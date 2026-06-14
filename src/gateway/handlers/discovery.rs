@@ -49,7 +49,7 @@ pub async fn spawn_discovered_agent_handler(
 
     // Check if agent is already running
     {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         if agents.contains_key(&id) {
             return (
                 StatusCode::CONFLICT,
@@ -64,7 +64,7 @@ pub async fn spawn_discovered_agent_handler(
 
     // Check if agent is in registry
     {
-        let registry = state.agent_registry.read().await;
+        let registry = state.agents.registry.read().await;
         if !registry.has(&id) {
             return (
                 StatusCode::NOT_FOUND,
@@ -80,7 +80,7 @@ pub async fn spawn_discovered_agent_handler(
     // Spawn the agent
     // Note: This requires access to the Gateway, so we need to spawn manually
     let personality = {
-        let registry = state.agent_registry.read().await;
+        let registry = state.agents.registry.read().await;
         registry.get(&id).cloned()
     };
 
@@ -89,7 +89,7 @@ pub async fn spawn_discovered_agent_handler(
         config.agent_id = Some(id.clone());
 
         // Create provider from model router
-        let provider = match state.model_router.create_default_provider().await {
+        let provider = match state.infra.model_router.create_default_provider().await {
             Ok(p) => p,
             Err(e) => {
                 return (
@@ -102,9 +102,9 @@ pub async fn spawn_discovered_agent_handler(
             }
         };
 
-        let tools = state.tool_registry.clone();
+        let tools = state.tools.registry.clone();
         let model = state.config.read().await.model.clone();
-        let memory_manager = state.memory_manager.read().await.as_ref().cloned();
+        let memory_manager = state.memory.manager.read().await.as_ref().cloned();
         let (tx, mut rx) = mpsc::channel(100);
 
         let agent = if let Some(mm) = memory_manager {
@@ -112,21 +112,21 @@ pub async fn spawn_discovered_agent_handler(
                 Agent::new(config.clone(), provider, tools)
                     .with_model(model)
                     .with_memory_manager(mm)
-                    .with_transcript_store(Arc::clone(&state.transcript_store))
-                    .with_artifact_store(Arc::clone(&state.artifact_store))
-                    .with_disk_budget(Arc::clone(&state.disk_budget))
-                    .with_session_file_manager(Arc::clone(&state.session_file_manager))
-                    .with_skill_manager(Arc::clone(&state.skills_manager)),
+                    .with_transcript_store(Arc::clone(&state.infra.transcript_store))
+                    .with_artifact_store(Arc::clone(&state.infra.artifact_store))
+                    .with_disk_budget(Arc::clone(&state.infra.disk_budget))
+                    .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+                    .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
             )
         } else {
             Arc::new(
                 Agent::new(config.clone(), provider, tools)
                     .with_model(model)
-                    .with_transcript_store(Arc::clone(&state.transcript_store))
-                    .with_artifact_store(Arc::clone(&state.artifact_store))
-                    .with_disk_budget(Arc::clone(&state.disk_budget))
-                    .with_session_file_manager(Arc::clone(&state.session_file_manager))
-                    .with_skill_manager(Arc::clone(&state.skills_manager)),
+                    .with_transcript_store(Arc::clone(&state.infra.transcript_store))
+                    .with_artifact_store(Arc::clone(&state.infra.artifact_store))
+                    .with_disk_budget(Arc::clone(&state.infra.disk_budget))
+                    .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+                    .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
             )
         };
 
@@ -142,7 +142,7 @@ pub async fn spawn_discovered_agent_handler(
         };
 
         {
-            let mut agents = state.agents.write().await;
+            let mut agents = state.agents.agents.write().await;
             agents.insert(id.clone(), handle);
         }
 
@@ -158,7 +158,7 @@ pub async fn spawn_discovered_agent_handler(
                     match cmd {
                         AgentCommand::Shutdown => {
                             info!("Agent {} shutting down", agent_id_clone);
-                            let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                            let _ = state_clone.events.tx.send(GatewayEvent::AgentStatus {
                                 agent_id: agent_id_clone.clone(),
                                 status: AgentStatus::Shutdown,
                             });
@@ -184,7 +184,7 @@ pub async fn spawn_discovered_agent_handler(
                             match result {
                                 Ok(outgoing) => {
                                     // Route response back to channel
-                                    let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
+                                    let _ = state_clone.events.tx.send(GatewayEvent::AgentResponse {
                                         session_id: session_id.clone(),
                                         agent_id: agent_id_clone.clone(),
                                         content: outgoing.content,
@@ -265,7 +265,7 @@ pub async fn spawn_all_discovered_agents_handler(
     info!("API request to spawn all discovered agents");
 
     let agent_ids: Vec<String> = {
-        let registry = state.agent_registry.read().await;
+        let registry = state.agents.registry.read().await;
         registry.list()
     };
 
@@ -276,7 +276,7 @@ pub async fn spawn_all_discovered_agents_handler(
     for agent_id in agent_ids {
         // Check if already running
         {
-            let agents = state.agents.read().await;
+            let agents = state.agents.agents.read().await;
             if agents.contains_key(&agent_id) {
                 already_running += 1;
                 continue;
@@ -285,7 +285,7 @@ pub async fn spawn_all_discovered_agents_handler(
 
         // Spawn the agent
         let personality = {
-            let registry = state.agent_registry.read().await;
+            let registry = state.agents.registry.read().await;
             registry.get(&agent_id).cloned()
         };
 
@@ -293,10 +293,10 @@ pub async fn spawn_all_discovered_agents_handler(
             let mut config = personality.to_agent_config();
             config.agent_id = Some(agent_id.clone());
 
-            if let Ok(provider) = state.model_router.create_default_provider().await {
-                let tools = state.tool_registry.clone();
+            if let Ok(provider) = state.infra.model_router.create_default_provider().await {
+                let tools = state.tools.registry.clone();
                 let model = state.config.read().await.model.clone();
-                let memory_manager = state.memory_manager.read().await.as_ref().cloned();
+                let memory_manager = state.memory.manager.read().await.as_ref().cloned();
                 let (tx, mut rx) = mpsc::channel(100);
 
                 let agent = if let Some(mm) = memory_manager {
@@ -304,21 +304,21 @@ pub async fn spawn_all_discovered_agents_handler(
                         Agent::new(config.clone(), provider, tools)
                             .with_model(model)
                             .with_memory_manager(mm)
-                            .with_transcript_store(Arc::clone(&state.transcript_store))
-                            .with_artifact_store(Arc::clone(&state.artifact_store))
-                            .with_disk_budget(Arc::clone(&state.disk_budget))
-                            .with_session_file_manager(Arc::clone(&state.session_file_manager))
-                            .with_skill_manager(Arc::clone(&state.skills_manager)),
+                            .with_transcript_store(Arc::clone(&state.infra.transcript_store))
+                            .with_artifact_store(Arc::clone(&state.infra.artifact_store))
+                            .with_disk_budget(Arc::clone(&state.infra.disk_budget))
+                            .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+                            .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
                     )
                 } else {
                     Arc::new(
                         Agent::new(config.clone(), provider, tools)
                             .with_model(model)
-                            .with_transcript_store(Arc::clone(&state.transcript_store))
-                            .with_artifact_store(Arc::clone(&state.artifact_store))
-                            .with_disk_budget(Arc::clone(&state.disk_budget))
-                            .with_session_file_manager(Arc::clone(&state.session_file_manager))
-                            .with_skill_manager(Arc::clone(&state.skills_manager)),
+                            .with_transcript_store(Arc::clone(&state.infra.transcript_store))
+                            .with_artifact_store(Arc::clone(&state.infra.artifact_store))
+                            .with_disk_budget(Arc::clone(&state.infra.disk_budget))
+                            .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+                            .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
                     )
                 };
 
@@ -334,7 +334,7 @@ pub async fn spawn_all_discovered_agents_handler(
                 };
 
                 {
-                    let mut agents = state.agents.write().await;
+                    let mut agents = state.agents.agents.write().await;
                     agents.insert(agent_id.clone(), handle);
                 }
 
@@ -378,7 +378,7 @@ pub async fn spawn_all_discovered_agents_handler(
                             }
                         }
                     }
-                    let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                    let _ = state_clone.events.tx.send(GatewayEvent::AgentStatus {
                         agent_id: agent_id_clone,
                         status: AgentStatus::Shutdown,
                     });
@@ -414,8 +414,8 @@ pub async fn spawn_all_discovered_agents_handler(
 pub async fn list_discovered_agents_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let registry = state.agent_registry.read().await;
-    let agents = state.agents.read().await;
+    let registry = state.agents.registry.read().await;
+    let agents = state.agents.agents.read().await;
 
     let list: Vec<_> = registry
         .iter()

@@ -49,10 +49,10 @@ pub async fn chat_handler(
         .unwrap_or_else(|| "default".to_string());
 
     // Use the default agent to process the message
-    let agents = state.agents.read().await;
+    let agents = state.agents.agents.read().await;
     if let Some(agent_handle) = agents.get("default") {
         // Subscribe to events before sending the command to avoid race condition
-        let mut event_rx = state.event_tx.subscribe();
+        let mut event_rx = state.events.tx.subscribe();
 
         // Send ProcessMessage command to agent
         let cmd = AgentCommand::ProcessMessage {
@@ -167,14 +167,20 @@ pub async fn web_terminal_chat_handler(
             .into_response();
     }
 
-    // Route through inbound pipeline
+    // Route through unified inbound entry
     let incoming =
         crate::channels::IncomingMessage::new(user_id, conversation_id.clone(), body.message)
             .with_provenance(crate::channels::InputProvenance::ExternalUser {
                 channel: "web".to_string(),
                 is_direct: true,
             });
-    let _ = state.inbound_pipeline.process(incoming).await;
+    if let Err(e) = state.pipelines.inbound_entry.send(incoming).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Failed to enqueue message: {}", e) })),
+        )
+            .into_response();
+    }
 
     let resp = WebTerminalChatResponse {
         message_id,
@@ -216,8 +222,7 @@ pub async fn send_message_handler(
 
     // If provider override is specified, we route through that provider
     if let Some(provider_name) = provider_override {
-        match state
-            .model_router
+        match state.infra.model_router
             .complete_with_provider(
                 &provider_name,
                 body.model_id,
@@ -248,13 +253,19 @@ pub async fn send_message_handler(
         }
     }
 
-    // Otherwise, route through inbound pipeline for normal agent processing
+    // Otherwise, route through unified inbound entry for normal agent processing
     let incoming = crate::channels::IncomingMessage::new(user_id, session_id.clone(), body.message)
         .with_provenance(crate::channels::InputProvenance::ExternalUser {
             channel: "api".to_string(),
             is_direct: true,
         });
-    let _ = state.inbound_pipeline.process(incoming).await;
+    if let Err(e) = state.pipelines.inbound_entry.send(incoming).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Failed to enqueue message: {}", e) })),
+        )
+            .into_response();
+    }
 
     let resp = serde_json::json!({
         "message_id": message_id,
@@ -278,7 +289,7 @@ pub async fn get_conversation_history_handler(
         .unwrap_or(100);
 
     // Access storage directly to get chat history
-    let storage = state.storage.read().await;
+    let storage = state.infra.storage.read().await;
 
     match storage
         .get_conversation_history(&conversation_id, limit)
@@ -329,7 +340,7 @@ pub async fn get_last_conversation_handler(
         .unwrap_or_else(|| "web_user".to_string());
 
     // Access storage directly to get last conversation
-    let storage = state.storage.read().await;
+    let storage = state.infra.storage.read().await;
 
     match storage.get_last_conversation(&user_id).await {
         Ok(conversation_id) => {
@@ -362,7 +373,7 @@ pub async fn list_conversations_handler(
         .cloned()
         .unwrap_or_else(|| "web_user".to_string());
 
-    let storage = state.storage.read().await;
+    let storage = state.infra.storage.read().await;
 
     match storage.get_user_conversations(&user_id, 100).await {
         Ok(conversation_ids) => {

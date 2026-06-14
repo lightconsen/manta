@@ -222,37 +222,6 @@ fn cron_config_defaults() {
     assert_eq!(config.check_interval_seconds, 60);
 }
 
-// ── QueuedMessage Construction ───────────────────────────────────────────────
-
-#[test]
-fn queued_message_new() {
-    let msg = QueuedMessage::new("msg_1", "telegram", "user_42", "Hello", "session_99");
-
-    assert_eq!(msg.id, "msg_1");
-    assert_eq!(msg.channel, "telegram");
-    assert_eq!(msg.user_id, "user_42");
-    assert_eq!(msg.content, "Hello");
-    assert_eq!(msg.session_id, "session_99");
-    assert!(msg.model_alias.is_none());
-    assert_eq!(msg.mention, MentionState::DirectMessage);
-}
-
-#[test]
-fn queued_message_with_mention() {
-    let msg = QueuedMessage::new("msg_1", "slack", "user_42", "Hello", "session_99")
-        .with_mention(MentionState::Mentioned);
-
-    assert_eq!(msg.mention, MentionState::Mentioned);
-}
-
-#[test]
-fn queued_message_with_model_alias() {
-    let msg = QueuedMessage::new("msg_1", "discord", "user_42", "Hello", "session_99")
-        .with_model_alias("fast");
-
-    assert_eq!(msg.model_alias, Some("fast".to_string()));
-}
-
 // ── MentionState Logic ───────────────────────────────────────────────────────
 
 #[test]

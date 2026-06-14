@@ -42,7 +42,7 @@ use crate::tools::ToolRegistry;
 #[allow(dead_code)]
 /// `GET /api/settings` — list all runtime key/value settings.
 pub async fn list_settings_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let settings = state.runtime_settings.read().await.clone();
+    let settings = state.infra.runtime_settings.read().await.clone();
     Json(settings)
 }
 
@@ -52,7 +52,7 @@ pub async fn set_setting_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<SetSettingRequest>,
 ) -> impl IntoResponse {
-    let mut settings = state.runtime_settings.write().await;
+    let mut settings = state.infra.runtime_settings.write().await;
     settings.insert(req.key.clone(), req.value.clone());
     Json(serde_json::json!({ "ok": true, "key": req.key }))
 }
@@ -63,7 +63,7 @@ pub async fn get_setting_handler(
     State(state): State<Arc<GatewayState>>,
     Path(key): Path<String>,
 ) -> impl IntoResponse {
-    let settings = state.runtime_settings.read().await;
+    let settings = state.infra.runtime_settings.read().await;
     match settings.get(&key) {
         Some(val) => Json(serde_json::json!({ "key": key, "value": val })).into_response(),
         None => (
@@ -80,7 +80,7 @@ pub async fn delete_setting_handler(
     State(state): State<Arc<GatewayState>>,
     Path(key): Path<String>,
 ) -> impl IntoResponse {
-    let mut settings = state.runtime_settings.write().await;
+    let mut settings = state.infra.runtime_settings.write().await;
     if settings.remove(&key).is_some() {
         Json(serde_json::json!({ "ok": true, "key": key })).into_response()
     } else {

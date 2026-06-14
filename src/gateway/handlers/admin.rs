@@ -73,16 +73,16 @@ pub async fn reload_all_handler(
 
     // ── 2. Plugins ────────────────────────────────────────────────────────
     if scope == "all" || scope == "plugins" {
-        let plugins = state.plugin_manager.list_plugins().await;
+        let plugins = state.infra.plugin_manager.list_plugins().await;
         let ids: Vec<String> = plugins.iter().map(|p| p.id().to_string()).collect();
         let mut unloaded = 0usize;
         for id in &ids {
-            match state.plugin_manager.unload_plugin(id).await {
+            match state.infra.plugin_manager.unload_plugin(id).await {
                 Ok(_) => unloaded += 1,
                 Err(e) => warn!("Failed to unload plugin '{}' during reload: {}", id, e),
             }
         }
-        let loaded = match state.plugin_manager.initialize().await {
+        let loaded = match state.infra.plugin_manager.initialize().await {
             Ok(count) => count,
             Err(e) => {
                 error!("Failed to initialize plugins: {}", e);
@@ -131,8 +131,7 @@ pub async fn reload_all_handler(
 
         if !changes.is_empty() {
             let details = serde_json::to_value(&changes).unwrap_or_default();
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     crate::security::runtime_audit::AuditEventType::ConfigChange,
                     "system",
@@ -154,7 +153,7 @@ pub async fn reload_all_handler(
         let (new_providers, current_names) = if let Some(ref new_cfg) = new_config {
             let new_names: std::collections::HashSet<String> =
                 new_cfg.providers.keys().cloned().collect();
-            let current = state.model_router.list_providers().await;
+            let current = state.infra.model_router.list_providers().await;
             let current_names: std::collections::HashSet<String> =
                 current.iter().map(|p| p.name.clone()).collect();
             (new_names, current_names)
@@ -168,7 +167,7 @@ pub async fn reload_all_handler(
         // Remove providers that no longer exist in config
         for name in &current_names {
             if !new_providers.contains(name) {
-                if let Err(e) = state.model_router.remove_provider(name).await {
+                if let Err(e) = state.infra.model_router.remove_provider(name).await {
                     warn!("Failed to remove provider '{}': {}", name, e);
                 } else {
                     removed += 1;
@@ -181,8 +180,7 @@ pub async fn reload_all_handler(
         if let Some(ref new_cfg) = new_config {
             for (name, provider_config) in &new_cfg.providers {
                 if !current_names.contains(name) {
-                    if let Err(e) = state
-                        .model_router
+                    if let Err(e) = state.infra.model_router
                         .add_provider(name, provider_config.clone())
                         .await
                     {
@@ -204,13 +202,12 @@ pub async fn reload_all_handler(
     // ── 5. MCP servers ────────────────────────────────────────────────────
     if scope == "all" || scope == "mcp" {
         // Disconnect all existing MCP servers
-        let existing_servers = state.mcp_manager.list_servers().await;
+        let existing_servers = state.tools.mcp_manager.list_servers().await;
         for server_id in &existing_servers {
             // Deregister tools first
-            state
-                .tool_registry
+            state.tools.registry
                 .deregister_prefix(&format!("mcp__{}__", server_id));
-            if let Err(e) = state.mcp_manager.disconnect(server_id).await {
+            if let Err(e) = state.tools.mcp_manager.disconnect(server_id).await {
                 warn!("Failed to disconnect MCP server '{}': {}", server_id, e);
             } else {
                 info!("Disconnected MCP server '{}'", server_id);
@@ -225,15 +222,14 @@ pub async fn reload_all_handler(
                 if !server_config.auto_connect {
                     continue;
                 }
-                match state
-                    .mcp_manager
+                match state.tools.mcp_manager
                     .connect(server_id, server_config.clone())
                     .await
                 {
                     Ok(tools) => {
                         info!("MCP server '{}' connected: {} tool(s)", server_id, tools.len());
                         // Register discovered tools
-                        if let Some(client_arc) = state.mcp_manager.get_client(server_id).await {
+                        if let Some(client_arc) = state.tools.mcp_manager.get_client(server_id).await {
                             let max_tools = if server_config.max_tools == 0 {
                                 tools.len()
                             } else {
@@ -245,7 +241,7 @@ pub async fn reload_all_handler(
                                     server_id,
                                     tool,
                                 ));
-                                state.tool_registry.register_dynamic(wrapper);
+                                state.tools.registry.register_dynamic(wrapper);
                             }
                         }
                         connected += 1;
@@ -268,7 +264,7 @@ pub async fn reload_all_handler(
     // ── 6. Skills ─────────────────────────────────────────────────────────
     if scope == "all" || scope == "skills" {
         let skills_result = {
-            let mut skills_manager = state.skills_manager.write().await;
+            let mut skills_manager = state.tools.skills_manager.write().await;
             match skills_manager.initialize().await {
                 Ok(count) => {
                     info!("Reinitialized skills manager with {} skills", count);

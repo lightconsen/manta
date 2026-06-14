@@ -121,7 +121,7 @@ async fn validate_ws_upgrade_request(
     if let Some(token) =
         crate::gateway::auth::extract_session_cookie_from_headers(headers, &cookie_config.name)
     {
-        if let Some(session) = state.auth_manager.validate_session(&token).await {
+        if let Some(session) = state.auth.manager.validate_session(&token).await {
             let scopes = if session.scopes.is_empty() {
                 DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
             } else {
@@ -142,7 +142,7 @@ async fn validate_ws_upgrade_request(
 
     // Check against auth_manager (for Bearer session tokens)
     if let Some(ref tok) = token_from_header {
-        if let Some(session) = state.auth_manager.validate_session(tok).await {
+        if let Some(session) = state.auth.manager.validate_session(tok).await {
             let scopes = if session.scopes.is_empty() {
                 DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
             } else {
@@ -223,7 +223,7 @@ async fn handle_websocket(
     }
     let conn = Arc::new(tokio::sync::RwLock::new(proto_conn));
 
-    let mut event_rx = state.event_tx.subscribe();
+    let mut event_rx = state.events.tx.subscribe();
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<WsCommand>(256);
 
     let (mut ws_sender, mut ws_receiver): (SplitSink<WebSocket, Message>, SplitStream<WebSocket>) =
@@ -426,7 +426,7 @@ async fn dispatch_method(
                             let user_text = format!("/{}", command);
                             let error_text =
                                 format!("Command error: Missing required scope: {}", required);
-                            if let Some(ref store) = state.session_store {
+                            if let Some(ref store) = state.agents.store {
                                 let _ = store
                                     .append_message(&AppendMessageParams {
                                         session_id,
@@ -663,7 +663,7 @@ async fn resolve_token_auth(
     let token = params.auth.as_ref().and_then(|a| a.token.as_ref()).cloned();
 
     if let Some(token_str) = token {
-        if let Some(session) = state.auth_manager.validate_session(&token_str).await {
+        if let Some(session) = state.auth.manager.validate_session(&token_str).await {
             let scopes = if session.scopes.is_empty() {
                 DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
             } else {
@@ -702,7 +702,7 @@ async fn handle_device_auth(
     use crate::security::device_pairing::DeviceAccessResult;
 
     if let Some(token) = params.auth.as_ref().and_then(|a| a.token.as_ref()) {
-        if let Some(device_id) = state.device_pairing_store.validate_token(token).await {
+        if let Some(device_id) = state.auth.device_pairing_store.validate_token(token).await {
             let scopes = if params.scopes.is_empty() {
                 DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
             } else {
@@ -720,8 +720,7 @@ async fn handle_device_auth(
         }
     };
 
-    let result = state
-        .device_pairing_store
+    let result = state.auth.device_pairing_store
         .request_access(&device.id, None, device.public_key.as_deref())
         .await;
 
@@ -735,7 +734,7 @@ async fn handle_device_auth(
             finalize_hello_ok(req, conn, params, Some(UserId::new(&device.id)), scopes).await
         }
         DeviceAccessResult::PairingRequired { code } => {
-            let _ = state.event_tx.send(GatewayEvent::DevicePairRequested {
+            let _ = state.events.tx.send(GatewayEvent::DevicePairRequested {
                 device_id: device.id.clone(),
                 code: code.clone(),
                 display_name: None,
@@ -803,7 +802,7 @@ async fn handle_chat_send(
     };
 
     let mut should_name = false;
-    if let Some(ref store) = state.session_store {
+    if let Some(ref store) = state.agents.store {
         if let Err(e) = store
             .append_message(&AppendMessageParams {
                 session_id: &session_id,
@@ -827,7 +826,7 @@ async fn handle_chat_send(
     }
 
     if should_name {
-        let store = state.session_store.clone();
+        let store = state.agents.store.clone();
         let sid = session_id.clone();
         let msg = params.message.clone();
         let trimmed = msg.trim();
@@ -854,7 +853,7 @@ async fn handle_chat_send(
         });
     }
 
-    if let Some(ref store) = state.session_store {
+    if let Some(ref store) = state.agents.store {
         if let Ok(Some(ps)) = store.load_session(&session_id).await {
             if let Some(ref bound_agent) = ps.metadata.bound_agent_id {
                 let route = crate::inbound::RouteResult {
@@ -862,7 +861,7 @@ async fn handle_chat_send(
                     workspace_id: None,
                     created_binding: false,
                 };
-                state.agent_router.bind_session(&session_id, &route).await;
+                state.agents.router.bind_session(&session_id, &route).await;
             }
         }
     }
@@ -873,13 +872,13 @@ async fn handle_chat_send(
             workspace_id: None,
             created_binding: false,
         };
-        state.agent_router.bind_session(&session_id, &route).await;
+        state.agents.router.bind_session(&session_id, &route).await;
     }
 
     // ── Smart name-based routing: "小王，xxx" -> route to secretary-xiaowang ──
     let mut final_message = params.message.clone();
     {
-        let registry = state.agent_registry.read().await;
+        let registry = state.agents.registry.read().await;
         // Try to extract a name prefix like "小王，" or "小王：" from the message.
         let trimmed = final_message.trim_start();
         if let Some((first_word, rest)) = trimmed.split_once(['，', ',', '：', ':', ' ', '\t']) {
@@ -896,7 +895,7 @@ async fn handle_chat_send(
                         workspace_id: None,
                         created_binding: true,
                     };
-                    state.agent_router.bind_session(&session_id, &route).await;
+                    state.agents.router.bind_session(&session_id, &route).await;
                     // Strip the greeting prefix so the agent sees only the task.
                     final_message = rest.trim_start().to_string();
                 }
@@ -911,19 +910,33 @@ async fn handle_chat_send(
                 is_direct: true,
             });
 
-    let routed = state.inbound_pipeline.process(incoming).await;
-
-    if let Some(ref _r) = routed {
-        let mut cg = conn.write().await;
-        if !cg.subscriptions.contains(&session_id) {
-            cg.subscriptions.push(session_id.clone());
+    // Submit to the unified inbound entry channel instead of calling the
+    // pipeline directly. The worker drives the message through the pipeline
+    // and `process_routed_messages` dispatches to the agent.
+    let routed = match state.pipelines.inbound_entry.send(incoming).await {
+        Ok(()) => {
+            // Best-effort synchronous resolution so the WebSocket client gets
+            // immediate feedback. The resolved agent is also what will receive
+            // the message via `routed_tx`.
+            Some(state.agents.router.resolve_by_session(&session_id).await)
         }
-        drop(cg);
+        Err(e) => {
+            return WsResponse::err(
+                &req.id,
+                "enqueue_failed",
+                format!("Failed to enqueue message: {}", e),
+            );
+        }
+    };
+
+    let mut cg = conn.write().await;
+    if !cg.subscriptions.contains(&session_id) {
+        cg.subscriptions.push(session_id.clone());
     }
+    drop(cg);
 
     if is_new_session {
-        let _ = state
-            .event_tx
+        let _ = state.events.tx
             .send(crate::gateway::GatewayEvent::SessionCreated {
                 session_id: session_id.clone(),
                 agent_id: routed
@@ -934,23 +947,14 @@ async fn handle_chat_send(
             });
     }
 
-    match routed {
-        Some(routed) => WsResponse::ok(
-            &req.id,
-            serde_json::json!({
-                "status": "accepted",
-                "session_id": session_id,
-                "agent_id": routed.agent_id,
-            }),
-        ),
-        None => WsResponse::ok(
-            &req.id,
-            serde_json::json!({
-                "status": "queued",
-                "session_id": session_id,
-            }),
-        ),
-    }
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": "accepted",
+            "session_id": session_id,
+            "agent_id": routed.map(|r| r.agent_id).unwrap_or_default(),
+        }),
+    )
 }
 
 async fn handle_chat_history(
@@ -975,7 +979,7 @@ async fn handle_chat_history(
         Err(res) => return res,
     };
 
-    let messages = if let Some(ref store) = state.session_store {
+    let messages = if let Some(ref store) = state.agents.store {
         match store
             .get_messages(&params.session_id, params.limit as i64, None)
             .await
@@ -1036,7 +1040,7 @@ async fn handle_chat_abort(
         Err(res) => return res,
     };
 
-    state.acp.cancel(params.session_id.clone()).await;
+    state.agents.acp.cancel(params.session_id.clone()).await;
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1047,7 +1051,7 @@ async fn handle_chat_abort(
 }
 
 async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let sessions: Vec<serde_json::Value> = if let Some(ref store) = state.session_store {
+    let sessions: Vec<serde_json::Value> = if let Some(ref store) = state.agents.store {
         match store.find_sessions(None, None, None, false).await {
             Ok(rows) => rows
                 .into_iter()
@@ -1077,7 +1081,7 @@ async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
             }
         }
     } else {
-        let mgr = state.session_manager.read().await;
+        let mgr = state.agents.manager.read().await;
         mgr.list_sessions()
             .await
             .into_iter()
@@ -1123,11 +1127,11 @@ async fn handle_sessions_create(
         .unwrap_or_else(|| format!("{}:{}", channel, user));
 
     {
-        let mut mgr = state.session_manager.write().await;
+        let mut mgr = state.agents.manager.write().await;
         mgr.create_session(session_id.clone());
     }
 
-    if let Some(ref store) = state.session_store {
+    if let Some(ref store) = state.agents.store {
         let metadata = crate::agent::session_store::SessionMetadata::new(&session_id, "", "", "");
         let _ = store.save_session(&session_id, &metadata, "{}").await;
     }
@@ -1157,11 +1161,11 @@ async fn handle_sessions_delete(
     };
 
     {
-        let mut mgr = state.session_manager.write().await;
+        let mut mgr = state.agents.manager.write().await;
         mgr.terminate_session(&params.session_id);
     }
 
-    if let Some(ref store) = state.session_store {
+    if let Some(ref store) = state.agents.store {
         let _ = store.delete_session(&params.session_id).await;
     }
 
@@ -1183,9 +1187,9 @@ async fn handle_sessions_reset(
         Err(res) => return res,
     };
 
-    state.acp.cancel(params.session_id.clone()).await;
+    state.agents.acp.cancel(params.session_id.clone()).await;
 
-    if let Some(ref store) = state.session_store {
+    if let Some(ref store) = state.agents.store {
         let _ = store.delete_session(&params.session_id).await;
     }
 
@@ -1254,7 +1258,7 @@ async fn handle_sessions_unsubscribe(
 
 async fn handle_agents_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let agents = {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         agents.keys().cloned().collect::<Vec<_>>()
     };
 
@@ -1273,12 +1277,12 @@ async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     };
 
     let agent = {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         agents.get(&params.agent_id).cloned()
     };
 
     let personality = {
-        let registry = state.agent_registry.read().await;
+        let registry = state.agents.registry.read().await;
         registry.get(&params.agent_id).cloned()
     };
 
@@ -1350,7 +1354,7 @@ async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
 }
 
 async fn handle_agents_registry(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let registry = state.agent_registry.read().await;
+    let registry = state.agents.registry.read().await;
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut entries: Vec<serde_json::Value> = Vec::new();
 
@@ -1369,7 +1373,7 @@ async fn handle_agents_registry(req: &WsRequest, state: &Arc<GatewayState>) -> W
 
     // 2. Runtime-spawned agents not in registry (e.g. default)
     {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         for id in agents.keys() {
             if !seen.contains(id) {
                 entries.push(serde_json::json!({
@@ -1387,7 +1391,7 @@ async fn handle_agents_registry(req: &WsRequest, state: &Arc<GatewayState>) -> W
 
 async fn handle_health(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let agent_count = {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         agents.len()
     };
 
@@ -1411,7 +1415,7 @@ async fn handle_system_presence(req: &WsRequest) -> WsResponse {
 }
 
 async fn handle_acp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let subagents = state.acp.list_subagents().await;
+    let subagents = state.agents.acp.list_subagents().await;
     let sessions: Vec<_> = subagents
         .iter()
         .map(|s| {
@@ -1471,8 +1475,7 @@ async fn handle_acp_spawn(
             .unwrap_or_else(|| "anonymous".to_string())
     };
 
-    let rate_result = state
-        .rate_limiter
+    let rate_result = state.auth.rate_limiter
         .check_with_cost(&crate::security::UserId::new(format!("acp:spawn:{}", actor)), 1.0)
         .await;
     if !rate_result.is_allowed() {
@@ -1514,16 +1517,14 @@ async fn handle_acp_spawn(
         max_crash_retries: 3,
     };
 
-    match state
-        .acp
+    match state.agents.acp
         .spawn_subagent(session_id.clone(), parent_id.clone(), config)
         .await
     {
         Ok(handle) => {
             let subagent_id = handle.id.clone();
 
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::AcpSpawn,
                     &actor,
@@ -1540,7 +1541,7 @@ async fn handle_acp_spawn(
 
             let message = IncomingMessage::new(actor.clone(), session_id.to_string(), params.task);
 
-            match state.acp.send_message(&subagent_id, message).await {
+            match state.agents.acp.send_message(&subagent_id, message).await {
                 Ok(response) => WsResponse::ok(
                     &req.id,
                     serde_json::json!({
@@ -1551,7 +1552,7 @@ async fn handle_acp_spawn(
                     }),
                 ),
                 Err(e) => {
-                    let _ = state.acp.shutdown_subagent(&subagent_id).await;
+                    let _ = state.agents.acp.shutdown_subagent(&subagent_id).await;
                     WsResponse::err(
                         &req.id,
                         "SPAWN_FAILED",
@@ -1561,8 +1562,7 @@ async fn handle_acp_spawn(
             }
         }
         Err(e) => {
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::AcpSpawn,
                     &actor,
@@ -1592,10 +1592,9 @@ async fn handle_acp_terminate(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
     };
 
     let session_id = AcpSessionId(params.session_id.clone());
-    match state.acp.terminate_session(&session_id).await {
+    match state.agents.acp.terminate_session(&session_id).await {
         Ok(count) => {
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::AcpTerminate,
                     "ws-user",
@@ -1614,8 +1613,7 @@ async fn handle_acp_terminate(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
             )
         }
         Err(e) => {
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::AcpTerminate,
                     "ws-user",
@@ -1651,7 +1649,7 @@ async fn handle_acp_message(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
     };
 
     let session_id = AcpSessionId(params.session_id.clone());
-    let subagents = state.acp.list_session_subagents(&session_id).await;
+    let subagents = state.agents.acp.list_session_subagents(&session_id).await;
 
     if subagents.is_empty() {
         return WsResponse::err(&req.id, "NO_ACTIVE_SUBAGENTS", "No active subagents in session");
@@ -1661,10 +1659,9 @@ async fn handle_acp_message(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
     let message =
         IncomingMessage::new("ws-user".to_string(), session_id.to_string(), params.message);
 
-    match state.acp.send_message(&subagent.id, message).await {
+    match state.agents.acp.send_message(&subagent.id, message).await {
         Ok(response) => {
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::AcpMessage,
                     "ws-user",
@@ -1690,8 +1687,7 @@ async fn handle_acp_message(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
             )
         }
         Err(e) => {
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::AcpMessage,
                     "ws-user",
@@ -1717,7 +1713,7 @@ async fn handle_acp_status(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    match state.acp.get_status(params.session_id.clone()).await {
+    match state.agents.acp.get_status(params.session_id.clone()).await {
         Some(status) => WsResponse::ok(
             &req.id,
             serde_json::json!({
@@ -1743,7 +1739,7 @@ async fn handle_acp_pause(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespo
         Err(res) => return res,
     };
 
-    state.acp.pause(params.session_id.clone()).await;
+    state.agents.acp.pause(params.session_id.clone()).await;
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1765,7 +1761,7 @@ async fn handle_acp_resume(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    state.acp.resume(params.session_id.clone()).await;
+    state.agents.acp.resume(params.session_id.clone()).await;
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1787,7 +1783,7 @@ async fn handle_acp_step(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespon
         Err(res) => return res,
     };
 
-    state.acp.step(params.session_id.clone()).await;
+    state.agents.acp.step(params.session_id.clone()).await;
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1809,7 +1805,7 @@ async fn handle_acp_cancel(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    state.acp.cancel(params.session_id.clone()).await;
+    state.agents.acp.cancel(params.session_id.clone()).await;
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1834,7 +1830,7 @@ async fn handle_acp_tree(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespon
     };
 
     let session_id = AcpSessionId(params.session_id.clone());
-    let tree = state.acp.get_subagent_tree(&session_id).await;
+    let tree = state.agents.acp.get_subagent_tree(&session_id).await;
 
     WsResponse::ok(
         &req.id,
@@ -1862,7 +1858,7 @@ async fn handle_acp_execute_session(req: &WsRequest, state: &Arc<GatewayState>) 
     };
 
     let agent_id = params.agent_id.unwrap_or_else(|| "default".to_string());
-    let agents = state.agents.read().await;
+    let agents = state.agents.agents.read().await;
     let agent_handle = match agents.get(&agent_id) {
         Some(h) => h.clone(),
         None => {
@@ -1890,8 +1886,7 @@ async fn handle_acp_execute_session(req: &WsRequest, state: &Arc<GatewayState>) 
     );
     drop(_guard);
 
-    match state
-        .acp
+    match state.agents.acp
         .execute_session_with_max_iterations(agent_handle.agent, incoming, params.max_iterations)
         .instrument(span)
         .await
@@ -1926,7 +1921,7 @@ async fn handle_acp_execute_run(req: &WsRequest, state: &Arc<GatewayState>) -> W
     };
 
     let agent_id = params.agent_id.unwrap_or_else(|| "default".to_string());
-    let agents = state.agents.read().await;
+    let agents = state.agents.agents.read().await;
     let agent_handle = match agents.get(&agent_id) {
         Some(h) => h.clone(),
         None => {
@@ -1954,8 +1949,7 @@ async fn handle_acp_execute_run(req: &WsRequest, state: &Arc<GatewayState>) -> W
     );
     drop(_guard);
 
-    match state
-        .acp
+    match state.agents.acp
         .execute_run_with_max_iterations(agent_handle.agent, incoming, params.max_iterations)
         .instrument(span)
         .await
@@ -2073,7 +2067,7 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
             if let Some(v) = params.value.as_str() {
                 config.model = v.to_string();
                 // Also update model router default alias
-                if let Err(e) = state.model_router.switch_default_model(v).await {
+                if let Err(e) = state.infra.model_router.switch_default_model(v).await {
                     return WsResponse::err(
                         &req.id,
                         "CONFIG_ERROR",
@@ -2291,9 +2285,9 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
 async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     // Build model list from aliases (always available) rather than catalog
     // which may be empty if initialize() was never called.
-    let aliases = state.model_router.list_aliases().await;
+    let aliases = state.infra.model_router.list_aliases().await;
     let entries: Vec<serde_json::Value> = {
-        let config = state.model_router.config.read().await;
+        let config = state.infra.model_router.config.read().await;
         aliases
             .iter()
             .filter_map(|name| config.aliases.get(name))
@@ -2306,7 +2300,7 @@ async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
             })
             .collect()
     };
-    let default_model = state.model_router.get_default_model().await;
+    let default_model = state.infra.model_router.get_default_model().await;
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -2387,8 +2381,7 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         }
 
         // Register with model router
-        if let Err(e) = state
-            .model_router
+        if let Err(e) = state.infra.model_router
             .add_provider(&provider_name, provider_config)
             .await
         {
@@ -2408,12 +2401,12 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         temperature: None,
         max_tokens: None,
     };
-    state.model_router.set_alias(alias).await;
+    state.infra.model_router.set_alias(alias).await;
 
     // If this is the first alias, auto-set it as default
-    let aliases = state.model_router.list_aliases().await;
+    let aliases = state.infra.model_router.list_aliases().await;
     if aliases.len() == 1 {
-        let _ = state.model_router.switch_default_model(&payload.name).await;
+        let _ = state.infra.model_router.switch_default_model(&payload.name).await;
     }
 
     // Register in catalog for discovery
@@ -2423,7 +2416,7 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         payload.name.clone(),
     )
     .with_alias(payload.name.clone());
-    state.model_router.model_catalog.register(entry).await;
+    state.infra.model_router.model_catalog.register(entry).await;
 
     // Persist GatewayConfig to syscity.toml
     if let Some(config_path) = state.config_path.clone() {
@@ -2460,7 +2453,7 @@ async fn handle_models_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
         Ok(p) => p,
         Err(res) => return res,
     };
-    let removed = state.model_router.remove_alias(&payload.name).await;
+    let removed = state.infra.model_router.remove_alias(&payload.name).await;
     if removed {
         WsResponse::ok(&req.id, serde_json::json!({ "status": "removed" }))
     } else {
@@ -2481,7 +2474,7 @@ async fn handle_models_set_default(req: &WsRequest, state: &Arc<GatewayState>) -
         Ok(p) => p,
         Err(res) => return res,
     };
-    match state.model_router.switch_default_model(&payload.name).await {
+    match state.infra.model_router.switch_default_model(&payload.name).await {
         Ok(()) => WsResponse::ok(
             &req.id,
             serde_json::json!({ "status": "ok", "default_model": payload.name }),
@@ -2491,7 +2484,7 @@ async fn handle_models_set_default(req: &WsRequest, state: &Arc<GatewayState>) -
 }
 
 async fn handle_mcp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let connected = state.mcp_manager.list_servers().await;
+    let connected = state.tools.mcp_manager.list_servers().await;
     let config_guard = state.config.read().await;
     let servers: Vec<serde_json::Value> = config_guard
         .mcp
@@ -2560,7 +2553,7 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
     }
 
     if payload.auto_connect {
-        if let Err(e) = state.mcp_manager.connect(&payload.id, config).await {
+        if let Err(e) = state.tools.mcp_manager.connect(&payload.id, config).await {
             return WsResponse::err(
                 &req.id,
                 "MCP_CONNECT_FAILED",
@@ -2586,9 +2579,9 @@ async fn handle_mcp_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    let _ = state.mcp_manager.disconnect(&payload.id).await;
+    let _ = state.tools.mcp_manager.disconnect(&payload.id).await;
     let prefix = format!("mcp__{}__", payload.id);
-    state.tool_registry.deregister_prefix(&prefix);
+    state.tools.registry.deregister_prefix(&prefix);
 
     {
         let mut cfg = state.config.write().await;
@@ -2626,7 +2619,7 @@ async fn handle_mcp_connect(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
         }
     };
 
-    match state.mcp_manager.connect(&payload.id, config).await {
+    match state.tools.mcp_manager.connect(&payload.id, config).await {
         Ok(tools) => WsResponse::ok(
             &req.id,
             serde_json::json!({
@@ -2649,10 +2642,10 @@ async fn handle_mcp_disconnect(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         Err(res) => return res,
     };
 
-    match state.mcp_manager.disconnect(&payload.id).await {
+    match state.tools.mcp_manager.disconnect(&payload.id).await {
         Ok(()) => {
             let prefix = format!("mcp__{}__", payload.id);
-            state.tool_registry.deregister_prefix(&prefix);
+            state.tools.registry.deregister_prefix(&prefix);
             WsResponse::ok(
                 &req.id,
                 serde_json::json!({ "status": "disconnected", "id": payload.id }),
@@ -2663,7 +2656,7 @@ async fn handle_mcp_disconnect(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
 }
 
 async fn handle_cron_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let jobs = match state.cron_scheduler.get_opt().await {
+    let jobs = match state.scheduler.cron_scheduler.get_opt().await {
         Some(s) => s.lock().await.list_jobs().await,
         None => Vec::new(),
     };
@@ -2702,7 +2695,7 @@ async fn handle_tasks_schedule(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         Err(res) => return res,
     };
 
-    let scheduler = match state.task_scheduler.get_opt().await {
+    let scheduler = match state.scheduler.task_scheduler.get_opt().await {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2737,7 +2730,7 @@ async fn handle_tasks_schedule(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
 }
 
 async fn handle_tasks_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let tasks = match state.task_scheduler.get_opt().await {
+    let tasks = match state.scheduler.task_scheduler.get_opt().await {
         Some(s) => s.lock().await.list().await,
         None => Vec::new(),
     };
@@ -2760,7 +2753,7 @@ async fn handle_tasks_delete(req: &WsRequest, state: &Arc<GatewayState>) -> WsRe
         Err(res) => return res,
     };
 
-    let scheduler = match state.task_scheduler.get_opt().await {
+    let scheduler = match state.scheduler.task_scheduler.get_opt().await {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2793,7 +2786,7 @@ async fn handle_tasks_enable(req: &WsRequest, state: &Arc<GatewayState>) -> WsRe
         Err(res) => return res,
     };
 
-    let scheduler = match state.task_scheduler.get_opt().await {
+    let scheduler = match state.scheduler.task_scheduler.get_opt().await {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2826,7 +2819,7 @@ async fn handle_tasks_disable(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
         Err(res) => return res,
     };
 
-    let scheduler = match state.task_scheduler.get_opt().await {
+    let scheduler = match state.scheduler.task_scheduler.get_opt().await {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2851,7 +2844,7 @@ async fn handle_tasks_disable(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
 
 async fn handle_skills_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let skills = {
-        let sm = state.skills_manager.read().await;
+        let sm = state.tools.skills_manager.read().await;
         sm.list_skills().await
     };
     let entries: Vec<_> = skills
@@ -3046,7 +3039,7 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
 
     // Reload skills
     {
-        let mut sm = state.skills_manager.write().await;
+        let mut sm = state.tools.skills_manager.write().await;
         if let Err(e) = sm.load_all().await {
             return WsResponse::err(
                 &req.id,
@@ -3090,7 +3083,7 @@ async fn handle_logs_subscribe(
         cg.log_cancel_tx = Some(cancel_tx);
     }
 
-    let log_tx = state.log_tx.clone();
+    let log_tx = state.events.log_tx.clone();
     let cmd_tx = cmd_tx.clone();
 
     tokio::spawn(async move {

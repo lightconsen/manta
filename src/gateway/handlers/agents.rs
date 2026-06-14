@@ -42,10 +42,10 @@ use crate::tools::ToolRegistry;
 #[allow(dead_code)]
 pub async fn list_agents_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     // Get running agents
-    let running_agents = state.agents.read().await;
+    let running_agents = state.agents.agents.read().await;
 
     // Get discovered personalities from registry
-    let registry = state.agent_registry.read().await;
+    let registry = state.agents.registry.read().await;
     let discovered: Vec<_> = registry.iter().map(|p| p.id.clone()).collect();
 
     let list: Vec<_> = running_agents
@@ -98,7 +98,7 @@ pub async fn create_agent_handler(
     let (tx, mut rx) = mpsc::channel(100);
 
     // Create provider from model router
-    let provider = match state.model_router.create_default_provider().await {
+    let provider = match state.infra.model_router.create_default_provider().await {
         Ok(p) => p,
         Err(e) => {
             return (
@@ -112,9 +112,9 @@ pub async fn create_agent_handler(
     };
 
     // Get tools, model, and memory manager
-    let tools = state.tool_registry.clone();
+    let tools = state.tools.registry.clone();
     let model = state.config.read().await.model.clone();
-    let memory_manager = state.memory_manager.read().await.as_ref().cloned();
+    let memory_manager = state.memory.manager.read().await.as_ref().cloned();
 
     // Create agent instance with memory manager and session management stores
     let agent = if let Some(mm) = memory_manager {
@@ -122,21 +122,21 @@ pub async fn create_agent_handler(
             Agent::new(config.clone(), provider, tools)
                 .with_model(model)
                 .with_memory_manager(mm)
-                .with_transcript_store(Arc::clone(&state.transcript_store))
-                .with_artifact_store(Arc::clone(&state.artifact_store))
-                .with_disk_budget(Arc::clone(&state.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.session_file_manager))
-                .with_skill_manager(Arc::clone(&state.skills_manager)),
+                .with_transcript_store(Arc::clone(&state.infra.transcript_store))
+                .with_artifact_store(Arc::clone(&state.infra.artifact_store))
+                .with_disk_budget(Arc::clone(&state.infra.disk_budget))
+                .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+                .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
         )
     } else {
         Arc::new(
             Agent::new(config.clone(), provider, tools)
                 .with_model(model)
-                .with_transcript_store(Arc::clone(&state.transcript_store))
-                .with_artifact_store(Arc::clone(&state.artifact_store))
-                .with_disk_budget(Arc::clone(&state.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.session_file_manager))
-                .with_skill_manager(Arc::clone(&state.skills_manager)),
+                .with_transcript_store(Arc::clone(&state.infra.transcript_store))
+                .with_artifact_store(Arc::clone(&state.infra.artifact_store))
+                .with_disk_budget(Arc::clone(&state.infra.disk_budget))
+                .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+                .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
         )
     };
 
@@ -154,7 +154,7 @@ pub async fn create_agent_handler(
 
     // Insert into agents map
     {
-        let mut agents = state.agents.write().await;
+        let mut agents = state.agents.agents.write().await;
         agents.insert(agent_id.clone(), handle);
     }
 
@@ -174,7 +174,7 @@ pub async fn create_agent_handler(
                         info!("Agent {} processing message for session {}", agent_id_clone, session_id);
 
                         // Update status
-                        let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                        let _ = state_clone.events.tx.send(GatewayEvent::AgentStatus {
                             agent_id: agent_id_clone.clone(),
                             status: AgentStatus::Processing { session_id: session_id.clone() },
                         });
@@ -195,16 +195,16 @@ pub async fn create_agent_handler(
                             Box::pin(async move {
                                 // Read directive settings
                                 let reasoning_vis = {
-                                    let s = state.runtime_settings.read().await;
+                                    let s = state.infra.runtime_settings.read().await;
                                     s.get("reasoning.visibility").and_then(|v| v.as_str()).map(|s| s.to_string())
                                 };
                                 let verbose_mode = {
-                                    let s = state.runtime_settings.read().await;
+                                    let s = state.infra.runtime_settings.read().await;
                                     s.get("verbose.mode").and_then(|v| v.as_str()).map(|s| s.to_string())
                                 };
                                 match event {
                                     crate::agent::ProgressEvent::Started => {
-                                        let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+                                        let _ = state.events.tx.send(GatewayEvent::AgentStatus {
                                             agent_id: aid.clone(),
                                             status: AgentStatus::Processing { session_id: sid.clone() },
                                         });
@@ -216,7 +216,7 @@ pub async fn create_agent_handler(
                                         // Only emit thinking events when there's actual content
                                         if let Some(ref thinking) = content {
                                             if !thinking.is_empty() {
-                                                let _ = state.event_tx.send(GatewayEvent::Thinking {
+                                                let _ = state.events.tx.send(GatewayEvent::Thinking {
                                                     session_id: sid.clone(),
                                                     agent_id: aid.clone(),
                                                     content: Some(thinking.clone()),
@@ -225,7 +225,7 @@ pub async fn create_agent_handler(
                                         }
                                     }
                                     crate::agent::ProgressEvent::ContentDelta { text } => {
-                                        let _ = state.event_tx.send(GatewayEvent::ContentDelta {
+                                        let _ = state.events.tx.send(GatewayEvent::ContentDelta {
                                             session_id: sid.clone(),
                                             agent_id: aid.clone(),
                                             delta: text,
@@ -235,7 +235,7 @@ pub async fn create_agent_handler(
                                         if verbose_mode.as_deref() == Some("off") {
                                             return;
                                         }
-                                        let _ = state.event_tx.send(GatewayEvent::ToolCalling {
+                                        let _ = state.events.tx.send(GatewayEvent::ToolCalling {
                                             session_id: sid.clone(), agent_id: aid.clone(),
                                             tool_name: name.clone(), arguments: arguments.clone(),
                                         });
@@ -253,7 +253,7 @@ pub async fn create_agent_handler(
                                         } else {
                                             result
                                         };
-                                        let _ = state.event_tx.send(GatewayEvent::ToolResult {
+                                        let _ = state.events.tx.send(GatewayEvent::ToolResult {
                                             session_id: sid.clone(), agent_id: aid.clone(),
                                             tool_name: name.clone(), result, data,
                                         });
@@ -263,14 +263,14 @@ pub async fn create_agent_handler(
                                         // as a final ToolResult event; no per-chunk gateway event yet.
                                     }
                                     crate::agent::ProgressEvent::Completed { response } => {
-                                        let _ = state.event_tx.send(GatewayEvent::Completed {
+                                        let _ = state.events.tx.send(GatewayEvent::Completed {
                                             session_id: sid.clone(),
                                             agent_id: aid.clone(),
                                             response,
                                         });
                                     }
                                     crate::agent::ProgressEvent::Error { message } => {
-                                        let _ = state.event_tx.send(GatewayEvent::ProcessingError {
+                                        let _ = state.events.tx.send(GatewayEvent::ProcessingError {
                                             session_id: sid.clone(),
                                             agent_id: aid.clone(),
                                             message,
@@ -282,7 +282,7 @@ pub async fn create_agent_handler(
 
                         // Apply thinking config from runtime settings
                         let think_level = {
-                            let s = state_clone.runtime_settings.read().await;
+                            let s = state_clone.infra.runtime_settings.read().await;
                             s.get("think.level").and_then(|v| v.as_str()).map(|s| s.to_string())
                         };
                         let extra = think_level.and_then(|level| {
@@ -305,7 +305,7 @@ pub async fn create_agent_handler(
                             Ok(mut outgoing) => {
                                 // Apply reasoning visibility filter
                                 let reasoning_vis = {
-                                    let s = state_clone.runtime_settings.read().await;
+                                    let s = state_clone.infra.runtime_settings.read().await;
                                     s.get("reasoning.visibility").and_then(|v| v.as_str()).map(|s| s.to_string())
                                 };
                                 if reasoning_vis.as_deref() == Some("off") {
@@ -313,7 +313,7 @@ pub async fn create_agent_handler(
                                 }
                                 // Accumulate usage
                                 if let Some(ref usage) = outgoing.usage {
-                                    let mut settings = state_clone.runtime_settings.write().await;
+                                    let mut settings = state_clone.infra.runtime_settings.write().await;
                                     let current_tokens = settings.get("usage.tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                                     let total_tokens = usage.prompt_tokens as u64 + usage.completion_tokens as u64;
                                     settings.insert("usage.tokens".to_string(), serde_json::json!(current_tokens + total_tokens));
@@ -321,7 +321,7 @@ pub async fn create_agent_handler(
                                     let tool_calls = outgoing.tool_calls.as_ref().map(|c| c.len() as u64).unwrap_or(0);
                                     settings.insert("usage.calls".to_string(), serde_json::json!(current_calls + tool_calls + 1));
                                 }
-                                let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
+                                let _ = state_clone.events.tx.send(GatewayEvent::AgentResponse {
                                     session_id: session_id.clone(), agent_id: agent_id_clone.clone(),
                                     content: outgoing.content, channel: source_channel.clone(),
                                     conversation_id: session_id.clone(), usage: outgoing.usage,
@@ -332,13 +332,13 @@ pub async fn create_agent_handler(
                             }
                         }
 
-                        let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                        let _ = state_clone.events.tx.send(GatewayEvent::AgentStatus {
                             agent_id: agent_id_clone.clone(), status: AgentStatus::Idle,
                         });
                     }
                     AgentCommand::Shutdown => {
                         info!("Agent {} shutting down", agent_id_clone);
-                        let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                        let _ = state_clone.events.tx.send(GatewayEvent::AgentStatus {
                             agent_id: agent_id_clone.clone(), status: AgentStatus::Shutdown,
                         });
                         break;
@@ -402,7 +402,7 @@ pub async fn get_agent_handler(
     State(state): State<Arc<GatewayState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let agents = state.agents.read().await;
+    let agents = state.agents.agents.read().await;
     match agents.get(&id) {
         Some(agent) => Json(serde_json::json!({
             "id": agent.id,
@@ -424,7 +424,7 @@ pub async fn delete_agent_handler(
 
     // Check if agent exists
     let agent_exists = {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         agents.contains_key(&id)
     };
 
@@ -435,7 +435,7 @@ pub async fn delete_agent_handler(
 
     // Get the agent's channel and send shutdown
     let tx = {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         agents.get(&id).map(|h| h.tx.clone())
     };
 
@@ -448,12 +448,12 @@ pub async fn delete_agent_handler(
 
     // Remove from agents map
     {
-        let mut agents = state.agents.write().await;
+        let mut agents = state.agents.agents.write().await;
         agents.remove(&id);
     }
 
     // Send event
-    let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+    let _ = state.events.tx.send(GatewayEvent::AgentStatus {
         agent_id: id.clone(),
         status: AgentStatus::Shutdown,
     });
@@ -464,7 +464,7 @@ pub async fn delete_agent_handler(
 
 #[allow(dead_code)]
 pub async fn list_channels_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let channels = state.channels.read().await;
+    let channels = state.channels.channels.read().await;
     let list: Vec<_> = channels.keys().cloned().collect();
     Json(list)
 }

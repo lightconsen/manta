@@ -598,7 +598,7 @@ pub async fn multi_tier_rate_limit_middleware(
     let ip = extract_client_ip(&req);
 
     // Loopback exemption: skip rate limiting for local development.
-    if state.multi_tier_rate_limiter.loopback_exempt() && is_loopback_ip(ip) {
+    if state.auth.multi_tier_rate_limiter.loopback_exempt() && is_loopback_ip(ip) {
         return Ok(next.run(req).await);
     }
 
@@ -617,13 +617,13 @@ pub async fn multi_tier_rate_limit_middleware(
         if let Some(header_value) = auth_header {
             if let Ok(header_str) = header_value.to_str() {
                 if let Some(token) = header_str.strip_prefix("Bearer ") {
-                    if let Some(session) = state.auth_manager.validate_session(token).await {
+                    if let Some(session) = state.auth.manager.validate_session(token).await {
                         session.user_id
                     } else {
                         // Try session cookie
                         let cookie_config = SessionCookieConfig::default();
                         if let Some(token) = extract_session_cookie(&req, &cookie_config.name) {
-                            if let Some(session) = state.auth_manager.validate_session(&token).await
+                            if let Some(session) = state.auth.manager.validate_session(&token).await
                             {
                                 session.user_id
                             } else {
@@ -651,7 +651,7 @@ pub async fn multi_tier_rate_limit_middleware(
             // Try session cookie for OAuth users
             let cookie_config = SessionCookieConfig::default();
             if let Some(token) = extract_session_cookie(&req, &cookie_config.name) {
-                if let Some(session) = state.auth_manager.validate_session(&token).await {
+                if let Some(session) = state.auth.manager.validate_session(&token).await {
                     session.user_id
                 } else {
                     extract_client_ip(&req)
@@ -669,8 +669,7 @@ pub async fn multi_tier_rate_limit_middleware(
     let endpoint = req.uri().path().to_string();
 
     // Check multi-tier rate limit using the shared instance from GatewayState
-    let result = state
-        .multi_tier_rate_limiter
+    let result = state.auth.multi_tier_rate_limiter
         .check_scoped(&user_id, ip, &endpoint, &scope)
         .await;
 

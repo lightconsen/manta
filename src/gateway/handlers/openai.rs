@@ -85,7 +85,7 @@ pub async fn openai_chat_completions_handler(
 
     // Grab the default agent handle.
     let handle = {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         match agents.get("default").cloned() {
             Some(h) => h,
             None => {
@@ -101,7 +101,7 @@ pub async fn openai_chat_completions_handler(
     };
 
     // Subscribe to events before sending the command to avoid a race.
-    let mut event_rx = state.event_tx.subscribe();
+    let mut event_rx = state.events.tx.subscribe();
     let session_id = uuid::Uuid::new_v4().to_string();
 
     let cmd = AgentCommand::ProcessMessage {

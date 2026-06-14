@@ -43,7 +43,7 @@ use crate::tools::ToolRegistry;
 
 #[allow(dead_code)]
 pub async fn list_skills_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let skills_manager = state.skills_manager.read().await;
+    let skills_manager = state.tools.skills_manager.read().await;
     let skills = skills_manager.list_skills().await;
 
     let skill_list: Vec<_> = skills
@@ -71,7 +71,7 @@ pub async fn get_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let skills_manager = state.skills_manager.read().await;
+    let skills_manager = state.tools.skills_manager.read().await;
     match skills_manager.get_skill(&id).await {
         Some(skill) => {
             let response = serde_json::json!({
@@ -99,7 +99,7 @@ pub async fn enable_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let mut skills_manager = state.skills_manager.write().await;
+    let mut skills_manager = state.tools.skills_manager.write().await;
     match skills_manager.set_skill_enabled(&id, true).await {
         Ok(()) => {
             let response = serde_json::json!({
@@ -122,7 +122,7 @@ pub async fn disable_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let mut skills_manager = state.skills_manager.write().await;
+    let mut skills_manager = state.tools.skills_manager.write().await;
     match skills_manager.set_skill_enabled(&id, false).await {
         Ok(()) => {
             let response = serde_json::json!({
@@ -154,7 +154,7 @@ pub async fn install_skill_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<InstallSkillRequest>,
 ) -> impl IntoResponse {
-    let skills_manager = state.skills_manager.read().await;
+    let skills_manager = state.tools.skills_manager.read().await;
     match skills_manager
         .install_from_registry(&body.name, body.registry_url.as_deref())
         .await
@@ -180,7 +180,7 @@ pub async fn uninstall_skill_handler(
     Path(name): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let skills_manager = state.skills_manager.read().await;
+    let skills_manager = state.tools.skills_manager.read().await;
     match skills_manager.uninstall_skill(&name).await {
         Ok(true) => {
             let response = serde_json::json!({
@@ -210,7 +210,7 @@ pub async fn run_skill_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<RunSkillRequest>,
 ) -> impl IntoResponse {
-    let skills_manager = state.skills_manager.read().await;
+    let skills_manager = state.tools.skills_manager.read().await;
 
     // Activate skill with runtime requirement verification
     let skill = match skills_manager.activate_skill(&id).await {
@@ -263,7 +263,7 @@ pub async fn run_skill_handler(
 
     // Get the default agent's query channel to execute the skill
     let query_tx = {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         agents.get("default").map(|h| h.query_tx.clone())
     };
 

@@ -53,7 +53,7 @@ impl crate::outbound::OutboundPipeline for DummyOutboundPipeline {
 pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
     let (event_tx, _) = broadcast::channel(1);
     let (log_tx, _) = broadcast::channel(1);
-    let (message_queue_tx, _message_queue_rx) = mpsc::channel(1);
+    let (inbound_entry_tx, _inbound_entry_rx) = mpsc::channel(1);
     let (routed_tx, _routed_rx) = mpsc::channel(1);
 
     let tmp = tempdir().expect("create temp dir");
@@ -84,91 +84,113 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
     let session_file_manager = crate::agent::SessionFileManager::new(session_files_dir);
     let _ = session_file_manager.init().await;
 
+    let skills_manager = Arc::new(RwLock::new(
+        crate::skills::SkillManager::new()
+            .await
+            .expect("skill manager"),
+    ));
+
     GatewayState {
         config: Arc::new(RwLock::new(config)),
         start_time: std::time::Instant::now(),
-        channels: Arc::new(RwLock::new(HashMap::new())),
-        agents: Arc::new(RwLock::new(HashMap::new())),
-        session_routing: Arc::new(RwLock::new(HashMap::new())),
-        agent_router: Arc::new(crate::inbound::AgentRouter::new(
-            crate::inbound::AgentRouterConfig::default(),
-        )),
-        session_channels: Arc::new(RwLock::new(HashMap::new())),
-        webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
-        model_router: Arc::new(ModelRouter::new(crate::model_router::ModelRouterConfig::default())),
-        tool_registry: Arc::new(ToolRegistry::new()),
-        event_tx,
-        log_tx,
-        hook_registry: Arc::new(hooks::EventHookRegistry::new()),
-        message_queue: message_queue_tx,
-        canvas_manager: Arc::new(CanvasManager::new()),
-        plugin_manager: Arc::new(
-            PluginManager::new(plugins_dir)
-                .await
-                .expect("plugin manager"),
-        ),
-        acp: Arc::new(AcpControlPlane::new(50)),
-        vector_memory: crate::utils::LateInit::new(),
-        session_search: crate::utils::LateInit::new(),
-        memory_manager: Arc::new(RwLock::new(None)),
-        hot_reload: crate::utils::LateInit::new(),
-        cron_scheduler: crate::utils::LateInit::new(),
-        task_scheduler: crate::utils::LateInit::new(),
-        engine_metrics: None,
-        heartbeat_wake_tx: crate::utils::LateInit::new(),
-        heartbeat_event_tx: crate::utils::LateInit::new(),
-        dream_scheduler: crate::utils::LateInit::new(),
-        dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
-        standing_order_manager: crate::utils::LateInit::new(),
-        auth_manager: Arc::new(crate::security::AuthManager::new()),
-        pairing_store: Arc::new(PairingStore::new()),
-        device_pairing_store: Arc::new(crate::security::device_pairing::DevicePairingStore::new()),
-        tailscale_authenticator: None,
-        trusted_proxy_authenticator: None,
-        command_gate: Arc::new(CommandGate::new()),
-        mention_gate: Arc::new(MentionGate::new(MentionPolicy::Allow)),
-        audit_log: Arc::new(crate::security::persistent_audit::PersistentAuditLog::new()),
-        rate_limiter: Arc::new(crate::security::RateLimiter::new(100, 10.0)),
-        multi_tier_rate_limiter: Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(
-            crate::gateway::rate_limit::MultiTierRateLimitConfig::default(),
-        )),
-        storage: Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new())),
-        skills_manager: Arc::new(RwLock::new(
-            crate::skills::SkillManager::new()
-                .await
-                .expect("skill manager"),
-        )),
-        agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
-        session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
-        session_store: None,
-        mcp_manager: Arc::new(McpManager::new()),
         config_path: None,
-        runtime_settings: Arc::new(RwLock::new(HashMap::new())),
-        approval_queue: Arc::new(ApprovalQueue::new()),
-        repair_state: Arc::new(RepairState::new()),
-        cost_guard: crate::agent::CostGuard::new(0, 0),
-        reply_dispatcher,
-        routed_tx,
-        inbound_pipeline,
-        outbound_pipeline,
-        side_effect_executor,
-        sse_streamer,
-        channel_extensions: Arc::new(RwLock::new(crate::channels::ChannelExtensionRegistry::new())),
-        provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
-        tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
-        session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
-        route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
-        transcript_store: Arc::new(transcript_store),
-        artifact_store: Arc::new(artifact_store),
-        disk_budget: Arc::new(disk_budget),
-        session_file_manager: Arc::new(session_file_manager),
-        group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
-        #[cfg(feature = "browser")]
-        browser_bridge: tokio::sync::RwLock::new(None),
-        computer_adapter: tokio::sync::RwLock::new(None),
-        acp_bridge: None,
-        health_monitor: None,
-        snapshot_store: None,
+        auth: AuthState {
+            manager: Arc::new(crate::security::AuthManager::new()),
+            pairing_store: Arc::new(PairingStore::new()),
+            device_pairing_store: Arc::new(crate::security::device_pairing::DevicePairingStore::new()),
+            tailscale_authenticator: None,
+            trusted_proxy_authenticator: None,
+            rate_limiter: Arc::new(crate::security::RateLimiter::new(100, 10.0)),
+            multi_tier_rate_limiter: Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(
+                crate::gateway::rate_limit::MultiTierRateLimitConfig::default(),
+            )),
+            audit_log: Arc::new(crate::security::persistent_audit::PersistentAuditLog::new()),
+            command_gate: Arc::new(CommandGate::new()),
+            mention_gate: Arc::new(MentionGate::new(MentionPolicy::Allow)),
+        },
+        agents: AgentState {
+            agents: Arc::new(RwLock::new(HashMap::new())),
+            router: Arc::new(crate::inbound::AgentRouter::new(
+                crate::inbound::AgentRouterConfig::default(),
+            )),
+            registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
+            manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
+            group_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
+            store: None,
+            message_buffer: Arc::new(RwLock::new(HashMap::new())),
+            route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
+            cost_guard: crate::agent::CostGuard::new(0, 0),
+            repair_state: Arc::new(RepairState::new()),
+            acp: Arc::new(AcpControlPlane::new(50)),
+            session_routing: Arc::new(RwLock::new(HashMap::new())),
+        },
+        channels: ChannelState {
+            channels: Arc::new(RwLock::new(HashMap::new())),
+            extensions: Arc::new(RwLock::new(crate::channels::ChannelExtensionRegistry::new())),
+            reply_dispatcher,
+            snapshot_store: None,
+            health_monitor: None,
+            acp_bridge: None,
+            session_channels: Arc::new(RwLock::new(HashMap::new())),
+            webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
+        },
+        memory: MemoryState {
+            vector: crate::utils::LateInit::new(),
+            session_search: crate::utils::LateInit::new(),
+            manager: Arc::new(RwLock::new(None)),
+            dream_scheduler: crate::utils::LateInit::new(),
+            dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
+            standing_order_manager: crate::utils::LateInit::new(),
+        },
+        tools: ToolState {
+            registry: Arc::new(ToolRegistry::new()),
+            mcp_manager: Arc::new(McpManager::new()),
+            approval_queue: Arc::new(ApprovalQueue::new()),
+            skills_manager,
+            canvas_manager: Arc::new(CanvasManager::new()),
+            computer_adapter: Arc::new(tokio::sync::RwLock::new(None)),
+        },
+        pipelines: PipelineState {
+            inbound: inbound_pipeline,
+            outbound: outbound_pipeline,
+            side_effect_executor,
+            sse_streamer,
+            routed_tx,
+            inbound_entry: inbound_entry_tx,
+        },
+        events: EventState {
+            tx: event_tx,
+            log_tx,
+            hook_registry: Arc::new(hooks::EventHookRegistry::new()),
+        },
+        infra: InfraState {
+            storage: Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new())),
+            runtime_settings: Arc::new(RwLock::new(HashMap::new())),
+            transcript_store: Arc::new(transcript_store),
+            artifact_store: Arc::new(artifact_store),
+            disk_budget: Arc::new(disk_budget),
+            session_file_manager: Arc::new(session_file_manager),
+            hot_reload: crate::utils::LateInit::new(),
+            plugin_manager: Arc::new(
+                PluginManager::new(plugins_dir)
+                    .await
+                    .expect("plugin manager"),
+            ),
+            model_router: Arc::new(ModelRouter::new(crate::model_router::ModelRouterConfig::default())),
+            engine_metrics: None,
+            #[cfg(feature = "browser")]
+            browser_bridge: tokio::sync::RwLock::new(None),
+        },
+        sdk: SdkState {
+            provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
+            tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
+        },
+        scheduler: SchedulerState {
+            task_scheduler: crate::utils::LateInit::new(),
+            heartbeat_wake_tx: crate::utils::LateInit::new(),
+            heartbeat_event_tx: crate::utils::LateInit::new(),
+            cron_scheduler: crate::utils::LateInit::new(),
+        },
     }
 }
 
@@ -259,7 +281,7 @@ async fn pairing_blocks_unauthorized_user_and_creates_request() {
 
     // A pairing request should have been created silently
     assert!(
-        !state.pairing_store.is_authorized("slack", "newbie").await,
+        !state.auth.pairing_store.is_authorized("slack", "newbie").await,
         "user should still not be authorized"
     );
 }
@@ -274,8 +296,7 @@ async fn pairing_allows_authorized_user() {
     let state = make_test_state(config).await;
 
     // Pre-authorize the user
-    let req = state
-        .pairing_store
+    let req = state.auth.pairing_store
         .request_access("slack", "alice", None)
         .await
         .expect("request access");
@@ -283,8 +304,7 @@ async fn pairing_allows_authorized_user() {
         crate::security::pairing::RequestAccessResult::NewRequest { code } => code,
         other => panic!("expected new request, got {:?}", other),
     };
-    state
-        .pairing_store
+    state.auth.pairing_store
         .approve("slack", &code, Some("admin"))
         .await;
 
@@ -354,7 +374,7 @@ async fn mention_gate_block_policy_blocks_mentions() {
 
     let state = make_test_state(config).await;
     // Set mention gate to Block
-    state.mention_gate.set_policy(MentionPolicy::Block).await;
+    state.auth.mention_gate.set_policy(MentionPolicy::Block).await;
 
     let result = state
         .check_incoming_access("discord", "user1", "hello", &MentionState::Mentioned)
@@ -374,7 +394,7 @@ async fn mention_gate_allow_policy_passes_mentions() {
     config.channels.insert("discord".to_string(), ch);
 
     let state = make_test_state(config).await;
-    state.mention_gate.set_policy(MentionPolicy::Allow).await;
+    state.auth.mention_gate.set_policy(MentionPolicy::Allow).await;
 
     let result = state
         .check_incoming_access("discord", "user1", "hello", &MentionState::Mentioned)

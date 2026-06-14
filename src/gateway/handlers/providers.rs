@@ -43,7 +43,7 @@ use crate::tools::ToolRegistry;
 
 #[allow(dead_code)]
 pub async fn list_providers_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let providers = state.model_router.list_providers().await;
+    let providers = state.infra.model_router.list_providers().await;
     Json(serde_json::json!({
         "providers": providers,
         "count": providers.len(),
@@ -55,7 +55,7 @@ pub async fn get_provider_health_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.model_router.get_provider_health(&id).await {
+    match state.infra.model_router.get_provider_health(&id).await {
         Some(health) => {
             let response = serde_json::json!({
                 "provider": id,
@@ -78,7 +78,7 @@ pub async fn switch_model_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<SwitchModelRequest>,
 ) -> impl IntoResponse {
-    match state.model_router.switch_default_model(&body.model).await {
+    match state.infra.model_router.switch_default_model(&body.model).await {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
@@ -102,7 +102,7 @@ pub async fn enable_provider_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.model_router.enable_provider(&id).await {
+    match state.infra.model_router.enable_provider(&id).await {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
@@ -125,7 +125,7 @@ pub async fn disable_provider_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.model_router.disable_provider(&id).await {
+    match state.infra.model_router.disable_provider(&id).await {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
@@ -148,7 +148,7 @@ pub async fn check_provider_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.model_router.check_provider_health(&id).await {
+    match state.infra.model_router.check_provider_health(&id).await {
         Ok(healthy) => {
             let response = serde_json::json!({
                 "provider": id,
@@ -171,7 +171,7 @@ pub async fn check_provider_handler(
 
 #[allow(dead_code)]
 pub async fn provider_usage_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let snapshots = state.model_router.all_snapshots_with_quota().await;
+    let snapshots = state.infra.model_router.all_snapshots_with_quota().await;
     Json(serde_json::json!({
         "providers": snapshots,
         "count": snapshots.len(),
@@ -183,7 +183,7 @@ pub async fn provider_usage_by_id_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.model_router.snapshot_with_quota(&id).await {
+    match state.infra.model_router.snapshot_with_quota(&id).await {
         Some(snapshot) => (StatusCode::OK, Json(serde_json::json!(snapshot))).into_response(),
         None => {
             let error = serde_json::json!({
@@ -199,7 +199,7 @@ pub async fn get_fallback_chain_handler(
     Path(alias): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let chain = state.model_router.get_fallback_chain(&alias).await;
+    let chain = state.infra.model_router.get_fallback_chain(&alias).await;
     Json(serde_json::json!({
         "alias": alias,
         "fallback_chain": chain,
@@ -212,8 +212,7 @@ pub async fn set_fallback_chain_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<SetFallbackChainRequest>,
 ) -> impl IntoResponse {
-    match state
-        .model_router
+    match state.infra.model_router
         .set_fallback_chain(&alias, body.providers)
         .await
     {
@@ -235,7 +234,7 @@ pub async fn set_fallback_chain_handler(
 }
 
 pub async fn list_models_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let entries = state.model_router.model_catalog.list().await;
+    let entries = state.infra.model_router.model_catalog.list().await;
     Json(serde_json::json!({
         "models": entries,
     }))
@@ -245,7 +244,7 @@ pub async fn list_models_handler(State(state): State<Arc<GatewayState>>) -> impl
 pub async fn get_default_model_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let default = state.model_router.get_default_model().await;
+    let default = state.infra.model_router.get_default_model().await;
     Json(serde_json::json!({
         "default_model": default,
     }))
@@ -257,7 +256,7 @@ pub async fn get_default_model_handler(
 pub async fn openai_list_models_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let entries = state.model_router.model_catalog.list().await;
+    let entries = state.infra.model_router.model_catalog.list().await;
     let data: Vec<_> = entries
         .iter()
         .map(|entry| {

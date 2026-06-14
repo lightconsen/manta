@@ -46,7 +46,7 @@ use crate::tools::ToolRegistry;
 #[allow(dead_code)]
 /// List connected MCP servers
 pub async fn list_mcp_servers_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let servers = state.mcp_manager.list_servers().await;
+    let servers = state.tools.mcp_manager.list_servers().await;
     Json(serde_json::json!({
         "servers": servers,
         "count": servers.len(),
@@ -82,7 +82,7 @@ pub async fn connect_mcp_server_handler(
         ..Default::default()
     };
 
-    match state.mcp_manager.connect(&server_id, config).await {
+    match state.tools.mcp_manager.connect(&server_id, config).await {
         Ok(tools) => (
             axum::http::StatusCode::OK,
             Json(serde_json::json!({
@@ -104,12 +104,12 @@ pub async fn disconnect_mcp_server_handler(
     State(state): State<Arc<GatewayState>>,
     Path(server_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.mcp_manager.disconnect(&server_id).await {
+    match state.tools.mcp_manager.disconnect(&server_id).await {
         Ok(()) => {
             // Remove all `mcp__{server_id}__*` tools from the registry so
             // they are no longer offered to agents.
             let prefix = format!("mcp__{server_id}__");
-            state.tool_registry.deregister_prefix(&prefix);
+            state.tools.registry.deregister_prefix(&prefix);
 
             (
                 axum::http::StatusCode::OK,
@@ -129,7 +129,7 @@ pub async fn list_mcp_tools_handler(
     State(state): State<Arc<GatewayState>>,
     Path(server_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.mcp_manager.get_client(&server_id).await {
+    match state.tools.mcp_manager.get_client(&server_id).await {
         Some(client_arc) => {
             let client = client_arc.read().await;
             let tools = client.get_tools().to_vec();
@@ -156,7 +156,7 @@ pub async fn call_mcp_tool_handler(
     Path((server_id, tool_name)): Path<(String, String)>,
     Json(args): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    match state.mcp_manager.get_client(&server_id).await {
+    match state.tools.mcp_manager.get_client(&server_id).await {
         Some(client_arc) => {
             let client = client_arc.read().await;
             match client.call_tool(&tool_name, args).await {
@@ -182,7 +182,7 @@ pub async fn list_mcp_resources_handler(
     State(state): State<Arc<GatewayState>>,
     Path(server_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.mcp_manager.get_client(&server_id).await {
+    match state.tools.mcp_manager.get_client(&server_id).await {
         Some(client_arc) => {
             let client = client_arc.read().await;
             match client.list_resources().await {
@@ -214,7 +214,7 @@ pub async fn read_mcp_resource_handler(
     Path(server_id): Path<String>,
     Json(body): Json<McpReadResourceRequest>,
 ) -> impl IntoResponse {
-    match state.mcp_manager.get_client(&server_id).await {
+    match state.tools.mcp_manager.get_client(&server_id).await {
         Some(client_arc) => {
             let client = client_arc.read().await;
             match client.read_resource(&body.uri).await {

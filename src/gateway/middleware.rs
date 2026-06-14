@@ -195,7 +195,7 @@ pub async fn tailscale_auth_middleware(
         }
         Some(ip) if is_tailscale(ip) => {
             // Tailscale IP: verify via whois
-            if let Some(ref auth) = state.tailscale_authenticator {
+            if let Some(ref auth) = state.auth.tailscale_authenticator {
                 if auth.is_authorized(&ip.to_string(), &allowed_tailnets).await {
                     debug!("Tailscale whois verified: {} - {:?}", ip, req.uri());
                     Ok(next.run(req).await)
@@ -236,7 +236,7 @@ pub async fn trusted_proxy_auth_middleware(
     use crate::security::runtime_audit::AuditEventType;
     use crate::security::trusted_proxy::{TrustedProxyError, TrustedProxyUser};
 
-    let authenticator = match state.trusted_proxy_authenticator.as_ref() {
+    let authenticator = match state.auth.trusted_proxy_authenticator.as_ref() {
         Some(auth) => auth.clone(),
         None => return Ok(next.run(req).await),
     };
@@ -248,8 +248,7 @@ pub async fn trusted_proxy_auth_middleware(
 
     match authenticator.authenticate(&req, direct_ip) {
         Ok(user) => {
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     &user.user_id,
@@ -268,8 +267,7 @@ pub async fn trusted_proxy_auth_middleware(
         }
         Err(TrustedProxyError::UntrustedProxy { proxy_ip }) => {
             let target = proxy_ip.to_string();
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     "unknown",
@@ -285,8 +283,7 @@ pub async fn trusted_proxy_auth_middleware(
             Err(StatusCode::FORBIDDEN)
         }
         Err(TrustedProxyError::MissingHeader { header }) => {
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     "unknown",
@@ -304,8 +301,7 @@ pub async fn trusted_proxy_auth_middleware(
             Err(StatusCode::BAD_REQUEST)
         }
         Err(TrustedProxyError::NoUserExtracted) => {
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     "unknown",
@@ -320,8 +316,7 @@ pub async fn trusted_proxy_auth_middleware(
             Err(StatusCode::BAD_REQUEST)
         }
         Err(TrustedProxyError::UserNotAllowed { user_id }) => {
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     &user_id,
@@ -418,7 +413,7 @@ pub async fn auth_middleware(
             if let Ok(header_str) = header_value.to_str() {
                 if let Some(token) = header_str.strip_prefix("Bearer ") {
                     // Validate session; AuthManager emits the TokenValidation event.
-                    if state.auth_manager.validate_session(token).await.is_some() {
+                    if state.auth.manager.validate_session(token).await.is_some() {
                         debug!("Valid auth token, allowing request");
                         return Ok(next.run(req).await);
                     }
@@ -427,8 +422,7 @@ pub async fn auth_middleware(
                 }
             }
             warn!("Invalid Authorization header format");
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::TokenValidation,
                     &actor,
@@ -444,8 +438,7 @@ pub async fn auth_middleware(
         }
         None => {
             warn!("Missing Authorization header");
-            state
-                .audit_log
+            state.auth.audit_log
                 .log(
                     AuditEventType::TokenValidation,
                     &actor,
@@ -490,7 +483,7 @@ pub async fn rate_limit_middleware(
     let ip = extract_client_ip(&req);
 
     // Loopback exemption for multi-tier rate limiter.
-    if use_multi_tier && state.multi_tier_rate_limiter.loopback_exempt() && is_localhost_ip(ip) {
+    if use_multi_tier && state.auth.multi_tier_rate_limiter.loopback_exempt() && is_localhost_ip(ip) {
         return Ok(next.run(req).await);
     }
 
@@ -508,7 +501,7 @@ pub async fn rate_limit_middleware(
         if let Some(header_value) = auth_header {
             if let Ok(header_str) = header_value.to_str() {
                 if let Some(token) = header_str.strip_prefix("Bearer ") {
-                    if let Some(session) = state.auth_manager.validate_session(token).await {
+                    if let Some(session) = state.auth.manager.validate_session(token).await {
                         session.user_id
                     } else {
                         extract_client_ip(&req)
@@ -536,8 +529,7 @@ pub async fn rate_limit_middleware(
         // Multi-tier sliding window rate limiting
         let endpoint = req.uri().path().to_string();
 
-        let result = state
-            .multi_tier_rate_limiter
+        let result = state.auth.multi_tier_rate_limiter
             .check_scoped(&user_id, ip, &endpoint, &scope)
             .await;
 
@@ -583,7 +575,7 @@ pub async fn rate_limit_middleware(
         }
     } else {
         // Legacy token bucket rate limiting
-        let result = state.rate_limiter.check(&user_id).await;
+        let result = state.auth.rate_limiter.check(&user_id).await;
 
         match result {
             crate::security::RateLimitResult::Allowed { remaining, reset_after_secs } => {
@@ -592,8 +584,7 @@ pub async fn rate_limit_middleware(
                 let headers = response.headers_mut();
                 headers.insert(
                     "X-RateLimit-Limit",
-                    state
-                        .rate_limiter
+                    state.auth.rate_limiter
                         .get_state(&user_id)
                         .await
                         .map(|s| s.capacity)

@@ -39,7 +39,7 @@ async fn list_agents_returns_empty_array() {
 
 #[tokio::test]
 async fn list_channels_returns_empty_array() {
-    // list_channels_handler reads from state.channels (running channels),
+    // list_channels_handler reads from state.channels.channels (running channels),
     // not config.channels. make_test_state does not populate running channels.
     let state =
         Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);

@@ -27,7 +27,7 @@ impl MessageTool {
 
     /// Look up a channel by name from the gateway state.
     async fn resolve_channel(&self, name: &str) -> Option<Arc<dyn Channel>> {
-        let channels = self.state.channels.read().await;
+        let channels = self.state.channels.channels.read().await;
         channels.get(name).cloned()
     }
 }

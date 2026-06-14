@@ -125,7 +125,7 @@ pub async fn session_cookie_middleware(
     let cookie_config = SessionCookieConfig::default();
     if let Some(token) = extract_session_cookie(&req, &cookie_config.name) {
         let _session: Option<crate::security::Session> =
-            state.auth_manager.validate_session(&token).await;
+            state.auth.manager.validate_session(&token).await;
         if _session.is_some() {
             debug!("Valid session cookie, allowing request");
             return Ok(next.run(req).await);

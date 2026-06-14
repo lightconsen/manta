@@ -210,15 +210,14 @@ pub async fn github_callback_handler(
         User::new(user_id.0.clone(), profile.name.unwrap_or_else(|| "GitHub User".to_string()))
             .admin(false);
 
-    if !state.auth_manager.user_exists(&user_id).await {
-        if let Err(e) = state.auth_manager.register_user(user.clone()).await {
+    if !state.auth.manager.user_exists(&user_id).await {
+        if let Err(e) = state.auth.manager.register_user(user.clone()).await {
             warn!("Failed to register OAuth user: {}", e);
         }
     }
 
     // Create session
-    let session = match state
-        .auth_manager
+    let session = match state.auth.manager
         .create_session(user_id, 24 * 7, None)
         .await
     {
@@ -413,14 +412,13 @@ pub async fn google_callback_handler(
         User::new(user_id.0.clone(), profile.name.unwrap_or_else(|| "Google User".to_string()))
             .admin(false);
 
-    if !state.auth_manager.user_exists(&user_id).await {
-        if let Err(e) = state.auth_manager.register_user(user.clone()).await {
+    if !state.auth.manager.user_exists(&user_id).await {
+        if let Err(e) = state.auth.manager.register_user(user.clone()).await {
             warn!("Failed to register OAuth user: {}", e);
         }
     }
 
-    let session = match state
-        .auth_manager
+    let session = match state.auth.manager
         .create_session(user_id, 24 * 7, None)
         .await
     {
@@ -492,7 +490,7 @@ pub async fn logout_handler(
 
     // Revoke session if present
     if let Some(token) = extract_session_cookie(&req, &cookie_config.name) {
-        state.auth_manager.revoke_session(&token).await;
+        state.auth.manager.revoke_session(&token).await;
     }
 
     info!("User logged out");

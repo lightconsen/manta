@@ -124,7 +124,7 @@ impl StandingOrderManager {
 
                             // Find the target agent
                             let agent_handle = {
-                                let agents = state.agents.read().await;
+                                let agents = state.agents.agents.read().await;
                                 agents.get(&agent_id).cloned()
                             };
 
@@ -146,8 +146,7 @@ impl StandingOrderManager {
                                                     ConversationId(session_id),
                                                     response.content,
                                                 );
-                                                if let Err(e) = state
-                                                    .reply_dispatcher
+                                                if let Err(e) = state.channels.reply_dispatcher
                                                     .dispatch(channel, dispatch_msg)
                                                     .await
                                                 {

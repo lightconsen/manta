@@ -29,7 +29,7 @@ pub struct DeviceRevokeRequest {
 pub async fn list_device_pending_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let pending = state.device_pairing_store.list_pending().await;
+    let pending = state.auth.device_pairing_store.list_pending().await;
     Json(serde_json::json!({
         "pending": pending,
         "count": pending.len(),
@@ -40,7 +40,7 @@ pub async fn list_device_pending_handler(
 pub async fn list_device_authorized_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let devices = state.device_pairing_store.list_authorized().await;
+    let devices = state.auth.device_pairing_store.list_authorized().await;
     Json(serde_json::json!({
         "devices": devices,
         "count": devices.len(),
@@ -52,8 +52,7 @@ pub async fn approve_device_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<DeviceApproveRequest>,
 ) -> impl IntoResponse {
-    match state
-        .device_pairing_store
+    match state.auth.device_pairing_store
         .approve(&req.code, Some("admin"))
         .await
     {
@@ -88,7 +87,7 @@ pub async fn reject_device_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<DeviceApproveRequest>,
 ) -> impl IntoResponse {
-    match state.device_pairing_store.reject(&req.code).await {
+    match state.auth.device_pairing_store.reject(&req.code).await {
         Some(_) => {
             info!("Device pairing rejected: code={}", req.code);
             (
@@ -116,7 +115,7 @@ pub async fn revoke_device_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<DeviceRevokeRequest>,
 ) -> impl IntoResponse {
-    let removed = state.device_pairing_store.revoke(&req.device_id).await;
+    let removed = state.auth.device_pairing_store.revoke(&req.device_id).await;
     if removed {
         info!("Device revoked: device_id={}", req.device_id);
         (
@@ -158,7 +157,7 @@ pub async fn setup_device_handler(
         }
     };
 
-    let pending = state.device_pairing_store.list_pending().await;
+    let pending = state.auth.device_pairing_store.list_pending().await;
     match pending.into_iter().find(|r| r.code == code) {
         Some(req) => (
             StatusCode::OK,
@@ -187,7 +186,7 @@ pub async fn device_qr_handler(
     Path(code): Path<String>,
 ) -> impl IntoResponse {
     // Validate that the code exists in pending requests
-    let pending = state.device_pairing_store.list_pending().await;
+    let pending = state.auth.device_pairing_store.list_pending().await;
     let exists = pending.iter().any(|r| r.code == code);
 
     if !exists {

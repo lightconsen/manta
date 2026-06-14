@@ -105,7 +105,7 @@ impl HeartbeatRunner {
     /// Initialize heartbeat state for all existing agents
     async fn init_agent_states(&self) {
         let now = Instant::now();
-        let agents = self.state.agents.read().await;
+        let agents = self.state.agents.agents.read().await;
         let mut states = self.agent_states.write().await;
 
         for (agent_id, handle) in agents.iter() {
@@ -178,7 +178,7 @@ impl HeartbeatRunner {
     /// Run heartbeat for a single agent by ID (used by the main loop)
     async fn run_heartbeat_for_agent_by_id(&self, agent_id: &str) {
         let handle = {
-            let agents = self.state.agents.read().await;
+            let agents = self.state.agents.agents.read().await;
             match agents.get(agent_id) {
                 Some(h) => h.clone(),
                 None => {
@@ -241,7 +241,7 @@ impl HeartbeatRunner {
     async fn handle_wake_request(&self, req: &WakeRequest) {
         info!("Heartbeat wake request: agent={}, priority={:?}", req.agent_id, req.priority);
 
-        let agents = self.state.agents.read().await;
+        let agents = self.state.agents.agents.read().await;
         let handle = match agents.get(&req.agent_id) {
             Some(h) => h.clone(),
             None => {
@@ -619,7 +619,7 @@ mod tests {
 
         // Insert agents into GatewayState BEFORE runner starts
         {
-            let mut agents = state.agents.write().await;
+            let mut agents = state.agents.agents.write().await;
             let handle_a = make_test_agent_handle(
                 "agent-fast",
                 Some(HeartbeatConfig {

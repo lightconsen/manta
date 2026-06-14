@@ -44,7 +44,7 @@ use crate::tools::ToolRegistry;
 pub async fn get_mention_policy_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let policy = state.mention_gate.policy().await;
+    let policy = state.auth.mention_gate.policy().await;
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -60,7 +60,7 @@ pub async fn set_mention_policy_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<SetMentionPolicyRequest>,
 ) -> impl IntoResponse {
-    state.mention_gate.set_policy(req.policy).await;
+    state.auth.mention_gate.set_policy(req.policy).await;
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -81,7 +81,7 @@ pub async fn list_mention_allowlist_handler(
         .get("channel")
         .cloned()
         .unwrap_or_else(|| "*".to_string());
-    let entries = state.mention_gate.list_allowlist(&channel).await;
+    let entries = state.auth.mention_gate.list_allowlist(&channel).await;
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -98,8 +98,7 @@ pub async fn add_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<AddMentionPatternRequest>,
 ) -> impl IntoResponse {
-    state
-        .mention_gate
+    state.auth.mention_gate
         .add_allowlist(&req.channel, &req.pattern)
         .await;
     (
@@ -119,8 +118,7 @@ pub async fn remove_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
     Path((channel, pattern)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let removed = state
-        .mention_gate
+    let removed = state.auth.mention_gate
         .remove_allowlist(&channel, &pattern)
         .await;
     (
@@ -144,7 +142,7 @@ pub async fn list_mention_blocklist_handler(
         .get("channel")
         .cloned()
         .unwrap_or_else(|| "*".to_string());
-    let entries = state.mention_gate.list_blocklist(&channel).await;
+    let entries = state.auth.mention_gate.list_blocklist(&channel).await;
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -161,8 +159,7 @@ pub async fn add_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<AddMentionPatternRequest>,
 ) -> impl IntoResponse {
-    state
-        .mention_gate
+    state.auth.mention_gate
         .add_blocklist(&req.channel, &req.pattern)
         .await;
     (
@@ -182,8 +179,7 @@ pub async fn remove_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
     Path((channel, pattern)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let removed = state
-        .mention_gate
+    let removed = state.auth.mention_gate
         .remove_blocklist(&channel, &pattern)
         .await;
     (

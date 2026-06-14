@@ -56,7 +56,7 @@ impl syscity::outbound::OutboundPipeline for DummyOutboundPipeline {
 
 async fn make_test_state(config: GatewayConfig) -> GatewayState {
     let (event_tx, _) = broadcast::channel(1);
-    let (message_queue_tx, _message_queue_rx) = mpsc::channel(1);
+    let (inbound_entry_tx, _inbound_entry_rx) = mpsc::channel(1);
     let (routed_tx, _routed_rx) = mpsc::channel(1);
 
     let tmp = tempfile::tempdir().expect("create temp dir");
@@ -88,97 +88,117 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
     let session_file_manager = syscity::agent::SessionFileManager::new(session_files_dir);
     let _ = session_file_manager.init().await;
 
+    let skills_manager = Arc::new(RwLock::new(
+        syscity::skills::SkillManager::new()
+            .await
+            .expect("skill manager"),
+    ));
+
     GatewayState {
         config: Arc::new(RwLock::new(config)),
         start_time: std::time::Instant::now(),
-        channels: Arc::new(RwLock::new(HashMap::new())),
-        agents: Arc::new(RwLock::new(HashMap::new())),
-        session_routing: Arc::new(RwLock::new(HashMap::new())),
-        agent_router: Arc::new(syscity::inbound::AgentRouter::new(
-            syscity::inbound::AgentRouterConfig::default(),
-        )),
-        session_channels: Arc::new(RwLock::new(HashMap::new())),
-        webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
-        model_router: Arc::new(syscity::model_router::ModelRouter::new(
-            syscity::model_router::ModelRouterConfig::default(),
-        )),
-        tool_registry: Arc::new(syscity::tools::ToolRegistry::new()),
-        event_tx,
-        log_tx: tokio::sync::broadcast::channel(1000).0,
-        hook_registry: Arc::new(syscity::gateway::hooks::EventHookRegistry::new()),
-        message_queue: message_queue_tx,
-        canvas_manager: Arc::new(syscity::canvas::CanvasManager::new()),
-        plugin_manager: Arc::new(
-            syscity::plugins::PluginManager::new(plugins_dir)
-                .await
-                .expect("plugin manager"),
-        ),
-        acp: Arc::new(syscity::acp::AcpControlPlane::new(10)),
-        tailscale_authenticator: None,
-        trusted_proxy_authenticator: None,
-        vector_memory: syscity::utils::LateInit::new(),
-        session_search: syscity::utils::LateInit::new(),
-        memory_manager: Arc::new(RwLock::new(None)),
-        hot_reload: syscity::utils::LateInit::new(),
-        cron_scheduler: syscity::utils::LateInit::new(),
-        heartbeat_wake_tx: syscity::utils::LateInit::new(),
-        heartbeat_event_tx: syscity::utils::LateInit::new(),
-        dream_scheduler: syscity::utils::LateInit::new(),
-        dream_metrics: Arc::new(syscity::memory::DreamMetrics::default()),
-        task_scheduler: syscity::utils::LateInit::new(),
-        auth_manager: Arc::new(syscity::security::AuthManager::new()),
-        pairing_store: Arc::new(syscity::security::pairing::PairingStore::new()),
-        device_pairing_store: Arc::new(syscity::security::device_pairing::DevicePairingStore::new()),
-        command_gate: Arc::new(syscity::tools::command_gate::CommandGate::new()),
-        mention_gate: Arc::new(syscity::security::mention_gate::MentionGate::new(
-            syscity::security::mention_gate::MentionPolicy::Allow,
-        )),
-        audit_log: Arc::new(syscity::security::persistent_audit::PersistentAuditLog::new()),
-        rate_limiter: Arc::new(syscity::security::RateLimiter::new(100, 10.0)),
-        multi_tier_rate_limiter: Arc::new(syscity::gateway::rate_limit::MultiTierRateLimiter::new(
-            syscity::gateway::rate_limit::MultiTierRateLimitConfig::default(),
-        )),
-        storage: Arc::new(RwLock::new(syscity::adapters::InMemoryStorage::new())),
-        skills_manager: Arc::new(RwLock::new(
-            syscity::skills::SkillManager::new()
-                .await
-                .expect("skill manager"),
-        )),
-        agent_registry: Arc::new(RwLock::new(syscity::agent::AgentRegistry::new())),
-        session_manager: Arc::new(RwLock::new(syscity::agent::SessionManager::new())),
-        session_store: None,
-        mcp_manager: Arc::new(syscity::tools::mcp::McpManager::new()),
         config_path: None,
-        runtime_settings: Arc::new(RwLock::new(HashMap::new())),
-        approval_queue: Arc::new(syscity::tools::approval::ApprovalQueue::new()),
-        repair_state: Arc::new(syscity::gateway::RepairState::new()),
-        cost_guard: syscity::agent::CostGuard::new(0, 0),
-        snapshot_store: None,
-        acp_bridge: None,
-        health_monitor: None,
-        engine_metrics: None,
-        standing_order_manager: syscity::utils::LateInit::new(),
-        reply_dispatcher,
-        routed_tx,
-        inbound_pipeline,
-        outbound_pipeline,
-        side_effect_executor,
-        sse_streamer,
-        channel_extensions: Arc::new(RwLock::new(
-            syscity::channels::ChannelExtensionRegistry::new(),
-        )),
-        provider_sdk: Arc::new(RwLock::new(syscity::providers::ProviderSdk::new())),
-        tool_sdk: Arc::new(RwLock::new(syscity::tools::ToolSdk::new())),
-        session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
-        route_resolver: Arc::new(syscity::agent::RouteResolver::new("default")),
-        transcript_store: Arc::new(transcript_store),
-        artifact_store: Arc::new(artifact_store),
-        disk_budget: Arc::new(disk_budget),
-        session_file_manager: Arc::new(session_file_manager),
-        group_session_manager: Arc::new(RwLock::new(syscity::agent::GroupSessionManager::new())),
-        #[cfg(feature = "browser")]
-        browser_bridge: tokio::sync::RwLock::new(None),
-        computer_adapter: tokio::sync::RwLock::new(None),
+        auth: syscity::gateway::state::AuthState {
+            manager: Arc::new(syscity::security::AuthManager::new()),
+            pairing_store: Arc::new(syscity::security::pairing::PairingStore::new()),
+            device_pairing_store: Arc::new(syscity::security::device_pairing::DevicePairingStore::new()),
+            tailscale_authenticator: None,
+            trusted_proxy_authenticator: None,
+            rate_limiter: Arc::new(syscity::security::RateLimiter::new(100, 10.0)),
+            multi_tier_rate_limiter: Arc::new(syscity::gateway::rate_limit::MultiTierRateLimiter::new(
+                syscity::gateway::rate_limit::MultiTierRateLimitConfig::default(),
+            )),
+            audit_log: Arc::new(syscity::security::persistent_audit::PersistentAuditLog::new()),
+            command_gate: Arc::new(syscity::tools::command_gate::CommandGate::new()),
+            mention_gate: Arc::new(syscity::security::mention_gate::MentionGate::new(
+                syscity::security::mention_gate::MentionPolicy::Allow,
+            )),
+        },
+        agents: syscity::gateway::state::AgentState {
+            agents: Arc::new(RwLock::new(HashMap::new())),
+            router: Arc::new(syscity::inbound::AgentRouter::new(
+                syscity::inbound::AgentRouterConfig::default(),
+            )),
+            registry: Arc::new(RwLock::new(syscity::agent::AgentRegistry::new())),
+            manager: Arc::new(RwLock::new(syscity::agent::SessionManager::new())),
+            group_manager: Arc::new(RwLock::new(syscity::agent::GroupSessionManager::new())),
+            store: None,
+            message_buffer: Arc::new(RwLock::new(HashMap::new())),
+            route_resolver: Arc::new(syscity::agent::RouteResolver::new("default")),
+            cost_guard: syscity::agent::CostGuard::new(0, 0),
+            repair_state: Arc::new(syscity::gateway::RepairState::new()),
+            acp: Arc::new(syscity::acp::AcpControlPlane::new(10)),
+            session_routing: Arc::new(RwLock::new(HashMap::new())),
+        },
+        channels: syscity::gateway::state::ChannelState {
+            channels: Arc::new(RwLock::new(HashMap::new())),
+            extensions: Arc::new(RwLock::new(syscity::channels::ChannelExtensionRegistry::new())),
+            reply_dispatcher,
+            snapshot_store: None,
+            health_monitor: None,
+            acp_bridge: None,
+            session_channels: Arc::new(RwLock::new(HashMap::new())),
+            webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
+        },
+        memory: syscity::gateway::state::MemoryState {
+            vector: syscity::utils::LateInit::new(),
+            session_search: syscity::utils::LateInit::new(),
+            manager: Arc::new(RwLock::new(None)),
+            dream_scheduler: syscity::utils::LateInit::new(),
+            dream_metrics: Arc::new(syscity::memory::DreamMetrics::default()),
+            standing_order_manager: syscity::utils::LateInit::new(),
+        },
+        tools: syscity::gateway::state::ToolState {
+            registry: Arc::new(syscity::tools::ToolRegistry::new()),
+            mcp_manager: Arc::new(syscity::tools::mcp::McpManager::new()),
+            approval_queue: Arc::new(syscity::tools::approval::ApprovalQueue::new()),
+            skills_manager,
+            canvas_manager: Arc::new(syscity::canvas::CanvasManager::new()),
+            computer_adapter: Arc::new(tokio::sync::RwLock::new(None)),
+        },
+        pipelines: syscity::gateway::state::PipelineState {
+            inbound: inbound_pipeline,
+            outbound: outbound_pipeline,
+            side_effect_executor,
+            sse_streamer,
+            routed_tx,
+            inbound_entry: inbound_entry_tx,
+        },
+        events: syscity::gateway::state::EventState {
+            tx: event_tx,
+            log_tx: tokio::sync::broadcast::channel(1000).0,
+            hook_registry: Arc::new(syscity::gateway::hooks::EventHookRegistry::new()),
+        },
+        infra: syscity::gateway::state::InfraState {
+            storage: Arc::new(RwLock::new(syscity::adapters::InMemoryStorage::new())),
+            runtime_settings: Arc::new(RwLock::new(HashMap::new())),
+            transcript_store: Arc::new(transcript_store),
+            artifact_store: Arc::new(artifact_store),
+            disk_budget: Arc::new(disk_budget),
+            session_file_manager: Arc::new(session_file_manager),
+            hot_reload: syscity::utils::LateInit::new(),
+            plugin_manager: Arc::new(
+                syscity::plugins::PluginManager::new(plugins_dir)
+                    .await
+                    .expect("plugin manager"),
+            ),
+            model_router: Arc::new(syscity::model_router::ModelRouter::new(
+                syscity::model_router::ModelRouterConfig::default(),
+            )),
+            engine_metrics: None,
+            #[cfg(feature = "browser")]
+            browser_bridge: tokio::sync::RwLock::new(None),
+        },
+        sdk: syscity::gateway::state::SdkState {
+            provider_sdk: Arc::new(RwLock::new(syscity::providers::ProviderSdk::new())),
+            tool_sdk: Arc::new(RwLock::new(syscity::tools::ToolSdk::new())),
+        },
+        scheduler: syscity::gateway::state::SchedulerState {
+            task_scheduler: syscity::utils::LateInit::new(),
+            heartbeat_wake_tx: syscity::utils::LateInit::new(),
+            heartbeat_event_tx: syscity::utils::LateInit::new(),
+            cron_scheduler: syscity::utils::LateInit::new(),
+        },
     }
 }
 
@@ -356,9 +376,7 @@ fn restricted_caps() -> ChannelCapabilities {
 async fn setup_with_channel(channel: Arc<dyn Channel>) -> (MessageTool, String) {
     let config = GatewayConfig::default();
     let state: GatewayState = make_test_state(config).await;
-    state
-        .channels
-        .write()
+    state.channels.channels.write()
         .await
         .insert("mock".to_string(), channel);
     let tool = MessageTool::new(Arc::new(state));

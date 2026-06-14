@@ -44,7 +44,7 @@ use crate::tools::ToolRegistry;
 #[allow(dead_code)]
 /// `GET /api/sessions` — list all active sessions and their routing info.
 pub async fn list_sessions_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let bindings = state.agent_router.list_bindings().await;
+    let bindings = state.agents.router.list_bindings().await;
     let sessions: Vec<_> = bindings
         .iter()
         .map(|(session_id, (agent_id, workspace_id))| {
@@ -71,7 +71,7 @@ pub async fn resolve_session_query_tx(
     session_id: &str,
 ) -> Result<mpsc::Sender<AgentQuery>, axum::response::Response> {
     let agent_id = {
-        let route = state.agent_router.resolve_by_session(session_id).await;
+        let route = state.agents.router.resolve_by_session(session_id).await;
         if route.agent_id == "default" && route.created_binding {
             // No existing binding and fell back to default — treat as not found
             return Err((
@@ -85,7 +85,7 @@ pub async fn resolve_session_query_tx(
         route.agent_id
     };
 
-    let agents = state.agents.read().await;
+    let agents = state.agents.agents.read().await;
     match agents.get(&agent_id) {
         Some(handle) => Ok(handle.query_tx.clone()),
         None => Err((

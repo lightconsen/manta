@@ -101,8 +101,7 @@ pub async fn put_config_handler(
 
     info!("Config updated and persisted to {:?}", config_path);
 
-    state
-        .audit_log
+    state.auth.audit_log
         .log(
             crate::security::runtime_audit::AuditEventType::ConfigChange,
             "admin",

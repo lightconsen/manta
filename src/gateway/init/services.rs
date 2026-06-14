@@ -104,7 +104,7 @@ pub async fn init_memory_services(
                 "Vector memory service initialized with {:?} provider",
                 config.vector_memory.provider
             );
-            state.vector_memory.init(service).await;
+            state.memory.vector.init(service).await;
         } else {
             warn!("Vector memory enabled but no suitable provider available");
         }
@@ -120,9 +120,9 @@ pub async fn init_memory_services(
         } else {
             info!("Session search (FTS5) initialized");
             let session_search_for_mm = session_search.clone();
-            state.session_search.init(session_search.clone()).await;
+            state.memory.session_search.init(session_search.clone()).await;
 
-            if let Some(vector_svc) = state.vector_memory.get_opt().await {
+            if let Some(vector_svc) = state.memory.vector.get_opt().await {
                 info!("Initializing MemoryManager with hybrid search...");
                 let store = Arc::new(
                     crate::memory::UnifiedStore::new_with_pool(pool.clone())
@@ -139,7 +139,7 @@ pub async fn init_memory_services(
                 )
                 .with_vector_service(vector_svc)
                 .with_session_search(session_search_for_mm);
-                state.memory_manager.write().await.replace(Arc::new(mm));
+                state.memory.manager.write().await.replace(Arc::new(mm));
                 info!("MemoryManager with hybrid search initialized");
             } else {
                 info!("Initializing MemoryManager (vector search disabled)...");
@@ -157,7 +157,7 @@ pub async fn init_memory_services(
                     crate::memory::MemoryManagerConfig::default(),
                 )
                 .with_session_search(session_search_for_mm);
-                state.memory_manager.write().await.replace(Arc::new(mm));
+                state.memory.manager.write().await.replace(Arc::new(mm));
                 info!("MemoryManager initialized (without vector search)");
             }
         }
@@ -176,7 +176,7 @@ pub async fn init_hot_reload(config: &GatewayConfig, state: &Arc<GatewayState>) 
             Ok(manager) => {
                 let manager = Arc::new(manager);
                 info!("Hot reload manager initialized");
-                state.hot_reload.init(manager).await;
+                state.infra.hot_reload.init(manager).await;
             }
             Err(e) => {
                 warn!("Failed to initialize hot reload manager: {}", e);
@@ -202,7 +202,7 @@ pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) {
             let mut scheduler = cron_scheduler.lock().await;
             scheduler.set_announce_tx(announce_tx);
         }
-        let event_tx_announce = state.event_tx.clone();
+        let event_tx_announce = state.events.tx.clone();
         tokio::spawn(async move {
             while let Some(delivery) = announce_rx.recv().await {
                 info!("Cron announce → {}:{}", delivery.channel, delivery.to);
@@ -226,7 +226,7 @@ pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) {
                 warn!("Advanced cron scheduler failed: {}", e);
             }
         });
-        state.cron_scheduler.init(cron_scheduler.clone()).await;
+        state.scheduler.cron_scheduler.init(cron_scheduler.clone()).await;
         info!("Advanced cron scheduler initialized");
 
         crate::tools::CronTool::set_scheduler(cron_scheduler);
@@ -242,7 +242,7 @@ pub async fn init_task_scheduler(state: &Arc<GatewayState>) {
     let handler: crate::planner::scheduled_tasks::TaskHandler = Arc::new(move |task| {
         let state = Arc::clone(&state_for_scheduler);
         Box::pin(async move {
-            let agents = state.agents.read().await;
+            let agents = state.agents.agents.read().await;
             if let Some(handle) = agents.values().next() {
                 let msg = format!(
                     "[Scheduled] {}: {} - Actions: {}",
@@ -264,7 +264,9 @@ pub async fn init_task_scheduler(state: &Arc<GatewayState>) {
     if let Err(e) = task_scheduler.start(handler).await {
         warn!("TaskScheduler failed to start: {}", e);
     } else {
-        state.task_scheduler.init(Arc::new(Mutex::new(task_scheduler))).await;
+        state.scheduler.task_scheduler
+            .init(Arc::new(Mutex::new(task_scheduler)))
+            .await;
         info!("TaskScheduler started");
     }
 }
@@ -272,8 +274,8 @@ pub async fn init_task_scheduler(state: &Arc<GatewayState>) {
 /// Wire side-effect executor with runtime context (memory + cron).
 pub async fn init_side_effect_context(state: &Arc<GatewayState>) {
     let side_effect_ctx = crate::outbound::SideEffectContext {
-        memory_manager: state.memory_manager.read().await.as_ref().cloned(),
-        cron_scheduler: state.cron_scheduler.get_opt().await,
+        memory_manager: state.memory.manager.read().await.as_ref().cloned(),
+        cron_scheduler: state.scheduler.cron_scheduler.get_opt().await,
         webhook_client: Some(Arc::new(
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
@@ -281,8 +283,7 @@ pub async fn init_side_effect_context(state: &Arc<GatewayState>) {
                 .unwrap_or_default(),
         )),
     };
-    state
-        .side_effect_executor
+    state.pipelines.side_effect_executor
         .set_context(side_effect_ctx)
         .await;
     info!("SideEffectExecutor context wired");

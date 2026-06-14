@@ -194,13 +194,13 @@ async fn whatsapp_webhook_handler(
                                 let platform_key = format!("whatsapp:{}", from);
                                 let session_id = if text_body.trim() == "/new" {
                                     let new_session =
-                                        reset_session(&state.webhook_sessions, &platform_key).await;
+                                        reset_session(&state.channels.webhook_sessions, &platform_key).await;
                                     info!(
                                         "🆕 New WhatsApp session started for {}: {}",
                                         from, new_session
                                     );
                                     // Send confirmation message back to user
-                                    let channels = state.channels.read().await;
+                                    let channels = state.channels.channels.read().await;
                                     if let Some(channel) = channels.get("whatsapp") {
                                         let confirmation = OutgoingMessage::new(
                                             ConversationId(from.to_string()),
@@ -216,13 +216,13 @@ async fn whatsapp_webhook_handler(
                                     new_session
                                 } else {
                                     // Get or create session UUID
-                                    get_or_create_session(&state.webhook_sessions, &platform_key)
+                                    get_or_create_session(&state.channels.webhook_sessions, &platform_key)
                                         .await
                                 };
 
                                 // Store session mapping for response routing
                                 {
-                                    let mut sessions = state.session_channels.write().await;
+                                    let mut sessions = state.channels.session_channels.write().await;
                                     sessions.insert(
                                         session_id.clone(),
                                         ("whatsapp".to_string(), from.to_string()),
@@ -243,14 +243,14 @@ async fn whatsapp_webhook_handler(
                                     continue;
                                 }
 
-                                // Route through inbound pipeline
+                                // Route through unified inbound entry
                                 let incoming =
                                     IncomingMessage::new(from, session_id.clone(), text_body)
                                         .with_provenance(InputProvenance::ExternalUser {
                                             channel: "whatsapp".to_string(),
                                             is_direct: true,
                                         });
-                                let _ = state.inbound_pipeline.process(incoming).await;
+                                let _ = state.pipelines.inbound_entry.send(incoming).await;
                             }
                         }
                     }
@@ -364,13 +364,13 @@ async fn telegram_webhook_handler(
                 .into_response();
             }
 
-            // Route through inbound pipeline
+            // Route through unified inbound entry
             let incoming = IncomingMessage::new(user_id, format!("telegram:{}", chat_id), text)
                 .with_provenance(InputProvenance::ExternalUser {
                     channel: "telegram".to_string(),
                     is_direct: true,
                 });
-            let _ = state.inbound_pipeline.process(incoming).await;
+            let _ = state.pipelines.inbound_entry.send(incoming).await;
         }
     }
 
@@ -475,28 +475,28 @@ async fn feishu_webhook_handler(
                 // Handle /new command to reset session
                 let platform_key = format!("feishu:{}", user_id);
                 let session_id = if text.trim() == "/new" {
-                    let new_session = reset_session(&state.webhook_sessions, &platform_key).await;
+                    let new_session = reset_session(&state.channels.webhook_sessions, &platform_key).await;
                     info!("🆕 New Feishu session started for {}: {}", user_id, new_session);
                     new_session
                 } else {
                     // Get or create session UUID
-                    get_or_create_session(&state.webhook_sessions, &platform_key).await
+                    get_or_create_session(&state.channels.webhook_sessions, &platform_key).await
                 };
 
                 // Store session mapping for response routing
                 {
-                    let mut sessions = state.session_channels.write().await;
+                    let mut sessions = state.channels.session_channels.write().await;
                     sessions
                         .insert(session_id.clone(), ("feishu".to_string(), user_id.to_string()));
                 }
 
-                // Route through inbound pipeline
+                // Route through unified inbound entry
                 let incoming = IncomingMessage::new(user_id, session_id.clone(), text)
                     .with_provenance(InputProvenance::ExternalUser {
                         channel: "feishu".to_string(),
                         is_direct: true,
                     });
-                let _ = state.inbound_pipeline.process(incoming).await;
+                let _ = state.pipelines.inbound_entry.send(incoming).await;
             }
         }
     }
@@ -654,7 +654,7 @@ async fn handle_slack_event(
         return (StatusCode::OK, "Access denied").into_response();
     }
 
-    // Route through inbound pipeline
+    // Route through unified inbound entry
     let incoming =
         IncomingMessage::new(user_id.to_string(), format!("slack:{}", channel), text.to_string())
             .with_provenance(InputProvenance::ExternalUser {
@@ -662,7 +662,7 @@ async fn handle_slack_event(
                 is_direct: channel.starts_with('D'),
             });
 
-    let _ = state.inbound_pipeline.process(incoming).await;
+    let _ = state.pipelines.inbound_entry.send(incoming).await;
 
     (StatusCode::OK, "OK").into_response()
 }
@@ -769,21 +769,21 @@ async fn generic_webhook_handler(
         // Handle /new command to reset session
         let platform_key = format!("{}:{}", channel, user_id);
         let session_id = if content.trim() == "/new" {
-            let new_session = reset_session(&state.webhook_sessions, &platform_key).await;
+            let new_session = reset_session(&state.channels.webhook_sessions, &platform_key).await;
             info!("🆕 New {} session started for {}: {}", channel, user_id, new_session);
             new_session
         } else {
             // Get or create session UUID
-            get_or_create_session(&state.webhook_sessions, &platform_key).await
+            get_or_create_session(&state.channels.webhook_sessions, &platform_key).await
         };
 
         // Store session mapping for response routing
         {
-            let mut sessions = state.session_channels.write().await;
+            let mut sessions = state.channels.session_channels.write().await;
             sessions.insert(session_id.clone(), (channel.clone(), user_id.clone()));
         }
 
-        // Route through inbound pipeline
+        // Route through unified inbound entry
         drop(config); // Release read lock before await
         let incoming = IncomingMessage::new(user_id, session_id, content).with_provenance(
             InputProvenance::ExternalUser {
@@ -791,7 +791,7 @@ async fn generic_webhook_handler(
                 is_direct: true,
             },
         );
-        let _ = state.inbound_pipeline.process(incoming).await;
+        let _ = state.pipelines.inbound_entry.send(incoming).await;
     }
 
     Json(WebhookResponse {

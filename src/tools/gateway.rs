@@ -310,8 +310,7 @@ impl Tool for GatewayTool {
                 let reason = args.reason.as_deref().unwrap_or("gateway tool restart");
                 let note = args.note.as_deref().unwrap_or("Gateway restart scheduled");
                 info!("gateway tool: restart requested{} (reason={})", delay, reason);
-                self.state
-                    .audit_log
+                self.state.auth.audit_log
                     .log(
                         crate::security::runtime_audit::AuditEventType::ConfigChange,
                         "admin",
@@ -564,8 +563,7 @@ impl Tool for GatewayTool {
 
                 info!("gateway tool: {} persisted to {:?}", args.action, config_path);
 
-                self.state
-                    .audit_log
+                self.state.auth.audit_log
                     .log(
                         crate::security::runtime_audit::AuditEventType::ConfigChange,
                         "admin",

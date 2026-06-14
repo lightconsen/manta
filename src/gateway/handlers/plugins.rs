@@ -65,7 +65,7 @@ pub struct SearchQuery {
 
 #[allow(dead_code)]
 pub async fn list_plugins_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let plugins = state.plugin_manager.list_plugins().await;
+    let plugins = state.infra.plugin_manager.list_plugins().await;
     let plugin_list: Vec<_> = plugins
         .iter()
         .map(|p| {
@@ -89,7 +89,7 @@ pub async fn enable_plugin_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.plugin_manager.set_enabled(&id, true).await {
+    match state.infra.plugin_manager.set_enabled(&id, true).await {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
@@ -111,7 +111,7 @@ pub async fn disable_plugin_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.plugin_manager.set_enabled(&id, false).await {
+    match state.infra.plugin_manager.set_enabled(&id, false).await {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
@@ -133,7 +133,7 @@ pub async fn unload_plugin_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.plugin_manager.unload_plugin(&id).await {
+    match state.infra.plugin_manager.unload_plugin(&id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => {
             let error = serde_json::json!({
@@ -155,7 +155,7 @@ pub async fn reload_plugin_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.plugin_manager.reload_plugin(&id).await {
+    match state.infra.plugin_manager.reload_plugin(&id).await {
         Ok(reloaded_id) => {
             let response = serde_json::json!({
                 "success": true,
@@ -175,16 +175,16 @@ pub async fn reload_plugin_handler(
 #[allow(dead_code)]
 pub async fn reload_plugins_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     // Unload all currently loaded plugins, then re-initialize from disk.
-    let plugins = state.plugin_manager.list_plugins().await;
+    let plugins = state.infra.plugin_manager.list_plugins().await;
     let ids: Vec<String> = plugins.iter().map(|p| p.id().to_string()).collect();
     let mut unloaded = 0usize;
     for id in &ids {
-        match state.plugin_manager.unload_plugin(id).await {
+        match state.infra.plugin_manager.unload_plugin(id).await {
             Ok(_) => unloaded += 1,
             Err(e) => warn!("Failed to unload plugin '{}' during reload: {}", id, e),
         }
     }
-    match state.plugin_manager.initialize().await {
+    match state.infra.plugin_manager.initialize().await {
         Ok(loaded) => {
             let response = serde_json::json!({
                 "success": true,
@@ -208,8 +208,7 @@ pub async fn install_plugin_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<InstallPluginRequest>,
 ) -> impl IntoResponse {
-    match state
-        .plugin_manager
+    match state.infra.plugin_manager
         .install_plugin(&req.name, req.registry.as_deref())
         .await
     {
@@ -235,7 +234,7 @@ pub async fn uninstall_plugin_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<InstallPluginRequest>,
 ) -> impl IntoResponse {
-    match state.plugin_manager.uninstall_plugin(&req.name).await {
+    match state.infra.plugin_manager.uninstall_plugin(&req.name).await {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
@@ -258,8 +257,7 @@ pub async fn search_plugins_handler(
     State(state): State<Arc<GatewayState>>,
     Query(params): Query<SearchQuery>,
 ) -> impl IntoResponse {
-    match state
-        .plugin_manager
+    match state.infra.plugin_manager
         .search_registry(&params.q, params.registry.as_deref())
         .await
     {

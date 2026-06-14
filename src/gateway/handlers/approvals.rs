@@ -44,8 +44,7 @@ use crate::tools::ToolRegistry;
 #[allow(dead_code)]
 /// `GET /api/v1/approvals` — list all pending approval requests.
 pub async fn list_approvals_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let approvals = state
-        .approval_queue
+    let approvals = state.tools.approval_queue
         .list_pending(ApprovalFilter::default())
         .await;
     Json(serde_json::json!({ "approvals": approvals, "count": approvals.len() }))
@@ -57,7 +56,7 @@ pub async fn get_approval_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.approval_queue.get(&id).await {
+    match state.tools.approval_queue.get(&id).await {
         Some(approval) => Json(approval).into_response(),
         None => (
             StatusCode::NOT_FOUND,
@@ -73,8 +72,7 @@ pub async fn approve_tool_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    if state
-        .approval_queue
+    if state.tools.approval_queue
         .resolve(&id, ApprovalDecision::Approve)
         .await
     {
@@ -99,8 +97,7 @@ pub async fn deny_tool_handler(
         .and_then(|b| b.reason.clone())
         .unwrap_or_else(|| "Denied by operator".to_string());
 
-    if state
-        .approval_queue
+    if state.tools.approval_queue
         .resolve(&id, ApprovalDecision::Deny { reason: reason.clone() })
         .await
     {

@@ -58,18 +58,18 @@ pub async fn health_handler(State(state): State<Arc<GatewayState>>) -> impl Into
 /// Readiness probe — returns 200 when the gateway is ready to serve traffic.
 /// Checks: agents, providers, channels.
 pub async fn ready_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let agents = state.agents.read().await;
+    let agents = state.agents.agents.read().await;
     let agent_ready = agents.get("default").is_some();
     let agent_count = agents.len();
     drop(agents);
 
-    let router_health = state.model_router.get_health_status().await;
+    let router_health = state.infra.model_router.get_health_status().await;
     let healthy_providers = router_health
         .values()
         .filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed))
         .count();
 
-    let channels = state.channels.read().await;
+    let channels = state.channels.channels.read().await;
     let channel_count = channels.len();
     drop(channels);
 
@@ -130,19 +130,19 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Agents
-    let agents = state.agents.read().await;
+    let agents = state.agents.agents.read().await;
     let agent_count = agents.len() as f64;
     drop(agents);
     gauge("syscity_agents_active", agent_count, "Number of active agents");
 
     // Channels
-    let channels = state.channels.read().await;
+    let channels = state.channels.channels.read().await;
     let channel_count = channels.len() as f64;
     drop(channels);
     gauge("syscity_channels_configured", channel_count, "Number of configured channels");
 
     // Providers
-    let router_health = state.model_router.get_health_status().await;
+    let router_health = state.infra.model_router.get_health_status().await;
     let healthy_providers = router_health
         .values()
         .filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed))
@@ -160,12 +160,12 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Memory subsystems
-    let vector_memory_ready = if state.vector_memory.is_initialized().await {
+    let vector_memory_ready = if state.memory.vector.is_initialized().await {
         1.0
     } else {
         0.0
     };
-    let memory_manager_ready = if state.memory_manager.read().await.is_some() {
+    let memory_manager_ready = if state.memory.manager.read().await.is_some() {
         1.0
     } else {
         0.0
@@ -182,7 +182,7 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Cron
-    let cron_ready = if state.cron_scheduler.is_initialized().await {
+    let cron_ready = if state.scheduler.cron_scheduler.is_initialized().await {
         1.0
     } else {
         0.0
@@ -194,15 +194,15 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Plugins
-    let plugin_count = state.plugin_manager.list_plugins().await.len() as f64;
+    let plugin_count = state.infra.plugin_manager.list_plugins().await.len() as f64;
     gauge("syscity_plugins_loaded", plugin_count, "Number of loaded plugins");
 
     // MCP
-    let mcp_count = state.mcp_manager.list_servers().await.len() as f64;
+    let mcp_count = state.tools.mcp_manager.list_servers().await.len() as f64;
     gauge("syscity_mcp_servers_connected", mcp_count, "Number of connected MCP servers");
 
     // Storage
-    let storage_healthy = match state.storage.read().await.health_check().await {
+    let storage_healthy = match state.infra.storage.read().await.health_check().await {
         Ok(_) => 1.0,
         Err(_) => 0.0,
     };
@@ -213,9 +213,9 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Cost guard
-    let daily_spend = state.cost_guard.daily_spend_cents() as f64;
-    let hourly_actions = state.cost_guard.hourly_action_count() as f64;
-    let budget_exceeded = if state.cost_guard.is_exceeded() {
+    let daily_spend = state.agents.cost_guard.daily_spend_cents() as f64;
+    let hourly_actions = state.agents.cost_guard.hourly_action_count() as f64;
+    let budget_exceeded = if state.agents.cost_guard.is_exceeded() {
         1.0
     } else {
         0.0
@@ -233,11 +233,11 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Audit log
-    let audit_entries = state.audit_log.persisted_count().await as f64;
+    let audit_entries = state.auth.audit_log.persisted_count().await as f64;
     gauge("syscity_audit_log_entries", audit_entries, "Total number of audit log entries");
 
     // Core engine metrics
-    if let Some(ref em) = state.engine_metrics {
+    if let Some(ref em) = state.infra.engine_metrics {
         gauge(
             "syscity_engine_entities_created",
             em.entities_created
@@ -275,7 +275,7 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     }
 
     // Dream metrics
-    if let Some(dm) = state.dream_scheduler.get_opt().await {
+    if let Some(dm) = state.memory.dream_scheduler.get_opt().await {
         let metrics = dm.metrics();
         gauge(
             "syscity_dreams_total",
@@ -350,41 +350,41 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     }
 
     // Per-plugin metrics
-    let plugin_snapshots = state.plugin_manager.metrics().all_snapshots().await;
+    let plugin_snapshots = state.infra.plugin_manager.metrics().all_snapshots().await;
     for (plugin_id, snap) in &plugin_snapshots {
         let plugin_label = &plugin_id.replace('"', "");
-        lines.push(format!("# HELP syscity_plugin_tool_calls_total Total tool calls per plugin"));
-        lines.push(format!("# TYPE syscity_plugin_tool_calls_total counter"));
+        lines.push("# HELP syscity_plugin_tool_calls_total Total tool calls per plugin".to_string());
+        lines.push("# TYPE syscity_plugin_tool_calls_total counter".to_string());
         lines.push(format!(
             "syscity_plugin_tool_calls_total{{plugin=\"{}\"}} {}",
             plugin_label, snap.tool_calls
         ));
 
-        lines.push(format!("# HELP syscity_plugin_tool_errors_total Total tool errors per plugin"));
-        lines.push(format!("# TYPE syscity_plugin_tool_errors_total counter"));
+        lines.push("# HELP syscity_plugin_tool_errors_total Total tool errors per plugin".to_string());
+        lines.push("# TYPE syscity_plugin_tool_errors_total counter".to_string());
         lines.push(format!(
             "syscity_plugin_tool_errors_total{{plugin=\"{}\"}} {}",
             plugin_label, snap.tool_errors
         ));
 
-        lines.push(format!(
-            "# HELP syscity_plugin_http_requests_total Total HTTP requests per plugin"
-        ));
-        lines.push(format!("# TYPE syscity_plugin_http_requests_total counter"));
+        lines.push(
+            "# HELP syscity_plugin_http_requests_total Total HTTP requests per plugin".to_string(),
+        );
+        lines.push("# TYPE syscity_plugin_http_requests_total counter".to_string());
         lines.push(format!(
             "syscity_plugin_http_requests_total{{plugin=\"{}\"}} {}",
             plugin_label, snap.http_requests
         ));
 
-        lines.push(format!("# HELP syscity_plugin_http_errors_total Total HTTP errors per plugin"));
-        lines.push(format!("# TYPE syscity_plugin_http_errors_total counter"));
+        lines.push("# HELP syscity_plugin_http_errors_total Total HTTP errors per plugin".to_string());
+        lines.push("# TYPE syscity_plugin_http_errors_total counter".to_string());
         lines.push(format!(
             "syscity_plugin_http_errors_total{{plugin=\"{}\"}} {}",
             plugin_label, snap.http_errors
         ));
 
-        lines.push(format!("# HELP syscity_plugin_memory_bytes Current memory usage per plugin"));
-        lines.push(format!("# TYPE syscity_plugin_memory_bytes gauge"));
+        lines.push("# HELP syscity_plugin_memory_bytes Current memory usage per plugin".to_string());
+        lines.push("# TYPE syscity_plugin_memory_bytes gauge".to_string());
         lines.push(format!(
             "syscity_plugin_memory_bytes{{plugin=\"{}\"}} {}",
             plugin_label, snap.memory_usage_bytes
@@ -398,13 +398,13 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
 /// Build a comprehensive health report covering all subsystems.
 pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     // Agents
-    let agents = state.agents.read().await;
+    let agents = state.agents.agents.read().await;
     let agent_ready = agents.get("default").is_some();
     let agent_count = agents.len();
     drop(agents);
 
     // Providers
-    let router_health = state.model_router.get_health_status().await;
+    let router_health = state.infra.model_router.get_health_status().await;
     let healthy_providers = router_health
         .values()
         .filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed))
@@ -412,52 +412,48 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     let total_providers = router_health.len();
 
     // Channels
-    let channels = state.channels.read().await;
+    let channels = state.channels.channels.read().await;
     let channel_count = channels.len();
     drop(channels);
 
     // Vector memory
-    let vector_memory_ready = state.vector_memory.is_initialized().await;
+    let vector_memory_ready = state.memory.vector.is_initialized().await;
 
     // Memory manager
-    let memory_manager_ready = state.memory_manager.read().await.is_some();
+    let memory_manager_ready = state.memory.manager.read().await.is_some();
 
     // Cron scheduler
-    let cron_ready = state.cron_scheduler.is_initialized().await;
+    let cron_ready = state.scheduler.cron_scheduler.is_initialized().await;
 
     // Plugins
-    let plugin_count = state.plugin_manager.list_plugins().await.len();
+    let plugin_count = state.infra.plugin_manager.list_plugins().await.len();
 
     // MCP servers
-    let mcp_count = state.mcp_manager.list_servers().await.len();
+    let mcp_count = state.tools.mcp_manager.list_servers().await.len();
 
     // Storage
-    let storage_healthy = state.storage.read().await.health_check().await.is_ok();
+    let storage_healthy = state.infra.storage.read().await.health_check().await.is_ok();
 
     // Cost guard
-    let cost_exceeded = state.cost_guard.is_exceeded();
-    let daily_spend = state.cost_guard.daily_spend_cents() as f64 / 100.0;
+    let cost_exceeded = state.agents.cost_guard.is_exceeded();
+    let daily_spend = state.agents.cost_guard.daily_spend_cents() as f64 / 100.0;
 
     // Dream metrics
-    let dream_report = state
-        .dream_scheduler
-        .get_opt()
-        .await
-        .map(|scheduler| {
-            let metrics = scheduler.metrics();
-            crate::gateway::DreamHealthReport {
-                dreams_total: metrics.dreams_total.load(Ordering::Relaxed),
-                dreams_failed: metrics.dreams_failed.load(Ordering::Relaxed),
-                memories_processed_total: metrics.memories_processed_total.load(Ordering::Relaxed),
-                memories_created_total: metrics.memories_created_total.load(Ordering::Relaxed),
-                memories_removed_total: metrics.memories_removed_total.load(Ordering::Relaxed),
-                memories_promoted_total: metrics.memories_promoted_total.load(Ordering::Relaxed),
-                memories_demoted_total: metrics.memories_demoted_total.load(Ordering::Relaxed),
-                dream_duration_ms_total: metrics.dream_duration_ms_total.load(Ordering::Relaxed),
-                llm_tokens_input_total: metrics.llm_tokens_input_total.load(Ordering::Relaxed),
-                llm_tokens_output_total: metrics.llm_tokens_output_total.load(Ordering::Relaxed),
-            }
-        });
+    let dream_report = state.memory.dream_scheduler.get_opt().await.map(|scheduler| {
+        let metrics = scheduler.metrics();
+        crate::gateway::DreamHealthReport {
+            dreams_total: metrics.dreams_total.load(Ordering::Relaxed),
+            dreams_failed: metrics.dreams_failed.load(Ordering::Relaxed),
+            memories_processed_total: metrics.memories_processed_total.load(Ordering::Relaxed),
+            memories_created_total: metrics.memories_created_total.load(Ordering::Relaxed),
+            memories_removed_total: metrics.memories_removed_total.load(Ordering::Relaxed),
+            memories_promoted_total: metrics.memories_promoted_total.load(Ordering::Relaxed),
+            memories_demoted_total: metrics.memories_demoted_total.load(Ordering::Relaxed),
+            dream_duration_ms_total: metrics.dream_duration_ms_total.load(Ordering::Relaxed),
+            llm_tokens_input_total: metrics.llm_tokens_input_total.load(Ordering::Relaxed),
+            llm_tokens_output_total: metrics.llm_tokens_output_total.load(Ordering::Relaxed),
+        }
+    });
 
     // Overall: agents + providers are critical; others are warnings
     let overall_healthy = agent_ready && healthy_providers > 0;
@@ -535,8 +531,8 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
 
 #[allow(dead_code)]
 pub async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let agents = state.agents.read().await;
-    let channels = state.channels.read().await;
+    let agents = state.agents.agents.read().await;
+    let channels = state.channels.channels.read().await;
 
     Json(serde_json::json!({
         "agents": {
@@ -551,15 +547,13 @@ pub async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl Into
 #[allow(dead_code)]
 pub async fn repair_status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     use std::sync::atomic::Ordering;
-    let last_cycle = state
-        .repair_state
+    let last_cycle = state.agents.repair_state
         .last_cycle_at
         .read()
         .await
         .map(|t| t.to_rfc3339());
-    let loop_running = state.repair_state.loop_running.load(Ordering::Relaxed);
-    let records: Vec<_> = state
-        .repair_state
+    let loop_running = state.agents.repair_state.loop_running.load(Ordering::Relaxed);
+    let records: Vec<_> = state.agents.repair_state
         .records
         .read()
         .await
@@ -581,11 +575,11 @@ pub async fn repair_status_handler(State(state): State<Arc<GatewayState>>) -> im
 pub async fn cost_status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     use std::sync::atomic::Ordering;
 
-    let daily_cents = state.cost_guard.daily_spend_cents();
-    let hourly_actions = state.cost_guard.hourly_action_count();
-    let budget_exceeded = state.cost_guard.budget_exceeded.load(Ordering::Relaxed);
-    let daily_limit = state.cost_guard.daily_limit_cents;
-    let hourly_limit = state.cost_guard.hourly_action_limit;
+    let daily_cents = state.agents.cost_guard.daily_spend_cents();
+    let hourly_actions = state.agents.cost_guard.hourly_action_count();
+    let budget_exceeded = state.agents.cost_guard.budget_exceeded.load(Ordering::Relaxed);
+    let daily_limit = state.agents.cost_guard.daily_limit_cents;
+    let hourly_limit = state.agents.cost_guard.hourly_action_limit;
 
     Json(serde_json::json!({
         "daily_spend_cents": daily_cents,

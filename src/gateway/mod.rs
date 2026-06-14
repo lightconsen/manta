@@ -66,6 +66,9 @@ pub mod middleware;
 pub mod protocol;
 pub mod rate_limit;
 pub mod send_policy;
+pub mod state;
+pub use state::*;
+
 pub mod webhooks;
 pub mod ws;
 use handlers::*;
@@ -640,162 +643,6 @@ impl ChannelConfig {
     }
 }
 
-/// Gateway state shared across handlers
-pub struct GatewayState {
-    /// Configuration
-    pub config: Arc<RwLock<GatewayConfig>>,
-    /// Gateway startup time for uptime calculations
-    pub start_time: Instant,
-    /// Active channels
-    pub channels: Arc<RwLock<HashMap<String, Arc<dyn Channel>>>>,
-    /// Active agents by ID
-    pub agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
-    /// Session routing table: session_id -> agent_id
-    /// DEPRECATED: use `agent_router` instead for new code.
-    pub session_routing: Arc<RwLock<HashMap<String, String>>>,
-    /// Agent router for workspace-aware multi-agent routing.
-    pub agent_router: Arc<AgentRouter>,
-    /// Session to channel mapping: session_id -> (channel_name, channel_specific_id)
-    /// Used to route responses back to the correct channel endpoint
-    pub session_channels: Arc<RwLock<HashMap<String, (String, String)>>>,
-    /// Webhook session storage: platform_key -> session_uuid
-    /// Platform key format: "whatsapp:phone_number" or "feishu:user_id"
-    /// Used for UUID-based session management in webhook-based channels
-    pub webhook_sessions: Arc<RwLock<HashMap<String, String>>>,
-    /// Model router for multi-provider support
-    pub model_router: Arc<ModelRouter>,
-    /// Tool registry for all agents
-    pub tool_registry: Arc<ToolRegistry>,
-    /// Event broadcast channel
-    pub event_tx: broadcast::Sender<GatewayEvent>,
-    /// Event hook registry for intercepting/transforming events
-    pub hook_registry: Arc<hooks::EventHookRegistry>,
-    /// Message queue for processing
-    pub message_queue: mpsc::Sender<QueuedMessage>,
-    /// Canvas manager for dynamic UI
-    pub canvas_manager: Arc<CanvasManager>,
-    /// Plugin manager for extensibility
-    pub plugin_manager: Arc<PluginManager>,
-    /// ACP control plane for subagent spawning
-    pub acp: Arc<AcpControlPlane>,
-    /// Vector memory service for semantic search (late initialization)
-    pub vector_memory: crate::utils::LateInit<Arc<VectorMemoryService>>,
-    /// Session search for FTS5 conversation indexing (late initialization)
-    pub session_search: crate::utils::LateInit<Arc<crate::memory::SessionSearch>>,
-    /// Memory manager — unified orchestrator with hybrid search (late initialization).
-    /// Kept as `Arc<RwLock<Option<_>>>` so the shared holder wired into tools can be populated later.
-    pub memory_manager: Arc<RwLock<Option<Arc<crate::memory::MemoryManager>>>>,
-    /// Hot reload manager for config changes (late initialization)
-    pub hot_reload: crate::utils::LateInit<Arc<HotReloadManager>>,
-    /// Cron scheduler for scheduled jobs (late initialization)
-    pub cron_scheduler: crate::utils::LateInit<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>,
-    /// Heartbeat wake channel sender (for requesting immediate heartbeat) (late initialization)
-    pub heartbeat_wake_tx: crate::utils::LateInit<tokio::sync::mpsc::Sender<crate::heartbeat::WakeRequest>>,
-    /// Heartbeat event broadcast sender (late initialization)
-    pub heartbeat_event_tx:
-        crate::utils::LateInit<tokio::sync::broadcast::Sender<crate::heartbeat::HeartbeatEvent>>,
-    /// Dream scheduler for background memory consolidation (late initialization)
-    pub dream_scheduler: crate::utils::LateInit<crate::memory::DreamScheduler>,
-    /// Observability counters for dream cycles.
-    pub dream_metrics: Arc<crate::memory::DreamMetrics>,
-    /// Standing order manager for persistent background agent programs (late initialization)
-    pub standing_order_manager: crate::utils::LateInit<crate::standing_orders::StandingOrderManager>,
-    /// Auth manager for authentication
-    pub auth_manager: Arc<crate::security::AuthManager>,
-    /// DM pairing store for access control
-    pub pairing_store: Arc<crate::security::pairing::PairingStore>,
-    /// Device pairing store for WebSocket device auth
-    pub device_pairing_store: Arc<crate::security::device_pairing::DevicePairingStore>,
-    /// Tailscale authenticator for whois-based identity verification
-    pub tailscale_authenticator: Option<Arc<crate::security::tailscale::TailscaleAuthenticator>>,
-    /// Trusted proxy authenticator for reverse-proxy-based identity verification.
-    pub trusted_proxy_authenticator:
-        Option<Arc<crate::security::trusted_proxy::TrustedProxyAuthenticator>>,
-    /// Command gate for slash-command permission control
-    pub command_gate: Arc<crate::tools::command_gate::CommandGate>,
-    /// Mention gate for controlling which mentions trigger agent responses
-    pub mention_gate: Arc<crate::security::mention_gate::MentionGate>,
-    /// Persistent audit log for security-relevant events (SQLite-backed)
-    pub audit_log: Arc<crate::security::persistent_audit::PersistentAuditLog>,
-    /// Rate limiter for API protection (legacy token bucket)
-    pub rate_limiter: Arc<crate::security::RateLimiter>,
-    /// Multi-tier rate limiter (sliding window per user/ip/endpoint)
-    pub multi_tier_rate_limiter: Arc<crate::gateway::rate_limit::MultiTierRateLimiter>,
-    /// Storage adapter for persistence
-    pub storage: Arc<RwLock<dyn crate::adapters::Storage>>,
-    /// Skills manager for hot-reloadable skills
-    pub skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
-    /// Agent registry for discovered personalities
-    pub agent_registry: Arc<RwLock<crate::agent::AgentRegistry>>,
-    /// Multi-agent session manager
-    pub session_manager: Arc<RwLock<crate::agent::SessionManager>>,
-    /// SQLite-backed session store for persistent chat history
-    pub session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
-    /// MCP manager for server connections (shared with McpConnectionTool)
-    pub mcp_manager: Arc<McpManager>,
-    /// Path to the config file (for runtime persistence)
-    pub config_path: Option<PathBuf>,
-    /// Runtime settings store — mutable key/value pairs changeable without restart.
-    pub runtime_settings: Arc<RwLock<HashMap<String, serde_json::Value>>>,
-    /// Approval queue for human-in-the-loop tool policy enforcement.
-    pub approval_queue: Arc<ApprovalQueue>,
-    /// Self-repair loop state — tracks restart records, exposed via REST.
-    pub repair_state: Arc<RepairState>,
-    /// Shared live cost guard — tracks daily spend and hourly action rate
-    /// across all agents. `Arc` allows every spawned agent to share one guard.
-    pub cost_guard: Arc<crate::agent::CostGuard>,
-    /// Reply dispatcher for routing agent responses to channels.
-    pub reply_dispatcher: Arc<crate::outbound::ReplyDispatcher>,
-    /// Sender for the inbound pipeline to deliver `RoutedMessage`s.
-    pub routed_tx: mpsc::Sender<crate::inbound::RoutedMessage>,
-    /// Inbound pipeline for processing incoming messages.
-    pub inbound_pipeline: Arc<dyn crate::inbound::InboundPipeline>,
-    /// Outbound pipeline for processing agent outputs.
-    pub outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline>,
-    /// Side effect executor for post-response actions.
-    pub side_effect_executor: Arc<crate::outbound::SideEffectExecutor>,
-    /// SSE streamer for real-time event streaming.
-    pub sse_streamer: Arc<crate::outbound::SseStreamer>,
-    /// Channel extension registry for unified channel management.
-    pub channel_extensions: Arc<RwLock<crate::channels::ChannelExtensionRegistry>>,
-    /// Provider SDK for dynamic provider registration and discovery.
-    pub provider_sdk: Arc<RwLock<crate::providers::ProviderSdk>>,
-    /// Tool SDK for dynamic tool pack registration.
-    pub tool_sdk: Arc<RwLock<crate::tools::ToolSdk>>,
-    /// Session message buffer for FollowUp / Collect queue modes.
-    /// session_id -> buffered messages (content + metadata)
-    pub session_message_buffer: Arc<RwLock<HashMap<String, Vec<BufferedMessage>>>>,
-    /// route resolver with multi-dimensional matching.
-    pub route_resolver: Arc<crate::agent::RouteResolver>,
-    /// File-based transcript store for session export.
-    pub transcript_store: Arc<crate::agent::TranscriptStore>,
-    /// Artifact store for session-bound code snippets, documents, links.
-    pub artifact_store: Arc<crate::agent::ArtifactStore>,
-    /// Disk budget manager for per-session storage quota enforcement.
-    pub disk_budget: Arc<crate::agent::DiskBudgetManager>,
-    /// Session file manager for isolated per-session file operations.
-    pub session_file_manager: Arc<crate::agent::SessionFileManager>,
-    /// Group session manager for multi-member sessions with role awareness.
-    pub group_session_manager: Arc<RwLock<crate::agent::GroupSessionManager>>,
-    /// Browser bridge server (started when browser.bridge_enabled is true)
-    #[cfg(feature = "browser")]
-    pub browser_bridge: tokio::sync::RwLock<Option<crate::browser::BrowserBridge>>,
-    /// Computer / desktop automation adapter (optional)
-    pub computer_adapter: tokio::sync::RwLock<Option<Arc<dyn crate::computer::ComputerAdapter>>>,
-    /// Engine metrics counters (populated when a core `Engine` is wired in).
-    pub engine_metrics: Option<Arc<crate::core::EngineMetrics>>,
-    /// Task scheduler for recurring / cron-like agent tasks (late initialization)
-    pub task_scheduler: crate::utils::LateInit<Arc<tokio::sync::Mutex<crate::planner::TaskScheduler>>>,
-    /// Log line broadcast channel for real-time log streaming to WebSocket clients
-    pub log_tx: broadcast::Sender<String>,
-    /// Channel account snapshot store for per-channel health tracking.
-    pub snapshot_store: Option<AccountSnapshotStore>,
-    /// ACP bridge for routing ACP commands from channel messages.
-    pub acp_bridge: Option<Arc<ChannelAcpBridge>>,
-    /// Optional health monitor for periodic health checks and stall detection.
-    pub health_monitor: Option<Arc<ChannelHealthMonitor>>,
-}
-
 impl GatewayState {
     /// Centralized access check for incoming messages.
     ///
@@ -819,7 +666,7 @@ impl GatewayState {
             // 1. Blocklist check
             if ch_cfg.is_blocked(user_id) {
                 let reason = format!("User {} is blocked on channel {}", user_id, channel);
-                self.audit_log
+                self.auth.audit_log
                     .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
                     .await;
                 return Err(reason);
@@ -830,17 +677,16 @@ impl GatewayState {
             match ch_cfg.dm_policy {
                 DmPolicy::Open => {}
                 DmPolicy::Pairing => {
-                    if !self.pairing_store.is_authorized(channel, user_id).await {
+                    if !self.auth.pairing_store.is_authorized(channel, user_id).await {
                         // Create pairing request silently and drop message
-                        let _ = self
-                            .pairing_store
+                        let _ = self.auth.pairing_store
                             .request_access(channel, user_id, None)
                             .await;
                         let reason = format!(
                             "User {} not authorized on channel {} (pairing required)",
                             user_id, channel
                         );
-                        self.audit_log
+                        self.auth.audit_log
                             .log(
                                 AuditEventType::PairingRequest,
                                 user_id,
@@ -855,11 +701,11 @@ impl GatewayState {
                 }
                 DmPolicy::Allowlist => {
                     if !ch_cfg.is_in_allowlist(user_id)
-                        && !self.pairing_store.is_authorized(channel, user_id).await
+                        && !self.auth.pairing_store.is_authorized(channel, user_id).await
                     {
                         let reason =
                             format!("User {} not in allowlist for channel {}", user_id, channel);
-                        self.audit_log
+                        self.auth.audit_log
                             .log(
                                 AuditEventType::AccessCheck,
                                 user_id,
@@ -880,7 +726,7 @@ impl GatewayState {
                     "Message from {} on channel {} ignored (mention required in groups)",
                     user_id, channel
                 );
-                self.audit_log
+                self.auth.audit_log
                     .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
                     .await;
                 return Err(reason);
@@ -888,14 +734,14 @@ impl GatewayState {
 
             // 3b. MentionGate policy check
             if matches!(mention, crate::channels::MentionState::Mentioned) {
-                let mention_allowed = self.mention_gate.check(channel, "*").await;
+                let mention_allowed = self.auth.mention_gate.check(channel, "*").await;
                 if !mention_allowed {
                     let reason = format!(
                         "Mention gate blocked message on channel {} (policy: {})",
                         channel,
-                        self.mention_gate.policy().await
+                        self.auth.mention_gate.policy().await
                     );
-                    self.audit_log
+                    self.auth.audit_log
                         .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
                         .await;
                     return Err(reason);
@@ -904,14 +750,14 @@ impl GatewayState {
         }
 
         // 4. Command gate check
-        let decision = self.command_gate.check(user_id, content);
+        let decision = self.auth.command_gate.check(user_id, content);
         if !decision.is_allowed() {
             let reason = match decision {
                 crate::tools::command_gate::AccessDecision::Denied { reason, .. } => reason,
                 _ => "Unknown denial reason".to_string(),
             };
             let msg = format!("Command gate denied for user {}: {}", user_id, reason);
-            self.audit_log
+            self.auth.audit_log
                 .log(
                     AuditEventType::CommandGate,
                     user_id,
@@ -925,7 +771,7 @@ impl GatewayState {
         }
 
         // Log successful access
-        self.audit_log
+        self.auth.audit_log
             .log(AuditEventType::AccessCheck, user_id, channel, true, "Access allowed", None)
             .await;
 
@@ -1233,52 +1079,6 @@ impl RepairState {
     }
 }
 
-/// Queued message for processing
-#[derive(Debug)]
-pub struct QueuedMessage {
-    pub id: String,
-    pub channel: String,
-    pub user_id: String,
-    pub content: String,
-    pub session_id: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    /// Optional model alias hint for agent routing
-    pub model_alias: Option<String>,
-    /// Mention state of the message (for group chat mention gating)
-    pub mention: crate::channels::MentionState,
-}
-
-impl QueuedMessage {
-    pub fn new(
-        id: impl Into<String>,
-        channel: impl Into<String>,
-        user_id: impl Into<String>,
-        content: impl Into<String>,
-        session_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            channel: channel.into(),
-            user_id: user_id.into(),
-            content: content.into(),
-            session_id: session_id.into(),
-            timestamp: chrono::Utc::now(),
-            model_alias: None,
-            mention: crate::channels::MentionState::DirectMessage,
-        }
-    }
-
-    pub fn with_mention(mut self, mention: crate::channels::MentionState) -> Self {
-        self.mention = mention;
-        self
-    }
-
-    pub fn with_model_alias(mut self, alias: impl Into<String>) -> Self {
-        self.model_alias = Some(alias.into());
-        self
-    }
-}
-
 /// Query parameters for WebSocket connection
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
@@ -1358,7 +1158,8 @@ impl Gateway {
 
         let (event_tx, _) = broadcast::channel(1000);
         let (log_tx, _) = broadcast::channel(1000);
-        let (message_queue_tx, message_queue_rx) = mpsc::channel(1000);
+        let (inbound_entry_tx, inbound_entry_rx) =
+            mpsc::channel::<crate::channels::IncomingMessage>(1000);
         let (routed_tx, routed_rx) = mpsc::channel(1000);
 
         // Initialize storage adapter, shared SQLite pool, session store, and audit log
@@ -1410,128 +1211,150 @@ impl Gateway {
         )
         .await?;
 
-        // Assemble the flat GatewayState used by the rest of the system
+        // Assemble the domain-grouped GatewayState used by the rest of the system
         let state = Arc::new(GatewayState {
             config: Arc::new(RwLock::new(config.clone())),
             start_time: Instant::now(),
             config_path: config_path.clone(),
-            channels: tools_init.channels.clone(),
-            agents: Arc::new(RwLock::new(HashMap::new())),
-            session_routing: Arc::new(RwLock::new(HashMap::new())),
-            agent_router: pipelines_init.agent_router.clone(),
-            session_channels: Arc::new(RwLock::new(HashMap::new())),
-            webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
-            model_router: model_router.clone(),
-            tool_registry: tools_init.tool_registry.clone(),
-            event_tx: event_tx.clone(),
-            log_tx: log_tx.clone(),
-            hook_registry: Arc::new(hooks::EventHookRegistry::new()),
-            message_queue: message_queue_tx.clone(),
-            canvas_manager: tools_init.canvas_manager.clone(),
-            plugin_manager: tools_init.plugin_manager.clone(),
-            acp: acp.clone(),
-            vector_memory: crate::utils::LateInit::new(),
-            session_search: crate::utils::LateInit::new(),
-            memory_manager: tools_init.memory_manager_holder.clone(),
-            hot_reload: crate::utils::LateInit::new(),
-            cron_scheduler: crate::utils::LateInit::new(),
-            heartbeat_wake_tx: crate::utils::LateInit::new(),
-            heartbeat_event_tx: crate::utils::LateInit::new(),
-            dream_scheduler: crate::utils::LateInit::new(),
-            dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
-            standing_order_manager: crate::utils::LateInit::new(),
-            auth_manager: security_init.auth_manager.clone(),
-            pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
-            device_pairing_store: Arc::new(
-                crate::security::device_pairing::DevicePairingStore::new(),
-            ),
-            tailscale_authenticator: {
-                let ttl = config.security.tailscale_auth_ttl_secs;
-                Some(Arc::new(crate::security::tailscale::TailscaleAuthenticator::new(
-                    std::time::Duration::from_secs(ttl),
-                )))
-            },
-            trusted_proxy_authenticator: {
-                let tp_config = config.security.trusted_proxy.clone();
-                if tp_config.enabled {
-                    Some(Arc::new(crate::security::trusted_proxy::TrustedProxyAuthenticator::new(
-                        tp_config,
+            auth: AuthState {
+                manager: security_init.auth_manager.clone(),
+                pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
+                device_pairing_store: Arc::new(
+                    crate::security::device_pairing::DevicePairingStore::new(),
+                ),
+                tailscale_authenticator: {
+                    let ttl = config.security.tailscale_auth_ttl_secs;
+                    Some(Arc::new(crate::security::tailscale::TailscaleAuthenticator::new(
+                        std::time::Duration::from_secs(ttl),
                     )))
-                } else {
-                    None
-                }
+                },
+                trusted_proxy_authenticator: {
+                    let tp_config = config.security.trusted_proxy.clone();
+                    if tp_config.enabled {
+                        Some(Arc::new(
+                            crate::security::trusted_proxy::TrustedProxyAuthenticator::new(
+                                tp_config,
+                            ),
+                        ))
+                    } else {
+                        None
+                    }
+                },
+                rate_limiter: security_init.rate_limiter.clone(),
+                multi_tier_rate_limiter: security_init.multi_tier_rate_limiter.clone(),
+                audit_log: audit_log.clone(),
+                command_gate: security_init.command_gate.clone(),
+                mention_gate: security_init.mention_gate.clone(),
             },
-            command_gate: security_init.command_gate.clone(),
-            mention_gate: security_init.mention_gate.clone(),
-            audit_log: audit_log.clone(),
-            rate_limiter: security_init.rate_limiter.clone(),
-            multi_tier_rate_limiter: security_init.multi_tier_rate_limiter.clone(),
-            storage: storage.clone(),
-            skills_manager: skills_manager.clone(),
-            agent_registry: agent_registry.clone(),
-            session_manager: session_manager.clone(),
-            session_store: session_store.clone(),
-            mcp_manager: tools_init.mcp_manager.clone(),
-            runtime_settings: Arc::new(RwLock::new(HashMap::new())),
-            approval_queue: tools_init.approval_queue.clone(),
-            repair_state: Arc::new(RepairState::new()),
-            cost_guard: crate::agent::CostGuard::new(
-                config.cost_guard.daily_limit_cents,
-                config.cost_guard.hourly_action_limit,
-            ),
-            reply_dispatcher: pipelines_init.reply_dispatcher.clone(),
-            routed_tx: routed_tx.clone(),
-            inbound_pipeline: pipelines_init.inbound_pipeline.clone(),
-            outbound_pipeline: pipelines_init.outbound_pipeline.clone(),
-            side_effect_executor: pipelines_init.side_effect_executor.clone(),
-            sse_streamer: pipelines_init.sse_streamer.clone(),
-            channel_extensions: tools_init.channel_extensions.clone(),
-            provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
-            tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
-            session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
-            route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
-            transcript_store: {
-                let store = crate::agent::TranscriptStore::new(crate::dirs::transcripts_dir());
-                Arc::new(store)
+            agents: AgentState {
+                agents: Arc::new(RwLock::new(HashMap::new())),
+                router: pipelines_init.agent_router.clone(),
+                registry: agent_registry.clone(),
+                manager: session_manager.clone(),
+                group_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
+                store: session_store.clone(),
+                message_buffer: Arc::new(RwLock::new(HashMap::new())),
+                route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
+                cost_guard: crate::agent::CostGuard::new(
+                    config.cost_guard.daily_limit_cents,
+                    config.cost_guard.hourly_action_limit,
+                ),
+                repair_state: Arc::new(RepairState::new()),
+                acp: acp.clone(),
+                session_routing: Arc::new(RwLock::new(HashMap::new())),
             },
-            artifact_store: {
-                let store = crate::agent::ArtifactStore::new(crate::dirs::artifacts_dir());
-                Arc::new(store)
+            channels: ChannelState {
+                channels: tools_init.channels.clone(),
+                extensions: tools_init.channel_extensions.clone(),
+                reply_dispatcher: pipelines_init.reply_dispatcher.clone(),
+                snapshot_store: None,
+                health_monitor: None,
+                acp_bridge: None,
+                session_channels: Arc::new(RwLock::new(HashMap::new())),
+                webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
             },
-            disk_budget: {
-                let manager = crate::agent::DiskBudgetManager::new(crate::dirs::budget_dir());
-                let _ = manager.init();
-                Arc::new(manager)
+            memory: MemoryState {
+                vector: crate::utils::LateInit::new(),
+                session_search: crate::utils::LateInit::new(),
+                manager: tools_init.memory_manager_holder.clone(),
+                dream_scheduler: crate::utils::LateInit::new(),
+                dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
+                standing_order_manager: crate::utils::LateInit::new(),
             },
-            session_file_manager: {
-                let manager =
-                    crate::agent::SessionFileManager::new(crate::dirs::session_files_dir());
-                let _ = manager.init().await;
-                Arc::new(manager)
+            tools: ToolState {
+                registry: tools_init.tool_registry.clone(),
+                mcp_manager: tools_init.mcp_manager.clone(),
+                approval_queue: tools_init.approval_queue.clone(),
+                skills_manager: skills_manager.clone(),
+                canvas_manager: tools_init.canvas_manager.clone(),
+                computer_adapter: Arc::new(tokio::sync::RwLock::new(tools_init.computer_adapter.clone())),
             },
-            group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
-            #[cfg(feature = "browser")]
-            browser_bridge: tokio::sync::RwLock::new(None),
-            computer_adapter: tokio::sync::RwLock::new(tools_init.computer_adapter.clone()),
-            engine_metrics: None,
-            task_scheduler: crate::utils::LateInit::new(),
-            snapshot_store: None,
-            acp_bridge: None,
-            health_monitor: None,
+            pipelines: PipelineState {
+                inbound: pipelines_init.inbound_pipeline.clone(),
+                outbound: pipelines_init.outbound_pipeline.clone(),
+                side_effect_executor: pipelines_init.side_effect_executor.clone(),
+                sse_streamer: pipelines_init.sse_streamer.clone(),
+                routed_tx: routed_tx.clone(),
+                inbound_entry: inbound_entry_tx.clone(),
+            },
+            events: EventState {
+                tx: event_tx.clone(),
+                log_tx: log_tx.clone(),
+                hook_registry: Arc::new(hooks::EventHookRegistry::new()),
+            },
+            infra: InfraState {
+                storage: storage.clone(),
+                runtime_settings: Arc::new(RwLock::new(HashMap::new())),
+                transcript_store: {
+                    let store = crate::agent::TranscriptStore::new(crate::dirs::transcripts_dir());
+                    Arc::new(store)
+                },
+                artifact_store: {
+                    let store = crate::agent::ArtifactStore::new(crate::dirs::artifacts_dir());
+                    Arc::new(store)
+                },
+                disk_budget: {
+                    let manager = crate::agent::DiskBudgetManager::new(crate::dirs::budget_dir());
+                    let _ = manager.init();
+                    Arc::new(manager)
+                },
+                session_file_manager: {
+                    let manager =
+                        crate::agent::SessionFileManager::new(crate::dirs::session_files_dir());
+                    let _ = manager.init().await;
+                    Arc::new(manager)
+                },
+                hot_reload: crate::utils::LateInit::new(),
+                plugin_manager: tools_init.plugin_manager.clone(),
+                model_router: model_router.clone(),
+                engine_metrics: None,
+                #[cfg(feature = "browser")]
+                browser_bridge: tokio::sync::RwLock::new(None),
+            },
+            sdk: SdkState {
+                provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
+                tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
+            },
+            scheduler: SchedulerState {
+                task_scheduler: crate::utils::LateInit::new(),
+                heartbeat_wake_tx: crate::utils::LateInit::new(),
+                heartbeat_event_tx: crate::utils::LateInit::new(),
+                cron_scheduler: crate::utils::LateInit::new(),
+            },
         });
 
         // Attach SessionStore to SessionManager for unified session model
-        if let Some(ref store) = state.session_store {
-            let mut mgr = state.session_manager.write().await;
+        if let Some(ref store) = state.agents.store {
+            let mut mgr = state.agents.manager.write().await;
             mgr.with_store(store.clone());
         }
 
         // Wire ACP lifecycle events into the gateway broadcast channel
-        state.acp.set_event_tx(state.event_tx.clone()).await;
+        state.agents.acp.set_event_tx(state.events.tx.clone()).await;
 
         // Forward MCP lifecycle events into the gateway broadcast channel
         {
-            let event_tx = state.event_tx.clone();
+            let event_tx = state.events.tx.clone();
             let mut mcp_event_rx = tools_init.mcp_event_rx;
             tokio::spawn(async move {
                 while let Some(event) = mcp_event_rx.recv().await {
@@ -1563,38 +1386,34 @@ impl Gateway {
         }
 
         // Initialize audit table (SQLite-backed persistent audit log)
-        if let Err(e) = state.audit_log.init().await {
+        if let Err(e) = state.auth.audit_log.init().await {
             warn!("Failed to initialize persistent audit log: {}", e);
         }
 
         // Dynamically register tools that need GatewayState
-        state
-            .tool_registry
+        state.tools.registry
             .register_dynamic(Arc::new(crate::tools::AgentsListTool::new(
-                state.agent_registry.clone(),
+                state.agents.registry.clone(),
             )));
-        state
-            .tool_registry
+        state.tools.registry
             .register_dynamic(Arc::new(crate::tools::GatewayTool::new(state.clone())));
-        state
-            .tool_registry
+        state.tools.registry
             .register_dynamic(Arc::new(crate::tools::MessageTool::new(state.clone())));
-        state
-            .tool_registry
+        state.tools.registry
             .register_dynamic(Arc::new(crate::tools::CanvasTool::new(
-                state.canvas_manager.clone(),
+                state.tools.canvas_manager.clone(),
             )));
 
         // Sync ProviderSdk / ToolSdk with existing registries
         {
-            let mut provider_sdk = state.provider_sdk.write().await;
+            let mut provider_sdk = state.sdk.provider_sdk.write().await;
             provider_sdk
-                .sync_from_model_router(&state.model_router)
+                .sync_from_model_router(&state.infra.model_router)
                 .await;
         }
         {
-            let mut tool_sdk = state.tool_sdk.write().await;
-            tool_sdk.sync_from_tool_registry(&state.tool_registry);
+            let mut tool_sdk = state.sdk.tool_sdk.write().await;
+            tool_sdk.sync_from_tool_registry(&state.tools.registry);
         }
 
         // Initialize late services: vector memory, session search, cron, task scheduler, etc.
@@ -1607,7 +1426,7 @@ impl Gateway {
         .await?;
 
         // Start message processing workers
-        tokio::spawn(Self::process_message_queue(state.clone(), message_queue_rx));
+        tokio::spawn(Self::process_inbound_entries(state.clone(), inbound_entry_rx));
         tokio::spawn(Self::process_routed_messages(state.clone(), routed_rx));
 
         Ok(Self { state, config })
@@ -1618,12 +1437,12 @@ impl Gateway {
     /// Primarily used in integration / E2E tests to inject a mock provider
     /// before calling `start()`.
     pub fn model_router(&self) -> Arc<crate::model_router::ModelRouter> {
-        self.state.model_router.clone()
+        self.state.infra.model_router.clone()
     }
 
     /// Return a clone of the internal `ToolRegistry` arc.
     pub fn tool_registry(&self) -> Arc<crate::tools::ToolRegistry> {
-        self.state.tool_registry.clone()
+        self.state.tools.registry.clone()
     }
 
     /// Start the gateway
@@ -1633,13 +1452,13 @@ impl Gateway {
         // Initialize plugins if enabled
         if self.config.plugins.enabled {
             if self.config.plugins.auto_load {
-                if let Err(e) = self.state.plugin_manager.initialize().await {
+                if let Err(e) = self.state.infra.plugin_manager.initialize().await {
                     warn!("Failed to initialize plugins: {}", e);
                 }
 
                 // Watch WASM files for hot-reload
-                if let Some(hot_reload) = self.state.hot_reload.get_opt().await {
-                    let plugins = self.state.plugin_manager.list_plugins().await;
+                if let Some(hot_reload) = self.state.infra.hot_reload.get_opt().await {
+                    let plugins = self.state.infra.plugin_manager.list_plugins().await;
                     for plugin in plugins {
                         if let Some(ref main) = plugin.manifest.main {
                             let wasm_path = plugin.path.join(main);
@@ -1673,7 +1492,7 @@ impl Gateway {
 
         // Initialize skills manager
         {
-            let mut skills_manager = self.state.skills_manager.write().await;
+            let mut skills_manager = self.state.tools.skills_manager.write().await;
             match skills_manager.initialize().await {
                 Ok(count) => info!("✅ Skills manager initialized with {} skills", count),
                 Err(e) => warn!("Failed to initialize skills manager: {}", e),
@@ -1681,7 +1500,7 @@ impl Gateway {
         }
 
         // Initialize hot reload if enabled
-        let hot_reload = self.state.hot_reload.get_opt().await;
+        let hot_reload = self.state.infra.hot_reload.get_opt().await;
         if let Some(ref hot_reload) = hot_reload {
             let config_path = crate::dirs::default_config_file();
             if let Err(e) = hot_reload
@@ -1723,7 +1542,7 @@ impl Gateway {
 
         // Discover agents from agents/ directory (auto-discovery)
         {
-            let mut registry = self.state.agent_registry.write().await;
+            let mut registry = self.state.agents.registry.write().await;
             match registry.discover().await {
                 Ok(count) => {
                     if count > 0 {
@@ -1750,10 +1569,10 @@ impl Gateway {
         {
             use crate::tools::DelegateTool;
             let resolver = Arc::new(GatewayAgentResolver {
-                agents: self.state.agents.clone(),
+                agents: self.state.agents.agents.clone(),
             });
             let default_agent = {
-                let agents = self.state.agents.read().await;
+                let agents = self.state.agents.agents.read().await;
                 agents.get("default").map(|h| h.agent.clone())
             };
             let delegate = if let Some(agent) = default_agent {
@@ -1761,8 +1580,7 @@ impl Gateway {
             } else {
                 DelegateTool::root().with_agent_resolver(resolver)
             };
-            self.state
-                .tool_registry
+            self.state.tools.registry
                 .register_dynamic(Arc::new(delegate));
             info!("DelegateTool registered with agent resolver for target_agent routing");
         }
@@ -1775,7 +1593,7 @@ impl Gateway {
 
         // Start dream scheduler if enabled
         if self.config.dreaming.enabled {
-            if let Some(mm) = self.state.memory_manager.read().await.as_ref().cloned() {
+            if let Some(mm) = self.state.memory.manager.read().await.as_ref().cloned() {
                 if let Some(tier_index) = mm.tier_index() {
                     let dreaming = &self.config.dreaming;
                     // Convert string-based MemoryDreamingConfig to enum-based DreamConfig
@@ -1806,7 +1624,7 @@ impl Gateway {
                     let tier_system_config = crate::memory::TierSystemConfig::default();
                     let mut engine =
                         crate::memory::DreamEngine::new(dream_config, tier_system_config)
-                            .with_metrics(Arc::clone(&self.state.dream_metrics));
+                            .with_metrics(Arc::clone(&self.state.memory.dream_metrics));
                     if let Some(ref workspace_dir) = self.config.workspace_dir {
                         engine = engine.with_workspace_dir(workspace_dir.clone());
                     }
@@ -1818,7 +1636,7 @@ impl Gateway {
                     let mut scheduler = crate::memory::DreamScheduler::new(engine);
                     scheduler.start(mm.store(), tier_index);
                     info!("Dream scheduler started");
-                    self.state.dream_scheduler.init(scheduler).await;
+                    self.state.memory.dream_scheduler.init(scheduler).await;
                 }
             }
         }
@@ -1831,7 +1649,7 @@ impl Gateway {
             );
             manager.start();
             info!("Standing orders manager started");
-            self.state.standing_order_manager.init(manager).await;
+            self.state.memory.standing_order_manager.init(manager).await;
         }
 
         // Start browser bridge server if enabled
@@ -1849,10 +1667,10 @@ impl Gateway {
                     let url = format!("http://127.0.0.1:{}", port);
                     info!(port = port, "Browser bridge server started");
                     {
-                        let mut bridge_lock = self.state.browser_bridge.write().await;
+                        let mut bridge_lock = self.state.infra.browser_bridge.write().await;
                         *bridge_lock = Some(bridge);
                     }
-                    let mut settings = self.state.runtime_settings.write().await;
+                    let mut settings = self.state.infra.runtime_settings.write().await;
                     settings.insert("browser_bridge_url".to_string(), serde_json::json!(url));
                     settings.insert("browser_bridge_token".to_string(), serde_json::json!(token));
                 }
@@ -1890,8 +1708,8 @@ impl Gateway {
 
         // Forward ApprovalRequired events from the tool registry into the Gateway event bus
         {
-            let mut approval_rx = self.state.approval_queue.event_tx.subscribe();
-            let event_tx = self.state.event_tx.clone();
+            let mut approval_rx = self.state.tools.approval_queue.event_tx.subscribe();
+            let event_tx = self.state.events.tx.clone();
             tokio::spawn(async move {
                 while let Ok(evt) = approval_rx.recv().await {
                     let _ = event_tx.send(GatewayEvent::ApprovalRequired {
@@ -1913,8 +1731,8 @@ impl Gateway {
             let runner = crate::heartbeat::HeartbeatRunner::new(self.state.clone());
             let wake_tx = runner.wake_sender();
             let event_tx = runner.event_tx.clone();
-            self.state.heartbeat_wake_tx.init(wake_tx.clone()).await;
-            self.state.heartbeat_event_tx.init(event_tx).await;
+            self.state.scheduler.heartbeat_wake_tx.init(wake_tx.clone()).await;
+            self.state.scheduler.heartbeat_event_tx.init(event_tx).await;
             tokio::spawn(async move {
                 runner.start().await;
             });
@@ -1922,7 +1740,7 @@ impl Gateway {
 
             // Wire heartbeat wake sender into cron scheduler so cron jobs
             // with wake_mode: heartbeat_nuke can trigger immediate heartbeats
-            if let Some(cron_arc) = self.state.cron_scheduler.get_opt().await {
+            if let Some(cron_arc) = self.state.scheduler.cron_scheduler.get_opt().await {
                 let mut scheduler = cron_arc.lock().await;
                 scheduler.set_heartbeat_wake_tx(wake_tx);
                 info!("Cron heartbeat wake integration enabled");
@@ -1931,7 +1749,7 @@ impl Gateway {
 
         // Start log tail broadcaster for real-time log streaming
         {
-            let log_tx = self.state.log_tx.clone();
+            let log_tx = self.state.events.log_tx.clone();
             tokio::spawn(async move {
                 let log_path = crate::logs::log_file_path();
                 let mut pos: u64 = 0;
@@ -1985,13 +1803,13 @@ impl Gateway {
             })?;
 
         // Stop dream scheduler on shutdown
-        if let Some(mut scheduler) = self.state.dream_scheduler.get_opt().await {
+        if let Some(mut scheduler) = self.state.memory.dream_scheduler.get_opt().await {
             scheduler.stop().await;
             info!("Dream scheduler stopped");
         }
 
         // Stop standing orders manager on shutdown
-        if let Some(mut manager) = self.state.standing_order_manager.get_opt().await {
+        if let Some(mut manager) = self.state.memory.standing_order_manager.get_opt().await {
             manager.stop().await;
             info!("Standing orders manager stopped");
         }
@@ -2183,17 +2001,17 @@ async fn spawn_agent_inner(
 
     // Create provider from model router
     let provider: Arc<dyn crate::providers::Provider> =
-        state.model_router.create_default_provider().await?;
+        state.infra.model_router.create_default_provider().await?;
     // Get tool registry from state
-    let tools = state.tool_registry.clone();
+    let tools = state.tools.registry.clone();
 
     // Get the model from config for this agent
     let model = state.config.read().await.model.clone();
 
     // Create the actual Agent instance with model, memory manager, chat history,
     // shared cost guard, and session management stores.
-    let memory_manager = state.memory_manager.read().await.as_ref().cloned();
-    let cost_guard = Arc::clone(&state.cost_guard);
+    let memory_manager = state.memory.manager.read().await.as_ref().cloned();
+    let cost_guard = Arc::clone(&state.agents.cost_guard);
 
     // Read computer config for the agent
     let computer_config = {
@@ -2204,7 +2022,7 @@ async fn spawn_agent_inner(
             ..Default::default()
         }
     };
-    let computer_adapter = state.computer_adapter.read().await.clone();
+    let computer_adapter = state.tools.computer_adapter.read().await.clone();
 
     let agent = if let Some(mm) = memory_manager {
         let chat_history = mm.chat_history();
@@ -2213,12 +2031,12 @@ async fn spawn_agent_inner(
             .with_memory_manager(mm.clone())
             .with_chat_history(chat_history)
             .with_cost_guard(cost_guard)
-            .with_transcript_store(Arc::clone(&state.transcript_store))
-            .with_artifact_store(Arc::clone(&state.artifact_store))
-            .with_disk_budget(Arc::clone(&state.disk_budget))
-            .with_session_file_manager(Arc::clone(&state.session_file_manager))
-            .with_model_router(Arc::clone(&state.model_router))
-            .with_skill_manager(Arc::clone(&state.skills_manager))
+            .with_transcript_store(Arc::clone(&state.infra.transcript_store))
+            .with_artifact_store(Arc::clone(&state.infra.artifact_store))
+            .with_disk_budget(Arc::clone(&state.infra.disk_budget))
+            .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+            .with_model_router(Arc::clone(&state.infra.model_router))
+            .with_skill_manager(Arc::clone(&state.tools.skills_manager))
             .with_model_alias(model.clone());
         if let Some(adapter) = computer_adapter.clone() {
             builder = builder
@@ -2236,12 +2054,12 @@ async fn spawn_agent_inner(
         let mut builder = Agent::new(config.clone(), provider, tools)
             .with_model(model.clone())
             .with_cost_guard(cost_guard)
-            .with_skill_manager(Arc::clone(&state.skills_manager))
-            .with_transcript_store(Arc::clone(&state.transcript_store))
-            .with_artifact_store(Arc::clone(&state.artifact_store))
-            .with_disk_budget(Arc::clone(&state.disk_budget))
-            .with_session_file_manager(Arc::clone(&state.session_file_manager))
-            .with_model_router(Arc::clone(&state.model_router))
+            .with_skill_manager(Arc::clone(&state.tools.skills_manager))
+            .with_transcript_store(Arc::clone(&state.infra.transcript_store))
+            .with_artifact_store(Arc::clone(&state.infra.artifact_store))
+            .with_disk_budget(Arc::clone(&state.infra.disk_budget))
+            .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+            .with_model_router(Arc::clone(&state.infra.model_router))
             .with_model_alias(model.clone());
         if let Some(adapter) = computer_adapter.clone() {
             builder = builder
@@ -2261,7 +2079,7 @@ async fn spawn_agent_inner(
     // jobs can run. Only the first agent is wired; subsequent agents keep
     // the first one active unless explicitly overwritten.
     {
-        if let Some(cron_arc) = state.cron_scheduler.get_opt().await {
+        if let Some(cron_arc) = state.scheduler.cron_scheduler.get_opt().await {
             cron_arc.lock().await.set_agent(agent.clone()).await;
             debug!("Routine engine: wired agent '{}' into cron scheduler", id);
         }
@@ -2279,7 +2097,7 @@ async fn spawn_agent_inner(
     };
 
     {
-        let mut agents = state.agents.write().await;
+        let mut agents = state.agents.agents.write().await;
         agents.insert(id.clone(), handle);
     }
 
@@ -2312,7 +2130,7 @@ async fn spawn_agent_inner(
                                    info!("Agent {} processing message for session {}", agent_id, session_id);
 
             // Update status to processing
-                                   let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+                                   let _ = state.events.tx.send(GatewayEvent::AgentStatus {
                                        agent_id: agent_id.clone(),
                                        status: AgentStatus::Processing { session_id: session_id.clone() },
                                    });
@@ -2360,7 +2178,7 @@ async fn spawn_agent_inner(
                                                            name, session_id
                                                        );
                                                        let _ =
-                                                           state.event_tx.send(GatewayEvent::ToolCalling {
+                                                           state.events.tx.send(GatewayEvent::ToolCalling {
                                                                session_id: session_id.clone(),
                                                                agent_id: agent_id.clone(),
                                                                tool_name: name.clone(),
@@ -2382,7 +2200,7 @@ async fn spawn_agent_inner(
                                                            "ToolResult event: {} for session {}",
                                                            name, session_id
                                                        );
-                                                       let _ = state.event_tx.send(GatewayEvent::ToolResult {
+                                                       let _ = state.events.tx.send(GatewayEvent::ToolResult {
                                                            session_id: session_id.clone(),
                                                            agent_id: agent_id.clone(),
                                                            tool_name: name.clone(),
@@ -2398,14 +2216,14 @@ async fn spawn_agent_inner(
                                                        });
                                                    }
                                                    crate::agent::ProgressEvent::Completed { response } => {
-                                                       let _ = state.event_tx.send(GatewayEvent::Completed {
+                                                       let _ = state.events.tx.send(GatewayEvent::Completed {
                                                            session_id: session_id.clone(),
                                                            agent_id: agent_id.clone(),
                                                            response,
                                                        });
                                                    }
                                                    crate::agent::ProgressEvent::Error { message } => {
-                                                       let _ = state.event_tx.send(GatewayEvent::ProcessingError {
+                                                       let _ = state.events.tx.send(GatewayEvent::ProcessingError {
                                                            session_id: session_id.clone(),
                                                            agent_id: agent_id.clone(),
                                                            message,
@@ -2442,7 +2260,7 @@ async fn spawn_agent_inner(
 
             // Look up conversation_id for response routing
                                    let conversation_id = {
-                                       let sessions = state.session_channels.read().await;
+                                       let sessions = state.channels.session_channels.read().await;
                                        sessions
                                            .get(&session_id)
                                            .map(|(_, cid)| cid.clone())
@@ -2453,7 +2271,7 @@ async fn spawn_agent_inner(
                                    let run_id = uuid::Uuid::new_v4().to_string();
 
             // Persist assistant response to session history
-                                   if let Some(ref store) = state.session_store {
+                                   if let Some(ref store) = state.agents.store {
                                        if let Err(e) = store
                                            .append_message(&AppendMessageParams {
                                                session_id: &session_id,
@@ -2471,7 +2289,7 @@ async fn spawn_agent_inner(
 
             // Send response event
                                    info!("DEBUG: Agent {} sending AgentResponse for session {} (conversation: {})", agent_id, session_id, conversation_id);
-                                   let _ = state.event_tx.send(GatewayEvent::AgentResponse {
+                                   let _ = state.events.tx.send(GatewayEvent::AgentResponse {
                                        session_id: session_id.clone(),
                                        agent_id: agent_id.clone(),
                                        content: response_content.clone(),
@@ -2496,15 +2314,15 @@ async fn spawn_agent_inner(
                                        trajectory,
                                        usage: response_usage,
                                    };
-                                   let outbound_result = state.outbound_pipeline.process(outbound_ctx).await;
+                                   let outbound_result = state.pipelines.outbound.process(outbound_ctx).await;
 
             // Apply canvas updates if the pipeline produced any
                                    if let Some(canvas_update) = outbound_result.canvas_update {
-                                       state.canvas_manager.apply_update(&session_id, canvas_update).await;
+                                       state.tools.canvas_manager.apply_update(&session_id, canvas_update).await;
                                    }
 
             // Update status to idle
-                                   let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+                                   let _ = state.events.tx.send(GatewayEvent::AgentStatus {
                                        agent_id: agent_id.clone(),
                                        status: AgentStatus::Idle,
                                    });
@@ -2516,21 +2334,21 @@ async fn spawn_agent_inner(
                                    info!("Agent {} updating configuration", agent_id);
             // Update agent configuration dynamically
                                    {
-                                       let mut agents = state.agents.write().await;
+                                       let mut agents = state.agents.agents.write().await;
                                        if let Some(handle) = agents.get_mut(&agent_id) {
                                            handle.config = new_config.clone();
                                            info!("Agent {} configuration updated", agent_id);
                                        }
                                    }
             // Send status update
-                                   let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+                                   let _ = state.events.tx.send(GatewayEvent::AgentStatus {
                                        agent_id: agent_id.clone(),
                                        status: AgentStatus::Idle,
                                    });
                                }
                                AgentCommand::Shutdown => {
                                    info!("Agent {} shutting down", agent_id);
-                                   let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+                                   let _ = state.events.tx.send(GatewayEvent::AgentStatus {
                                        agent_id: agent_id.clone(),
                                        status: AgentStatus::Shutdown,
                                    });
@@ -2585,7 +2403,7 @@ impl Gateway {
     pub async fn spawn_agent_from_personality(&self, agent_id: &str) -> crate::Result<bool> {
         // Check if agent already exists
         {
-            let agents = self.state.agents.read().await;
+            let agents = self.state.agents.agents.read().await;
             if agents.contains_key(agent_id) {
                 return Ok(false);
             }
@@ -2593,7 +2411,7 @@ impl Gateway {
 
         // Get personality from registry
         let personality = {
-            let registry = self.state.agent_registry.read().await;
+            let registry = self.state.agents.registry.read().await;
             match registry.get(agent_id) {
                 Some(p) => p.clone(),
                 None => {
@@ -2619,7 +2437,7 @@ impl Gateway {
     /// Spawn all discovered agents
     pub async fn spawn_all_discovered_agents(&self) -> crate::Result<usize> {
         let agent_ids: Vec<String> = {
-            let registry = self.state.agent_registry.read().await;
+            let registry = self.state.agents.registry.read().await;
             registry.list()
         };
 
@@ -2651,7 +2469,7 @@ impl Gateway {
         &self,
         ext: Arc<dyn crate::channels::ChannelExtension>,
     ) {
-        let mut registry = self.state.channel_extensions.write().await;
+        let mut registry = self.state.channels.extensions.write().await;
         registry.register(ext.clone());
         info!("Registered channel extension: {}", ext.name());
     }
@@ -2660,7 +2478,7 @@ impl Gateway {
     pub async fn get_or_spawn_agent(&self, agent_id: &str) -> crate::Result<Option<AgentHandle>> {
         // First check if already spawned
         {
-            let agents = self.state.agents.read().await;
+            let agents = self.state.agents.agents.read().await;
             if let Some(handle) = agents.get(agent_id) {
                 return Ok(Some(handle.clone()));
             }
@@ -2670,7 +2488,7 @@ impl Gateway {
         match self.spawn_agent_from_personality(agent_id).await {
             Ok(true) | Ok(false) => {
                 // Now get the spawned agent
-                let agents = self.state.agents.read().await;
+                let agents = self.state.agents.agents.read().await;
                 Ok(agents.get(agent_id).cloned())
             }
             Err(e) => {
@@ -2698,8 +2516,7 @@ impl Gateway {
             }
 
             match self
-                .state
-                .mcp_manager
+                .state.tools.mcp_manager
                 .connect(server_id, server_config.clone())
                 .await
             {
@@ -2719,11 +2536,11 @@ impl Gateway {
                         server_config.max_tools.min(tools.len())
                     };
 
-                    if let Some(client_arc) = self.state.mcp_manager.get_client(server_id).await {
+                    if let Some(client_arc) = self.state.tools.mcp_manager.get_client(server_id).await {
                         for tool in tools.iter().take(max_tools) {
                             let wrapper =
                                 Arc::new(McpToolWrapper::new(client_arc.clone(), server_id, tool));
-                            self.state.tool_registry.register_dynamic(wrapper);
+                            self.state.tools.registry.register_dynamic(wrapper);
                             debug!("  Registered MCP tool: mcp__{}__{}", server_id, tool.name);
                         }
                     }
@@ -2745,7 +2562,7 @@ impl Gateway {
             }
 
             // Check if channel already running
-            if self.state.channels.read().await.contains_key(name) {
+            if self.state.channels.channels.read().await.contains_key(name) {
                 info!("Channel {} already running, skipping", name);
                 continue;
             }
@@ -2791,7 +2608,7 @@ impl Gateway {
 
         for (name, _path) in &available {
             // Skip if a native channel with the same name is already running
-            if self.state.channels.read().await.contains_key(name) {
+            if self.state.channels.channels.read().await.contains_key(name) {
                 info!("Channel '{}' already running as native, skipping plugin", name);
                 continue;
             }
@@ -2801,9 +2618,7 @@ impl Gateway {
                     info!("Loaded WASM channel plugin '{}'", name);
                     // Register in the channel map
                     let channel: Arc<dyn crate::channels::Channel> = plugin.clone();
-                    self.state
-                        .channels
-                        .write()
+                    self.state.channels.channels.write()
                         .await
                         .insert(name.clone(), channel.clone());
 
@@ -2814,7 +2629,7 @@ impl Gateway {
                     }
 
                     // Wire health monitoring
-                    if let Some(ref monitor) = self.state.health_monitor {
+                    if let Some(ref monitor) = self.state.channels.health_monitor {
                         let check_interval = std::time::Duration::from_secs(30);
                         let transport_timeout = std::time::Duration::from_secs(10);
                         monitor.monitor_channel_with_timeout(
@@ -2826,7 +2641,7 @@ impl Gateway {
                     }
 
                     // Record snapshot
-                    if let Some(ref store) = self.state.snapshot_store {
+                    if let Some(ref store) = self.state.channels.snapshot_store {
                         let snap = crate::channels::snapshot::healthy_snapshot(name, None);
                         store.store(snap).await;
                     }
@@ -2949,14 +2764,14 @@ impl Gateway {
         }
 
         // Record a healthy snapshot after successful channel initialization
-        if let Some(ref store) = self.state.snapshot_store {
+        if let Some(ref store) = self.state.channels.snapshot_store {
             let snap = healthy_snapshot(name, None);
             store.store(snap).await;
         }
 
         // Start health monitoring if configured
-        if let Some(ref monitor) = self.state.health_monitor {
-            let channels = self.state.channels.read().await;
+        if let Some(ref monitor) = self.state.channels.health_monitor {
+            let channels = self.state.channels.channels.read().await;
             if let Some(channel) = channels.get(name).cloned() {
                 drop(channels);
                 let check_interval = std::time::Duration::from_secs(30);
@@ -2988,15 +2803,14 @@ impl Gateway {
             );
 
             // Set channel default so the router knows which agent to use for Telegram
-            self.state
-                .agent_router
+            self.state.agents.router
                 .set_channel_default(name, agent_name.to_string(), None)
                 .await;
 
             // Create the channel extension
             let ext = Arc::new(crate::channels::TelegramChannelExtension::new(
                 channel.clone(),
-                self.state.session_channels.clone(),
+                self.state.channels.session_channels.clone(),
             ));
 
             // Create inbound channel: extension -> inbound pipeline
@@ -3011,17 +2825,12 @@ impl Gateway {
                 }
             });
 
-            // Bridge inbound messages into the pipeline
+            // Bridge inbound messages into the unified entry channel
             let state_clone = self.state.clone();
             tokio::spawn(async move {
                 while let Some(message) = inbound_rx.recv().await {
-                    if let Some(routed) = state_clone.inbound_pipeline.process(message).await {
-                        info!(
-                            "Telegram message routed through pipeline: agent={}",
-                            routed.agent_id
-                        );
-                    } else {
-                        info!("Telegram message absorbed by pipeline (debounced or suppressed)");
+                    if let Err(e) = state_clone.pipelines.inbound_entry.send(message).await {
+                        warn!("Failed to submit Telegram message to inbound entry: {}", e);
                     }
                 }
             });
@@ -3041,8 +2850,7 @@ impl Gateway {
             // Register a bridge with the reply dispatcher so outbound pipeline
             // messages flow into the extension's run_outbound.
             let bridge = Arc::new(crate::channels::ChannelSenderBridge::new(name, outbound_tx));
-            self.state
-                .reply_dispatcher
+            self.state.channels.reply_dispatcher
                 .register_channel(name, bridge)
                 .await;
 
@@ -3050,9 +2858,7 @@ impl Gateway {
             self.register_channel_extension(ext).await;
 
             // Keep the raw channel in the channels map for direct access
-            self.state
-                .channels
-                .write()
+            self.state.channels.channels.write()
                 .await
                 .insert(name.to_string(), channel);
             info!("✅ Telegram channel '{}' initialized via ChannelExtension", name);
@@ -3074,11 +2880,13 @@ impl Gateway {
 
             let channel = Arc::new(crate::channels::discord::DiscordChannel::new(discord_config));
 
-            // Bridge inbound messages into the pipeline
+            // Bridge inbound messages into the unified entry channel
             let state_clone = self.state.clone();
             tokio::spawn(async move {
                 while let Some(msg) = inbound_rx.recv().await {
-                    state_clone.inbound_pipeline.process(msg).await;
+                    if let Err(e) = state_clone.pipelines.inbound_entry.send(msg).await {
+                        warn!("Failed to submit message to inbound entry: {}", e);
+                    }
                 }
             });
 
@@ -3089,13 +2897,10 @@ impl Gateway {
                     error!("Discord channel {} failed: {}", channel_name, e);
                 }
             });
-            self.state
-                .reply_dispatcher
+            self.state.channels.reply_dispatcher
                 .register_channel(name, channel.clone())
                 .await;
-            self.state
-                .channels
-                .write()
+            self.state.channels.channels.write()
                 .await
                 .insert(name.to_string(), channel);
             info!("✅ Discord channel '{}' initialized", name);
@@ -3120,11 +2925,13 @@ impl Gateway {
 
             let channel = Arc::new(crate::channels::slack::SlackChannel::new(slack_config));
 
-            // Bridge inbound messages into the pipeline
+            // Bridge inbound messages into the unified entry channel
             let state_clone = self.state.clone();
             tokio::spawn(async move {
                 while let Some(msg) = inbound_rx.recv().await {
-                    state_clone.inbound_pipeline.process(msg).await;
+                    if let Err(e) = state_clone.pipelines.inbound_entry.send(msg).await {
+                        warn!("Failed to submit message to inbound entry: {}", e);
+                    }
                 }
             });
 
@@ -3135,13 +2942,10 @@ impl Gateway {
                     error!("Slack channel {} failed: {}", channel_name, e);
                 }
             });
-            self.state
-                .reply_dispatcher
+            self.state.channels.reply_dispatcher
                 .register_channel(name, channel.clone())
                 .await;
-            self.state
-                .channels
-                .write()
+            self.state.channels.channels.write()
                 .await
                 .insert(name.to_string(), channel);
             info!("✅ Slack channel '{}' initialized", name);
@@ -3169,13 +2973,10 @@ impl Gateway {
                     error!("WhatsApp channel {} failed: {}", channel_name, e);
                 }
             });
-            self.state
-                .reply_dispatcher
+            self.state.channels.reply_dispatcher
                 .register_channel(name, channel.clone())
                 .await;
-            self.state
-                .channels
-                .write()
+            self.state.channels.channels.write()
                 .await
                 .insert(name.to_string(), channel);
             info!("✅ WhatsApp channel '{}' initialized", name);
@@ -3204,13 +3005,10 @@ impl Gateway {
                     error!("Feishu channel {} failed: {}", channel_name, e);
                 }
             });
-            self.state
-                .reply_dispatcher
+            self.state.channels.reply_dispatcher
                 .register_channel(name, channel.clone())
                 .await;
-            self.state
-                .channels
-                .write()
+            self.state.channels.channels.write()
                 .await
                 .insert(name.to_string(), channel);
             info!("✅ Feishu channel '{}' initialized (inbound via webhook)", name);
@@ -3236,11 +3034,13 @@ impl Gateway {
 
             let channel = Arc::new(crate::channels::qq::QqChannel::new(qq_config));
 
-            // Bridge inbound messages into the pipeline
+            // Bridge inbound messages into the unified entry channel
             let state_clone = self.state.clone();
             tokio::spawn(async move {
                 while let Some(msg) = inbound_rx.recv().await {
-                    state_clone.inbound_pipeline.process(msg).await;
+                    if let Err(e) = state_clone.pipelines.inbound_entry.send(msg).await {
+                        warn!("Failed to submit message to inbound entry: {}", e);
+                    }
                 }
             });
 
@@ -3251,13 +3051,10 @@ impl Gateway {
                     error!("QQ channel {} failed: {}", channel_name, e);
                 }
             });
-            self.state
-                .reply_dispatcher
+            self.state.channels.reply_dispatcher
                 .register_channel(name, channel.clone())
                 .await;
-            self.state
-                .channels
-                .write()
+            self.state.channels.channels.write()
                 .await
                 .insert(name.to_string(), channel);
             info!("✅ QQ channel '{}' initialized", name);
@@ -3270,35 +3067,24 @@ impl Gateway {
         Ok(())
     }
 
-    /// Process message queue
-    async fn process_message_queue(
+    /// Unified worker that consumes `IncomingMessage`s from `inbound_entry`
+    /// and drives them through the inbound pipeline.
+    ///
+    /// The pipeline forwards `RoutedMessage`s to `routed_tx`; the separate
+    /// `process_routed_messages` worker handles actual agent dispatch.
+    async fn process_inbound_entries(
         state: Arc<GatewayState>,
-        mut rx: mpsc::Receiver<QueuedMessage>,
+        mut rx: mpsc::Receiver<crate::channels::IncomingMessage>,
     ) {
-        while let Some(msg) = rx.recv().await {
-            info!("Processing queued message: {}", msg.id);
-
-            // Centralized access check (blocklist, DM policy, mention, command gate)
-            if let Err(reason) = state
-                .check_incoming_access(&msg.channel, &msg.user_id, &msg.content, &msg.mention)
-                .await
-            {
-                debug!("Message dropped: {}", reason);
-                continue;
+        while let Some(incoming) = rx.recv().await {
+            match state.pipelines.inbound.process(incoming).await {
+                Some(routed) => {
+                    info!("Inbound message routed through pipeline: agent={}", routed.agent_id);
+                }
+                None => {
+                    info!("Inbound message absorbed by pipeline (debounced or suppressed)");
+                }
             }
-
-            // Convert QueuedMessage to IncomingMessage and route through
-            // the inbound pipeline (debounce -> media -> dispatch -> queue -> router).
-            let incoming =
-                crate::channels::IncomingMessage::new(msg.user_id, msg.session_id, msg.content)
-                    .with_provenance(crate::channels::InputProvenance::ExternalUser {
-                        channel: msg.channel,
-                        is_direct: true,
-                    });
-
-            let _ = state.inbound_pipeline.process(incoming).await;
-            // The pipeline forwards RoutedMessage to routed_tx; process_routed_messages
-            // handles the actual agent dispatch.
         }
     }
 
@@ -3326,7 +3112,7 @@ impl Gateway {
             // ── Group session membership check ───────────────────────────────
             {
                 let user_id = &routed.incoming.user_id.0;
-                let groups = state.group_session_manager.read().await;
+                let groups = state.agents.group_manager.read().await;
                 if let Some(group) = groups.get_group(&session_id) {
                     let group = group.read().await;
                     if !group.is_member(user_id) {
@@ -3352,7 +3138,7 @@ impl Gateway {
                 crate::inbound::QueueMode::Interrupt => {
                     // Clear any buffered messages for this session
                     {
-                        let mut buffers = state.session_message_buffer.write().await;
+                        let mut buffers = state.agents.message_buffer.write().await;
                         buffers.remove(&session_id);
                     }
                     Self::send_to_agent(
@@ -3369,7 +3155,7 @@ impl Gateway {
                 crate::inbound::QueueMode::Steer => {
                     // Send Cancel to agent (best-effort), then send the steer message
                     {
-                        let agents = state.agents.read().await;
+                        let agents = state.agents.agents.read().await;
                         if let Some(agent) = agents.get(&agent_id) {
                             let _ = agent.tx.send(AgentCommand::Cancel).await;
                         }
@@ -3390,7 +3176,7 @@ impl Gateway {
                 crate::inbound::QueueMode::FollowUp => {
                     // Buffer message; flush after a delay if no more arrive
                     let should_flush = {
-                        let mut buffers = state.session_message_buffer.write().await;
+                        let mut buffers = state.agents.message_buffer.write().await;
                         let buffer = buffers.entry(session_id.clone()).or_default();
                         buffer.push(BufferedMessage {
                             content: routed.incoming.content.clone(),
@@ -3422,7 +3208,7 @@ impl Gateway {
                 crate::inbound::QueueMode::Collect => {
                     // /done trigger: flush the buffer
                     let has_buffered = {
-                        let buffers = state.session_message_buffer.read().await;
+                        let buffers = state.agents.message_buffer.read().await;
                         buffers
                             .get(&session_id)
                             .map(|b| !b.is_empty())
@@ -3463,7 +3249,7 @@ impl Gateway {
     /// Flush buffered messages for a session and send as a single batch.
     async fn flush_session_buffer(state: &Arc<GatewayState>, agent_id: &str, session_id: &str) {
         let messages: Vec<BufferedMessage> = {
-            let mut buffers = state.session_message_buffer.write().await;
+            let mut buffers = state.agents.message_buffer.write().await;
             buffers.remove(session_id).unwrap_or_default()
         };
 
@@ -3540,7 +3326,7 @@ impl Gateway {
         user_id: &str,
         channel: &str,
     ) {
-        let agents = state.agents.read().await;
+        let agents = state.agents.agents.read().await;
         let agent_handle = match agents.get(agent_id) {
             Some(h) => h.clone(),
             None => {
@@ -3552,7 +3338,7 @@ impl Gateway {
 
         // Apply thinking config from runtime settings
         let think_level = {
-            let s = state.runtime_settings.read().await;
+            let s = state.infra.runtime_settings.read().await;
             s.get("think.level")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
@@ -3571,13 +3357,13 @@ impl Gateway {
 
         // Check queue mode and apply interrupt behavior if needed
         let queue_mode = {
-            let s = state.runtime_settings.read().await;
+            let s = state.infra.runtime_settings.read().await;
             s.get("queue.mode")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
         };
         if queue_mode.as_deref() == Some("interrupt") {
-            state.acp.cancel(session_id.to_string()).await;
+            state.agents.acp.cancel(session_id.to_string()).await;
         }
 
         let incoming_msg = crate::channels::IncomingMessage::new(
@@ -3591,7 +3377,7 @@ impl Gateway {
         });
 
         // Broadcast processing status
-        let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+        let _ = state.events.tx.send(GatewayEvent::AgentStatus {
             agent_id: agent_id.to_string(),
             status: AgentStatus::Processing {
                 session_id: session_id.to_string(),
@@ -3599,8 +3385,8 @@ impl Gateway {
         });
 
         // Build progress callback that forwards events to gateway subscribers
-        let event_tx = state.event_tx.clone();
-        let runtime_settings = state.runtime_settings.clone();
+        let event_tx = state.events.tx.clone();
+        let runtime_settings = state.infra.runtime_settings.clone();
         let progress_session = session_id.to_string();
         let progress_agent = agent_id.to_string();
         let progress_channel = channel.to_string();
@@ -3712,15 +3498,14 @@ impl Gateway {
         });
 
         // Route through ACP for serialized execution
-        match state
-            .acp
+        match state.agents.acp
             .execute_session_with_progress(agent_handle.agent.clone(), incoming_msg, progress_cb)
             .await
         {
             Ok(mut outgoing) => {
                 // Apply reasoning visibility filter
                 let reasoning_vis = {
-                    let s = state.runtime_settings.read().await;
+                    let s = state.infra.runtime_settings.read().await;
                     s.get("reasoning.visibility")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
@@ -3731,7 +3516,7 @@ impl Gateway {
 
                 // Accumulate usage statistics
                 if let Some(ref usage) = outgoing.usage {
-                    let mut settings = state.runtime_settings.write().await;
+                    let mut settings = state.infra.runtime_settings.write().await;
                     let current_tokens = settings
                         .get("usage.tokens")
                         .and_then(|v| v.as_u64())
@@ -3760,7 +3545,7 @@ impl Gateway {
                 let run_id = uuid::Uuid::new_v4().to_string();
 
                 // Save assistant response to persistent session history
-                if let Some(ref store) = state.session_store {
+                if let Some(ref store) = state.agents.store {
                     let reasoning = outgoing.reasoning_content.as_deref();
                     let tool_calls_json = outgoing
                         .tool_calls
@@ -3790,7 +3575,7 @@ impl Gateway {
                                 warn!("Failed to save session name: {}", e);
                             } else {
                                 info!("Session {} auto-named: '{}'", session_id, name);
-                                let _ = state.event_tx.send(GatewayEvent::SessionRenamed {
+                                let _ = state.events.tx.send(GatewayEvent::SessionRenamed {
                                     session_id: session_id.to_string(),
                                     name: name.clone(),
                                 });
@@ -3798,7 +3583,7 @@ impl Gateway {
                         }
                     }
                 }
-                let _ = state.event_tx.send(GatewayEvent::AgentResponse {
+                let _ = state.events.tx.send(GatewayEvent::AgentResponse {
                     session_id: session_id.to_string(),
                     agent_id: agent_id.to_string(),
                     content: outgoing.content,
@@ -3809,7 +3594,7 @@ impl Gateway {
             }
             Err(e) => {
                 error!("ACP execution failed for agent {} session {}: {}", agent_id, session_id, e);
-                let _ = state.event_tx.send(GatewayEvent::ProcessingError {
+                let _ = state.events.tx.send(GatewayEvent::ProcessingError {
                     session_id: session_id.to_string(),
                     agent_id: agent_id.to_string(),
                     message: format!("Execution failed: {}", e),
@@ -3817,7 +3602,7 @@ impl Gateway {
             }
         }
 
-        let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+        let _ = state.events.tx.send(GatewayEvent::AgentStatus {
             agent_id: agent_id.to_string(),
             status: AgentStatus::Idle,
         });
@@ -3878,7 +3663,7 @@ impl Gateway {
 
                     // Get current running channels
                     let current_channels: Vec<String> = {
-                        let channels = state.channels.read().await;
+                        let channels = state.channels.channels.read().await;
                         channels.keys().cloned().collect()
                     };
 
@@ -3899,7 +3684,7 @@ impl Gateway {
                         if should_stop {
                             // Remove channel from state (channel will be dropped, should clean up itself)
                             let removed = {
-                                let mut channels = state.channels.write().await;
+                                let mut channels = state.channels.channels.write().await;
                                 channels.remove(name).is_some()
                             };
                             if removed {
@@ -3915,7 +3700,7 @@ impl Gateway {
                         }
 
                         let existing = {
-                            let channels = state.channels.read().await;
+                            let channels = state.channels.channels.read().await;
                             channels.get(name).cloned()
                         };
 
@@ -3937,7 +3722,7 @@ impl Gateway {
 
                                     // Remove old channel
                                     {
-                                        let mut channels = state.channels.write().await;
+                                        let mut channels = state.channels.channels.write().await;
                                         channels.remove(name);
                                     }
 
@@ -4014,7 +3799,7 @@ impl Gateway {
                         };
 
                         // Send UpdateConfig to the running agent if it exists
-                        let agents = state.agents.read().await;
+                        let agents = state.agents.agents.read().await;
                         if let Some(handle) = agents.get(&agent_name) {
                             match handle.tx.send(AgentCommand::UpdateConfig(new_config)).await {
                                 Ok(_) => {
@@ -4075,7 +3860,7 @@ impl Gateway {
                         };
 
                         if !new_channel_config.enabled {
-                            let mut channels = state.channels.write().await;
+                            let mut channels = state.channels.channels.write().await;
                             if channels.remove(&channel_name).is_some() {
                                 info!("✅ Stopped disabled channel '{}'", channel_name);
                             }
@@ -4084,7 +3869,7 @@ impl Gateway {
 
                         // Stop existing channel
                         {
-                            let mut channels = state.channels.write().await;
+                            let mut channels = state.channels.channels.write().await;
                             channels.remove(&channel_name);
                         }
 
@@ -4134,7 +3919,7 @@ impl Gateway {
                         }
 
  // Try state-preserving reload first
-                        match state.plugin_manager.reload_plugin(&plugin_id).await {
+                        match state.infra.plugin_manager.reload_plugin(&plugin_id).await {
                             Ok(reloaded_id) => {
                                 info!("✅ Reloaded plugin '{}' (preserved state)", reloaded_id);
                             }
@@ -4143,9 +3928,9 @@ impl Gateway {
                                     "State-preserving reload failed for '{}', falling back to unload+load: {}",
                                     plugin_id, e
                                 );
-                                match state.plugin_manager.unload_plugin(&plugin_id).await {
+                                match state.infra.plugin_manager.unload_plugin(&plugin_id).await {
                                     Ok(true) => {
-                                        match state.plugin_manager.load_plugin(&plugin_dir).await
+                                        match state.infra.plugin_manager.load_plugin(&plugin_dir).await
                                         {
                                             Ok(loaded_id) => {
                                                 info!(
@@ -4162,7 +3947,7 @@ impl Gateway {
                                         }
                                     }
                                     Ok(false) => {
-                                        match state.plugin_manager.load_plugin(&plugin_dir).await
+                                        match state.infra.plugin_manager.load_plugin(&plugin_dir).await
                                         {
                                             Ok(loaded_id) => {
                                                 info!(
@@ -4237,8 +4022,7 @@ impl Gateway {
 
                         if !changes.is_empty() {
                             let details = serde_json::to_value(&changes).unwrap_or_default();
-                            state
-                                .audit_log
+                            state.auth.audit_log
                                 .log(
                                     crate::security::runtime_audit::AuditEventType::ConfigChange,
                                     "file_watcher",
@@ -4515,9 +4299,7 @@ async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
     const COOLDOWN_SECS: i64 = 30;
 
     let dead: Vec<(String, AgentConfig)> = {
-        state
-            .agents
-            .read()
+        state.agents.agents.read()
             .await
             .iter()
             .filter(|(_, h)| h.tx.is_closed())
@@ -4532,7 +4314,7 @@ async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
         let key = format!("agent:{}", agent_id);
 
         let should_restart = {
-            let mut records = state.repair_state.records.write().await;
+            let mut records = state.agents.repair_state.records.write().await;
             let rec = records
                 .entry(key.clone())
                 .or_insert_with(|| RepairRecord::new(&key));
@@ -4553,18 +4335,18 @@ async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
         }
 
         warn!("Agent {} tx closed — attempting restart", agent_id);
-        state.agents.write().await.remove(&agent_id);
+        state.agents.agents.write().await.remove(&agent_id);
 
         match spawn_agent_inner(state.clone(), agent_id.clone(), config).await {
             Ok(()) => {
-                let mut records = state.repair_state.records.write().await;
+                let mut records = state.agents.repair_state.records.write().await;
                 let rec = records
                     .entry(key)
                     .or_insert_with(|| RepairRecord::new(&agent_id));
                 rec.restart_count += 1;
                 rec.last_restart_at = Some(chrono::Utc::now());
                 info!("Agent {} restarted (attempt {})", agent_id, rec.restart_count);
-                let _ = state.event_tx.send(GatewayEvent::RepairAction {
+                let _ = state.events.tx.send(GatewayEvent::RepairAction {
                     kind: "agent".into(),
                     target_id: agent_id,
                     description: format!(
@@ -4576,7 +4358,7 @@ async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
             }
             Err(e) => {
                 error!("Failed to restart agent {}: {}", agent_id, e);
-                let mut records = state.repair_state.records.write().await;
+                let mut records = state.agents.repair_state.records.write().await;
                 let rec = records
                     .entry(key)
                     .or_insert_with(|| RepairRecord::new(&agent_id));
@@ -4592,9 +4374,7 @@ async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
     const MAX_RESTARTS: u32 = 5;
     const COOLDOWN_SECS: i64 = 30;
 
-    let channels: Vec<(String, Arc<dyn Channel>)> = state
-        .channels
-        .read()
+    let channels: Vec<(String, Arc<dyn Channel>)> = state.channels.channels.read()
         .await
         .iter()
         .map(|(n, c)| (n.clone(), c.clone()))
@@ -4614,7 +4394,7 @@ async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
 
         let key = format!("channel:{}", name);
         let should_restart = {
-            let mut records = state.repair_state.records.write().await;
+            let mut records = state.agents.repair_state.records.write().await;
             let rec = records
                 .entry(key.clone())
                 .or_insert_with(|| RepairRecord::new(&key));
@@ -4637,14 +4417,14 @@ async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
         warn!("Channel {} unhealthy — calling start()", name);
         match channel.start().await {
             Ok(()) => {
-                let mut records = state.repair_state.records.write().await;
+                let mut records = state.agents.repair_state.records.write().await;
                 let rec = records
                     .entry(key)
                     .or_insert_with(|| RepairRecord::new(&name));
                 rec.restart_count += 1;
                 rec.last_restart_at = Some(chrono::Utc::now());
                 info!("Channel {} restarted (attempt {})", name, rec.restart_count);
-                let _ = state.event_tx.send(GatewayEvent::RepairAction {
+                let _ = state.events.tx.send(GatewayEvent::RepairAction {
                     kind: "channel".into(),
                     target_id: name,
                     description: format!(
@@ -4656,7 +4436,7 @@ async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
             }
             Err(e) => {
                 error!("Failed to restart channel {}: {}", name, e);
-                let mut records = state.repair_state.records.write().await;
+                let mut records = state.agents.repair_state.records.write().await;
                 let rec = records
                     .entry(key)
                     .or_insert_with(|| RepairRecord::new(&name));
@@ -4670,8 +4450,7 @@ async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
 /// Gateway-level self-repair loop — runs every 60 seconds, checks agents and channels.
 async fn run_repair_loop(state: Arc<GatewayState>) {
     use std::sync::atomic::Ordering;
-    state
-        .repair_state
+    state.agents.repair_state
         .loop_running
         .store(true, Ordering::Relaxed);
 
@@ -4680,7 +4459,7 @@ async fn run_repair_loop(state: Arc<GatewayState>) {
 
     loop {
         ticker.tick().await;
-        *state.repair_state.last_cycle_at.write().await = Some(chrono::Utc::now());
+        *state.agents.repair_state.last_cycle_at.write().await = Some(chrono::Utc::now());
         run_agent_watchdog_cycle(&state).await;
         run_channel_watchdog_cycle(&state).await;
     }
