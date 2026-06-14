@@ -81,6 +81,26 @@ impl std::fmt::Display for SecretSource {
     }
 }
 
+/// A cached value with an expiration time.
+#[derive(Debug, Clone)]
+struct CachedValue<T> {
+    value: T,
+    expires_at: Instant,
+}
+
+impl<T> CachedValue<T> {
+    fn new(value: T, ttl: Duration) -> Self {
+        Self {
+            value,
+            expires_at: Instant::now() + ttl,
+        }
+    }
+
+    fn is_expired(&self) -> bool {
+        Instant::now() >= self.expires_at
+    }
+}
+
 /// Secret reference - can be a raw string or a secret reference
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -247,6 +267,12 @@ pub struct SecretResolver {
     degraded_mode: bool,
     /// Whether hot-reload is enabled
     hot_reload: bool,
+    /// Cache TTL for per-provider payloads and per-reference results.
+    cache_ttl: Duration,
+    /// Per-provider payload cache (env value, file content, exec output).
+    provider_payload_cache: Arc<RwLock<HashMap<String, CachedValue<String>>>>,
+    /// Per-reference result cache.
+    ref_result_cache: Arc<RwLock<HashMap<String, CachedValue<String>>>>,
 }
 
 impl SecretResolver {
@@ -257,6 +283,9 @@ impl SecretResolver {
             snapshot: Arc::new(RwLock::new(SecretsSnapshot::new(default_ttl))),
             degraded_mode: false,
             hot_reload: false,
+            cache_ttl: default_ttl,
+            provider_payload_cache: Arc::new(RwLock::new(HashMap::new())),
+            ref_result_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -275,8 +304,58 @@ impl SecretResolver {
         self.hot_reload = enabled;
     }
 
+    /// Set the TTL used for the per-provider payload and per-reference caches.
+    pub fn set_cache_ttl(&mut self, ttl: Duration) {
+        self.cache_ttl = ttl;
+    }
+
+    /// Get the current cache TTL.
+    pub fn cache_ttl(&self) -> Duration {
+        self.cache_ttl
+    }
+
     /// Resolve a secret reference to its value
     pub async fn resolve(&self, reference: &SecretRef) -> Result<String> {
+        // Stable cache key derived from the reference itself.
+        if let Ok(cache_key) = serde_json::to_string(reference) {
+            {
+                let cache = self.ref_result_cache.read().await;
+                if let Some(entry) = cache.get(&cache_key) {
+                    if !entry.is_expired() {
+                        debug!("Returning cached resolved secret");
+                        return Ok(entry.value.clone());
+                    }
+                }
+            }
+
+            let result = match reference {
+                SecretRef::String(s) => self.resolve_string(s).await,
+                SecretRef::Explicit { env, file, exec } => {
+                    if let Some(var) = env {
+                        self.resolve_env(var).await
+                    } else if let Some(path) = file {
+                        self.resolve_file(path).await
+                    } else if let Some(cmd) = exec {
+                        self.resolve_exec(cmd).await
+                    } else {
+                        Err(ConfigError::InvalidValue {
+                            key: "secret".to_string(),
+                            message: "Empty secret reference - no source specified".to_string(),
+                        }
+                        .into())
+                    }
+                }
+            };
+
+            if let Ok(value) = &result {
+                let mut cache = self.ref_result_cache.write().await;
+                cache.insert(cache_key, CachedValue::new(value.clone(), self.cache_ttl));
+            }
+
+            return result;
+        }
+
+        // Fallback if the reference cannot be serialized for caching.
         match reference {
             SecretRef::String(s) => self.resolve_string(s).await,
             SecretRef::Explicit { env, file, exec } => {
@@ -313,11 +392,24 @@ impl SecretResolver {
     async fn resolve_env(&self, var: &str) -> Result<String> {
         debug!("Resolving secret from env: {}", var);
 
+        let cache_key = format!("env:{}", var);
+        {
+            let cache = self.provider_payload_cache.read().await;
+            if let Some(entry) = cache.get(&cache_key) {
+                if !entry.is_expired() {
+                    debug!("Returning cached env payload for {}", var);
+                    return Ok(entry.value.clone());
+                }
+            }
+        }
+
         match std::env::var(var) {
             Ok(value) => {
                 if value.is_empty() {
                     warn!("Environment variable {} is set but empty", var);
                 }
+                let mut cache = self.provider_payload_cache.write().await;
+                cache.insert(cache_key, CachedValue::new(value.clone(), self.cache_ttl));
                 Ok(value)
             }
             Err(_) => {
@@ -339,6 +431,17 @@ impl SecretResolver {
     async fn resolve_file(&self, path: &Path) -> Result<String> {
         debug!("Resolving secret from file: {}", path.display());
 
+        let cache_key = format!("file:{}", path.display());
+        {
+            let cache = self.provider_payload_cache.read().await;
+            if let Some(entry) = cache.get(&cache_key) {
+                if !entry.is_expired() {
+                    debug!("Returning cached file payload for {}", path.display());
+                    return Ok(entry.value.clone());
+                }
+            }
+        }
+
         // For async file operations in tokio
         let path = path.to_path_buf();
         let content = tokio::task::spawn_blocking(move || {
@@ -348,12 +451,26 @@ impl SecretResolver {
         .map_err(|e| crate::error::SyscityError::Internal(format!("Task join error: {}", e)))??;
 
         // Trim whitespace (including newlines) from file content
-        Ok(content.trim().to_string())
+        let content = content.trim().to_string();
+        let mut cache = self.provider_payload_cache.write().await;
+        cache.insert(cache_key, CachedValue::new(content.clone(), self.cache_ttl));
+        Ok(content)
     }
 
     /// Resolve from external command
     async fn resolve_exec(&self, command: &str) -> Result<String> {
         debug!("Resolving secret from exec: {}", command);
+
+        let cache_key = format!("exec:{}", command);
+        {
+            let cache = self.provider_payload_cache.read().await;
+            if let Some(entry) = cache.get(&cache_key) {
+                if !entry.is_expired() {
+                    debug!("Returning cached exec payload for {}", command);
+                    return Ok(entry.value.clone());
+                }
+            }
+        }
 
         // Parse command and args
         let parts: Vec<&str> = command.split_whitespace().collect();
@@ -392,7 +509,51 @@ impl SecretResolver {
             message: format!("Invalid UTF-8 in command output: {}", e),
         })?;
 
-        Ok(stdout.trim().to_string())
+        let content = stdout.trim().to_string();
+        let mut cache = self.provider_payload_cache.write().await;
+        cache.insert(cache_key, CachedValue::new(content.clone(), self.cache_ttl));
+        Ok(content)
+    }
+
+    /// Refresh all caches, forcing the next resolutions to re-read their
+    /// sources. The runtime snapshot is left intact so degraded-mode fallback
+    /// values remain available until a new snapshot is built.
+    pub async fn refresh(&self) {
+        self.provider_payload_cache.write().await.clear();
+        self.ref_result_cache.write().await.clear();
+        debug!("Secret caches refreshed");
+    }
+
+    /// Refresh a specific secret reference, clearing both its per-reference
+    /// cache entry and the underlying provider payload cache entries.
+    pub async fn refresh_reference(&self, reference: &SecretRef) {
+        if let Ok(cache_key) = serde_json::to_string(reference) {
+            self.ref_result_cache.write().await.remove(&cache_key);
+        }
+
+        let mut provider_cache = self.provider_payload_cache.write().await;
+        match reference {
+            SecretRef::String(s) if s.starts_with('$') => {
+                let var = s
+                    .strip_prefix('$')
+                    .unwrap_or(s)
+                    .trim_start_matches('{')
+                    .trim_end_matches('}');
+                provider_cache.remove(&format!("env:{}", var));
+            }
+            SecretRef::Explicit { env, file, exec } => {
+                if let Some(var) = env {
+                    provider_cache.remove(&format!("env:{}", var));
+                }
+                if let Some(path) = file {
+                    provider_cache.remove(&format!("file:{}", path.display()));
+                }
+                if let Some(cmd) = exec {
+                    provider_cache.remove(&format!("exec:{}", cmd));
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Build a snapshot of resolved secrets from a configuration
@@ -643,23 +804,134 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_snapshot_operations() {
-        let mut snapshot = SecretsSnapshot::new(Duration::from_secs(3600));
+    async fn test_per_ref_cache_env() {
+        let var = "TEST_PER_REF_CACHE_ENV";
+        env::set_var(var, "old_value");
 
-        // Insert a secret
-        snapshot.insert(
-            "test_key",
-            ResolvedSecret {
-                value: "test_value".to_string(),
-                source: SecretSource::Env("TEST_ENV".to_string()),
-                resolved_at: Instant::now(),
-                ttl: Some(Duration::from_secs(3600)),
-            },
+        let mut resolver = SecretResolver::new(Duration::from_secs(3600));
+        resolver.set_cache_ttl(Duration::from_secs(3600));
+        let reference = SecretRef::from_env(var);
+
+        let first = resolver.resolve(&reference).await.unwrap();
+        assert_eq!(first, "old_value");
+
+        env::set_var(var, "new_value");
+        let second = resolver.resolve(&reference).await.unwrap();
+        assert_eq!(second, "old_value", "per-reference cache should return old value");
+
+        resolver.refresh().await;
+        let third = resolver.resolve(&reference).await.unwrap();
+        assert_eq!(third, "new_value", "after refresh the new value should be read");
+
+        env::remove_var(var);
+    }
+
+    #[tokio::test]
+    async fn test_provider_payload_cache_env() {
+        let var = "TEST_PROVIDER_PAYLOAD_CACHE_ENV";
+        env::set_var(var, "old_value");
+
+        let mut resolver = SecretResolver::new(Duration::from_secs(3600));
+        resolver.set_cache_ttl(Duration::from_secs(3600));
+
+        let shorthand = SecretRef::String(format!("${}", var));
+        let explicit = SecretRef::from_env(var);
+
+        let first = resolver.resolve(&shorthand).await.unwrap();
+        assert_eq!(first, "old_value");
+
+        env::set_var(var, "new_value");
+        let second = resolver.resolve(&explicit).await.unwrap();
+        assert_eq!(
+            second, "old_value",
+            "provider payload cache should be shared between references"
         );
 
-        assert_eq!(snapshot.len(), 1);
-        assert!(!snapshot.is_empty());
-        assert_eq!(snapshot.get("test_key"), Some("test_value"));
-        assert_eq!(snapshot.get("nonexistent"), None);
+        resolver.refresh_reference(&explicit).await;
+        let third = resolver.resolve(&explicit).await.unwrap();
+        assert_eq!(third, "new_value");
+
+        env::remove_var(var);
+    }
+
+    #[tokio::test]
+    async fn test_file_cache() {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_secret_cache_file.txt");
+        std::fs::write(&path, "old_file_secret\n").unwrap();
+
+        let mut resolver = SecretResolver::new(Duration::from_secs(3600));
+        resolver.set_cache_ttl(Duration::from_secs(3600));
+        let reference = SecretRef::from_file(&path);
+
+        let first = resolver.resolve(&reference).await.unwrap();
+        assert_eq!(first, "old_file_secret");
+
+        std::fs::write(&path, "new_file_secret\n").unwrap();
+        let second = resolver.resolve(&reference).await.unwrap();
+        assert_eq!(second, "old_file_secret", "file content should be cached");
+
+        resolver.refresh().await;
+        let third = resolver.resolve(&reference).await.unwrap();
+        assert_eq!(third, "new_file_secret");
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_exec_cache() {
+        let var = "TEST_EXEC_CACHE_VAR";
+        env::set_var(var, "old_exec_secret");
+
+        let mut resolver = SecretResolver::new(Duration::from_secs(3600));
+        resolver.set_cache_ttl(Duration::from_secs(3600));
+        let reference = SecretRef::from_exec(format!("printenv {}", var));
+
+        let first = resolver.resolve(&reference).await.unwrap();
+        assert_eq!(first, "old_exec_secret");
+
+        env::set_var(var, "new_exec_secret");
+        let second = resolver.resolve(&reference).await.unwrap();
+        assert_eq!(second, "old_exec_secret", "exec output should be cached");
+
+        resolver.refresh().await;
+        let third = resolver.resolve(&reference).await.unwrap();
+        assert_eq!(third, "new_exec_secret");
+
+        env::remove_var(var);
+    }
+
+    #[tokio::test]
+    async fn test_refresh_reference_is_selective() {
+        let var_a = "TEST_REFRESH_SELECTIVE_A";
+        let var_b = "TEST_REFRESH_SELECTIVE_B";
+        env::set_var(var_a, "old_a");
+        env::set_var(var_b, "old_b");
+
+        let mut resolver = SecretResolver::new(Duration::from_secs(3600));
+        resolver.set_cache_ttl(Duration::from_secs(3600));
+        let ref_a = SecretRef::from_env(var_a);
+        let ref_b = SecretRef::from_env(var_b);
+
+        assert_eq!(resolver.resolve(&ref_a).await.unwrap(), "old_a");
+        assert_eq!(resolver.resolve(&ref_b).await.unwrap(), "old_b");
+
+        env::set_var(var_a, "new_a");
+        env::set_var(var_b, "new_b");
+
+        resolver.refresh_reference(&ref_a).await;
+        assert_eq!(resolver.resolve(&ref_a).await.unwrap(), "new_a");
+        assert_eq!(resolver.resolve(&ref_b).await.unwrap(), "old_b");
+
+        env::remove_var(var_a);
+        env::remove_var(var_b);
+    }
+
+    #[test]
+    fn test_cache_ttl_accessor() {
+        let mut resolver = SecretResolver::new(Duration::from_secs(60));
+        assert_eq!(resolver.cache_ttl(), Duration::from_secs(60));
+        resolver.set_cache_ttl(Duration::from_secs(120));
+        assert_eq!(resolver.cache_ttl(), Duration::from_secs(120));
     }
 }
