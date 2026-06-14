@@ -18,6 +18,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
+use crate::gateway::rate_limit::{AuthScope, MultiTierResult, RequestScope};
 use crate::gateway::GatewayState;
 use crate::security::UserId;
 
@@ -83,10 +84,7 @@ fn is_private_ip(addr: IpAddr) -> bool {
 /// - If the direct connection IP is *not* a trusted proxy, ignores forwarded headers.
 /// - Falls back to `ConnectInfo<SocketAddr>` extension (TCP peer address).
 /// - Last resort: `X-Real-IP` header (no proxy verification — best-effort).
-pub fn extract_client_ip_with_trusted(
-    req: &Request,
-    trusted_proxies: &[IpAddr],
-) -> Option<IpAddr> {
+pub fn extract_client_ip_with_trusted(req: &Request, trusted_proxies: &[IpAddr]) -> Option<IpAddr> {
     // Try to get the direct connection IP from ConnectInfo extension
     let direct_ip: Option<IpAddr> = req
         .extensions()
@@ -172,13 +170,20 @@ pub async fn tailscale_auth_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     // If trusted proxy auth already succeeded, the request is authenticated.
-    if req.extensions().get::<crate::security::trusted_proxy::TrustedProxyUser>().is_some() {
+    if req
+        .extensions()
+        .get::<crate::security::trusted_proxy::TrustedProxyUser>()
+        .is_some()
+    {
         return Ok(next.run(req).await);
     }
 
     let (trusted_proxies, allowed_tailnets) = {
         let config = state.config.read().await;
-        (config.security.trusted_proxies.clone(), config.security.allowed_tailnets.clone())
+        (
+            config.security.trusted_proxies.clone(),
+            config.security.allowed_tailnets.clone(),
+        )
     };
 
     let client_ip = extract_client_ip_with_trusted(&req, &trusted_proxies);
@@ -285,7 +290,9 @@ pub async fn trusted_proxy_auth_middleware(
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     "unknown",
-                    &direct_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    &direct_ip
+                        .map(|ip| ip.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
                     false,
                     format!("Trusted proxy authentication rejected: missing header {}", header),
                     Some(serde_json::json!({
@@ -302,7 +309,9 @@ pub async fn trusted_proxy_auth_middleware(
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     "unknown",
-                    &direct_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    &direct_ip
+                        .map(|ip| ip.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
                     false,
                     "Trusted proxy authentication rejected: no user extracted",
                     Some(serde_json::json!({ "path": req.uri().path() })),
@@ -316,7 +325,9 @@ pub async fn trusted_proxy_auth_middleware(
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     &user_id,
-                    &direct_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    &direct_ip
+                        .map(|ip| ip.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
                     false,
                     "Trusted proxy authentication rejected: user not allowed",
                     Some(serde_json::json!({
@@ -380,6 +391,14 @@ pub async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    use crate::security::runtime_audit::AuditEventType;
+
+    let path = req.uri().path().to_string();
+    let client_ip = extract_client_ip(&req);
+    let actor = client_ip
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
     // Check if auth is required
     let auth_required = {
         let config = state.config.read().await;
@@ -398,18 +417,46 @@ pub async fn auth_middleware(
         Some(header_value) => {
             if let Ok(header_str) = header_value.to_str() {
                 if let Some(token) = header_str.strip_prefix("Bearer ") {
-                    // Validate session
+                    // Validate session; AuthManager emits the TokenValidation event.
                     if state.auth_manager.validate_session(token).await.is_some() {
                         debug!("Valid auth token, allowing request");
                         return Ok(next.run(req).await);
                     }
+                    warn!("Invalid or expired auth token");
+                    return Err(StatusCode::UNAUTHORIZED);
                 }
             }
-            warn!("Invalid or expired auth token");
+            warn!("Invalid Authorization header format");
+            state
+                .audit_log
+                .log(
+                    AuditEventType::TokenValidation,
+                    &actor,
+                    &path,
+                    false,
+                    "Bearer token missing or malformed",
+                    Some(serde_json::json!({
+                        "reason": "malformed_header",
+                    })),
+                )
+                .await;
             Err(StatusCode::UNAUTHORIZED)
         }
         None => {
             warn!("Missing Authorization header");
+            state
+                .audit_log
+                .log(
+                    AuditEventType::TokenValidation,
+                    &actor,
+                    &path,
+                    false,
+                    "Authorization header missing",
+                    Some(serde_json::json!({
+                        "reason": "missing_header",
+                    })),
+                )
+                .await;
             Err(StatusCode::UNAUTHORIZED)
         }
     }
@@ -418,22 +465,42 @@ pub async fn auth_middleware(
 /// Middleware: Rate limiting
 ///
 /// Supports both legacy token bucket and multi-tier sliding window rate limiting.
-/// Multi-tier mode checks global, per-user, per-IP, and per-endpoint limits.
-/// Adds X-RateLimit-* headers to responses.
+/// Multi-tier mode checks global, per-user, per-IP, per-endpoint, auth-specific
+/// scopes, control-plane writes, and lockout state. Adds X-RateLimit-* headers
+/// to responses.
 pub async fn rate_limit_middleware(
     State(state): State<Arc<GatewayState>>,
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
     // Check if rate limiting is enabled
-    let (rate_limit_enabled, use_multi_tier) = {
+    let (rate_limit_enabled, use_multi_tier, shared_secret) = {
         let config = state.config.read().await;
-        (config.security.rate_limit.enabled, config.security.rate_limit.multi_tier)
+        (
+            config.security.rate_limit.enabled,
+            config.security.rate_limit.multi_tier,
+            config.security.shared_token.clone(),
+        )
     };
 
     if !rate_limit_enabled {
         return Ok(next.run(req).await);
     }
+
+    let ip = extract_client_ip(&req);
+
+    // Loopback exemption for multi-tier rate limiter.
+    if use_multi_tier && state.multi_tier_rate_limiter.loopback_exempt() && is_localhost_ip(ip) {
+        return Ok(next.run(req).await);
+    }
+
+    // Detect request scope for multi-tier rate limiting.
+    let auth_header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok());
+    let scope =
+        RequestScope::detect(req.method(), req.uri().path(), auth_header, shared_secret.as_deref());
 
     // Get user identifier (from auth token if available, else IP)
     let user_id = {
@@ -467,12 +534,11 @@ pub async fn rate_limit_middleware(
 
     if use_multi_tier {
         // Multi-tier sliding window rate limiting
-        let ip = extract_client_ip(&req);
         let endpoint = req.uri().path().to_string();
 
         let result = state
             .multi_tier_rate_limiter
-            .check(&user_id, ip, &endpoint)
+            .check_scoped(&user_id, ip, &endpoint, &scope)
             .await;
 
         match result {
@@ -575,6 +641,11 @@ pub async fn rate_limit_middleware(
             }
         }
     }
+}
+
+/// Check whether an IP address is localhost.
+fn is_localhost_ip(ip: Option<IpAddr>) -> bool {
+    ip.is_some_and(|ip| ip.is_loopback())
 }
 
 /// Generate a random CSP nonce (16 bytes hex = 32 chars)
