@@ -103,8 +103,136 @@ impl DaemonManager {
 
         Ok(())
     }
+}
 
-    /// Run the daemon in the foreground with Gateway (new architecture)
+/// Apply environment variable overrides for security credentials,
+/// respecting `security.credential_precedence`.
+fn apply_env_security_overrides(config: &mut crate::gateway::GatewayConfig) {
+    use crate::gateway::CredentialPrecedence;
+
+    let precedence = config.security.credential_precedence;
+
+    if let Ok(token) = std::env::var("SYSCITY_SECURITY_SHARED_TOKEN") {
+        let config_empty = config
+            .security
+            .shared_token
+            .as_ref()
+            .map(|s| s.is_empty())
+            .unwrap_or(true);
+
+        match precedence {
+            CredentialPrecedence::EnvFirst => {
+                config.security.shared_token = Some(token);
+            }
+            CredentialPrecedence::ConfigFirst if config_empty => {
+                config.security.shared_token = Some(token);
+            }
+            CredentialPrecedence::ConfigFirst => {}
+        }
+    }
+}
+
+/// Apply environment variable overrides for LLM provider credentials,
+/// respecting `security.credential_precedence`.
+fn apply_env_provider_overrides(config: &mut crate::gateway::GatewayConfig) {
+    use crate::gateway::CredentialPrecedence;
+
+    let precedence = config.security.credential_precedence;
+
+    // SYSCITY_BASE_URL + SYSCITY_API_KEY pair creates a provider.
+    if let (Ok(base_url), Ok(api_key)) =
+        (std::env::var("SYSCITY_BASE_URL"), std::env::var("SYSCITY_API_KEY"))
+    {
+        let is_anthropic = std::env::var("SYSCITY_IS_ANTHROPIC")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false);
+
+        let provider_type = if is_anthropic {
+            crate::model_router::ProviderType::Anthropic
+        } else {
+            crate::model_router::ProviderType::OpenAi
+        };
+
+        let provider_name = std::env::var("SYSCITY_MODEL_PROVIDER").unwrap_or_else(|_| {
+            if is_anthropic {
+                "anthropic".to_string()
+            } else {
+                "openai".to_string()
+            }
+        });
+
+        let should_insert = match precedence {
+            CredentialPrecedence::EnvFirst => true,
+            CredentialPrecedence::ConfigFirst => !config.providers.contains_key(&provider_name),
+        };
+
+        if should_insert {
+            let provider_config = crate::model_router::ProviderConfig {
+                provider_type,
+                api_key,
+                api_keys: Vec::new(),
+                auth_profile: None,
+                oauth: None,
+                base_url: Some(base_url),
+                timeout: std::time::Duration::from_secs(60),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            };
+            config
+                .providers
+                .insert(provider_name.clone(), provider_config);
+            println!("🤖 Configured {} provider from environment", provider_name);
+        }
+    } else if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+        let should_insert = match precedence {
+            CredentialPrecedence::EnvFirst => true,
+            CredentialPrecedence::ConfigFirst => !config.providers.contains_key("anthropic"),
+        };
+
+        if should_insert {
+            let provider_config = crate::model_router::ProviderConfig {
+                provider_type: crate::model_router::ProviderType::Anthropic,
+                api_key,
+                api_keys: Vec::new(),
+                auth_profile: None,
+                oauth: None,
+                base_url: None,
+                timeout: std::time::Duration::from_secs(60),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            };
+            config
+                .providers
+                .insert("anthropic".to_string(), provider_config);
+            println!("🤖 Configured Anthropic provider from ANTHROPIC_API_KEY");
+        }
+    } else if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+        let should_insert = match precedence {
+            CredentialPrecedence::EnvFirst => true,
+            CredentialPrecedence::ConfigFirst => !config.providers.contains_key("openai"),
+        };
+
+        if should_insert {
+            let provider_config = crate::model_router::ProviderConfig {
+                provider_type: crate::model_router::ProviderType::OpenAi,
+                api_key,
+                api_keys: Vec::new(),
+                auth_profile: None,
+                oauth: None,
+                base_url: None,
+                timeout: std::time::Duration::from_secs(60),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            };
+            config
+                .providers
+                .insert("openai".to_string(), provider_config);
+            println!("🤖 Configured OpenAI provider from OPENAI_API_KEY");
+        }
+    }
+}
+
+impl DaemonManager {
     pub async fn run_foreground(&self) -> crate::Result<()> {
         println!("🚀 Syscity daemon running with Gateway...");
 
@@ -137,6 +265,8 @@ pairing_required = false
 auth_mode = "none"
 shared_token = ""
 security_headers = true
+# Credential precedence: "env_first" (env overrides config) or "config_first" (config overrides env)
+# credential_precedence = "env_first"
 
 [security.rate_limit]
 enabled = true
@@ -226,6 +356,9 @@ workspace_only = true
         gateway_config.model_provider = std::env::var("SYSCITY_MODEL_PROVIDER")
             .unwrap_or_else(|_| gateway_config.model_provider.clone());
 
+        // Apply credential precedence for security tokens
+        apply_env_security_overrides(&mut gateway_config);
+
         // Enable features based on environment variables
         // Vector Memory - enabled by default with local GGUF embeddings
         if std::env::var("SYSCITY_VECTOR_MEMORY_ENABLED")
@@ -285,7 +418,8 @@ workspace_only = true
         if self.config.remote_control_port != 22 {
             gateway_config.computer.remote_control.port = self.config.remote_control_port;
         }
-        gateway_config.computer.remote_control.protocol = self.config.remote_control_protocol.clone();
+        gateway_config.computer.remote_control.protocol =
+            self.config.remote_control_protocol.clone();
         if let Some(ref key) = self.config.remote_control_key {
             gateway_config.computer.remote_control.key_path = Some(key.clone());
         }
@@ -296,77 +430,7 @@ workspace_only = true
         }
 
         // Configure LLM Provider from environment variables (legacy support)
-        if let (Ok(base_url), Ok(api_key)) =
-            (std::env::var("SYSCITY_BASE_URL"), std::env::var("SYSCITY_API_KEY"))
-        {
-            let is_anthropic = std::env::var("SYSCITY_IS_ANTHROPIC")
-                .map(|v| v.to_lowercase() == "true" || v == "1")
-                .unwrap_or(false);
-
-            let provider_type = if is_anthropic {
-                crate::model_router::ProviderType::Anthropic
-            } else {
-                crate::model_router::ProviderType::OpenAi
-            };
-
-            let provider_config = crate::model_router::ProviderConfig {
-                provider_type,
-                api_key,
-                api_keys: Vec::new(),
-                auth_profile: None,
-                oauth: None,
-                base_url: Some(base_url),
-                timeout: std::time::Duration::from_secs(60),
-                max_retries: 3,
-                retry_delay_ms: 1000,
-            };
-
-            let provider_name = std::env::var("SYSCITY_MODEL_PROVIDER").unwrap_or_else(|_| {
-                if is_anthropic {
-                    "anthropic".to_string()
-                } else {
-                    "openai".to_string()
-                }
-            });
-            gateway_config
-                .providers
-                .insert(provider_name.clone(), provider_config);
-            println!("🤖 Configured {} provider from environment", provider_name);
-        } else if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-            // Also support direct ANTHROPIC_API_KEY
-            let provider_config = crate::model_router::ProviderConfig {
-                provider_type: crate::model_router::ProviderType::Anthropic,
-                api_key,
-                api_keys: Vec::new(),
-                auth_profile: None,
-                oauth: None,
-                base_url: None,
-                timeout: std::time::Duration::from_secs(60),
-                max_retries: 3,
-                retry_delay_ms: 1000,
-            };
-            gateway_config
-                .providers
-                .insert("anthropic".to_string(), provider_config);
-            println!("🤖 Configured Anthropic provider from ANTHROPIC_API_KEY");
-        } else if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-            // Support OPENAI_API_KEY
-            let provider_config = crate::model_router::ProviderConfig {
-                provider_type: crate::model_router::ProviderType::OpenAi,
-                api_key,
-                api_keys: Vec::new(),
-                auth_profile: None,
-                oauth: None,
-                base_url: None,
-                timeout: std::time::Duration::from_secs(60),
-                max_retries: 3,
-                retry_delay_ms: 1000,
-            };
-            gateway_config
-                .providers
-                .insert("openai".to_string(), provider_config);
-            println!("🤖 Configured OpenAI provider from OPENAI_API_KEY");
-        }
+        apply_env_provider_overrides(&mut gateway_config);
 
         // Write PID file
         let pid = std::process::id();
@@ -590,9 +654,7 @@ workspace_only = true
 }
 
 /// Scan for incomplete plans at startup and optionally resume them.
-async fn run_startup_recovery(
-    gateway: &crate::gateway::Gateway,
-) -> crate::Result<()> {
+async fn run_startup_recovery(gateway: &crate::gateway::Gateway) -> crate::Result<()> {
     let db_path = crate::dirs::syscity_dir().join("planner.db");
     if !db_path.exists() {
         return Ok(());
@@ -648,8 +710,8 @@ async fn run_startup_recovery(
 
         let provider = gateway.model_router().create_default_provider().await?;
 
-        let planner = crate::planner::GoalPlanner::with_provider(adapter, provider)
-            .with_state_store(store);
+        let planner =
+            crate::planner::GoalPlanner::with_provider(adapter, provider).with_state_store(store);
 
         for s in summaries {
             match planner.resume_plan(&s.id).await {
@@ -675,6 +737,7 @@ async fn run_startup_recovery(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_daemon_config_creation() {
@@ -856,5 +919,128 @@ mod tests {
 
         // PID 999999 is extremely unlikely to exist
         assert!(!manager.is_process_running(999999).await);
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_first_overrides_shared_token() {
+        use crate::gateway::{CredentialPrecedence, GatewayConfig};
+
+        std::env::set_var("SYSCITY_SECURITY_SHARED_TOKEN", "env-token");
+        let mut config = GatewayConfig::default();
+        config.security.shared_token = Some("config-token".to_string());
+        config.security.credential_precedence = CredentialPrecedence::EnvFirst;
+
+        apply_env_security_overrides(&mut config);
+
+        assert_eq!(config.security.shared_token.as_deref(), Some("env-token"));
+        std::env::remove_var("SYSCITY_SECURITY_SHARED_TOKEN");
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_first_keeps_shared_token() {
+        use crate::gateway::{CredentialPrecedence, GatewayConfig};
+
+        std::env::set_var("SYSCITY_SECURITY_SHARED_TOKEN", "env-token");
+        let mut config = GatewayConfig::default();
+        config.security.shared_token = Some("config-token".to_string());
+        config.security.credential_precedence = CredentialPrecedence::ConfigFirst;
+
+        apply_env_security_overrides(&mut config);
+
+        assert_eq!(config.security.shared_token.as_deref(), Some("config-token"));
+        std::env::remove_var("SYSCITY_SECURITY_SHARED_TOKEN");
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_first_falls_back_to_env_shared_token() {
+        use crate::gateway::{CredentialPrecedence, GatewayConfig};
+
+        std::env::set_var("SYSCITY_SECURITY_SHARED_TOKEN", "env-token");
+        let mut config = GatewayConfig::default();
+        config.security.shared_token = None;
+        config.security.credential_precedence = CredentialPrecedence::ConfigFirst;
+
+        apply_env_security_overrides(&mut config);
+
+        assert_eq!(config.security.shared_token.as_deref(), Some("env-token"));
+        std::env::remove_var("SYSCITY_SECURITY_SHARED_TOKEN");
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_first_overrides_provider() {
+        use crate::gateway::{CredentialPrecedence, GatewayConfig};
+        use crate::model_router::{ProviderConfig, ProviderType};
+
+        std::env::set_var("OPENAI_API_KEY", "env-openai-key");
+        let mut config = GatewayConfig::default();
+        config.providers.insert(
+            "openai".to_string(),
+            ProviderConfig {
+                provider_type: ProviderType::OpenAi,
+                api_key: "config-openai-key".to_string(),
+                api_keys: Vec::new(),
+                auth_profile: None,
+                oauth: None,
+                base_url: None,
+                timeout: std::time::Duration::from_secs(60),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            },
+        );
+        config.security.credential_precedence = CredentialPrecedence::EnvFirst;
+
+        apply_env_provider_overrides(&mut config);
+
+        assert_eq!(config.providers["openai"].api_key, "env-openai-key");
+        std::env::remove_var("OPENAI_API_KEY");
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_first_keeps_provider() {
+        use crate::gateway::{CredentialPrecedence, GatewayConfig};
+        use crate::model_router::{ProviderConfig, ProviderType};
+
+        std::env::set_var("OPENAI_API_KEY", "env-openai-key");
+        let mut config = GatewayConfig::default();
+        config.providers.insert(
+            "openai".to_string(),
+            ProviderConfig {
+                provider_type: ProviderType::OpenAi,
+                api_key: "config-openai-key".to_string(),
+                api_keys: Vec::new(),
+                auth_profile: None,
+                oauth: None,
+                base_url: None,
+                timeout: std::time::Duration::from_secs(60),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            },
+        );
+        config.security.credential_precedence = CredentialPrecedence::ConfigFirst;
+
+        apply_env_provider_overrides(&mut config);
+
+        assert_eq!(config.providers["openai"].api_key, "config-openai-key");
+        std::env::remove_var("OPENAI_API_KEY");
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_first_adds_missing_provider_from_env() {
+        use crate::gateway::{CredentialPrecedence, GatewayConfig};
+
+        std::env::set_var("ANTHROPIC_API_KEY", "env-anthropic-key");
+        let mut config = GatewayConfig::default();
+        config.security.credential_precedence = CredentialPrecedence::ConfigFirst;
+
+        apply_env_provider_overrides(&mut config);
+
+        assert_eq!(config.providers["anthropic"].api_key, "env-anthropic-key");
+        std::env::remove_var("ANTHROPIC_API_KEY");
     }
 }
