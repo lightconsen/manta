@@ -61,6 +61,7 @@ pub mod command_provider;
 pub mod commands;
 pub mod handlers;
 pub mod hooks;
+pub mod init;
 pub mod middleware;
 pub mod protocol;
 pub mod rate_limit;
@@ -1360,485 +1361,78 @@ impl Gateway {
         let (message_queue_tx, message_queue_rx) = mpsc::channel(1000);
         let (routed_tx, routed_rx) = mpsc::channel(1000);
 
-        // Initialize storage adapter and shared SQLite pool early (needed for session_store → tool_registry)
-        #[allow(clippy::type_complexity)]
-        let (storage, unified_vector_store, sqlite_pool): (
-            Arc<RwLock<dyn crate::adapters::Storage>>,
-            Option<Arc<dyn crate::memory::VectorStore>>,
-            Option<sqlx::SqlitePool>,
-        ) = match config.storage.storage_type.as_str() {
-            "sqlite" => {
-                let db_path = config
-                    .storage
-                    .database_url
-                    .as_ref()
-                    .map(|s| std::path::PathBuf::from(s.strip_prefix("sqlite:").unwrap_or(s)))
-                    .unwrap_or_else(|| crate::dirs::syscity_dir().join("data").join("syscity.db"));
-                if let Some(parent) = db_path.parent() {
-                    tokio::fs::create_dir_all(parent).await.ok();
-                }
-                if !db_path.exists() {
-                    tokio::fs::File::create(&db_path).await.ok();
-                }
-                let db_url = format!("sqlite:///{}", db_path.display());
-                info!("Connecting to SQLite storage at: {}", db_url);
-                let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e| {
-                    crate::error::SyscityError::Storage {
-                        context: "Failed to connect to SQLite".into(),
-                        details: e.to_string(),
-                    }
-                })?;
-                let sqlite_storage = Arc::new(crate::adapters::SqliteStorage::new(pool.clone()));
-                let vector_store: Arc<dyn crate::memory::VectorStore> = sqlite_storage.clone();
-                let storage: Arc<RwLock<dyn crate::adapters::Storage>> =
-                    Arc::new(RwLock::new(crate::adapters::SqliteStorage::new(pool.clone())));
-                (storage, Some(vector_store), Some(pool))
-            }
-            "file" => {
-                let base_path = config.storage.base_path.as_deref().unwrap_or("./data");
-                let storage = Arc::new(RwLock::new(crate::adapters::FileStorage::new(base_path)?));
-                (storage, None, None)
-            }
-            _ => {
-                let storage = Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new()));
-                (storage, None, None)
-            }
-        };
+        // Initialize storage adapter, shared SQLite pool, session store, and audit log
+        let storage_init = init::storage::init_storage(&config).await?;
+        let storage = storage_init.storage;
+        let unified_vector_store = storage_init.unified_vector_store;
+        let sqlite_pool = storage_init.sqlite_pool;
+        let session_store = storage_init.session_store;
+        let audit_log = storage_init.audit_log;
+        let audit_log_dyn = storage_init.audit_log_dyn;
 
-        // Create session_store early so it can be passed to tool registry
-        let session_store: Option<Arc<crate::agent::session_store::SessionStore>> =
-            if let Some(ref pool) = sqlite_pool {
-                match crate::agent::session_store::SessionStore::from_pool(pool.clone()).await {
-                    Ok(store) => {
-                        info!("SessionStore initialized for persistent chat history");
-                        Some(Arc::new(store))
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to initialize SessionStore: {}. Chat history will not persist.",
-                            e
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            };
+        // Initialize ACP control plane and model router
+        let acp = init::agents::init_acp(&config, session_store.clone()).await;
+        let model_router = init::agents::init_model_router(&config).await;
 
-        // Create audit logger early so tool registry can record security events.
-        let audit_log: Arc<crate::security::persistent_audit::PersistentAuditLog> =
-            if let Some(ref pool) = sqlite_pool {
-                Arc::new(crate::security::persistent_audit::PersistentAuditLog::with_pool(
-                    pool.clone(),
-                ))
-            } else {
-                Arc::new(crate::security::persistent_audit::PersistentAuditLog::new())
-            };
-        let audit_log_dyn: Arc<dyn crate::security::runtime_audit::AuditLogger> = audit_log.clone();
+        // Initialize skill manager, agent registry, and session manager
+        let (skills_manager, agent_registry, session_manager) =
+            init::agents::init_agent_state().await?;
 
-        // Create ACP control plane first (needed for tool registration)
-        let acp_max_iter = config.acp.max_iterations;
-        let acp = if let Some(ref store) = session_store {
-            info!("Wiring ACP control plane to SessionStore for persistent subagent sessions");
-            Arc::new(AcpControlPlane::new(acp_max_iter).with_store(store.clone()))
-        } else {
-            if config.storage.storage_type == "sqlite" {
-                warn!(
-                    "Storage type is 'database' but no SessionStore is available; \
-                     ACP subagent sessions will not persist. Check the SQLite pool configuration."
-                );
-            } else {
-                info!(
-                    "ACP control plane running without SessionStore (ephemeral subagent sessions)"
-                );
-            }
-            Arc::new(AcpControlPlane::new(acp_max_iter))
-        };
-        acp.load_persisted_sessions().await;
+        // Initialize tool subsystem (registry, MCP, plugins, channels, computer adapter)
+        let tools_init = init::tools::init_tools(
+            &config,
+            acp.clone(),
+            session_store.clone(),
+            audit_log_dyn.clone(),
+            model_router.clone(),
+        )
+        .await?;
 
-        // Create the shared MCP manager with an internal event channel.
-        let (mcp_event_tx, mut mcp_event_rx) =
-            mpsc::unbounded_channel::<crate::tools::mcp::McpEvent>();
-        let mcp_manager = Arc::new(McpManager::new().with_event_tx(mcp_event_tx).await);
-
-        // Create shared approval queue for human-in-the-loop tool policy enforcement
-        let approval_queue = Arc::new(ApprovalQueue::new());
-
-        // Shared holder for MemoryManager — populated after vector/FTS5 services start.
-        // Wrapped in Arc so MemorySearchTool can observe the late-init value.
-        let memory_manager_holder: Arc<
-            tokio::sync::RwLock<Option<Arc<crate::memory::MemoryManager>>>,
-        > = Arc::new(tokio::sync::RwLock::new(None));
-
-        // Create tool registry with built-in tools (including ACP tools if enabled)
-        let tool_registry = Arc::new(
-            create_default_tool_registry(
-                acp.clone(),
-                mcp_manager.clone(),
-                approval_queue.clone(),
-                session_store.clone(),
-                memory_manager_holder.clone(),
-                config.capabilities.clone(),
-                audit_log_dyn.clone(),
-                Some(Arc::new(crate::security::content_filter::ContentFilter::default())),
-            )
-            .await?,
-        );
-
-        // Initialize computer adapter.
-        // Prefer remote control when configured; otherwise use local platform adapter.
-        let computer_adapter: Option<Arc<dyn crate::computer::ComputerAdapter>> = if config
-            .computer
-            .enabled
-        {
-            if let Some(ref host) = config.computer.remote_control.host {
-                let rc_config = crate::computer::RemoteControlConfig {
-                    host: host.clone(),
-                    user: config
-                        .computer
-                        .remote_control
-                        .user
-                        .clone()
-                        .unwrap_or_else(|| {
-                            std::env::var("USER").unwrap_or_else(|_| "user".to_string())
-                        }),
-                    port: config.computer.remote_control.port,
-                    protocol: match config.computer.remote_control.protocol.as_str() {
-                        "vnc" => crate::computer::RemoteProtocol::Vnc { password: None },
-                        "rdp" => {
-                            crate::computer::RemoteProtocol::Rdp { password: None, domain: None }
-                        }
-                        _ => crate::computer::RemoteProtocol::Ssh {
-                            key_path: config.computer.remote_control.key_path.clone(),
-                        },
-                    },
-                    display: config.computer.remote_control.display.clone(),
-                    ssh_extra_args: config.computer.remote_control.ssh_extra_args.clone(),
-                    connect_timeout: std::time::Duration::from_secs(
-                        config.computer.remote_control.timeout_secs,
-                    ),
-                };
-                match crate::computer::RemoteControlAdapter::new(rc_config, tool_registry.clone())
-                    .await
-                {
-                    Ok(adapter) => {
-                        info!(
-                            "Remote control adapter connected to {} for desktop automation",
-                            host
-                        );
-                        Some(Arc::new(adapter))
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to connect remote control adapter to {}: {}. Falling back to local adapter.",
-                            host, e
-                        );
-                        match crate::computer::create_adapter(tool_registry.clone()).await {
-                            Ok(adapter) => {
-                                info!("Local computer adapter initialized as fallback");
-                                Some(Arc::from(adapter))
-                            }
-                            Err(e) => {
-                                warn!("Failed to initialize local computer adapter: {}", e);
-                                None
-                            }
-                        }
-                    }
-                }
-            } else if crate::computer::has_display_server() {
-                match crate::computer::create_adapter(tool_registry.clone()).await {
-                    Ok(adapter) => {
-                        info!("Computer adapter initialized for desktop automation");
-                        Some(Arc::from(adapter))
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize computer adapter: {}", e);
-                        None
-                    }
-                }
-            } else {
-                warn!(
-                    "No display server detected and no remote_control host configured; desktop automation disabled"
-                );
-                None
-            }
-        } else {
-            None
-        };
-
-        // Initialize plugin manager
-        let plugins_dir = crate::dirs::config_dir().join("plugins");
-        let plugin_manager = {
-            let pm = PluginManager::new(plugins_dir).await?;
-            pm.set_tool_registry(tool_registry.clone()).await;
-            Arc::new(pm)
-        };
-
-        // Create model router config — start empty, no hard-coded aliases.
-        let mut model_router_config = crate::model_router::ModelRouterConfig::default();
-
-        // If providers are configured (env vars or syscity.toml), create a
-        // default alias from the first provider so the gateway is usable
-        // immediately without requiring a UI round-trip.
-        if let Some(first_provider) = config.providers.keys().next() {
-            let alias = crate::model_router::ModelAlias {
-                name: "default".to_string(),
-                provider: first_provider.clone(),
-                model: config.model.clone(),
-                temperature: None,
-                max_tokens: None,
-            };
-            model_router_config
-                .aliases
-                .insert("default".to_string(), alias);
-            model_router_config.default_model = "default".to_string();
-        }
-
-        // Create and initialize model router early so it can be shared
-        let model_router = Arc::new(crate::model_router::ModelRouter::new(model_router_config));
-        for (name, provider_config) in &config.providers {
-            info!("Configuring provider: {}", name);
-            if let Err(e) = model_router
-                .add_provider(name, provider_config.clone())
-                .await
-            {
-                warn!("Failed to add provider '{}': {}", name, e);
-            }
-        }
-
-        // Wire plugin manager to register plugin-backed providers with the model router
-        {
-            let mr_register = model_router.clone();
-            let mr_unregister = model_router.clone();
-            plugin_manager
-                .set_provider_callbacks(
-                    Arc::new(move |name: String, provider: Arc<dyn crate::providers::Provider + Send + Sync>| {
-                        let mr = mr_register.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = mr.add_provider_instance(&name, provider).await {
-                                warn!("Failed to register plugin provider '{}': {}", name, e);
-                            }
-                        });
-                    }),
-                    Arc::new(move |name: String| {
-                        let mr = mr_unregister.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = mr.remove_provider(&name).await {
-                                warn!("Failed to unregister plugin provider '{}': {}", name, e);
-                            }
-                        });
-                    }),
-                )
-                .await;
-        }
-
-        // Create shared channels map early so plugin channel callbacks can capture it
-        let channels = Arc::new(RwLock::new(HashMap::<String, Arc<dyn Channel>>::new()));
-
-        // Wire plugin manager channel callbacks (plugin.json plugins with Channel capability)
-        #[cfg(feature = "plugins")]
-        {
-            use crate::channels::IncomingMessage;
-            use tokio::sync::mpsc;
-
-            let (plugin_inbound_tx, _plugin_inbound_rx) =
-                mpsc::unbounded_channel::<IncomingMessage>();
-
-            let channels_reg = channels.clone();
-            let channels_unreg = channels.clone();
-            plugin_manager
-                .set_channel_callbacks(
-                    Arc::new(
-                        move |name: String, channel: Arc<dyn crate::channels::Channel + Send + Sync>| {
-                            let ch = channels_reg.clone();
-                            tokio::spawn(async move {
-                                ch.write().await.insert(name.clone(), channel);
-                                info!("Registered plugin channel '{}'", name);
-                            });
-                        },
-                    ),
-                    Arc::new(move |name: String| {
-                        let ch = channels_unreg.clone();
-                        tokio::spawn(async move {
-                            ch.write().await.remove(&name);
-                            info!("Deregistered plugin channel '{}'", name);
-                        });
-                    }),
-                )
-                .await;
-
-            plugin_manager
-                .set_channel_message_tx(plugin_inbound_tx)
-                .await;
-        }
-
-        // Create skill manager early so it can be shared with ACP builder and GatewayState
-        let skills_manager =
-            Arc::new(tokio::sync::RwLock::new(crate::skills::SkillManager::new().await?));
-
-        // Configure ACP default agent builder (needs provider + tools, which are now ready)
-        if let Ok(default_provider) = model_router.create_default_provider().await {
-            let mut default_agent_config = config.default_agent.clone();
-            default_agent_config.workspace_dir = config
-                .workspace_dir
-                .as_ref()
-                .map(crate::dirs::resolve_tilde);
-            default_agent_config.workspace_only = config.workspace_only;
-            let default_tools = tool_registry.clone();
-            let provider_clone = default_provider.clone();
-            let model_router_clone = model_router.clone();
-            let default_model = config.model.clone();
-            let skills_manager_clone = Arc::clone(&skills_manager);
-            acp.set_agent_builder(move || {
-                crate::agent::AgentBuilder::new()
-                    .config(default_agent_config.clone())
-                    .provider(provider_clone.clone())
-                    .tools(default_tools.clone())
-                    .model_router(model_router_clone.clone())
-                    .model_alias(default_model.clone())
-                    .planner_model(default_model.clone())
-                    .skill_manager(Arc::clone(&skills_manager_clone))
-                    .build()
-            })
-            .await;
-        } else {
-            warn!("No default LLM provider available — ACP subagent spawning will fail until a provider is configured");
-        }
+        // Configure ACP default agent builder now that provider and tools are ready
+        init::agents::configure_acp_agent_builder(
+            &acp,
+            &config,
+            model_router.clone(),
+            tools_init.tool_registry.clone(),
+            skills_manager.clone(),
+        )
+        .await;
 
         // Initialize security components
-        let auth_manager = Arc::new(
-            crate::security::AuthManager::new()
-                .with_pairing_required(config.security.pairing_required)
-                .with_audit_log(audit_log_dyn.clone()),
-        );
-        let rate_limiter = Arc::new(crate::security::RateLimiter::new(
-            config.security.rate_limit.capacity,
-            config.security.rate_limit.refill_rate,
-        ));
+        let security_init = init::security::init_security(&config, audit_log_dyn.clone()).await?;
 
-        // Initialize multi-tier rate limiter with sliding window per user/ip/endpoint
-        let multi_tier_config = crate::gateway::rate_limit::MultiTierRateLimitConfig {
-            global: crate::gateway::rate_limit::TierConfig {
-                enabled: config.security.rate_limit.global.enabled,
-                capacity: config.security.rate_limit.global.capacity,
-                window_secs: config.security.rate_limit.global.window_secs,
-            },
-            per_user: crate::gateway::rate_limit::TierConfig {
-                enabled: config.security.rate_limit.per_user.enabled,
-                capacity: config.security.rate_limit.per_user.capacity,
-                window_secs: config.security.rate_limit.per_user.window_secs,
-            },
-            per_ip: crate::gateway::rate_limit::TierConfig {
-                enabled: config.security.rate_limit.per_ip.enabled,
-                capacity: config.security.rate_limit.per_ip.capacity,
-                window_secs: config.security.rate_limit.per_ip.window_secs,
-            },
-            per_endpoint: crate::gateway::rate_limit::TierConfig {
-                enabled: config.security.rate_limit.per_endpoint.enabled,
-                capacity: config.security.rate_limit.per_endpoint.capacity,
-                window_secs: config.security.rate_limit.per_endpoint.window_secs,
-            },
-            shared_secret: crate::gateway::rate_limit::TierConfig {
-                enabled: config.security.rate_limit.shared_secret.enabled,
-                capacity: config.security.rate_limit.shared_secret.capacity,
-                window_secs: config.security.rate_limit.shared_secret.window_secs,
-            },
-            device_token: crate::gateway::rate_limit::TierConfig {
-                enabled: config.security.rate_limit.device_token.enabled,
-                capacity: config.security.rate_limit.device_token.capacity,
-                window_secs: config.security.rate_limit.device_token.window_secs,
-            },
-            hook_auth: crate::gateway::rate_limit::TierConfig {
-                enabled: config.security.rate_limit.hook_auth.enabled,
-                capacity: config.security.rate_limit.hook_auth.capacity,
-                window_secs: config.security.rate_limit.hook_auth.window_secs,
-            },
-            control_plane_write: crate::gateway::rate_limit::TierConfig {
-                enabled: config.security.rate_limit.control_plane_write.enabled,
-                capacity: config.security.rate_limit.control_plane_write.capacity,
-                window_secs: config.security.rate_limit.control_plane_write.window_secs,
-            },
-            lockout: config.security.rate_limit.lockout,
-            loopback_exempt: config.security.rate_limit.loopback_exempt,
-        };
-        let multi_tier_rate_limiter =
-            Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(multi_tier_config));
-
-        // Create inbound / outbound pipelines (skeleton alignment)
-        let agent_router = if let Some(pool) = sqlite_pool.clone() {
-            let binding_store = Arc::new(
-                crate::inbound::SqliteBindingStore::new(pool)
-                    .await
-                    .map_err(|e| crate::error::SyscityError::Storage {
-                        context: "Failed to create binding store".to_string(),
-                        details: e.to_string(),
-                    })?,
-            );
-            let router = AgentRouter::new(crate::inbound::AgentRouterConfig::default())
-                .with_binding_store(binding_store);
-            router.load_bindings().await.ok();
-            Arc::new(router)
-        } else {
-            Arc::new(AgentRouter::new(crate::inbound::AgentRouterConfig::default()))
-        };
-        let reply_dispatcher = Arc::new(crate::outbound::ReplyDispatcher::new(
-            crate::outbound::ReplyDispatchConfig::default(),
-        ));
-
-        let (debounce_flush_tx, debounce_flush_rx) = mpsc::channel(256);
-        let debouncer = InboundDebouncer::new(InboundDebouncerConfig::default(), debounce_flush_tx);
-
-        let inbound_concrete = Arc::new(crate::inbound::DefaultInboundPipeline::new(
-            debouncer.clone(),
-            crate::inbound::MediaUnderstandingPipeline::new()
-                .with_model_router(Arc::clone(&model_router)),
-            crate::inbound::AutoReplyDispatch::new(
-                crate::inbound::AutoReplyDispatchConfig::default(),
-            ),
-            crate::inbound::QueueModeResolver::new(),
-            (*agent_router).clone(),
+        // Initialize inbound / outbound pipelines
+        let pipelines_init = init::pipelines::init_pipelines(
+            &config,
+            sqlite_pool.as_ref(),
+            model_router.clone(),
             routed_tx.clone(),
-            debounce_flush_rx,
-        ));
-        inbound_concrete.clone().start();
-        let inbound_pipeline: Arc<dyn crate::inbound::InboundPipeline> = inbound_concrete;
+        )
+        .await?;
 
-        let side_effect_registry = Arc::new(crate::outbound::SideEffectRegistry::new());
-        let side_effect_executor =
-            Arc::new(crate::outbound::SideEffectExecutor::new(side_effect_registry));
-        let sse_streamer = Arc::new(crate::outbound::SseStreamer::new());
-        let outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline> =
-            Arc::new(crate::outbound::DefaultOutboundPipeline::new(
-                reply_dispatcher.clone(),
-                side_effect_executor.clone(),
-                Some(sse_streamer.clone()),
-                None, // trajectory_writer – optional, can be wired later
-            ));
-
-        // Create state with placeholder values for vector_memory and hot_reload
-        // We'll fill them in after state creation to allow callbacks to reference state
+        // Assemble the flat GatewayState used by the rest of the system
         let state = Arc::new(GatewayState {
             config: Arc::new(RwLock::new(config.clone())),
             start_time: Instant::now(),
             config_path: config_path.clone(),
-            channels,
+            channels: tools_init.channels.clone(),
             agents: Arc::new(RwLock::new(HashMap::new())),
             session_routing: Arc::new(RwLock::new(HashMap::new())),
-            agent_router,
+            agent_router: pipelines_init.agent_router.clone(),
             session_channels: Arc::new(RwLock::new(HashMap::new())),
             webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
-            model_router,
-            tool_registry,
-            event_tx,
-            log_tx,
+            model_router: model_router.clone(),
+            tool_registry: tools_init.tool_registry.clone(),
+            event_tx: event_tx.clone(),
+            log_tx: log_tx.clone(),
             hook_registry: Arc::new(hooks::EventHookRegistry::new()),
-            message_queue: message_queue_tx,
-            canvas_manager: Arc::new(CanvasManager::new()),
-            plugin_manager,
-            acp,
+            message_queue: message_queue_tx.clone(),
+            canvas_manager: tools_init.canvas_manager.clone(),
+            plugin_manager: tools_init.plugin_manager.clone(),
+            acp: acp.clone(),
             vector_memory: RwLock::new(None),
             session_search: RwLock::new(None),
-            memory_manager: memory_manager_holder.clone(),
+            memory_manager: tools_init.memory_manager_holder.clone(),
             hot_reload: RwLock::new(None),
             cron_scheduler: RwLock::new(None),
             heartbeat_wake_tx: RwLock::new(None),
@@ -1846,7 +1440,7 @@ impl Gateway {
             dream_scheduler: RwLock::new(None),
             dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
             standing_order_manager: RwLock::new(None),
-            auth_manager,
+            auth_manager: security_init.auth_manager.clone(),
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
             device_pairing_store: Arc::new(
                 crate::security::device_pairing::DevicePairingStore::new(),
@@ -1867,50 +1461,31 @@ impl Gateway {
                     None
                 }
             },
-            command_gate: {
-                let gate = crate::tools::command_gate::CommandGate::new();
-                // Web terminal and API users need User level for slash commands
-                gate.set_user_level("web_user", crate::tools::command_gate::UserLevel::User);
-                gate.set_user_level("api_user", crate::tools::command_gate::UserLevel::User);
-                Arc::new(gate)
-            },
-            mention_gate: {
-                let gate = crate::security::mention_gate::MentionGate::new(
-                    config.security.mention_gating.policy,
-                );
-                for pattern in &config.security.mention_gating.allowlist {
-                    gate.add_allowlist("*", pattern.clone()).await;
-                }
-                for pattern in &config.security.mention_gating.blocklist {
-                    gate.add_blocklist("*", pattern.clone()).await;
-                }
-                Arc::new(gate)
-            },
+            command_gate: security_init.command_gate.clone(),
+            mention_gate: security_init.mention_gate.clone(),
             audit_log: audit_log.clone(),
-            rate_limiter,
-            multi_tier_rate_limiter,
-            storage,
-            skills_manager,
-            agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
-            session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
-            session_store,
-            mcp_manager: mcp_manager.clone(),
+            rate_limiter: security_init.rate_limiter.clone(),
+            multi_tier_rate_limiter: security_init.multi_tier_rate_limiter.clone(),
+            storage: storage.clone(),
+            skills_manager: skills_manager.clone(),
+            agent_registry: agent_registry.clone(),
+            session_manager: session_manager.clone(),
+            session_store: session_store.clone(),
+            mcp_manager: tools_init.mcp_manager.clone(),
             runtime_settings: Arc::new(RwLock::new(HashMap::new())),
-            approval_queue,
+            approval_queue: tools_init.approval_queue.clone(),
             repair_state: Arc::new(RepairState::new()),
             cost_guard: crate::agent::CostGuard::new(
                 config.cost_guard.daily_limit_cents,
                 config.cost_guard.hourly_action_limit,
             ),
-            reply_dispatcher,
-            routed_tx,
-            inbound_pipeline,
-            outbound_pipeline,
-            side_effect_executor: side_effect_executor.clone(),
-            sse_streamer: sse_streamer.clone(),
-            channel_extensions: Arc::new(RwLock::new(
-                crate::channels::ChannelExtensionRegistry::new(),
-            )),
+            reply_dispatcher: pipelines_init.reply_dispatcher.clone(),
+            routed_tx: routed_tx.clone(),
+            inbound_pipeline: pipelines_init.inbound_pipeline.clone(),
+            outbound_pipeline: pipelines_init.outbound_pipeline.clone(),
+            side_effect_executor: pipelines_init.side_effect_executor.clone(),
+            sse_streamer: pipelines_init.sse_streamer.clone(),
+            channel_extensions: tools_init.channel_extensions.clone(),
             provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
             tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
             session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
@@ -1937,7 +1512,7 @@ impl Gateway {
             group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
             #[cfg(feature = "browser")]
             browser_bridge: tokio::sync::RwLock::new(None),
-            computer_adapter: tokio::sync::RwLock::new(computer_adapter),
+            computer_adapter: tokio::sync::RwLock::new(tools_init.computer_adapter.clone()),
             engine_metrics: None,
             task_scheduler: RwLock::new(None),
             snapshot_store: None,
@@ -1951,12 +1526,13 @@ impl Gateway {
             mgr.with_store(store.clone());
         }
 
-        // Wire ACP lifecycle events into the gateway broadcast channel.
+        // Wire ACP lifecycle events into the gateway broadcast channel
         state.acp.set_event_tx(state.event_tx.clone()).await;
 
-        // Forward MCP lifecycle events into the gateway broadcast channel.
+        // Forward MCP lifecycle events into the gateway broadcast channel
         {
             let event_tx = state.event_tx.clone();
+            let mut mcp_event_rx = tools_init.mcp_event_rx;
             tokio::spawn(async move {
                 while let Some(event) = mcp_event_rx.recv().await {
                     let gateway_event = match event {
@@ -2009,7 +1585,7 @@ impl Gateway {
                 state.canvas_manager.clone(),
             )));
 
-        // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
+        // Sync ProviderSdk / ToolSdk with existing registries
         {
             let mut provider_sdk = state.provider_sdk.write().await;
             provider_sdk
@@ -2021,288 +1597,17 @@ impl Gateway {
             tool_sdk.sync_from_tool_registry(&state.tool_registry);
         }
 
-        // Initialize vector memory service if enabled
-        if config.vector_memory.enabled {
-            info!("Initializing vector memory service...");
+        // Initialize late services: vector memory, session search, cron, task scheduler, etc.
+        init::services::init_late_services(
+            &config,
+            &state,
+            sqlite_pool.as_ref(),
+            unified_vector_store,
+        )
+        .await?;
 
-            let embedding_provider: Option<Arc<dyn crate::memory::vector::EmbeddingProvider>> =
-                match config.vector_memory.provider {
-                    EmbeddingProviderType::OpenAi => {
-                        if let Some(ref api_key) = config.vector_memory.embedding_api_key {
-                            info!("Using OpenAI embedding provider");
-                            let mut provider = ApiEmbeddingProvider::new(
-                                api_key.clone(),
-                                config.vector_memory.embedding_model.clone(),
-                                config.vector_memory.embedding_dimension,
-                            );
-                            if let Some(ref base_url) = config.vector_memory.api_base_url {
-                                provider = provider.with_base_url(base_url.clone());
-                            }
-                            Some(Arc::new(provider))
-                        } else {
-                            warn!("OpenAI embedding provider requires an API key");
-                            None
-                        }
-                    }
-                    EmbeddingProviderType::LocalGguf => {
-                        #[cfg(feature = "local-embeddings")]
-                        {
-                            if let Some(ref model_path) = config.vector_memory.local_model_path {
-                                info!("Using local GGUF embedding provider");
-                                use crate::memory::local_embeddings::ModelSource;
-                                let source = ModelSource::parse(model_path);
-                                let provider = LocalGgufEmbeddingProvider::create(
-                                    source,
-                                    config.vector_memory.embedding_dimension,
-                                )
-                                .await;
-                                if provider.is_fts_only() {
-                                    if let Some(reason) = provider.fts_reason() {
-                                        warn!("Local GGUF provider in FTS-only mode: {}", reason);
-                                    } else {
-                                        info!("Local GGUF provider initialized, will load model on first use");
-                                    }
-                                } else {
-                                    info!("GGUF model configured from {}", model_path);
-                                }
-                                Some(Arc::new(provider))
-                            } else {
-                                warn!(
-                                    "Local GGUF provider requires 'local_model_path' configuration"
-                                );
-                                None
-                            }
-                        }
-                        #[cfg(not(feature = "local-embeddings"))]
-                        {
-                            warn!("Local GGUF provider requires 'local-embeddings' feature. Build with: cargo build --features local-embeddings");
-                            None
-                        }
-                    }
-                };
-
-            if let Some(embedding_provider) = embedding_provider {
-                // Use unified storage as the vector store (if it's SqliteStorage)
-                // For non-SQLite storage, fall back to in-memory vector store
-                let vector_store: Arc<dyn crate::memory::VectorStore> = match unified_vector_store {
-                    Some(store) => {
-                        info!("Using unified SQLite storage for vector store");
-                        store
-                    }
-                    None => {
-                        info!("Using in-memory vector store (unified storage requires 'sqlite' storage type)");
-                        Arc::new(MemoryVectorStore::new(config.vector_memory.embedding_dimension))
-                    }
-                };
-
-                // Create embedding config for the service
-                let embedding_config = EmbeddingConfig {
-                    model: config.vector_memory.embedding_model.clone(),
-                    chunk_size: 512,
-                    chunk_overlap: 50,
-                    batch_size: 32,
-                };
-
-                // Wrap with a SHA-256 dedup cache (1 024-entry FIFO) to avoid
-                // re-embedding identical text across requests.
-                let cached_provider = CachedEmbeddingProvider::new(embedding_provider, 1024);
-                let service = Arc::new(VectorMemoryService::new(
-                    Arc::new(cached_provider),
-                    vector_store,
-                    &embedding_config,
-                ));
-                info!(
-                    "✅ Vector memory service initialized with {:?} provider",
-                    config.vector_memory.provider
-                );
-                *state.vector_memory.write().await = Some(service);
-            } else {
-                warn!("Vector memory enabled but no suitable provider available");
-            }
-        } else {
-            info!("Vector memory service disabled");
-        }
-
-        // Initialize SessionSearch (FTS5) and MemoryManager (hybrid search) if we have SQLite
-        if let Some(pool) = sqlite_pool {
-            info!("Initializing session search (FTS5)...");
-            let session_search = Arc::new(crate::memory::SessionSearch::new(pool.clone()));
-            if let Err(e) = session_search.initialize().await {
-                warn!("Failed to initialize session search: {}", e);
-            } else {
-                info!("✅ Session search (FTS5) initialized");
-                *state.session_search.write().await = Some(session_search.clone());
-
-                // Create MemoryManager with hybrid search enabled if we also have vector_memory
-                let vector_guard = state.vector_memory.read().await;
-                if let Some(ref vector_svc) = *vector_guard {
-                    info!("Initializing MemoryManager with hybrid search...");
-                    // Create store from the existing pool (shared connection)
-                    let store = Arc::new(
-                        crate::memory::UnifiedStore::new_with_pool(pool.clone())
-                            .await
-                            .map_err(|e| crate::error::SyscityError::Storage {
-                                context: "Failed to create UnifiedStore".into(),
-                                details: e.to_string(),
-                            })?,
-                    );
-                    let mm = crate::memory::MemoryManager::new(
-                        store.clone(),
-                        store,
-                        crate::memory::MemoryManagerConfig::default(),
-                    )
-                    .with_vector_service(vector_svc.clone())
-                    .with_session_search(session_search);
-                    *state.memory_manager.write().await = Some(Arc::new(mm));
-                    info!("✅ MemoryManager with hybrid search initialized");
-                } else {
-                    info!("Initializing MemoryManager (vector search disabled)...");
-                    let store = Arc::new(
-                        crate::memory::UnifiedStore::new_with_pool(pool.clone())
-                            .await
-                            .map_err(|e| crate::error::SyscityError::Storage {
-                                context: "Failed to create UnifiedStore".into(),
-                                details: e.to_string(),
-                            })?,
-                    );
-                    let mm = crate::memory::MemoryManager::new(
-                        store.clone(),
-                        store,
-                        crate::memory::MemoryManagerConfig::default(),
-                    )
-                    .with_session_search(session_search);
-                    *state.memory_manager.write().await = Some(Arc::new(mm));
-                    info!("✅ MemoryManager initialized (without vector search)");
-                }
-            }
-        } else {
-            info!("SQLite not in use; session search and hybrid memory disabled");
-        }
-
-        // Initialize hot reload manager if enabled
-        if config.hot_reload.enabled {
-            info!("Initializing hot reload manager...");
-            match HotReloadManager::new() {
-                Ok(manager) => {
-                    let manager = Arc::new(manager);
-                    info!("Hot reload manager initialized");
-                    *state.hot_reload.write().await = Some(manager);
-                }
-                Err(e) => {
-                    warn!("Failed to initialize hot reload manager: {}", e);
-                }
-            }
-        } else {
-            info!("Hot reload disabled");
-        }
-
-        // Initialize cron scheduler if enabled
-        if config.cron.enabled {
-            info!("Initializing advanced cron scheduler...");
-            use crate::cron::cron::{AnnounceDelivery, CronScheduler};
-            let (cron_scheduler, command_rx) = CronScheduler::new();
-            let cron_scheduler =
-                cron_scheduler.with_store_path(crate::dirs::cron_dir().join("jobs.json"));
-            let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
-
-            // Wire up announce delivery → SSE broadcast
-            let (announce_tx, mut announce_rx) = mpsc::channel::<AnnounceDelivery>(64);
-            {
-                let mut scheduler = cron_scheduler.lock().await;
-                scheduler.set_announce_tx(announce_tx);
-            }
-            let event_tx_announce = state.event_tx.clone();
-            tokio::spawn(async move {
-                while let Some(delivery) = announce_rx.recv().await {
-                    info!("Cron announce → {}:{}", delivery.channel, delivery.to);
-                    match event_tx_announce.send(GatewayEvent::CronAnnounce {
-                        channel: delivery.channel,
-                        to: delivery.to,
-                        message: delivery.message.clone(),
-                    }) {
-                        Ok(receiver_count) => {
-                            info!("Cron announce broadcast to {} receivers", receiver_count)
-                        }
-                        Err(e) => warn!("Failed to broadcast cron announce: {}", e),
-                    }
-                }
-            });
-
-            // Start the scheduler in a background task
-            let cron_scheduler_clone = Arc::clone(&cron_scheduler);
-            tokio::spawn(async move {
-                let mut scheduler = cron_scheduler_clone.lock().await;
-                if let Err(e) = scheduler.start(command_rx).await {
-                    warn!("Advanced cron scheduler failed: {}", e);
-                }
-            });
-            *state.cron_scheduler.write().await = Some(cron_scheduler.clone());
-            info!("✅ Advanced cron scheduler initialized");
-
-            // Wire the scheduler into CronTool so it can delegate operations
-            crate::tools::CronTool::set_scheduler(cron_scheduler);
-        } else {
-            info!("Cron scheduler disabled");
-        }
-
-        // ── TaskScheduler (recurring agent tasks) ───────────────────────────
-        {
-            let mut task_scheduler = crate::planner::TaskScheduler::new();
-            let state_for_scheduler = Arc::clone(&state);
-            let handler: crate::planner::scheduled_tasks::TaskHandler =
-                Arc::new(move |task: crate::planner::ScheduledTask| {
-                    let state = Arc::clone(&state_for_scheduler);
-                    Box::pin(async move {
-                        let agents = state.agents.read().await;
-                        if let Some(handle) = agents.values().next() {
-                            let msg = format!(
-                                "[Scheduled] {}: {} - Actions: {}",
-                                task.name,
-                                task.description,
-                                task.actions.len()
-                            );
-                            let incoming =
-                                crate::channels::IncomingMessage::new("scheduler", &task.id, &msg);
-                            if let Err(e) = handle.agent.process_message(incoming).await {
-                                warn!("Scheduled task '{}' failed: {}", task.id, e);
-                            } else {
-                                info!("Scheduled task '{}' processed successfully", task.id);
-                            }
-                        } else {
-                            warn!("No agent available to run scheduled task '{}'", task.id);
-                        }
-                    })
-                        as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
-                });
-            if let Err(e) = task_scheduler.start(handler).await {
-                warn!("TaskScheduler failed to start: {}", e);
-            } else {
-                *state.task_scheduler.write().await =
-                    Some(Arc::new(tokio::sync::Mutex::new(task_scheduler)));
-                info!("TaskScheduler started");
-            }
-        }
-
-        // Wire side-effect executor with runtime context (memory + cron)
-        let side_effect_ctx = crate::outbound::SideEffectContext {
-            memory_manager: state.memory_manager.read().await.clone(),
-            cron_scheduler: state.cron_scheduler.read().await.clone(),
-            webhook_client: Some(Arc::new(
-                reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(10))
-                    .build()
-                    .unwrap_or_default(),
-            )),
-        };
-        state
-            .side_effect_executor
-            .set_context(side_effect_ctx)
-            .await;
-        info!("✅ SideEffectExecutor context wired");
-
-        // Start message processing worker (legacy QueuedMessage path)
+        // Start message processing workers
         tokio::spawn(Self::process_message_queue(state.clone(), message_queue_rx));
-        // Start routed-message worker (new InboundPipeline path)
         tokio::spawn(Self::process_routed_messages(state.clone(), routed_rx));
 
         Ok(Self { state, config })
