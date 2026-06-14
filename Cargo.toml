@@ -90,6 +90,9 @@ oauth2 = { version = "5.0", features = ["reqwest"] }
 # Regex for security scanning
 regex = "1.10"
 
+# IP network parsing for trusted proxy CIDR matching
+ipnet = "2.9"
+
 # System monitoring (CPU, memory, disk, network, processes)
 sysinfo = "0.30"
 

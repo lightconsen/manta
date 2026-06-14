@@ -42,6 +42,8 @@ pub enum AuditEventType {
     AcpMessage,
     /// Content filter action (PII/secrets detected, redacted, or blocked)
     ContentFilter,
+    /// Trusted proxy authentication attempt
+    TrustedProxyLogin,
 }
 
 /// A single audit log entry.

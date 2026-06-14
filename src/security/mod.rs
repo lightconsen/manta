@@ -1199,6 +1199,9 @@ pub mod pentest;
 /// Tailscale authentication
 pub mod tailscale;
 
+/// Trusted proxy authentication
+pub mod trusted_proxy;
+
 /// Multi-dimensional allowlist
 pub mod allowlist;
 
@@ -1218,6 +1221,11 @@ pub use pii::{
 
 // Re-export content filter types
 pub use content_filter::{ContentFilter, ContentFilterOutcome, FilterAction};
+
+// Re-export trusted proxy types
+pub use trusted_proxy::{
+    TrustedProxyAuthenticator, TrustedProxyConfig, TrustedProxyError, TrustedProxyUser,
+};
 
 // Re-export audit logger trait
 pub use runtime_audit::AuditLogger;

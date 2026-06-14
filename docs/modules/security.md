@@ -26,6 +26,6 @@ Input validation, access control, and sandboxing.
 - **📝 Partial**: Device pairing challenge — `DevicePairingStore` with 5-character unambiguous codes, 1h TTL exists (`src/security/device_pairing.rs:67-88`). Missing: 8-character codes, max pending limit, QR-code pairing, setup code with base64url URL.
 - **📝 Partial**: Secret resolution cache — `SecretsSnapshot` with TTL and degraded-mode fallback exists (`src/secrets.rs:182-237`). Missing: per-provider payload cache, per-ref result cache, manual refresh.
 - **📝 Partial**: Audit logging for auth events and tool execution — `RuntimeAuditLog` / `PersistentAuditLog` record `ToolInvocation`, `ToolDeny`, `AccessCheck`, `Security`, and pairing events (`src/security/runtime_audit.rs:16-43`). Missing: fine-grained auth events (login, logout, token validation).
-- **Missing**: Trusted proxy authentication — IP whitelist, required headers, user extraction, allowUsers whitelist.
+- **✅ Implemented**: Trusted proxy authentication — IP whitelist/CIDR, required headers, user extraction, allowUsers whitelist, audit logging. See `src/security/trusted_proxy.rs` and `src/gateway/middleware.rs::trusted_proxy_auth_middleware`.
 - **Missing**: Credential precedence — `env-first` vs `config-first` for token/password sources.
 - **Missing**: Secret scanning in tool outputs (prevent credential leakage).

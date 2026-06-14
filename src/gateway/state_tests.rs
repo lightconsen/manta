@@ -124,6 +124,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         pairing_store: Arc::new(PairingStore::new()),
         device_pairing_store: Arc::new(crate::security::device_pairing::DevicePairingStore::new()),
         tailscale_authenticator: None,
+        trusted_proxy_authenticator: None,
         command_gate: Arc::new(CommandGate::new()),
         mention_gate: Arc::new(MentionGate::new(MentionPolicy::Allow)),
         audit_log: Arc::new(crate::security::persistent_audit::PersistentAuditLog::new()),

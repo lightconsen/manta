@@ -171,6 +171,11 @@ pub async fn tailscale_auth_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // If trusted proxy auth already succeeded, the request is authenticated.
+    if req.extensions().get::<crate::security::trusted_proxy::TrustedProxyUser>().is_some() {
+        return Ok(next.run(req).await);
+    }
+
     let (trusted_proxies, allowed_tailnets) = {
         let config = state.config.read().await;
         (config.security.trusted_proxies.clone(), config.security.allowed_tailnets.clone())
@@ -206,6 +211,121 @@ pub async fn tailscale_auth_middleware(
         None => {
             debug!("Cannot determine client IP, allowing (may be Unix socket)");
             Ok(next.run(req).await)
+        }
+    }
+}
+
+/// Middleware: Trusted proxy authentication.
+///
+/// Validates that the direct connection comes from a configured trusted proxy,
+/// requires the configured identity headers, extracts the user, and enforces
+/// the allowlist. Successful authentications attach a `TrustedProxyUser`
+/// extension to the request for downstream handlers.
+///
+/// If trusted proxy auth is disabled, this middleware is a no-op.
+pub async fn trusted_proxy_auth_middleware(
+    State(state): State<Arc<GatewayState>>,
+    mut req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    use crate::security::runtime_audit::AuditEventType;
+    use crate::security::trusted_proxy::{TrustedProxyError, TrustedProxyUser};
+
+    let authenticator = match state.trusted_proxy_authenticator.as_ref() {
+        Some(auth) => auth.clone(),
+        None => return Ok(next.run(req).await),
+    };
+
+    let direct_ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip());
+
+    match authenticator.authenticate(&req, direct_ip) {
+        Ok(user) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::TrustedProxyLogin,
+                    &user.user_id,
+                    &user.proxy_ip.to_string(),
+                    true,
+                    "Trusted proxy authentication accepted",
+                    Some(serde_json::json!({
+                        "header": user.header_name,
+                        "proxy_ip": user.proxy_ip.to_string(),
+                        "path": req.uri().path(),
+                    })),
+                )
+                .await;
+            req.extensions_mut().insert(user);
+            Ok(next.run(req).await)
+        }
+        Err(TrustedProxyError::UntrustedProxy { proxy_ip }) => {
+            let target = proxy_ip.to_string();
+            state
+                .audit_log
+                .log(
+                    AuditEventType::TrustedProxyLogin,
+                    "unknown",
+                    &target,
+                    false,
+                    "Trusted proxy authentication rejected: untrusted proxy",
+                    Some(serde_json::json!({
+                        "proxy_ip": target,
+                        "path": req.uri().path(),
+                    })),
+                )
+                .await;
+            Err(StatusCode::FORBIDDEN)
+        }
+        Err(TrustedProxyError::MissingHeader { header }) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::TrustedProxyLogin,
+                    "unknown",
+                    &direct_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    false,
+                    format!("Trusted proxy authentication rejected: missing header {}", header),
+                    Some(serde_json::json!({
+                        "header": header,
+                        "path": req.uri().path(),
+                    })),
+                )
+                .await;
+            Err(StatusCode::BAD_REQUEST)
+        }
+        Err(TrustedProxyError::NoUserExtracted) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::TrustedProxyLogin,
+                    "unknown",
+                    &direct_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    false,
+                    "Trusted proxy authentication rejected: no user extracted",
+                    Some(serde_json::json!({ "path": req.uri().path() })),
+                )
+                .await;
+            Err(StatusCode::BAD_REQUEST)
+        }
+        Err(TrustedProxyError::UserNotAllowed { user_id }) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::TrustedProxyLogin,
+                    &user_id,
+                    &direct_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    false,
+                    "Trusted proxy authentication rejected: user not allowed",
+                    Some(serde_json::json!({
+                        "user_id": user_id,
+                        "path": req.uri().path(),
+                    })),
+                )
+                .await;
+            Err(StatusCode::FORBIDDEN)
         }
     }
 }

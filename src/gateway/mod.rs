@@ -354,6 +354,9 @@ pub struct SecurityConfig {
  /// Tailscale whois cache TTL in seconds (default 300)
     #[serde(default = "default_tailscale_ttl")]
     pub tailscale_auth_ttl_secs: u64,
+    /// Trusted proxy authentication configuration.
+    #[serde(default)]
+    pub trusted_proxy: crate::security::trusted_proxy::TrustedProxyConfig,
 }
 
 fn default_tailscale_ttl() -> u64 { 300 }
@@ -422,6 +425,7 @@ impl Default for SecurityConfig {
             allowed_tailnets: Vec::new(),
             trusted_proxies: Vec::new(),
             tailscale_auth_ttl_secs: 300,
+            trusted_proxy: crate::security::trusted_proxy::TrustedProxyConfig::default(),
         }
     }
 }
@@ -644,6 +648,8 @@ pub struct GatewayState {
     pub device_pairing_store: Arc<crate::security::device_pairing::DevicePairingStore>,
  /// Tailscale authenticator for whois-based identity verification
     pub tailscale_authenticator: Option<Arc<crate::security::tailscale::TailscaleAuthenticator>>,
+    /// Trusted proxy authenticator for reverse-proxy-based identity verification.
+    pub trusted_proxy_authenticator: Option<Arc<crate::security::trusted_proxy::TrustedProxyAuthenticator>>,
  /// Command gate for slash-command permission control
     pub command_gate: Arc<crate::tools::command_gate::CommandGate>,
  /// Mention gate for controlling which mentions trigger agent responses
@@ -1758,6 +1764,16 @@ impl Gateway {
                     ),
                 ))
             },
+            trusted_proxy_authenticator: {
+                let tp_config = config.security.trusted_proxy.clone();
+                if tp_config.enabled {
+                    Some(Arc::new(
+                        crate::security::trusted_proxy::TrustedProxyAuthenticator::new(tp_config),
+                    ))
+                } else {
+                    None
+                }
+            },
             command_gate: {
                 let gate = crate::tools::command_gate::CommandGate::new();
  // Web terminal and API users need User level for slash commands
@@ -2679,6 +2695,7 @@ impl Gateway {
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), auth::session_cookie_middleware))
             .layer(from_fn_with_state(state.clone(), middleware::tailscale_auth_middleware))
+            .layer(from_fn_with_state(state.clone(), middleware::trusted_proxy_auth_middleware))
             .layer(from_fn(middleware::security_headers_middleware))
             .with_state(state.clone());
 
