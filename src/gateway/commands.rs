@@ -3,13 +3,14 @@
 //! Provides `/` commands via WebSocket RPC.
 //! Commands are exposed via `commands.list` and executed via `commands.execute`.
 
-use crate::acp::AcpSessionId;
+use crate::acp::{AcpSessionId, SpawnMode, SubagentConfig, ThreadBinding};
 use crate::agent::TranscriptFormat;
 use crate::gateway::command_provider::{CommandProviderHint, CommandProviderResolver};
 use crate::gateway::protocol::*;
 use crate::gateway::GatewayState;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter};
 use crate::tools::command_gate::UserLevel;
+use crate::tools::mcp::{McpServerConfig, McpToolWrapper};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -265,7 +266,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             .admin()
             .power(),
         CommandDef::new("mcp", "mcp", "Manage MCP server connections", CommandCategory::Admin)
-            .with_args("show|get|set|unset")
+            .with_args("show|connect|disconnect|tools|resources|prompts|call|read")
             .admin()
             .power(),
         CommandDef::new("debug", "debug", "Runtime debug overrides", CommandCategory::Admin)
@@ -516,7 +517,7 @@ pub async fn handle_commands_execute(
             "reasoning" => handle_reasoning(req, state, &params.args).await,
             "queue" => handle_queue(req, state, &params.args).await,
             "tools" => handle_tools(req, state, &params.args).await,
-            "usage" => handle_usage(req, state).await,
+            "usage" => handle_usage(req, state, &params.args).await,
             "context" => handle_context(req, conn, state).await,
             "compact" => handle_compact(req, conn, state, &params.args).await,
             "session" => handle_session(req, conn, state, &params.args).await,
@@ -778,22 +779,99 @@ async fn handle_tools(req: &WsRequest, state: &Arc<GatewayState>, args: &str) ->
     WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
 }
 
-async fn handle_usage(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let settings = state.runtime_settings.read().await;
-    let tokens = settings
-        .get("usage.tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let calls = settings
-        .get("usage.calls")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+async fn handle_usage(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+    args: &str,
+) -> WsResponse {
+    let mode_arg = args.trim();
+    let valid_modes = ["off", "tokens", "full", "cost"];
 
-    let text = format!(
-        "📊 **Usage**\n\nEstimated tokens: {}\nTool calls: {}\n\nFull cost tracking not yet implemented.",
-        tokens, calls
-    );
-    WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
+    if !mode_arg.is_empty() && valid_modes.contains(&mode_arg) {
+        let mut settings = state.runtime_settings.write().await;
+        settings.insert("usage.mode".to_string(), serde_json::json!(mode_arg));
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "text": format!("📊 Usage display mode set to '{}'.", mode_arg),
+                "mode": mode_arg,
+            }),
+        );
+    }
+
+    if !mode_arg.is_empty() && !valid_modes.contains(&mode_arg) {
+        return WsResponse::err(
+            &req.id,
+            "INVALID_ARGS",
+            format!("Usage: /usage [{}]", valid_modes.join("|")),
+        );
+    }
+
+    let (mode, tokens, calls) = {
+        let settings = state.runtime_settings.read().await;
+        let mode = settings
+            .get("usage.mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("full")
+            .to_string();
+        let tokens = settings
+            .get("usage.tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let calls = settings
+            .get("usage.calls")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        (mode, tokens, calls)
+    };
+
+    let guard = state.cost_guard.as_ref();
+    let daily_cents = guard.daily_spend_cents();
+    let daily_dollars = daily_cents as f64 / 100.0;
+    let hourly_actions = guard.hourly_action_count();
+    let daily_limit = guard.daily_limit_cents;
+    let hourly_limit = guard.hourly_action_limit;
+    let exceeded = guard.is_exceeded();
+
+    let text = match mode.as_str() {
+        "off" => "📊 Usage tracking display is disabled.".to_string(),
+        "tokens" => format!(
+            "📊 **Usage (tokens)**\n\nEstimated tokens: {}\nTool calls: {}",
+            tokens, calls
+        ),
+        "cost" => format!(
+            "📊 **Usage (cost)**\n\nDaily spend: ${:.2} ({} cents)\nHourly actions: {}",
+            daily_dollars, daily_cents, hourly_actions
+        ),
+        _ => {
+            let mut lines = vec!["📊 **Usage**".to_string()];
+            lines.push(format!("Estimated tokens: {}", tokens));
+            lines.push(format!("Tool calls: {}", calls));
+            lines.push(format!(
+                "Daily spend: ${:.2} ({} cents)",
+                daily_dollars, daily_cents
+            ));
+            lines.push(format!("Hourly actions: {}", hourly_actions));
+            if daily_limit > 0 {
+                lines.push(format!(
+                    "Daily limit: ${:.2}",
+                    daily_limit as f64 / 100.0
+                ));
+            }
+            if hourly_limit > 0 {
+                lines.push(format!("Hourly action limit: {}", hourly_limit));
+            }
+            if exceeded {
+                lines.push("⚠️ Budget limit exceeded.".to_string());
+            }
+            lines.join("\n")
+        }
+    };
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "text": text, "mode": mode }),
+    )
 }
 
 async fn handle_compact(
@@ -900,33 +978,291 @@ async fn handle_subagents(
     args: &str,
 ) -> WsResponse {
     let trimmed = args.trim();
+
     if trimmed.is_empty() || trimmed == "list" {
         let session_id = conn.read().await.subscriptions.first().cloned();
-        if let Some(sid) = session_id {
-            if let Some(status) = state.acp.get_status(sid.clone()).await {
-                let text = format!(
-                    "🤖 **Subagents for `{}`**\n\n\
-                    Runtime state: `{:?}`\n\
-                    Mode: `{:?}`\n\
-                    Iteration: {}/{}\n\
-                    Queue depth: {}",
-                    sid,
-                    status.runtime_state,
-                    status.mode,
-                    status.current_iteration,
-                    status.max_iterations,
-                    status.queue_depth,
-                );
-                return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
-            }
+        let handles = if let Some(ref sid) = session_id {
+            state
+                .acp
+                .list_session_subagents(&AcpSessionId(sid.clone()))
+                .await
+        } else {
+            state.acp.list_subagents().await
+        };
+
+        if handles.is_empty() {
+            return WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "text": "🤖 No subagents found." }),
+            );
         }
-        return WsResponse::ok(&req.id, serde_json::json!({ "text": "🤖 No active session." }));
+
+        let mut lines = vec![format!("🤖 **Subagents** ({} total)", handles.len())];
+        for h in &handles {
+            lines.push(format!(
+                "- `{}` — status: `{:?}`, mode: `{:?}`, thread: `{}`",
+                h.id, h.status, h.mode, h.thread_id
+            ));
+        }
+        if let Some(sid) = session_id {
+            lines.push(format!("Session: `{}`", sid));
+        }
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": lines.join("\n") }),
+        );
     }
 
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "text": format!("🤖 Subagent command '{}' not yet implemented.", trimmed) }),
-    )
+    let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
+    let sub = parts[0];
+    let rest = parts.get(1).unwrap_or(&"").trim();
+
+    match sub {
+        "kill" => {
+            if rest.is_empty() || rest == "all" {
+                let session_id = conn.read().await.subscriptions.first().cloned();
+                if let Some(sid) = session_id {
+                    match state
+                        .acp
+                        .terminate_session(&AcpSessionId(sid.clone()))
+                        .await
+                    {
+                        Ok(count) => WsResponse::ok(
+                            &req.id,
+                            serde_json::json!({
+                                "text": format!(
+                                    "💀 Terminated {} subagent(s) in session `{}`.",
+                                    count, sid
+                                )
+                            }),
+                        ),
+                        Err(e) => WsResponse::err(
+                            &req.id,
+                            "KILL_FAILED",
+                            format!("Failed to terminate session: {}", e),
+                        ),
+                    }
+                } else {
+                    WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({ "text": "💀 No active session to kill." }),
+                    )
+                }
+            } else {
+                match state.acp.kill_subagent(rest).await {
+                    Ok(true) => WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({
+                            "text": format!("💀 Subagent `{}` killed.", rest)
+                        }),
+                    ),
+                    Ok(false) => WsResponse::err(
+                        &req.id,
+                        "AGENT_NOT_FOUND",
+                        format!("Subagent `{}` not found.", rest),
+                    ),
+                    Err(e) => WsResponse::err(
+                        &req.id,
+                        "KILL_FAILED",
+                        format!("Failed to kill `{}`: {}", rest, e),
+                    ),
+                }
+            }
+        }
+        "log" => {
+            let topics = state.acp.bus_topics().await;
+            if topics.is_empty() {
+                return WsResponse::ok(
+                    &req.id,
+                    serde_json::json!({ "text": "📜 No ACP bus topics." }),
+                );
+            }
+            let mut lines = vec!["📜 **ACP Bus Log**".to_string()];
+            for topic in topics {
+                let subscribers = state.acp.bus_subscribers(&topic).await;
+                lines.push(format!(
+                    "- `{}` — {} subscriber(s): {}",
+                    topic,
+                    subscribers.len(),
+                    subscribers.join(", ")
+                ));
+            }
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "text": lines.join("\n") }),
+            )
+        }
+        "info" => {
+            if rest.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /subagents info <id>",
+                );
+            }
+            let status = state.acp.get_subagent_status(rest).await;
+            let all = state.acp.list_subagents().await;
+            match all.iter().find(|h| h.id == rest) {
+                Some(handle) => {
+                    let text = format!(
+                        "🤖 **Subagent `{}`**\n\n\
+                        Status: `{:?}`\n\
+                        Mode: `{:?}`\n\
+                        Thread: `{}`\n\
+                        Session: `{}`\n\
+                        Parent: `{}`",
+                        handle.id,
+                        status.unwrap_or(handle.status),
+                        handle.mode,
+                        handle.thread_id,
+                        handle.session_id,
+                        handle.parent_id
+                    );
+                    WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
+                }
+                None => WsResponse::err(
+                    &req.id,
+                    "AGENT_NOT_FOUND",
+                    format!("Subagent `{}` not found.", rest),
+                ),
+            }
+        }
+        "send" | "steer" => {
+            if rest.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /subagents send|steer <id> <message>",
+                );
+            }
+            let msg_parts: Vec<&str> = rest.splitn(2, ' ').collect();
+            let target_id = msg_parts[0];
+            let message = msg_parts.get(1).unwrap_or(&"").trim();
+            if message.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /subagents send|steer <id> <message>",
+                );
+            }
+
+            let guard = conn.read().await;
+            let sender = guard
+                .user_id
+                .as_ref()
+                .map(|u| u.0.clone())
+                .unwrap_or_else(|| "user".to_string());
+            let conversation_id = guard.subscriptions.first().cloned().unwrap_or_default();
+            drop(guard);
+
+            let incoming = crate::channels::IncomingMessage::new(
+                sender,
+                conversation_id,
+                message.to_string(),
+            );
+
+            if sub == "send" {
+                match state.acp.send_message(target_id, incoming).await {
+                    Ok(result) => WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({
+                            "text": format!(
+                                "🤖 Message sent to `{}`.\n\nResponse: {}",
+                                target_id, result
+                            )
+                        }),
+                    ),
+                    Err(e) => WsResponse::err(
+                        &req.id,
+                        "SEND_FAILED",
+                        format!("Failed to send to `{}`: {}", target_id, e),
+                    ),
+                }
+            } else {
+                match state
+                    .acp
+                    .steer_subagent(target_id, message.to_string())
+                    .await
+                {
+                    Ok(result) => WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({
+                            "text": format!(
+                                "🤖 Steering sent to `{}`.\n\nResult: {}",
+                                target_id, result
+                            )
+                        }),
+                    ),
+                    Err(e) => WsResponse::err(
+                        &req.id,
+                        "STEER_FAILED",
+                        format!("Failed to steer `{}`: {}", target_id, e),
+                    ),
+                }
+            }
+        }
+        "spawn" => {
+            let session_id = conn.read().await.subscriptions.first().cloned();
+            let Some(sid) = session_id else {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /subagents spawn requires an active session.",
+                );
+            };
+            let route = state.agent_router.resolve_by_session(&sid).await;
+            if route.agent_id.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "NO_PARENT_AGENT",
+                    "No parent agent found for the active session.",
+                );
+            }
+
+            let (agent_type, system_prompt) = if rest.is_empty() {
+                ("default".to_string(), None)
+            } else {
+                let mut words = rest.splitn(2, ' ');
+                let at = words.next().unwrap_or("default").to_string();
+                let prompt = words.next().map(|s| s.to_string());
+                (at, prompt)
+            };
+
+            let config = SubagentConfig {
+                agent_type,
+                system_prompt,
+                mode: SpawnMode::Run,
+                thread_binding: ThreadBinding::Auto,
+                ..SubagentConfig::default()
+            };
+
+            match state
+                .acp
+                .spawn_subagent(AcpSessionId(sid.clone()), route.agent_id, config)
+                .await
+            {
+                Ok(handle) => WsResponse::ok(
+                    &req.id,
+                    serde_json::json!({
+                        "text": format!(
+                            "🤖 Spawned subagent `{}` in session `{}`.",
+                            handle.id, sid
+                        )
+                    }),
+                ),
+                Err(e) => WsResponse::err(
+                    &req.id,
+                    "SPAWN_FAILED",
+                    format!("Failed to spawn subagent: {}", e),
+                ),
+            }
+        }
+        _ => WsResponse::err(
+            &req.id,
+            "INVALID_ARGS",
+            "Usage: /subagents list|kill|log|info|send|steer|spawn",
+        ),
+    }
 }
 
 async fn handle_skill(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
@@ -987,7 +1323,10 @@ async fn handle_acp(
                 return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
             }
         }
-        return WsResponse::ok(&req.id, serde_json::json!({ "text": "🤖 No active ACP session." }));
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": "🤖 No active ACP session." }),
+        );
     }
 
     let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
@@ -995,6 +1334,40 @@ async fn handle_acp(
     let rest = parts.get(1).unwrap_or(&"").trim();
 
     match sub {
+        "spawn" => {
+            let parent_id = if rest.is_empty() {
+                let session_id = conn.read().await.subscriptions.first().cloned();
+                if let Some(sid) = session_id {
+                    let route = state.agent_router.resolve_by_session(&sid).await;
+                    if route.agent_id.is_empty() {
+                        None
+                    } else {
+                        Some(route.agent_id)
+                    }
+                } else {
+                    None
+                }
+            } else {
+                Some(rest.to_string())
+            };
+            let Some(parent_id) = parent_id else {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /acp spawn [parent_agent_id] (requires an active session or explicit parent)",
+                );
+            };
+            let session_id = state.acp.create_session(parent_id.clone()).await;
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "text": format!(
+                        "🤖 Created ACP session `{}` for parent `{}`.",
+                        session_id, parent_id
+                    )
+                }),
+            )
+        }
         "cancel" => {
             let sid = if rest.is_empty() {
                 conn.read().await.subscriptions.first().cloned()
@@ -1028,9 +1401,107 @@ async fn handle_acp(
             }
             WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /acp close [session_id]")
         }
-        _ => WsResponse::ok(
+        "steer" => {
+            if rest.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /acp steer <id> <message>",
+                );
+            }
+            let steer_parts: Vec<&str> = rest.splitn(2, ' ').collect();
+            let target_id = steer_parts[0];
+            let message = steer_parts.get(1).unwrap_or(&"").trim();
+            if message.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /acp steer <id> <message>",
+                );
+            }
+            match state
+                .acp
+                .steer_subagent(target_id, message.to_string())
+                .await
+            {
+                Ok(result) => WsResponse::ok(
+                    &req.id,
+                    serde_json::json!({
+                        "text": format!(
+                            "🤖 Steering sent to `{}`.\n\nResult: {}",
+                            target_id, result
+                        )
+                    }),
+                ),
+                Err(e) => WsResponse::err(
+                    &req.id,
+                    "STEER_FAILED",
+                    format!("Failed to steer `{}`: {}", target_id, e),
+                ),
+            }
+        }
+        "sessions" => {
+            let subagents = state.acp.list_subagents().await;
+            let mut session_ids: Vec<AcpSessionId> =
+                subagents.iter().map(|h| h.session_id.clone()).collect();
+            session_ids.sort_by(|a, b| a.0.cmp(&b.0));
+            session_ids.dedup();
+
+            if session_ids.is_empty() {
+                return WsResponse::ok(
+                    &req.id,
+                    serde_json::json!({ "text": "🤖 No ACP sessions." }),
+                );
+            }
+
+            let mut lines = vec![format!(
+                "🤖 **ACP Sessions** ({})",
+                session_ids.len()
+            )];
+            for sid in session_ids {
+                match state.acp.get_session_info(&sid).await {
+                    Some(info) => lines.push(format!(
+                        "- `{}` — parent `{}`, {} subagent(s), created {}",
+                        info.id, info.parent_agent_id, info.subagent_count, info.created_at
+                    )),
+                    None => lines.push(format!("- `{}` — metadata unavailable", sid)),
+                }
+            }
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "text": lines.join("\n") }),
+            )
+        }
+        "pause" | "resume" | "step" => {
+            let sid = if rest.is_empty() {
+                conn.read().await.subscriptions.first().cloned()
+            } else {
+                Some(rest.to_string())
+            };
+            let Some(sid) = sid else {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    format!("Usage: /acp {} [session_id]", sub),
+                );
+            };
+            match sub {
+                "pause" => state.acp.pause(sid.clone()).await,
+                "resume" => state.acp.resume(sid.clone()).await,
+                "step" => state.acp.step(sid.clone()).await,
+                _ => unreachable!(),
+            }
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "text": format!("🤖 Sent `{}` to session `{}`.", sub, sid)
+                }),
+            )
+        }
+        _ => WsResponse::err(
             &req.id,
-            serde_json::json!({ "text": format!("🤖 ACP subcommand '{}' not yet implemented.", sub) }),
+            "INVALID_ARGS",
+            "Usage: /acp spawn|cancel|steer|close|sessions|status|pause|resume|step",
         ),
     }
 }
@@ -1795,30 +2266,320 @@ async fn handle_mcp(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> W
         return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
     }
 
-    let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
-    let sub = parts[0];
-    let rest = parts.get(1).unwrap_or(&"").trim();
+    let mut tokens = trimmed.split_whitespace();
+    let sub = tokens.next().unwrap_or("");
 
     match sub {
-        "disconnect" => {
+        "connect" => {
+            let rest: Vec<&str> = tokens.collect();
             if rest.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /mcp connect <server_id> [command] [args...]",
+                );
+            }
+            let server_id = rest[0].to_string();
+            let config = if rest.len() > 1 {
+                let base = state
+                    .config
+                    .read()
+                    .await
+                    .mcp
+                    .servers
+                    .get(&server_id)
+                    .cloned()
+                    .unwrap_or_default();
+                let command = rest[1].to_string();
+                let args = rest[2..].iter().map(|s| s.to_string()).collect();
+                McpServerConfig {
+                    command: Some(command),
+                    args,
+                    ..base
+                }
+            } else {
+                match state
+                    .config
+                    .read()
+                    .await
+                    .mcp
+                    .servers
+                    .get(&server_id)
+                    .cloned()
+                {
+                    Some(cfg) => cfg,
+                    None => {
+                        return WsResponse::err(
+                            &req.id,
+                            "INVALID_ARGS",
+                            "Usage: /mcp connect <server_id> [command] [args...]",
+                        );
+                    }
+                }
+            };
+
+            match state.mcp_manager.connect(&server_id, config.clone()).await {
+                Ok(tools) => {
+                    if let Some(client_arc) = state.mcp_manager.get_client(&server_id).await {
+                        let max_tools = if config.max_tools == 0 {
+                            tools.len()
+                        } else {
+                            config.max_tools.min(tools.len())
+                        };
+                        for tool in tools.iter().take(max_tools) {
+                            let wrapper = Arc::new(McpToolWrapper::new(
+                                client_arc.clone(),
+                                &server_id,
+                                tool,
+                            ));
+                            state.tool_registry.register_dynamic(wrapper);
+                        }
+                    }
+                    let text = format!(
+                        "🔌 Connected MCP server '{}' ({} tool{} registered).",
+                        server_id,
+                        tools.len(),
+                        if tools.len() == 1 { "" } else { "s" }
+                    );
+                    WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({
+                            "text": text,
+                            "server_id": server_id,
+                            "tools": tools.len(),
+                        }),
+                    )
+                }
+                Err(e) => WsResponse::err(&req.id, "MCP_ERROR", format!("{}", e)),
+            }
+        }
+        "disconnect" => {
+            let server_id = tokens.next().unwrap_or("");
+            if server_id.is_empty() {
                 return WsResponse::err(
                     &req.id,
                     "INVALID_ARGS",
                     "Usage: /mcp disconnect <server_id>",
                 );
             }
-            match state.mcp_manager.disconnect(rest).await {
+            match state.mcp_manager.disconnect(server_id).await {
                 Ok(()) => WsResponse::ok(
                     &req.id,
-                    serde_json::json!({ "text": format!("🔌 MCP server '{}' disconnected.", rest) }),
+                    serde_json::json!({ "text": format!("🔌 MCP server '{}' disconnected.", server_id) }),
                 ),
                 Err(e) => WsResponse::err(&req.id, "MCP_ERROR", format!("{}", e)),
             }
         }
-        _ => WsResponse::ok(
+        "tools" => {
+            let server_id = tokens.next().unwrap_or("");
+            if server_id.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /mcp tools <server_id>",
+                );
+            }
+            match state.mcp_manager.get_client(server_id).await {
+                Some(client_arc) => {
+                    let client = client_arc.read().await;
+                    let tools: Vec<serde_json::Value> = client
+                        .get_tools()
+                        .iter()
+                        .map(|t| {
+                            serde_json::json!({
+                                "name": t.name,
+                                "description": t.description,
+                            })
+                        })
+                        .collect();
+                    WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({
+                            "text": format!("🔌 {} tool(s) on '{}'", tools.len(), server_id),
+                            "server_id": server_id,
+                            "tools": tools,
+                        }),
+                    )
+                }
+                None => WsResponse::err(
+                    &req.id,
+                    "MCP_ERROR",
+                    format!("MCP server '{}' is not connected.", server_id),
+                ),
+            }
+        }
+        "resources" => {
+            let server_id = tokens.next().unwrap_or("");
+            if server_id.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /mcp resources <server_id>",
+                );
+            }
+            match state.mcp_manager.get_client(server_id).await {
+                Some(client_arc) => match client_arc.read().await.list_resources().await {
+                    Ok(resources) => {
+                        let items: Vec<serde_json::Value> = resources
+                            .iter()
+                            .map(|r| {
+                                serde_json::json!({
+                                    "uri": r.uri,
+                                    "name": r.name,
+                                    "description": r.description,
+                                    "mime_type": r.mime_type,
+                                })
+                            })
+                            .collect();
+                        WsResponse::ok(
+                            &req.id,
+                            serde_json::json!({
+                                "text": format!(
+                                    "🔌 {} resource(s) on '{}'",
+                                    items.len(),
+                                    server_id
+                                ),
+                                "server_id": server_id,
+                                "resources": items,
+                            }),
+                        )
+                    }
+                    Err(e) => WsResponse::err(&req.id, "MCP_ERROR", format!("{}", e)),
+                },
+                None => WsResponse::err(
+                    &req.id,
+                    "MCP_ERROR",
+                    format!("MCP server '{}' is not connected.", server_id),
+                ),
+            }
+        }
+        "prompts" => {
+            let server_id = tokens.next().unwrap_or("");
+            if server_id.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /mcp prompts <server_id>",
+                );
+            }
+            match state.mcp_manager.get_client(server_id).await {
+                Some(client_arc) => match client_arc.read().await.list_prompts().await {
+                    Ok(prompts) => {
+                        let items: Vec<serde_json::Value> = prompts
+                            .iter()
+                            .map(|p| {
+                                serde_json::json!({
+                                    "name": p.name,
+                                    "description": p.description,
+                                    "arguments": p.arguments,
+                                })
+                            })
+                            .collect();
+                        WsResponse::ok(
+                            &req.id,
+                            serde_json::json!({
+                                "text": format!(
+                                    "🔌 {} prompt(s) on '{}'",
+                                    items.len(),
+                                    server_id
+                                ),
+                                "server_id": server_id,
+                                "prompts": items,
+                            }),
+                        )
+                    }
+                    Err(e) => WsResponse::err(&req.id, "MCP_ERROR", format!("{}", e)),
+                },
+                None => WsResponse::err(
+                    &req.id,
+                    "MCP_ERROR",
+                    format!("MCP server '{}' is not connected.", server_id),
+                ),
+            }
+        }
+        "call" => {
+            let server_id = tokens.next().unwrap_or("");
+            let tool_name = tokens.next().unwrap_or("");
+            let json_args = tokens.collect::<Vec<&str>>().join(" ");
+            if server_id.is_empty() || tool_name.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /mcp call <server_id> <tool_name> [json_args]",
+                );
+            }
+            let params = if json_args.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_str(&json_args) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return WsResponse::err(
+                            &req.id,
+                            "INVALID_ARGS",
+                            format!("Invalid JSON arguments: {}", e),
+                        );
+                    }
+                }
+            };
+            match state.mcp_manager.get_client(server_id).await {
+                Some(client_arc) => match client_arc.read().await.call_tool(tool_name, params).await {
+                    Ok(result) => WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({
+                            "text": format!("🔌 Tool '{}' returned result.", tool_name),
+                            "server_id": server_id,
+                            "tool": tool_name,
+                            "result": result,
+                        }),
+                    ),
+                    Err(e) => WsResponse::err(&req.id, "MCP_ERROR", format!("{}", e)),
+                },
+                None => WsResponse::err(
+                    &req.id,
+                    "MCP_ERROR",
+                    format!("MCP server '{}' is not connected.", server_id),
+                ),
+            }
+        }
+        "read" => {
+            let server_id = tokens.next().unwrap_or("");
+            let uri = tokens.next().unwrap_or("");
+            if server_id.is_empty() || uri.is_empty() {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /mcp read <server_id> <uri>",
+                );
+            }
+            match state.mcp_manager.get_client(server_id).await {
+                Some(client_arc) => match client_arc.read().await.read_resource(uri).await {
+                    Ok(contents) => WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({
+                            "text": format!(
+                                "🔌 Read {} content fragment(s) from '{}'.",
+                                contents.len(),
+                                uri
+                            ),
+                            "server_id": server_id,
+                            "uri": uri,
+                            "contents": contents,
+                        }),
+                    ),
+                    Err(e) => WsResponse::err(&req.id, "MCP_ERROR", format!("{}", e)),
+                },
+                None => WsResponse::err(
+                    &req.id,
+                    "MCP_ERROR",
+                    format!("MCP server '{}' is not connected.", server_id),
+                ),
+            }
+        }
+        _ => WsResponse::err(
             &req.id,
-            serde_json::json!({ "text": format!("🔌 MCP subcommand '{}' not yet implemented.", sub) }),
+            "INVALID_ARGS",
+            "Usage: /mcp [show|connect|disconnect|tools|resources|prompts|call|read]",
         ),
     }
 }
