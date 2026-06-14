@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
+use crate::security::runtime_audit::AuditEventType;
+
 /// Unique identifier for a user
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(pub String);
@@ -73,6 +75,8 @@ pub struct AuthManager {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
     /// Whether pairing is required for new users
     pairing_required: bool,
+    /// Optional audit logger for auth events
+    audit_log: Option<Arc<dyn AuditLogger>>,
 }
 
 /// Session information
@@ -101,6 +105,12 @@ impl AuthManager {
     /// Require pairing for new users
     pub fn with_pairing_required(mut self, required: bool) -> Self {
         self.pairing_required = required;
+        self
+    }
+
+    /// Attach an audit logger for auth events.
+    pub fn with_audit_log(mut self, audit_log: Arc<dyn AuditLogger>) -> Self {
+        self.audit_log = Some(audit_log);
         self
     }
 
@@ -171,6 +181,22 @@ impl AuthManager {
         let mut sessions = self.sessions.write().await;
         sessions.insert(token, session.clone());
 
+        if let Some(ref audit) = self.audit_log {
+            audit
+                .log_entry(
+                    AuditEventType::Login,
+                    session.user_id.to_string(),
+                    session.token.clone(),
+                    true,
+                    "Session created".to_string(),
+                    Some(serde_json::json!({
+                        "scopes": session.scopes,
+                        "ttl_hours": ttl_hours,
+                    })),
+                )
+                .await;
+        }
+
         debug!("Created session for user: {} with scopes {:?}", user_id, session.scopes);
         Ok(session)
     }
@@ -196,16 +222,65 @@ impl AuthManager {
     /// Validate a session token
     pub async fn validate_session(&self, token: &str) -> Option<Session> {
         let sessions = self.sessions.read().await;
-        sessions
+        let result = sessions
             .get(token)
             .cloned()
-            .filter(|s| s.expires_at > chrono::Utc::now())
+            .filter(|s| s.expires_at > chrono::Utc::now());
+
+        if let Some(ref audit) = self.audit_log {
+            if let Some(ref session) = result {
+                audit
+                    .log_entry(
+                        AuditEventType::TokenValidation,
+                        session.user_id.to_string(),
+                        token.to_string(),
+                        true,
+                        "Token validation succeeded".to_string(),
+                        Some(serde_json::json!({
+                            "scopes": session.scopes,
+                        })),
+                    )
+                    .await;
+            } else {
+                audit
+                    .log_entry(
+                        AuditEventType::TokenValidation,
+                        "unknown".to_string(),
+                        token.to_string(),
+                        false,
+                        "Token validation failed".to_string(),
+                        None,
+                    )
+                    .await;
+            }
+        }
+
+        result
     }
 
     /// Revoke a session
     pub async fn revoke_session(&self, token: &str) -> bool {
-        let mut sessions = self.sessions.write().await;
-        sessions.remove(token).is_some()
+        let session = {
+            let mut sessions = self.sessions.write().await;
+            sessions.remove(token)
+        };
+
+        if let Some(ref session) = session {
+            if let Some(ref audit) = self.audit_log {
+                audit
+                    .log_entry(
+                        AuditEventType::Logout,
+                        session.user_id.to_string(),
+                        token.to_string(),
+                        true,
+                        "Session revoked".to_string(),
+                        None,
+                    )
+                    .await;
+            }
+        }
+
+        session.is_some()
     }
 
     /// Generate a pairing code (simplified implementation)
@@ -818,6 +893,63 @@ mod tests {
             .unwrap();
         assert!(auth.validate_session(&session.token).await.is_some());
     }
+
+    #[tokio::test]
+    async fn test_auth_manager_audit_login_logout() {
+        use crate::security::runtime_audit::{AuditEventType, RuntimeAuditLog};
+
+        let audit_log = Arc::new(RuntimeAuditLog::with_capacity(100));
+        let auth = AuthManager::new().with_audit_log(audit_log.clone());
+        let user = User::new("audited_user", "Audited User");
+
+        auth.register_user(user.clone()).await.unwrap();
+
+        let session = auth
+            .create_session(user.id.clone(), 24, None)
+            .await
+            .unwrap();
+
+        let logins = audit_log.filter(AuditEventType::Login).await;
+        assert_eq!(logins.len(), 1);
+        assert_eq!(logins[0].actor, "audited_user");
+        assert!(logins[0].allowed);
+
+        assert!(auth.revoke_session(&session.token).await);
+
+        let logouts = audit_log.filter(AuditEventType::Logout).await;
+        assert_eq!(logouts.len(), 1);
+        assert_eq!(logouts[0].actor, "audited_user");
+        assert!(logouts[0].allowed);
+    }
+
+    #[tokio::test]
+    async fn test_auth_manager_audit_token_validation() {
+        use crate::security::runtime_audit::{AuditEventType, RuntimeAuditLog};
+
+        let audit_log = Arc::new(RuntimeAuditLog::with_capacity(100));
+        let auth = AuthManager::new().with_audit_log(audit_log.clone());
+        let user = User::new("token_user", "Token User");
+
+        auth.register_user(user.clone()).await.unwrap();
+
+        // Failed validation before session exists
+        assert!(auth.validate_session("invalid-token").await.is_none());
+
+        let session = auth
+            .create_session(user.id.clone(), 24, None)
+            .await
+            .unwrap();
+
+        // Successful validation
+        assert!(auth.validate_session(&session.token).await.is_some());
+
+        let validations = audit_log.filter(AuditEventType::TokenValidation).await;
+        assert_eq!(validations.len(), 2);
+        assert!(!validations[0].allowed);
+        assert_eq!(validations[0].actor, "unknown");
+        assert!(validations[1].allowed);
+        assert_eq!(validations[1].actor, "token_user");
+    }
 }
 
 // Device fingerprinting for security tracking
@@ -1215,9 +1347,7 @@ pub mod content_filter;
 pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};
 
 // Re-export PII types
-pub use pii::{
-    DataClassification, DetectedPii, FilterResult, PiiDetector, PiiPattern,
-};
+pub use pii::{DataClassification, DetectedPii, FilterResult, PiiDetector, PiiPattern};
 
 // Re-export content filter types
 pub use content_filter::{ContentFilter, ContentFilterOutcome, FilterAction};

@@ -44,6 +44,12 @@ pub enum AuditEventType {
     ContentFilter,
     /// Trusted proxy authentication attempt
     TrustedProxyLogin,
+    /// User login (session created)
+    Login,
+    /// User logout (session revoked)
+    Logout,
+    /// Token validation attempt
+    TokenValidation,
 }
 
 /// A single audit log entry.
@@ -279,6 +285,30 @@ mod tests {
         assert_eq!(AuditEventType::AccessCheck, AuditEventType::AccessCheck);
         assert_eq!(AuditEventType::ToolInvocation, AuditEventType::ToolInvocation);
         assert_ne!(AuditEventType::PairingRequest, AuditEventType::PairingApprove);
+        // Auth-specific variants
+        assert_ne!(AuditEventType::Login, AuditEventType::Logout);
+        assert_ne!(AuditEventType::Logout, AuditEventType::TokenValidation);
+    }
+
+    #[tokio::test]
+    async fn test_filter_auth_event_types() {
+        let log = RuntimeAuditLog::with_capacity(100);
+        log.log(AuditEventType::Login, "u1", "t1", true, "", None)
+            .await;
+        log.log(AuditEventType::Logout, "u1", "t1", true, "", None)
+            .await;
+        log.log(AuditEventType::TokenValidation, "u1", "t1", true, "", None)
+            .await;
+        log.log(AuditEventType::AccessCheck, "u2", "t2", true, "", None)
+            .await;
+
+        let logins = log.filter(AuditEventType::Login).await;
+        assert_eq!(logins.len(), 1);
+        assert_eq!(logins[0].event_type, AuditEventType::Login);
+
+        let token_validations = log.filter(AuditEventType::TokenValidation).await;
+        assert_eq!(token_validations.len(), 1);
+        assert_eq!(token_validations[0].event_type, AuditEventType::TokenValidation);
     }
 
     #[test]

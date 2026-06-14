@@ -404,6 +404,24 @@ pub struct RateLimitConfig {
     /// Per-endpoint rate limit
     #[serde(default)]
     pub per_endpoint: TierConfig,
+    /// Shared-secret authentication scope rate limit.
+    #[serde(default)]
+    pub shared_secret: TierConfig,
+    /// Device-token authentication scope rate limit.
+    #[serde(default)]
+    pub device_token: TierConfig,
+    /// Webhook/hook authentication scope rate limit.
+    #[serde(default)]
+    pub hook_auth: TierConfig,
+    /// Control-plane write operation rate limit.
+    #[serde(default)]
+    pub control_plane_write: TierConfig,
+    /// Lockout configuration for repeated failures.
+    #[serde(default)]
+    pub lockout: crate::security::sliding_window::LockoutConfig,
+    /// Skip rate limiting for loopback addresses.
+    #[serde(default)]
+    pub loopback_exempt: bool,
 }
 
 /// Single tier configuration for multi-tier rate limiting
@@ -477,6 +495,28 @@ impl Default for RateLimitConfig {
                 capacity: 50,
                 window_secs: 60,
             },
+            shared_secret: TierConfig {
+                enabled: true,
+                capacity: 200,
+                window_secs: 60,
+            },
+            device_token: TierConfig {
+                enabled: true,
+                capacity: 60,
+                window_secs: 60,
+            },
+            hook_auth: TierConfig {
+                enabled: true,
+                capacity: 300,
+                window_secs: 60,
+            },
+            control_plane_write: TierConfig {
+                enabled: true,
+                capacity: 20,
+                window_secs: 60,
+            },
+            lockout: crate::security::sliding_window::LockoutConfig::default(),
+            loopback_exempt: true,
         }
     }
 }
@@ -1668,7 +1708,8 @@ impl Gateway {
         // Initialize security components
         let auth_manager = Arc::new(
             crate::security::AuthManager::new()
-                .with_pairing_required(config.security.pairing_required),
+                .with_pairing_required(config.security.pairing_required)
+                .with_audit_log(audit_log_dyn.clone()),
         );
         let rate_limiter = Arc::new(crate::security::RateLimiter::new(
             config.security.rate_limit.capacity,
@@ -1697,6 +1738,28 @@ impl Gateway {
                 capacity: config.security.rate_limit.per_endpoint.capacity,
                 window_secs: config.security.rate_limit.per_endpoint.window_secs,
             },
+            shared_secret: crate::gateway::rate_limit::TierConfig {
+                enabled: config.security.rate_limit.shared_secret.enabled,
+                capacity: config.security.rate_limit.shared_secret.capacity,
+                window_secs: config.security.rate_limit.shared_secret.window_secs,
+            },
+            device_token: crate::gateway::rate_limit::TierConfig {
+                enabled: config.security.rate_limit.device_token.enabled,
+                capacity: config.security.rate_limit.device_token.capacity,
+                window_secs: config.security.rate_limit.device_token.window_secs,
+            },
+            hook_auth: crate::gateway::rate_limit::TierConfig {
+                enabled: config.security.rate_limit.hook_auth.enabled,
+                capacity: config.security.rate_limit.hook_auth.capacity,
+                window_secs: config.security.rate_limit.hook_auth.window_secs,
+            },
+            control_plane_write: crate::gateway::rate_limit::TierConfig {
+                enabled: config.security.rate_limit.control_plane_write.enabled,
+                capacity: config.security.rate_limit.control_plane_write.capacity,
+                window_secs: config.security.rate_limit.control_plane_write.window_secs,
+            },
+            lockout: config.security.rate_limit.lockout,
+            loopback_exempt: config.security.rate_limit.loopback_exempt,
         };
         let multi_tier_rate_limiter =
             Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(multi_tier_config));
@@ -2701,6 +2764,7 @@ impl Gateway {
             .route("/api/v1/device/pairing/reject", post(reject_device_handler))
             .route("/api/v1/device/pairing/revoke", post(revoke_device_handler))
             .route("/api/v1/device/pairing/qr/{code}", get(device_qr_handler))
+            .route("/api/v1/device/pairing/setup/{setup_code}", get(setup_device_handler))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
 
         let essential_router = essential_public_router.merge(essential_auth_router);
@@ -5360,7 +5424,7 @@ impl GatewayConfig {
         let mut fields = HashMap::new();
 
         let json = serde_json::to_value(self).unwrap_or_default();
-        let obj = json.as_object().map(|o| o.clone()).unwrap_or_default();
+        let obj = json.as_object().cloned().unwrap_or_default();
 
         // Only capture fields that are actually hot-reloadable
         let reloadable_keys = [
