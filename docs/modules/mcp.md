@@ -74,13 +74,3 @@ pub struct McpServerConfig {
 }
 ```
 
-## Missing / TODO
-
-- **✅ Implemented**: SSE transport — `connect_sse()` with SSE reader task and POST writer task. See `src/tools/mcp.rs:380-496`.
-- **✅ Implemented**: Auto-reconnect with exponential backoff — `McpManager::reconnect_with_backoff()` with `[5, 10, 20, 40, 80]` second sequence. See `src/tools/mcp.rs:925-950`.
-- **✅ Implemented**: Server capability negotiation — parsed and acted on via `McpServerCapabilities`, `McpToolsCapability`, `McpResourcesCapability`, `McpPromptsCapability`, and capability helper methods. See `src/tools/mcp.rs` capability types and `initialize()`.
-- **✅ Implemented**: `streamable_http` transport — `connect_streamable_http()` sends POST requests and handles SSE response bodies, wired into the connection dispatch. See `src/tools/mcp.rs:544-610`.
-- **✅ Implemented**: MCP prompts and sampling protocol support — `prompts/list`, `prompts/get`, and `sampling/createMessage` exposed through `McpPromptTool` and `McpConnectionTool` actions. See `src/tools/mcp.rs`.
-- **✅ Implemented**: Resource change notifications — `resources/subscribe`/`unsubscribe` and server-pushed `notifications/resources/updated` forwarded as `GatewayEvent::McpResourceChanged`. See `src/tools/mcp.rs`.
-- **✅ Implemented**: MCP tool result streaming for long-running operations — `progressToken` generated per streaming call and `McpToolWrapper::execute_stream` yields progress chunks. See `src/tools/mcp.rs`.
-- **✅ Implemented**: Connection health monitoring and automatic failover — per-server health monitor in `McpManager` with `Healthy`/`Degraded`/`Unhealthy` transitions and automatic reconnect. See `src/tools/mcp.rs`.
