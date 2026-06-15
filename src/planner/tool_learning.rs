@@ -130,16 +130,30 @@ pub struct ToolSuggestion {
     pub failure_pattern: String,
 }
 
+const DEFAULT_EXPERIENCE_TTL_SECS: u64 = 90 * 24 * 60 * 60; // 90 days
+
 /// Engine that learns from tool execution outcomes.
 #[derive(Clone)]
 pub struct ToolLearningEngine {
     memory: Arc<dyn MemoryStore>,
+    experience_ttl_secs: u64,
 }
 
 impl ToolLearningEngine {
     /// Create a new learning engine backed by the given memory store.
     pub fn new(memory: Arc<dyn MemoryStore>) -> Self {
-        Self { memory }
+        Self {
+            memory,
+            experience_ttl_secs: DEFAULT_EXPERIENCE_TTL_SECS,
+        }
+    }
+
+    /// Set the TTL for stored experiences (default: 90 days).
+    /// Set to 0 for no expiry.
+    #[allow(dead_code)]
+    pub fn with_experience_ttl_secs(mut self, secs: u64) -> Self {
+        self.experience_ttl_secs = secs;
+        self
     }
 
     /// Record the outcome of a tool execution.
@@ -186,6 +200,13 @@ impl ToolLearningEngine {
         )
         .with_importance_score(if success { 0.6 } else { 0.85 })
         .with_source("tool_learning");
+
+        // Apply TTL to prevent unbounded storage growth.
+        let mem = if self.experience_ttl_secs > 0 {
+            mem.with_ttl(self.experience_ttl_secs)
+        } else {
+            mem
+        };
 
         self.memory.store(mem).await?;
         info!("Recorded new tool experience for '{}'", exp.tool_name);
