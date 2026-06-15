@@ -240,6 +240,10 @@ pub struct PluginRuntime {
     #[cfg(feature = "plugins")]
     #[allow(dead_code)]
     event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<PluginEvent>>>>,
+    /// Handle to the spawned event dispatch task so panics are not silently
+    /// ignored when the runtime is dropped.
+    #[cfg(feature = "plugins")]
+    event_dispatch_handle: Option<tokio::task::JoinHandle<()>>,
     /// Per-plugin metrics registry
     metrics: Arc<PluginMetricsRegistry>,
 }
@@ -268,11 +272,13 @@ impl PluginRuntime {
             let subscribers_clone = event_subscribers.clone();
 
             // Spawn event dispatch task (only if tokio runtime is active)
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                let _ = handle.spawn(async move {
+            let event_dispatch_handle = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                Some(handle.spawn(async move {
                     Self::event_dispatch_loop(subscribers_clone, event_rx).await;
-                });
-            }
+                }))
+            } else {
+                None
+            };
 
             Ok(Self {
                 plugins: Arc::new(RwLock::new(HashMap::new())),
@@ -281,6 +287,7 @@ impl PluginRuntime {
                 shared_state,
                 event_subscribers,
                 event_rx: Arc::new(Mutex::new(None)),
+                event_dispatch_handle,
                 metrics: Arc::new(PluginMetricsRegistry::new()),
             })
         }
@@ -1928,6 +1935,15 @@ impl PluginRuntime {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "plugins")]
+impl Drop for PluginRuntime {
+    fn drop(&mut self) {
+        if let Some(handle) = self.event_dispatch_handle.take() {
+            handle.abort();
+        }
     }
 }
 
