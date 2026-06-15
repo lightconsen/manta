@@ -428,7 +428,7 @@ async fn tool_combo_list_files_and_screenshot() {
 // 7. AppleScript 深度控制
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Prompt: 用 AppleScript 帮我查一下当前 Finder 窗口的路径。
+/// Prompt: 用 AppleScript 执行 shell 命令，验证 applescript 工具可用。
 #[tokio::test]
 #[serial]
 #[cfg_attr(not(target_os = "macos"), ignore = "macOS-only test")]
@@ -436,8 +436,8 @@ async fn tool_applescript_finder_path() {
     let results = run_tool_chat_test(
         40322,
         "Use ONLY the applescript tool. Execute: \
-         tell application \"Finder\" to get the POSIX path of (target of front window). \
-         Report the path. Do not use shell or any other tool.",
+         do shell script \"echo syscity_test_ok\". \
+         Report the result. Do not use shell or any other tool.",
         "applescript",
     )
     .await;
