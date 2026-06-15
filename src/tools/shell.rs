@@ -61,6 +61,25 @@ impl ShellTool {
     }
 }
 
+/// Allowed shell interpreters. Any other value of `$SHELL` falls back to
+/// `/bin/sh` to prevent a malicious or unexpected interpreter from being
+/// invoked by the shell tool.
+const ALLOWED_SHELLS: &[&str] = &[
+    "/bin/sh",
+    "/bin/bash",
+    "/usr/bin/bash",
+    "/bin/zsh",
+    "/usr/bin/zsh",
+];
+
+/// Resolve the shell interpreter to use, validating against an allowlist.
+fn resolve_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|s| ALLOWED_SHELLS.contains(&s.as_str()))
+        .unwrap_or_else(|| "/bin/sh".to_string())
+}
+
 #[async_trait]
 impl Tool for ShellTool {
     fn name(&self) -> &str {
@@ -126,7 +145,7 @@ impl Tool for ShellTool {
         debug!("Working directory: {:?}", working_dir);
 
         // Parse command (handle shell operators like |, &&, etc.)
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let shell = resolve_shell();
 
         let start_time = std::time::Instant::now();
 
