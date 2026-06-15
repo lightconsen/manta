@@ -107,7 +107,7 @@ async fn tool_nodes_invoked_via_chat() {
 async fn tool_web_search_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40089,
-        "Use the web_search tool to search for Rust programming language.",
+        "Use the web_search tool to search for Rust programming language. Do NOT use web_fetch.",
         "web_search",
     )
     .await;
