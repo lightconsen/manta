@@ -1,17 +1,14 @@
 //! Integration tests for device infrastructure using mock drivers.
 //!
 //! These tests validate the full lifecycle: create mock capabilities and
-//! drivers → device registry → register into CapabilityRegistry →
-//! resolve by name.
+//! drivers, build a device registry, probe, connect, and exercise mock
+//! capabilities directly.
 
-use syscity::capability::registry::CapabilityRegistry;
-use syscity::capability::providers::device_adapter;
-use syscity::capability::Capability;
+use syscity::device::Capability;
 use syscity::device::mock::{make_mock_device_registry, MockCapability, MockDeviceDriver};
 use std::sync::Arc;
 
-/// Full flow: mock driver → probe → connect → register capabilities →
-/// verify in CapabilityRegistry.
+/// Full flow: mock driver -> probe -> connect -> verify device state.
 #[tokio::test]
 async fn mock_device_full_lifecycle() {
     let caps: Vec<Arc<dyn Capability>> = vec![
@@ -35,21 +32,7 @@ async fn mock_device_full_lifecycle() {
     let device = reg.connect("stepper").await.unwrap();
     assert_eq!(device.id(), "dev-stepper");
     assert!(device.status.read().await.is_connected());
-
-    // Register device capabilities
-    let mut cap_reg = CapabilityRegistry::new();
-    device_adapter::register_device_capabilities(&mut cap_reg, device);
-
-    // Verify capabilities are discoverable
-    assert!(cap_reg.resolve("motor.move_to").is_some());
-    assert!(cap_reg.resolve("motor.stop").is_some());
-    assert_eq!(cap_reg.len(), 2);
-
-    // List by prefix
-    let motor_caps = cap_reg.list_by_prefix("motor");
-    assert_eq!(motor_caps.len(), 2);
-    assert!(motor_caps.contains(&"motor.move_to".to_string()));
-    assert!(motor_caps.contains(&"motor.stop".to_string()));
+    assert_eq!(device.capabilities.len(), 2);
 }
 
 /// Execute a mock capability and verify the result.
@@ -105,14 +88,8 @@ async fn mock_device_multiple_devices() {
     let dev1 = reg.connect("stepper").await.unwrap();
     let dev2 = reg.connect("webcam").await.unwrap();
 
-    let mut cap_reg = CapabilityRegistry::new();
-    device_adapter::register_device_capabilities(&mut cap_reg, dev1);
-    device_adapter::register_device_capabilities(&mut cap_reg, dev2);
-
-    assert_eq!(cap_reg.len(), 3);
-    assert!(cap_reg.resolve("motor.move_to").is_some());
-    assert!(cap_reg.resolve("motor.stop").is_some());
-    assert!(cap_reg.resolve("camera.capture").is_some());
+    assert_eq!(dev1.capabilities.len(), 2);
+    assert_eq!(dev2.capabilities.len(), 1);
 }
 
 /// Device registry lifecycle: disconnect and health check.

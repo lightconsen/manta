@@ -47,9 +47,9 @@ pub trait DeviceDriver: Send + Sync {
 
     /// Connect to the device and build the [`Device`] object.
     ///
-    /// This should register all [`Capability`](crate::capability::Capability)
+    /// This should register all [`Capability`](crate::device::Capability)
     /// implementations for the device's operations and attach a
-    /// [`SafetyZone`](crate::capability::safety::SafetyZone) with appropriate
+    /// [`SafetyZone`](crate::device::SafetyZone) with appropriate
     /// rules.
     ///
     /// # Errors

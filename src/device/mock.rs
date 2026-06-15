@@ -17,8 +17,8 @@
 //!     .with_capabilities(vec![Arc::new(cap)]);
 //! ```
 
-use crate::capability::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
-use crate::capability::{Capability, CapabilityResult};
+use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
+use crate::device::capability::{Capability, CapabilityResult};
 use crate::device::driver::DeviceDriver;
 use crate::device::registry::DeviceRegistry;
 use crate::device::{Device, DeviceInfo};
@@ -226,36 +226,11 @@ pub fn make_mock_device_registry(drivers: Vec<MockDeviceDriver>) -> DeviceRegist
     reg
 }
 
-/// Convenience: probe matching drivers, connect each, and register their
-/// capabilities into a [`CapabilityRegistry`](crate::capability::registry::CapabilityRegistry).
-///
-/// Returns the [`DeviceRegistry`] so callers can inspect connected devices.
-pub async fn register_mock_devices(
-    capability_registry: &mut crate::capability::registry::CapabilityRegistry,
-    drivers: Vec<MockDeviceDriver>,
-) -> Result<DeviceRegistry> {
-    let mut device_reg = DeviceRegistry::new();
-    for d in drivers {
-        device_reg.register(Arc::new(d));
-    }
-
-    for name in device_reg.probe_all().await? {
-        let device = device_reg.connect(&name).await?;
-        crate::capability::providers::device_adapter::register_device_capabilities(
-            capability_registry,
-            device,
-        );
-    }
-
-    Ok(device_reg)
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::registry::CapabilityRegistry;
     use serde_json::json;
 
     // ── MockCapability tests ───────────────────────────────────────────────
@@ -376,29 +351,5 @@ mod tests {
         assert_eq!(reg.driver_count(), 2);
         let available = reg.probe_all().await.unwrap();
         assert_eq!(available, vec!["motor"]);
-    }
-
-    #[tokio::test]
-    async fn test_register_mock_devices() {
-        let caps: Vec<Arc<dyn Capability>> = vec![
-            Arc::new(MockCapability::new("motor.move_to")),
-            Arc::new(MockCapability::new("motor.stop")),
-        ];
-        let drivers = vec![
-            MockDeviceDriver::new("motor", true).with_capabilities(caps),
-        ];
-
-        let mut capability_reg = CapabilityRegistry::new();
-        let device_reg = register_mock_devices(&mut capability_reg, drivers)
-            .await
-            .unwrap();
-
-        // Device registry should have the connected device
-        assert_eq!(device_reg.len().await, 1);
-
-        // Capability registry should have the device's capabilities
-        assert!(capability_reg.resolve("motor.move_to").is_some());
-        assert!(capability_reg.resolve("motor.stop").is_some());
-        assert_eq!(capability_reg.len(), 2);
     }
 }

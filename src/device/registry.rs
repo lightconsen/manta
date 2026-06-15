@@ -223,7 +223,7 @@ impl DeviceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
+    use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
     use crate::device::DeviceInfo;
     use async_trait::async_trait;
 

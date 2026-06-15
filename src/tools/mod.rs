@@ -735,6 +735,7 @@ pub mod command_detector;
 pub mod command_gate;
 pub mod cron_tool;
 pub mod delegate_tool;
+pub mod device_tool;
 pub mod file;
 pub mod gateway;
 pub mod grep;

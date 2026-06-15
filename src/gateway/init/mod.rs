@@ -5,6 +5,7 @@
 //! domain to keep the monolithic constructor readable.
 
 pub mod agents;
+pub mod devices;
 pub mod pipelines;
 pub mod security;
 pub mod services;

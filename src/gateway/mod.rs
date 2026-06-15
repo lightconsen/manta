@@ -1119,6 +1119,8 @@ pub struct Gateway {
     message_workers: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
     /// Handles for each spawned agent processing loop.
     agent_tasks: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
+    /// Physical device registry, populated when device drivers are provided.
+    device_registry: Option<Arc<crate::device::registry::DeviceRegistry>>,
 }
 
 /// Validate authentication configuration for ambiguity and conflicts.
@@ -1156,8 +1158,24 @@ fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
 }
 
 impl Gateway {
-    /// Create a new gateway instance
+    /// Create a new gateway instance with no device drivers.
     pub async fn new(config: GatewayConfig, config_path: Option<PathBuf>) -> crate::Result<Self> {
+        Self::with_devices(config, config_path, vec![]).await
+    }
+
+    /// Create a new gateway instance with optional device drivers.
+    ///
+    /// Device drivers are discovered, probed, and connected at startup.  Each
+    /// capability is registered in `ToolRegistry` so the LLM can discover and call device operations through standard
+    /// function calling.
+    ///
+    /// Pass an empty vec (or use [`Gateway::new`]) when no physical devices
+    /// are needed.
+    pub async fn with_devices(
+        config: GatewayConfig,
+        config_path: Option<PathBuf>,
+        device_drivers: Vec<Arc<dyn crate::device::DeviceDriver>>,
+    ) -> crate::Result<Self> {
         // Validate security configuration before proceeding
         validate_auth_config(&config)?;
 
@@ -1436,6 +1454,33 @@ impl Gateway {
         )
         .await?;
 
+        // ── Initialize device subsystem ──
+        // Probes, connects, and registers device capabilities as tools in
+        // ToolRegistry so the LLM can discover and call device operations
+        // through standard function calling.
+        let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> =
+            if !device_drivers.is_empty() {
+                let mut dev_reg = crate::device::registry::DeviceRegistry::new();
+                for driver in device_drivers {
+                    dev_reg.register(driver);
+                }
+                let present = dev_reg.probe_all().await?;
+                for name in &present {
+                    let device = dev_reg.connect(name).await?;
+                    for cap in &device.capabilities {
+                        let wrapper =
+                            crate::tools::device_tool::DeviceToolWrapper::new(
+                                name.clone(),
+                                cap.clone(),
+                            );
+                        state.tools.registry.register_dynamic(Arc::new(wrapper));
+                    }
+                }
+                Some(Arc::new(dev_reg))
+            } else {
+                None
+            };
+
         // Start message processing workers
         let inbound_handle = tokio::spawn(Self::process_inbound_entries(
             state.clone(),
@@ -1455,6 +1500,7 @@ impl Gateway {
             background_tasks: tokio::sync::Mutex::new(background_tasks),
             message_workers: tokio::sync::Mutex::new(vec![inbound_handle, routed_handle]),
             agent_tasks: tokio::sync::Mutex::new(Vec::new()),
+            device_registry,
         })
     }
 
@@ -1469,6 +1515,14 @@ impl Gateway {
     /// Return a clone of the internal `ToolRegistry` arc.
     pub fn tool_registry(&self) -> Arc<crate::tools::ToolRegistry> {
         self.state.tools.registry.clone()
+    }
+
+    /// Return a clone of the internal `DeviceRegistry`, if one exists.
+    ///
+    /// Returns `None` when no device drivers were registered at startup.
+    /// Primarily used in integration / E2E tests to verify device registration.
+    pub fn device_registry(&self) -> Option<Arc<crate::device::registry::DeviceRegistry>> {
+        self.device_registry.clone()
     }
 
     /// Return a clone of the gateway shutdown token.
@@ -2222,65 +2276,10 @@ async fn spawn_agent_inner(
     };
     let computer_adapter = state.tools.computer_adapter.read().await.clone();
 
-    // ── Build unified capability registry ──
-    //
-    // NOTE on the two-path dispatch architecture:
-    //
-    //   The Agent uses two independent paths for tool/action dispatch, and this
-    //   registry is a future-facing abstraction for device/hardware capabilities:
-    //
-    //   Path 1 — ToolRegistry (primary):   Agent → ToolRegistry selects and
-    //     executes static built-in tools (shell, file, glob, grep, process, …)
-    //     and dynamic MCP tools.  This is the established, fully-wired path.
-    //
-    //   Path 2 — ComputerAdapter (direct): Agent → self.computer_adapter field
-    //     → ComputerUseLoop → ComputerAdapter → registry.execute().  This
-    //     dedicated loop (screenshot → decide → execute → verify) bypasses the
-    //     CapabilityRegistry entirely.
-    //
-    //   What goes INTO the CapabilityRegistry below:
-    //     • ComputerCapability wrappers  (one per DesktopAction variant)
-    //     • ToolCapability wrappers      (only dynamic/MCP tools –
-    //       ToolRegistry::all_tools_arc() returns only those)
-    //
-    //   What is NOT in the CapabilityRegistry:
-    //     • Static built-in tools  (shell, file_write, glob, grep, process, …)
-    //       — by design; all_tools_arc() excludes them.
-    //
-    //   The registry exists for external queries (API consumers enumerating
-    //   capabilities) and future device integration.  The Agent's primary
-    //   message pipeline does not consult it.
-    let capability_registry = {
-        use crate::capability::providers::tool_adapter::ToolCapability;
-        use crate::capability::registry::CapabilityRegistry;
-        use std::sync::Arc;
-
-        let mut reg = CapabilityRegistry::new();
-
-        // Register all ToolRegistry tools as Capability wrappers
-        // NOTE: all_tools_arc() returns only dynamic (MCP) tools, not static
-        // built-in tools.  This is intentional — the static tool path is
-        // handled directly by ToolRegistry.
-        for tool in tools.all_tools_arc() {
-            reg.register(Arc::new(ToolCapability::new(tool)));
-        }
-
-        // Register computer capabilities if adapter is available
-        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-        if let Some(ref adapter) = computer_adapter {
-            use crate::capability::providers::computer_adapter::all_computer_capabilities;
-            for cap in all_computer_capabilities(adapter.clone()) {
-                reg.register(Arc::new(cap));
-            }
-        }
-
-        Arc::new(reg)
-    };
 
     let agent = if let Some(mm) = memory_manager {
         let chat_history = mm.chat_history();
         let mut builder = Agent::new(config.clone(), provider, tools)
-            .with_capability_registry(capability_registry.clone())
             .with_model(model.clone())
             .with_memory_manager(mm.clone())
             .with_chat_history(chat_history)
@@ -2306,7 +2305,6 @@ async fn spawn_agent_inner(
         Arc::new(builder)
     } else {
         let mut builder = Agent::new(config.clone(), provider, tools)
-            .with_capability_registry(capability_registry.clone())
             .with_model(model.clone())
             .with_cost_guard(cost_guard)
             .with_skill_manager(Arc::clone(&state.tools.skills_manager))
@@ -4015,6 +4013,7 @@ impl Gateway {
                                         background_tasks: tokio::sync::Mutex::new(Vec::new()),
                                         message_workers: tokio::sync::Mutex::new(Vec::new()),
                                         agent_tasks: tokio::sync::Mutex::new(Vec::new()),
+                                        device_registry: None,
                                     };
                                     if let Err(e) =
                                         gateway.init_single_channel(name, new_channel_config).await
@@ -4039,6 +4038,7 @@ impl Gateway {
                                     background_tasks: tokio::sync::Mutex::new(Vec::new()),
                                     message_workers: tokio::sync::Mutex::new(Vec::new()),
                                     agent_tasks: tokio::sync::Mutex::new(Vec::new()),
+                                    device_registry: None,
                                 };
                                 if let Err(e) =
                                     gateway.init_single_channel(name, new_channel_config).await
@@ -4170,6 +4170,7 @@ impl Gateway {
                             background_tasks: tokio::sync::Mutex::new(Vec::new()),
                             message_workers: tokio::sync::Mutex::new(Vec::new()),
                             agent_tasks: tokio::sync::Mutex::new(Vec::new()),
+                            device_registry: None,
                         };
                         match gateway
                             .init_single_channel(&channel_name, &new_channel_config)

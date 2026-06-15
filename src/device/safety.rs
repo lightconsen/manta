@@ -1,9 +1,8 @@
-//! Safety constraints for capabilities.
+//! Safety constraints for device capabilities.
 //!
-//! A [`SafetyZone`] is attached to each capability provider (tool,
-//! desktop adapter, device) and is checked **before** every invocation.
-//! If a rule is violated the execution is rejected without calling
-//! the underlying implementation.
+//! A [`SafetyZone`] is attached to each device and is checked **before**
+//! every invocation.  If a rule is violated the execution is rejected
+//! without calling the underlying implementation.
 
 use serde_json::Value;
 use std::time::SystemTime;
@@ -44,7 +43,7 @@ pub struct WorkspaceBoundary {
     pub bounds: [f64; 6],
 }
 
-/// Per-provider safety zone.
+/// Per-device safety zone.
 ///
 /// Holds the current set of active rules and tracks whether the zone
 /// has been tripped (e.g. by an emergency-stop signal).

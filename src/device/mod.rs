@@ -21,19 +21,21 @@
 //! [`Capability`] implementations (one per operation, e.g. `motor.move_to`,
 //! `camera.capture`).
 
-use crate::capability::safety::SafetyZone;
-use crate::capability::Capability;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 
+pub mod capability;
+pub mod driver;
 pub mod mock;
 pub mod registry;
-pub mod driver;
+pub mod safety;
 
+pub use capability::{Capability, CapabilityResult};
 pub use driver::DeviceDriver;
 pub use mock::{MockCapability, MockDeviceDriver};
 pub use registry::DeviceRegistry;
+pub use safety::{SafetyRule, SafetyRuleKind, SafetyZone};
 
 /// Static metadata about a physical device.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
