@@ -7,6 +7,8 @@
 //! - Parent-child agent communication
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -48,7 +50,9 @@ pub struct AcpSessionId(pub String);
 
 impl AcpSessionId {
     pub fn new() -> Self {
-        Self(Uuid::new_v4().to_string())
+        let mut bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut bytes);
+        Self(URL_SAFE_NO_PAD.encode(bytes))
     }
 }
 
