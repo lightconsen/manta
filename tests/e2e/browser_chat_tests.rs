@@ -49,7 +49,7 @@ async fn tool_browser_navigate_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40120,
-        "Use the browser tool to navigate to https://example.com and tell me the page title.",
+        "Use ONLY the browser tool. Navigate to https://example.com and tell me the page title. Do not use any other tool.",
         "browser",
     )
     .await;
@@ -65,7 +65,7 @@ async fn tool_browser_snapshot_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40121,
-        "Use the browser tool to navigate to https://example.com, then take a snapshot and tell me what interactive elements are on the page.",
+        "Use ONLY the browser tool. Navigate to https://example.com, take a snapshot, and list interactive elements. Do not use any other tool.",
         "browser",
     )
     .await;
@@ -81,7 +81,7 @@ async fn tool_browser_screenshot_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40122,
-        "Use the browser tool to navigate to https://example.com and take a screenshot, then tell me if the screenshot was saved.",
+        "Use ONLY the browser tool. Navigate to https://example.com, take a screenshot, and report the result. Do not use any other tool.",
         "browser",
     )
     .await;

@@ -5,7 +5,7 @@ use super::*;
 async fn tool_shell_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40070,
-        "Use the shell tool to run the command 'echo hello-from-shell-test' and report the exact output.",
+        "Use ONLY the shell tool. Run: 'echo hello-from-shell-test' and report the exact output. Do not use any other tool.",
         "shell",
     )
     .await;
@@ -28,7 +28,7 @@ async fn tool_file_invoked_via_chat() {
 async fn tool_todo_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40081,
-        "Use the todo tool to add a task 'e2e-todo-item' and then list all todos.",
+        "Use ONLY the todo tool. Add a task 'e2e-todo-item' and list all todos. Do not use any other tool.",
         "todo",
     )
     .await;
@@ -39,7 +39,7 @@ async fn tool_todo_invoked_via_chat() {
 async fn tool_code_exec_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40082,
-        "Use the execute_code tool to run Python code that prints 'syscity-code-exec-ok' and report the output.",
+        "Use ONLY the execute_code tool. Run Python: print('syscity-code-exec-ok'). Report the output. Do not use any other tool.",
         "execute_code",
     )
     .await;
@@ -50,7 +50,7 @@ async fn tool_code_exec_invoked_via_chat() {
 async fn tool_web_fetch_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40083,
-        "Use the web_fetch tool to fetch https://example.com and tell me what the page title is.",
+        "Use ONLY the web_fetch tool. Fetch https://example.com and tell me the page title. Do not use any other tool.",
         "web_fetch",
     )
     .await;
@@ -61,7 +61,7 @@ async fn tool_web_fetch_invoked_via_chat() {
 async fn tool_memory_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40084,
-        "Call the memory tool with action=store, content='Syscity is an AI agent framework' to save a memory.",
+        "Use ONLY the memory tool. Call action=store, content='Syscity is an AI agent framework'. Do not use any other tool.",
         "memory",
     )
     .await;
@@ -91,7 +91,7 @@ async fn tool_grep_invoked_via_chat() {
 #[serial]
 async fn tool_process_invoked_via_chat() {
     let _results =
-        run_tool_chat_test(40087, "Use the process tool to list running processes.", "process")
+        run_tool_chat_test(40087, "Use ONLY the process tool. List running processes. Do not use any other tool.", "process")
             .await;
 }
 
@@ -99,7 +99,7 @@ async fn tool_process_invoked_via_chat() {
 #[serial]
 async fn tool_nodes_invoked_via_chat() {
     let _results =
-        run_tool_chat_test(40088, "Use the nodes tool to list available nodes.", "nodes").await;
+        run_tool_chat_test(40088, "Use ONLY the nodes tool. List available nodes. Do not use any other tool.", "nodes").await;
 }
 
 #[tokio::test]
@@ -118,7 +118,7 @@ async fn tool_web_search_invoked_via_chat() {
 async fn tool_update_plan_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40090,
-        "Use the update_plan tool to create a plan titled 'Test Plan' with steps 'Step 1' and 'Step 2'.",
+        "Use ONLY the update_plan tool. Create a plan titled 'Test Plan' with steps 'Step 1' and 'Step 2'. Do not use any other tool.",
         "update_plan",
     ).await;
 }
@@ -128,7 +128,7 @@ async fn tool_update_plan_invoked_via_chat() {
 async fn tool_canvas_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40091,
-        "Use the canvas tool to present a canvas for session 'test-session-canvas' with a text component saying 'Hello Canvas'.",
+        "Use ONLY the canvas tool. Present a canvas for session 'test-session-canvas' with a text component 'Hello Canvas'. Do not use any other tool.",
         "canvas",
     ).await;
 }
@@ -149,7 +149,7 @@ async fn tool_pdf_invoked_via_chat() {
 async fn tool_image_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40093,
-        "Use the image tool to get info about the file /tmp/syscity-test.png.",
+        "Use ONLY the image tool. Get info about /tmp/syscity-test.png. Do not use any other tool.",
         "image",
     )
     .await;
@@ -159,7 +159,7 @@ async fn tool_image_invoked_via_chat() {
 #[serial]
 async fn tool_tts_invoked_via_chat() {
     let _results =
-        run_tool_chat_test(40094, "Use the tts tool to convert the text 'Hello' to speech.", "tts")
+        run_tool_chat_test(40094, "Use ONLY the tts tool. Convert 'Hello' to speech. Do not use any other tool.", "tts")
             .await;
 }
 
@@ -168,7 +168,7 @@ async fn tool_tts_invoked_via_chat() {
 async fn tool_memory_search_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40095,
-        "Use the memory_search tool to search for 'Syscity'.",
+        "Use ONLY the memory_search tool. Search for 'Syscity'. Do not use any other tool.",
         "memory_search",
     )
     .await;
@@ -179,7 +179,7 @@ async fn tool_memory_search_invoked_via_chat() {
 async fn tool_memory_get_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40096,
-        "Use the memory_get tool to list all stored memories.",
+        "Use ONLY the memory_get tool. List all stored memories. Do not use any other tool.",
         "memory_get",
     )
     .await;
@@ -189,7 +189,7 @@ async fn tool_memory_get_invoked_via_chat() {
 #[serial]
 async fn tool_cron_invoked_via_chat() {
     let _results =
-        run_tool_chat_test(40097, "Use the cron tool to list all cron jobs.", "cron").await;
+        run_tool_chat_test(40097, "Use ONLY the cron tool. List all cron jobs. Do not use any other tool.", "cron").await;
 }
 
 #[tokio::test]
@@ -207,7 +207,7 @@ async fn tool_file_edit_invoked_via_chat() {
 async fn tool_acp_spawn_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40099,
-        "Call the acp_spawn tool with task='say hello' and mode='run' to spawn a subagent.",
+        "Use ONLY the acp_spawn tool. Spawn a subagent with task='say hello', mode='run'. Do not use any other tool.",
         "acp_spawn",
     )
     .await;
@@ -218,7 +218,7 @@ async fn tool_acp_spawn_invoked_via_chat() {
 async fn tool_acp_session_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40100,
-        "Call the acp_session tool with action=list to list active ACP sessions.",
+        "Use ONLY the acp_session tool. List active ACP sessions with action=list. Do not use any other tool.",
         "acp_session",
     )
     .await;
@@ -229,7 +229,7 @@ async fn tool_acp_session_invoked_via_chat() {
 async fn tool_acp_session_kill_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40110,
-        "Call the acp_session tool with action=kill and subagent_id='test-subagent' to kill a subagent.",
+        "Use ONLY the acp_session tool. Kill subagent 'test-subagent' with action=kill. Do not use any other tool.",
         "acp_session",
     ).await;
 }
@@ -239,7 +239,7 @@ async fn tool_acp_session_kill_invoked_via_chat() {
 async fn tool_sessions_list_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40101,
-        "Call the sessions_list tool to list all active sessions.",
+        "Use ONLY the sessions_list tool. List all active sessions. Do not use any other tool.",
         "sessions_list",
     )
     .await;
@@ -250,7 +250,7 @@ async fn tool_sessions_list_invoked_via_chat() {
 async fn tool_sessions_history_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40102,
-        "Call the sessions_history tool with session_id='test-session' to get chat history.",
+        "Use ONLY the sessions_history tool. Get history for session_id='test-session'. Do not use any other tool.",
         "sessions_history",
     )
     .await;
@@ -261,7 +261,7 @@ async fn tool_sessions_history_invoked_via_chat() {
 async fn tool_sessions_send_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40103,
-        "Call the sessions_send tool with session_id='test-session', subagent_id='test-subagent', message='ping' to send a message.",
+        "Use ONLY the sessions_send tool. Send 'ping' to session_id='test-session', subagent_id='test-subagent'. Do not use any other tool.",
         "sessions_send",
     ).await;
 }
@@ -271,7 +271,7 @@ async fn tool_sessions_send_invoked_via_chat() {
 async fn tool_sessions_yield_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40104,
-        "Call the sessions_yield tool with subagent_id='test-subagent' to yield a subagent.",
+        "Use ONLY the sessions_yield tool. Yield subagent 'test-subagent'. Do not use any other tool.",
         "sessions_yield",
     )
     .await;
@@ -282,7 +282,7 @@ async fn tool_sessions_yield_invoked_via_chat() {
 async fn tool_session_status_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40105,
-        "Call the session_status tool with session_id='test-session' to get detailed session metadata.",
+        "Use ONLY the session_status tool. Get status for session_id='test-session'. Do not use any other tool.",
         "session_status",
     ).await;
 }
@@ -302,7 +302,7 @@ async fn tool_apply_patch_invoked_via_chat() {
 async fn tool_delegate_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40108,
-        "Call the delegate tool with action=list to list delegated child agents.",
+        "Use ONLY the delegate tool. List delegated agents with action=list. Do not use any other tool.",
         "delegate",
     )
     .await;
@@ -313,7 +313,7 @@ async fn tool_delegate_invoked_via_chat() {
 async fn tool_mcp_connection_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40109,
-        "Use the mcp_connection tool to list all connected MCP servers.",
+        "Use ONLY the mcp_connection tool. List all connected MCP servers. Do not use any other tool.",
         "mcp_connection",
     )
     .await;
