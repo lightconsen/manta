@@ -22,14 +22,14 @@ use crate::channels::{IncomingMessage, OutgoingMessage};
 pub use crate::gateway::AgentHandle;
 
 /// Configuration for automatic crash recovery of subagents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrashRecoveryConfig {
     /// Whether to automatically restart crashed subagents.
     pub enabled: bool,
     /// Maximum number of restart attempts for a single subagent.
     pub max_retries: u32,
     /// Backoff delays in seconds between restart attempts.
-    pub backoff_seconds: &'static [u64],
+    pub backoff_seconds: Vec<u64>,
 }
 
 impl Default for CrashRecoveryConfig {
@@ -37,7 +37,7 @@ impl Default for CrashRecoveryConfig {
         Self {
             enabled: true,
             max_retries: 3,
-            backoff_seconds: &[1, 2, 5, 10, 30],
+            backoff_seconds: vec![1, 2, 5, 10, 30],
         }
     }
 }
@@ -1025,9 +1025,9 @@ impl AcpControlPlane {
 
  /// Update crash recovery configuration at runtime.
     pub async fn set_recovery_config(&self, recovery: CrashRecoveryConfig) {
+        info!("ACP crash recovery config updated: enabled={}", recovery.enabled);
         let mut guard = self.recovery.write().await;
         *guard = recovery;
-        info!("ACP crash recovery config updated: enabled={}", recovery.enabled);
     }
 
  /// Set the default agent builder on an existing instance.
@@ -1558,7 +1558,7 @@ impl AcpControlPlane {
                     tokio::task::spawn_blocking(move || {
                         let rt = tokio::runtime::Handle::current();
                         rt.block_on(async {
-                            let global = *acp.recovery.read().await;
+                            let global = acp.recovery.read().await;
                             let should_recover = (recovery_retry_on_crash || global.enabled)
                                 && current_crash_count < recovery_max_retries;
                             if !should_recover {
@@ -1707,9 +1707,9 @@ impl AcpControlPlane {
         config: SubagentConfig,
         crash_count: u32,
     ) -> Option<SubagentHandle> {
-        let backoff_delays: &[u64] = {
+        let backoff_delays = {
             let guard = self.recovery.read().await;
-            guard.backoff_seconds
+            guard.backoff_seconds.clone()
         };
         let delay_idx = (crash_count as usize).min(backoff_delays.len().saturating_sub(1));
         let delay = backoff_delays.get(delay_idx).copied().unwrap_or(30);
@@ -2408,7 +2408,7 @@ mod tests {
             .with_recovery(CrashRecoveryConfig {
                 enabled: true,
                 max_retries: 1,
-                backoff_seconds: &[0],
+                backoff_seconds: vec![0],
             })
             .with_agent_builder(|| {
                 let provider = Arc::new(crate::providers::mock::MockProvider::new().with_callback(
