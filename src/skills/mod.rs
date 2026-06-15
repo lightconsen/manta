@@ -661,7 +661,7 @@ impl SkillManager {
         let (frontmatter, prompt) = frontmatter::parse_skill_md(&content)?;
 
  // Convert frontmatter to skill
-        let mut skill: Skill = serde_yaml::from_str(&frontmatter)?;
+        let mut skill: Skill = serde_yml::from_str(&frontmatter)?;
         skill.prompt = prompt;
         skill.source_path = path.to_path_buf();
 
@@ -722,7 +722,7 @@ impl SkillManager {
         let content = tokio::fs::read_to_string(path).await?;
         let (frontmatter, prompt) = frontmatter::parse_skill_md(&content)?;
 
-        let mut skill: Skill = serde_yaml::from_str(&frontmatter)?;
+        let mut skill: Skill = serde_yml::from_str(&frontmatter)?;
         skill.prompt = prompt;
         skill.source_path = path.to_path_buf();
         skill.check_eligibility();
@@ -1011,7 +1011,7 @@ impl SkillManager {
     async fn load_skill_from_file_inner(path: &Path) -> crate::Result<Skill> {
         let content = tokio::fs::read_to_string(path).await?;
         let (frontmatter, prompt) = frontmatter::parse_skill_md(&content)?;
-        let mut skill: Skill = serde_yaml::from_str(&frontmatter)?;
+        let mut skill: Skill = serde_yml::from_str(&frontmatter)?;
         skill.prompt = prompt;
         skill.source_path = path.to_path_buf();
         let file_size = content.len();

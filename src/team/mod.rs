@@ -276,7 +276,7 @@ impl Team {
         })?;
 
         let config_path = team_dir.join("team.yaml");
-        let yaml = serde_yaml::to_string(self).map_err(|e| {
+        let yaml = serde_yml::to_string(self).map_err(|e| {
             crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
                 "YAML error: {}",
                 e
@@ -305,7 +305,7 @@ impl Team {
             }
         })?;
 
-        let team: Team = serde_yaml::from_str(&yaml).map_err(|e| {
+        let team: Team = serde_yml::from_str(&yaml).map_err(|e| {
             crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
                 "YAML error: {}",
                 e
@@ -376,7 +376,7 @@ impl Team {
         match format.to_lowercase().as_str() {
             "json" => serde_json::to_string_pretty(self)
                 .map_err(crate::error::SyscityError::Serialization),
-            "yaml" | "yml" => serde_yaml::to_string(self).map_err(|e| {
+            "yaml" | "yml" => serde_yml::to_string(self).map_err(|e| {
                 crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
                     "YAML serialization error: {}",
                     e
@@ -395,7 +395,7 @@ impl Team {
             "json" => {
                 serde_json::from_str(data).map_err(crate::error::SyscityError::Serialization)?
             }
-            "yaml" | "yml" => serde_yaml::from_str(data).map_err(|e| {
+            "yaml" | "yml" => serde_yml::from_str(data).map_err(|e| {
                 crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
                     "YAML deserialization error: {}",
                     e

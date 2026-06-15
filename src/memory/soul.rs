@@ -45,7 +45,7 @@ pub struct BehaviorConfig {
     pub group_chat_mode: Option<String>,
     /// Additional free-form behavior flags.
     #[serde(flatten)]
-    pub extra: HashMap<String, serde_yaml::Value>,
+    pub extra: HashMap<String, serde_yml::Value>,
 }
 
 /// User preference configuration embedded in SOUL.md.
@@ -62,7 +62,7 @@ pub struct PreferenceConfig {
     pub format: Option<String>,
     /// Additional free-form preferences.
     #[serde(flatten)]
-    pub extra: HashMap<String, serde_yaml::Value>,
+    pub extra: HashMap<String, serde_yml::Value>,
 }
 
 /// Heuristic analysis of conversation patterns used to auto-populate SOUL.md.
@@ -103,7 +103,7 @@ pub struct SoulConfig {
     pub preferences: PreferenceConfig,
     /// Extra top-level keys for forward compatibility.
     #[serde(flatten)]
-    pub extra: HashMap<String, serde_yaml::Value>,
+    pub extra: HashMap<String, serde_yml::Value>,
 }
 
 impl SoulConfig {
@@ -206,7 +206,7 @@ impl SoulConfig {
             if !self.preferences.extra.contains_key(key) {
                 self.preferences
                     .extra
-                    .insert(key.clone(), serde_yaml::Value::String(value.clone()));
+                    .insert(key.clone(), serde_yml::Value::String(value.clone()));
                 changed = true;
             }
         }
@@ -215,12 +215,12 @@ impl SoulConfig {
     }
 }
 
-fn yaml_to_string(v: &serde_yaml::Value) -> String {
+fn yaml_to_string(v: &serde_yml::Value) -> String {
     match v {
-        serde_yaml::Value::String(s) => s.clone(),
-        serde_yaml::Value::Number(n) => n.to_string(),
-        serde_yaml::Value::Bool(b) => b.to_string(),
-        _ => serde_yaml::to_string(v)
+        serde_yml::Value::String(s) => s.clone(),
+        serde_yml::Value::Number(n) => n.to_string(),
+        serde_yml::Value::Bool(b) => b.to_string(),
+        _ => serde_yml::to_string(v)
             .unwrap_or_default()
             .trim()
             .to_string(),
@@ -269,7 +269,7 @@ impl SoulFile {
             .trim_start()
             .to_string();
 
-        let config: SoulConfig = serde_yaml::from_str(yaml_text).map_err(|e| {
+        let config: SoulConfig = serde_yml::from_str(yaml_text).map_err(|e| {
             crate::error::SyscityError::Validation(format!(
                 "Failed to parse SOUL.md frontmatter: {}",
                 e

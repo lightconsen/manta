@@ -81,7 +81,7 @@ async fn show_config(format: &super::ConfigFormat) -> Result<()> {
         }
         super::ConfigFormat::Yaml => {
             let value: toml::Value = toml::from_str(&content)?;
-            let yaml = serde_yaml::to_string(&value)?;
+            let yaml = serde_yml::to_string(&value)?;
             println!("{}", yaml);
         }
     }

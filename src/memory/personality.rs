@@ -512,7 +512,7 @@ impl PersonalityMemory {
             return Ok(false);
         }
 
-        let yaml = serde_yaml::to_string(&soul_file.config).map_err(|e| {
+        let yaml = serde_yml::to_string(&soul_file.config).map_err(|e| {
             SyscityError::Validation(format!("Failed to serialize SOUL.md config: {}", e))
         })?;
 
