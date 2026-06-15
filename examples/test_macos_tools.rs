@@ -7,7 +7,7 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
-use syscity::computer::capabilities::{CapabilityRegistry, CapabilitySet, ToolConflictStrategy};
+use syscity::computer::platform::{PlatformCapabilityRegistry, PlatformToolSet, ToolConflictStrategy};
 #[cfg(target_os = "macos")]
 use syscity::tools::{ToolContext, ToolRegistry};
 
@@ -16,7 +16,7 @@ use syscity::tools::{ToolContext, ToolRegistry};
 async fn main() {
     println!("=== macOS Capability Set Test ===\n");
 
-    let macos_set = syscity::computer::capabilities::MacosSet::new();
+    let macos_set = syscity::computer::platform::MacosToolset::new();
     println!("Set ID:       {}", macos_set.id());
     println!("Name:         {}", macos_set.name());
     println!("Description:  {}", macos_set.description());
@@ -29,7 +29,7 @@ async fn main() {
     }
     println!();
 
-    let mut cap_reg = CapabilityRegistry::new();
+    let mut cap_reg = PlatformCapabilityRegistry::new();
     cap_reg.register(Box::new(macos_set));
 
     let mut tool_reg = ToolRegistry::new();

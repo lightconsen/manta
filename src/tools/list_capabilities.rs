@@ -54,7 +54,7 @@ impl Tool for ListCapabilitiesTool {
         _args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let sets = crate::computer::capabilities::all_known_sets();
+        let sets = crate::computer::platform::all_known_toolsets();
 
         let mut infos = Vec::new();
         for set in sets {

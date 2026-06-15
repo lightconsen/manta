@@ -1354,7 +1354,7 @@ impl AcpControlPlane {
             agent_id: None,
         };
 
- // Create the agent (acquire builder, call, release)
+        // Create the agent (acquire builder, call, release)
         let agent = {
             let builder_guard = self.default_agent_builder.read().await;
             let result = if let Some(ref builder) = *builder_guard {

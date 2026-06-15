@@ -1175,7 +1175,7 @@ impl ToolRegistry {
         self
     }
 
-    /// Register a tool
+    /// Register a tool from a boxed implementation.
     pub fn register(&mut self, tool: BoxedTool) {
         let name = tool.name().to_string();
         self.tools.insert(name, tool);
@@ -1252,6 +1252,26 @@ impl ToolRegistry {
         }
 
         names
+    }
+
+    /// Get all dynamically-registered tools as `Arc<dyn Tool>` references.
+    ///
+    /// Excludes blocked and degraded tools. Static tools registered via
+    /// `register(Box<dyn Tool>)` are NOT returned — callers that need
+    /// `Arc<dyn Tool>` for static tools should collect `Arc` references
+    /// at registration time via `register_arc()`.
+    pub fn all_tools_arc(&self) -> Vec<std::sync::Arc<dyn Tool>> {
+        let mut result: Vec<std::sync::Arc<dyn Tool>> = Vec::new();
+
+        if let Ok(dynamic) = self.dynamic_tools.read() {
+            for (name, tool) in dynamic.iter() {
+                if !self.is_blocked(name) && !self.is_degraded(name) {
+                    result.push(tool.clone());
+                }
+            }
+        }
+
+        result
     }
 
     /// Check if a tool exists, is not blocked, and is not degraded.

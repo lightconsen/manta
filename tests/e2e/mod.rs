@@ -15,7 +15,10 @@ pub use syscity::providers::{
     mock::MockProvider, FunctionCall, Message as ProviderMessage, Role, ToolCall,
 };
 pub use tokio::time::timeout;
-pub use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+pub use tokio_tungstenite::{
+    connect_async, connect_async_with_config, tungstenite::protocol::Message,
+    tungstenite::protocol::WebSocketConfig,
+};
 
 // ── Type Aliases ──────────────────────────────────────────────────────────────
 
@@ -329,7 +332,12 @@ pub struct FrontendSimulator {
 impl FrontendSimulator {
     pub async fn connect(port: u16) -> Self {
         let url = format!("ws://127.0.0.1:{}/ws", port);
-        let (ws_stream, _) = connect_async(&url)
+        let config = WebSocketConfig {
+            max_frame_size: Some(128 << 20), // 128 MB — large enough for screenshot base64
+            max_message_size: Some(128 << 20),
+            ..Default::default()
+        };
+        let (ws_stream, _) = connect_async_with_config(&url, Some(config), false)
             .await
             .expect("Failed to connect to WebSocket");
         let (mut write, mut read) = ws_stream.split();

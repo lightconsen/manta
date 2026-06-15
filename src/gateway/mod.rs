@@ -2222,9 +2222,35 @@ async fn spawn_agent_inner(
     };
     let computer_adapter = state.tools.computer_adapter.read().await.clone();
 
+    // ── Build unified capability registry ──
+    let capability_registry = {
+        use crate::capability::providers::tool_adapter::ToolCapability;
+        use crate::capability::registry::CapabilityRegistry;
+        use std::sync::Arc;
+
+        let mut reg = CapabilityRegistry::new();
+
+        // Register all ToolRegistry tools as Capability wrappers
+        for tool in tools.all_tools_arc() {
+            reg.register(Arc::new(ToolCapability::new(tool)));
+        }
+
+        // Register computer capabilities if adapter is available
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+        if let Some(ref adapter) = computer_adapter {
+            use crate::capability::providers::computer_adapter::all_computer_capabilities;
+            for cap in all_computer_capabilities(adapter.clone()) {
+                reg.register(Arc::new(cap));
+            }
+        }
+
+        Arc::new(reg)
+    };
+
     let agent = if let Some(mm) = memory_manager {
         let chat_history = mm.chat_history();
         let mut builder = Agent::new(config.clone(), provider, tools)
+            .with_capability_registry(capability_registry.clone())
             .with_model(model.clone())
             .with_memory_manager(mm.clone())
             .with_chat_history(chat_history)
@@ -2250,6 +2276,7 @@ async fn spawn_agent_inner(
         Arc::new(builder)
     } else {
         let mut builder = Agent::new(config.clone(), provider, tools)
+            .with_capability_registry(capability_registry.clone())
             .with_model(model.clone())
             .with_cost_guard(cost_guard)
             .with_skill_manager(Arc::clone(&state.tools.skills_manager))
@@ -4425,22 +4452,22 @@ async fn create_default_tool_registry(
 
     // ── Register platform-specific capability sets ──
     {
-        use crate::computer::capabilities::{
-            CapabilityProfile, CapabilityRegistry, OsControlScope, ToolConflictStrategy,
+        use crate::computer::platform::{
+            CapabilityProfile, OsControlScope, PlatformCapabilityRegistry, ToolConflictStrategy,
         };
 
-        let mut cap_reg = CapabilityRegistry::new();
+        let mut tool_reg = PlatformCapabilityRegistry::new();
 
         #[cfg(target_os = "linux")]
         {
-            cap_reg.register(Box::new(crate::computer::capabilities::LinuxSet::new()));
-            cap_reg.register(Box::new(crate::computer::capabilities::LinuxDesktopX11Set::new()));
-            cap_reg.register(Box::new(crate::computer::capabilities::LinuxDesktopWaylandSet::new()));
+            tool_reg.register(Box::new(crate::computer::platform::LinuxToolset::new()));
+            tool_reg.register(Box::new(crate::computer::platform::LinuxDesktopX11Toolset::new()));
+            tool_reg.register(Box::new(crate::computer::platform::LinuxDesktopWaylandToolset::new()));
         }
 
         #[cfg(target_os = "macos")]
         {
-            cap_reg.register(Box::new(crate::computer::capabilities::MacosSet::new()));
+            tool_reg.register(Box::new(crate::computer::platform::MacosToolset::new()));
         }
 
         // Load capability profile from config
@@ -4462,34 +4489,34 @@ async fn create_default_tool_registry(
         let disabled_sets: std::collections::HashSet<String> =
             capabilities.disabled_sets.iter().cloned().collect();
 
-        profile.apply(&mut cap_reg);
+        profile.apply(&mut tool_reg);
 
         // Apply max_scope filter: disable sets whose scope exceeds the limit
         if let Some(limit) = max_scope {
-            let to_disable: Vec<String> = cap_reg
+            let to_disable: Vec<String> = tool_reg
                 .all_sets()
                 .iter()
                 .filter(|s| s.scope() > limit)
                 .map(|s| s.id().to_string())
                 .collect();
             for id in to_disable {
-                cap_reg.disable(&id);
+                tool_reg.disable(&id);
             }
         }
 
         // Apply explicit disabled_sets filter
         for id in &disabled_sets {
-            cap_reg.disable(id);
+            tool_reg.disable(id);
         }
 
         // Log detected capabilities before exporting
-        let available = cap_reg.available_sets();
+        let available = tool_reg.available_sets();
         if available.is_empty() {
-            info!("No platform-specific capability sets detected on this host");
+            info!("No platform-specific tool sets detected on this host");
         } else {
             for set in &available {
                 info!(
-                    "Capability set available: {} ({}) — {}",
+                    "Platform tool set available: {} ({}) — {}",
                     set.name(),
                     set.id(),
                     set.description()
@@ -4497,9 +4524,9 @@ async fn create_default_tool_registry(
             }
         }
 
-        cap_reg.export_to_tool_registry(&mut registry, ToolConflictStrategy::Reject);
+        tool_reg.export_to_tool_registry(&mut registry, ToolConflictStrategy::Reject);
 
-        info!("Capability sets exported: {} set(s) active", available.len());
+        info!("Platform tool sets exported: {} set(s) active", available.len());
     }
 
     // Gate high-privilege tools behind SkillTrust::Trusted.

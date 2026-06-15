@@ -6,6 +6,7 @@
 use crate::channels::{IncomingMessage, OutgoingMessage};
 use crate::channels::thread_binding::ThreadBindingManager;
 use crate::providers::{CompletionRequest, ContentBlock, Message, Provider, Role, ToolCall, ToolResult};
+use crate::capability::registry::CapabilityRegistry;
 use crate::tools::{ToolContext, ToolExecutionChunk, ToolRegistry};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -746,7 +747,7 @@ impl AgentConfig {
 
         // Inject host environment awareness so the LLM knows what OS
         // controls are available on this machine.
-        let host_env = crate::computer::capabilities::host_environment_summary();
+        let host_env = crate::computer::platform::host_environment_summary();
         format!("{}\n\n## Host Environment\n\n{}", result, host_env)
     }
 }
@@ -831,6 +832,8 @@ pub struct Agent {
     /// Optional thread binding manager for tracking session/thread hierarchy
     /// with idle timeout, max age, and child-spawning policies.
     thread_binding_manager: Option<ThreadBindingManager>,
+    /// Optional unified capability registry for device + computer capabilities.
+    capability_registry: Option<Arc<CapabilityRegistry>>,
 }
 
 impl Agent {
@@ -873,6 +876,7 @@ impl Agent {
             computer_config: None,
             goal_planner: None,
             thread_binding_manager: None,
+            capability_registry: None,
         }
     }
 
@@ -1104,6 +1108,18 @@ impl Agent {
             planner = planner.with_memory(memory.clone());
         }
         self.goal_planner = Some(planner);
+        self
+    }
+
+    /// Set the unified capability registry for this agent.
+    ///
+    /// When set, tools, computer actions, and device capabilities registered
+    /// in the registry are available through `find_capability()`.
+    pub fn with_capability_registry(
+        mut self,
+        registry: Arc<CapabilityRegistry>,
+    ) -> Self {
+        self.capability_registry = Some(registry);
         self
     }
 
@@ -3580,6 +3596,21 @@ Your response:"#,
         &self.tools
     }
 
+    /// Get the unified capability registry, if configured.
+    pub fn get_capability_registry(&self) -> Option<&CapabilityRegistry> {
+        self.capability_registry.as_deref()
+    }
+
+    /// Look up a capability by name from the unified registry.
+    ///
+    /// Returns `None` if the capability registry is not configured or the
+    /// capability is not found.
+    pub fn find_capability(&self, name: &str) -> Option<Arc<dyn crate::capability::Capability>> {
+        self.capability_registry
+            .as_ref()
+            .and_then(|reg| reg.resolve(name))
+    }
+
     /// Extract artifacts (code blocks, links) from tool result content
     /// and store them in the artifact store.
     fn extract_and_store_artifacts(&self, session_id: &str, content: &str, tool_name: &str) {
@@ -3670,6 +3701,8 @@ pub struct AgentBuilder {
     computer_config: Option<crate::computer::LoopConfig>,
     /// Thread binding manager for tracking session/thread hierarchy.
     thread_binding_manager: Option<ThreadBindingManager>,
+    /// Unified capability registry for device + computer capabilities.
+    capability_registry: Option<Arc<CapabilityRegistry>>,
 }
 
 impl AgentBuilder {
@@ -3802,6 +3835,15 @@ impl AgentBuilder {
         self
     }
 
+    /// Set the unified capability registry.
+    pub fn with_capability_registry(
+        mut self,
+        registry: Arc<CapabilityRegistry>,
+    ) -> Self {
+        self.capability_registry = Some(registry);
+        self
+    }
+
     /// Build the agent
     pub fn build(self) -> crate::Result<Agent> {
         let mut agent = Agent::new(
@@ -3874,6 +3916,10 @@ impl AgentBuilder {
 
         if let Some(manager) = self.thread_binding_manager {
             agent = agent.with_thread_binding_manager(manager);
+        }
+
+        if let Some(registry) = self.capability_registry {
+            agent = agent.with_capability_registry(registry);
         }
 
         Ok(agent)

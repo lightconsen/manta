@@ -25,6 +25,7 @@ mod acp_tests;
 #[cfg(feature = "browser")]
 mod browser_tests;
 mod delegate_mcp_plan_tests;
+mod device_tests;
 mod execution_tests;
 mod file_tests;
 mod media_tests;

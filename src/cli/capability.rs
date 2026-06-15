@@ -1,9 +1,9 @@
-//! Capability check command — show available OS capability sets and tools.
+//! Capability check command — show available OS platform tool sets and tools.
 
-use crate::computer::capabilities::all_known_sets;
+use crate::computer::platform::all_known_toolsets;
 use crate::error::Result;
 
-/// Print a formatted table of all capability sets and their availability.
+/// Print a formatted table of all platform tool sets and their availability.
 pub async fn run_capability_check() -> Result<()> {
     println!("Syscity Capability Report");
     println!("=========================\n");
@@ -30,9 +30,9 @@ pub async fn run_capability_check() -> Result<()> {
     println!();
 
     // Capability sets
-    let sets = all_known_sets();
+    let sets = all_known_toolsets();
     if sets.is_empty() {
-        println!("No OS-specific capability sets compiled into this binary.");
+        println!("No OS-specific platform tool sets compiled into this binary.");
         return Ok(());
     }
 
@@ -53,10 +53,10 @@ pub async fn run_capability_check() -> Result<()> {
         };
 
         let scope_label = match set.scope() {
-            crate::computer::capabilities::OsControlScope::ReadOnly => "read-only",
-            crate::computer::capabilities::OsControlScope::UserSpace => "user-space",
-            crate::computer::capabilities::OsControlScope::System => "system",
-            crate::computer::capabilities::OsControlScope::Root => "root",
+            crate::computer::platform::OsControlScope::ReadOnly => "read-only",
+            crate::computer::platform::OsControlScope::UserSpace => "user-space",
+            crate::computer::platform::OsControlScope::System => "system",
+            crate::computer::platform::OsControlScope::Root => "root",
         };
 
         println!("  {} [{}] — {} (scope: {})", set.name(), set.id(), status, scope_label);

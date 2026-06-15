@@ -53,9 +53,24 @@ pub async fn init_security(
     let multi_tier_rate_limiter = Arc::new(MultiTierRateLimiter::new(multi_tier_config));
 
     let command_gate = {
-        let gate = crate::tools::command_gate::CommandGate::new();
-        gate.set_user_level("web_user", crate::tools::command_gate::UserLevel::User);
-        gate.set_user_level("api_user", crate::tools::command_gate::UserLevel::User);
+        // When no authentication is required, default to an open gate that
+        // allows all commands including admin-level commands.
+        let gate = if matches!(
+            config.security.auth_mode,
+            crate::gateway::protocol::AuthMode::None
+        ) {
+            let gate = crate::tools::command_gate::CommandGate::open();
+            gate.set_user_level(
+                "anonymous",
+                crate::tools::command_gate::UserLevel::Admin,
+            );
+            gate
+        } else {
+            let gate = crate::tools::command_gate::CommandGate::new();
+            gate.set_user_level("web_user", crate::tools::command_gate::UserLevel::User);
+            gate.set_user_level("api_user", crate::tools::command_gate::UserLevel::User);
+            gate
+        };
         Arc::new(gate)
     };
 

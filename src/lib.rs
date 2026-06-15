@@ -38,6 +38,7 @@ pub mod acp;
 pub mod adapters;
 pub mod agent;
 pub mod browser;
+pub mod capability;
 pub mod canvas;
 pub mod channels;
 pub mod cli;
@@ -46,6 +47,7 @@ pub mod config;
 pub mod core;
 pub mod cron;
 pub mod daemon;
+pub mod device;
 pub mod dirs;
 pub mod embed;
 pub mod error;
@@ -87,8 +89,8 @@ pub use config::hot_reload::{
     WatchedConfig,
 };
 
-// Backward-compat: capabilities moved under computer/
-pub use computer::capabilities;
+// Backward-compat: capabilities moved under computer/ (now platform/)
+pub use computer::platform;
 
 /// Application version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

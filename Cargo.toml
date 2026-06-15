@@ -210,6 +210,7 @@ tokio-test = "0.4"
 wiremock = "0.6"
 mockall = "0.12"
 tempfile = "3.10"
+futures-util = "0.3"
 
 # Assertions
 pretty_assertions = "1.4"
