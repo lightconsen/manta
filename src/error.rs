@@ -18,6 +18,14 @@ pub enum SyscityError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// I/O errors with additional context
+    #[error("I/O error: {context}: {source}")]
+    IoContext {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
+
     /// HTTP client errors
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
@@ -132,12 +140,15 @@ pub trait ResultExt<T, E> {
 }
 
 impl<T> ResultExt<T, std::io::Error> for std::result::Result<T, std::io::Error> {
-    fn with_context<F, C>(self, _f: F) -> Result<T>
+    fn with_context<F, C>(self, f: F) -> Result<T>
     where
         F: FnOnce() -> C,
         C: Into<String>,
     {
-        self.map_err(SyscityError::Io)
+        self.map_err(|e| SyscityError::IoContext {
+            context: f().into(),
+            source: e,
+        })
     }
 }
 
@@ -269,5 +280,6 @@ mod tests {
             Err(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
         let syscity_result: Result<i32> = result.with_context(|| "file op");
         assert!(syscity_result.is_err());
+        assert!(syscity_result.unwrap_err().to_string().contains("file op"));
     }
 }
