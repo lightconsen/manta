@@ -63,12 +63,10 @@ pub type ChannelRegisterFn =
 pub type ChannelUnregisterFn = Arc<dyn Fn(String) + Send + Sync>;
 
 /// Plugin manager - high-level interface for plugin operations
-#[allow(dead_code)]
 pub struct PluginManager {
     runtime: Arc<PluginRuntime>,
     hook_registry: Arc<HookRegistry>,
     plugins_dir: PathBuf,
-    auto_load: bool,
     tool_registry: RwLock<Option<Arc<ToolRegistry>>>,
     trace_enabled: Arc<AtomicBool>,
     provider_register: RwLock<Option<ProviderRegisterFn>>,
@@ -100,7 +98,6 @@ impl PluginManager {
             runtime,
             hook_registry,
             plugins_dir,
-            auto_load: true,
             tool_registry: RwLock::new(None),
             trace_enabled: Arc::new(AtomicBool::new(false)),
             provider_register: RwLock::new(None),
