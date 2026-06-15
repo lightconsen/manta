@@ -30,6 +30,9 @@ use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::task::JoinHandle;
+use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tracing::{debug, error, info, warn};
 
@@ -1114,6 +1117,15 @@ pub struct SendMessageRequest {
 pub struct Gateway {
     state: Arc<GatewayState>,
     config: GatewayConfig,
+    shutdown_token: CancellationToken,
+    /// Background tasks spawned by `Gateway::new()` and `Gateway::start()`.
+    /// Drained and aborted during `stop()`.
+    background_tasks: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
+    /// Handles for the unified inbound/routed message workers.
+    /// These are drained gracefully by closing their entry channels.
+    message_workers: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
+    /// Handles for each spawned agent processing loop.
+    agent_tasks: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
 }
 
 /// Validate authentication configuration for ambiguity and conflicts.
@@ -1161,6 +1173,7 @@ impl Gateway {
         let (inbound_entry_tx, inbound_entry_rx) =
             mpsc::channel::<crate::channels::IncomingMessage>(1000);
         let (routed_tx, routed_rx) = mpsc::channel(1000);
+        let shutdown_token = CancellationToken::new();
 
         // Initialize storage adapter, shared SQLite pool, session store, and audit log
         let storage_init = init::storage::init_storage(&config).await?;
@@ -1343,6 +1356,10 @@ impl Gateway {
             },
         });
 
+        // Background tasks spawned before `Gateway` is fully constructed are
+        // collected here and then handed off to the `background_tasks` field.
+        let mut background_tasks: Vec<JoinHandle<()>> = Vec::new();
+
         // Attach SessionStore to SessionManager for unified session model
         if let Some(ref store) = state.agents.store {
             let mut mgr = state.agents.manager.write().await;
@@ -1356,7 +1373,7 @@ impl Gateway {
         {
             let event_tx = state.events.tx.clone();
             let mut mcp_event_rx = tools_init.mcp_event_rx;
-            tokio::spawn(async move {
+            let mcp_forward_handle = tokio::spawn(async move {
                 while let Some(event) = mcp_event_rx.recv().await {
                     let gateway_event = match event {
                         crate::tools::mcp::McpEvent::Connected {
@@ -1383,6 +1400,7 @@ impl Gateway {
                     let _ = event_tx.send(gateway_event);
                 }
             });
+            background_tasks.push(mcp_forward_handle);
         }
 
         // Initialize audit table (SQLite-backed persistent audit log)
@@ -1426,10 +1444,25 @@ impl Gateway {
         .await?;
 
         // Start message processing workers
-        tokio::spawn(Self::process_inbound_entries(state.clone(), inbound_entry_rx));
-        tokio::spawn(Self::process_routed_messages(state.clone(), routed_rx));
+        let inbound_handle = tokio::spawn(Self::process_inbound_entries(
+            state.clone(),
+            inbound_entry_rx,
+            shutdown_token.clone(),
+        ));
+        let routed_handle = tokio::spawn(Self::process_routed_messages(
+            state.clone(),
+            routed_rx,
+            shutdown_token.clone(),
+        ));
 
-        Ok(Self { state, config })
+        Ok(Self {
+            state,
+            config,
+            shutdown_token,
+            background_tasks: tokio::sync::Mutex::new(background_tasks),
+            message_workers: tokio::sync::Mutex::new(vec![inbound_handle, routed_handle]),
+            agent_tasks: tokio::sync::Mutex::new(Vec::new()),
+        })
     }
 
     /// Return a clone of the internal `ModelRouter` arc.
@@ -1443,6 +1476,21 @@ impl Gateway {
     /// Return a clone of the internal `ToolRegistry` arc.
     pub fn tool_registry(&self) -> Arc<crate::tools::ToolRegistry> {
         self.state.tools.registry.clone()
+    }
+
+    /// Return a clone of the gateway shutdown token.
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown_token.clone()
+    }
+
+    /// Spawn a background task and track it for graceful shutdown.
+    async fn spawn_task(&self, handle: JoinHandle<()>) {
+        self.background_tasks.lock().await.push(handle);
+    }
+
+    /// Spawn an agent processing loop and track it for graceful shutdown.
+    async fn spawn_agent_task(&self, handle: JoinHandle<()>) {
+        self.agent_tasks.lock().await.push(handle);
     }
 
     /// Start the gateway
@@ -1511,11 +1559,12 @@ impl Gateway {
             }
             // Start hot reload processing in background
             let hot_reload_clone = hot_reload.clone();
-            tokio::spawn(async move {
+            let hot_reload_handle = tokio::spawn(async move {
                 if let Err(e) = hot_reload_clone.run().await {
                     error!("Hot reload error: {}", e);
                 }
             });
+            self.spawn_task(hot_reload_handle).await;
 
             // Register config change handlers
             self.register_hot_reload_handlers(hot_reload).await;
@@ -1710,7 +1759,7 @@ impl Gateway {
         {
             let mut approval_rx = self.state.tools.approval_queue.event_tx.subscribe();
             let event_tx = self.state.events.tx.clone();
-            tokio::spawn(async move {
+            let approval_handle = tokio::spawn(async move {
                 while let Ok(evt) = approval_rx.recv().await {
                     let _ = event_tx.send(GatewayEvent::ApprovalRequired {
                         approval_id: evt.approval_id,
@@ -1721,10 +1770,12 @@ impl Gateway {
                     });
                 }
             });
+            self.spawn_task(approval_handle).await;
         }
 
         // Start gateway-level self-repair watchdog (60 s interval)
-        tokio::spawn(run_repair_loop(self.state.clone()));
+        let repair_handle = tokio::spawn(run_repair_loop(self.state.clone()));
+        self.spawn_task(repair_handle).await;
 
         // Start heartbeat runner if enabled
         if self.config.heartbeat.enabled {
@@ -1733,9 +1784,10 @@ impl Gateway {
             let event_tx = runner.event_tx.clone();
             self.state.scheduler.heartbeat_wake_tx.init(wake_tx.clone()).await;
             self.state.scheduler.heartbeat_event_tx.init(event_tx).await;
-            tokio::spawn(async move {
+            let heartbeat_handle = tokio::spawn(async move {
                 runner.start().await;
             });
+            self.spawn_task(heartbeat_handle).await;
             info!("Heartbeat runner started");
 
             // Wire heartbeat wake sender into cron scheduler so cron jobs
@@ -1750,7 +1802,7 @@ impl Gateway {
         // Start log tail broadcaster for real-time log streaming
         {
             let log_tx = self.state.events.log_tx.clone();
-            tokio::spawn(async move {
+            let log_tail_handle = tokio::spawn(async move {
                 let log_path = crate::logs::log_file_path();
                 let mut pos: u64 = 0;
                 loop {
@@ -1791,11 +1843,15 @@ impl Gateway {
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 }
             });
+            self.spawn_task(log_tail_handle).await;
             info!("Log tail broadcaster started");
         }
 
-        // Run the server
+        // Run the server with graceful shutdown so `Gateway::stop()` can end it.
+        let shutdown_token = self.shutdown_token.clone();
+        let shutdown = async move { shutdown_token.cancelled().await };
         axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .with_graceful_shutdown(shutdown)
             .await
             .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Gateway server error".to_string(),
@@ -1814,6 +1870,152 @@ impl Gateway {
             info!("Standing orders manager stopped");
         }
 
+        Ok(())
+    }
+
+    /// Gracefully shut down the gateway and its subsystems.
+    ///
+    /// The shutdown sequence follows the dependency order from the architecture
+    /// plan: stop accepting new traffic, drain in-flight messages, stop agents,
+    /// channels, ACP, cron, dream/standing-order schedulers, MCP, hot reload,
+    /// task scheduler, browser/heartbeat/log-tail tasks, plugins, and finally
+    /// background tasks.
+    pub async fn stop(&self) -> crate::Result<()> {
+        info!("Shutting down Syscity Gateway...");
+
+        // Signal every cancel-aware loop to exit.
+        self.shutdown_token.cancel();
+
+        // 1. Drain the unified message workers.
+        let message_handles = {
+            let mut workers = self.message_workers.lock().await;
+            std::mem::take(&mut *workers)
+        };
+        for handle in message_handles {
+            match timeout(Duration::from_secs(5), handle).await {
+                Ok(_) => {}
+                Err(_) => warn!("Message worker did not stop within timeout"),
+            }
+        }
+
+        // 2. Stop all spawned agents and await their loops.
+        {
+            let agents = self.state.agents.agents.read().await;
+            for (_id, handle) in agents.iter() {
+                let _ = handle.tx.send(crate::gateway::AgentCommand::Shutdown).await;
+            }
+        }
+        let agent_handles = {
+            let mut tasks = self.agent_tasks.lock().await;
+            std::mem::take(&mut *tasks)
+        };
+        for handle in agent_handles {
+            match timeout(Duration::from_secs(10), handle).await {
+                Ok(_) => {}
+                Err(_) => warn!("Agent task did not stop within timeout"),
+            }
+        }
+
+        // 3. Stop configured channels.
+        let channel_refs: Vec<Arc<dyn crate::channels::Channel>> = {
+            let channels = self.state.channels.channels.read().await;
+            channels.values().cloned().collect()
+        };
+        for channel in channel_refs {
+            let name = channel.name().to_string();
+            if let Err(e) = channel.stop().await {
+                warn!("Failed to stop channel '{}': {}", name, e);
+            } else {
+                info!("Channel '{}' stopped", name);
+            }
+        }
+
+        // 4. ACP shutdown.
+        self.state.agents.acp.shutdown().await;
+        info!("ACP control plane shut down");
+
+        // 5. Cron scheduler.
+        if let Some(cron_arc) = self.state.scheduler.cron_scheduler.get_opt().await {
+            let mut scheduler = cron_arc.lock().await;
+            if let Err(e) = scheduler.shutdown().await {
+                warn!("Failed to shutdown cron scheduler: {}", e);
+            } else {
+                info!("Cron scheduler stopped");
+            }
+        }
+
+        // 6. Dream scheduler.
+        if let Some(mut scheduler) = self.state.memory.dream_scheduler.get_opt().await {
+            scheduler.stop().await;
+            info!("Dream scheduler stopped");
+        }
+
+        // 7. Standing orders manager.
+        if let Some(mut manager) = self.state.memory.standing_order_manager.get_opt().await {
+            manager.stop().await;
+            info!("Standing orders manager stopped");
+        }
+
+        // 8. Disconnect MCP servers.
+        let mcp_servers = self.state.tools.mcp_manager.list_servers().await;
+        for server_id in mcp_servers {
+            if let Err(e) = self.state.tools.mcp_manager.disconnect(&server_id).await {
+                warn!("Failed to disconnect MCP server '{}': {}", server_id, e);
+            }
+        }
+
+        // 9. Hot reload.
+        if let Some(hot_reload) = self.state.infra.hot_reload.get_opt().await {
+            if let Err(e) = hot_reload.stop().await {
+                warn!("Failed to stop hot reload manager: {}", e);
+            }
+        }
+
+        // 10. Task scheduler.
+        if let Some(ts_arc) = self.state.scheduler.task_scheduler.get_opt().await {
+            let mut scheduler = ts_arc.lock().await;
+            if let Err(e) = scheduler.stop().await {
+                warn!("Failed to stop task scheduler: {}", e);
+            }
+        }
+
+        // 11. Browser bridge / pool.
+        #[cfg(feature = "browser")]
+        {
+            let mut bridge_lock = self.state.infra.browser_bridge.write().await;
+            if let Some(bridge) = bridge_lock.take() {
+                bridge.shutdown().await;
+                info!("Browser pool shut down");
+            }
+        }
+
+        // 12. Tailscale.
+        #[cfg(feature = "tailscale")]
+        if self.config.tailscale_enabled {
+            if let Err(e) = crate::tailscale::stop().await {
+                warn!("Failed to stop Tailscale: {}", e);
+            }
+        }
+
+        // 13. Abort remaining background tasks (log tail, heartbeat, repair loop,
+        //     channel bridges, cron announce forwarder, etc.).
+        let background_handles = {
+            let mut tasks = self.background_tasks.lock().await;
+            std::mem::take(&mut *tasks)
+        };
+        for handle in background_handles {
+            handle.abort();
+        }
+
+        // 14. Plugin manager shutdown.
+        if let Err(e) = self.state.infra.plugin_manager.shutdown().await {
+            warn!("Failed to shutdown plugin manager: {}", e);
+        }
+
+        // 15. Storage is left to flush on process exit because `dyn Storage`
+        //     does not expose a close method.
+
+        info!("Gateway shutdown complete");
         Ok(())
     }
 
@@ -1983,17 +2185,20 @@ impl Gateway {
 
     /// Spawn a new agent
     async fn spawn_agent(&self, id: String, config: AgentConfig) -> crate::Result<()> {
-        spawn_agent_inner(self.state.clone(), id, config).await
+        let handle = spawn_agent_inner(self.state.clone(), id, config).await?;
+        self.spawn_agent_task(handle).await;
+        Ok(())
     }
 }
 
 /// Free function that spawns an agent — callable from both `Gateway::spawn_agent`
-/// and the self-repair watchdog loop.
+/// and the self-repair watchdog loop. Returns the agent processing loop handle so
+/// the gateway can await it during shutdown.
 async fn spawn_agent_inner(
     state: Arc<GatewayState>,
     id: String,
     mut config: AgentConfig,
-) -> crate::Result<()> {
+) -> crate::Result<JoinHandle<()>> {
     config.agent_id = Some(id.clone());
     info!("Spawning agent: {}", id);
 
@@ -2104,7 +2309,7 @@ async fn spawn_agent_inner(
     // Start agent processing loop
     let agent_id = id.clone();
 
-    tokio::spawn(async move {
+    let task_handle = tokio::spawn(async move {
         info!("Agent {} processing loop started", agent_id);
 
         // Start per-agent stale-context eviction loop (check every 5 min,
@@ -2394,7 +2599,7 @@ async fn spawn_agent_inner(
         repair_handle.abort();
     });
 
-    Ok(())
+    Ok(task_handle)
 }
 
 impl Gateway {
@@ -2819,21 +3024,23 @@ impl Gateway {
 
             // Spawn extension inbound task (Telegram bot -> inbound pipeline)
             let ext_inbound = ext.clone();
-            tokio::spawn(async move {
+            let inbound_handle = tokio::spawn(async move {
                 if let Err(e) = ext_inbound.run_inbound(inbound_tx).await {
                     error!("Telegram extension inbound task failed: {}", e);
                 }
             });
+            self.spawn_task(inbound_handle).await;
 
             // Bridge inbound messages into the unified entry channel
             let state_clone = self.state.clone();
-            tokio::spawn(async move {
+            let bridge_handle = tokio::spawn(async move {
                 while let Some(message) = inbound_rx.recv().await {
                     if let Err(e) = state_clone.pipelines.inbound_entry.send(message).await {
                         warn!("Failed to submit Telegram message to inbound entry: {}", e);
                     }
                 }
             });
+            self.spawn_task(bridge_handle).await;
 
             // Create outbound channel: reply dispatcher -> extension outbound
             let (outbound_tx, outbound_rx) =
@@ -2841,11 +3048,12 @@ impl Gateway {
 
             // Spawn extension outbound task (outbound pipeline -> Telegram)
             let ext_outbound = ext.clone();
-            tokio::spawn(async move {
+            let outbound_handle = tokio::spawn(async move {
                 if let Err(e) = ext_outbound.run_outbound(outbound_rx).await {
                     error!("Telegram extension outbound task failed: {}", e);
                 }
             });
+            self.spawn_task(outbound_handle).await;
 
             // Register a bridge with the reply dispatcher so outbound pipeline
             // messages flow into the extension's run_outbound.
@@ -3075,14 +3283,23 @@ impl Gateway {
     async fn process_inbound_entries(
         state: Arc<GatewayState>,
         mut rx: mpsc::Receiver<crate::channels::IncomingMessage>,
+        shutdown: CancellationToken,
     ) {
-        while let Some(incoming) = rx.recv().await {
-            match state.pipelines.inbound.process(incoming).await {
-                Some(routed) => {
-                    info!("Inbound message routed through pipeline: agent={}", routed.agent_id);
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => {
+                    info!("Inbound entry worker received shutdown signal");
+                    break;
                 }
-                None => {
-                    info!("Inbound message absorbed by pipeline (debounced or suppressed)");
+                Some(incoming) = rx.recv() => {
+                    match state.pipelines.inbound.process(incoming).await {
+                        Some(routed) => {
+                            info!("Inbound message routed through pipeline: agent={}", routed.agent_id);
+                        }
+                        None => {
+                            info!("Inbound message absorbed by pipeline (debounced or suppressed)");
+                        }
+                    }
                 }
             }
         }
@@ -3095,145 +3312,147 @@ impl Gateway {
     async fn process_routed_messages(
         state: Arc<GatewayState>,
         mut rx: mpsc::Receiver<crate::inbound::RoutedMessage>,
+        shutdown: CancellationToken,
     ) {
-        while let Some(routed) = rx.recv().await {
-            if routed.suppress_delivery {
-                debug!("Suppressing delivery for session {}", routed.incoming.conversation_id.0);
-                continue;
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => {
+                    info!("Routed message worker received shutdown signal");
+                    break;
+                }
+                Some(routed) = rx.recv() => {
+                    Self::dispatch_routed_message(&state, routed).await;
+                }
             }
+        }
+    }
 
-            let session_id = routed.incoming.conversation_id.0.clone();
-            let agent_id = routed.agent_id.clone();
-            let channel = match &routed.incoming.provenance {
-                crate::channels::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
-                _ => "unknown".to_string(),
-            };
+    /// Dispatch a single `RoutedMessage` to the resolved agent.
+    async fn dispatch_routed_message(state: &Arc<GatewayState>, routed: crate::inbound::RoutedMessage) {
+        if routed.suppress_delivery {
+            debug!("Suppressing delivery for session {}", routed.incoming.conversation_id.0);
+            return;
+        }
 
-            // ── Group session membership check ───────────────────────────────
-            {
-                let user_id = &routed.incoming.user_id.0;
-                let groups = state.agents.group_manager.read().await;
-                if let Some(group) = groups.get_group(&session_id) {
-                    let group = group.read().await;
-                    if !group.is_member(user_id) {
+        let session_id = routed.incoming.conversation_id.0.clone();
+        let agent_id = routed.agent_id.clone();
+        let channel = match &routed.incoming.provenance {
+            crate::channels::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
+            _ => "unknown".to_string(),
+        };
+
+        // ── Group session membership check ───────────────────────────────
+        {
+            let user_id = &routed.incoming.user_id.0;
+            let groups = state.agents.group_manager.read().await;
+            if let Some(group) = groups.get_group(&session_id) {
+                let group = group.read().await;
+                if !group.is_member(user_id) {
+                    warn!(
+                        "User {} is not a member of group session {}, dropping message",
+                        user_id, session_id
+                    );
+                    return;
+                }
+                if let Some(member) = group.get_member(user_id) {
+                    if !member.role.can_participate() {
                         warn!(
-                            "User {} is not a member of group session {}, dropping message",
-                            user_id, session_id
+                            "User {} (role: {}) cannot participate in group session {}, dropping message",
+                            user_id, member.role, session_id
                         );
-                        continue;
-                    }
-                    if let Some(member) = group.get_member(user_id) {
-                        if !member.role.can_participate() {
-                            warn!(
-                                "User {} (role: {}) cannot participate in group session {}, dropping message",
-                                user_id, member.role, session_id
-                            );
-                            continue;
-                        }
+                        return;
                     }
                 }
             }
+        }
 
-            match routed.queue_mode {
-                crate::inbound::QueueMode::Interrupt => {
-                    // Clear any buffered messages for this session
-                    {
-                        let mut buffers = state.agents.message_buffer.write().await;
-                        buffers.remove(&session_id);
-                    }
-                    Self::send_to_agent(
-                        &state,
-                        &agent_id,
-                        &session_id,
-                        &routed.incoming.content,
-                        &routed.incoming.user_id.0,
-                        &channel,
-                    )
-                    .await;
+        match routed.queue_mode {
+            crate::inbound::QueueMode::Interrupt => {
+                // Clear any buffered messages for this session
+                {
+                    let mut buffers = state.agents.message_buffer.write().await;
+                    buffers.remove(&session_id);
                 }
+                Self::send_to_agent(
+                    state,
+                    &agent_id,
+                    &session_id,
+                    &routed.incoming.content,
+                    &routed.incoming.user_id.0,
+                    &channel,
+                )
+                .await;
+            }
 
-                crate::inbound::QueueMode::Steer => {
-                    // Send Cancel to agent (best-effort), then send the steer message
-                    {
-                        let agents = state.agents.agents.read().await;
-                        if let Some(agent) = agents.get(&agent_id) {
-                            let _ = agent.tx.send(AgentCommand::Cancel).await;
-                        }
-                    }
-                    // Small delay to let cancel take effect
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    Self::send_to_agent(
-                        &state,
-                        &agent_id,
-                        &session_id,
-                        &routed.incoming.content,
-                        &routed.incoming.user_id.0,
-                        &channel,
-                    )
-                    .await;
-                }
-
-                crate::inbound::QueueMode::FollowUp => {
-                    // Buffer message; flush after a delay if no more arrive
-                    let should_flush = {
-                        let mut buffers = state.agents.message_buffer.write().await;
-                        let buffer = buffers.entry(session_id.clone()).or_default();
-                        buffer.push(BufferedMessage {
-                            content: routed.incoming.content.clone(),
-                            user_id: routed.incoming.user_id.0.clone(),
-                            channel: channel.clone(),
-                        });
-                        buffer.len() >= 5 // Max 5 messages before forced flush
-                    };
-
-                    if should_flush {
-                        Self::flush_session_buffer(&state, &agent_id, &session_id).await;
-                    } else {
-                        // Spawn a delayed flush task
-                        let state_clone = state.clone();
-                        let agent_id_clone = agent_id.clone();
-                        let session_id_clone = session_id.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                            Self::flush_session_buffer(
-                                &state_clone,
-                                &agent_id_clone,
-                                &session_id_clone,
-                            )
-                            .await;
-                        });
+            crate::inbound::QueueMode::Steer => {
+                // Send Cancel to agent (best-effort), then send the steer message
+                {
+                    let agents = state.agents.agents.read().await;
+                    if let Some(agent) = agents.get(&agent_id) {
+                        let _ = agent.tx.send(AgentCommand::Cancel).await;
                     }
                 }
+                // Small delay to let cancel take effect
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                Self::send_to_agent(
+                    state,
+                    &agent_id,
+                    &session_id,
+                    &routed.incoming.content,
+                    &routed.incoming.user_id.0,
+                    &channel,
+                )
+                .await;
+            }
 
-                crate::inbound::QueueMode::Collect => {
-                    // /done trigger: flush the buffer
-                    let has_buffered = {
-                        let buffers = state.agents.message_buffer.read().await;
-                        buffers
-                            .get(&session_id)
-                            .map(|b| !b.is_empty())
-                            .unwrap_or(false)
-                    };
+            crate::inbound::QueueMode::FollowUp => {
+                // Buffer message; flush after a delay if no more arrive
+                let should_flush = {
+                    let mut buffers = state.agents.message_buffer.write().await;
+                    let buffer = buffers.entry(session_id.clone()).or_default();
+                    buffer.push(BufferedMessage {
+                        content: routed.incoming.content.clone(),
+                        user_id: routed.incoming.user_id.0.clone(),
+                        channel: channel.clone(),
+                    });
+                    buffer.len() >= 5 // Max 5 messages before forced flush
+                };
 
-                    if has_buffered {
-                        Self::flush_session_buffer(&state, &agent_id, &session_id).await;
-                    } else {
-                        // No buffer to flush; treat as normal message
-                        Self::send_to_agent(
-                            &state,
-                            &agent_id,
-                            &session_id,
-                            &routed.incoming.content,
-                            &routed.incoming.user_id.0,
-                            &channel,
+                if should_flush {
+                    Self::flush_session_buffer(state, &agent_id, &session_id).await;
+                } else {
+                    // Spawn a delayed flush task
+                    let state_clone = state.clone();
+                    let agent_id_clone = agent_id.clone();
+                    let session_id_clone = session_id.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                        Self::flush_session_buffer(
+                            &state_clone,
+                            &agent_id_clone,
+                            &session_id_clone,
                         )
                         .await;
-                    }
+                    });
                 }
+            }
 
-                crate::inbound::QueueMode::Normal => {
+            crate::inbound::QueueMode::Collect => {
+                // /done trigger: flush the buffer
+                let has_buffered = {
+                    let buffers = state.agents.message_buffer.read().await;
+                    buffers
+                        .get(&session_id)
+                        .map(|b| !b.is_empty())
+                        .unwrap_or(false)
+                };
+
+                if has_buffered {
+                    Self::flush_session_buffer(state, &agent_id, &session_id).await;
+                } else {
+                    // No buffer to flush; treat as normal message
                     Self::send_to_agent(
-                        &state,
+                        state,
                         &agent_id,
                         &session_id,
                         &routed.incoming.content,
@@ -3242,6 +3461,18 @@ impl Gateway {
                     )
                     .await;
                 }
+            }
+
+            crate::inbound::QueueMode::Normal => {
+                Self::send_to_agent(
+                    state,
+                    &agent_id,
+                    &session_id,
+                    &routed.incoming.content,
+                    &routed.incoming.user_id.0,
+                    &channel,
+                )
+                .await;
             }
         }
     }
@@ -3730,6 +3961,10 @@ impl Gateway {
                                     let gateway = Gateway {
                                         state: state.clone(),
                                         config: new_config.clone(),
+                                        shutdown_token: CancellationToken::new(),
+                                        background_tasks: tokio::sync::Mutex::new(Vec::new()),
+                                        message_workers: tokio::sync::Mutex::new(Vec::new()),
+                                        agent_tasks: tokio::sync::Mutex::new(Vec::new()),
                                     };
                                     if let Err(e) =
                                         gateway.init_single_channel(name, new_channel_config).await
@@ -3750,6 +3985,10 @@ impl Gateway {
                                 let gateway = Gateway {
                                     state: state.clone(),
                                     config: new_config.clone(),
+                                    shutdown_token: CancellationToken::new(),
+                                    background_tasks: tokio::sync::Mutex::new(Vec::new()),
+                                    message_workers: tokio::sync::Mutex::new(Vec::new()),
+                                    agent_tasks: tokio::sync::Mutex::new(Vec::new()),
                                 };
                                 if let Err(e) =
                                     gateway.init_single_channel(name, new_channel_config).await
@@ -3877,6 +4116,10 @@ impl Gateway {
                         let gateway = Gateway {
                             state: state.clone(),
                             config: current_config.clone(),
+                            shutdown_token: CancellationToken::new(),
+                            background_tasks: tokio::sync::Mutex::new(Vec::new()),
+                            message_workers: tokio::sync::Mutex::new(Vec::new()),
+                            agent_tasks: tokio::sync::Mutex::new(Vec::new()),
                         };
                         match gateway
                             .init_single_channel(&channel_name, &new_channel_config)
@@ -4338,7 +4581,7 @@ async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
         state.agents.agents.write().await.remove(&agent_id);
 
         match spawn_agent_inner(state.clone(), agent_id.clone(), config).await {
-            Ok(()) => {
+            Ok(_handle) => {
                 let mut records = state.agents.repair_state.records.write().await;
                 let rec = records
                     .entry(key)

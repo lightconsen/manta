@@ -436,14 +436,6 @@ workspace_only = true
         let pid = std::process::id();
         self.write_pid(pid).await?;
 
-        // Clean up PID file on shutdown
-        let pid_file = self.config.pid_file.clone();
-        tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.ok();
-            let _ = tokio::fs::remove_file(&pid_file).await;
-            println!("\n👋 Daemon stopped");
-        });
-
         // Create and start the Gateway
         let gateway = Gateway::new(gateway_config.clone(), Some(config_path.clone())).await?;
 
@@ -455,7 +447,41 @@ workspace_only = true
         println!("✅ Gateway ready");
         println!("   URL: http://{}:{}", gateway_config.host, gateway_config.port);
 
-        gateway.start().await
+        // Watch for shutdown signals and cancel the gateway token so that
+        // `gateway.start()` returns and we can run the full shutdown sequence.
+        let shutdown_token = gateway.shutdown_token();
+        tokio::spawn(async move {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let mut sigterm =
+                    signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+                let mut sigint =
+                    signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
+                tokio::select! {
+                    _ = sigterm.recv() => {},
+                    _ = sigint.recv() => {},
+                    _ = tokio::signal::ctrl_c() => {},
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+            shutdown_token.cancel();
+        });
+
+        let start_result = gateway.start().await;
+
+        // Clean up PID file and run full gateway shutdown regardless of why
+        // `start()` returned.
+        let _ = tokio::fs::remove_file(&self.config.pid_file).await;
+        if let Err(e) = gateway.stop().await {
+            warn!("Gateway shutdown error: {}", e);
+        }
+        println!("\n👋 Daemon stopped");
+
+        start_result
     }
 
     /// Stop the daemon gracefully

@@ -176,6 +176,11 @@ impl BrowserBridge {
         Ok(actual_port)
     }
 
+    /// Shut down the browser pool used by this bridge.
+    pub async fn shutdown(&self) {
+        self.state.pool.shutdown().await;
+    }
+
     /// Build the Axum router
     fn router(state: BridgeState) -> Router {
         Router::new()

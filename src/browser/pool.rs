@@ -429,6 +429,18 @@ impl BrowserPool {
         }
     }
 
+    /// Shut down all browser instances in the pool.
+    #[cfg(feature = "browser")]
+    pub async fn shutdown(&self) {
+        let profile_names: Vec<String> = {
+            let instances = self.instances.read().await;
+            instances.keys().cloned().collect()
+        };
+        for name in profile_names {
+            self.close_profile(&name).await;
+        }
+    }
+
     /// List active profiles and their page counts
     pub async fn status(&self) -> Vec<(String, usize)> {
         let instances = self.instances.read().await;
