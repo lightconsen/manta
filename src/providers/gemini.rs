@@ -167,7 +167,7 @@ impl GeminiProvider {
     }
 
     /// Parse a Gemini generateContent response into internal format.
-    fn from_gemini_response(&self, resp: GeminiResponse, model: &str) -> crate::Result<CompletionResponse> {
+    fn parse_gemini_response(&self, resp: GeminiResponse, model: &str) -> crate::Result<CompletionResponse> {
         let candidate = resp.candidates.into_iter().next().ok_or_else(|| {
             crate::error::SyscityError::ExternalService {
                 source: format!(
@@ -346,7 +346,7 @@ impl Provider for GeminiProvider {
                     })?;
 
                     info!("Successfully received completion from Gemini");
-                    return self.from_gemini_response(gemini_resp, &model);
+                    return self.parse_gemini_response(gemini_resp, &model);
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
@@ -899,7 +899,7 @@ mod tests {
             usage_metadata: None,
         };
 
-        let result = provider.from_gemini_response(resp, "gemini-2.0-flash").unwrap();
+        let result = provider.parse_gemini_response(resp, "gemini-2.0-flash").unwrap();
         assert_eq!(result.message.content, "Hello back");
         assert_eq!(result.model, "gemini-2.0-flash");
         assert_eq!(result.message.role, Role::Assistant);
@@ -914,7 +914,7 @@ mod tests {
             prompt_feedback: None,
             usage_metadata: None,
         };
-        let result = provider.from_gemini_response(resp, "gemini-2.0-flash");
+        let result = provider.parse_gemini_response(resp, "gemini-2.0-flash");
         assert!(result.is_err());
     }
 
@@ -947,7 +947,7 @@ mod tests {
                 total_token_count: 15,
             }),
         };
-        let result = provider.from_gemini_response(resp, "gemini-2.0-flash").unwrap();
+        let result = provider.parse_gemini_response(resp, "gemini-2.0-flash").unwrap();
         let usage = result.usage.unwrap();
         assert_eq!(usage.prompt_tokens, 10);
         assert_eq!(usage.completion_tokens, 5);
