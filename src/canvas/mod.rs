@@ -14,7 +14,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 /// Unique identifier for a UI session
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct CanvasId(pub String);
 
 impl CanvasId {
@@ -23,11 +23,6 @@ impl CanvasId {
     }
 }
 
-impl Default for CanvasId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// A2UI Component types
 #[derive(Debug, Clone, Serialize, Deserialize)]
