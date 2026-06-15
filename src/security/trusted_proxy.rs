@@ -78,6 +78,8 @@ pub enum TrustedProxyError {
     NoUserExtracted,
     /// Extracted user is not in the allowlist.
     UserNotAllowed { user_id: String },
+    /// The authenticator is disabled and should not have been invoked.
+    Disabled,
 }
 
 impl fmt::Display for TrustedProxyError {
@@ -94,6 +96,9 @@ impl fmt::Display for TrustedProxyError {
             }
             TrustedProxyError::UserNotAllowed { user_id } => {
                 write!(f, "user '{}' is not in the trusted-proxy allowlist", user_id)
+            }
+            TrustedProxyError::Disabled => {
+                write!(f, "trusted-proxy authentication is disabled")
             }
         }
     }
@@ -163,7 +168,7 @@ impl TrustedProxyAuthenticator {
     ) -> Result<TrustedProxyUser, TrustedProxyError> {
         if !self.config.enabled {
             // Should not be invoked when disabled, but fail closed.
-            return Err(TrustedProxyError::NoUserExtracted);
+            return Err(TrustedProxyError::Disabled);
         }
 
         let proxy_ip = direct_ip.ok_or(TrustedProxyError::NoUserExtracted)?;
@@ -418,5 +423,14 @@ mod tests {
         assert!(config.trusted_proxies.is_empty());
         assert!(config.required_headers.is_empty());
         assert!(config.allow_users.is_empty());
+    }
+
+    #[test]
+    fn test_authenticate_disabled() {
+        let config = TrustedProxyConfig::disabled();
+        let auth = TrustedProxyAuthenticator::new(config);
+        let req = Request::builder().uri("/").body(()).unwrap();
+        let err = auth.authenticate(&req, Some("127.0.0.1".parse().unwrap())).unwrap_err();
+        assert_eq!(err, TrustedProxyError::Disabled);
     }
 }

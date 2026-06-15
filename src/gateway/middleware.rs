@@ -315,6 +315,21 @@ pub async fn trusted_proxy_auth_middleware(
                 .await;
             Err(StatusCode::BAD_REQUEST)
         }
+        Err(TrustedProxyError::Disabled) => {
+            state.auth.audit_log
+                .log(
+                    AuditEventType::TrustedProxyLogin,
+                    "unknown",
+                    &direct_ip
+                        .map(|ip| ip.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    false,
+                    "Trusted proxy authentication rejected: authenticator is disabled",
+                    Some(serde_json::json!({ "path": req.uri().path() })),
+                )
+                .await;
+            Err(StatusCode::FORBIDDEN)
+        }
         Err(TrustedProxyError::UserNotAllowed { user_id }) => {
             state.auth.audit_log
                 .log(
