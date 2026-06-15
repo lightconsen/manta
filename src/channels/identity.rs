@@ -307,9 +307,9 @@ impl IdentityValidator {
             });
         }
         if !self.config.user_id_allowed_chars.contains_match(user_id) {
-            return Err(IdentityValidationError::InvalidUserId(format!(
-                "User ID contains disallowed characters"
-            )));
+            return Err(IdentityValidationError::InvalidUserId(
+                "User ID contains disallowed characters".to_string(),
+            ));
         }
         Ok(())
     }
