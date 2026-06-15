@@ -57,16 +57,28 @@ impl SubTask {
     }
 }
 
+const DEFAULT_MAX_TASKS: usize = 50;
+
 /// Decomposes high-level natural-language goals into executable subtask DAGs.
 #[derive(Clone)]
 pub struct GoalDecomposer {
     provider: Arc<dyn Provider>,
+    max_tasks: usize,
 }
 
 impl GoalDecomposer {
     /// Create a new decomposer backed by the given LLM provider.
     pub fn new(provider: Arc<dyn Provider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            max_tasks: DEFAULT_MAX_TASKS,
+        }
+    }
+
+    /// Set the maximum number of subtasks allowed (default: 50).
+    pub fn with_max_tasks(mut self, n: usize) -> Self {
+        self.max_tasks = n;
+        self
     }
 
     /// Decompose a goal into a list of [`SubTask`]s.
@@ -152,6 +164,15 @@ impl GoalDecomposer {
             return Err(crate::error::SyscityError::Validation(format!(
                 "Cycle detected in subtask dependencies: {:?}",
                 cycle
+            )));
+        }
+
+        // Limit: cap total subtasks to prevent runaway generation.
+        if subtasks.len() > self.max_tasks {
+            return Err(crate::error::SyscityError::Validation(format!(
+                "Decomposition produced {} subtasks, exceeding the maximum of {}",
+                subtasks.len(),
+                self.max_tasks
             )));
         }
 
