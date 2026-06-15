@@ -16,8 +16,8 @@ async fn tool_shell_invoked_via_chat() {
 async fn tool_file_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40080,
-        "Use the file_write tool to create a file at /tmp/syscity-e2e-test.txt with content 'syscity-e2e-file-test'. \
-         Then use file_read to read it back and confirm the content.",
+        "Use ONLY the file_write tool. Create /tmp/syscity-e2e-test.txt with content 'syscity-e2e-file-test'. \
+         Do NOT call file_read or any other tool. Only call file_write once.",
         "file_write",
     )
     .await;
@@ -138,7 +138,7 @@ async fn tool_canvas_invoked_via_chat() {
 async fn tool_pdf_invoked_via_chat() {
     let _results = run_tool_chat_test(
         40092,
-        "Use the pdf tool to generate a PDF with content 'Hello PDF' and save it.",
+        "Use ONLY the pdf tool. Generate a PDF with content 'Hello PDF' and save it to /tmp/syscity-e2e-test.pdf. Do not use any other tool.",
         "pdf",
     )
     .await;

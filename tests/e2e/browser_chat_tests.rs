@@ -97,7 +97,7 @@ async fn tool_browser_pdf_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40123,
-        "Use the browser tool to navigate to https://example.com and save the page as a PDF.",
+        "Use ONLY the browser tool. Navigate to https://example.com and save the page as a PDF. Do not use any other tool.",
         "browser",
     )
     .await;
@@ -113,7 +113,7 @@ async fn tool_browser_click_and_type_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40124,
-        "Use the browser tool to navigate to https://example.com, click the 'More information...' link, and tell me what page you land on.",
+        "Use ONLY the browser tool. Navigate to https://example.com, click the 'More information...' link, and tell me what page you land on. Do not use any other tool.",
         "browser",
     )
     .await;

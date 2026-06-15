@@ -435,9 +435,9 @@ async fn tool_combo_list_files_and_screenshot() {
 async fn tool_applescript_finder_path() {
     let results = run_tool_chat_test(
         40322,
-        "Use the applescript tool to execute: \
+        "Use ONLY the applescript tool. Execute: \
          tell application \"Finder\" to get the POSIX path of (target of front window). \
-         Report the path. Call ONLY applescript.",
+         Report the path. Do not use shell or any other tool.",
         "applescript",
     )
     .await;
