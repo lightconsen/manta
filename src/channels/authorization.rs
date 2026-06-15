@@ -182,21 +182,21 @@ impl CandidateMatcher {
         let mut hits = 0;
         let mut checks = 0;
 
-        if !a.username.is_none() || !b.username.is_none() {
+        if a.username.is_some() || b.username.is_some() {
             checks += 1;
-            if a.username == b.username && a.username.is_some() {
+            if a.username == b.username {
                 hits += 1;
             }
         }
-        if !a.phone.is_none() || !b.phone.is_none() {
+        if a.phone.is_some() || b.phone.is_some() {
             checks += 1;
-            if a.phone == b.phone && a.phone.is_some() {
+            if a.phone == b.phone {
                 hits += 1;
             }
         }
-        if !a.email.is_none() || !b.email.is_none() {
+        if a.email.is_some() || b.email.is_some() {
             checks += 1;
-            if a.email == b.email && a.email.is_some() {
+            if a.email == b.email {
                 hits += 1;
             }
         }
