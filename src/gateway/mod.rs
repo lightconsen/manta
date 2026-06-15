@@ -2223,6 +2223,33 @@ async fn spawn_agent_inner(
     let computer_adapter = state.tools.computer_adapter.read().await.clone();
 
     // ── Build unified capability registry ──
+    //
+    // NOTE on the two-path dispatch architecture:
+    //
+    //   The Agent uses two independent paths for tool/action dispatch, and this
+    //   registry is a future-facing abstraction for device/hardware capabilities:
+    //
+    //   Path 1 — ToolRegistry (primary):   Agent → ToolRegistry selects and
+    //     executes static built-in tools (shell, file, glob, grep, process, …)
+    //     and dynamic MCP tools.  This is the established, fully-wired path.
+    //
+    //   Path 2 — ComputerAdapter (direct): Agent → self.computer_adapter field
+    //     → ComputerUseLoop → ComputerAdapter → registry.execute().  This
+    //     dedicated loop (screenshot → decide → execute → verify) bypasses the
+    //     CapabilityRegistry entirely.
+    //
+    //   What goes INTO the CapabilityRegistry below:
+    //     • ComputerCapability wrappers  (one per DesktopAction variant)
+    //     • ToolCapability wrappers      (only dynamic/MCP tools –
+    //       ToolRegistry::all_tools_arc() returns only those)
+    //
+    //   What is NOT in the CapabilityRegistry:
+    //     • Static built-in tools  (shell, file_write, glob, grep, process, …)
+    //       — by design; all_tools_arc() excludes them.
+    //
+    //   The registry exists for external queries (API consumers enumerating
+    //   capabilities) and future device integration.  The Agent's primary
+    //   message pipeline does not consult it.
     let capability_registry = {
         use crate::capability::providers::tool_adapter::ToolCapability;
         use crate::capability::registry::CapabilityRegistry;
@@ -2231,6 +2258,9 @@ async fn spawn_agent_inner(
         let mut reg = CapabilityRegistry::new();
 
         // Register all ToolRegistry tools as Capability wrappers
+        // NOTE: all_tools_arc() returns only dynamic (MCP) tools, not static
+        // built-in tools.  This is intentional — the static tool path is
+        // handled directly by ToolRegistry.
         for tool in tools.all_tools_arc() {
             reg.register(Arc::new(ToolCapability::new(tool)));
         }
@@ -4468,6 +4498,11 @@ async fn create_default_tool_registry(
         #[cfg(target_os = "macos")]
         {
             tool_reg.register(Box::new(crate::computer::platform::MacosToolset::new()));
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            tool_reg.register(Box::new(crate::computer::platform::WindowsToolset::new()));
         }
 
         // Load capability profile from config

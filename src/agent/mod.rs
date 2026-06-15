@@ -833,6 +833,18 @@ pub struct Agent {
     /// with idle timeout, max age, and child-spawning policies.
     thread_binding_manager: Option<ThreadBindingManager>,
     /// Optional unified capability registry for device + computer capabilities.
+    ///
+    /// NOTE: This registry is populated at startup (in gateway/mod.rs) with
+    /// ComputerCapability wrappers and dynamic ToolCapability wrappers, but
+    /// the Agent's primary dispatch uses a two-path architecture that
+    /// bypasses it:
+    ///
+    ///   - Tools → ToolRegistry (the established path)
+    ///   - Computer Use → computer_adapter field → ComputerUseLoop (direct)
+    ///
+    /// This registry exists for external queries (e.g. device capability
+    /// enumeration, API consumers) and future device/hardware integration.
+    /// It is NOT consulted during Agent message processing.
     capability_registry: Option<Arc<CapabilityRegistry>>,
 }
 

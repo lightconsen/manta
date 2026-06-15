@@ -1,17 +1,22 @@
-//! E2E tests for macOS computer module tools (macOS only)
+//! E2E tests for platform-specific tools (macOS / Linux / Windows)
 //!
-//! These tests verify that the macOS-specific tools (screenshot, accessibility,
-//! AppleScript, desktop control, process) can be invoked via chat and return
-//! valid results.  Also covers multi-tool workflows.
+//! Each test verifies that a platform tool can be invoked via chat and returns
+//! valid results.  Platform-gated with `#[cfg_attr(not(target_os = "..."), ignore)]`.
 //!
 //! Prerequisites:
-//! - Must run on macOS with Screen Recording and Accessibility permissions
-//! - Requires a configured LLM provider:
+//! - A configured LLM provider:
 //!   `SYSCITY_TEST_PROVIDER_KEY` + `SYSCITY_TEST_PROVIDER` env vars, or
 //!   `start-local-qwen.sh` / `start-local-kimi.sh` in project root
+//! - Platform-specific permissions (Screen Recording, Accessibility, etc.)
 //!
-//! Run:
+//! Run macOS tests:
 //!   cargo test --test e2e_test tool_macos_ -- --include-ignored --nocapture
+//!
+//! Run Linux tests:
+//!   cargo test --test e2e_test tool_linux_ -- --include-ignored --nocapture
+//!
+//! Run Windows tests:
+//!   cargo test --test e2e_test tool_windows_ -- --include-ignored --nocapture
 
 use super::*;
 
@@ -593,5 +598,118 @@ async fn tool_macos_desktop_control_inspect() {
                 "result.data should contain 'success' or 'mode'"
             );
         }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 9. Linux — system-level tools
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Prompt: inspect system information.
+#[tokio::test]
+#[serial]
+#[cfg_attr(not(target_os = "linux"), ignore = "Linux-only test")]
+async fn tool_linux_system_inspect_via_chat() {
+    let results = run_tool_chat_test(
+        40140,
+        "Use ONLY the system_inspect tool. Get the hostname and uptime of this \
+         Linux system. Do not use any other tool.",
+        "system_inspect",
+    )
+    .await;
+    for r in &results {
+        let result_str = r.get("result").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(!result_str.is_empty(), "system_inspect should produce output");
+    }
+}
+
+/// Prompt: send a desktop notification.
+#[tokio::test]
+#[serial]
+#[cfg_attr(not(target_os = "linux"), ignore = "Linux-only test")]
+async fn tool_linux_notification_invoked_via_chat() {
+    let results = run_tool_chat_test(
+        40141,
+        "Use ONLY the linux_notification tool. Send a notification with \
+         summary='Syscity Test' and body='E2E notification test'. \
+         Do not use any other tool.",
+        "linux_notification",
+    )
+    .await;
+    for r in &results {
+        let result_str = r.get("result").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(!result_str.is_empty(), "linux_notification should produce output");
+    }
+}
+
+/// Prompt: combine system inspection with process listing.
+#[tokio::test]
+#[serial]
+#[cfg_attr(not(target_os = "linux"), ignore = "Linux-only test")]
+async fn tool_linux_multi_system_and_process() {
+    let results = run_multi_tool_chat_test(
+        40142,
+        "First use the system_inspect tool to get the hostname and uptime. \
+         Then use the process tool to list the top 5 processes by CPU.",
+        &["system_inspect", "process"],
+    )
+    .await;
+    assert!(!results.is_empty(), "expected at least one tool result");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 10. Windows — desktop automation tools
+// ════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+#[serial]
+#[cfg_attr(not(target_os = "windows"), ignore = "Windows-only test")]
+async fn tool_windows_clipboard_invoked_via_chat() {
+    let results = run_tool_chat_test(
+        40143,
+        "Use ONLY the windows_clipboard tool. Get the current clipboard content. \
+         Do not use any other tool.",
+        "windows_clipboard",
+    )
+    .await;
+    for r in &results {
+        let result_str = r.get("result").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(!result_str.is_empty(), "windows_clipboard should produce output");
+    }
+}
+
+#[tokio::test]
+#[serial]
+#[cfg_attr(not(target_os = "windows"), ignore = "Windows-only test")]
+#[ignore = "Requires display server + desktop permissions"]
+async fn tool_windows_screenshot_invoked_via_chat() {
+    let results = run_tool_chat_test(
+        40144,
+        "Use ONLY the windows_screenshot tool. Take a screenshot of the \
+         primary display. Do not use any other tool.",
+        "windows_screenshot",
+    )
+    .await;
+    for r in &results {
+        let result_str = r.get("result").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(!result_str.is_empty(), "windows_screenshot should produce output");
+    }
+}
+
+#[tokio::test]
+#[serial]
+#[cfg_attr(not(target_os = "windows"), ignore = "Windows-only test")]
+#[ignore = "Requires display server + desktop permissions"]
+async fn tool_windows_desktop_control_invoked_via_chat() {
+    let results = run_tool_chat_test(
+        40145,
+        "Use ONLY the windows_desktop_control tool. List all open windows. \
+         Do not use any other tool.",
+        "windows_desktop_control",
+    )
+    .await;
+    for r in &results {
+        let result_str = r.get("result").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(!result_str.is_empty(), "windows_desktop_control should produce output");
     }
 }
