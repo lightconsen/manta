@@ -12,7 +12,13 @@
 
 use crate::channels::IncomingMessage;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+/// Shared map from session id to the bound `(agent_id, workspace_id)` pair.
+pub type BindingMap = Arc<RwLock<HashMap<String, (String, Option<String>)>>>;
 
 /// Sources for conversation resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,19 +172,11 @@ impl ResolutionProvider for CommandProvider {
 /// Uses existing session binding to resolve.
 pub struct FocusedBindingProvider {
     /// session_id -> (agent_id, workspace_id)
-    bindings: std::sync::Arc<tokio::sync::RwLock<
-        std::collections::HashMap<String, (String, Option<String>)>,
-    >>,
+    bindings: BindingMap,
 }
 
 impl FocusedBindingProvider {
-    pub fn new(
-        bindings: std::sync::Arc<
-            tokio::sync::RwLock<
-                std::collections::HashMap<String, (String, Option<String>)>,
-            >,
-        >,
-    ) -> Self {
+    pub fn new(bindings: BindingMap) -> Self {
         Self { bindings }
     }
 
@@ -361,11 +359,7 @@ impl ConversationResolver {
     pub fn with_default_chain(
         default_agent_id: impl Into<String>,
         default_workspace_id: Option<String>,
-        bindings: std::sync::Arc<
-            tokio::sync::RwLock<
-                std::collections::HashMap<String, (String, Option<String>)>,
-            >,
-        >,
+        bindings: BindingMap,
     ) -> Self {
         let mut resolver = Self { providers: Vec::new() };
 
@@ -438,11 +432,7 @@ impl ConversationResolver {
 pub async fn resolve_conversation(
     message: &IncomingMessage,
     default_agent: &str,
-    bindings: std::sync::Arc<
-        tokio::sync::RwLock<
-            std::collections::HashMap<String, (String, Option<String>)>,
-        >,
-    >,
+    bindings: BindingMap,
 ) -> ConversationResolution {
     let resolver =
         ConversationResolver::with_default_chain(default_agent, None, bindings);
