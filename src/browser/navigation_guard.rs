@@ -5,9 +5,13 @@
 //! Checks:
 //! - URL scheme must be http/https/about
 //! - IP literals are checked against private ranges
+//! - Hostnames are resolved and checked against private ranges (DNS rebinding
+//!   mitigation — resolves at navigation time to catch hostnames that point
+//!   to internal addresses)
 //! - Hostnames are checked against blocklist/allowlist
 
 use std::net::IpAddr;
+use tokio::net::lookup_host;
 
 /// Navigation policy for URL validation
 #[derive(Debug, Clone)]
@@ -45,8 +49,14 @@ impl NavigationPolicy {
     }
 }
 
-/// Validate that a URL is allowed by the navigation policy
-pub fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> crate::Result<()> {
+/// Validate that a URL is allowed by the navigation policy.
+///
+/// For hostnames (non-IP literals), DNS is resolved so that hostnames pointing
+/// to private IPs are also caught (basic DNS rebinding mitigation).
+pub async fn assert_navigation_allowed(
+    url: &str,
+    policy: &NavigationPolicy,
+) -> crate::Result<()> {
     let parsed = url::Url::parse(url)
         .map_err(|e| crate::error::SyscityError::Validation(format!("Invalid URL: {}", e)))?;
 
@@ -78,13 +88,37 @@ pub fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> crate:
         )));
     }
 
-    // Check IP literal
+    // Check IP literal or resolve hostname and check resolved IPs.
     if let Ok(ip) = host.parse::<IpAddr>() {
         if !policy.allow_private && is_private_ip(ip) {
             return Err(crate::error::SyscityError::Validation(format!(
                 "Navigation to private IP '{}' is not allowed",
                 ip
             )));
+        }
+    } else if !policy.allow_private {
+        // Resolve hostname and verify no resolved address is private
+        // (basic DNS rebinding mitigation).
+        let addr_str = format!("{}:80", host);
+        let resolved = lookup_host(&addr_str).await;
+        match resolved {
+            Ok(addrs) => {
+                for addr in addrs {
+                    if is_private_ip(addr.ip()) {
+                        return Err(crate::error::SyscityError::Validation(format!(
+                            "Hostname '{}' resolves to private IP '{}'",
+                            host,
+                            addr.ip()
+                        )));
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Failed to resolve hostname '{}': {}",
+                    host, e
+                )));
+            }
         }
     }
 
@@ -131,53 +165,60 @@ fn is_private_ip(ip: IpAddr) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_navigation_guard_blocks_private_ip() {
+    #[tokio::test]
+    async fn test_navigation_guard_blocks_private_ip() {
         let policy = NavigationPolicy::restrictive();
 
-        assert!(assert_navigation_allowed("http://127.0.0.1/", &policy).is_err());
-        assert!(assert_navigation_allowed("http://10.0.0.1/", &policy).is_err());
-        assert!(assert_navigation_allowed("http://192.168.1.1/", &policy).is_err());
-        assert!(assert_navigation_allowed("http://172.16.0.1/", &policy).is_err());
-        assert!(assert_navigation_allowed("http://[::1]/", &policy).is_err());
-        assert!(assert_navigation_allowed("http://localhost/", &policy).is_err());
+        assert!(assert_navigation_allowed("http://127.0.0.1/", &policy).await.is_err());
+        assert!(assert_navigation_allowed("http://10.0.0.1/", &policy).await.is_err());
+        assert!(assert_navigation_allowed("http://192.168.1.1/", &policy).await.is_err());
+        assert!(assert_navigation_allowed("http://172.16.0.1/", &policy).await.is_err());
+        assert!(assert_navigation_allowed("http://[::1]/", &policy).await.is_err());
     }
 
-    #[test]
-    fn test_navigation_guard_allows_public() {
+    #[tokio::test]
+    async fn test_navigation_guard_blocks_localhost() {
         let policy = NavigationPolicy::restrictive();
 
-        assert!(assert_navigation_allowed("https://example.com/", &policy).is_ok());
-        assert!(assert_navigation_allowed("https://google.com/", &policy).is_ok());
-        assert!(assert_navigation_allowed("https://github.com/", &policy).is_ok());
+        // localhost is blocked by hostname blocklist (sync check).
+        assert!(assert_navigation_allowed("http://localhost/", &policy).await.is_err());
     }
 
-    #[test]
-    fn test_navigation_guard_blocks_invalid_scheme() {
+    #[tokio::test]
+    async fn test_navigation_guard_allows_public() {
         let policy = NavigationPolicy::restrictive();
 
-        assert!(assert_navigation_allowed("file:///etc/passwd", &policy).is_err());
-        assert!(assert_navigation_allowed("ftp://example.com/", &policy).is_err());
+        assert!(assert_navigation_allowed("https://example.com/", &policy).await.is_ok());
+        assert!(assert_navigation_allowed("https://google.com/", &policy).await.is_ok());
+        assert!(assert_navigation_allowed("https://github.com/", &policy).await.is_ok());
     }
 
-    #[test]
-    fn test_navigation_guard_permissive() {
+    #[tokio::test]
+    async fn test_navigation_guard_blocks_invalid_scheme() {
+        let policy = NavigationPolicy::restrictive();
+
+        assert!(assert_navigation_allowed("file:///etc/passwd", &policy).await.is_err());
+        assert!(assert_navigation_allowed("ftp://example.com/", &policy).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_navigation_guard_permissive() {
         let policy = NavigationPolicy::permissive();
 
-        assert!(assert_navigation_allowed("http://127.0.0.1/", &policy).is_ok());
-        assert!(assert_navigation_allowed("http://192.168.1.1/", &policy).is_ok());
+        assert!(assert_navigation_allowed("http://127.0.0.1/", &policy).await.is_ok());
+        assert!(assert_navigation_allowed("http://192.168.1.1/", &policy).await.is_ok());
     }
 
-    #[test]
-    fn test_navigation_guard_allowlist() {
+    #[tokio::test]
+    async fn test_navigation_guard_allowlist() {
         let policy = NavigationPolicy {
             allow_private: false,
             allowed_hostnames: vec!["example.com".to_string()],
             blocked_hostnames: Vec::new(),
         };
 
-        assert!(assert_navigation_allowed("https://example.com/", &policy).is_ok());
-        assert!(assert_navigation_allowed("https://google.com/", &policy).is_err());
+        assert!(assert_navigation_allowed("https://example.com/", &policy).await.is_ok());
+        assert!(assert_navigation_allowed("https://google.com/", &policy).await.is_err());
     }
 
     #[test]

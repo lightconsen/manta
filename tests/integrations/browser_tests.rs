@@ -94,17 +94,17 @@ fn skip_if_incompatible() {
     }
 }
 
-#[test]
-fn test_browser_navigate_blocks_private_ip() {
+#[tokio::test]
+async fn test_browser_navigate_blocks_private_ip() {
     let policy = NavigationPolicy::restrictive();
 
-    assert!(assert_navigation_allowed("http://127.0.0.1/", &policy).is_err());
-    assert!(assert_navigation_allowed("http://10.0.0.1/", &policy).is_err());
-    assert!(assert_navigation_allowed("http://192.168.1.1/", &policy).is_err());
-    assert!(assert_navigation_allowed("http://172.16.0.1/", &policy).is_err());
-    assert!(assert_navigation_allowed("http://[::1]/", &policy).is_err());
-    assert!(assert_navigation_allowed("http://localhost/", &policy).is_err());
-    assert!(assert_navigation_allowed("https://example.com/", &policy).is_ok());
+    assert!(assert_navigation_allowed("http://127.0.0.1/", &policy).await.is_err());
+    assert!(assert_navigation_allowed("http://10.0.0.1/", &policy).await.is_err());
+    assert!(assert_navigation_allowed("http://192.168.1.1/", &policy).await.is_err());
+    assert!(assert_navigation_allowed("http://172.16.0.1/", &policy).await.is_err());
+    assert!(assert_navigation_allowed("http://[::1]/", &policy).await.is_err());
+    assert!(assert_navigation_allowed("http://localhost/", &policy).await.is_err());
+    assert!(assert_navigation_allowed("https://example.com/", &policy).await.is_ok());
 }
 
 #[test]
@@ -187,26 +187,26 @@ fn test_act_kind_serde() {
     assert!(json.contains("hover"));
 }
 
-#[test]
-fn test_navigation_guard_allowlist() {
+#[tokio::test]
+async fn test_navigation_guard_allowlist() {
     let policy = NavigationPolicy {
         allow_private: false,
         allowed_hostnames: vec!["example.com".to_string()],
         blocked_hostnames: Vec::new(),
     };
 
-    assert!(assert_navigation_allowed("https://example.com/", &policy).is_ok());
-    assert!(assert_navigation_allowed("https://google.com/", &policy).is_err());
+    assert!(assert_navigation_allowed("https://example.com/", &policy).await.is_ok());
+    assert!(assert_navigation_allowed("https://google.com/", &policy).await.is_err());
 }
 
-#[test]
-fn test_navigation_guard_schemes() {
+#[tokio::test]
+async fn test_navigation_guard_schemes() {
     let policy = NavigationPolicy::restrictive();
 
-    assert!(assert_navigation_allowed("http://example.com/", &policy).is_ok());
-    assert!(assert_navigation_allowed("https://example.com/", &policy).is_ok());
-    assert!(assert_navigation_allowed("file:///etc/passwd", &policy).is_err());
-    assert!(assert_navigation_allowed("ftp://example.com/", &policy).is_err());
+    assert!(assert_navigation_allowed("http://example.com/", &policy).await.is_ok());
+    assert!(assert_navigation_allowed("https://example.com/", &policy).await.is_ok());
+    assert!(assert_navigation_allowed("file:///etc/passwd", &policy).await.is_err());
+    assert!(assert_navigation_allowed("ftp://example.com/", &policy).await.is_err());
 }
 
 // ── Direct Browser Tool Integration Tests (require compatible Chrome) ───────────
