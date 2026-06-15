@@ -722,7 +722,7 @@ impl McpClient {
                 }
             };
 
-            use futures_util::StreamExt;
+            use futures::StreamExt;
             let mut stream = resp.bytes_stream();
             let mut buf = String::new();
 
@@ -866,7 +866,7 @@ impl McpClient {
                     }
                 };
 
-                use futures_util::StreamExt;
+                use futures::StreamExt;
                 let mut stream = resp.bytes_stream();
                 let mut buf = String::new();
                 while let Some(chunk) = stream.next().await {

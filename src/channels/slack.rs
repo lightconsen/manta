@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
 #[cfg(feature = "slack")]
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 
 /// Slack channel configuration
 #[derive(Debug, Clone)]

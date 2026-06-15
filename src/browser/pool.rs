@@ -91,7 +91,7 @@ impl BrowserInstance {
 
         // Spawn handler task
         let handler_task = tokio::spawn(async move {
-            use futures_util::StreamExt;
+            use futures::StreamExt;
             while let Some(h) = handler.next().await {
                 if h.is_err() {
                     break;
@@ -124,7 +124,7 @@ impl BrowserInstance {
 
         // Spawn handler task for the connected browser as well
         let _handler_task = tokio::spawn(async move {
-            use futures_util::StreamExt;
+            use futures::StreamExt;
             while let Some(h) = handler.next().await {
                 if h.is_err() {
                     break;

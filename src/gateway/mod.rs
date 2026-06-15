@@ -20,7 +20,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;

@@ -1065,7 +1065,7 @@ impl BrowserTool {
         actions: Vec<BrowserAction>,
     ) -> crate::Result<ToolExecutionResult> {
         use chromiumoxide::browser::{Browser, BrowserConfig};
-        use futures_util::StreamExt;
+        use futures::StreamExt;
         use std::sync::Arc;
 
         let mut builder = BrowserConfig::builder()

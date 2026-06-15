@@ -2,7 +2,7 @@
 //!
 //! Provides a client for CLI/web commands to connect to the running daemon.
 
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};

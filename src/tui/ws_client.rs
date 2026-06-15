@@ -3,7 +3,7 @@
 use crate::tui::auth::AuthConfig;
 use crate::tui::error::TuiError;
 use crate::VERSION;
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;

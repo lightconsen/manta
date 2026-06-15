@@ -2,7 +2,7 @@
 
 use crate::tui::actions::TuiAction;
 use crossterm::event::{Event, EventStream};
-use futures_util::StreamExt;
+use futures::StreamExt;
 use tokio::sync::mpsc;
 
 /// Spawn a task that reads crossterm events and sends `TuiAction`s to `tx`.

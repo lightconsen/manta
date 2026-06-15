@@ -8,7 +8,7 @@ use super::{
     ProviderInstanceConfig, Role, ToolCall, Usage,
 };
 use async_trait::async_trait;
-use futures_core::Stream;
+use futures::Stream;
 use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;

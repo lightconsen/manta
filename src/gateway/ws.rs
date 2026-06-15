@@ -21,7 +21,7 @@ use axum::{
     response::IntoResponse,
 };
 use base64::Engine;
-use futures_util::{
+use futures::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt,
 };
