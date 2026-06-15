@@ -43,7 +43,7 @@ bytes = "1.5"
 
 # HTTP server
 axum = { version = "0.7", features = ["ws"] }
-axum-extra = "0.9"
+axum-extra = "0.12"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "cors", "limit"] }
 
