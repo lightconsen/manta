@@ -93,13 +93,28 @@ macro_rules! load_builtin_skills {
                             "intent" => TriggerType::Intent,
                             _ => TriggerType::Keyword,
                         };
-                        skill.triggers.push(SkillTrigger {
-                            trigger_type,
-                            pattern: trigger.pattern.clone(),
-                            priority: trigger.priority,
-                            user_invocable: true,
-                            model_invocable: true,
-                        });
+                        skill.triggers.push(
+                            match SkillTrigger::try_new(
+                                trigger_type,
+                                trigger.pattern.clone(),
+                                trigger.priority,
+                                true,
+                                true,
+                            ) {
+                                Ok(t) => t,
+                                Err(e) => {
+                                    tracing::warn!("Skill '{}': {}; falling back to keyword trigger", name, e);
+                                    // Construct without regex validation as keyword
+                                    SkillTrigger {
+                                        trigger_type: TriggerType::Keyword,
+                                        pattern: trigger.pattern.clone(),
+                                        priority: trigger.priority,
+                                        user_invocable: true,
+                                        model_invocable: true,
+                                    }
+                                }
+                            },
+                        );
                     }
 
  // Use skill emoji if available, fall back to legacy emoji

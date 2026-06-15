@@ -55,7 +55,7 @@ pub enum TriggerType {
 }
 
 /// A trigger that activates a skill
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SkillTrigger {
  /// Trigger type
     #[serde(rename = "type")]
@@ -71,6 +71,66 @@ pub struct SkillTrigger {
  /// Whether the model can invoke this skill
     #[serde(default = "default_true")]
     pub model_invocable: bool,
+}
+
+impl SkillTrigger {
+    /// Create a new `SkillTrigger`, validating the pattern when `trigger_type` is `Regex`.
+    pub fn try_new(
+        trigger_type: TriggerType,
+        pattern: String,
+        priority: i32,
+        user_invocable: bool,
+        model_invocable: bool,
+    ) -> Result<Self, String> {
+        if trigger_type == TriggerType::Regex {
+            regex::Regex::new(&pattern)
+                .map_err(|e| format!("Invalid regex pattern '{}': {}", pattern, e))?;
+        }
+        Ok(Self {
+            trigger_type,
+            pattern,
+            priority,
+            user_invocable,
+            model_invocable,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for SkillTrigger {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct SkillTriggerHelper {
+            #[serde(rename = "type")]
+            trigger_type: TriggerType,
+            pattern: String,
+            #[serde(default)]
+            priority: i32,
+            #[serde(default = "default_true")]
+            user_invocable: bool,
+            #[serde(default = "default_true")]
+            model_invocable: bool,
+        }
+
+        let helper = SkillTriggerHelper::deserialize(deserializer)?;
+        if helper.trigger_type == TriggerType::Regex {
+            regex::Regex::new(&helper.pattern).map_err(|e| {
+                serde::de::Error::custom(format!(
+                    "invalid regex pattern '{}': {}",
+                    helper.pattern, e
+                ))
+            })?;
+        }
+        Ok(SkillTrigger {
+            trigger_type: helper.trigger_type,
+            pattern: helper.pattern,
+            priority: helper.priority,
+            user_invocable: helper.user_invocable,
+            model_invocable: helper.model_invocable,
+        })
+    }
 }
 
 fn default_true() -> bool {
@@ -235,13 +295,16 @@ impl Skill {
 
  /// Add a trigger to the skill
     pub fn with_trigger(mut self, trigger_type: TriggerType, pattern: impl Into<String>) -> Self {
-        self.triggers.push(SkillTrigger {
+        let pattern = pattern.into();
+        let trigger = SkillTrigger::try_new(
             trigger_type,
-            pattern: pattern.into(),
-            priority: 0,
-            user_invocable: true,
-            model_invocable: true,
-        });
+            pattern,
+            0,
+            true,
+            true,
+        )
+        .expect("invalid regex pattern in trigger");
+        self.triggers.push(trigger);
         self
     }
 
