@@ -39,7 +39,6 @@ config = "0.14"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream", "blocking"], default-features = false }
-openssl = { version = "0.10", features = ["vendored"] }
 bytes = "1.5"
 
 # HTTP server
@@ -138,7 +137,7 @@ nix = { version = "0.27", features = ["signal", "process"] }
 daemonize = "0.5"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "migrate", "chrono"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "migrate", "chrono"] }
 
 # Vector database (QMD/LanceDB-style)
 pgvector = { version = "0.4", optional = true, features = ["sqlx"] }
