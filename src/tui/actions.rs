@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// High-level user intent emitted by the input mapper.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum TuiAction {
     /// Send the current input as a chat message.
     SendMessage,

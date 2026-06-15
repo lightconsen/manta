@@ -50,6 +50,7 @@ pub struct ClientEvent {
     #[serde(default)]
     pub payload: Option<Value>,
     #[serde(default)]
+    #[allow(dead_code)]
     pub seq: Option<u64>,
 }
 
@@ -63,7 +64,9 @@ pub(crate) struct ClientError {
 /// Payload of the hello-ok response.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HelloOkPayload {
+    #[allow(dead_code)]
     pub protocol_version: u32,
+    #[allow(dead_code)]
     pub session_key: String,
     pub features: Vec<String>,
     pub scopes_granted: Vec<String>,
@@ -74,6 +77,7 @@ pub struct HelloOkPayload {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerInfo {
     pub version: String,
+    #[allow(dead_code)]
     pub conn_id: String,
 }
 
@@ -195,6 +199,7 @@ impl WsClient {
     }
 
     /// Send a fire-and-forget text message.
+    #[allow(dead_code)]
     pub fn send_text(&self, text: String) -> Result<(), TuiError> {
         self.write_tx
             .send(Message::Text(text))
@@ -202,6 +207,7 @@ impl WsClient {
     }
 
     /// Close the connection gracefully.
+    #[allow(dead_code)]
     pub fn close(&self) -> Result<(), TuiError> {
         self.write_tx
             .send(Message::Close(None))
@@ -209,6 +215,7 @@ impl WsClient {
     }
 
     /// Request the gateway abort the current run.
+    #[allow(dead_code)]
     pub async fn abort(&mut self) -> Result<Value, TuiError> {
         self.request("chat.abort", None).await
     }

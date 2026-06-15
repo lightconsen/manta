@@ -4,8 +4,6 @@
 //! over WebSocket and provides real-time chat, session management, slash
 //! commands, and a configuration editor.
 
-#![allow(dead_code)]
-
 mod actions;
 mod app;
 mod auth;

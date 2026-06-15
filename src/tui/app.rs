@@ -98,6 +98,7 @@ async fn run_app(
 }
 
 /// A small wrapper to print errors after terminal shutdown.
+#[allow(dead_code)]
 pub fn print_error(err: &TuiError) {
     eprintln!("TUI error: {err}");
 }
