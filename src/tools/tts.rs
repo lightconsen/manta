@@ -103,7 +103,12 @@ impl Tool for TtsTool {
         };
 
         // Try OpenAI TTS API first
-        if let Some(api_key) = context.environment.get("OPENAI_API_KEY") {
+        let api_key = context
+            .environment
+            .get("OPENAI_API_KEY")
+            .cloned()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+        if let Some(api_key) = api_key {
             let voice = args.voice.as_deref().unwrap_or("alloy");
             let speed = args.speed.unwrap_or(1.0).clamp(0.25, 4.0);
 

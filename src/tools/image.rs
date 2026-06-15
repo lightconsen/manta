@@ -289,7 +289,10 @@ impl Tool for ImageGenerateTool {
         let api_key = context
             .environment
             .get("OPENAI_API_KEY")
-            .or_else(|| context.environment.get("DALLE_API_KEY"));
+            .cloned()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .or_else(|| context.environment.get("DALLE_API_KEY").cloned())
+            .or_else(|| std::env::var("DALLE_API_KEY").ok());
 
         if api_key.is_none() {
             return Ok(ToolExecutionResult {

@@ -123,6 +123,31 @@ pub struct ToolContext {
     pub sandbox_policy: Option<SandboxPolicy>,
 }
 
+/// Allowed environment variables that are safe to forward to child processes.
+///
+/// This whitelist avoids leaking secrets such as API keys into shell and other
+/// subprocess executions while preserving common system variables required by
+/// most programs.
+const ALLOWED_ENV_VARS: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USER",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TMPDIR",
+    "TERM",
+    "TZ",
+];
+
+/// Build a whitelisted environment map from the current process environment.
+fn default_tool_environment() -> HashMap<String, String> {
+    std::env::vars()
+        .filter(|(k, _)| ALLOWED_ENV_VARS.contains(&k.as_str()))
+        .collect()
+}
+
 impl Default for ToolContext {
     fn default() -> Self {
         Self {
@@ -130,7 +155,7 @@ impl Default for ToolContext {
             conversation_id: String::new(),
             working_directory: std::env::current_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from(".")),
-            environment: std::env::vars().collect(),
+            environment: default_tool_environment(),
             timeout: Duration::from_secs(30),
             allowed_paths: Vec::new(),
             allowed_commands: Vec::new(),

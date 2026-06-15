@@ -144,7 +144,12 @@ impl Tool for SttTool {
         }
 
         // Try OpenAI Whisper API
-        if let Some(api_key) = context.environment.get("OPENAI_API_KEY") {
+        let api_key = context
+            .environment
+            .get("OPENAI_API_KEY")
+            .cloned()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+        if let Some(api_key) = api_key {
             let model = args.model.as_deref().unwrap_or("whisper-1");
             let response_format = args.response_format.as_deref().unwrap_or("text");
 
