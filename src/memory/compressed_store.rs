@@ -110,10 +110,23 @@ impl CompressedJsonlStore {
         }
 
         let compressed = Self::compress_lines(&all_lines)?;
-        fs::write(&shard, compressed)
+
+        // Atomic write: write to temp file, then rename.
+        let tmp_path = self.dir.join(format!(
+            ".{}.tmp.{}",
+            shard.file_name().unwrap_or_default().to_string_lossy(),
+            std::process::id()
+        ));
+        fs::write(&tmp_path, compressed)
             .await
             .map_err(|e| crate::error::SyscityError::Storage {
-                context: format!("Failed to write archival shard: {:?}", shard),
+                context: format!("Failed to write temp shard: {:?}", tmp_path),
+                details: e.to_string(),
+            })?;
+        fs::rename(&tmp_path, &shard)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to rename temp shard to {:?}", shard),
                 details: e.to_string(),
             })?;
 
@@ -191,26 +204,44 @@ impl CompressedJsonlStore {
             by_date.entry(date).or_default().push(mem);
         }
 
-        // Clear existing shards
-        let shards = self.list_shards().await;
-        for shard in shards {
-            let _ = fs::remove_file(&shard).await;
-        }
+        // List old shards before we touch anything.
+        let old_shards = self.list_shards().await;
 
-        // Write new shards
-        for (date, mems) in by_date {
+        // Write new shards to temp files first, then rename atomically.
+        let mut new_shards: Vec<PathBuf> = Vec::new();
+        for (date, mems) in &by_date {
             let shard = self.dir.join(format!("{}.jsonl.gz", date));
             let lines: Vec<String> = mems
                 .iter()
                 .map(|m| serde_json::to_string(m).unwrap())
                 .collect();
             let compressed = Self::compress_lines(&lines)?;
-            fs::write(&shard, compressed).await.map_err(|e| {
+
+            let tmp_path = self.dir.join(format!(
+                ".{}.tmp.{}",
+                shard.file_name().unwrap_or_default().to_string_lossy(),
+                std::process::id()
+            ));
+            fs::write(&tmp_path, compressed).await.map_err(|e| {
                 crate::error::SyscityError::Storage {
-                    context: format!("Failed to rewrite archival shard: {:?}", shard),
+                    context: format!("Failed to write temp shard: {:?}", tmp_path),
                     details: e.to_string(),
                 }
             })?;
+            fs::rename(&tmp_path, &shard).await.map_err(|e| {
+                crate::error::SyscityError::Storage {
+                    context: format!("Failed to rename temp shard to {:?}", shard),
+                    details: e.to_string(),
+                }
+            })?;
+            new_shards.push(shard);
+        }
+
+        // Remove old shards that were not rewritten.
+        for old in &old_shards {
+            if !new_shards.contains(old) {
+                let _ = fs::remove_file(old).await;
+            }
         }
 
         Ok(())
