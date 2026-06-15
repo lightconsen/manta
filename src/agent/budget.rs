@@ -31,23 +31,31 @@ impl IterationBudget {
 
     /// Get remaining iterations
     pub fn remaining(&self) -> usize {
-        self.remaining.load(Ordering::Relaxed)
+        self.remaining.load(Ordering::Acquire)
     }
 
     /// Check if budget is exhausted
     pub fn is_exhausted(&self) -> bool {
-        self.remaining.load(Ordering::Relaxed) == 0
+        self.remaining.load(Ordering::Acquire) == 0
     }
 
     /// Consume one iteration, returns true if successful
     pub fn consume(&self) -> bool {
-        let current = self.remaining.load(Ordering::Relaxed);
-        if current == 0 {
-            return false;
+        loop {
+            let current = self.remaining.load(Ordering::Acquire);
+            if current == 0 {
+                return false;
+            }
+            match self.remaining.compare_exchange(
+                current,
+                current - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(_) => continue,
+            }
         }
-        self.remaining
-            .compare_exchange(current, current - 1, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
     }
 
     /// Get a child budget that shares the same counter
@@ -60,7 +68,7 @@ impl IterationBudget {
 
     /// Reset the budget to maximum
     pub fn reset(&self) {
-        self.remaining.store(self.max, Ordering::Relaxed);
+        self.remaining.store(self.max, Ordering::Release);
     }
 
     /// Get budget summary for display
