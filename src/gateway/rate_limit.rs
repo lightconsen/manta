@@ -11,7 +11,7 @@
 use crate::gateway::auth::extract_session_cookie;
 use crate::gateway::auth::SessionCookieConfig;
 use crate::security::sliding_window::{
-    AttemptLog, LockoutConfig, LockoutStateSnapshot, RateLimitKey, SlidingWindowRateLimiter,
+    LockoutConfig, RateLimitKey, SlidingWindowRateLimiter,
 };
 use crate::security::{RateLimitResult, RateLimiter, UserId};
 use axum::{

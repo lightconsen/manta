@@ -2,13 +2,11 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::post,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use crate::config::hot_reload::ConfigFileType;
 use crate::gateway::GatewayState;
 use crate::tools::mcp::McpToolWrapper;
 

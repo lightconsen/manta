@@ -18,7 +18,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-use crate::gateway::rate_limit::{AuthScope, MultiTierResult, RequestScope};
+use crate::gateway::rate_limit::RequestScope;
 use crate::gateway::GatewayState;
 use crate::security::UserId;
 
@@ -234,7 +234,7 @@ pub async fn trusted_proxy_auth_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     use crate::security::runtime_audit::AuditEventType;
-    use crate::security::trusted_proxy::{TrustedProxyError, TrustedProxyUser};
+    use crate::security::trusted_proxy::TrustedProxyError;
 
     let authenticator = match state.auth.trusted_proxy_authenticator.as_ref() {
         Some(auth) => auth.clone(),

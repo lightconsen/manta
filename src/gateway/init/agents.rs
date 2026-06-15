@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 use crate::acp::AcpControlPlane;
 use crate::agent::session_store::SessionStore;
-use crate::agent::{AgentBuilder, AgentConfig, AgentRegistry, SessionManager};
+use crate::agent::{AgentBuilder, AgentRegistry, SessionManager};
 use crate::gateway::GatewayConfig;
 use crate::model_router::{ModelAlias, ModelRouter, ModelRouterConfig};
 use crate::skills::SkillManager;

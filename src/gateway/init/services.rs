@@ -5,7 +5,7 @@
 //! and side-effect context wiring.
 
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
 use crate::gateway::GatewayConfig;

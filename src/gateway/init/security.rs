@@ -9,7 +9,6 @@ use tracing::info;
 use crate::gateway::rate_limit::{MultiTierRateLimitConfig, MultiTierRateLimiter, TierConfig};
 use crate::gateway::GatewayConfig;
 use crate::security::mention_gate::MentionGate;
-use crate::security::persistent_audit::PersistentAuditLog;
 use crate::security::runtime_audit::AuditLogger;
 use crate::security::AuthManager;
 use crate::security::RateLimiter;

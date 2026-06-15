@@ -10,17 +10,12 @@
 // Transitional: management REST handlers are no longer routed (protocol.md v1.0
 // Phase 3) but kept in source for reference during the migration window.
 // They will be fully removed in Phase 5 cleanup.
-#![allow(unused_imports)]
 
 use axum::{
-    extract::{Path, Query, State, WebSocketUpgrade},
-    http::{header, StatusCode},
-    middleware::{from_fn, from_fn_with_state, Next},
-    response::{Html, IntoResponse, Json},
+    middleware::{from_fn, from_fn_with_state},
     routing::{delete, get, post},
     Router,
 };
-use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -39,25 +34,23 @@ use tracing::{debug, error, info, warn};
 use crate::acp::AcpControlPlane;
 use crate::agent::session_store::AppendMessageParams;
 use crate::agent::{Agent, AgentConfig};
-use crate::canvas::{CanvasEvent, CanvasManager};
-use crate::channels::acp_bridge::ChannelAcpBridge;
-use crate::channels::health::ChannelHealthMonitor;
-use crate::channels::snapshot::{error_snapshot, healthy_snapshot, AccountSnapshotStore};
+use crate::channels::snapshot::healthy_snapshot;
 use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
 use crate::inbound::*;
-use crate::memory::vector::{
-    ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
-    MemoryVectorStore, VectorMemoryService,
-};
-use crate::model_router::ModelRouter;
-use crate::plugins::PluginManager;
 use crate::security::pairing::DmPolicy;
-use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
+use crate::tools::approval::ApprovalQueue;
 use crate::tools::delegate_tool::AgentResolver;
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
 use async_trait::async_trait;
+
+#[cfg(test)]
+use crate::model_router::ModelRouter;
+#[cfg(test)]
+use crate::plugins::PluginManager;
+#[cfg(test)]
+use crate::canvas::CanvasManager;
 
 pub mod auth;
 pub mod command_provider;
@@ -2785,9 +2778,9 @@ impl Gateway {
     /// Discover and start WASM plugin channels.
     #[cfg(feature = "plugins")]
     async fn init_plugin_channels(&self) -> crate::Result<()> {
-        use crate::channels::plugin_host::{PluginChannel, PluginChannelRegistry};
+        use crate::channels::plugin_host::PluginChannelRegistry;
         use crate::dirs;
-        use std::path::PathBuf;
+        
 
         let plugin_dir = dirs::extensions_dir().join("channels");
         if !plugin_dir.exists() {
