@@ -39,7 +39,6 @@ pub mod adapters;
 pub mod agent;
 pub mod browser;
 pub mod canvas;
-pub mod capabilities;
 pub mod channels;
 pub mod cli;
 pub mod client;
@@ -87,6 +86,9 @@ pub use config::hot_reload::{
     ConfigChangeEvent, ConfigChangeType, ConfigFileType, HotReloadBuilder, HotReloadManager,
     WatchedConfig,
 };
+
+// Backward-compat: capabilities moved under computer/
+pub use computer::capabilities;
 
 /// Application version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

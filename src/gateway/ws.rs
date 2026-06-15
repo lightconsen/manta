@@ -527,8 +527,8 @@ async fn dispatch_method(
 async fn handle_permissions_request_macos_accessibility(req: &WsRequest) -> WsResponse {
     #[cfg(target_os = "macos")]
     {
-        crate::capabilities::macos::permissions::trigger_accessibility_prompt();
-        crate::capabilities::macos::permissions::open_accessibility_settings();
+        crate::computer::capabilities::macos::permissions::trigger_accessibility_prompt();
+        crate::computer::capabilities::macos::permissions::open_accessibility_settings();
         WsResponse::ok(
             &req.id,
             serde_json::json!({

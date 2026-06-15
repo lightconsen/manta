@@ -45,6 +45,8 @@ pub mod platform_windows;
 #[cfg(target_os = "linux")]
 pub mod platform_linux;
 
+pub mod capabilities;
+
 pub use remote_control::{RemoteControlAdapter, RemoteControlConfig, RemoteProtocol};
 pub use types::*;
 pub use verification::{VerificationConfig, VerificationCriteria, VerificationEngine};

@@ -7,7 +7,7 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
-use syscity::capabilities::{CapabilityRegistry, CapabilitySet, ToolConflictStrategy};
+use syscity::computer::capabilities::{CapabilityRegistry, CapabilitySet, ToolConflictStrategy};
 #[cfg(target_os = "macos")]
 use syscity::tools::{ToolContext, ToolRegistry};
 
@@ -16,7 +16,7 @@ use syscity::tools::{ToolContext, ToolRegistry};
 async fn main() {
     println!("=== macOS Capability Set Test ===\n");
 
-    let macos_set = syscity::capabilities::MacosSet::new();
+    let macos_set = syscity::computer::capabilities::MacosSet::new();
     println!("Set ID:       {}", macos_set.id());
     println!("Name:         {}", macos_set.name());
     println!("Description:  {}", macos_set.description());

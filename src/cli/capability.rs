@@ -1,6 +1,6 @@
 //! Capability check command — show available OS capability sets and tools.
 
-use crate::capabilities::all_known_sets;
+use crate::computer::capabilities::all_known_sets;
 use crate::error::Result;
 
 /// Print a formatted table of all capability sets and their availability.
@@ -53,10 +53,10 @@ pub async fn run_capability_check() -> Result<()> {
         };
 
         let scope_label = match set.scope() {
-            crate::capabilities::OsControlScope::ReadOnly => "read-only",
-            crate::capabilities::OsControlScope::UserSpace => "user-space",
-            crate::capabilities::OsControlScope::System => "system",
-            crate::capabilities::OsControlScope::Root => "root",
+            crate::computer::capabilities::OsControlScope::ReadOnly => "read-only",
+            crate::computer::capabilities::OsControlScope::UserSpace => "user-space",
+            crate::computer::capabilities::OsControlScope::System => "system",
+            crate::computer::capabilities::OsControlScope::Root => "root",
         };
 
         println!("  {} [{}] — {} (scope: {})", set.name(), set.id(), status, scope_label);

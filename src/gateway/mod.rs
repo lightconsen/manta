@@ -4425,7 +4425,7 @@ async fn create_default_tool_registry(
 
     // ── Register platform-specific capability sets ──
     {
-        use crate::capabilities::{
+        use crate::computer::capabilities::{
             CapabilityProfile, CapabilityRegistry, OsControlScope, ToolConflictStrategy,
         };
 
@@ -4433,14 +4433,14 @@ async fn create_default_tool_registry(
 
         #[cfg(target_os = "linux")]
         {
-            cap_reg.register(Box::new(crate::capabilities::LinuxSet::new()));
-            cap_reg.register(Box::new(crate::capabilities::LinuxDesktopX11Set::new()));
-            cap_reg.register(Box::new(crate::capabilities::LinuxDesktopWaylandSet::new()));
+            cap_reg.register(Box::new(crate::computer::capabilities::LinuxSet::new()));
+            cap_reg.register(Box::new(crate::computer::capabilities::LinuxDesktopX11Set::new()));
+            cap_reg.register(Box::new(crate::computer::capabilities::LinuxDesktopWaylandSet::new()));
         }
 
         #[cfg(target_os = "macos")]
         {
-            cap_reg.register(Box::new(crate::capabilities::MacosSet::new()));
+            cap_reg.register(Box::new(crate::computer::capabilities::MacosSet::new()));
         }
 
         // Load capability profile from config

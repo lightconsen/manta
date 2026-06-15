@@ -746,7 +746,7 @@ impl AgentConfig {
 
         // Inject host environment awareness so the LLM knows what OS
         // controls are available on this machine.
-        let host_env = crate::capabilities::host_environment_summary();
+        let host_env = crate::computer::capabilities::host_environment_summary();
         format!("{}\n\n## Host Environment\n\n{}", result, host_env)
     }
 }
