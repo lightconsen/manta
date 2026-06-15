@@ -1,3 +1,8 @@
+//! Tool subsystem initialization.
+//!
+//! Creates the tool registry, MCP manager, approval queue, canvas manager,
+//! plugin manager, channel registry, and computer adapter.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};

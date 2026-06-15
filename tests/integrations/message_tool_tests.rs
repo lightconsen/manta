@@ -101,13 +101,17 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         auth: syscity::gateway::state::AuthState {
             manager: Arc::new(syscity::security::AuthManager::new()),
             pairing_store: Arc::new(syscity::security::pairing::PairingStore::new()),
-            device_pairing_store: Arc::new(syscity::security::device_pairing::DevicePairingStore::new()),
+            device_pairing_store: Arc::new(
+                syscity::security::device_pairing::DevicePairingStore::new(),
+            ),
             tailscale_authenticator: None,
             trusted_proxy_authenticator: None,
             rate_limiter: Arc::new(syscity::security::RateLimiter::new(100, 10.0)),
-            multi_tier_rate_limiter: Arc::new(syscity::gateway::rate_limit::MultiTierRateLimiter::new(
-                syscity::gateway::rate_limit::MultiTierRateLimitConfig::default(),
-            )),
+            multi_tier_rate_limiter: Arc::new(
+                syscity::gateway::rate_limit::MultiTierRateLimiter::new(
+                    syscity::gateway::rate_limit::MultiTierRateLimitConfig::default(),
+                ),
+            ),
             audit_log: Arc::new(syscity::security::persistent_audit::PersistentAuditLog::new()),
             command_gate: Arc::new(syscity::tools::command_gate::CommandGate::new()),
             mention_gate: Arc::new(syscity::security::mention_gate::MentionGate::new(
@@ -376,7 +380,10 @@ fn restricted_caps() -> ChannelCapabilities {
 async fn setup_with_channel(channel: Arc<dyn Channel>) -> (MessageTool, String) {
     let config = GatewayConfig::default();
     let state: GatewayState = make_test_state(config).await;
-    state.channels.channels.write()
+    state
+        .channels
+        .channels
+        .write()
         .await
         .insert("mock".to_string(), channel);
     let tool = MessageTool::new(Arc::new(state));

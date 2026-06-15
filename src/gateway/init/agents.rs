@@ -1,3 +1,8 @@
+//! Agent subsystem initialization.
+//!
+//! Builds the ACP control plane, model router, skill manager, agent registry,
+//! and session manager that make up the agent runtime.
+
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};

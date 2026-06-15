@@ -1,3 +1,8 @@
+//! Security subsystem initialization.
+//!
+//! Creates the authentication manager, rate limiters, and command/mention gates
+//! used by the gateway request path.
+
 use std::sync::Arc;
 use tracing::info;
 

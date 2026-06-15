@@ -1,3 +1,8 @@
+//! Storage subsystem initialization.
+//!
+//! Selects and initializes the storage adapter (in-memory, file, or SQLite),
+//! session store, persistent audit log, and optional unified vector store.
+
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};

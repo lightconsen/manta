@@ -1,3 +1,9 @@
+//! Late service initialization.
+//!
+//! Initializes services that depend on storage or other early subsystems:
+//! vector memory, session search (FTS5), hot reload, cron scheduler, task scheduler,
+//! and side-effect context wiring.
+
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tracing::{info, warn};
