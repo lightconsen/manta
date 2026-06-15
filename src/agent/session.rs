@@ -7,6 +7,7 @@
 //! - Context sharing between agents
 //! - Intent-based agent routing
 
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -68,9 +69,9 @@ pub struct SessionAgent {
  /// Agent status
     pub status: AgentInstanceStatus,
  /// Spawn time
-    pub spawned_at: std::time::Instant,
+    pub spawned_at: DateTime<Utc>,
  /// Last activity time
-    pub last_activity: std::time::Instant,
+    pub last_activity: DateTime<Utc>,
 }
 
 /// Status of an agent instance
@@ -106,8 +107,8 @@ impl SessionAgent {
             thread_id,
             is_active: true,
             status: AgentInstanceStatus::Starting,
-            spawned_at: std::time::Instant::now(),
-            last_activity: std::time::Instant::now(),
+            spawned_at: Utc::now(),
+            last_activity: Utc::now(),
         }
     }
 
@@ -124,13 +125,13 @@ impl SessionAgent {
  /// Mark agent as ready
     pub fn mark_ready(&mut self) {
         self.status = AgentInstanceStatus::Ready;
-        self.last_activity = std::time::Instant::now();
+        self.last_activity = Utc::now();
     }
 
  /// Mark agent as busy
     pub fn mark_busy(&mut self) {
         self.status = AgentInstanceStatus::Busy;
-        self.last_activity = std::time::Instant::now();
+        self.last_activity = Utc::now();
     }
 
  /// Mark agent as terminated
@@ -162,9 +163,9 @@ pub struct MultiAgentSession {
  /// Context shared across the session (for Shared binding mode)
     shared_context: Arc<RwLock<HashMap<String, String>>>,
  /// Session creation time
-    pub created_at: std::time::Instant,
+    pub created_at: DateTime<Utc>,
  /// Last activity time
-    pub last_activity: std::time::Instant,
+    pub last_activity: DateTime<Utc>,
  /// Message channel for routing
     message_tx: mpsc::Sender<SessionMessage>,
 }
@@ -216,8 +217,8 @@ impl MultiAgentSession {
             primary_thread_id,
             agents: HashMap::new(),
             shared_context: Arc::new(RwLock::new(HashMap::new())),
-            created_at: std::time::Instant::now(),
-            last_activity: std::time::Instant::now(),
+            created_at: Utc::now(),
+            last_activity: Utc::now(),
             message_tx,
         };
 
@@ -254,7 +255,7 @@ impl MultiAgentSession {
         );
 
         self.agents.insert(agent_id.clone(), agent);
-        self.last_activity = std::time::Instant::now();
+        self.last_activity = Utc::now();
 
         self.agents.get(&agent_id).unwrap()
     }
@@ -355,7 +356,11 @@ impl MultiAgentSession {
 
  /// Check if session has timed out (no activity)
     pub fn is_timed_out(&self, timeout: std::time::Duration) -> bool {
-        self.last_activity.elapsed() > timeout
+        let elapsed = Utc::now().signed_duration_since(self.last_activity);
+        match chrono::Duration::from_std(timeout) {
+            Ok(timeout) => elapsed > timeout,
+            Err(_) => false,
+        }
     }
 
  /// Cleanup terminated agents
