@@ -14,33 +14,26 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, OnceCell};
 use tracing::{error, info};
 
 /// Global broadcast channel for cron output
-static CRON_BROADCAST: RwLock<Option<broadcast::Sender<String>>> = RwLock::const_new(None);
+static CRON_BROADCAST: OnceCell<broadcast::Sender<String>> = OnceCell::const_new();
 
 /// Initialize the cron broadcast channel
 pub async fn init_cron_broadcast() -> broadcast::Receiver<String> {
-    let tx = {
-        let guard = CRON_BROADCAST.read().await;
-        if let Some(ref tx) = *guard {
-            tx.clone()
-        } else {
-            drop(guard);
+    let tx = CRON_BROADCAST
+        .get_or_init(|| async {
             let (tx, _rx) = broadcast::channel(100);
-            let mut guard = CRON_BROADCAST.write().await;
-            *guard = Some(tx.clone());
             tx
-        }
-    };
+        })
+        .await;
     tx.subscribe()
 }
 
 /// Broadcast a cron job output to all connected clients
 pub async fn broadcast_cron_output(output: &str) {
-    let guard = CRON_BROADCAST.read().await;
-    if let Some(ref tx) = *guard {
+    if let Some(tx) = CRON_BROADCAST.get() {
         // Send as plain text with cron prefix, not JSON
         let msg = format!("📅 {}", output);
         let _ = tx.send(msg);
@@ -78,18 +71,13 @@ pub async fn start_server_with_agent(
     agent: Arc<crate::agent::Agent>,
 ) -> crate::Result<()> {
     // Initialize global broadcast channel for cron output
-    let cron_tx = {
-        let guard = CRON_BROADCAST.read().await;
-        if let Some(ref tx) = *guard {
-            tx.clone()
-        } else {
-            drop(guard);
+    let cron_tx = CRON_BROADCAST
+        .get_or_init(|| async {
             let (tx, _rx) = broadcast::channel(100);
-            let mut guard = CRON_BROADCAST.write().await;
-            *guard = Some(tx.clone());
             tx
-        }
-    };
+        })
+        .await
+        .clone();
 
     let state = AppState {
         engine,
