@@ -2,6 +2,8 @@
 //!
 //! Provides authentication, authorization, rate limiting, and sandboxing.
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -167,7 +169,9 @@ impl AuthManager {
             }
         };
 
-        let token = uuid::Uuid::new_v4().to_string();
+        let mut token_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut token_bytes);
+        let token = URL_SAFE_NO_PAD.encode(token_bytes);
         let now = chrono::Utc::now();
         let session = Session {
             token: token.clone(),
