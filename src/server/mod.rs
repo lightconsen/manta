@@ -107,6 +107,8 @@ pub async fn start_server_with_agent(
 
 /// Create the API router
 fn create_api_router(state: AppState) -> Router {
+    use tower_http::limit::RequestBodyLimitLayer;
+
     Router::new()
         .route("/", get(root))
         .route("/health", get(health_check))
@@ -117,6 +119,7 @@ fn create_api_router(state: AppState) -> Router {
         .route("/entities/:id", post(update_entity))
         .route("/webhooks", get(webhook_root))
         .with_state(state)
+        .layer(RequestBodyLimitLayer::new(1024 * 1024))
 }
 
 /// Webhook root endpoint

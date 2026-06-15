@@ -45,7 +45,7 @@ bytes = "1.5"
 axum = { version = "0.7", features = ["ws"] }
 axum-extra = "0.9"
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "limit"] }
 
 # WebSocket client
 tokio-tungstenite = "0.24"
