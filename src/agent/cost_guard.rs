@@ -63,7 +63,7 @@ impl CostGuard {
     /// Returns `true` if any spending or rate limit has been exceeded.
     #[inline]
     pub fn is_exceeded(&self) -> bool {
-        self.budget_exceeded.load(Ordering::Relaxed)
+        self.budget_exceeded.load(Ordering::Acquire)
     }
 
     /// Record the token usage for one provider call.
@@ -77,15 +77,15 @@ impl CostGuard {
         // cpm = cents per million tokens
         let cost_cents = (input_tokens * input_cpm + output_tokens * output_cpm) / 1_000_000;
 
-        let new_daily = self.daily_cents.fetch_add(cost_cents, Ordering::Relaxed) + cost_cents;
-        let new_hourly = self.hourly_actions.fetch_add(1, Ordering::Relaxed) + 1;
+        let new_daily = self.daily_cents.fetch_add(cost_cents, Ordering::AcqRel) + cost_cents;
+        let new_hourly = self.hourly_actions.fetch_add(1, Ordering::AcqRel) + 1;
 
         let daily_exceeded = self.daily_limit_cents > 0 && new_daily >= self.daily_limit_cents;
         let hourly_exceeded =
             self.hourly_action_limit > 0 && new_hourly >= self.hourly_action_limit;
 
         if daily_exceeded || hourly_exceeded {
-            self.budget_exceeded.store(true, Ordering::Relaxed);
+            self.budget_exceeded.store(true, Ordering::Release);
             tracing::warn!(
                 daily_cents = new_daily,
                 daily_limit = self.daily_limit_cents,
@@ -98,17 +98,17 @@ impl CostGuard {
 
     /// Current daily spend in cents.
     pub fn daily_spend_cents(&self) -> u64 {
-        self.daily_cents.load(Ordering::Relaxed)
+        self.daily_cents.load(Ordering::Acquire)
     }
 
     /// Number of actions taken in the current hour.
     pub fn hourly_action_count(&self) -> u64 {
-        self.hourly_actions.load(Ordering::Relaxed)
+        self.hourly_actions.load(Ordering::Acquire)
     }
 
     /// Manually reset the exceeded flag (e.g. after a config change).
     pub fn reset_exceeded(&self) {
-        self.budget_exceeded.store(false, Ordering::Relaxed);
+        self.budget_exceeded.store(false, Ordering::Release);
     }
 
     // ── Private ───────────────────────────────────────────────────────────────
@@ -119,10 +119,10 @@ impl CostGuard {
         if let Ok(mut last) = self.last_daily_reset.lock() {
             if let Ok(elapsed) = last.elapsed() {
                 if elapsed >= Duration::from_secs(86_400) {
-                    self.daily_cents.store(0, Ordering::Relaxed);
+                    self.daily_cents.store(0, Ordering::Release);
                     // Only clear the flag if no hourly limit is also tripped.
                     if self.hourly_action_limit == 0 {
-                        self.budget_exceeded.store(false, Ordering::Relaxed);
+                        self.budget_exceeded.store(false, Ordering::Release);
                     }
                     *last = SystemTime::now();
                 }
@@ -132,12 +132,12 @@ impl CostGuard {
         // Hourly reset
         if let Ok(mut last) = self.last_hourly_reset.lock() {
             if last.elapsed() >= Duration::from_secs(3_600) {
-                self.hourly_actions.store(0, Ordering::Relaxed);
+                self.hourly_actions.store(0, Ordering::Release);
                 // Re-check whether the daily limit is still exceeded.
                 let daily_ok = self.daily_limit_cents == 0
-                    || self.daily_cents.load(Ordering::Relaxed) < self.daily_limit_cents;
+                    || self.daily_cents.load(Ordering::Acquire) < self.daily_limit_cents;
                 if daily_ok {
-                    self.budget_exceeded.store(false, Ordering::Relaxed);
+                    self.budget_exceeded.store(false, Ordering::Release);
                 }
                 *last = Instant::now();
             }
