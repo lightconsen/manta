@@ -9,9 +9,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 /// Verified owner lifecycle states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OwnerState {
     /// No ownership claim has been verified.
+    #[default]
     Unverified,
     /// Ownership verified.
     Verified,
@@ -19,12 +20,6 @@ pub enum OwnerState {
     Delegated,
     /// Ownership explicitly revoked.
     Revoked,
-}
-
-impl Default for OwnerState {
-    fn default() -> Self {
-        OwnerState::Unverified
-    }
 }
 
 /// In-memory owner state store keyed by user ID.

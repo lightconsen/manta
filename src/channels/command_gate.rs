@@ -107,18 +107,13 @@ impl Authorizer {
 }
 
 /// Authorization logic for combining multiple authorizers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AuthorizerMode {
     /// Allow if ANY authorizer passes (OR logic).
+    #[default]
     Any,
     /// Allow if ALL authorizers pass (AND logic).
     All,
-}
-
-impl Default for AuthorizerMode {
-    fn default() -> Self {
-        Self::Any
-    }
 }
 
 /// Configuration for a command gate on a specific channel.

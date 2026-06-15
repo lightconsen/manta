@@ -13,35 +13,25 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Where to place the next message in a thread.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlacementHint {
     /// Continue in the current thread.
+    #[default]
     Current,
     /// Spawn a child thread/branch.
     Child,
 }
 
-impl Default for PlacementHint {
-    fn default() -> Self {
-        Self::Current
-    }
-}
-
 /// What type of execution context to spawn when creating a new thread.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SpawnTarget {
     /// Spawn a subagent (lightweight, in-process).
+    #[default]
     Subagent,
     /// Spawn an ACP session (full agent control plane session).
     Acp,
-}
-
-impl Default for SpawnTarget {
-    fn default() -> Self {
-        Self::Subagent
-    }
 }
 
 /// Policy for thread binding behavior.
