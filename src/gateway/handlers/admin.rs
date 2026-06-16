@@ -153,10 +153,23 @@ pub async fn reload_all_handler(
     // new configuration.
     if scope == "all" || scope == "config" || scope == "device" {
         let old_init = state.device_init.write().await.take();
+
+        // Re-scan native plugins directory before reinitializing,
+        // so newly placed .so/.dylib files are picked up on hot-reload.
+        #[cfg(feature = "native-plugins")]
+        {
+            let config = state.config.read().await;
+            if let Some(ref dir) = config.device.native_plugins_dir {
+                tracing::info!("Re-scanning native plugins directory: {:?}", dir);
+                state.infra.driver_factory.scan_native_plugins_dir(dir);
+            }
+        }
+
         let device_result = if let Some(old) = old_init {
             let config = state.config.read().await;
             crate::gateway::init::devices::reload_devices(
                 old,
+                &state.infra.driver_factory,
                 &config.device,
                 &state.tools.registry,
             )
@@ -165,7 +178,7 @@ pub async fn reload_all_handler(
             // No previous init — run fresh init from config
             let config = state.config.read().await;
             let drivers =
-                crate::gateway::init::devices::discover_drivers_from_config(&config.device);
+                crate::gateway::init::devices::discover_drivers_from_config(&state.infra.driver_factory, &config.device);
             crate::gateway::init::devices::init_devices(
                 &config.device,
                 drivers,
@@ -180,6 +193,7 @@ pub async fn reload_all_handler(
                 let config = state.config.read().await;
                 if let Some(ref mut di) = new_init {
                     if let Some(handle) = crate::gateway::init::devices::spawn_os_bridge_from_config(
+                        &state.infra.driver_factory,
                         di.registry.clone(),
                         &config.device.os_bridge,
                         state.tools.registry.clone(),

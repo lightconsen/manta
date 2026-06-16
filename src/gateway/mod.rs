@@ -190,6 +190,12 @@ pub struct DeviceConfig {
     /// OS device bridge configuration.
     #[serde(default)]
     pub os_bridge: crate::device::os_bridge::OsBridgeConfig,
+    /// Optional directory to scan for native plugin shared libraries
+    /// (`.so`, `.dylib`, `.dll`) at startup.  Each plugin must export the
+    /// `syscity_driver_*` C ABI functions.
+    #[cfg(feature = "native-plugins")]
+    #[serde(default)]
+    pub native_plugins_dir: Option<std::path::PathBuf>,
 }
 
 fn default_device_enabled() -> bool {
@@ -204,6 +210,8 @@ impl Default for DeviceConfig {
             health_check: crate::device::HealthCheckConfig::default(),
             hot_plug: crate::device::HotPlugConfig::default(),
             os_bridge: crate::device::os_bridge::OsBridgeConfig::default(),
+            #[cfg(feature = "native-plugins")]
+            native_plugins_dir: None,
         }
     }
 }
@@ -1456,6 +1464,7 @@ impl Gateway {
                 },
                 hot_reload: crate::utils::LateInit::new(),
                 plugin_manager: tools_init.plugin_manager.clone(),
+                driver_factory: crate::device::DriverFactory::new(),
                 model_router: model_router.clone(),
                 engine_metrics: None,
                 #[cfg(feature = "browser")]
@@ -1567,11 +1576,27 @@ impl Gateway {
         //
         // Drivers are provided either explicitly (via `with_devices()`) or
         // discovered from the configuration's `device.drivers` entries.
+        //
+        // The shared DriverFactory is stored in state so that all paths
+        // (config-driven init, OS bridge, hot-reload, native plugins) use
+        // the same registered constructors (already initialized in InfraState).
+
         let device_drivers = if device_drivers.is_empty() {
-            crate::gateway::init::devices::discover_drivers_from_config(&config.device)
+            crate::gateway::init::devices::discover_drivers_from_config(
+                &state.infra.driver_factory,
+                &config.device,
+            )
         } else {
             device_drivers
         };
+
+        // Scan native plugin directory if configured
+        #[cfg(feature = "native-plugins")]
+        if let Some(ref dir) = config.device.native_plugins_dir {
+            tracing::info!("Scanning native plugins directory: {:?}", dir);
+            state.infra.driver_factory.scan_native_plugins_dir(dir);
+        }
+
         let mut device_init = crate::gateway::init::devices::init_devices(
             &config.device,
             device_drivers,
@@ -1582,6 +1607,7 @@ impl Gateway {
         // Spawn OS device bridge if enabled
         if let Some(ref mut di) = device_init {
             if let Some(handle) = crate::gateway::init::devices::spawn_os_bridge_from_config(
+                &state.infra.driver_factory,
                 di.registry.clone(),
                 &config.device.os_bridge,
                 state.tools.registry.clone(),

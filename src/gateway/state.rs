@@ -22,6 +22,7 @@ use crate::agent::{
     GroupSessionManager, RouteResolver, SessionFileManager, SessionManager, TranscriptStore,
 };
 use crate::adapters::Storage;
+use crate::device::DriverFactory;
 use crate::gateway::init::devices::DeviceInit;
 use crate::gateway::AgentHandle;
 use crate::canvas::CanvasManager;
@@ -149,6 +150,9 @@ pub struct InfraState {
     pub hot_reload: LateInit<Arc<HotReloadManager>>,
     pub plugin_manager: Arc<PluginManager>,
     pub model_router: Arc<ModelRouter>,
+    /// Pluggable device driver factory — shared between config-driven init
+    /// and OS bridge runtime event path.
+    pub driver_factory: DriverFactory,
     /// Engine metrics counters (populated when a core `Engine` is wired in).
     pub engine_metrics: Option<Arc<crate::core::EngineMetrics>>,
     /// Browser bridge server (started when browser.bridge_enabled is true).

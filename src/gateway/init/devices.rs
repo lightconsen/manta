@@ -10,22 +10,19 @@
 //! When devices are connected, a background task periodically runs health
 //! checks on all devices and logs warnings for degraded hardware.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
 use crate::device::health::spawn_health_check_loop;
 use crate::device::hotplug::spawn_hot_plug_loop;
-use crate::device::mock::MockDeviceDriver;
 use crate::device::os_bridge::bridge::{spawn_os_bridge_loop, DriverBuilder};
 use crate::device::os_bridge::OsBridgeConfig;
 use crate::device::registry::DeviceRegistry;
 use crate::device::DeviceDriver;
-use crate::error::SyscityError;
+use crate::device::DriverFactory;
 use crate::gateway::DeviceConfig;
 use crate::tools::device_tool::DeviceToolWrapper;
 use crate::tools::ToolRegistry;
-use serde_json::Value;
 
 /// Device subsystem initialization result.
 pub struct DeviceInit {
@@ -107,68 +104,17 @@ pub async fn init_devices(
     }))
 }
 
-// ── Driver factory (config-driven discovery) ─────────────────────────────
-
-/// Constructor signature for building a device driver from JSON parameters.
-type DriverConstructor = fn(Value) -> crate::Result<Arc<dyn DeviceDriver>>;
-
-/// Registry of driver constructors keyed by their config `kind` string.
-///
-/// Follows the same pattern as the Provider Resolver in
-/// [`crate::providers::resolver`] — a centralised mapping from a config-level
-/// type name to the concrete constructor function.
-///
-/// # Example
-///
-/// ```ignore
-/// let factory = DriverFactory::new();
-/// let driver = factory.build("mock", json!({ "name": "sensor" }))?;
-/// ```
-pub struct DriverFactory {
-    constructors: HashMap<&'static str, DriverConstructor>,
-}
-
-impl DriverFactory {
-    /// Create a factory with all built-in driver constructors registered.
-    pub fn new() -> Self {
-        let mut f = Self {
-            constructors: HashMap::new(),
-        };
-        f.register("mock", MockDeviceDriver::from_config);
-        f
-    }
-
-    /// Register a driver constructor for the given `kind` string.
-    pub fn register(&mut self, kind: &'static str, ctor: DriverConstructor) {
-        self.constructors.insert(kind, ctor);
-    }
-
-    /// Build a driver by `kind`, passing `params` to its constructor.
-    ///
-    /// Returns an error if `kind` is not registered.
-    pub fn build(&self, kind: &str, params: Value) -> crate::Result<Arc<dyn DeviceDriver>> {
-        let ctor = self.constructors.get(kind).ok_or_else(|| {
-            SyscityError::NotFound {
-                resource: format!("Device driver kind '{}'", kind),
-            }
-        })?;
-        ctor(params)
-    }
-}
-
-impl Default for DriverFactory {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// ── Config-driven driver discovery ──────────────────────────────────────
 
 /// Convert [`DeviceDriverEntry`] items from config into driver instances.
 ///
 /// Each entry is built via [`DriverFactory`].  Failures are logged as warnings
 /// and skipped so that a single misconfigured entry does not block the entire
 /// device subsystem.
-pub fn discover_drivers_from_config(config: &DeviceConfig) -> Vec<Arc<dyn DeviceDriver>> {
-    let factory = DriverFactory::new();
+pub fn discover_drivers_from_config(
+    factory: &DriverFactory,
+    config: &DeviceConfig,
+) -> Vec<Arc<dyn DeviceDriver>> {
     let mut drivers = Vec::new();
     for entry in &config.drivers {
         match factory.build(&entry.kind, entry.params.clone()) {
@@ -186,6 +132,7 @@ pub fn discover_drivers_from_config(config: &DeviceConfig) -> Vec<Arc<dyn Device
 /// Call this after `init_devices()` succeeds. Returns `Some(JoinHandle)` if
 /// the bridge was spawned, `None` if disabled or no matchers configured.
 pub fn spawn_os_bridge_from_config(
+    factory: &DriverFactory,
     registry: Arc<DeviceRegistry>,
     os_bridge: &OsBridgeConfig,
     tool_registry: Arc<ToolRegistry>,
@@ -195,8 +142,9 @@ pub fn spawn_os_bridge_from_config(
     }
 
     let matchers = os_bridge.matchers.clone();
-    let build_driver: DriverBuilder = Arc::new(|kind: &str, params: serde_json::Value| {
-        DriverFactory::new().build(kind, params)
+    let factory = factory.clone();
+    let build_driver: DriverBuilder = Arc::new(move |kind: &str, params: serde_json::Value| {
+        factory.build(kind, params)
     });
 
     Some(spawn_os_bridge_loop(
@@ -218,6 +166,7 @@ pub fn spawn_os_bridge_from_config(
 /// Returns `Ok(None)` if the device subsystem is disabled or has no drivers.
 pub async fn reload_devices(
     old: DeviceInit,
+    factory: &DriverFactory,
     config: &DeviceConfig,
     tool_registry: &ToolRegistry,
 ) -> crate::Result<Option<DeviceInit>> {
@@ -239,7 +188,7 @@ pub async fn reload_devices(
     tool_registry.deregister_prefix("device_");
 
     // 4. Re-run discovery and init
-    let drivers = discover_drivers_from_config(config);
+    let drivers = discover_drivers_from_config(factory, config);
     init_devices(config, drivers, tool_registry).await
 }
 
@@ -324,45 +273,19 @@ mod tests {
         assert!(result.is_none());
     }
 
-    // ── DriverFactory tests ────────────────────────────────────────────────
-
-    #[test]
-    fn test_driver_factory_build_mock() {
-        let factory = DriverFactory::new();
-        let driver = factory
-            .build("mock", json!({ "name": "cfg-motor", "present": true }))
-            .expect("mock driver should build");
-        assert_eq!(driver.driver_name(), "cfg-motor");
-    }
-
-    #[test]
-    fn test_driver_factory_build_unknown() {
-        let factory = DriverFactory::new();
-        let result = factory.build("nonexistent", json!({}));
-        match result {
-            Ok(_) => panic!("expected error for unknown driver kind"),
-            Err(e) => assert!(e.to_string().contains("nonexistent")),
-        }
-    }
-
-    #[test]
-    fn test_driver_factory_build_mock_defaults() {
-        let factory = DriverFactory::new();
-        let driver = factory
-            .build("mock", json!({}))
-            .expect("mock driver with empty params should build");
-        assert_eq!(driver.driver_name(), "mock"); // default name
-    }
+    // ── discover_drivers_from_config tests ───────────────────────────
 
     #[test]
     fn test_discover_drivers_from_config_empty() {
+        let factory = DriverFactory::new();
         let config = DeviceConfig::default(); // no drivers
-        let drivers = discover_drivers_from_config(&config);
+        let drivers = discover_drivers_from_config(&factory, &config);
         assert!(drivers.is_empty());
     }
 
     #[test]
     fn test_discover_drivers_from_config_with_mock() {
+        let factory = DriverFactory::new();
         let config = DeviceConfig {
             drivers: vec![DeviceDriverEntry {
                 kind: "mock".into(),
@@ -370,13 +293,14 @@ mod tests {
             }],
             ..Default::default()
         };
-        let drivers = discover_drivers_from_config(&config);
+        let drivers = discover_drivers_from_config(&factory, &config);
         assert_eq!(drivers.len(), 1);
         assert_eq!(drivers[0].driver_name(), "sensor-01");
     }
 
     #[test]
     fn test_discover_drivers_from_config_skips_unknown() {
+        let factory = DriverFactory::new();
         let config = DeviceConfig {
             drivers: vec![
                 DeviceDriverEntry {
@@ -390,7 +314,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let drivers = discover_drivers_from_config(&config);
+        let drivers = discover_drivers_from_config(&factory, &config);
         assert_eq!(drivers.len(), 1);
         assert_eq!(drivers[0].driver_name(), "good");
     }

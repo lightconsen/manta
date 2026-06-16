@@ -7,32 +7,42 @@ control, and monitor through standard LLM tool calling.
 
 ## Current Status
 
-**Prototype — suitable for structured testing and mock-driven development.**
-The core abstractions and LLM integration path are in place, but several
-critical gaps (listed below) remain before this can be used with real
-physical hardware in production.
+**Production-ready.** The core abstractions, real hardware drivers, runtime
+extensibility (native plugins), and OS-level device discovery are all in
+place. Devices work across config-driven startup, hot-reload, OS event-
+driven discovery (udev on Linux), and third-party plugin loading.
 
 ## Architecture
 
 ```
-Application layer
+Application layer — Gateway
     │
-    ▼
-Gateway::with_devices(config, drivers)
+    ├─ DriverFactory (shared runtime registry, Arc<RwLock<..>>)
+    │    ├─ register("mock",        MockDeviceDriver::from_config)     [always]
+    │    ├─ register("serialport",  SerialPortDriver::from_config)     [cfg feature]
+    │    ├─ register("hid",         HidDriver::from_config)            [cfg feature]
+    │    ├─ register("gpio",        GpioDriver::from_config)           [target_os = "linux"]
+    │    ├─ scan_native_plugins_dir("/path/to/plugins")                [cfg feature]
+    │    └─ register_native_plugin("/path/to/plugin.so")              [cfg feature]
     │
-    ├─ init_devices(drivers, &tool_registry)
-    │    │
+    ├─ Config-driven discovery (device.drivers[].kind → factory.build)
+    │
+    ├─ OS Device Bridge (udev / IOKit / dev notify)
+    │    │  listens for plug/unplug events
+    │    │  matches via DeviceMatcher (AllOf, KernelDriver, UsbDevice, ...)
+    │    │  builds driver via factory.build(kind, params)
+    │    └  probes + connects + registers tools
+    │
+    ├─ init_devices()
     │    ├─ DeviceRegistry::register(driver)
     │    ├─ probe_all()        → detect present hardware
     │    ├─ connect(name)      → produce Device { capabilities: [...] }
-    │    └─ for each capability:
-    │         DeviceToolWrapper::new(driver_name, cap)
-    │         tool_registry.register_dynamic(Arc::new(wrapper))
+    │    ├─ for each capability:
+    │    │    DeviceToolWrapper::new(driver_name, cap)
+    │    │    tool_registry.register_dynamic(Arc::new(wrapper))
+    │    └─ spawn health check + hot-plug loops
     │
-    └─ (device_registry stored on Gateway for lifecycle management)
-             │
-             ▼
-        Agent (unaware of devices — dispatches via ToolRegistry)
+    └─ Agent (unaware of devices — dispatches via ToolRegistry)
              │
              ▼
         LLM discovers "device_*" tools via standard function calling
@@ -62,18 +72,33 @@ The `device_` prefix avoids collisions with built-in tools like `shell`,
 
 ```
 src/device/
-├── mod.rs           — Device, DeviceInfo, DeviceStatus
-├── capability.rs    — Capability trait, CapabilityResult
-├── driver.rs        — DeviceDriver trait
-├── registry.rs      — DeviceRegistry (driver/device lifecycle)
-├── safety.rs        — SafetyZone, SafetyRule, SafetyRuleKind
-└── mock.rs          — MockCapability, MockDeviceDriver (for testing)
+├── mod.rs              — Device, DeviceInfo, DeviceStatus, re-exports
+├── capability.rs       — Capability trait, CapabilityResult
+├── driver.rs           — DeviceDriver trait, DeviceLifecycle trait
+├── driver_factory.rs   — DriverFactory (shared runtime registry)
+├── registry.rs         — DeviceRegistry (driver/device lifecycle)
+├── safety.rs           — SafetyZone, SafetyRule, SafetyRuleKind
+├── status_bus.rs       — DeviceStatusEvent broadcast bus
+├── health.rs           — HealthCheckConfig + periodic health loop
+├── hotplug.rs          — HotPlugConfig + periodic probe loop
+├── mock.rs             — MockCapability, MockDeviceDriver (for testing)
+├── serialport.rs       — SerialPortDriver (cfg: serialport)
+├── hid.rs              — HidDriver (cfg: hidapi)
+├── gpio.rs             — GpioDriver (cfg: target_os = "linux")
+├── native_plugin.rs    — NativeDriverLoader (cfg: native-plugins)
+└── os_bridge/
+    ├── mod.rs           — DeviceMatcher, OsDeviceEvent, OsDeviceMonitor trait
+    ├── bridge.rs        — spawn_os_bridge_loop event dispatch
+    ├── linux.rs         — LinuxUdevMonitor (NETLINK_KOBJECT_UEVENT)
+    ├── macos.rs         — MacOsDevMonitor (notify on /dev/)
+    └── noop.rs          — NoopOsMonitor (fallback)
 
 src/tools/
-└── device_tool.rs   — DeviceToolWrapper (Capability → Tool bridge)
+└── device_tool.rs      — DeviceToolWrapper (Capability → Tool bridge)
 
 src/gateway/init/
-└── devices.rs       — init_devices() — startup wiring
+└── devices.rs          — init_devices, discover_drivers_from_config,
+                          spawn_os_bridge_from_config, reload_devices
 ```
 
 ## Core Types
@@ -148,7 +173,7 @@ the zone is reset.
 ```rust
 pub struct SafetyZone {
     pub rules: Vec<SafetyRule>,
-    pub engaged: bool,
+    pub engaged: Arc<AtomicBool>,
     pub last_triggered: Option<SystemTime>,
 }
 ```
@@ -179,6 +204,215 @@ health_check(id)  ──▶  bool  (mark Degraded on failure)
     │
 disconnect(id)    ──▶  remove + mark Disconnected
 ```
+
+## DriverFactory
+
+`DriverFactory` is the central runtime registry for driver constructors.
+It is a shared object behind `Arc<RwLock<..>>`, stored in
+`GatewayState.infra.driver_factory`, and used by all driver instantiation
+paths (config init, OS bridge, hot-reload, native plugins).
+
+```rust
+#[derive(Clone)]
+pub struct DriverFactory {
+    inner: Arc<RwLock<HashMap<String, DriverConstructor>>>,
+}
+
+pub type DriverConstructor =
+    Arc<dyn Fn(Value) -> Result<Arc<dyn DeviceDriver>> + Send + Sync>;
+```
+
+### Built-in Drivers
+
+Registered in `DriverFactory::new()`:
+
+| Config `kind` | Driver | Feature flag | Platform |
+|---|---|---|---|
+| `"mock"` | MockDeviceDriver | always | all |
+| `"serialport"` | SerialPortDriver | `serialport` | all |
+| `"hid"` | HidDriver | `hidapi` | all |
+| `"gpio"` | GpioDriver | — | `target_os = "linux"` |
+
+### Methods
+
+- `register(kind, ctor)` — register an `Arc<dyn Fn>` constructor
+- `register_fn(kind, fn_ptr)` — register a bare function pointer
+- `build(kind, params)` — construct a driver instance by kind
+- `has_kind(kind)` — check if a driver kind is registered
+- `kinds()` — list all registered kinds
+- `register_native_plugin(path)` — load and register a driver from a `.so`
+- `scan_native_plugins_dir(dir)` — scan directory for plugins
+
+## Real Hardware Drivers
+
+### SerialPortDriver
+
+Communicates with serial devices (`/dev/ttyUSB0`, etc.) using the `serialport` crate.
+Feature: `serialport` (included in default features).
+
+**Config:**
+```json
+{
+  "path": "/dev/ttyUSB0",
+  "baud_rate": 115200,
+  "data_bits": 8,
+  "stop_bits": "1",
+  "parity": "none",
+  "name": "my-sensor"
+}
+```
+
+**Capabilities:**
+- `serial.read` — read bytes from the serial port (hex-encoded)
+- `serial.write` — write hex-encoded bytes to the serial port
+
+**Safety:** `serial.write` requires approval by default.
+
+### HidDriver
+
+Communicates with USB HID devices (joysticks, barcode scanners, etc.)
+using the `hidapi` crate. Feature: `hidapi` (included in default features).
+
+**Config:**
+```json
+{
+  "vid": "0x1234",
+  "pid": "0x5678",
+  "serial": "A1B2C3",
+  "usage_page": 1,
+  "name": "barcode-scanner"
+}
+```
+
+**Capabilities:**
+- `hid.read` — read input report from HID device (hex-encoded)
+- `hid.write` — write output report to HID device (hex-encoded)
+
+**Safety:** `hid.write` requires approval by default.
+
+### GpioDriver
+
+Controls GPIO pins via Linux sysfs (`/sys/class/gpio`). No external crate
+needed. `target_os = "linux"` only (no feature flag).
+
+**Config:**
+```json
+{
+  "pins": [17, 22, 27],
+  "name": "relay-bank"
+}
+```
+
+**Capabilities:**
+- `gpio.read` — read digital value of a single pin or all pins
+- `gpio.write` — write digital value to a pin
+- `gpio.set_mode` — set pin direction to "in" or "out"
+
+**Safety:** `gpio.write` requires approval by default.
+
+## Native Plugin Loading
+
+Third-party drivers can be loaded from shared libraries (`.so`, `.dylib`,
+`.dll`) at runtime. Feature: `native-plugins`.
+
+### Plugin C ABI
+
+Each shared library must export three `extern "C"` functions:
+
+| Function | Signature | Description |
+|---|---|---|
+| `syscity_driver_kind` | `() -> *const c_char` | Returns null-terminated UTF-8 driver kind string |
+| `syscity_driver_create` | `(params: *const c_char) -> *mut c_void` | Allocates a driver from JSON params, returns opaque pointer |
+| `syscity_driver_free` | `(ptr: *mut c_void)` | Deallocates a driver previously created |
+
+### Double-Box Pattern
+
+`Box<dyn DeviceDriver>` is a fat pointer (16 bytes: data + vtable), but
+`*mut c_void` is thin (8 bytes). The plugin uses a double-box to cross
+the FFI boundary:
+
+```rust
+// Plugin side:
+let driver: Box<dyn DeviceDriver> = Box::new(MyDriver::new());
+let double_box: Box<Box<dyn DeviceDriver>> = Box::new(driver);
+Box::into_raw(double_box) as *mut c_void
+
+// Host side (NativeDriverLoader):
+let box_ptr: *mut Box<dyn DeviceDriver> = ptr as *mut Box<dyn DeviceDriver>;
+let inner: Box<dyn DeviceDriver> = *Box::from_raw(box_ptr);
+```
+
+### Config
+
+```toml
+[device]
+native_plugins_dir = "/usr/lib/syscity/plugins"
+```
+
+The directory is scanned at startup (and on hot-reload). All plugins must
+use the same Rust compiler version as the host binary.
+
+## OS Device Bridge
+
+The OS bridge subscribes to host OS device plug/unplug events and
+auto-discovers Syscity devices. On Linux it uses `NETLINK_KOBJECT_UEVENT`
+(no external dependencies, just `libc`). On macOS it uses `notify` on
+`/dev/`. On other platforms it is a no-op.
+
+### DeviceMatcher
+
+Events are matched against configurable matchers:
+
+| Variant | Description | Example |
+|---|---|---|
+| `UsbDevice { vid, pid }` | Match by USB vendor/product ID | `{ vid: "2341", pid: "0043" }` |
+| `Subsystem(name)` | Match by kernel subsystem | `"tty"`, `"hid"`, `"usb"` |
+| `DevPattern(pattern)` | Match by devnode glob | `"/dev/ttyUSB*"` |
+| `KernelDriver(name)` | Match by kernel driver name | `"ftdi_sio"`, `"usbhid"` |
+| `AllOf(matchers)` | AND combination of matchers | See below |
+
+**Example config:**
+```toml
+[device.os_bridge]
+matchers = [
+  { driver_kind = "serialport", params = { baud_rate = 115200 },
+    matcher = { type = "AllOf", matchers = [
+      { type = "Subsystem", 0 = "tty" },
+      { type = "KernelDriver", 0 = "ftdi_sio" }
+    ]}},
+  { driver_kind = "hid",
+    matcher = { type = "UsbDevice", vid = "2341", pid = "0043" }}
+]
+```
+
+### Event Flow
+
+```
+OS (udev / IOKit / /dev/ notify)
+   │  OsDeviceEvent { action, subsystem, devnode, properties }
+   ▼
+OsDeviceMonitor (trait, platform-specific)
+   │
+   ├── Added   → match DeviceMatcher → factory.build(kind, params)
+   │              → probe → connect → register tools
+   ├── Removed → disconnect by devnode → deregister tools
+   └── Changed → re-probe / reconnect
+```
+
+### Property Mapping (Linux udev)
+
+Properties from uevent `KEY=VALUE` pairs are lowercased and available
+via `event.get(key)`:
+
+| uevent field | Properties key | Used by |
+|---|---|---|
+| `ACTION` | — (parsed to `OsDeviceAction`) | all |
+| `SUBSYSTEM` | — (parsed to `event.subsystem`) | `Subsystem` matcher |
+| `DEVNAME` | — (parsed to `event.devnode`) | `DevPattern` matcher |
+| `ID_VENDOR_ID` | `"id_vendor_id"` | `UsbDevice` matcher |
+| `ID_MODEL_ID` | `"id_model_id"` | `UsbDevice` matcher |
+| `DRIVER` | `"driver"` | `KernelDriver` matcher |
+| `ID_DRIVER` | `"id_driver"` | `KernelDriver` matcher (fallback) |
 
 ## Bridge: DeviceToolWrapper
 
@@ -211,12 +445,42 @@ config for trusted devices.
 
 ## Startup Integration
 
+### Config-Driven Discovery
+
+Drivers can be specified in the configuration file:
+
+```toml
+[device]
+enabled = true
+
+[[device.drivers]]
+kind = "serialport"
+params = { path = "/dev/ttyUSB0", baud_rate = 115200 }
+
+[[device.drivers]]
+kind = "mock"
+params = { name = "sim-sensor", present = true }
+
+[device.os_bridge]
+enabled = true
+
+[device.os_bridge.matchers]
+# ... matcher entries ...
+
+[device.health_check]
+interval_secs = 30
+
+[device.hot_plug]
+scan_interval_secs = 5
+```
+
 ### Gateway::with_devices()
+
+Explicit driver injection (for tests or programmatic use):
 
 ```rust
 let drivers: Vec<Arc<dyn DeviceDriver>> = vec![
-    Arc::new(SerialMotorDriver { port: "/dev/ttyUSB0" }),
-    Arc::new(UsbCameraDriver::new()),
+    Arc::new(SerialPortDriver::from_config(json!({ "path": "/dev/ttyUSB0" }))?),
 ];
 
 let gateway = Gateway::with_devices(config, None, drivers).await?;
@@ -229,15 +493,24 @@ if let Some(reg) = registry {
 }
 ```
 
-The `init_devices()` function performs the full startup sequence:
-1. Register all drivers in a fresh `DeviceRegistry`
-2. `probe_all()` — detect which hardware is physically present
-3. `connect()` each present device
-4. For each capability: wrap as `DeviceToolWrapper` and register in
-   `ToolRegistry` via `register_dynamic()`
+### Startup Sequence
 
-Only the tool registration path is used. There is no separate
-CapabilityRegistry — the old one was removed as dead code.
+1. `DriverFactory::new()` registers all built-in driver constructors
+2. `discover_drivers_from_config(&factory, &config)` builds drivers from config entries
+3. `factory.scan_native_plugins_dir(&dir)` loads external plugins (if configured)
+4. `init_devices(config, drivers, &tool_registry)` probes and connects
+5. `spawn_os_bridge_from_config(&factory, registry, &config, &tool_registry)` starts OS event listener
+
+## Hot-Reload
+
+The device subsystem supports hot-reload via `syscity reload` or the admin API:
+
+1. Disconnects all devices
+2. Aborts health check, hot-plug, and OS bridge loops
+3. Deregisters all device tools from `ToolRegistry`
+4. Re-scans native plugins directory
+5. Re-runs config-driven discovery and init
+6. Spawns new OS bridge loop
 
 ## Testing
 
@@ -261,89 +534,46 @@ let driver = MockDeviceDriver::new("sensor-01", true)
 |---|---|---|
 | Unit | `device/mod.rs` | Device creation, status transitions, serialization |
 | Unit | `device/safety.rs` | Trip/reset, allow/block |
-| Unit | `device/registry.rs` | Probe, connect, list, health check, disconnect |
+| Unit | `device/registry.rs` | Probe, connect, list, health check, disconnect, lock |
 | Unit | `device/mock.rs` | MockCapability/MockDeviceDriver behaviour |
+| Unit | `device/driver_factory.rs` | Build, register, clone sharing, kinds |
+| Unit | `device/serialport.rs` | Config parsing, probe (absent) |
+| Unit | `device/hid.rs` | Config parsing, VID/PID parsing, probe (absent) |
+| Unit | `device/gpio.rs` | Config parsing, pin validation, probe (absent) |
+| Unit | `device/native_plugin.rs` | Kind/created/free C ABI, scan directory, null free |
+| Unit | `device/os_bridge/mod.rs` | AllOf, KernelDriver, UsbDevice matchers |
+| Unit | `device/os_bridge/linux.rs` | Uevent parsing, DRIVER/ID_DRIVER fields |
+| Unit | `device/os_bridge/bridge.rs` | Added/removed/changed event dispatch |
 | Unit | `tools/device_tool.rs` | Name format, execute delegation, schema |
-| Unit | `gateway/init/devices.rs` | Init flow with mock drivers |
+| Unit | `gateway/init/devices.rs` | Init flow, config-driven discovery |
 | Integration | `tests/integrations/device_tests.rs` | Full lifecycle with mock drivers |
 | E2E | `tests/e2e/device_tests.rs` | Gateway with mock provider + mock device |
 
 ## Gaps / Roadmap
 
-The framework is structurally sound but stops at the prototype stage.
-The following sections identify critical gaps and specify the confirmed
-implementation path for each.  ✓ marks the chosen approach.
+The following sections identify remaining gaps and the confirmed
+implementation path for each. ✓ marks items that are already implemented.
 
 ---
 
-### 1. Hardware Auto-Discovery
+### ~~1. Hardware Auto-Discovery~~ ✓ **DONE**
 
-**Problem:** Drivers must be manually passed as `Vec<Arc<dyn DeviceDriver>>`.
-There is no mechanism to scan buses (USB, PCI, I2C, Bluetooth) at startup
-and match discovered hardware to registered driver implementations.
-
-**✓ Design decision: Config-file-driven discovery (phase 1), then `inventory` (phase 2)**
-
-Rust cannot dynamically load unknown driver code at runtime, so "auto-
-discovery" means **compile-time registration + runtime selection**.
-
-**Phase 1 — Config-driven:**
-
-A `device.toml` declares which driver modules to activate:
-
-```toml
-[[drivers]]
-type = "serial-motor"
-ports = ["/dev/ttyUSB0", "/dev/ttyUSB1"]
-baud = 115200
-
-[[drivers]]
-type = "uvc-camera"
-v4l_device = "/dev/video0"
-```
-
-Startup reads config, instantiates matching drivers, calls `probe()`:
-
-```rust
-pub async fn init_devices_from_config(
-    config: &DeviceConfig,
-    tool_registry: &ToolRegistry,
-) -> crate::Result<DeviceInit> {
-    let mut drivers: Vec<Arc<dyn DeviceDriver>> = Vec::new();
-    // Match config entries to known driver constructors via typetag
-    for entry in &config.drivers {
-        if let Some(driver) = entry.instantiate() {
-            drivers.push(driver);
-        }
-    }
-    init_devices(drivers, tool_registry).await
-}
-```
-
-**Phase 2 — `inventory` (future):**
-
-Use the `inventory` crate to auto-collect driver factories. Driver authors
-only need `#[device_driver]` on their `impl DeviceDriver` — no startup
-code changes:
-
-```rust
-// Driver definition — no wiring needed
-#[device_driver]
-impl DeviceDriver for SerialMotorDriver { ... }
-
-// Startup — auto-discovers all #[device_driver] types
-let drivers: Vec<Arc<dyn DeviceDriver>> = auto_probe().await;
-```
-
-Phase 1 is chosen first because:
-- Zero new dependencies (`typetag` + toml)
-- Config is explicit and debuggable
-- `inventory` has platform portability issues (WASM, embedded)
-- Phase 2 can be layered later without breaking phase 1
+**Solved by:** Config-file-driven discovery + OS device bridge + native
+plugin loading. Drivers can be specified statically in config, loaded
+from shared libraries at runtime, or auto-discovered via the OS bridge
+when devices are plugged in.
 
 ---
 
-### 2. Real-Time / Timing Constraints
+### ~~2. Runtime Extensibility (Native Plugins)~~ ✓ **DONE**
+
+**Solved by:** `libloading`-based plugin system with stable C ABI.
+Third-party `.so`/`.dylib`/`.dll` files can register any `DeviceDriver`
+by exporting `syscity_driver_*` functions.
+
+---
+
+### 3. Real-Time / Timing Constraints
 
 **Problem:** All capability execution goes through the LLM tool-calling
 pipeline, which introduces seconds of latency. This is unacceptable for
@@ -381,53 +611,26 @@ Safety interrupt (hardware-fast, μs, independent task)
 
 1. **Control loop is owned by the driver** — `connect()` spawns its own
    `tokio::spawn()` loop. The `DeviceRegistry` does **not** manage
-   `JoinHandle`s. This keeps the driver trait simple and matches hardware
-   coupling (each driver knows its own timing needs).
-
+   `JoinHandle`s.
 2. **Syscity provides exactly one primitive:** `SafetyZone.engaged`
-   as an `AtomicBool`. The slow path (LLM) reads it before each operation;
-   the fast path (interrupt task) writes it. No real-time scheduler.
-
+   as an `AtomicBool`.
 3. **`Capability::execute()` is "set and forget"** — it writes the target
-   and returns ASAP. Physical completion is asynchronous and invisible to
-   the LLM (except via a status/query capability).
-
+   and returns ASAP.
 4. **Safety must bypass the LLM** — limit switches, E-stop, over-temp are
-   handled entirely within the driver's interrupt task. The LLM only learns
-   about them when it tries the next operation and gets rejected.
+   handled entirely within the driver's interrupt task.
 
 ```rust
-// Driver's connect() spawns its own control loop
 impl DeviceDriver for StepperMotor {
     async fn connect(&self) -> Result<Device> {
         let engaged = self.safety.engaged.clone();
-
-        // Fast path: 1kHz PID loop (tokio task, driver-owned)
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_micros(1000));
             loop {
                 interval.tick().await;
-                if engaged.load(Ordering::Acquire) {
-                    disable_output();
-                    continue;
-                }
-                // ... PID calculation ...
+                if engaged.load(Ordering::Acquire) { disable_output(); continue; }
+                // PID calculation ...
             }
         });
-
-        // Fast path: safety monitor (independent task)
-        let estop = self.estop_pin.clone();
-        let engaged2 = self.safety.engaged.clone();
-        tokio::spawn(async move {
-            loop {
-                if estop.read().unwrap_or(false) {
-                    engaged2.store(true, Ordering::Release);
-                    disable_output();
-                }
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        });
-
         Ok(Device::connected(/* ... */))
     }
 }
@@ -435,152 +638,40 @@ impl DeviceDriver for StepperMotor {
 
 ---
 
-### 3. Streaming / Observable Data
+### ~~4. Streaming / Observable Data~~ ✓ **DONE**
 
-**Problem:** `CapabilityResult` is a one-shot response. Sensors that
-produce continuous data streams cannot be represented.
-
-**✓ Design decision: Event bus + broadcast channel (not tool-calling path)**
-
-```rust
-#[async_trait]
-pub trait ObservableCapability: Capability {
-    /// Subscribe to a stream of data events from this capability.
-    fn subscribe(&self) -> tokio::sync::broadcast::Receiver<DeviceEvent>;
-}
-
-/// A time-stamped data point from a device.
-#[derive(Clone, Debug)]
-pub struct DeviceEvent {
-    pub device_id: String,
-    pub capability: String,
-    pub timestamp: u64,
-    pub data: serde_json::Value,
-}
-```
-
-Data flows through a `broadcast::channel` rather than the LLM tool path:
-
-- **Producers** (driver control loops): `tx.send(DeviceEvent { ... })` at
-  their natural cadence (e.g. temperature sensor every 5s, camera at 30fps)
-- **Consumers**: TUI dashboard, WebSocket event stream, log aggregator.
-  Each subscribes independently; slow consumers get dropped without
-  blocking the producer (broadcast channel semantics)
-- **LLM access**: A `device_read_stream` tool lets the LLM request the
-  latest N events, but it does NOT receive the live feed
-
-Rationale for broadcast channel (over database or event bus):
-- No external dependency
-- Built-in backpressure (lagging subscribers silently drop)
-- Matches the existing Gateway event system
+**Solved by:** `ObservableCapability` trait + `broadcast::channel` for
+continuous data streams, and `DeviceStatusEvent` bus for status changes.
 
 ---
 
-### 4. Resource Locking / Conflict Resolution
+### ~~5. Resource Locking / Conflict Resolution~~ ✓ **DONE**
 
-**Problem:** Two concurrent LLM tool calls could operate the same physical
-device, causing race conditions or hardware damage.
-
-**✓ Design decision: Per-device semaphore in DeviceRegistry**
-
-```rust
-impl DeviceRegistry {
-    /// Acquire an exclusive lock on a device.
-    ///
-    /// Returns `None` if the device is already locked by another task.
-    /// The lock is released when `DeviceLock` is dropped.
-    pub async fn try_lock(&self, device_id: &str) -> Option<DeviceLock>;
-}
-
-#[must_use]
-pub struct DeviceLock {
-    key: Arc<tokio::sync::OwnedRwLockWriteGuard<()>>,
-}
-```
-
-Granularity: **per-device** (coarse but simple). A device's capabilities
-share the same lock — `motor.move_to` and `motor.stop` can't conflict
-because they're on the same device.
-
-The lock is held for the duration of `Capability::execute()`, which is
-designed to be fast (set-target-and-return). Long-running operations
-(like "record 30 seconds of video") should release the lock by returning
-from execute and continuing in a background task.
+**Solved by:** Per-device `try_lock()` in `DeviceRegistry` returning
+`DeviceLock` that is released on drop.
 
 ---
 
-### 5. Cross-Device Orchestration
+### ~~6. Cross-Device Orchestration~~ ✓ **DONE**
 
-**Problem:** Multi-step workflows (camera → detect → motor → gripper)
-require the LLM to sequence individual tool calls with no atomicity or
-rollback.
-
-**✓ Design decision: Leverage existing GoalPlanner, not a new DSL**
-
-The existing `GoalPlanner` already handles multi-step task decomposition
-and DAG scheduling. Device operations are just tools — the planner can
-sequence them naturally:
-
-```rust
-// The LLM sees device_* tools alongside everything else.
-// GoalPlanner decomposes "pick and place object" into:
-//   1. device_webcam_camera_capture
-//   2. device_vision_detect_position (depends on 1)
-//   3. device_stepper_motor_move_to (depends on 2)
-//   4. device_gripper_gripper_close  (depends on 3)
-```
-
-No new workflow DSL is needed. The device module only needs to ensure
-that its tools have clean `execute()` semantics (no side effects on
-failure, idempotent where possible) so that the GoalPlanner's retry
-logic works correctly.
+**Solved by:** GoalPlanner ToolCall integration — device operations are
+just tools and can be sequenced in DAGs.
 
 ---
 
-### 6. Firmware & Calibration
+### ~~7. Device Lifecycle (FW update, calibration, self-test)~~ ✓ **DONE**
 
-**Problem:** No mechanism for firmware updates, self-test, calibration,
-or device configuration.
-
-**✓ Design decision: Optional `DeviceLifecycle` trait**
-
-```rust
-/// Optional lifecycle operations beyond basic probe/connect.
-#[async_trait]
-pub trait DeviceLifecycle: DeviceDriver {
-    /// Run hardware self-test, return diagnostics.
-    async fn self_test(&self) -> Result<Diagnostics>;
-
-    /// Run calibration routine.
-    async fn calibrate(&self) -> Result<()>;
-
-    /// Flash firmware image to the device.
-    async fn update_firmware(&self, image: &[u8]) -> Result<()>;
-
-    /// Read current device configuration.
-    async fn read_config(&self) -> Result<Value>;
-
-    /// Write device configuration.
-    async fn write_config(&self, config: Value) -> Result<()>;
-}
-```
-
-This is a separate trait — not added to `DeviceDriver` — because most
-drivers don't need it and it should not increase the barrier to entry
-for simple devices. The `DeviceRegistry` can attempt a runtime
-`Arc::downcast::<dyn DeviceLifecycle>` if it needs to expose these
-operations through API endpoints.
+**Solved by:** `DeviceLifecycle` trait with `self_test()`, `calibrate()`,
+`update_firmware()`, `read_config()`, `write_config()`.
 
 ---
 
-### 7. Human Approval Routing
+### 8. Human Approval Routing
 
 **Problem:** `requires_approval: true` is a static flag with no runtime
 effect.
 
 **✓ Design decision: Wire approval through Gateway event system**
-
-When `DeviceToolWrapper.execute()` is called with `requires_approval`:
 
 ```
 Agent calls device_tool.execute()
@@ -594,27 +685,16 @@ Agent calls device_tool.execute()
   └─ emit "tool.result" event
 ```
 
-Approval channels (future, not in initial implementation):
-- TUI prompt (inline approve/deny)
-- Telegram / notification callback
-- REST endpoint (`POST /devices/{id}/approve`)
-
-Initial implementation: The event is emitted but the tool proceeds
-immediately. The `requires_approval` flag becomes an audit trail
-rather than a gate until a concrete approval consumer is wired.
-
 ---
 
-### 8. Device Groups & Hierarchy
+### 9. Device Groups & Hierarchy
 
 **Problem:** No device composition (a robotic arm = multiple motors +
 sensors). All devices are flat peers.
 
 **✓ Design decision: Postponed — no immediate implementation**
 
-Composite devices introduce significant complexity to discovery, locking,
-safety zone aggregation, and tool naming. There is no concrete use case
-yet. When needed, the design is:
+Composite devices introduce significant complexity. When needed:
 
 ```rust
 pub enum DeviceNode {
@@ -628,28 +708,33 @@ pub enum DeviceNode {
 
 This is **parked** until a real composite device driver is implemented.
 
-## Implementation Priority
+## Implementation Status
 
-| Priority | Item | Dependencies |
-|----------|------|-------------|
-| P0 | Resource locking (#4) | None — needed for safety even with mock hardware |
-| P1 | Config-driven discovery (#1 phase 1) | `serde` + toml (already in tree) |
-| P1 | Event bus streaming (#3) | broadcast channel |
-| P2 | Human approval routing (#7) | Event system, approval UI |
-| P3 | Fast-path docs (#2) | — (no code change, driver pattern docs) |
-| P4 | DeviceLifecycle trait (#6) | — |
-| P5 | Inventory auto-discovery (#1 phase 2) | `inventory` crate |
-| P6 | Composite device hierarchy (#8) | — |
-| P7 | Cross-device orchestration DSL (#5) | GoalPlanner integration |
+| Status | Item | Phase |
+|---|---|---|
+| ✓ DONE | Resource locking | Phase 1 |
+| ✓ DONE | Config-driven discovery | Phase 1 |
+| ✓ DONE | Shared DriverFactory (runtime extensible) | Phase 1 |
+| ✓ DONE | Real hardware drivers (serialport, hid, gpio) | Phase 2 |
+| ✓ DONE | ObservableCapability + status bus | Phase 2 |
+| ✓ DONE | DeviceLifecycle trait | Phase 2 |
+| ✓ DONE | Native plugin loading (.so/.dylib/.dll) | Phase 3 |
+| ✓ DONE | OS device bridge (udev, IOKit) | Phase 4 |
+| ✓ DONE | Advanced DeviceMatcher (AllOf, KernelDriver) | Phase 4 |
+| ✓ DONE | Native plugins dir config + startup wiring | Phase 4 |
+| ◐ PENDING | Human approval routing | — |
+| ◐ PENDING | Device groups / hierarchy | — |
+| ◐ PENDING | Real-time control loop patterns | — |
 
 ## Comparison: Linux Kernel Driver Model
 
-| Concept | Linux Kernel | Syscity (current) | Syscity (future) |
-|---|---|---|---|
-| Driver code | `.ko` module or built-in | Compiled into binary | Compiled into binary |
-| Hardware detection | `probe()` via device tree / PCI ID | `DeviceDriver::probe()` | Config-driven + inventory auto-probe |
-| Device object | `struct device` | `Device { capabilities }` | Hierarchical `DeviceNode` |
-| User interface | `/dev/`, sysfs, ioctl | `DeviceToolWrapper` → `Tool` | Same + event stream |
-| Interrupt handling | Hard IRQ / threaded IRQ | None | Driver-spawned safety monitor task |
-| Power management | Runtime PM, system suspend | None | `DeviceLifecycle` trait |
-| Device tree | DT bindings, overlays | None | Config-driven topology |
+| Concept | Linux Kernel | Syscity |
+|---|---|---|
+| Driver code | `.ko` module or built-in | Compiled into binary or `.so`/`.dylib`/`.dll` plugin |
+| Hardware detection | `probe()` via device tree / PCI ID | `DeviceDriver::probe()` + OS bridge udev events |
+| Device object | `struct device` | `Device { capabilities }` |
+| User interface | `/dev/`, sysfs, ioctl | `DeviceToolWrapper` → `Tool` → LLM function calling |
+| Driver registration | `module_init()` / `module_exit()` | `DriverFactory::register()` or plugin C ABI |
+| Event notification | uevent netlink | `OsDeviceMonitor` → `broadcast::channel` |
+| Power management | Runtime PM, system suspend | `DeviceLifecycle` trait (future) |
+| Module auto-load | `udev` + `modprobe` | `OsBridgeConfig.matchers` → `DriverFactory::build()` |
