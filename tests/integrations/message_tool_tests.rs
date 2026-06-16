@@ -186,6 +186,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
                     .await
                     .expect("plugin manager"),
             ),
+            driver_factory: syscity::device::DriverFactory::new(),
             model_router: Arc::new(syscity::model_router::ModelRouter::new(
                 syscity::model_router::ModelRouterConfig::default(),
             )),

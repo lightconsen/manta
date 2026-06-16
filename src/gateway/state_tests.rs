@@ -177,6 +177,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
                     .await
                     .expect("plugin manager"),
             ),
+            driver_factory: crate::device::DriverFactory::new(),
             model_router: Arc::new(ModelRouter::new(crate::model_router::ModelRouterConfig::default())),
             engine_metrics: None,
             #[cfg(feature = "browser")]

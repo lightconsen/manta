@@ -98,6 +98,15 @@ pub enum DeviceMatcher {
     Subsystem(String),
     /// Match by devnode glob pattern, e.g. `"/dev/ttyUSB*"`.
     DevPattern(String),
+    /// Match when ALL sub-matchers match (AND logic).
+    ///
+    /// Useful for combining conditions, e.g. `Subsystem("tty")` + `KernelDriver("ftdi_sio")`
+    /// to only match USB serial adapters using a specific driver.
+    AllOf(Vec<DeviceMatcher>),
+    /// Match by kernel driver name, e.g. `"ftdi_sio"`, `"usbhid"`, `"cdc_acm"`.
+    ///
+    /// Checks both `DRIVER` and `ID_DRIVER` uevent properties (lowercased).
+    KernelDriver(String),
 }
 
 impl DeviceMatcher {
@@ -118,6 +127,13 @@ impl DeviceMatcher {
                 } else {
                     false
                 }
+            }
+            DeviceMatcher::AllOf(matchers) => {
+                matchers.iter().all(|m| m.matches(event))
+            }
+            DeviceMatcher::KernelDriver(driver) => {
+                let ev_driver = event.get("driver").or_else(|| event.get("id_driver"));
+                ev_driver == Some(driver.as_str())
             }
         }
     }
@@ -161,5 +177,126 @@ impl Default for OsBridgeConfig {
             enabled: true,
             matchers: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod matcher_tests {
+    use super::*;
+
+    fn make_event(subsystem: &str, properties: Vec<(&str, &str)>) -> OsDeviceEvent {
+        let mut map = HashMap::new();
+        for (k, v) in properties {
+            map.insert(k.to_string(), v.to_string());
+        }
+        OsDeviceEvent {
+            action: OsDeviceAction::Added,
+            subsystem: subsystem.to_string(),
+            devnode: Some("/dev/ttyUSB0".to_string()),
+            properties: map,
+        }
+    }
+
+    #[test]
+    fn test_all_of_matches_all() {
+        let event = make_event("tty", vec![("driver", "ftdi_sio")]);
+        let matcher = DeviceMatcher::AllOf(vec![
+            DeviceMatcher::Subsystem("tty".into()),
+            DeviceMatcher::KernelDriver("ftdi_sio".into()),
+        ]);
+        assert!(matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_all_of_fails_subsystem() {
+        let event = make_event("hid", vec![("driver", "ftdi_sio")]);
+        let matcher = DeviceMatcher::AllOf(vec![
+            DeviceMatcher::Subsystem("tty".into()),
+            DeviceMatcher::KernelDriver("ftdi_sio".into()),
+        ]);
+        assert!(!matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_all_of_fails_driver() {
+        let event = make_event("tty", vec![("driver", "cdc_acm")]);
+        let matcher = DeviceMatcher::AllOf(vec![
+            DeviceMatcher::Subsystem("tty".into()),
+            DeviceMatcher::KernelDriver("ftdi_sio".into()),
+        ]);
+        assert!(!matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_kernel_driver_matches() {
+        let event = make_event("tty", vec![("driver", "ftdi_sio")]);
+        let matcher = DeviceMatcher::KernelDriver("ftdi_sio".into());
+        assert!(matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_kernel_driver_no_match() {
+        let event = make_event("tty", vec![("driver", "cdc_acm")]);
+        let matcher = DeviceMatcher::KernelDriver("ftdi_sio".into());
+        assert!(!matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_kernel_driver_fallback_id_driver() {
+        let event = make_event("usb", vec![("id_driver", "usbhid")]);
+        let matcher = DeviceMatcher::KernelDriver("usbhid".into());
+        assert!(matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_kernel_driver_no_property() {
+        let event = make_event("tty", vec![]);
+        let matcher = DeviceMatcher::KernelDriver("ftdi_sio".into());
+        assert!(!matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_all_of_empty() {
+        let event = make_event("tty", vec![]);
+        // Empty AllOf should match anything (vacuously true)
+        let matcher = DeviceMatcher::AllOf(vec![]);
+        assert!(matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_nested_all_of() {
+        let event = make_event("tty", vec![("driver", "ftdi_sio"), ("id_vendor_id", "2341")]);
+        let matcher = DeviceMatcher::AllOf(vec![
+            DeviceMatcher::Subsystem("tty".into()),
+            DeviceMatcher::AllOf(vec![
+                DeviceMatcher::KernelDriver("ftdi_sio".into()),
+                DeviceMatcher::UsbDevice {
+                    vid: "2341".into(),
+                    pid: "0043".into(),
+                },
+            ]),
+        ]);
+        // pid doesn't match — nested AllOf should fail
+        assert!(!matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_usb_device_matches() {
+        let event = make_event("usb", vec![("ID_VENDOR_ID", "2341"), ("ID_MODEL_ID", "0043")]);
+        let matcher = DeviceMatcher::UsbDevice {
+            vid: "2341".into(),
+            pid: "0043".into(),
+        };
+        assert!(matcher.matches(&event));
+    }
+
+    #[test]
+    fn test_usb_device_no_match() {
+        let event = make_event("usb", vec![("ID_VENDOR_ID", "2341"), ("ID_MODEL_ID", "9999")]);
+        let matcher = DeviceMatcher::UsbDevice {
+            vid: "2341".into(),
+            pid: "0043".into(),
+        };
+        assert!(!matcher.matches(&event));
     }
 }

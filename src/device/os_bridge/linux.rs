@@ -325,6 +325,48 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_uevent_includes_driver() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"libudev\0");
+        buf.extend_from_slice(&UDEV_MONITOR_MAGIC.to_ne_bytes());
+        buf.extend_from_slice(&16u32.to_ne_bytes());
+        buf.extend_from_slice(b"ACTION=add\0");
+        buf.extend_from_slice(b"SUBSYSTEM=tty\0");
+        buf.extend_from_slice(b"DEVNAME=ttyUSB0\0");
+        buf.extend_from_slice(b"DRIVER=ftdi_sio\0");
+        buf.extend_from_slice(b"ID_VENDOR_ID=2341\0");
+        buf.extend_from_slice(b"ID_MODEL_ID=0043\0");
+        buf.push(0);
+
+        let event = parse_uevent(&buf).expect("should parse");
+        assert_eq!(event.action, OsDeviceAction::Added);
+        assert_eq!(event.subsystem, "tty");
+        assert_eq!(event.devnode, Some("/dev/ttyUSB0".into()));
+        // DRIVER field is stored as lowercased "driver" in properties
+        assert_eq!(event.get("driver"), Some("ftdi_sio"));
+        // ID_DRIVER is not present in this event
+        assert_eq!(event.get("id_driver"), None);
+    }
+
+    #[test]
+    fn test_parse_uevent_with_id_driver() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"libudev\0");
+        buf.extend_from_slice(&UDEV_MONITOR_MAGIC.to_ne_bytes());
+        buf.extend_from_slice(&16u32.to_ne_bytes());
+        buf.extend_from_slice(b"ACTION=add\0");
+        buf.extend_from_slice(b"SUBSYSTEM=usb\0");
+        buf.extend_from_slice(b"DEVNAME=bus/usb/001/003\0");
+        buf.extend_from_slice(b"ID_DRIVER=usbhid\0");
+        buf.push(0);
+
+        let event = parse_uevent(&buf).expect("should parse");
+        assert_eq!(event.get("id_driver"), Some("usbhid"));
+        // DRIVER is not present in this event
+        assert_eq!(event.get("driver"), None);
+    }
+
+    #[test]
     fn test_parse_uevent_skips_unknown_action() {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"libudev\0");
