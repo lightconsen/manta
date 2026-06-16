@@ -200,3 +200,64 @@ async fn device_tool_invoked_via_chat() {
         tool_result_output,
     );
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_device_registry_accessible_from_gateway() {
+    let port = 18200;
+
+    let sensor_cap = Arc::new(
+        MockCapability::new("sensor.read_temperature")
+            .with_result(serde_json::json!({"celsius": 23.5})),
+    );
+    let driver = MockDeviceDriver::new("sensor-01", true)
+        .with_capabilities(vec![sensor_cap as Arc<dyn Capability>]);
+
+    let config = test_config(port, false);
+    let gateway = Gateway::with_devices(config, None, vec![Arc::new(driver) as Arc<dyn DeviceDriver>])
+        .await
+        .expect("Failed to create gateway with devices");
+
+    let device_registry = gateway.device_registry();
+    assert!(device_registry.is_some(), "Device registry should be present");
+    let reg = device_registry.unwrap();
+
+    assert_eq!(reg.len().await, 1, "Should have 1 connected device");
+    let ids = reg.list().await;
+    assert!(ids.contains(&"dev-sensor-01".to_string()), "Device ID should be connected");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_status_events_available_through_gateway_registry() {
+    let port = 18201;
+
+    let sensor_cap = Arc::new(
+        MockCapability::new("sensor.read_temperature")
+            .with_result(serde_json::json!({"celsius": 23.5})),
+    );
+    let driver = MockDeviceDriver::new("sensor-01", true)
+        .with_capabilities(vec![sensor_cap as Arc<dyn Capability>]);
+
+    let config = test_config(port, false);
+    let gateway = Gateway::with_devices(config, None, vec![Arc::new(driver) as Arc<dyn DeviceDriver>])
+        .await
+        .expect("Failed to create gateway with devices");
+
+    let device_registry = gateway.device_registry().expect("Device registry should be present");
+
+    // Subscribe to status events
+    let mut rx = device_registry.subscribe_status();
+
+    // Perform a disconnect to trigger a status event
+    device_registry.disconnect("dev-sensor-01").await.unwrap();
+
+    // Verify we received the Disconnected event
+    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("should receive event within timeout")
+        .expect("event should not be lagged");
+
+    assert_eq!(event.device_id, "dev-sensor-01");
+    // Note: event.current reflects the status read from the device after the operation
+}

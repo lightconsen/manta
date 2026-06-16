@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
+use crate::device::health::spawn_health_check_loop;
+use crate::device::hotplug::spawn_hot_plug_loop;
 use crate::device::mock::MockDeviceDriver;
 use crate::device::registry::DeviceRegistry;
 use crate::device::DeviceDriver;
@@ -30,6 +32,8 @@ pub struct DeviceInit {
     pub registry: Arc<DeviceRegistry>,
     /// Background health-check loop handle, if one was spawned.
     pub health_check_handle: Option<JoinHandle<()>>,
+    /// Background hot-plug detection loop handle, if one was spawned.
+    pub hot_plug_handle: Option<JoinHandle<()>>,
 }
 
 /// Initialize the device subsystem.
@@ -74,22 +78,19 @@ pub async fn init_devices(
     let registry = Arc::new(device_registry);
 
     // Spawn background health-check loop
-    let health_check_handle = if config.health_check_interval_secs > 0 {
+    let health_check_handle = if config.health_check.interval_secs > 0 {
         let reg = registry.clone();
-        let interval = tokio::time::Duration::from_secs(config.health_check_interval_secs);
-        let handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            loop {
-                ticker.tick().await;
-                let results = reg.health_check_all().await;
-                for (id, healthy) in &results {
-                    if !healthy {
-                        tracing::warn!("Device health check failed: {}", id);
-                    }
-                }
-            }
-        });
-        Some(handle)
+        let cfg = config.health_check.clone();
+        Some(spawn_health_check_loop(reg, cfg))
+    } else {
+        None
+    };
+
+    // Spawn background hot-plug detection loop
+    let hot_plug_handle = if config.hot_plug.scan_interval_secs > 0 {
+        let reg = registry.clone();
+        let cfg = config.hot_plug.clone();
+        Some(spawn_hot_plug_loop(reg, cfg))
     } else {
         None
     };
@@ -97,6 +98,7 @@ pub async fn init_devices(
     Ok(Some(DeviceInit {
         registry,
         health_check_handle,
+        hot_plug_handle,
     }))
 }
 
@@ -191,8 +193,11 @@ pub async fn reload_devices(
     // 1. Disconnect all old devices
     old.registry.disconnect_all().await;
 
-    // 2. Abort old health-check loop
+    // 2. Abort old loops
     if let Some(handle) = old.health_check_handle {
+        handle.abort();
+    }
+    if let Some(handle) = old.hot_plug_handle {
         handle.abort();
     }
 

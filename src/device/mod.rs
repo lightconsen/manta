@@ -27,15 +27,29 @@ use tokio::sync::RwLock;
 
 pub mod capability;
 pub mod driver;
+pub mod health;
+pub mod hotplug;
 pub mod mock;
 pub mod registry;
 pub mod safety;
+pub mod status_bus;
 
 pub use capability::{Capability, CapabilityResult, DeviceEvent, ObservableCapability};
 pub use driver::{DeviceDriver, DeviceLifecycle};
+pub use health::HealthCheckConfig;
+pub use hotplug::HotPlugConfig;
 pub use mock::{MockCapability, MockDeviceDriver, MockObservableCapability};
 pub use registry::{DeviceLock, DeviceRegistry};
 pub use safety::{SafetyRule, SafetyRuleKind, SafetyZone};
+pub use status_bus::DeviceStatusEvent;
+
+/// Convenience helper: current UNIX epoch time in nanoseconds.
+pub fn now_nanos() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
 
 /// Static metadata about a physical device.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -91,6 +105,15 @@ impl DeviceStatus {
     /// Returns `true` if the device is in an error state.
     pub fn has_error(&self) -> bool {
         matches!(self, Self::Error { .. })
+    }
+
+    /// Create a `Connected` status with the current timestamp.
+    pub fn connected_now() -> Self {
+        let since = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        Self::Connected { since }
     }
 }
 

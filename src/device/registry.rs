@@ -4,10 +4,13 @@
 //! instances and the [`Device`](super::Device) objects they produce.
 
 use crate::device::driver::DeviceDriver;
+use crate::device::status_bus::DeviceStatusEvent;
 use crate::device::{Device, DeviceStatus};
-use crate::error::Result;
+use crate::error::{Result, SyscityError};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::SystemTime;
+use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 
 /// RAII guard that provides exclusive access to a device.
@@ -43,13 +46,20 @@ impl std::fmt::Debug for DeviceLock {
 /// 3. Call [`connect`](Self::connect) to initialize a specific device.
 /// 4. Call [`health_check`](Self::health_check) periodically to monitor.
 /// 5. Call [`disconnect`](Self::disconnect) on shutdown.
-#[derive(Default)]
+///
+/// # Status bus
+///
+/// Call [`subscribe_status`](Self::subscribe_status) to receive
+/// [`DeviceStatusEvent`]s whenever a device transitions between
+/// connected / degraded / error / disconnected states.
 pub struct DeviceRegistry {
     drivers: Vec<Arc<dyn DeviceDriver>>,
     devices: RwLock<HashMap<String, DeviceEntry>>,
     /// Per-device locks for exclusive access (e.g. during calibration,
     /// firmware update, or sequential command sequences).
     locks: RwLock<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
+    /// Broadcast channel for device status change events.
+    status_tx: broadcast::Sender<DeviceStatusEvent>,
 }
 
 impl std::fmt::Debug for DeviceRegistry {
@@ -69,11 +79,15 @@ struct DeviceEntry {
 
 impl DeviceRegistry {
     /// Create an empty registry.
+    ///
+    /// The status broadcast channel has a capacity of 256 events.
     pub fn new() -> Self {
+        let (status_tx, _) = broadcast::channel(256);
         Self {
             drivers: Vec::new(),
             devices: RwLock::new(HashMap::new()),
             locks: RwLock::new(HashMap::new()),
+            status_tx,
         }
     }
 
@@ -140,6 +154,9 @@ impl DeviceRegistry {
         self.locks.write().await.insert(id.clone(), Arc::new(RwLock::new(())));
 
         tracing::info!("Device connected: {} ({})", id, driver_name);
+        // Drop the devices guard so emit_status_event can read them.
+        drop(devices);
+        self.emit_status_event(&id, DeviceStatus::Disconnected).await;
         Ok(device)
     }
 
@@ -187,10 +204,13 @@ impl DeviceRegistry {
         let healthy = driver.health_check().await.unwrap_or(false);
 
         if !healthy {
+            let previous = entry.device.status.read().await.clone();
             entry
                 .device
                 .mark_degraded(format!("Health check failed for '{}'", device_id))
                 .await;
+            drop(entry);
+            self.emit_status_event(device_id, previous).await;
         }
 
         Ok(healthy)
@@ -210,34 +230,36 @@ impl DeviceRegistry {
     }
 
     /// Disconnect a specific device.
+    ///
+    /// Emits a [`DeviceStatusEvent`] with the previous → `Disconnected`
+    /// transition on the status bus.
     pub async fn disconnect(&self, device_id: &str) -> Result<()> {
-        let mut devices = self.devices.write().await;
-        if let Some(entry) = devices.remove(device_id) {
-            entry
-                .device
-                .status
-                .write()
-                .await
-                .clone_from(&DeviceStatus::Disconnected);
-            tracing::info!("Device disconnected: {}", device_id);
-        }
+        let previous = {
+            let mut devices = self.devices.write().await;
+            let entry = devices.remove(device_id);
+            let prev = match entry {
+                Some(ref e) => e.device.status.read().await.clone(),
+                None => DeviceStatus::Disconnected,
+            };
+            if let Some(e) = entry {
+                e.device.status.write().await.clone_from(&DeviceStatus::Disconnected);
+                tracing::info!("Device disconnected: {}", device_id);
+            }
+            prev
+        };
         self.locks.write().await.remove(device_id);
+        self.emit_status_event(device_id, previous).await;
         Ok(())
     }
 
     /// Disconnect all devices.
+    ///
+    /// Emits a [`DeviceStatusEvent`] for each disconnected device.
     pub async fn disconnect_all(&self) {
-        let mut devices = self.devices.write().await;
-        for (id, entry) in devices.drain() {
-            entry
-                .device
-                .status
-                .write()
-                .await
-                .clone_from(&DeviceStatus::Disconnected);
-            tracing::info!("Device disconnected: {}", id);
+        let ids: Vec<String> = self.list().await;
+        for id in &ids {
+            let _ = self.disconnect(id).await;
         }
-        self.locks.write().await.clear();
     }
 
     /// Try to acquire exclusive access to a connected device.
@@ -253,6 +275,133 @@ impl DeviceRegistry {
             device,
             _guard: guard,
         })
+    }
+
+    /// Subscribe to device status change events.
+    ///
+    /// Returns a `broadcast::Receiver` that yields [`DeviceStatusEvent`]s
+    /// every time a device transitions between operational states.
+    /// Capacity is 256 events; slow consumers that fall behind will miss
+    /// events (the oldest are dropped).
+    pub fn subscribe_status(&self) -> broadcast::Receiver<DeviceStatusEvent> {
+        self.status_tx.subscribe()
+    }
+
+    /// Update a device's status and emit a [`DeviceStatusEvent`].
+    ///
+    /// This is the preferred way to change a device's status when the
+    /// caller wants the change to be observable.  For low-level direct
+    /// mutations use [`Device::mark_connected`] etc. directly.
+    pub async fn set_device_status(&self, device_id: &str, new_status: DeviceStatus) {
+        if let Some(device) = self.get(device_id).await {
+            let mut status = device.status.write().await;
+            let previous = status.clone();
+            *status = new_status;
+            drop(status);
+            self.emit_status_event(device_id, previous).await;
+        }
+    }
+
+    /// Reconnect a device by disconnecting and re-connecting through its driver.
+    ///
+    /// The old device is disconnected, a fresh [`Device`] object is created
+    /// via the driver's [`connect`](DeviceDriver::connect), and the new
+    /// device takes its place in the registry.  A `Disconnected` + `Connected`
+    /// pair of events is emitted.
+    pub async fn reconnect(&self, device_id: &str) -> Result<()> {
+        let driver_idx = {
+            let devices = self.devices.read().await;
+            devices
+                .get(device_id)
+                .ok_or_else(|| SyscityError::NotFound {
+                    resource: format!("Device '{}'", device_id),
+                })?
+                .driver_idx
+        };
+
+        // Remove old device entry (emits Disconnected event).
+        self.disconnect(device_id).await.ok();
+
+        // Connect fresh device through the same driver.
+        let new_device = self.drivers[driver_idx]
+            .connect()
+            .await
+            .map_err(|e| SyscityError::ExternalService {
+                source: format!("Reconnect failed for '{}': {}", device_id, e),
+                cause: None,
+            })?;
+        let new_device = Arc::new(new_device);
+        let new_id = new_device.id().to_string();
+
+        // Insert fresh entry with the same driver index.
+        {
+            let mut devices = self.devices.write().await;
+            devices.insert(
+                new_id.clone(),
+                DeviceEntry {
+                    device: new_device.clone(),
+                    driver_idx,
+                },
+            );
+        }
+        self.locks
+            .write()
+            .await
+            .insert(new_id.clone(), Arc::new(RwLock::new(())));
+
+        // Emit Connected event.
+        self.emit_status_event(&new_id, DeviceStatus::Disconnected)
+            .await;
+
+        tracing::info!("Device reconnected: {} (new id: {})", device_id, new_id);
+        Ok(())
+    }
+
+    /// Probe a single driver by name.
+    ///
+    /// Returns `Ok(true)` if the hardware is present, `Ok(false)` if absent.
+    pub async fn probe_driver(&self, driver_name: &str) -> Result<bool> {
+        let driver = self
+            .drivers
+            .iter()
+            .find(|d| d.driver_name() == driver_name)
+            .ok_or_else(|| SyscityError::NotFound {
+                resource: format!("Device driver '{}'", driver_name),
+            })?;
+        driver.probe().await
+    }
+
+    /// Return driver names of currently connected devices.
+    ///
+    /// This is useful for hot-plug logic that compares all registered
+    /// drivers against currently connected ones.
+    pub async fn connected_driver_names(&self) -> Vec<String> {
+        let devices = self.devices.read().await;
+        devices
+            .values()
+            .map(|e| self.drivers[e.driver_idx].driver_name().to_string())
+            .collect()
+    }
+
+    // ── Private helpers ─────────────────────────────────────────────────────
+
+    /// Emit a [`DeviceStatusEvent`] on the status bus, reading the current
+    /// status from the live device.
+    async fn emit_status_event(&self, device_id: &str, previous: DeviceStatus) {
+        let current = match self.get(device_id).await {
+            Some(device) => device.status.read().await.clone(),
+            None => DeviceStatus::Disconnected,
+        };
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let _ = self.status_tx.send(DeviceStatusEvent {
+            device_id: device_id.to_string(),
+            previous,
+            current,
+            timestamp_millis: timestamp,
+        });
     }
 
     /// Get the number of registered drivers.
@@ -275,6 +424,7 @@ mod tests {
     use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
     use crate::device::DeviceInfo;
     use async_trait::async_trait;
+    use tokio::sync::broadcast::error::TryRecvError;
 
     struct MockDriver {
         name: String,
@@ -442,5 +592,246 @@ mod tests {
         let names = reg.driver_names();
         assert!(names.contains(&"motor".into()));
         assert!(names.contains(&"camera".into()));
+    }
+
+    // ── Status bus tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_subscribe_status_connect() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "motor".into(),
+            present: true,
+        }));
+
+        let mut rx = reg.subscribe_status();
+        reg.connect("motor").await.unwrap();
+
+        let event = rx.try_recv().expect("expected a status event");
+        assert_eq!(event.device_id, "dev-motor");
+        assert!(matches!(event.previous, DeviceStatus::Disconnected));
+        assert!(matches!(event.current, DeviceStatus::Connected { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_status_disconnect() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "motor".into(),
+            present: true,
+        }));
+
+        reg.connect("motor").await.unwrap();
+
+        let mut rx = reg.subscribe_status();
+        reg.disconnect("dev-motor").await.unwrap();
+
+        let event = rx.try_recv().expect("expected a status event");
+        assert_eq!(event.device_id, "dev-motor");
+        assert!(matches!(event.previous, DeviceStatus::Connected { .. }));
+        assert!(matches!(event.current, DeviceStatus::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_status_multiple_events() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "motor".into(),
+            present: true,
+        }));
+
+        let mut rx = reg.subscribe_status();
+        reg.connect("motor").await.unwrap();
+
+        reg.set_device_status(
+            "dev-motor",
+            DeviceStatus::Degraded {
+                message: "test".into(),
+                since: crate::device::now_nanos(),
+            },
+        )
+        .await;
+
+        reg.disconnect("dev-motor").await.unwrap();
+
+        let mut events = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(evt) => events.push(evt.current),
+                Err(TryRecvError::Empty) => break,
+                Err(e) => panic!("unexpected error: {:?}", e),
+            }
+        }
+
+        assert_eq!(events.len(), 3);
+        assert!(matches!(events[0], DeviceStatus::Connected { .. }));
+        assert!(matches!(events[1], DeviceStatus::Degraded { .. }));
+        assert!(matches!(events[2], DeviceStatus::Disconnected));
+    }
+
+    // ── set_device_status tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_set_device_status_updates_and_emits() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "motor".into(),
+            present: true,
+        }));
+
+        let mut rx = reg.subscribe_status();
+        reg.connect("motor").await.unwrap();
+        // drain the connect event — we are testing set_device_status only
+        let _ = rx.try_recv();
+
+        reg.set_device_status(
+            "dev-motor",
+            DeviceStatus::Error {
+                message: "overheat".into(),
+                since: 0,
+            },
+        )
+        .await;
+
+        let device = reg.get("dev-motor").await.unwrap();
+        assert!(device.status.read().await.has_error());
+
+        let event = rx.try_recv().expect("expected an error status event");
+        assert!(matches!(event.current, DeviceStatus::Error { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_set_device_status_nonexistent_device() {
+        let reg = DeviceRegistry::new();
+        let mut rx = reg.subscribe_status();
+
+        reg.set_device_status(
+            "ghost",
+            DeviceStatus::Error {
+                message: "x".into(),
+                since: 0,
+            },
+        )
+        .await;
+
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    // ── reconnect tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_reconnect_disconnects_and_reconnects() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "motor".into(),
+            present: true,
+        }));
+
+        reg.connect("motor").await.unwrap();
+
+        let mut rx = reg.subscribe_status();
+        reg.reconnect("dev-motor").await.unwrap();
+
+        assert_eq!(reg.len().await, 1);
+
+        let event1 = rx.try_recv().expect("expected first status event");
+        assert!(matches!(event1.current, DeviceStatus::Disconnected));
+
+        let event2 = rx.try_recv().expect("expected second status event");
+        assert!(matches!(event2.current, DeviceStatus::Connected { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_reconnect_nonexistent_device() {
+        let reg = DeviceRegistry::new();
+        let err = reg.reconnect("ghost").await.unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    // ── probe_driver tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_probe_driver_present() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "motor".into(),
+            present: true,
+        }));
+        assert!(reg.probe_driver("motor").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_probe_driver_absent() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "camera".into(),
+            present: false,
+        }));
+        assert!(!reg.probe_driver("camera").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_probe_driver_unknown() {
+        let reg = DeviceRegistry::new();
+        let err = reg.probe_driver("nonexistent").await.unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    // ── connected_driver_names test ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_connected_driver_names() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "a".into(),
+            present: true,
+        }));
+        reg.register(Arc::new(MockDriver {
+            name: "b".into(),
+            present: true,
+        }));
+        reg.connect("a").await.unwrap();
+        let names = reg.connected_driver_names().await;
+        assert_eq!(names, vec!["a"]);
+    }
+
+    // ── try_lock tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_try_lock_success() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "motor".into(),
+            present: true,
+        }));
+        reg.connect("motor").await.unwrap();
+
+        let lock = reg.try_lock("dev-motor").await;
+        assert!(lock.is_some());
+        assert_eq!(lock.as_ref().unwrap().device().id(), "dev-motor");
+        drop(lock);
+
+        assert!(reg.try_lock("dev-motor").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_try_lock_contention() {
+        let mut reg = DeviceRegistry::new();
+        reg.register(Arc::new(MockDriver {
+            name: "motor".into(),
+            present: true,
+        }));
+        reg.connect("motor").await.unwrap();
+
+        let lock1 = reg.try_lock("dev-motor").await;
+        assert!(lock1.is_some());
+
+        let lock2 = reg.try_lock("dev-motor").await;
+        assert!(lock2.is_none());
+
+        drop(lock1);
+
+        let lock3 = reg.try_lock("dev-motor").await;
+        assert!(lock3.is_some());
     }
 }

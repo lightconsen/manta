@@ -178,18 +178,16 @@ pub struct DeviceConfig {
     /// List of device drivers to construct from configuration.
     #[serde(default)]
     pub drivers: Vec<DeviceDriverEntry>,
-    /// Interval (in seconds) between periodic health checks on
-    /// connected devices. Default: 60 seconds.
-    #[serde(default = "default_health_check_interval")]
-    pub health_check_interval_secs: u64,
+    /// Health check loop configuration.
+    #[serde(default)]
+    pub health_check: crate::device::HealthCheckConfig,
+    /// Hot-plug detection loop configuration.
+    #[serde(default)]
+    pub hot_plug: crate::device::HotPlugConfig,
 }
 
 fn default_device_enabled() -> bool {
     true
-}
-
-fn default_health_check_interval() -> u64 {
-    60
 }
 
 impl Default for DeviceConfig {
@@ -197,7 +195,8 @@ impl Default for DeviceConfig {
         Self {
             enabled: true,
             drivers: Vec::new(),
-            health_check_interval_secs: 60,
+            health_check: crate::device::HealthCheckConfig::default(),
+            hot_plug: crate::device::HotPlugConfig::default(),
         }
     }
 }
