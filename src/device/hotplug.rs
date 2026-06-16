@@ -61,7 +61,7 @@ pub fn spawn_hot_plug_loop(
         loop {
             ticker.tick().await;
 
-            let all = registry.driver_names();
+            let all = registry.driver_names().await;
             let connected = registry.connected_driver_names().await;
 
             for driver_name in &all {
@@ -173,7 +173,7 @@ mod tests {
     async fn test_hot_plug_absent_becomes_present() {
         let mut reg = DeviceRegistry::new();
         let (driver, present) = ToggleProbeDriver::new("sensor-01", false);
-        reg.register(Arc::new(driver));
+        reg.register(Arc::new(driver)).await;
         let registry = Arc::new(reg);
         let mut rx = registry.subscribe_status();
 
@@ -215,7 +215,7 @@ mod tests {
     async fn test_hot_plug_skips_connected_driver() {
         let mut reg = DeviceRegistry::new();
         let (driver, _present) = ToggleProbeDriver::new("sensor-01", true);
-        reg.register(Arc::new(driver));
+        reg.register(Arc::new(driver)).await;
         let registry = Arc::new(reg);
 
         // Manually connect — this emits a Connected event
@@ -252,7 +252,7 @@ mod tests {
     async fn test_hot_plug_auto_connect_false() {
         let mut reg = DeviceRegistry::new();
         let (driver, present) = ToggleProbeDriver::new("sensor-01", false);
-        reg.register(Arc::new(driver));
+        reg.register(Arc::new(driver)).await;
         let registry = Arc::new(reg);
 
         let handle = spawn_hot_plug_loop(
@@ -285,7 +285,7 @@ mod tests {
         let mut reg = DeviceRegistry::new();
         let driver = MockDeviceDriver::new("sensor-01", true)
             .with_connect_error("connection refused");
-        reg.register(Arc::new(driver));
+        reg.register(Arc::new(driver)).await;
         let registry = Arc::new(reg);
 
         let handle = spawn_hot_plug_loop(

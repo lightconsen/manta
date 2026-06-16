@@ -17,6 +17,8 @@ use tokio::task::JoinHandle;
 use crate::device::health::spawn_health_check_loop;
 use crate::device::hotplug::spawn_hot_plug_loop;
 use crate::device::mock::MockDeviceDriver;
+use crate::device::os_bridge::bridge::{spawn_os_bridge_loop, DriverBuilder};
+use crate::device::os_bridge::OsBridgeConfig;
 use crate::device::registry::DeviceRegistry;
 use crate::device::DeviceDriver;
 use crate::error::SyscityError;
@@ -34,6 +36,8 @@ pub struct DeviceInit {
     pub health_check_handle: Option<JoinHandle<()>>,
     /// Background hot-plug detection loop handle, if one was spawned.
     pub hot_plug_handle: Option<JoinHandle<()>>,
+    /// Background OS device bridge loop handle, if one was spawned.
+    pub os_bridge_handle: Option<JoinHandle<()>>,
 }
 
 /// Initialize the device subsystem.
@@ -57,10 +61,10 @@ pub async fn init_devices(
         return Ok(None);
     }
 
-    let mut device_registry = DeviceRegistry::new();
+    let device_registry = DeviceRegistry::new();
 
     for driver in drivers {
-        device_registry.register(driver);
+        device_registry.register(driver).await;
     }
 
     let present = device_registry.probe_all().await?;
@@ -99,6 +103,7 @@ pub async fn init_devices(
         registry,
         health_check_handle,
         hot_plug_handle,
+        os_bridge_handle: None,
     }))
 }
 
@@ -176,6 +181,32 @@ pub fn discover_drivers_from_config(config: &DeviceConfig) -> Vec<Arc<dyn Device
     drivers
 }
 
+/// Spawn the OS device bridge loop from configuration settings.
+///
+/// Call this after `init_devices()` succeeds. Returns `Some(JoinHandle)` if
+/// the bridge was spawned, `None` if disabled or no matchers configured.
+pub fn spawn_os_bridge_from_config(
+    registry: Arc<DeviceRegistry>,
+    os_bridge: &OsBridgeConfig,
+    tool_registry: Arc<ToolRegistry>,
+) -> Option<JoinHandle<()>> {
+    if !os_bridge.enabled || os_bridge.matchers.is_empty() {
+        return None;
+    }
+
+    let matchers = os_bridge.matchers.clone();
+    let build_driver: DriverBuilder = Arc::new(|kind: &str, params: serde_json::Value| {
+        DriverFactory::new().build(kind, params)
+    });
+
+    Some(spawn_os_bridge_loop(
+        registry,
+        matchers,
+        tool_registry,
+        build_driver,
+    ))
+}
+
 /// Reload the device subsystem from configuration.
 ///
 /// 1. Disconnects all devices in the old registry.
@@ -198,6 +229,9 @@ pub async fn reload_devices(
         handle.abort();
     }
     if let Some(handle) = old.hot_plug_handle {
+        handle.abort();
+    }
+    if let Some(handle) = old.os_bridge_handle {
         handle.abort();
     }
 

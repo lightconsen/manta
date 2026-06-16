@@ -175,7 +175,19 @@ pub async fn reload_all_handler(
         };
 
         match device_result {
-            Ok(new_init) => {
+            Ok(mut new_init) => {
+                // Spawn OS device bridge for the new device init
+                let config = state.config.read().await;
+                if let Some(ref mut di) = new_init {
+                    if let Some(handle) = crate::gateway::init::devices::spawn_os_bridge_from_config(
+                        di.registry.clone(),
+                        &config.device.os_bridge,
+                        state.tools.registry.clone(),
+                    ) {
+                        di.os_bridge_handle = Some(handle);
+                    }
+                }
+                drop(config);
                 *state.device_init.write().await = new_init;
                 result["device"] = serde_json::json!({ "reloaded": true });
                 info!("Device subsystem reloaded from configuration");

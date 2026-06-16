@@ -276,7 +276,7 @@ mod tests {
     async fn test_healthy_device_stays_connected() {
         let mut registry = DeviceRegistry::new();
         let (driver, _healthy) = ToggleHealthDriver::new("sensor-01", true, true);
-        registry.register(Arc::new(driver));
+        registry.register(Arc::new(driver)).await;
         let _ = registry.connect("sensor-01").await.unwrap();
 
         let mut rx = registry.subscribe_status();
@@ -315,7 +315,7 @@ mod tests {
     async fn test_consecutive_failures_mark_error() {
         let mut registry = DeviceRegistry::new();
         let (driver, _healthy) = ToggleHealthDriver::new("sensor-01", true, false);
-        registry.register(Arc::new(driver));
+        registry.register(Arc::new(driver)).await;
         let _ = registry.connect("sensor-01").await.unwrap();
 
         let mut rx = registry.subscribe_status();
@@ -358,7 +358,7 @@ mod tests {
     async fn test_auto_reconnect_recovers_device() {
         let mut registry = DeviceRegistry::new();
         let (driver, healthy_handle) = ToggleHealthDriver::new("sensor-01", true, false);
-        registry.register(Arc::new(driver));
+        registry.register(Arc::new(driver)).await;
         let _ = registry.connect("sensor-01").await.unwrap();
 
         let mut rx = registry.subscribe_status();
@@ -402,7 +402,7 @@ mod tests {
     async fn test_auto_reconnect_disabled() {
         let mut registry = DeviceRegistry::new();
         let (driver, _healthy) = ToggleHealthDriver::new("sensor-01", true, false);
-        registry.register(Arc::new(driver));
+        registry.register(Arc::new(driver)).await;
         let _ = registry.connect("sensor-01").await.unwrap();
 
         let mut rx = registry.subscribe_status();
@@ -441,7 +441,7 @@ mod tests {
     async fn test_disconnected_device_no_errors() {
         let mut registry = DeviceRegistry::new();
         let (driver, _healthy) = ToggleHealthDriver::new("sensor-01", true, false);
-        registry.register(Arc::new(driver));
+        registry.register(Arc::new(driver)).await;
         let _ = registry.connect("sensor-01").await.unwrap();
         let _ = registry.disconnect("dev-sensor-01").await;
 
@@ -477,7 +477,7 @@ mod tests {
     async fn test_failure_counters_persist_across_ticks() {
         let mut registry = DeviceRegistry::new();
         let (driver, _healthy) = ToggleHealthDriver::new("sensor-01", true, false);
-        registry.register(Arc::new(driver));
+        registry.register(Arc::new(driver)).await;
         let _ = registry.connect("sensor-01").await.unwrap();
 
         let registry = Arc::new(registry);

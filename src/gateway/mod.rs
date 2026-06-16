@@ -187,6 +187,9 @@ pub struct DeviceConfig {
     /// Hot-plug detection loop configuration.
     #[serde(default)]
     pub hot_plug: crate::device::HotPlugConfig,
+    /// OS device bridge configuration.
+    #[serde(default)]
+    pub os_bridge: crate::device::os_bridge::OsBridgeConfig,
 }
 
 fn default_device_enabled() -> bool {
@@ -200,6 +203,7 @@ impl Default for DeviceConfig {
             drivers: Vec::new(),
             health_check: crate::device::HealthCheckConfig::default(),
             hot_plug: crate::device::HotPlugConfig::default(),
+            os_bridge: crate::device::os_bridge::OsBridgeConfig::default(),
         }
     }
 }
@@ -1568,12 +1572,23 @@ impl Gateway {
         } else {
             device_drivers
         };
-        let device_init = crate::gateway::init::devices::init_devices(
+        let mut device_init = crate::gateway::init::devices::init_devices(
             &config.device,
             device_drivers,
             &state.tools.registry,
         )
         .await?;
+
+        // Spawn OS device bridge if enabled
+        if let Some(ref mut di) = device_init {
+            if let Some(handle) = crate::gateway::init::devices::spawn_os_bridge_from_config(
+                di.registry.clone(),
+                &config.device.os_bridge,
+                state.tools.registry.clone(),
+            ) {
+                di.os_bridge_handle = Some(handle);
+            }
+        }
 
         // Store device_init on state for lifecycle management and hot-reload
         // The health check handle lives on DeviceInit, not background_tasks,
@@ -2230,11 +2245,17 @@ impl Gateway {
             handle.abort();
         }
 
-        // 14. Abort device health check handle (stored on state for hot-reload).
+        // 14. Abort device background handles (stored on state for hot-reload).
         {
             let mut di = self.state.device_init.write().await;
             if let Some(ref mut init) = *di {
                 if let Some(handle) = init.health_check_handle.take() {
+                    handle.abort();
+                }
+                if let Some(handle) = init.hot_plug_handle.take() {
+                    handle.abort();
+                }
+                if let Some(handle) = init.os_bridge_handle.take() {
                     handle.abort();
                 }
             }

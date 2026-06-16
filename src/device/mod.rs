@@ -30,6 +30,7 @@ pub mod driver;
 pub mod health;
 pub mod hotplug;
 pub mod mock;
+pub mod os_bridge;
 pub mod registry;
 pub mod safety;
 pub mod status_bus;

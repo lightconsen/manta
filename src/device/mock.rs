@@ -308,10 +308,10 @@ impl DeviceDriver for MockDeviceDriver {
 ///
 /// Each driver is registered without probing or connecting; call
 /// `probe_all()` / `connect()` on the returned registry as needed.
-pub fn make_mock_device_registry(drivers: Vec<MockDeviceDriver>) -> DeviceRegistry {
-    let mut reg = DeviceRegistry::new();
+pub async fn make_mock_device_registry(drivers: Vec<MockDeviceDriver>) -> DeviceRegistry {
+    let reg = DeviceRegistry::new();
     for d in drivers {
-        reg.register(Arc::new(d));
+        reg.register(Arc::new(d)).await;
     }
     reg
 }
@@ -437,8 +437,8 @@ mod tests {
             MockDeviceDriver::new("motor", true),
             MockDeviceDriver::new("camera", false),
         ];
-        let reg = make_mock_device_registry(drivers);
-        assert_eq!(reg.driver_count(), 2);
+        let reg = make_mock_device_registry(drivers).await;
+        assert_eq!(reg.driver_count().await, 2);
         let available = reg.probe_all().await.unwrap();
         assert_eq!(available, vec!["motor"]);
     }

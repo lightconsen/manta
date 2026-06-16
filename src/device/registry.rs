@@ -10,8 +10,7 @@ use crate::error::{Result, SyscityError};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
-use tokio::sync::broadcast;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 /// RAII guard that provides exclusive access to a device.
 ///
@@ -53,7 +52,7 @@ impl std::fmt::Debug for DeviceLock {
 /// [`DeviceStatusEvent`]s whenever a device transitions between
 /// connected / degraded / error / disconnected states.
 pub struct DeviceRegistry {
-    drivers: Vec<Arc<dyn DeviceDriver>>,
+    drivers: Mutex<Vec<Arc<dyn DeviceDriver>>>,
     devices: RwLock<HashMap<String, DeviceEntry>>,
     /// Per-device locks for exclusive access (e.g. during calibration,
     /// firmware update, or sequential command sequences).
@@ -64,8 +63,9 @@ pub struct DeviceRegistry {
 
 impl std::fmt::Debug for DeviceRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let driver_count = self.drivers.try_lock().map(|v| v.len()).unwrap_or(0);
         f.debug_struct("DeviceRegistry")
-            .field("drivers", &self.drivers.len())
+            .field("drivers", &driver_count)
             .finish()
     }
 }
@@ -84,7 +84,7 @@ impl DeviceRegistry {
     pub fn new() -> Self {
         let (status_tx, _) = broadcast::channel(256);
         Self {
-            drivers: Vec::new(),
+            drivers: Mutex::new(Vec::new()),
             devices: RwLock::new(HashMap::new()),
             locks: RwLock::new(HashMap::new()),
             status_tx,
@@ -94,8 +94,8 @@ impl DeviceRegistry {
     /// Register a device driver.
     ///
     /// Drivers are probed in registration order during [`probe_all`](Self::probe_all).
-    pub fn register(&mut self, driver: Arc<dyn DeviceDriver>) {
-        self.drivers.push(driver);
+    pub async fn register(&self, driver: Arc<dyn DeviceDriver>) {
+        self.drivers.lock().await.push(driver);
     }
 
     /// Probe all registered drivers and return those whose hardware is present.
@@ -103,7 +103,8 @@ impl DeviceRegistry {
     /// This does **not** connect to the devices — only reports availability.
     pub async fn probe_all(&self) -> Result<Vec<String>> {
         let mut available = Vec::new();
-        for driver in &self.drivers {
+        let snapshot = self.drivers.lock().await.clone();
+        for driver in &snapshot {
             match driver.probe().await {
                 Ok(true) => available.push(driver.driver_name().to_string()),
                 Ok(false) => { /* not present, skip */ }
@@ -126,16 +127,19 @@ impl DeviceRegistry {
     ///
     /// Returns an error if the driver is not registered or connection fails.
     pub async fn connect(&self, driver_name: &str) -> Result<Arc<Device>> {
-        let (driver_idx, driver) = self
-            .drivers
-            .iter()
-            .enumerate()
-            .find(|(_, d)| d.driver_name() == driver_name)
-            .ok_or_else(|| {
-                crate::error::SyscityError::NotFound {
-                    resource: format!("Device driver '{}'", driver_name),
-                }
-            })?;
+        let (driver_idx, driver) = {
+            let drivers = self.drivers.lock().await;
+            let (idx, d) = drivers
+                .iter()
+                .enumerate()
+                .find(|(_, d)| d.driver_name() == driver_name)
+                .ok_or_else(|| {
+                    crate::error::SyscityError::NotFound {
+                        resource: format!("Device driver '{}'", driver_name),
+                    }
+                })?;
+            (idx, d.clone())
+        };
 
         let device = driver.connect().await?;
         let id = device.id().to_string();
@@ -200,7 +204,7 @@ impl DeviceRegistry {
                 resource: format!("Device '{}'", device_id),
             })?;
 
-        let driver = &self.drivers[entry.driver_idx];
+        let driver = self.drivers.lock().await[entry.driver_idx].clone();
         let healthy = driver.health_check().await.unwrap_or(false);
 
         if !healthy {
@@ -323,13 +327,14 @@ impl DeviceRegistry {
         self.disconnect(device_id).await.ok();
 
         // Connect fresh device through the same driver.
-        let new_device = self.drivers[driver_idx]
-            .connect()
-            .await
-            .map_err(|e| SyscityError::ExternalService {
-                source: format!("Reconnect failed for '{}': {}", device_id, e),
-                cause: None,
-            })?;
+        let new_device = {
+            let drivers = self.drivers.lock().await;
+            drivers[driver_idx].connect().await
+                .map_err(|e| SyscityError::ExternalService {
+                    source: format!("Reconnect failed for '{}': {}", device_id, e),
+                    cause: None,
+                })?
+        };
         let new_device = Arc::new(new_device);
         let new_id = new_device.id().to_string();
 
@@ -361,13 +366,16 @@ impl DeviceRegistry {
     ///
     /// Returns `Ok(true)` if the hardware is present, `Ok(false)` if absent.
     pub async fn probe_driver(&self, driver_name: &str) -> Result<bool> {
-        let driver = self
-            .drivers
-            .iter()
-            .find(|d| d.driver_name() == driver_name)
-            .ok_or_else(|| SyscityError::NotFound {
-                resource: format!("Device driver '{}'", driver_name),
-            })?;
+        let driver = {
+            let drivers = self.drivers.lock().await;
+            drivers
+                .iter()
+                .find(|d| d.driver_name() == driver_name)
+                .ok_or_else(|| SyscityError::NotFound {
+                    resource: format!("Device driver '{}'", driver_name),
+                })?
+                .clone()
+        };
         driver.probe().await
     }
 
@@ -377,9 +385,10 @@ impl DeviceRegistry {
     /// drivers against currently connected ones.
     pub async fn connected_driver_names(&self) -> Vec<String> {
         let devices = self.devices.read().await;
+        let drivers = self.drivers.lock().await;
         devices
             .values()
-            .map(|e| self.drivers[e.driver_idx].driver_name().to_string())
+            .map(|e| drivers[e.driver_idx].driver_name().to_string())
             .collect()
     }
 
@@ -405,16 +414,14 @@ impl DeviceRegistry {
     }
 
     /// Get the number of registered drivers.
-    pub fn driver_count(&self) -> usize {
-        self.drivers.len()
+    pub async fn driver_count(&self) -> usize {
+        self.drivers.lock().await.len()
     }
 
     /// List registered driver names.
-    pub fn driver_names(&self) -> Vec<String> {
-        self.drivers
-            .iter()
-            .map(|d| d.driver_name().to_string())
-            .collect()
+    pub async fn driver_names(&self) -> Vec<String> {
+        let drivers = self.drivers.lock().await;
+        drivers.iter().map(|d| d.driver_name().to_string()).collect()
     }
 }
 
@@ -470,7 +477,7 @@ mod tests {
         let reg = DeviceRegistry::new();
         assert!(reg.is_empty().await);
         assert_eq!(reg.len().await, 0);
-        assert!(reg.driver_names().is_empty());
+        assert!(reg.driver_names().await.is_empty());
     }
 
     #[tokio::test]
@@ -479,11 +486,13 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.register(Arc::new(MockDriver {
             name: "camera".into(),
             present: false, // not present
-        }));
+        }))
+        .await;
 
         let available = reg.probe_all().await.unwrap();
         assert_eq!(available, vec!["motor"]);
@@ -510,11 +519,13 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "sensor-a".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.register(Arc::new(MockDriver {
             name: "sensor-b".into(),
             present: true,
-        }));
+        }))
+        .await;
 
         reg.connect("sensor-a").await.unwrap();
         reg.connect("sensor-b").await.unwrap();
@@ -535,7 +546,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.connect("motor").await.unwrap();
         assert_eq!(reg.len().await, 1);
 
@@ -549,11 +561,13 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "a".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.register(Arc::new(MockDriver {
             name: "b".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.connect("a").await.unwrap();
         reg.connect("b").await.unwrap();
         assert_eq!(reg.len().await, 2);
@@ -568,7 +582,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.connect("motor").await.unwrap();
 
         // Mock driver health check always returns Ok(true)
@@ -576,20 +591,22 @@ mod tests {
         assert!(healthy);
     }
 
-    #[test]
-    fn test_driver_count_and_names() {
+    #[tokio::test]
+    async fn test_driver_count_and_names() {
         let mut reg = DeviceRegistry::new();
-        assert_eq!(reg.driver_count(), 0);
+        assert_eq!(reg.driver_count().await, 0);
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.register(Arc::new(MockDriver {
             name: "camera".into(),
             present: false,
-        }));
-        assert_eq!(reg.driver_count(), 2);
-        let names = reg.driver_names();
+        }))
+        .await;
+        assert_eq!(reg.driver_count().await, 2);
+        let names = reg.driver_names().await;
         assert!(names.contains(&"motor".into()));
         assert!(names.contains(&"camera".into()));
     }
@@ -602,7 +619,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
 
         let mut rx = reg.subscribe_status();
         reg.connect("motor").await.unwrap();
@@ -619,7 +637,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
 
         reg.connect("motor").await.unwrap();
 
@@ -638,7 +657,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
 
         let mut rx = reg.subscribe_status();
         reg.connect("motor").await.unwrap();
@@ -677,7 +697,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
 
         let mut rx = reg.subscribe_status();
         reg.connect("motor").await.unwrap();
@@ -725,7 +746,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
 
         reg.connect("motor").await.unwrap();
 
@@ -756,7 +778,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
         assert!(reg.probe_driver("motor").await.unwrap());
     }
 
@@ -766,7 +789,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "camera".into(),
             present: false,
-        }));
+        }))
+        .await;
         assert!(!reg.probe_driver("camera").await.unwrap());
     }
 
@@ -785,11 +809,13 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "a".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.register(Arc::new(MockDriver {
             name: "b".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.connect("a").await.unwrap();
         let names = reg.connected_driver_names().await;
         assert_eq!(names, vec!["a"]);
@@ -803,7 +829,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.connect("motor").await.unwrap();
 
         let lock = reg.try_lock("dev-motor").await;
@@ -820,7 +847,8 @@ mod tests {
         reg.register(Arc::new(MockDriver {
             name: "motor".into(),
             present: true,
-        }));
+        }))
+        .await;
         reg.connect("motor").await.unwrap();
 
         let lock1 = reg.try_lock("dev-motor").await;

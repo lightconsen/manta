@@ -28,7 +28,7 @@ async fn mock_device_full_lifecycle() {
     let driver = MockDeviceDriver::new("stepper", true).with_capabilities(caps);
 
     // Build registry and connect
-    let reg = make_mock_device_registry(vec![driver]);
+    let reg = make_mock_device_registry(vec![driver]).await;
     let available = reg.probe_all().await.unwrap();
     assert_eq!(available, vec!["stepper"]);
 
@@ -55,7 +55,7 @@ async fn mock_device_connect_error() {
     let driver =
         MockDeviceDriver::new("faulty", true).with_connect_error("hardware not responding");
 
-    let reg = make_mock_device_registry(vec![driver]);
+    let reg = make_mock_device_registry(vec![driver]).await;
     let available = reg.probe_all().await.unwrap();
     assert_eq!(available, vec!["faulty"]);
 
@@ -78,7 +78,7 @@ async fn mock_device_multiple_devices() {
         MockDeviceDriver::new("webcam", true).with_capabilities(camera_caps),
     ];
 
-    let reg = make_mock_device_registry(drivers);
+    let reg = make_mock_device_registry(drivers).await;
     let available = reg.probe_all().await.unwrap();
     assert_eq!(available.len(), 2);
 
@@ -95,7 +95,7 @@ async fn mock_device_lifecycle_management() {
     let driver = MockDeviceDriver::new("sensor", true)
         .with_capabilities(vec![Arc::new(MockCapability::new("sensor.read"))]);
 
-    let reg = make_mock_device_registry(vec![driver]);
+    let reg = make_mock_device_registry(vec![driver]).await;
     reg.connect("sensor").await.unwrap();
     assert_eq!(reg.len().await, 1);
 
@@ -246,7 +246,7 @@ async fn test_multiple_devices_health_check_all() {
     let good = MockDeviceDriver::new("good", true).with_health(true);
     let bad = MockDeviceDriver::new("bad", true).with_health(false);
 
-    let reg = make_mock_device_registry(vec![good, bad]);
+    let reg = make_mock_device_registry(vec![good, bad]).await;
     reg.connect("good").await.unwrap();
     reg.connect("bad").await.unwrap();
 
