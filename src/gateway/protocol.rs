@@ -599,6 +599,14 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "uri": uri,
             }),
         )),
+        GatewayEvent::DeviceStatusChanged { device_id, status, message } => Some((
+            "device.status_changed".to_string(),
+            serde_json::json!({
+                "device_id": device_id,
+                "status": status,
+                "message": message,
+            }),
+        )),
     }
 }
 

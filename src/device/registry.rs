@@ -10,6 +10,30 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// RAII guard that provides exclusive access to a device.
+///
+/// Obtained via [`DeviceRegistry::try_lock`]. The lock is released
+/// automatically when the guard is dropped.
+pub struct DeviceLock {
+    device: Arc<Device>,
+    _guard: tokio::sync::OwnedRwLockWriteGuard<()>,
+}
+
+impl DeviceLock {
+    /// Access the underlying device.
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+}
+
+impl std::fmt::Debug for DeviceLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceLock")
+            .field("device_id", &self.device.id())
+            .finish()
+    }
+}
+
 /// Registry of device drivers and their connected devices.
 ///
 /// # Lifecycle
@@ -23,6 +47,9 @@ use tokio::sync::RwLock;
 pub struct DeviceRegistry {
     drivers: Vec<Arc<dyn DeviceDriver>>,
     devices: RwLock<HashMap<String, DeviceEntry>>,
+    /// Per-device locks for exclusive access (e.g. during calibration,
+    /// firmware update, or sequential command sequences).
+    locks: RwLock<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
 }
 
 impl std::fmt::Debug for DeviceRegistry {
@@ -46,6 +73,7 @@ impl DeviceRegistry {
         Self {
             drivers: Vec::new(),
             devices: RwLock::new(HashMap::new()),
+            locks: RwLock::new(HashMap::new()),
         }
     }
 
@@ -107,6 +135,10 @@ impl DeviceRegistry {
                 driver_idx,
             },
         );
+
+        // Create a lock entry for this device
+        self.locks.write().await.insert(id.clone(), Arc::new(RwLock::new(())));
+
         tracing::info!("Device connected: {} ({})", id, driver_name);
         Ok(device)
     }
@@ -189,6 +221,7 @@ impl DeviceRegistry {
                 .clone_from(&DeviceStatus::Disconnected);
             tracing::info!("Device disconnected: {}", device_id);
         }
+        self.locks.write().await.remove(device_id);
         Ok(())
     }
 
@@ -204,6 +237,22 @@ impl DeviceRegistry {
                 .clone_from(&DeviceStatus::Disconnected);
             tracing::info!("Device disconnected: {}", id);
         }
+        self.locks.write().await.clear();
+    }
+
+    /// Try to acquire exclusive access to a connected device.
+    ///
+    /// Returns `None` if the device is not connected or if the lock
+    /// is already held. The lock is released when the returned
+    /// [`DeviceLock`] is dropped.
+    pub async fn try_lock(&self, device_id: &str) -> Option<DeviceLock> {
+        let device = self.get(device_id).await?;
+        let lock = self.locks.read().await.get(device_id)?.clone();
+        let guard = lock.try_write_owned().ok()?;
+        Some(DeviceLock {
+            device,
+            _guard: guard,
+        })
     }
 
     /// Get the number of registered drivers.

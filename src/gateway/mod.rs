@@ -147,6 +147,59 @@ pub struct GatewayConfig {
     /// Capability set configuration (profile, scope, enabled sets)
     #[serde(default)]
     pub capabilities: crate::config::CapabilitiesConfig,
+    /// Device subsystem configuration.
+    #[serde(default)]
+    pub device: DeviceConfig,
+}
+
+/// A single device driver entry in the configuration.
+///
+/// Each entry specifies the driver `kind` (e.g. `"mock"`, `"serial"`) and
+/// optional JSON `params` passed to the driver's constructor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceDriverEntry {
+    /// Driver type name, e.g. `"mock"`.
+    pub kind: String,
+    /// Arbitrary JSON parameters for the driver constructor.
+    #[serde(default)]
+    pub params: serde_json::Value,
+}
+
+/// Device subsystem configuration for the gateway.
+///
+/// Controls whether the device subsystem is active and how drivers are
+/// discovered and managed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceConfig {
+    /// Enable the device subsystem. When `false`, all device driver
+    /// probing and connection is skipped.
+    #[serde(default = "default_device_enabled")]
+    pub enabled: bool,
+    /// List of device drivers to construct from configuration.
+    #[serde(default)]
+    pub drivers: Vec<DeviceDriverEntry>,
+    /// Interval (in seconds) between periodic health checks on
+    /// connected devices. Default: 60 seconds.
+    #[serde(default = "default_health_check_interval")]
+    pub health_check_interval_secs: u64,
+}
+
+fn default_device_enabled() -> bool {
+    true
+}
+
+fn default_health_check_interval() -> u64 {
+    60
+}
+
+impl Default for DeviceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            drivers: Vec::new(),
+            health_check_interval_secs: 60,
+        }
+    }
 }
 
 fn default_model() -> String {
@@ -572,6 +625,7 @@ impl Default for GatewayConfig {
             dreaming: crate::config::MemoryDreamingConfig::default(),
             standing_orders: crate::standing_orders::config::StandingOrderConfig::default(),
             capabilities: crate::config::CapabilitiesConfig::default(),
+            device: DeviceConfig::default(),
         }
     }
 }
@@ -1021,6 +1075,12 @@ pub enum GatewayEvent {
         agent_id: String,
         delta: String,
     },
+    /// Device status changed (connected, disconnected, error, degraded).
+    DeviceStatusChanged {
+        device_id: String,
+        status: String,
+        message: Option<String>,
+    },
 }
 
 /// Agent status
@@ -1458,28 +1518,27 @@ impl Gateway {
         // Probes, connects, and registers device capabilities as tools in
         // ToolRegistry so the LLM can discover and call device operations
         // through standard function calling.
+        //
+        // Drivers are provided either explicitly (via `with_devices()`) or
+        // discovered from the configuration's `device.drivers` entries.
+        let device_drivers = if device_drivers.is_empty() {
+            crate::gateway::init::devices::discover_drivers_from_config(&config.device)
+        } else {
+            device_drivers
+        };
+        let device_init = crate::gateway::init::devices::init_devices(
+            &config.device,
+            device_drivers,
+            &state.tools.registry,
+        )
+        .await?;
         let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> =
-            if !device_drivers.is_empty() {
-                let mut dev_reg = crate::device::registry::DeviceRegistry::new();
-                for driver in device_drivers {
-                    dev_reg.register(driver);
-                }
-                let present = dev_reg.probe_all().await?;
-                for name in &present {
-                    let device = dev_reg.connect(name).await?;
-                    for cap in &device.capabilities {
-                        let wrapper =
-                            crate::tools::device_tool::DeviceToolWrapper::new(
-                                name.clone(),
-                                cap.clone(),
-                            );
-                        state.tools.registry.register_dynamic(Arc::new(wrapper));
-                    }
-                }
-                Some(Arc::new(dev_reg))
-            } else {
-                None
-            };
+            device_init.as_ref().map(|di| di.registry.clone());
+        if let Some(init) = device_init {
+            if let Some(handle) = init.health_check_handle {
+                background_tasks.push(handle);
+            }
+        }
 
         // Start message processing workers
         let inbound_handle = tokio::spawn(Self::process_inbound_entries(

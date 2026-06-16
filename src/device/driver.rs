@@ -5,8 +5,43 @@
 
 use crate::device::Device;
 use crate::error::Result;
+use serde_json::Value;
 
-/// Trait implemented by concrete device drivers.
+/// Optional lifecycle operations for advanced device management.
+///
+/// Drivers that implement self-test, calibration, firmware update, or
+/// configuration read/write can provide this trait alongside
+/// [`DeviceDriver`].  Use [`DeviceDriver::as_lifecycle`] to upcast.
+///
+/// All methods have default no-op implementations so implementors only
+/// override what they support.
+#[async_trait::async_trait]
+pub trait DeviceLifecycle: Send + Sync {
+    /// Run the device's built-in self-test.
+    async fn self_test(&self) -> Result<bool> {
+        Ok(true)
+    }
+
+    /// Calibrate the device with the given parameters.
+    async fn calibrate(&self, _params: Value) -> Result<()> {
+        Ok(())
+    }
+
+    /// Update the device firmware.
+    async fn update_firmware(&self, _firmware: Vec<u8>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Read the current device configuration.
+    async fn read_config(&self) -> Result<Value> {
+        Ok(Value::Null)
+    }
+
+    /// Write a new device configuration.
+    async fn write_config(&self, _config: Value) -> Result<()> {
+        Ok(())
+    }
+}
 ///
 /// Drivers are responsible for:
 /// - Probing whether the hardware is present (`probe`)
@@ -67,5 +102,12 @@ pub trait DeviceDriver: Send + Sync {
     /// Returns `Ok(true)` if healthy, `Ok(false)` if degraded/unreachable.
     async fn health_check(&self) -> Result<bool> {
         Ok(true)
+    }
+
+    /// Upcast to [`DeviceLifecycle`] if the driver supports it.
+    ///
+    /// Returns `None` by default. Override to return `Some(&self)`.
+    fn as_lifecycle(&self) -> Option<&dyn DeviceLifecycle> {
+        None
     }
 }

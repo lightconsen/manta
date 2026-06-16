@@ -31,10 +31,10 @@ pub mod mock;
 pub mod registry;
 pub mod safety;
 
-pub use capability::{Capability, CapabilityResult};
-pub use driver::DeviceDriver;
-pub use mock::{MockCapability, MockDeviceDriver};
-pub use registry::DeviceRegistry;
+pub use capability::{Capability, CapabilityResult, DeviceEvent, ObservableCapability};
+pub use driver::{DeviceDriver, DeviceLifecycle};
+pub use mock::{MockCapability, MockDeviceDriver, MockObservableCapability};
+pub use registry::{DeviceLock, DeviceRegistry};
 pub use safety::{SafetyRule, SafetyRuleKind, SafetyZone};
 
 /// Static metadata about a physical device.

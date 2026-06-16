@@ -18,7 +18,7 @@
 //! ```
 
 use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
-use crate::device::capability::{Capability, CapabilityResult};
+use crate::device::capability::{Capability, CapabilityResult, DeviceEvent, ObservableCapability};
 use crate::device::driver::DeviceDriver;
 use crate::device::registry::DeviceRegistry;
 use crate::device::{Device, DeviceInfo};
@@ -26,6 +26,8 @@ use crate::error::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::SystemTime;
+use tokio::sync::broadcast;
 
 // ── MockCapability ────────────────────────────────────────────────────────────
 
@@ -124,6 +126,74 @@ impl Capability for MockCapability {
     }
 }
 
+// ── MockObservableCapability ──────────────────────────────────────────────────
+
+/// A configurable [`ObservableCapability`] for testing streaming events.
+///
+/// Creates a broadcast channel that test code can send events into,
+/// and consumers can subscribe to via [`subscribe`](ObservableCapability::subscribe).
+pub struct MockObservableCapability {
+    inner: MockCapability,
+    tx: broadcast::Sender<DeviceEvent>,
+}
+
+impl MockObservableCapability {
+    /// Create a mock observable capability with the given name.
+    /// The broadcast channel capacity defaults to 64.
+    pub fn new(name: impl Into<String>) -> Self {
+        let (tx, _) = broadcast::channel(64);
+        Self {
+            inner: MockCapability::new(name),
+            tx,
+        }
+    }
+
+    /// Emit a [`DeviceEvent`] on the broadcast channel.
+    pub fn emit(&self, device_id: impl Into<String>, data: serde_json::Value) {
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let _ = self.tx.send(DeviceEvent {
+            device_id: device_id.into(),
+            capability: self.inner.name().to_string(),
+            timestamp_millis: timestamp,
+            data,
+        });
+    }
+
+    /// Return a reference to the underlying [`MockCapability`].
+    pub fn capability(&self) -> &MockCapability {
+        &self.inner
+    }
+}
+
+#[async_trait]
+impl Capability for MockObservableCapability {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn param_schema(&self) -> Value {
+        self.inner.param_schema()
+    }
+
+    async fn execute(&self, params: Value) -> CapabilityResult {
+        self.inner.execute(params).await
+    }
+
+    fn as_observable(&self) -> Option<&dyn ObservableCapability> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl ObservableCapability for MockObservableCapability {
+    fn subscribe(&self) -> broadcast::Receiver<DeviceEvent> {
+        self.tx.subscribe()
+    }
+}
+
 // ── MockDeviceDriver ──────────────────────────────────────────────────────────
 
 /// A configurable [`DeviceDriver`] implementation for testing.
@@ -172,6 +242,26 @@ impl MockDeviceDriver {
     pub fn with_health(mut self, ok: bool) -> Self {
         self.health_result = ok;
         self
+    }
+
+    /// Construct a mock driver from JSON configuration.
+    ///
+    /// Expected `params` schema:
+    /// ```json
+    /// { "name": "my-driver", "present": true }
+    /// ```
+    /// Both fields are optional — defaults are `"mock"` and `true`.
+    pub fn from_config(params: Value) -> Result<Arc<dyn DeviceDriver>> {
+        let name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("mock")
+            .to_string();
+        let present = params
+            .get("present")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        Ok(Arc::new(Self::new(name, present)))
     }
 }
 

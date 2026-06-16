@@ -5,6 +5,7 @@
 //! without calling the underlying implementation.
 
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 /// A single safety rule attached to a capability.
@@ -47,14 +48,29 @@ pub struct WorkspaceBoundary {
 ///
 /// Holds the current set of active rules and tracks whether the zone
 /// has been tripped (e.g. by an emergency-stop signal).
-#[derive(Debug, Clone)]
+///
+/// The `engaged` field uses an [`AtomicBool`] so hardware interrupt paths
+/// (driver control loops, emergency-stop handlers) can read and write it
+/// without acquiring the device's `RwLock`.
+#[derive(Debug)]
 pub struct SafetyZone {
     /// Active rules.
     pub rules: Vec<SafetyRule>,
-    /// Whether the zone is in tripped state.
-    pub engaged: bool,
+    /// Whether the zone is in tripped state (lock-free for fast paths).
+    engaged: AtomicBool,
     /// When the zone was last tripped.
     pub last_triggered: Option<SystemTime>,
+}
+
+// AtomicBool is not Clone, so implement Clone manually.
+impl Clone for SafetyZone {
+    fn clone(&self) -> Self {
+        Self {
+            rules: self.rules.clone(),
+            engaged: AtomicBool::new(self.engaged.load(Ordering::Relaxed)),
+            last_triggered: self.last_triggered,
+        }
+    }
 }
 
 impl SafetyZone {
@@ -62,9 +78,14 @@ impl SafetyZone {
     pub fn new(rules: Vec<SafetyRule>) -> Self {
         Self {
             rules,
-            engaged: false,
+            engaged: AtomicBool::new(false),
             last_triggered: None,
         }
+    }
+
+    /// Returns `true` if the safety zone is currently tripped.
+    pub fn is_engaged(&self) -> bool {
+        self.engaged.load(Ordering::Acquire)
     }
 
     /// Check whether executing `capability` with `params` is allowed.
@@ -73,7 +94,7 @@ impl SafetyZone {
     /// as an error. If the zone has been tripped all executions are
     /// rejected until [`reset`](Self::reset) is called.
     pub fn check(&self, capability: &str, _params: &Value) -> Result<(), String> {
-        if self.engaged {
+        if self.engaged.load(Ordering::Acquire) {
             return Err(format!(
                 "Safety zone is tripped — cannot execute '{}'",
                 capability
@@ -86,14 +107,14 @@ impl SafetyZone {
 
     /// Trip the safety zone (e.g. emergency-stop activated).
     pub fn trip(&mut self, reason: String) {
-        self.engaged = true;
+        self.engaged.store(true, Ordering::Release);
         self.last_triggered = Some(SystemTime::now());
         tracing::warn!("Safety zone tripped: {}", reason);
     }
 
     /// Reset the safety zone after the issue is resolved.
     pub fn reset(&mut self) {
-        self.engaged = false;
+        self.engaged.store(false, Ordering::Release);
         tracing::info!("Safety zone reset");
     }
 }

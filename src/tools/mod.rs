@@ -1356,7 +1356,29 @@ impl ToolRegistry {
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
         // Run policy hooks first
-        let policy_decision = self.hooks.run_policy(name, &args).await;
+        let mut policy_decision = self.hooks.run_policy(name, &args).await;
+
+        // Fallback: if no hook declared RequiresApproval but the tool's
+        // capabilities advertise it, auto-generate a NeedsApproval decision.
+        // This catches device tools (requires_approval: true) and any other
+        // high-risk tools registered without an explicit policy hook.
+        if matches!(policy_decision, ToolPolicyDecision::Allow) {
+            let caps = self.get_capabilities(name);
+            if caps.requires_approval {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static APPROVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
+                let approval_id = format!("fallback-{:08x}", APPROVAL_COUNTER.fetch_add(1, Ordering::Relaxed));
+                policy_decision = ToolPolicyDecision::NeedsApproval {
+                    approval_id,
+                    tool_name: name.to_string(),
+                    args: args.clone(),
+                    risk_level: crate::tools::approval::RiskLevel::High,
+                    approval_level: crate::tools::approval::ApprovalLevel::Ask,
+                    requested_by: "system".to_string(),
+                    message: format!("Tool '{}' requires approval (fallsback from requires_approval flag)", name),
+                };
+            }
+        }
 
         match policy_decision {
             ToolPolicyDecision::Allow => {
