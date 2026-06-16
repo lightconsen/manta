@@ -203,6 +203,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             heartbeat_event_tx: syscity::utils::LateInit::new(),
             cron_scheduler: syscity::utils::LateInit::new(),
         },
+        device_init: tokio::sync::RwLock::new(None),
     }
 }
 

@@ -576,6 +576,14 @@ pub enum DesktopAction {
         destination: String,
         method: TransferMethod,
     },
+    /// Call a tool by name in the ToolRegistry (e.g. device tools).
+    ///
+    /// Used by the GoalPlanner executor to dispatch device operations
+    /// and other tool-registered capabilities as plan steps.
+    ToolCall {
+        tool_name: String,
+        args: serde_json::Value,
+    },
 }
 
 /// Package manager supported for software installation.

@@ -215,6 +215,9 @@ Available DesktopAction types (JSON shape):
 - { "compress": { "sources": ["/tmp/logs"], "destination": "/tmp/logs.zip", "format": "zip" } }
 - { "decompress": { "archive": "/tmp/logs.zip", "destination": "/tmp/extracted" } }
 - { "transfer_file": { "source": "/tmp/file.txt", "destination": "user@host:/tmp/file.txt", "method": "scp" } }
+- { "tool_call": { "tool_name": "device_oscilloscope_01_read_waveform", "args": { "channel": 1 } } }
+
+Note: Tool names starting with "device_" (e.g. "device_oscilloscope_01_read_waveform", "device_motor_03_move_to") are device capabilities registered by connected hardware. Use "tool_call" for any device operation. The list of available tool names is provided in the available_tools list.
 
 Available verification types:
 - { "success": {} }

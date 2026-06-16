@@ -202,6 +202,11 @@ impl ToolHooks {
         self.before_call.is_empty() && self.after_call.is_empty() && self.policy_hooks.is_empty()
     }
 
+    /// Returns `true` if at least one policy hook is registered.
+    pub fn has_policy_hooks(&self) -> bool {
+        !self.policy_hooks.is_empty()
+    }
+
     /// Run all registered policy hooks for the given tool call.
     ///
     /// Returns `Allow` if all hooks allow, or the first `Deny` or `NeedsApproval` encountered.

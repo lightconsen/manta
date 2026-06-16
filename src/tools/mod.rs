@@ -830,6 +830,10 @@ pub struct ToolRegistry {
     privileged_tools: std::sync::RwLock<HashSet<String>>,
     /// Hooks for tool execution (before/after/policy).
     hooks: ToolHooks,
+    /// Runtime-override hooks (set through `&self` via `set_hooks`).
+    /// Allows tests to inject policy hooks through an `Arc<ToolRegistry>`.
+    /// Takes precedence over `self.hooks` when `Some`.
+    hooks_override: std::sync::Mutex<Option<ToolHooks>>,
     /// Approval queue for human-in-the-loop tool execution.
     /// When set, high-risk tool calls can be suspended pending human approval.
     approval_queue: Option<Arc<ApprovalQueue>>,
@@ -841,7 +845,21 @@ pub struct ToolRegistry {
 
 impl Default for ToolRegistry {
     fn default() -> Self {
-        Self::new()
+        Self {
+            tools: HashMap::new(),
+            dynamic_tools: std::sync::RwLock::new(HashMap::new()),
+            blocked_prefixes: std::sync::RwLock::new(HashSet::new()),
+            cache: std::sync::Mutex::new(HashMap::new()),
+            cache_ttl: None,
+            cache_enabled: true,
+            failure_counts: std::sync::RwLock::new(HashMap::new()),
+            privileged_tools: std::sync::RwLock::new(HashSet::new()),
+            hooks: ToolHooks::new(),
+            hooks_override: std::sync::Mutex::new(None),
+            approval_queue: None,
+            content_filter: None,
+            audit_log: None,
+        }
     }
 }
 
@@ -871,6 +889,7 @@ impl ToolRegistry {
             failure_counts: std::sync::RwLock::new(HashMap::new()),
             privileged_tools: std::sync::RwLock::new(HashSet::new()),
             hooks: ToolHooks::new(),
+            hooks_override: std::sync::Mutex::new(None),
             approval_queue: None,
             content_filter: None,
             audit_log: None,
@@ -889,6 +908,7 @@ impl ToolRegistry {
             failure_counts: std::sync::RwLock::new(HashMap::new()),
             privileged_tools: std::sync::RwLock::new(HashSet::new()),
             hooks: ToolHooks::new(),
+            hooks_override: std::sync::Mutex::new(None),
             approval_queue: None,
             content_filter: None,
             audit_log: None,
@@ -1144,6 +1164,29 @@ impl ToolRegistry {
         self
     }
 
+    /// Set the hooks for this registry through `&self` (interior mutability).
+    ///
+    /// This allows setting hooks through an `Arc<ToolRegistry>` without
+    /// requiring `&mut self`. Used by tests that need to inject policy
+    /// hooks at runtime (e.g. auto-approval for device tool calls).
+    pub fn set_hooks(&self, hooks: ToolHooks) {
+        if let Ok(mut guard) = self.hooks_override.lock() {
+            *guard = Some(hooks);
+        }
+    }
+
+    /// Return the active hooks — the override hooks if set, otherwise the
+    /// builder-configured hooks.  Override hooks take precedence so that
+    /// `set_hooks()` (called through `Arc<ToolRegistry>`) can inject hooks
+    /// at runtime without requiring `&mut self`.
+    fn active_hooks(&self) -> ToolHooks {
+        self.hooks_override
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .unwrap_or_else(|| self.hooks.clone())
+    }
+
     /// Set the approval queue for human-in-the-loop execution.
     ///
     /// When set, tool calls that return `ToolPolicyDecision::NeedsApproval`
@@ -1356,13 +1399,19 @@ impl ToolRegistry {
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
         // Run policy hooks first
-        let mut policy_decision = self.hooks.run_policy(name, &args).await;
+        let mut policy_decision = self.active_hooks().run_policy(name, &args).await;
 
-        // Fallback: if no hook declared RequiresApproval but the tool's
-        // capabilities advertise it, auto-generate a NeedsApproval decision.
-        // This catches device tools (requires_approval: true) and any other
-        // high-risk tools registered without an explicit policy hook.
-        if matches!(policy_decision, ToolPolicyDecision::Allow) {
+        // Fallback: if no policy hook was configured (hooks list empty), but
+        // the tool's capabilities advertise requires_approval, auto-generate a
+        // NeedsApproval decision. This catches device tools (requires_approval:
+        // true) and other high-risk tools registered without an explicit hook.
+        //
+        // When a policy hook IS configured and returns Allow, its decision is
+        // authoritative — the hook has made a conscious choice to allow the
+        // call, so we skip the fallback.
+        if matches!(policy_decision, ToolPolicyDecision::Allow)
+            && !self.active_hooks().has_policy_hooks()
+        {
             let caps = self.get_capabilities(name);
             if caps.requires_approval {
                 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1452,7 +1501,7 @@ impl ToolRegistry {
         }
 
         // Run before-hooks
-        self.hooks.run_before(name, &args).await;
+        self.active_hooks().run_before(name, &args).await;
 
         // Check cache first
         let cache_key = Self::cache_key(name, &args);
@@ -1460,7 +1509,7 @@ impl ToolRegistry {
             tracing::debug!("Cache hit for tool: {}", name);
             let result = Ok(cached_result);
             if let Ok(ref exec_result) = result {
-                self.hooks.run_after(name, &args, exec_result).await;
+                self.active_hooks().run_after(name, &args, exec_result).await;
             }
             return self.filter_and_audit(name, context, Some(result)).await;
         }
@@ -1500,7 +1549,7 @@ impl ToolRegistry {
 
         // Run after-hooks
         if let Some(Ok(ref exec_result)) = execution_result {
-            self.hooks.run_after(name, &args, exec_result).await;
+            self.active_hooks().run_after(name, &args, exec_result).await;
         }
 
         self.filter_and_audit(name, context, execution_result).await
@@ -1707,7 +1756,7 @@ impl ToolRegistry {
         let tool_name = call.name.clone();
 
         // Run policy hooks first.
-        let policy_decision = self.hooks.run_policy(&tool_name, &args).await;
+        let policy_decision = self.active_hooks().run_policy(&tool_name, &args).await;
         match policy_decision {
             ToolPolicyDecision::Allow => {}
             ToolPolicyDecision::Deny { reason } => {
@@ -1747,7 +1796,7 @@ impl ToolRegistry {
         }
 
         // Run before-hooks.
-        self.hooks.run_before(&tool_name, &args).await;
+        self.active_hooks().run_before(&tool_name, &args).await;
 
         // Look up the tool and consume its stream.
         let collected = if let Some(tool) = self.get(&tool_name) {
@@ -1802,7 +1851,7 @@ impl ToolRegistry {
         context: &ToolContext,
         collected: ToolExecutionResult,
     ) -> Option<crate::Result<ToolExecutionResult>> {
-        self.hooks.run_after(name, args, &collected).await;
+        self.active_hooks().run_after(name, args, &collected).await;
         self.filter_and_audit(name, context, Some(Ok(collected)))
             .await
     }

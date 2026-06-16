@@ -182,6 +182,9 @@ fn is_complex_task(message: &str) -> bool {
         "migrate", "backup", "restore", "pipeline", "orchestrate",
         "setup environment", "deploy to", "configure ssl", "configure https",
         "install and", "build and", "clone and", "docker compose",
+        // Device / sensor orchestration
+        "read sensor", "capture waveform", "oscilloscope", "multimeter",
+        "motor", "actuator",
     ];
     KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
@@ -1103,6 +1106,9 @@ impl Agent {
         if let Some(ref memory) = self.memory_store {
             planner = planner.with_memory(memory.clone());
         }
+        // Pass ToolRegistry so GoalPlanner can execute device ToolCalls
+        // and other tool-registered capabilities as plan steps.
+        planner = planner.with_tool_registry(self.tools.clone());
         self.goal_planner = Some(planner);
         self
     }

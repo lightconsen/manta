@@ -293,6 +293,13 @@ impl GoalPlanner {
         self
     }
 
+    /// Attach a [`ToolRegistry`] for executing [`ToolCall`] actions
+    /// (e.g. device operations) during plan execution.
+    pub fn with_tool_registry(mut self, registry: Arc<crate::tools::ToolRegistry>) -> Self {
+        self.executor = self.executor.with_tool_registry(registry);
+        self
+    }
+
     /// Decompose a high-level goal into an executable [`Plan`].
     ///
     /// The LLM is given the list of available tool names (taken from the
@@ -365,7 +372,8 @@ impl GoalPlanner {
         goal: &str,
         available_tools: &[String],
     ) -> crate::Result<PlanResult> {
-        let mut plan = self.decompose(goal, available_tools).await?;
+        let decompose_result = self.decompose(goal, available_tools).await;
+        let mut plan = decompose_result?;
 
         let plan_id = format!("plan_{}", uuid::Uuid::new_v4());
 
