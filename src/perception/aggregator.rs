@@ -73,6 +73,11 @@ impl TemporalAggregator {
         }
     }
 
+    /// Return all observations currently in the window.
+    pub fn observations(&self) -> Vec<&Observation> {
+        self.observations.iter().map(|(_, obs)| obs).collect()
+    }
+
     /// Return the number of observations in the current window.
     pub fn len(&self) -> usize {
         self.observations.len()

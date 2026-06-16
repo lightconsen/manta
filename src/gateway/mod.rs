@@ -1607,6 +1607,23 @@ impl Gateway {
                     .await;
                 }
 
+                // Register device capabilities as perception sources
+                if let Some(ref device_registry) = device_registry {
+                    for device_id in device_registry.list().await {
+                        if let Some(device) = device_registry.get(&device_id).await {
+                            for cap in &device.capabilities {
+                                reg.register_source(Arc::new(
+                                    crate::perception::DeviceSourceAdapter::new(
+                                        device.id().to_string(),
+                                        cap.clone(),
+                                    ),
+                                ))
+                                .await;
+                            }
+                        }
+                    }
+                }
+
                 // Register the perception query tool
                 let tool = Arc::new(
                     crate::tools::perception_tool::PerceptionQueryTool::new(reg.clone()),

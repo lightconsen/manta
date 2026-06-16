@@ -69,7 +69,7 @@ impl PerceptionRegistry {
     /// Query the current scene graph and observation history.
     pub async fn query(&self, q: &PerceptionQuery) -> QueryResult {
         let scene_graph = self.scene_graph.read().await;
-        let _aggregator = self.aggregator.read().await;
+        let aggregator = self.aggregator.read().await;
 
         let entities: Vec<_> = scene_graph
             .entities()
@@ -78,10 +78,12 @@ impl PerceptionRegistry {
             .cloned()
             .collect();
 
-        // For observations we'd ideally iterate over the aggregator's window,
-        // but since it doesn't expose raw observations directly, we return
-        // what we have from entity matches.
-        let observations: Vec<Observation> = Vec::new();
+        let observations: Vec<Observation> = aggregator
+            .observations()
+            .into_iter()
+            .filter(|obs| q.matches_observation(obs))
+            .cloned()
+            .collect();
 
         let mut result = QueryResult {
             observations,
