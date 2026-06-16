@@ -94,6 +94,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         config: Arc::new(RwLock::new(config)),
         start_time: std::time::Instant::now(),
         config_path: None,
+        device_init: tokio::sync::RwLock::new(None),
         auth: AuthState {
             manager: Arc::new(crate::security::AuthManager::new()),
             pairing_store: Arc::new(PairingStore::new()),

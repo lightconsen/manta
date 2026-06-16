@@ -174,6 +174,36 @@ pub fn discover_drivers_from_config(config: &DeviceConfig) -> Vec<Arc<dyn Device
     drivers
 }
 
+/// Reload the device subsystem from configuration.
+///
+/// 1. Disconnects all devices in the old registry.
+/// 2. Aborts the old health-check loop.
+/// 3. Deregisters all old device tools from the [`ToolRegistry`].
+/// 4. Re-runs driver discovery and init with the new `config`.
+/// 5. Returns the new [`DeviceInit`].
+///
+/// Returns `Ok(None)` if the device subsystem is disabled or has no drivers.
+pub async fn reload_devices(
+    old: DeviceInit,
+    config: &DeviceConfig,
+    tool_registry: &ToolRegistry,
+) -> crate::Result<Option<DeviceInit>> {
+    // 1. Disconnect all old devices
+    old.registry.disconnect_all().await;
+
+    // 2. Abort old health-check loop
+    if let Some(handle) = old.health_check_handle {
+        handle.abort();
+    }
+
+    // 3. Deregister all old device tools
+    tool_registry.deregister_prefix("device_");
+
+    // 4. Re-run discovery and init
+    let drivers = discover_drivers_from_config(config);
+    init_devices(config, drivers, tool_registry).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

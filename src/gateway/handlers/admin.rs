@@ -112,6 +112,7 @@ pub async fn reload_all_handler(
             config.standing_orders = new_cfg.standing_orders.clone();
             config.cron = new_cfg.cron.clone();
             config.browser = new_cfg.browser.clone();
+            config.device = new_cfg.device.clone();
             drop(config);
             result["config"] = serde_json::json!({ "updated": true });
             info!("Applied hot-reloadable configuration fields");
@@ -143,6 +144,47 @@ pub async fn reload_all_handler(
                 changes = ?changes.iter().map(|c| &c.path).collect::<Vec<_>>(),
                 "Config changes detected on reload"
             );
+        }
+    }
+
+    // ── Device subsystem reload (hot-reload drivers from config) ──────
+    // Runs when scope is "all", "config", or "device".  Disconnects all
+    // existing devices, cleans up old tools, and re-initializes from the
+    // new configuration.
+    if scope == "all" || scope == "config" || scope == "device" {
+        let old_init = state.device_init.write().await.take();
+        let device_result = if let Some(old) = old_init {
+            let config = state.config.read().await;
+            crate::gateway::init::devices::reload_devices(
+                old,
+                &config.device,
+                &state.tools.registry,
+            )
+            .await
+        } else {
+            // No previous init — run fresh init from config
+            let config = state.config.read().await;
+            let drivers =
+                crate::gateway::init::devices::discover_drivers_from_config(&config.device);
+            crate::gateway::init::devices::init_devices(
+                &config.device,
+                drivers,
+                &state.tools.registry,
+            )
+            .await
+        };
+
+        match device_result {
+            Ok(new_init) => {
+                *state.device_init.write().await = new_init;
+                result["device"] = serde_json::json!({ "reloaded": true });
+                info!("Device subsystem reloaded from configuration");
+            }
+            Err(e) => {
+                error!("Failed to reload device subsystem: {}", e);
+                result["device"] =
+                    serde_json::json!({ "reloaded": false, "error": e.to_string() });
+            }
         }
     }
 

@@ -21,8 +21,9 @@ use crate::agent::{
     session_store::SessionStore, AgentRegistry, ArtifactStore, CostGuard, DiskBudgetManager,
     GroupSessionManager, RouteResolver, SessionFileManager, SessionManager, TranscriptStore,
 };
-use crate::gateway::AgentHandle;
 use crate::adapters::Storage;
+use crate::gateway::init::devices::DeviceInit;
+use crate::gateway::AgentHandle;
 use crate::canvas::CanvasManager;
 use crate::channels::{
     Channel, ChannelAcpBridge, ChannelExtensionRegistry, ChannelHealthMonitor, IncomingMessage,
@@ -177,6 +178,9 @@ pub struct GatewayState {
     pub start_time: Instant,
     /// Path to the config file (for runtime persistence)
     pub config_path: Option<PathBuf>,
+    /// Device subsystem init state (registry, health check handle).
+    /// Replaced on hot-reload to re-probe/re-connect devices.
+    pub device_init: RwLock<Option<DeviceInit>>,
 
     pub auth: AuthState,
     pub agents: AgentState,

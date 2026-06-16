@@ -1300,6 +1300,7 @@ impl Gateway {
             config: Arc::new(RwLock::new(config.clone())),
             start_time: Instant::now(),
             config_path: config_path.clone(),
+            device_init: RwLock::new(None),
             auth: AuthState {
                 manager: security_init.auth_manager.clone(),
                 pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
@@ -1532,13 +1533,14 @@ impl Gateway {
             &state.tools.registry,
         )
         .await?;
+
+        // Store device_init on state for lifecycle management and hot-reload
+        // The health check handle lives on DeviceInit, not background_tasks,
+        // so it can be aborted during hot-reload without ownership conflicts.
+        *state.device_init.write().await = device_init;
+
         let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> =
-            device_init.as_ref().map(|di| di.registry.clone());
-        if let Some(init) = device_init {
-            if let Some(handle) = init.health_check_handle {
-                background_tasks.push(handle);
-            }
-        }
+            state.device_init.read().await.as_ref().map(|di| di.registry.clone());
 
         // Start message processing workers
         let inbound_handle = tokio::spawn(Self::process_inbound_entries(
@@ -2113,12 +2115,22 @@ impl Gateway {
             handle.abort();
         }
 
-        // 14. Plugin manager shutdown.
+        // 14. Abort device health check handle (stored on state for hot-reload).
+        {
+            let mut di = self.state.device_init.write().await;
+            if let Some(ref mut init) = *di {
+                if let Some(handle) = init.health_check_handle.take() {
+                    handle.abort();
+                }
+            }
+        }
+
+        // 15. Plugin manager shutdown.
         if let Err(e) = self.state.infra.plugin_manager.shutdown().await {
             warn!("Failed to shutdown plugin manager: {}", e);
         }
 
-        // 15. Storage is left to flush on process exit because `dyn Storage`
+        // 16. Storage is left to flush on process exit because `dyn Storage`
         //     does not expose a close method.
 
         info!("Gateway shutdown complete");
