@@ -363,6 +363,7 @@ mod tests {
             base64: "aGVsbG8=".to_string(),
             width: 100,
             height: 100,
+            timestamp: std::time::Instant::now(),
         };
         assert_eq!(compute_screenshot_diff(&ss, &ss), 0);
     }
@@ -373,11 +374,13 @@ mod tests {
             base64: "aGVsbG8=".to_string(),
             width: 100,
             height: 100,
+            timestamp: std::time::Instant::now(),
         };
         let b = Screenshot {
             base64: "d29ybGQ=".to_string(),
             width: 100,
             height: 100,
+            timestamp: std::time::Instant::now(),
         };
         assert_eq!(compute_screenshot_diff(&a, &b), u32::MAX);
     }

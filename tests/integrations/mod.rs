@@ -32,5 +32,6 @@ mod media_tests;
 mod memory_tests;
 mod message_tool_tests;
 mod network_tests;
+mod perception_tests;
 mod task_time_tests;
 mod web_tests;

@@ -60,6 +60,7 @@ pub mod logs;
 pub mod memory;
 pub mod model_router;
 pub mod outbound;
+pub mod perception;
 pub mod computer;
 pub mod planner;
 pub mod plugins;

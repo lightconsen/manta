@@ -150,6 +150,9 @@ pub struct GatewayConfig {
     /// Device subsystem configuration.
     #[serde(default)]
     pub device: DeviceConfig,
+    /// Perception fusion layer configuration.
+    #[serde(default)]
+    pub perception: PerceptionConfig,
 }
 
 /// A single device driver entry in the configuration.
@@ -197,6 +200,42 @@ impl Default for DeviceConfig {
             drivers: Vec::new(),
             health_check: crate::device::HealthCheckConfig::default(),
             hot_plug: crate::device::HotPlugConfig::default(),
+        }
+    }
+}
+
+/// Perception fusion layer configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerceptionConfig {
+    /// Enable the perception fusion layer. When false, no sources are polled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Interval in seconds for the background poll loop. 0 = disable auto-poll.
+    #[serde(default)]
+    pub poll_interval_secs: u64,
+    /// Maximum number of observations to retain in the scene graph history.
+    #[serde(default = "default_scene_history")]
+    pub scene_history: usize,
+    /// Aggregation window in seconds for temporal fusion.
+    #[serde(default = "default_aggregation_window")]
+    pub aggregation_window_secs: u64,
+}
+
+fn default_scene_history() -> usize {
+    1000
+}
+
+fn default_aggregation_window() -> u64 {
+    5
+}
+
+impl Default for PerceptionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            poll_interval_secs: 0,
+            scene_history: 1000,
+            aggregation_window_secs: 5,
         }
     }
 }
@@ -625,6 +664,7 @@ impl Default for GatewayConfig {
             standing_orders: crate::standing_orders::config::StandingOrderConfig::default(),
             capabilities: crate::config::CapabilitiesConfig::default(),
             device: DeviceConfig::default(),
+            perception: PerceptionConfig::default(),
         }
     }
 }
@@ -1180,6 +1220,8 @@ pub struct Gateway {
     agent_tasks: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
     /// Physical device registry, populated when device drivers are provided.
     device_registry: Option<Arc<crate::device::registry::DeviceRegistry>>,
+    /// Perception fusion layer registry, populated when perception is enabled.
+    perception_registry: Option<Arc<crate::perception::PerceptionRegistry>>,
 }
 
 /// Validate authentication configuration for ambiguity and conflicts.
@@ -1541,6 +1583,56 @@ impl Gateway {
         let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> =
             state.device_init.read().await.as_ref().map(|di| di.registry.clone());
 
+        // Initialize perception fusion layer
+        let perception_registry: Option<Arc<crate::perception::PerceptionRegistry>> =
+            if config.perception.enabled {
+                let reg = Arc::new(crate::perception::PerceptionRegistry::new(
+                    crate::perception::AggregationStrategy::Latest,
+                    config.perception.aggregation_window_secs,
+                ));
+
+                // Register computer adapter sources
+                if let Some(ref adapter) = tools_init.computer_adapter {
+                    reg.register_source(Arc::new(
+                        crate::perception::ScreenshotAdapter::new(adapter.clone()),
+                    ))
+                    .await;
+
+                    let monitor = Arc::new(tokio::sync::Mutex::new(
+                        crate::computer::system::SystemMonitor::new(),
+                    ));
+                    reg.register_source(Arc::new(
+                        crate::perception::SystemMonitorAdapter::new(monitor),
+                    ))
+                    .await;
+                }
+
+                // Register the perception query tool
+                let tool = Arc::new(
+                    crate::tools::perception_tool::PerceptionQueryTool::new(reg.clone()),
+                );
+                state.tools.registry.register_dynamic(tool);
+
+                // Spawn background poll loop
+                if config.perception.poll_interval_secs > 0 {
+                    let r = reg.clone();
+                    let interval =
+                        std::time::Duration::from_secs(config.perception.poll_interval_secs);
+                    let handle = tokio::spawn(async move {
+                        let mut ticker = tokio::time::interval(interval);
+                        loop {
+                            ticker.tick().await;
+                            r.poll_all().await;
+                        }
+                    });
+                    background_tasks.push(handle);
+                }
+
+                Some(reg)
+            } else {
+                None
+            };
+
         // Start message processing workers
         let inbound_handle = tokio::spawn(Self::process_inbound_entries(
             state.clone(),
@@ -1561,6 +1653,7 @@ impl Gateway {
             message_workers: tokio::sync::Mutex::new(vec![inbound_handle, routed_handle]),
             agent_tasks: tokio::sync::Mutex::new(Vec::new()),
             device_registry,
+            perception_registry,
         })
     }
 
@@ -1583,6 +1676,12 @@ impl Gateway {
     /// Primarily used in integration / E2E tests to verify device registration.
     pub fn device_registry(&self) -> Option<Arc<crate::device::registry::DeviceRegistry>> {
         self.device_registry.clone()
+    }
+
+    /// Return a clone of the internal `PerceptionRegistry`, if one exists.
+    /// Returns `None` when perception is disabled.
+    pub fn perception_registry(&self) -> Option<Arc<crate::perception::PerceptionRegistry>> {
+        self.perception_registry.clone()
     }
 
     /// Return a clone of the gateway shutdown token.
@@ -4084,6 +4183,7 @@ impl Gateway {
                                         message_workers: tokio::sync::Mutex::new(Vec::new()),
                                         agent_tasks: tokio::sync::Mutex::new(Vec::new()),
                                         device_registry: None,
+                                        perception_registry: None,
                                     };
                                     if let Err(e) =
                                         gateway.init_single_channel(name, new_channel_config).await
@@ -4109,6 +4209,7 @@ impl Gateway {
                                     message_workers: tokio::sync::Mutex::new(Vec::new()),
                                     agent_tasks: tokio::sync::Mutex::new(Vec::new()),
                                     device_registry: None,
+                                    perception_registry: None,
                                 };
                                 if let Err(e) =
                                     gateway.init_single_channel(name, new_channel_config).await
@@ -4241,6 +4342,7 @@ impl Gateway {
                             message_workers: tokio::sync::Mutex::new(Vec::new()),
                             agent_tasks: tokio::sync::Mutex::new(Vec::new()),
                             device_registry: None,
+                            perception_registry: None,
                         };
                         match gateway
                             .init_single_channel(&channel_name, &new_channel_config)

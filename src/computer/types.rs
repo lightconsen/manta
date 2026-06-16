@@ -361,6 +361,15 @@ pub struct Screenshot {
     pub width: u32,
     /// Height in pixels.
     pub height: u32,
+    /// Wall-clock capture timestamp. Skipped in serialization since Instant is not
+    /// natively supported by serde.
+    #[serde(skip, default = "instant_now")]
+    pub timestamp: std::time::Instant,
+}
+
+/// Serde helper: default value for `#[serde(skip)]` timestamp fields.
+fn instant_now() -> std::time::Instant {
+    std::time::Instant::now()
 }
 
 /// Mouse button for click / drag actions.
@@ -715,6 +724,10 @@ pub struct SystemStatus {
     pub swap_used_mb: u64,
     pub disks: Vec<DiskStatus>,
     pub networks: Vec<NetworkStatus>,
+    /// Wall-clock snapshot timestamp. Skipped in serialization since Instant is not
+    /// natively supported by serde.
+    #[serde(skip, default = "instant_now")]
+    pub timestamp: std::time::Instant,
 }
 
 /// Disk usage information.

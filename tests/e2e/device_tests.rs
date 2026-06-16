@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use syscity::device::Capability;
 use syscity::device::mock::{MockCapability, MockDeviceDriver};
+use syscity::device::Capability;
 use syscity::device::DeviceDriver;
 use syscity::model_router::ModelAlias;
 
@@ -30,9 +30,10 @@ async fn device_tool_registered_in_gateway() {
         .with_capabilities(vec![sensor_cap as Arc<dyn Capability>]);
 
     let config = test_config(port, false);
-    let gateway = Gateway::with_devices(config, None, vec![Arc::new(driver) as Arc<dyn DeviceDriver>])
-        .await
-        .expect("Failed to create gateway with devices");
+    let gateway =
+        Gateway::with_devices(config, None, vec![Arc::new(driver) as Arc<dyn DeviceDriver>])
+            .await
+            .expect("Failed to create gateway with devices");
 
     // Verify the device tool is registered in ToolRegistry
     let registry = gateway.tool_registry();
@@ -45,10 +46,7 @@ async fn device_tool_registered_in_gateway() {
 
     // Verify the device registry is present and has the connected device
     let device_registry = gateway.device_registry();
-    assert!(
-        device_registry.is_some(),
-        "Device registry should be present"
-    );
+    assert!(device_registry.is_some(), "Device registry should be present");
     let device_reg = device_registry.unwrap();
     assert_eq!(device_reg.len().await, 1);
 }
@@ -63,17 +61,13 @@ async fn device_tool_invoked_via_chat() {
         MockCapability::new("sensor.read_temperature")
             .with_result(serde_json::json!({"celsius": 23.5})),
     );
-    let driver: Arc<dyn DeviceDriver> = Arc::new(
-        MockDeviceDriver::new("sensor-01", true)
-            .with_capabilities(vec![sensor_cap]),
-    );
+    let driver: Arc<dyn DeviceDriver> =
+        Arc::new(MockDeviceDriver::new("sensor-01", true).with_capabilities(vec![sensor_cap]));
 
     // ── Build mock provider that will call the device tool ──
     let mock = MockProvider::new().with_callback(move |messages| {
         // Handle NOCACHE handshake
-        if messages.len() == 1
-            && messages[0].content.contains("NOCACHE")
-        {
+        if messages.len() == 1 && messages[0].content.contains("NOCACHE") {
             return ProviderMessage::assistant("NOCACHE");
         }
 
@@ -83,19 +77,16 @@ async fn device_tool_invoked_via_chat() {
         }
 
         // First turn: emit a tool call for the device sensor tool
-        ProviderMessage::assistant("I'll read the sensor.")
-            .with_tool_calls(vec![
-                ToolCall {
-                    id: "call_device_1".to_string(),
-                    call_type: "function".to_string(),
-                    function: FunctionCall {
-                        name: "device_sensor-01_sensor_read_temperature".to_string(),
-                        arguments: "{}".to_string(),
-                    },
-                    index: None,
-                    result: None,
-                },
-            ])
+        ProviderMessage::assistant("I'll read the sensor.").with_tool_calls(vec![ToolCall {
+            id: "call_device_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "device_sensor-01_sensor_read_temperature".to_string(),
+                arguments: "{}".to_string(),
+            },
+            index: None,
+            result: None,
+        }])
     });
 
     // ── Start gateway with both mock device and mock provider ──
@@ -214,9 +205,10 @@ async fn test_device_registry_accessible_from_gateway() {
         .with_capabilities(vec![sensor_cap as Arc<dyn Capability>]);
 
     let config = test_config(port, false);
-    let gateway = Gateway::with_devices(config, None, vec![Arc::new(driver) as Arc<dyn DeviceDriver>])
-        .await
-        .expect("Failed to create gateway with devices");
+    let gateway =
+        Gateway::with_devices(config, None, vec![Arc::new(driver) as Arc<dyn DeviceDriver>])
+            .await
+            .expect("Failed to create gateway with devices");
 
     let device_registry = gateway.device_registry();
     assert!(device_registry.is_some(), "Device registry should be present");
@@ -240,11 +232,14 @@ async fn test_status_events_available_through_gateway_registry() {
         .with_capabilities(vec![sensor_cap as Arc<dyn Capability>]);
 
     let config = test_config(port, false);
-    let gateway = Gateway::with_devices(config, None, vec![Arc::new(driver) as Arc<dyn DeviceDriver>])
-        .await
-        .expect("Failed to create gateway with devices");
+    let gateway =
+        Gateway::with_devices(config, None, vec![Arc::new(driver) as Arc<dyn DeviceDriver>])
+            .await
+            .expect("Failed to create gateway with devices");
 
-    let device_registry = gateway.device_registry().expect("Device registry should be present");
+    let device_registry = gateway
+        .device_registry()
+        .expect("Device registry should be present");
 
     // Subscribe to status events
     let mut rx = device_registry.subscribe_status();

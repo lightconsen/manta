@@ -7,7 +7,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
-use syscity::computer::platform::{PlatformCapabilityRegistry, PlatformToolSet, ToolConflictStrategy};
+use syscity::computer::platform::{
+    PlatformCapabilityRegistry, PlatformToolSet, ToolConflictStrategy,
+};
 #[cfg(target_os = "macos")]
 use syscity::tools::{ToolContext, ToolRegistry};
 

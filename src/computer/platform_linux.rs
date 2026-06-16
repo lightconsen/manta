@@ -66,6 +66,7 @@ impl ComputerAdapter for X11ComputerAdapter {
             base64,
             width,
             height,
+            timestamp: std::time::Instant::now(),
         })
     }
 
@@ -638,6 +639,7 @@ impl ComputerAdapter for WaylandComputerAdapter {
             base64,
             width,
             height,
+            timestamp: std::time::Instant::now(),
         })
     }
 

@@ -745,6 +745,7 @@ pub mod image;
 pub mod list_capabilities;
 pub mod mcp;
 pub mod memory;
+pub mod perception_tool;
 pub mod message;
 pub mod nodes;
 pub mod patch;

@@ -236,6 +236,7 @@ impl ComputerUseLoop {
                             base64: String::new(),
                             width: 0,
                             height: 0,
+                            timestamp: std::time::Instant::now(),
                         });
                     return Ok(LoopResult {
                         success: false,
@@ -560,6 +561,7 @@ mod tests {
                 base64: String::new(),
                 width: 100,
                 height: 100,
+                timestamp: std::time::Instant::now(),
             },
             history: vec![],
             last_verified: None,

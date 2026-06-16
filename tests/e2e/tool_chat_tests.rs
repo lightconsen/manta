@@ -90,16 +90,23 @@ async fn tool_grep_invoked_via_chat() {
 #[tokio::test]
 #[serial]
 async fn tool_process_invoked_via_chat() {
-    let _results =
-        run_tool_chat_test(40087, "Use ONLY the process tool. List running processes. Do not use any other tool.", "process")
-            .await;
+    let _results = run_tool_chat_test(
+        40087,
+        "Use ONLY the process tool. List running processes. Do not use any other tool.",
+        "process",
+    )
+    .await;
 }
 
 #[tokio::test]
 #[serial]
 async fn tool_nodes_invoked_via_chat() {
-    let _results =
-        run_tool_chat_test(40088, "Use ONLY the nodes tool. List available nodes. Do not use any other tool.", "nodes").await;
+    let _results = run_tool_chat_test(
+        40088,
+        "Use ONLY the nodes tool. List available nodes. Do not use any other tool.",
+        "nodes",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -158,9 +165,12 @@ async fn tool_image_invoked_via_chat() {
 #[tokio::test]
 #[serial]
 async fn tool_tts_invoked_via_chat() {
-    let _results =
-        run_tool_chat_test(40094, "Use ONLY the tts tool. Convert 'Hello' to speech. Do not use any other tool.", "tts")
-            .await;
+    let _results = run_tool_chat_test(
+        40094,
+        "Use ONLY the tts tool. Convert 'Hello' to speech. Do not use any other tool.",
+        "tts",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -188,8 +198,12 @@ async fn tool_memory_get_invoked_via_chat() {
 #[tokio::test]
 #[serial]
 async fn tool_cron_invoked_via_chat() {
-    let _results =
-        run_tool_chat_test(40097, "Use ONLY the cron tool. List all cron jobs. Do not use any other tool.", "cron").await;
+    let _results = run_tool_chat_test(
+        40097,
+        "Use ONLY the cron tool. List all cron jobs. Do not use any other tool.",
+        "cron",
+    )
+    .await;
 }
 
 #[tokio::test]

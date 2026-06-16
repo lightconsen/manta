@@ -162,6 +162,7 @@ impl VirtualDisplay for XvfbDisplay {
                     base64,
                     width: self.width,
                     height: self.height,
+                    timestamp: std::time::Instant::now(),
                 });
             }
             Ok(output) => {
@@ -239,6 +240,7 @@ impl VirtualDisplay for XvfbDisplay {
             base64,
             width: self.width,
             height: self.height,
+            timestamp: std::time::Instant::now(),
         })
     }
 

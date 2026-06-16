@@ -92,6 +92,7 @@ impl SystemMonitor {
             swap_used_mb: bytes_to_mb(self.system.used_swap()),
             disks,
             networks,
+            timestamp: std::time::Instant::now(),
         }
     }
 

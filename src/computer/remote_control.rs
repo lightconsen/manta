@@ -344,6 +344,7 @@ impl RemoteControlAdapter {
                     base64,
                     width,
                     height,
+                    timestamp: std::time::Instant::now(),
                 });
             }
         }
@@ -406,6 +407,7 @@ impl RemoteControlAdapter {
             base64,
             width,
             height,
+            timestamp: std::time::Instant::now(),
         })
     }
 
@@ -485,6 +487,7 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
             base64: final_b64,
             width,
             height,
+            timestamp: std::time::Instant::now(),
         })
     }
 

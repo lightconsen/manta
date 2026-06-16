@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
-use syscity::device::Capability;
 use syscity::device::mock::{MockCapability, MockDeviceDriver};
+use syscity::device::Capability;
 use syscity::device::DeviceDriver;
 use syscity::tools::hooks::{ToolHooks, ToolPolicyDecision};
 use syscity::tools::ToolRegistry;
@@ -290,10 +290,8 @@ async fn goal_planner_tool_call_device() {
         MockCapability::new("sensor.read_temperature")
             .with_result(serde_json::json!({"celsius": 23.5})),
     );
-    let driver: Arc<dyn DeviceDriver> = Arc::new(
-        MockDeviceDriver::new("sensor-01", true)
-            .with_capabilities(vec![sensor_cap]),
-    );
+    let driver: Arc<dyn DeviceDriver> =
+        Arc::new(MockDeviceDriver::new("sensor-01", true).with_capabilities(vec![sensor_cap]));
 
     // ── Mock provider returns subtasks with a `tool_call` action ──
     // ── Mock provider returns subtasks with a `tool_call` action ──

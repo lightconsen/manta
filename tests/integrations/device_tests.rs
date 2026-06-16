@@ -4,13 +4,13 @@
 //! drivers, build a device registry, probe, connect, and exercise mock
 //! capabilities directly.
 
-use syscity::device::Capability;
-use syscity::device::mock::{make_mock_device_registry, MockCapability, MockDeviceDriver};
-use syscity::device::{DeviceStatus, HealthCheckConfig, HotPlugConfig};
-use syscity::gateway::DeviceConfig;
-use syscity::gateway::init::devices::init_devices;
-use syscity::tools::ToolRegistry;
 use std::sync::Arc;
+use syscity::device::mock::{make_mock_device_registry, MockCapability, MockDeviceDriver};
+use syscity::device::Capability;
+use syscity::device::{DeviceStatus, HealthCheckConfig, HotPlugConfig};
+use syscity::gateway::init::devices::init_devices;
+use syscity::gateway::DeviceConfig;
+use syscity::tools::ToolRegistry;
 
 /// Full flow: mock driver -> probe -> connect -> verify device state.
 #[tokio::test]
@@ -25,8 +25,7 @@ async fn mock_device_full_lifecycle() {
         Arc::new(MockCapability::new("motor.stop")),
     ];
 
-    let driver = MockDeviceDriver::new("stepper", true)
-        .with_capabilities(caps);
+    let driver = MockDeviceDriver::new("stepper", true).with_capabilities(caps);
 
     // Build registry and connect
     let reg = make_mock_device_registry(vec![driver]);
@@ -42,22 +41,19 @@ async fn mock_device_full_lifecycle() {
 /// Execute a mock capability and verify the result.
 #[tokio::test]
 async fn mock_device_execute_capability() {
-    let cap = MockCapability::new("sensor.read_temp")
-        .with_result(serde_json::json!({"celsius": 23.5}));
+    let cap =
+        MockCapability::new("sensor.read_temp").with_result(serde_json::json!({"celsius": 23.5}));
 
     let result = cap.execute(serde_json::json!({})).await;
     assert!(result.success);
-    assert_eq!(
-        result.output,
-        Some(serde_json::json!({"celsius": 23.5}))
-    );
+    assert_eq!(result.output, Some(serde_json::json!({"celsius": 23.5})));
 }
 
 /// Error path: driver that fails to connect.
 #[tokio::test]
 async fn mock_device_connect_error() {
-    let driver = MockDeviceDriver::new("faulty", true)
-        .with_connect_error("hardware not responding");
+    let driver =
+        MockDeviceDriver::new("faulty", true).with_connect_error("hardware not responding");
 
     let reg = make_mock_device_registry(vec![driver]);
     let available = reg.probe_all().await.unwrap();
@@ -74,15 +70,12 @@ async fn mock_device_multiple_devices() {
         Arc::new(MockCapability::new("motor.move_to")),
         Arc::new(MockCapability::new("motor.stop")),
     ];
-    let camera_caps: Vec<Arc<dyn Capability>> = vec![
-        Arc::new(MockCapability::new("camera.capture")),
-    ];
+    let camera_caps: Vec<Arc<dyn Capability>> =
+        vec![Arc::new(MockCapability::new("camera.capture"))];
 
     let drivers = vec![
-        MockDeviceDriver::new("stepper", true)
-            .with_capabilities(motor_caps),
-        MockDeviceDriver::new("webcam", true)
-            .with_capabilities(camera_caps),
+        MockDeviceDriver::new("stepper", true).with_capabilities(motor_caps),
+        MockDeviceDriver::new("webcam", true).with_capabilities(camera_caps),
     ];
 
     let reg = make_mock_device_registry(drivers);
