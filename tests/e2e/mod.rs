@@ -674,6 +674,7 @@ mod computer_tests;
 mod device_tests;
 mod health_tests;
 mod llm_chat_tests;
+mod perception_tests;
 mod mock_chat_tests;
 mod planner_tests;
 mod session_tests;
