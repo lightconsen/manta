@@ -14,7 +14,10 @@
 //! 4. **Entity building** — Merge properties and metadata into a [`FusedEntity`].
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use tokio::sync::RwLock;
 
 use crate::perception::{Modality, Observation};
 
@@ -66,49 +69,85 @@ impl Default for FusionConfig {
 
 /// Cross-modal fusion engine.
 ///
-/// Stateless and trivially thread-safe — [`fuse`] is a pure function on
-/// `&[Observation]`.
+/// `fuse()` reads the current config under a short read-lock, then operates
+/// on a snapshot — concurrent `update_config` calls do not interrupt an
+/// in-flight fuse.
 #[derive(Debug, Clone)]
 pub struct FusionEngine {
-    config: FusionConfig,
+    config: Arc<RwLock<FusionConfig>>,
 }
 
 impl FusionEngine {
     /// Create a new fusion engine with the given configuration.
     pub fn new(config: FusionConfig) -> Self {
-        Self { config }
+        Self {
+            config: Arc::new(RwLock::new(config)),
+        }
     }
 
-    /// Fuse a set of observations into cross-modal entities.
-    ///
-    /// Returns a list of [`FusedEntity`]s, one per temporal cluster that
-    /// contains at least one observation meeting the confidence threshold.
-    pub fn fuse(&self, observations: &[Observation]) -> Vec<FusedEntity> {
-        // Fast path: empty input
+    /// Snapshot the current config (cheap clone).
+    pub async fn config(&self) -> FusionConfig {
+        self.config.read().await.clone()
+    }
+
+    /// Atomically update the config under the writer lock.
+    pub async fn update_config<F>(&self, f: F)
+    where
+        F: FnOnce(&mut FusionConfig),
+    {
+        let mut g = self.config.write().await;
+        f(&mut g);
+    }
+
+    /// Replace the config in one shot.
+    pub async fn set_config(&self, new_cfg: FusionConfig) {
+        *self.config.write().await = new_cfg;
+    }
+
+    /// Synchronous variant used inside `fuse()` after taking a snapshot.
+    fn fuse_with_config(
+        &self,
+        cfg: &FusionConfig,
+        observations: &[Observation],
+    ) -> Vec<FusedEntity> {
         if observations.is_empty() {
             return vec![];
         }
 
-        // Step 1: Filter by minimum confidence
         let filtered: Vec<&Observation> = observations
             .iter()
-            .filter(|obs| obs.confidence >= self.config.min_confidence)
+            .filter(|obs| obs.confidence >= cfg.min_confidence)
             .collect();
 
         if filtered.is_empty() {
             return vec![];
         }
 
-        // Step 2: Temporal clustering across all observations
-        let clusters = self.cluster_by_time(&filtered);
+        let clusters = Self::cluster_by_time(cfg.temporal_window_ms, &filtered);
         let mut fused = Vec::new();
         for cluster in clusters {
             if let Some(entity) = self.build_fused_entity(cluster) {
                 fused.push(entity);
             }
         }
-
         fused
+    }
+
+    /// Fuse a set of observations into cross-modal entities.
+    ///
+    /// Returns a list of [`FusedEntity`]s, one per temporal cluster that
+    /// contains at least one observation meeting the confidence threshold.
+    pub async fn fuse(&self, observations: &[Observation]) -> Vec<FusedEntity> {
+        let cfg = self.config.read().await.clone();
+        self.fuse_with_config(&cfg, observations)
+    }
+
+    /// Synchronous fuse — uses the last-known config without awaiting.
+    /// Available because [`FusionEngine::config`] is held in an [`Arc<RwLock>`].
+    /// Useful from synchronous contexts (e.g. existing test code).
+    pub fn fuse_blocking(&self, observations: &[Observation]) -> Vec<FusedEntity> {
+        let cfg = self.config.blocking_read().clone();
+        self.fuse_with_config(&cfg, observations)
     }
 
     /// Cluster observations within a time window (temporal correlation).
@@ -120,7 +159,7 @@ impl FusionEngine {
     ///   within `temporal_window_ms` of the cluster start.
     /// - Otherwise, start a new cluster.
     fn cluster_by_time<'a>(
-        &self,
+        temporal_window_ms: u64,
         observations: &[&'a Observation],
     ) -> Vec<Vec<&'a Observation>> {
         if observations.is_empty() {
@@ -130,7 +169,7 @@ impl FusionEngine {
         let mut sorted: Vec<&'a Observation> = observations.to_vec();
         sorted.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
 
-        let window = Duration::from_millis(self.config.temporal_window_ms);
+        let window = Duration::from_millis(temporal_window_ms);
         let mut clusters: Vec<Vec<&'a Observation>> = Vec::new();
         let mut current_cluster: Vec<&'a Observation> = Vec::new();
         let mut window_start: Instant = sorted[0].timestamp;
@@ -262,40 +301,41 @@ mod tests {
             source: source.to_string(),
             modality,
             timestamp: ts,
+            created_at: std::time::SystemTime::now(),
             confidence: conf,
             data: serde_json::json!({}),
         }
     }
 
-    #[test]
-    fn test_fuse_two_modalities_same_cluster() {
+    #[tokio::test]
+    async fn test_fuse_two_modalities_same_cluster() {
         let engine = FusionEngine::new(FusionConfig::default());
         let now = Instant::now();
         let obs = vec![
             make_obs("camera", Modality::Rgb, now, 0.9),
             make_obs("mic", Modality::Audio, now, 0.8),
         ];
-        let fused = engine.fuse(&obs);
+        let fused = engine.fuse(&obs).await;
         assert_eq!(fused.len(), 1, "expected 1 fused entity");
         assert_eq!(fused[0].modalities.len(), 2);
     }
 
-    #[test]
-    fn test_conflict_resolution_higher_confidence_wins() {
+    #[tokio::test]
+    async fn test_conflict_resolution_higher_confidence_wins() {
         let engine = FusionEngine::new(FusionConfig::default());
         let now = Instant::now();
         let obs = vec![
             make_obs("cam1", Modality::Rgb, now, 0.6),
             make_obs("cam2", Modality::Rgb, now, 0.9),
         ];
-        let fused = engine.fuse(&obs);
+        let fused = engine.fuse(&obs).await;
         assert!(!fused.is_empty());
         assert!((fused[0].confidence - 0.9).abs() < 0.01,
             "confidence should be ~0.9 (the higher of the two)");
     }
 
-    #[test]
-    fn test_temporal_window_excludes_old_observations() {
+    #[tokio::test]
+    async fn test_temporal_window_excludes_old_observations() {
         let engine = FusionEngine::new(FusionConfig {
             temporal_window_ms: 100,
             min_confidence: 0.0,
@@ -306,7 +346,7 @@ mod tests {
             make_obs("cam", Modality::Rgb, now, 0.9),
             make_obs("old_mic", Modality::Audio, old, 0.8),
         ];
-        let fused = engine.fuse(&obs);
+        let fused = engine.fuse(&obs).await;
         assert!(!fused.is_empty());
         // Only Rgb modality should be in the recent cluster
         assert!(
@@ -315,8 +355,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_min_confidence_filter() {
+    #[tokio::test]
+    async fn test_min_confidence_filter() {
         let engine = FusionEngine::new(FusionConfig {
             temporal_window_ms: 1000,
             min_confidence: 0.7,
@@ -326,7 +366,7 @@ mod tests {
             make_obs("good_cam", Modality::Rgb, now, 0.9),
             make_obs("noisy_mic", Modality::Audio, now, 0.3),
         ];
-        let fused = engine.fuse(&obs);
+        let fused = engine.fuse(&obs).await;
         assert!(!fused.is_empty());
         assert!(
             fused.iter().all(|e| e.modalities == vec![Modality::Rgb]),
@@ -334,15 +374,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_fuse_empty_observations() {
+    #[tokio::test]
+    async fn test_fuse_empty_observations() {
         let engine = FusionEngine::new(FusionConfig::default());
-        let fused = engine.fuse(&[]);
+        let fused = engine.fuse(&[]).await;
         assert!(fused.is_empty());
     }
 
-    #[test]
-    fn test_all_below_min_confidence_returns_empty() {
+    #[tokio::test]
+    async fn test_all_below_min_confidence_returns_empty() {
         let engine = FusionEngine::new(FusionConfig {
             min_confidence: 0.8,
             ..Default::default()
@@ -352,20 +392,37 @@ mod tests {
             make_obs("noisy", Modality::Rgb, now, 0.2),
             make_obs("noisy2", Modality::Audio, now, 0.3),
         ];
-        let fused = engine.fuse(&obs);
+        let fused = engine.fuse(&obs).await;
         assert!(fused.is_empty());
     }
 
-    #[test]
-    fn test_fused_entity_contains_observation_ids() {
+    #[tokio::test]
+    async fn test_fused_entity_contains_observation_ids() {
         let engine = FusionEngine::new(FusionConfig::default());
         let now = Instant::now();
         let obs = vec![
             make_obs("cam", Modality::Rgb, now, 0.9),
             make_obs("mic", Modality::Audio, now, 0.8),
         ];
-        let fused = engine.fuse(&obs);
+        let fused = engine.fuse(&obs).await;
         assert_eq!(fused.len(), 1);
         assert_eq!(fused[0].observation_ids.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_changes_behavior() {
+        let engine = FusionEngine::new(FusionConfig {
+            min_confidence: 0.0,
+            temporal_window_ms: 500,
+        });
+        let now = Instant::now();
+        let obs = vec![make_obs("noisy", Modality::Rgb, now, 0.3)];
+        // Initially passes
+        assert_eq!(engine.fuse(&obs).await.len(), 1);
+        // Tighten threshold and re-fuse
+        engine
+            .update_config(|c| c.min_confidence = 0.9)
+            .await;
+        assert!(engine.fuse(&obs).await.is_empty());
     }
 }

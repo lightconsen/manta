@@ -247,6 +247,18 @@ pub struct PerceptionConfig {
     /// Enable microphone as a perception source.
     #[serde(default)]
     pub enable_microphone: bool,
+    /// Persistence backend: `"none"` (default, in-memory only) or `"jsonl"`
+    /// (file-backed JSONL day files for cross-restart history).
+    #[serde(default = "default_persistence_backend")]
+    pub persistence_backend: String,
+    /// Root directory for the persistence backend. When `None`, falls back
+    /// to a sensible default (`{temp}/syscity-perception-jsonl`).
+    #[serde(default)]
+    pub persistence_dir: Option<String>,
+    /// Days of observation history to retain. `0` disables pruning.
+    /// The prune task runs every 6 hours.
+    #[serde(default = "default_persistence_retention_days")]
+    pub persistence_retention_days: u64,
 }
 
 fn default_scene_history() -> usize {
@@ -269,6 +281,14 @@ fn default_silence_threshold_db() -> f32 {
     -40.0
 }
 
+fn default_persistence_backend() -> String {
+    "none".to_string()
+}
+
+fn default_persistence_retention_days() -> u64 {
+    7
+}
+
 impl Default for PerceptionConfig {
     fn default() -> Self {
         Self {
@@ -280,6 +300,9 @@ impl Default for PerceptionConfig {
             audio_sample_rate: 16_000,
             silence_threshold_db: -40.0,
             enable_microphone: false,
+            persistence_backend: "none".to_string(),
+            persistence_dir: None,
+            persistence_retention_days: 7,
         }
     }
 }
@@ -1290,10 +1313,37 @@ async fn init_perception(
         return None;
     }
 
-    let reg = Arc::new(crate::perception::PerceptionRegistry::new(
-        crate::perception::AggregationStrategy::Latest,
-        config.aggregation_window_secs,
-    ));
+    // Build the persistence backend (defaults to NullObservationStore).
+    let store: Arc<dyn crate::perception::ObservationStore> = match config.persistence_backend.as_str() {
+        "jsonl" => {
+            let dir = config.persistence_dir.clone().map(std::path::PathBuf::from);
+            match crate::perception::build_store("jsonl", dir).await {
+                Ok(s) => {
+                    tracing::info!(
+                        "perception persistence: jsonl backend at {}",
+                        config
+                            .persistence_dir
+                            .clone()
+                            .unwrap_or_else(|| "<default temp dir>".into()),
+                    );
+                    s
+                }
+                Err(e) => {
+                    tracing::warn!("failed to open jsonl perception store: {}; falling back to none", e);
+                    Arc::new(crate::perception::NullObservationStore)
+                }
+            }
+        }
+        _ => Arc::new(crate::perception::NullObservationStore),
+    };
+
+    let reg = Arc::new(
+        crate::perception::PerceptionRegistry::new(
+            crate::perception::AggregationStrategy::Latest,
+            config.aggregation_window_secs,
+        )
+        .with_store(store.clone()),
+    );
 
     // Register computer adapter sources
     let computer_adapter = state.tools.computer_adapter.read().await.clone();
@@ -1369,6 +1419,29 @@ async fn init_perception(
             loop {
                 ticker.tick().await;
                 r.poll_all().await;
+            }
+        });
+        background_tasks.push(handle);
+    }
+
+    // Spawn periodic prune task for the persistent store.
+    if config.persistence_retention_days > 0
+        && config.persistence_backend != "none"
+    {
+        let store_clone = store.clone();
+        let retention_days = config.persistence_retention_days;
+        let handle = tokio::spawn(async move {
+            // Run every 6 hours.
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+            ticker.tick().await; // skip the immediate tick
+            loop {
+                ticker.tick().await;
+                let cutoff = std::time::SystemTime::now()
+                    - std::time::Duration::from_secs(retention_days * 86_400);
+                match store_clone.prune_older_than(cutoff).await {
+                    Ok(n) => tracing::debug!("perception store prune: ~{n} rows removed"),
+                    Err(e) => tracing::warn!("perception store prune failed: {e}"),
+                }
             }
         });
         background_tasks.push(handle);

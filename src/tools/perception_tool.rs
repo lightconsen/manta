@@ -114,7 +114,7 @@ impl Tool for PerceptionQueryTool {
         if enable_fusion {
             if let Some(engine) = &self.fusion_engine {
                 let observations = self.registry.all_observations().await;
-                let fused = engine.fuse(&observations);
+                let fused = engine.fuse(&observations).await;
                 output["fused_entities"] =
                     serde_json::to_value(&fused).unwrap_or(serde_json::Value::Null);
             }

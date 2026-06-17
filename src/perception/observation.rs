@@ -6,7 +6,7 @@
 //! streaming (observable device capability) sensors.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -52,12 +52,36 @@ pub struct Observation {
     pub source: String,
     /// Sensor modality.
     pub modality: Modality,
-    /// Wall-clock capture timestamp.
+    /// Wall-clock capture timestamp (process-relative; not portable across restarts).
     pub timestamp: Instant,
+    /// System time when the observation was created — durable across restarts.
+    /// Used by persistent stores to sort and prune by absolute date.
+    pub created_at: SystemTime,
     /// Confidence estimate in `[0.0, 1.0]`.  `1.0` = ground truth.
     pub confidence: f32,
     /// Payload — arbitrary structured data (screenshot dimensions, system metrics, etc.).
     pub data: serde_json::Value,
+}
+
+impl Observation {
+    /// Create an observation with `created_at = SystemTime::now()`.
+    pub fn new(
+        source: impl Into<String>,
+        modality: Modality,
+        timestamp: Instant,
+        confidence: f32,
+        data: serde_json::Value,
+    ) -> Self {
+        Self {
+            id: ObservationId::new(),
+            source: source.into(),
+            modality,
+            timestamp,
+            created_at: SystemTime::now(),
+            confidence,
+            data,
+        }
+    }
 }
 
 /// Reports whether a perception source is fully operational or degraded.
@@ -158,6 +182,7 @@ impl PerceptionSource for ScreenshotAdapter {
                     source: self.name().to_string(),
                     modality: Modality::Rgb,
                     timestamp: ts,
+                    created_at: SystemTime::now(),
                     confidence: 1.0,
                     data: serde_json::json!({
                         "width": ss.width,
@@ -207,6 +232,7 @@ impl PerceptionSource for SystemMonitorAdapter {
             source: self.name().to_string(),
             modality: Modality::System,
             timestamp: ts,
+            created_at: SystemTime::now(),
             confidence: 1.0,
             data: serde_json::to_value(&status).unwrap_or_default(),
         }]
@@ -273,6 +299,7 @@ impl PerceptionSource for DeviceSourceAdapter {
             source: self.name().to_string(),
             modality: self.modality,
             timestamp: Instant::now(),
+            created_at: SystemTime::now(),
             confidence: if result.success { 1.0 } else { 0.0 },
             data: result.output.unwrap_or(serde_json::Value::Null),
         }]
@@ -294,6 +321,7 @@ impl PerceptionSource for DeviceSourceAdapter {
                     source: format!("device:{}:{}", device_id, event.capability),
                     modality,
                     timestamp: Instant::now(),
+                    created_at: SystemTime::now(),
                     confidence: 1.0,
                     data: event.data,
                 };

@@ -106,6 +106,7 @@ mod tests {
             source: source.to_string(),
             modality,
             timestamp: ts,
+            created_at: std::time::SystemTime::now(),
             confidence: 1.0,
             data: serde_json::json!({}),
         }

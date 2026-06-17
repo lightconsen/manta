@@ -286,6 +286,7 @@ mod tests {
             source: source.to_string(),
             modality: Modality::System,
             timestamp: Instant::now(),
+            created_at: std::time::SystemTime::now(),
             confidence: 1.0,
             data: serde_json::json!({"value": 42}),
         }

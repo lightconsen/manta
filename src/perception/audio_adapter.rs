@@ -20,7 +20,7 @@
 //! ```
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -237,6 +237,7 @@ impl MicrophoneAdapter {
             source,
             modality: Modality::Audio,
             timestamp: segment.timestamp,
+            created_at: SystemTime::now(),
             confidence,
             data: serde_json::json!({
                 "duration_ms": segment.duration_ms,
