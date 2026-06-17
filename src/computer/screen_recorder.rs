@@ -523,6 +523,11 @@ impl ScreenRecorder {
         Some(pixel_diff(frames[1], frames[0]))
     }
 
+    /// Inject a synthetic frame into the buffer (for testing).
+    pub async fn inject_frame(&self, frame: VideoFrame) {
+        self.frame_buffer.lock().await.push_back(frame);
+    }
+
     /// Save the current frame buffer as an MP4 video using FFmpeg.
     async fn save_buffer_to_video(
         &self,

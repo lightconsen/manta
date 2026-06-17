@@ -57,7 +57,9 @@ pub use fs_watch::{FileChangeEvent, FileChangeKind, FileWatchResult, FileWatcher
 pub use network::{FirewallRule, NetworkInspector, PingResult, PortEntry, TcpConnectResult};
 pub use log_aggregator::{AlertAction, AlertEvent, LogAggregator, LogAlertRule, LogEntry, LogLevel, LogSource};
 pub use audio::{AudioCapture, AudioSegment, AudioSource, DetectedAudioEvent};
-pub use screen_recorder::{RecorderConfig, Rect as RecorderRect, ScreenRecorder, VideoFrame};
+pub use screen_recorder::{
+    resolve_or_download_ffmpeg, RecorderConfig, Rect as RecorderRect, ScreenRecorder, VideoFrame,
+};
 
 /// Unified error type for computer operations.
 #[derive(Debug, thiserror::Error)]
