@@ -243,6 +243,7 @@ impl SensitiveUiDetector {
             "sudo",
             "administrator",
             "uac",
+            "user account control",
             "elevation",
             "authenticate",
             "enter password to",

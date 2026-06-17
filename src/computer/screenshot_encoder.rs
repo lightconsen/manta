@@ -67,20 +67,43 @@ impl NetworkCondition {
     }
 
     /// Measure RTT to a host via a single ping (synchronous, short timeout).
+    ///
+    /// Uses platform-specific ping flags:
+    /// - Unix: `-c 1 -W 3`
+    /// - Windows: `-n 1 -w 3000` (timeout in milliseconds)
     fn measure_latency(host: &str) -> Option<f64> {
         let start = std::time::Instant::now();
-        let output = std::process::Command::new("ping")
-            .arg("-c")
-            .arg("1")
-            .arg("-W")
-            .arg("3")
-            .arg(host)
-            .output()
-            .ok()?;
-        if output.status.success() {
-            Some(start.elapsed().as_secs_f64() * 1000.0)
-        } else {
-            None
+        #[cfg(target_os = "windows")]
+        {
+            let output = std::process::Command::new("ping")
+                .arg("-n")
+                .arg("1")
+                .arg("-w")
+                .arg("3000")
+                .arg(host)
+                .output()
+                .ok()?;
+            if output.status.success() {
+                Some(start.elapsed().as_secs_f64() * 1000.0)
+            } else {
+                None
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let output = std::process::Command::new("ping")
+                .arg("-c")
+                .arg("1")
+                .arg("-W")
+                .arg("3")
+                .arg(host)
+                .output()
+                .ok()?;
+            if output.status.success() {
+                Some(start.elapsed().as_secs_f64() * 1000.0)
+            } else {
+                None
+            }
         }
     }
 
@@ -235,9 +258,14 @@ impl ScreenshotEncoder {
         }
     }
 
+    /// Check whether a command is available by running `<name> --version`.
+    ///
+    /// Uses `--version` directly instead of `which`/`where` for broad
+    /// cross-platform compatibility (convert, ffmpeg, and sips all
+    /// support `--version`).
     async fn has_cmd(name: &str) -> bool {
-        Command::new("which")
-            .arg(name)
+        Command::new(name)
+            .arg("--version")
             .output()
             .await
             .ok()
