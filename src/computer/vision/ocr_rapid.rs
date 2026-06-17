@@ -84,6 +84,19 @@ impl RapidOcr {
         })
     }
 
+    /// Auto-download all RapidOCR models and create an engine.
+    ///
+    /// Downloads from HuggingFace to `{cache_dir}/syscity/models/vision/`
+    /// on first call; reuses cached files on subsequent calls.
+    pub async fn new_auto() -> crate::Result<Self> {
+        let paths = super::resolve_or_download_vision_models().await?;
+        Self::new(
+            paths.det.to_str().unwrap(),
+            paths.rec.to_str().unwrap(),
+            paths.cls.as_ref().and_then(|p| p.to_str()),
+        )
+    }
+
     /// Set detection threshold (default 0.3).
     pub fn with_det_threshold(mut self, threshold: f32) -> Self {
         self.det_threshold = threshold;

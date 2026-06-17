@@ -23,8 +23,26 @@ use syscity::computer::vision::{ocr_rapid::RapidOcr, ui_onnx::OmniParserDetector
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-fn model_dir() -> PathBuf {
+fn cache_model_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("syscity")
+        .join("models")
+        .join("vision")
+}
+
+fn project_model_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models").join("vision")
+}
+
+fn model_dir() -> PathBuf {
+    // Prefer cache dir (auto-download location), fall back to project dir.
+    let cache = cache_model_dir();
+    if cache.join("det.onnx").exists() || cache.join("omniparser.onnx").exists() {
+        cache
+    } else {
+        project_model_dir()
+    }
 }
 
 fn has_ocr_models() -> bool {

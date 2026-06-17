@@ -60,6 +60,15 @@ impl OmniParserDetector {
         })
     }
 
+    /// Auto-download the OmniParser model and create a detector.
+    ///
+    /// Downloads from HuggingFace to `{cache_dir}/syscity/models/vision/`
+    /// on first call; reuses cached file on subsequent calls.
+    pub async fn new_auto() -> crate::Result<Self> {
+        let paths = super::resolve_or_download_vision_models().await?;
+        Self::new(paths.omniparser.to_str().unwrap())
+    }
+
     /// Set confidence thresholds.
     pub fn with_thresholds(mut self, icon: f32, text: f32) -> Self {
         self.icon_threshold = icon;
