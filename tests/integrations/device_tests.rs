@@ -117,7 +117,7 @@ async fn test_status_bus_full_lifecycle() {
     let config = DeviceConfig::default();
     let tool_registry = ToolRegistry::new();
 
-    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry)
+    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
         .await
         .expect("init should succeed")
         .expect("init should return Some");
@@ -149,7 +149,7 @@ async fn test_status_bus_reconnect_events() {
     let config = DeviceConfig::default();
     let tool_registry = ToolRegistry::new();
 
-    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry)
+    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
         .await
         .expect("init should succeed")
         .expect("init should return Some");
@@ -195,13 +195,12 @@ async fn test_init_devices_spawns_health_loop() {
         ..Default::default()
     };
     let tool_registry = ToolRegistry::new();
-    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry)
+    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
         .await
         .expect("init should succeed")
         .expect("init should return Some");
 
     assert!(init.health_check_handle.is_some());
-    // default hot_plug interval is 10 > 0, so hot_plug_handle should also be Some
     assert!(init.hot_plug_handle.is_some());
 
     if let Some(h) = init.health_check_handle {
@@ -230,7 +229,7 @@ async fn test_init_devices_no_handle_when_interval_zero() {
         ..Default::default()
     };
     let tool_registry = ToolRegistry::new();
-    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry)
+    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
         .await
         .expect("init should succeed")
         .expect("init should return Some");

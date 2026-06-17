@@ -679,3 +679,4 @@ mod mock_chat_tests;
 mod planner_tests;
 mod session_tests;
 mod tool_chat_tests;
+mod vision_tests;
