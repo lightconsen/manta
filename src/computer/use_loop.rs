@@ -228,16 +228,7 @@ impl ComputerUseLoop {
             // Check execution controller for pause / resume / step / cancel.
             if let Some(ref ctrl) = self.execution_controller {
                 if let Err(reason) = ctrl.check_and_wait().await {
-                    let final_screenshot = self
-                        .adapter
-                        .screenshot(self.config.screenshot_region)
-                        .await
-                        .unwrap_or_else(|_| Screenshot {
-                            base64: String::new(),
-                            width: 0,
-                            height: 0,
-                            timestamp: std::time::Instant::now(),
-                        });
+                    let final_screenshot = self.fallback_screenshot().await;
                     return Ok(LoopResult {
                         success: false,
                         steps_taken: step,
@@ -266,7 +257,7 @@ impl ComputerUseLoop {
 
             // Auto-escalation: too many consecutive failures.
             if consecutive_failures >= 5 {
-                let final_screenshot = self.adapter.screenshot(self.config.screenshot_region).await?;
+                let final_screenshot = self.fallback_screenshot().await;
                 return Ok(LoopResult {
                     success: false,
                     steps_taken: step,
@@ -280,8 +271,8 @@ impl ComputerUseLoop {
                 });
             }
 
-            // 1. Perceive — capture screenshot.
-            let screenshot = self.adapter.screenshot(self.config.screenshot_region).await?;
+            // 1. Perceive — capture screenshot (fallback on headless).
+            let screenshot = self.fallback_screenshot().await;
 
             // 2. Plan — ask the decision maker what to do.
             let state = LoopState {
@@ -436,7 +427,7 @@ impl ComputerUseLoop {
         }
 
         // Max steps reached.
-        let final_screenshot = self.adapter.screenshot(self.config.screenshot_region).await?;
+        let final_screenshot = self.fallback_screenshot().await;
         Ok(LoopResult {
             success: false,
             steps_taken: history.len(),
@@ -526,6 +517,20 @@ impl ComputerUseLoop {
             | DesktopAction::UnwatchFile { .. } => Ok(true),
             _ => Ok(true), // Other actions: assume success.
         }
+    }
+
+    /// Take a screenshot, falling back to an empty placeholder when the
+    /// display is not available (e.g. headless / CI).
+    async fn fallback_screenshot(&self) -> Screenshot {
+        self.adapter
+            .screenshot(self.config.screenshot_region)
+            .await
+            .unwrap_or_else(|_| Screenshot {
+                base64: String::new(),
+                width: 0,
+                height: 0,
+                timestamp: std::time::Instant::now(),
+            })
     }
 }
 
