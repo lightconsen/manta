@@ -32,9 +32,327 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+
+// ---------------------------------------------------------------------------
+// FFmpeg resolution & auto-download (used before any ffmpeg subprocess call)
+// ---------------------------------------------------------------------------
+
+/// Platform-specific cache path for the downloaded ffmpeg binary.
+fn ffmpeg_cache_path() -> PathBuf {
+    let base = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    let name = if cfg!(target_os = "windows") {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    base.join("syscity").join("ffmpeg").join(name)
+}
+
+/// Check whether `ffmpeg` is already on PATH and works.
+async fn check_ffmpeg_on_path() -> Option<PathBuf> {
+    tokio::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .await
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|_| PathBuf::from("ffmpeg"))
+}
+
+/// Resolve the ffmpeg binary: PATH → cache → auto-download.
+pub async fn resolve_or_download_ffmpeg() -> crate::computer::Result<PathBuf> {
+    // 1. Already on PATH
+    if let Some(path) = check_ffmpeg_on_path().await {
+        return Ok(path);
+    }
+    // 2. Already cached
+    let cache = ffmpeg_cache_path();
+    if cache.exists() {
+        let ok = tokio::process::Command::new(&cache)
+            .arg("-version")
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok {
+            return Ok(cache);
+        }
+    }
+    // 3. Download static build
+    info!(
+        "ffmpeg not found on PATH — downloading static build to {}",
+        cache.display()
+    );
+    if let Some(parent) = cache.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            crate::computer::ComputerError::Other(format!(
+                "Cannot create cache dir {}: {}",
+                parent.display(),
+                e
+            ))
+        })?;
+    }
+    download_ffmpeg(&cache).await?;
+    Ok(cache)
+}
+
+/// Download raw bytes from a URL (up to 120 s timeout).
+async fn download_bytes(url: &str) -> crate::computer::Result<Vec<u8>> {
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .user_agent("syscity/0.1")
+        .build()
+        .map_err(|e| {
+            crate::computer::ComputerError::Other(format!("HTTP client: {}", e))
+        })?
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| {
+            crate::computer::ComputerError::Other(format!(
+                "Download failed ({}): {}",
+                url, e
+            ))
+        })?;
+    if !response.status().is_success() {
+        return Err(crate::computer::ComputerError::Other(format!(
+            "Download returned HTTP {} for {}",
+            response.status(),
+            url
+        )));
+    }
+    response.bytes().await.map(|b| b.to_vec()).map_err(|e| {
+        crate::computer::ComputerError::Other(format!("Download body: {}", e))
+    })
+}
+
+/// Download a static ffmpeg binary for the current platform.
+#[cfg(target_os = "macos")]
+async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
+    use std::io::Read;
+    use zip::ZipArchive;
+
+    let url = "https://evermeet.cx/ffmpeg/get/ffmpeg/zip";
+    let data = download_bytes(url).await?;
+
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = ZipArchive::new(cursor).map_err(|e| {
+        crate::computer::ComputerError::Other(format!("Read zip: {}", e))
+    })?;
+
+    let mut extracted = false;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| {
+            crate::computer::ComputerError::Other(format!("Zip entry {}: {}", i, e))
+        })?;
+        if entry.name() == "ffmpeg" {
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf).map_err(|e| {
+                crate::computer::ComputerError::Other(format!("Read zip entry: {}", e))
+            })?;
+            std::fs::write(dest, &buf).map_err(|e| {
+                crate::computer::ComputerError::Other(format!(
+                    "Write {}: {}",
+                    dest.display(),
+                    e
+                ))
+            })?;
+            extracted = true;
+            break;
+        }
+    }
+    if !extracted {
+        return Err(crate::computer::ComputerError::Other(
+            "ffmpeg binary not found in zip archive".into(),
+        ));
+    }
+    set_executable(dest)?;
+    info!("Downloaded ffmpeg to {}", dest.display());
+    Ok(())
+}
+
+/// Download static ffmpeg for Linux (johnvansickle tar.xz).
+#[cfg(target_os = "linux")]
+async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
+    let url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz";
+    let data = download_bytes(url).await?;
+
+    let extract_dir = dest.parent().unwrap().join(".ffmpeg_extract");
+    if extract_dir.exists() {
+        std::fs::remove_dir_all(&extract_dir).ok();
+    }
+    std::fs::create_dir_all(&extract_dir).map_err(|e| {
+        crate::computer::ComputerError::Other(format!(
+            "Create {}: {}",
+            extract_dir.display(),
+            e
+        ))
+    })?;
+
+    // pipe tar data to `tar -xJf -` (xz support is standard on modern Linux)
+    let mut child = tokio::process::Command::new("tar")
+        .arg("-xJf")
+        .arg("-")
+        .arg("-C")
+        .arg(&extract_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| {
+            crate::computer::ComputerError::Other(format!("spawn tar: {}", e))
+        })?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(&data).await.map_err(|e| {
+            crate::computer::ComputerError::Other(format!("write to tar stdin: {}", e))
+        })?;
+    }
+    drop(stdin); // close stdin → tar starts processing
+
+    let status = child.wait().await.map_err(|e| {
+        crate::computer::ComputerError::Other(format!("wait tar: {}", e))
+    })?;
+    if !status.success() {
+        return Err(crate::computer::ComputerError::Other(
+            "tar extraction failed (is xz-utils installed?)".into(),
+        ));
+    }
+
+    // Find the ffmpeg binary inside the extracted directory tree
+    let found = find_file_recursively(&extract_dir, "ffmpeg").ok_or_else(|| {
+        crate::computer::ComputerError::Other(
+            "ffmpeg binary not found in extracted archive".into(),
+        )
+    })?;
+    set_executable(&found)?;
+    std::fs::rename(&found, dest).map_err(|e| {
+        crate::computer::ComputerError::Other(format!(
+            "move ffmpeg: {}",
+            e
+        ))
+    })?;
+    std::fs::remove_dir_all(&extract_dir).ok();
+    info!("Downloaded ffmpeg to {}", dest.display());
+    Ok(())
+}
+
+/// Download static ffmpeg for Windows (gyan.dev essentials zip).
+#[cfg(target_os = "windows")]
+async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
+    use std::io::Read;
+    use zip::ZipArchive;
+
+    let url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
+    let data = download_bytes(url).await?;
+
+    let extract_dir = dest.parent().unwrap().join(".ffmpeg_extract");
+    if extract_dir.exists() {
+        std::fs::remove_dir_all(&extract_dir).ok();
+    }
+    std::fs::create_dir_all(&extract_dir).map_err(|e| {
+        crate::computer::ComputerError::Other(format!(
+            "Create {}: {}",
+            extract_dir.display(),
+            e
+        ))
+    })?;
+
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = ZipArchive::new(cursor).map_err(|e| {
+        crate::computer::ComputerError::Other(format!("Read zip: {}", e))
+    })?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| {
+            crate::computer::ComputerError::Other(format!("Zip entry {}: {}", i, e))
+        })?;
+        let name = entry.name().to_string();
+        if entry.is_dir() {
+            std::fs::create_dir_all(extract_dir.join(&name)).ok();
+        } else {
+            let out = extract_dir.join(&name);
+            if let Some(p) = out.parent() {
+                std::fs::create_dir_all(p).ok();
+            }
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf).map_err(|e| {
+                crate::computer::ComputerError::Other(format!(
+                    "Read zip entry: {}",
+                    e
+                ))
+            })?;
+            std::fs::write(&out, &buf).map_err(|e| {
+                crate::computer::ComputerError::Other(format!(
+                    "Write {}: {}",
+                    out.display(),
+                    e
+                ))
+            })?;
+        }
+    }
+
+    // Find ffmpeg.exe in the extracted tree
+    let found =
+        find_file_recursively(&extract_dir, "ffmpeg.exe").ok_or_else(|| {
+            crate::computer::ComputerError::Other(
+                "ffmpeg.exe not found in extracted archive".into(),
+            )
+        })?;
+    std::fs::rename(&found, dest).map_err(|e| {
+        crate::computer::ComputerError::Other(format!("move ffmpeg.exe: {}", e))
+    })?;
+    std::fs::remove_dir_all(&extract_dir).ok();
+    info!("Downloaded ffmpeg to {}", dest.display());
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+async fn download_ffmpeg(_dest: &Path) -> crate::computer::Result<()> {
+    Err(crate::computer::ComputerError::Other(
+        "Automatic ffmpeg download not supported on this platform. \
+         Please install ffmpeg manually."
+            .into(),
+    ))
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path) -> crate::computer::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = std::fs::metadata(path).map_err(|e| {
+        crate::computer::ComputerError::Other(format!("stat {}: {}", path.display(), e))
+    })?;
+    let mut perms = meta.permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms).map_err(|e| {
+        crate::computer::ComputerError::Other(format!("chmod {}: {}", path.display(), e))
+    })
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &Path) -> crate::computer::Result<()> {
+    Ok(())
+}
+
+/// Recursively search for a file by name in a directory tree.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn find_file_recursively(dir: &Path, target: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_file_recursively(&path, target) {
+                return Some(found);
+            }
+        } else if path.file_name().and_then(|n| n.to_str()) == Some(target) {
+            return Some(path);
+        }
+    }
+    None
+}
 
 /// A single captured video frame.
 #[derive(Debug, Clone)]
@@ -114,13 +432,17 @@ impl ScreenRecorder {
             ));
         }
 
+        let ffmpeg_bin = resolve_or_download_ffmpeg().await?;
+
         self.running.store(true, Ordering::SeqCst);
         let running = self.running.clone();
         let buffer = self.frame_buffer.clone();
         let config = self.config;
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = run_ffmpeg_capture(config, buffer, running).await {
+            if let Err(e) =
+                run_ffmpeg_capture(config, buffer, running, ffmpeg_bin).await
+            {
                 warn!("Screen recorder capture loop exited: {}", e);
             }
         });
@@ -206,9 +528,87 @@ impl ScreenRecorder {
         &self,
         path: &Path,
     ) -> crate::computer::Result<()> {
-        // TODO: encode buffer frames into a video file.
-        // For now, this is a placeholder.
-        info!("Saving video to {} — not yet implemented", path.display());
+        // Drain all frames from the buffer
+        let frames: Vec<VideoFrame> = {
+            let mut buf = self.frame_buffer.lock().await;
+            buf.drain(..).collect()
+        };
+
+        if frames.is_empty() {
+            info!("No frames to save — buffer is empty");
+            return Ok(());
+        }
+
+        let ffmpeg_bin = resolve_or_download_ffmpeg().await?;
+        let width = frames[0].width;
+        let height = frames[0].height;
+        let fps = self.config.fps;
+        let total = frames.len();
+
+        // Spawn ffmpeg to encode raw RGBA frames into H.264 MP4.
+        let mut child = tokio::process::Command::new(&ffmpeg_bin)
+            .arg("-y")
+            .arg("-f").arg("rawvideo")
+            .arg("-pix_fmt").arg("rgba")
+            .arg("-s").arg(format!("{}x{}", width, height))
+            .arg("-r").arg(fps.to_string())
+            .arg("-i").arg("-") // read from stdin
+            .arg("-c:v").arg("libx264")
+            .arg("-pix_fmt").arg("yuv420p")
+            .arg("-preset").arg("fast")
+            .arg(path)
+            .stdin(Stdio::piped())
+            .stderr(Stdio::null())
+            .stdout(Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                crate::computer::ComputerError::Other(format!(
+                    "Failed to spawn ffmpeg for encoding: {}",
+                    e
+                ))
+            })?;
+
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            crate::computer::ComputerError::Other(
+                "Failed to open ffmpeg stdin".to_string(),
+            )
+        })?;
+
+        for frame in &frames {
+            stdin.write_all(&frame.data).await.map_err(|e| {
+                crate::computer::ComputerError::Other(format!(
+                    "Failed to write frame to ffmpeg: {}",
+                    e
+                ))
+            })?;
+        }
+
+        // Close stdin so ffmpeg knows the input is complete
+        drop(stdin);
+
+        let status = child.wait().await.map_err(|e| {
+            crate::computer::ComputerError::Other(format!(
+                "Failed to wait for ffmpeg: {}",
+                e
+            ))
+        })?;
+
+        if !status.success() {
+            warn!("ffmpeg encoding exited with status: {}", status);
+            return Err(crate::computer::ComputerError::Other(format!(
+                "ffmpeg encoding failed with status: {}",
+                status
+            )));
+        }
+
+        info!(
+            "Saved {} frames ({}x{}, {} fps) to {}",
+            total,
+            width,
+            height,
+            fps,
+            path.display()
+        );
         Ok(())
     }
 }
@@ -221,8 +621,9 @@ async fn run_ffmpeg_capture(
     config: RecorderConfig,
     buffer: Arc<Mutex<VecDeque<VideoFrame>>>,
     running: Arc<AtomicBool>,
+    ffmpeg_bin: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut cmd = build_ffmpeg_command(config)?;
+    let mut cmd = build_ffmpeg_command(config, &ffmpeg_bin)?;
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::null());
 
@@ -286,8 +687,9 @@ async fn run_ffmpeg_capture(
 
 fn build_ffmpeg_command(
     config: RecorderConfig,
+    ffmpeg_bin: &Path,
 ) -> Result<tokio::process::Command, Box<dyn std::error::Error + Send + Sync>> {
-    let mut cmd = tokio::process::Command::new("ffmpeg");
+    let mut cmd = tokio::process::Command::new(ffmpeg_bin);
     cmd.arg("-y"); // Overwrite output
 
     // Input format and device depend on platform.
@@ -531,5 +933,15 @@ mod tests {
         // Buffer should not exceed max_frames = fps * max_buffer_secs = 10.
         let buf = recorder.frame_buffer.lock().await;
         assert!(buf.len() <= 10, "buffer should be capped at max_frames");
+    }
+
+    #[tokio::test]
+    async fn test_save_buffer_to_video_empty() {
+        let recorder = ScreenRecorder::new(RecorderConfig::default()).unwrap();
+        // Empty buffer should not error
+        recorder
+            .save_buffer_to_video(Path::new("/tmp/empty_test.mp4"))
+            .await
+            .unwrap();
     }
 }
