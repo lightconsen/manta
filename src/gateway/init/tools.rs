@@ -63,12 +63,8 @@ pub async fn init_computer_adapter(
                 .clone()
                 .unwrap_or_else(|| std::env::var("USER").unwrap_or_else(|_| "user".to_string())),
             port: config.computer.remote_control.port,
-            protocol: match config.computer.remote_control.protocol.as_str() {
-                "vnc" => crate::computer::RemoteProtocol::Vnc { password: None },
-                "rdp" => crate::computer::RemoteProtocol::Rdp { password: None, domain: None },
-                _ => crate::computer::RemoteProtocol::Ssh {
-                    key_path: config.computer.remote_control.key_path.clone(),
-                },
+            protocol: crate::computer::RemoteProtocol::Ssh {
+                key_path: config.computer.remote_control.key_path.clone(),
             },
             display: config.computer.remote_control.display.clone(),
             ssh_extra_args: config.computer.remote_control.ssh_extra_args.clone(),

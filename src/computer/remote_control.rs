@@ -2,11 +2,7 @@
 //!
 //! This adapter implements [`ComputerAdapter`] for remote hosts, allowing the
 //! agent to run the same `ComputerUseLoop` against a machine across the
-//! network.  The primary transport is SSH (shell commands over `ssh`); VNC
-//! and RDP protocol variants are declared in [`RemoteProtocol`] but fall
-//! through to SSH commands for all operations.  A native VNC/RDP frame-buffer
-//! implementation would be a significant addition (requires external crates
-//! and protocol-level work) and is not currently planned.
+//! network via SSH (shell commands over `ssh`).
 //!
 //! # Usage
 //!
@@ -54,24 +50,6 @@ pub enum RemoteProtocol {
     Ssh {
         /// Path to private key (None = use agent / default keys).
         key_path: Option<String>,
-    },
-    /// VNC remote framebuffer (declared for future use).
-    ///
-    /// Falls through to SSH-based commands for all operations.
-    /// A native frame-buffer implementation is not currently planned.
-    Vnc {
-        /// VNC password (None = no auth).
-        password: Option<String>,
-    },
-    /// Microsoft Remote Desktop Protocol (declared for future use).
-    ///
-    /// Falls through to SSH-based commands for all operations.
-    /// A native RDP implementation is not currently planned.
-    Rdp {
-        /// RDP password (None = use NLA / smart card).
-        password: Option<String>,
-        /// Domain for NLA authentication.
-        domain: Option<String>,
     },
 }
 
