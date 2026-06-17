@@ -31,6 +31,9 @@ logs/
 # Test artifacts
 tts_*.aiff
 
+# ONNX model files
+/models/
+
 # Config (may contain secrets)
 config.yaml
 config.json
