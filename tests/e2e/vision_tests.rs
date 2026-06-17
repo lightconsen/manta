@@ -24,9 +24,9 @@ use syscity::computer::vision::{ocr_rapid::RapidOcr, ui_onnx::OmniParserDetector
 // ── Helpers ────────────────────────────────────────────────────────────
 
 fn cache_model_dir() -> PathBuf {
-    dirs::cache_dir()
+    dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("syscity")
+        .join(".syscity")
         .join("models")
         .join("vision")
 }

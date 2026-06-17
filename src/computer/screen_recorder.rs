@@ -40,15 +40,15 @@ use tracing::{info, warn};
 // FFmpeg resolution & auto-download (used before any ffmpeg subprocess call)
 // ---------------------------------------------------------------------------
 
-/// Platform-specific cache path for the downloaded ffmpeg binary.
+/// Platform-specific data path for the downloaded ffmpeg binary.
 fn ffmpeg_cache_path() -> PathBuf {
-    let base = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    let base = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     let name = if cfg!(target_os = "windows") {
         "ffmpeg.exe"
     } else {
         "ffmpeg"
     };
-    base.join("syscity").join("ffmpeg").join(name)
+    base.join(".syscity").join("ffmpeg").join(name)
 }
 
 /// Check whether `ffmpeg` is already on PATH and works.

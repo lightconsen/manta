@@ -1,14 +1,14 @@
-//! ONNX model auto-download — resolve vision models from cache or download.
+//! ONNX model auto-download — resolve vision models from disk or download.
 //!
 //! Follows the same pattern as `screen_recorder::resolve_or_download_ffmpeg`:
-//! 1. Check cache directory for each model
+//! 1. Check data directory for each model
 //! 2. Download missing models from HuggingFace
 //! 3. Return paths to all resolved model files
 //!
-//! Models are cached at `{cache_dir}/syscity/models/vision/`:
-//! - macOS:   `~/Library/Caches/syscity/models/vision/`
-//! - Linux:   `~/.cache/syscity/models/vision/`
-//! - Windows: `{LocalAppData}\syscity\models\vision\`
+//! Models are stored at `~/.syscity/models/vision/`:
+//! - macOS:   `~/.syscity/models/vision/`
+//! - Linux:   `~/.syscity/models/vision/`
+//! - Windows: `~\.syscity\models\vision\`
 
 use std::path::{Path, PathBuf};
 
@@ -25,34 +25,34 @@ pub struct VisionModelPaths {
     pub cls: Option<PathBuf>,
 }
 
-/// Cache directory for ONNX models: `{cache_dir}/syscity/models/vision/`.
-fn model_cache_dir() -> PathBuf {
-    let base = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
-    base.join("syscity").join("models").join("vision")
+/// Data directory for ONNX models: `~/.syscity/models/vision/`.
+fn model_data_dir() -> PathBuf {
+    let base = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    base.join(".syscity").join("models").join("vision")
 }
 
-/// Resolve ONNX vision models: check cache, download what's missing.
+/// Resolve ONNX vision models: check local storage, download what's missing.
 ///
 /// Returns paths to all required model files.  Models that are already
-/// cached are not re-downloaded.  Skips optional models (cls.onnx) that
+/// stored are not re-downloaded.  Skips optional models (cls.onnx) that
 /// are not found and cannot be downloaded.
 pub async fn resolve_or_download_vision_models() -> crate::computer::Result<VisionModelPaths> {
-    let cache = model_cache_dir();
+    let dir = model_data_dir();
 
-    // Ensure cache directory exists
-    tokio::fs::create_dir_all(&cache)
+    // Ensure data directory exists
+    tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| {
             crate::computer::ComputerError::Other(format!(
-                "Cannot create model cache dir {}: {}",
-                cache.display(),
+                "Cannot create model data dir {}: {}",
+                dir.display(),
                 e
             ))
         })?;
 
     // Resolve OmniParser
     let omniparser = resolve_single_model(
-        &cache,
+        &dir,
         "omniparser.onnx",
         "https://hf-mirror.com/onnx-community/OmniParser-icon_detect_640x640/resolve/main/onnx/model.onnx",
     )
@@ -60,7 +60,7 @@ pub async fn resolve_or_download_vision_models() -> crate::computer::Result<Visi
 
     // Resolve RapidOCR detection
     let det = resolve_single_model(
-        &cache,
+        &dir,
         "det.onnx",
         "https://hf-mirror.com/monkt/paddleocr-onnx/resolve/main/detection/v5/det.onnx",
     )
@@ -68,7 +68,7 @@ pub async fn resolve_or_download_vision_models() -> crate::computer::Result<Visi
 
     // Resolve RapidOCR recognition
     let rec = resolve_single_model(
-        &cache,
+        &dir,
         "rec.onnx",
         "https://hf-mirror.com/monkt/paddleocr-onnx/resolve/main/languages/english/rec.onnx",
     )
@@ -76,7 +76,7 @@ pub async fn resolve_or_download_vision_models() -> crate::computer::Result<Visi
 
     // Resolve optional cls model (best-effort)
     let cls = resolve_optional_model(
-        &cache,
+        &dir,
         "cls.onnx",
         "https://hf-mirror.com/monkt/paddleocr-onnx/resolve/main/languages/english/cls.onnx",
     )
@@ -90,21 +90,21 @@ pub async fn resolve_or_download_vision_models() -> crate::computer::Result<Visi
     })
 }
 
-/// Resolve a single required model: cache hit → return, miss → download.
+/// Resolve a single required model: already on disk → return, or download.
 async fn resolve_single_model(
-    cache_dir: &Path,
+    model_dir: &Path,
     filename: &str,
     url: &str,
 ) -> crate::computer::Result<PathBuf> {
-    let path = cache_dir.join(filename);
+    let path = model_dir.join(filename);
 
-    // Cache hit: already exists
+    // Already exists on disk
     if path.exists() {
-        tracing::debug!("ONNX model cached: {}", path.display());
+        tracing::debug!("ONNX model on disk: {}", path.display());
         return Ok(path);
     }
 
-    // Cache miss: download
+    // Not on disk: download
     tracing::info!(
         "Downloading ONNX model '{}' from {} (~{} MB)",
         filename,
@@ -136,11 +136,11 @@ async fn resolve_single_model(
 
 /// Resolve an optional model — returns `None` on failure instead of error.
 async fn resolve_optional_model(
-    cache_dir: &Path,
+    model_dir: &Path,
     filename: &str,
     url: &str,
 ) -> Option<PathBuf> {
-    match resolve_single_model(cache_dir, filename, url).await {
+    match resolve_single_model(model_dir, filename, url).await {
         Ok(path) => Some(path),
         Err(e) => {
             tracing::warn!(
@@ -203,10 +203,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_model_cache_dir_is_absolute() {
-        let dir = model_cache_dir();
-        assert!(dir.is_absolute(), "cache dir should be absolute: {:?}", dir);
-        assert!(dir.ends_with("syscity/models/vision"), "should end with syscity/models/vision: {:?}", dir);
+    fn test_model_data_dir_is_absolute() {
+        let dir = model_data_dir();
+        assert!(dir.is_absolute(), "data dir should be absolute: {:?}", dir);
+        assert!(dir.ends_with(".syscity/models/vision"), "should end with .syscity/models/vision: {:?}", dir);
     }
 
     #[test]
