@@ -170,7 +170,7 @@ impl RapidOcr {
         let prob_map = {
             let outputs = self
                 .det_model
-                .run(ort::inputs!["input" => input])
+                .run(ort::inputs!["x" => input])
                 .map_err(|e| SyscityError::Internal(format!("Detection inference failed: {}", e)))?;
 
             // DBNet outputs a probability map. The exact output name depends on the ONNX export;
@@ -342,7 +342,7 @@ impl RapidOcr {
 
         let outputs = self
             .rec_model
-            .run(ort::inputs!["input" => input])
+            .run(ort::inputs!["x" => input])
             .map_err(|e| SyscityError::Internal(format!("Recognition inference failed: {}", e)))?;
 
         let output_name = outputs

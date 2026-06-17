@@ -255,7 +255,7 @@ fn test_yolo_parse_transposed_layout() {
 
     let num_anchors = shape[2];
     let num_classes = shape[1] - 4;
-    let is_transposed = shape[1] > shape[2];
+    let is_transposed = shape[1] <= 85;
 
     // Detection 0: class 0 (button), high confidence
     data[0 * num_anchors + 0] = 320.0; // cx

@@ -8,13 +8,15 @@
 //!
 //! ```bash
 //! mkdir -p models/vision
+//! # RapidOCR models (English, from monkt/paddleocr-onnx)
 //! wget -O models/vision/det.onnx \
-//!     https://huggingface.co/RapidAI/RapidOCR/resolve/main/det.onnx
+//!     https://hf-mirror.com/monkt/paddleocr-onnx/resolve/main/detection/v5/det.onnx
 //! wget -O models/vision/rec.onnx \
-//!     https://huggingface.co/RapidAI/RapidOCR/resolve/main/rec.onnx
+//!     https://hf-mirror.com/monkt/paddleocr-onnx/resolve/main/languages/english/rec.onnx
+//! # OmniParser icon detection (ONNX export of YOLOv8)
 //! wget -O models/vision/omniparser.onnx \
-//!     https://huggingface.co/microsoft/OmniParser/resolve/main/omniparser.onnx
-//! cargo test --test e2e vision -- --include-ignored
+//!     https://hf-mirror.com/onnx-community/OmniParser-icon_detect_640x640/resolve/main/onnx/model.onnx
+//! cargo test --test e2e_test -- vision -- --include-ignored
 //! ```
 
 use base64::Engine;
@@ -148,7 +150,7 @@ async fn test_ocr_detect_small_region() {
     let mut ocr = load_ocr().expect("OCR models should be loadable");
     let screenshot = create_synthetic_ui_screenshot(640, 480);
     let result = ocr.detect_text(&screenshot).await;
-    assert!(result.is_ok(), "OCR should handle 640x480 UI screenshot");
+    assert!(result.is_ok(), "OCR should handle 640x480 UI screenshot: {:?}", result.err());
 }
 
 // ── E2E Tests: OmniParser ─────────────────────────────────────────────

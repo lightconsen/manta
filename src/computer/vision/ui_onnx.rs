@@ -10,7 +10,7 @@
 //! Model file required:
 //! - `omniparser.onnx` — element detection model
 //!
-//! Download from: https://huggingface.co/microsoft/OmniParser
+//! Download from: https://hf-mirror.com/onnx-community/OmniParser-icon_detect_640x640
 
 use super::{DetectedElement, Rect};
 use crate::computer::types::Screenshot;
@@ -171,23 +171,25 @@ impl OmniParserDetector {
         shape: &[usize],
     ) -> crate::Result<Vec<(usize, f32, f32, f32, f32, f32)>> {
         // Determine layout: (batch, features, anchors) vs (batch, anchors, features)
-        let (num_anchors, num_features) = if shape.len() == 3 {
-            if shape[1] > shape[2] {
-                // shape: [batch, features, anchors]
-                (shape[2], shape[1])
-            } else {
-                // shape: [batch, anchors, features]
-                (shape[1], shape[2])
-            }
-        } else {
+        // YOLO features dimension: 4 (bbox) + num_classes (typically 1-80).
+        // The features dimension is always ≤ 85; anchors is typically 8400.
+        if shape.len() != 3 {
             return Err(SyscityError::Internal(format!(
                 "Unexpected YOLO output shape: {:?}",
                 shape
             )));
+        }
+
+        let is_transposed = shape[1] <= 85; // small dim → features at dim 1
+        let (num_anchors, num_features) = if is_transposed {
+            // shape: [batch, features, anchors]
+            (shape[2], shape[1])
+        } else {
+            // shape: [batch, anchors, features]
+            (shape[1], shape[2])
         };
 
         let num_classes = num_features.saturating_sub(4); // 4 box coords + N classes
-        let is_transposed = shape[1] > shape[2]; // [batch, features, anchors]
 
         let mut detections = Vec::new();
 
