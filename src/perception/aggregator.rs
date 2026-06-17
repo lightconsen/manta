@@ -6,8 +6,45 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::perception::scene_graph::Entity;
-use crate::perception::Observation;
+use crate::perception::{Modality, Observation};
+
+/// Stable entity identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+pub struct EntityId(String);
+
+impl EntityId {
+    /// Create a new entity ID.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+}
+
+impl std::fmt::Display for EntityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A tracked entity in the perception layer.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Entity {
+    /// Stable identifier.
+    pub id: EntityId,
+    /// Human-readable label.
+    pub label: String,
+    /// Sensor modality.
+    pub modality: Modality,
+    /// First observed timestamp.
+    #[serde(skip)]
+    pub first_seen: Instant,
+    /// Most recent observation timestamp.
+    #[serde(skip)]
+    pub last_seen: Instant,
+    /// Current confidence in [0.0, 1.0].
+    pub confidence: f32,
+    /// Arbitrary properties extracted from observation data.
+    pub properties: std::collections::HashMap<String, serde_json::Value>,
+}
 
 /// Strategy for converting a window of observations into stable entities.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -29,10 +66,15 @@ impl Default for AggregationStrategy {
 }
 
 /// Sliding-window temporal aggregator.
+///
+/// Pruning uses [`Observation::timestamp`] rather than push time so that
+/// the window reflects *when observations actually occurred*, regardless
+/// of polling cadence or processing delay.
 pub struct TemporalAggregator {
     strategy: AggregationStrategy,
     window_size: Duration,
-    observations: VecDeque<(Instant, Observation)>,
+    /// Observations ordered by increasing timestamp (maintained by push).
+    observations: VecDeque<Observation>,
 }
 
 impl TemporalAggregator {
@@ -47,15 +89,19 @@ impl TemporalAggregator {
 
     /// Push a new observation into the sliding window.
     pub fn push(&mut self, obs: Observation) {
-        self.observations.push_back((Instant::now(), obs));
+        self.observations.push_back(obs);
         self.prune();
     }
 
-    /// Remove expired observations from the window.
+    /// Remove observations whose timestamp falls outside the window.
+    ///
+    /// Uses the observation's own [`timestamp`](Observation::timestamp)
+    /// rather than push time, so the window correctly represents "when
+    /// the observation occurred" rather than "when it was ingested".
     pub fn prune(&mut self) {
         let cutoff = Instant::now() - self.window_size;
         while let Some(front) = self.observations.front() {
-            if front.0 < cutoff {
+            if front.timestamp < cutoff {
                 self.observations.pop_front();
             } else {
                 break;
@@ -75,7 +121,7 @@ impl TemporalAggregator {
 
     /// Return all observations currently in the window.
     pub fn observations(&self) -> Vec<&Observation> {
-        self.observations.iter().map(|(_, obs)| obs).collect()
+        self.observations.iter().collect()
     }
 
     /// Return the number of observations in the current window.
@@ -94,13 +140,13 @@ impl TemporalAggregator {
         // Take the last observation per source name
         let mut latest: std::collections::HashMap<&str, &Observation> =
             std::collections::HashMap::new();
-        for (_, obs) in &self.observations {
+        for obs in &self.observations {
             latest.insert(obs.source.as_str(), obs);
         }
         latest
             .values()
             .map(|obs| Entity {
-                id: crate::perception::EntityId::new(obs.source.clone()),
+                id: EntityId::new(obs.source.clone()),
                 label: format!("{:?}", obs.modality),
                 modality: obs.modality,
                 first_seen: obs.timestamp,
@@ -111,8 +157,6 @@ impl TemporalAggregator {
                     m.insert("data".to_string(), obs.data.clone());
                     m
                 },
-                spatial: obs.spatial.clone(),
-                relationships: Vec::new(),
             })
             .collect()
     }
@@ -121,7 +165,7 @@ impl TemporalAggregator {
         let mut counts: std::collections::HashMap<&str, usize> =
             std::collections::HashMap::new();
         let total = self.observations.len();
-        for (_, obs) in &self.observations {
+        for obs in &self.observations {
             *counts.entry(obs.source.as_str()).or_insert(0) += 1;
         }
         let threshold = total / 2;
@@ -134,14 +178,14 @@ impl TemporalAggregator {
         self.observations
             .iter()
             .rev()
-            .filter(|(_, obs)| sources.contains(&obs.source.as_str()))
-            .fold(std::collections::HashMap::new(), |mut acc, (_, obs)| {
+            .filter(|obs| sources.contains(&obs.source.as_str()))
+            .fold(std::collections::HashMap::new(), |mut acc, obs| {
                 acc.entry(obs.source.as_str()).or_insert(obs);
                 acc
             })
             .into_values()
             .map(|obs| Entity {
-                id: crate::perception::EntityId::new(obs.source.clone()),
+                id: EntityId::new(obs.source.clone()),
                 label: format!("{:?}", obs.modality),
                 modality: obs.modality,
                 first_seen: obs.timestamp,
@@ -152,8 +196,6 @@ impl TemporalAggregator {
                     m.insert("data".to_string(), obs.data.clone());
                     m
                 },
-                spatial: obs.spatial.clone(),
-                relationships: Vec::new(),
             })
             .collect()
     }
@@ -161,7 +203,7 @@ impl TemporalAggregator {
     fn aggregate_count_threshold(&self, threshold: usize) -> Vec<Entity> {
         let mut counts: std::collections::HashMap<&str, usize> =
             std::collections::HashMap::new();
-        for (_, obs) in &self.observations {
+        for obs in &self.observations {
             *counts.entry(obs.source.as_str()).or_insert(0) += 1;
         }
         let sources: Vec<&str> = counts
@@ -173,14 +215,14 @@ impl TemporalAggregator {
         self.observations
             .iter()
             .rev()
-            .filter(|(_, obs)| sources.contains(&obs.source.as_str()))
-            .fold(std::collections::HashMap::new(), |mut acc, (_, obs)| {
+            .filter(|obs| sources.contains(&obs.source.as_str()))
+            .fold(std::collections::HashMap::new(), |mut acc, obs| {
                 acc.entry(obs.source.as_str()).or_insert(obs);
                 acc
             })
             .into_values()
             .map(|obs| Entity {
-                id: crate::perception::EntityId::new(obs.source.clone()),
+                id: EntityId::new(obs.source.clone()),
                 label: format!("{:?}", obs.modality),
                 modality: obs.modality,
                 first_seen: obs.timestamp,
@@ -191,8 +233,6 @@ impl TemporalAggregator {
                     m.insert("data".to_string(), obs.data.clone());
                     m
                 },
-                spatial: obs.spatial.clone(),
-                relationships: Vec::new(),
             })
             .collect()
     }
@@ -200,7 +240,7 @@ impl TemporalAggregator {
     fn aggregate_confidence_weighted(&self, threshold: f32) -> Vec<Entity> {
         let mut scores: std::collections::HashMap<&str, f32> =
             std::collections::HashMap::new();
-        for (_, obs) in &self.observations {
+        for obs in &self.observations {
             *scores.entry(obs.source.as_str()).or_insert(0.0) += obs.confidence;
         }
         let sources: Vec<&str> = scores
@@ -212,14 +252,14 @@ impl TemporalAggregator {
         self.observations
             .iter()
             .rev()
-            .filter(|(_, obs)| sources.contains(&obs.source.as_str()))
-            .fold(std::collections::HashMap::new(), |mut acc, (_, obs)| {
+            .filter(|obs| sources.contains(&obs.source.as_str()))
+            .fold(std::collections::HashMap::new(), |mut acc, obs| {
                 acc.entry(obs.source.as_str()).or_insert(obs);
                 acc
             })
             .into_values()
             .map(|obs| Entity {
-                id: crate::perception::EntityId::new(obs.source.clone()),
+                id: EntityId::new(obs.source.clone()),
                 label: format!("{:?}", obs.modality),
                 modality: obs.modality,
                 first_seen: obs.timestamp,
@@ -230,8 +270,6 @@ impl TemporalAggregator {
                     m.insert("data".to_string(), obs.data.clone());
                     m
                 },
-                spatial: obs.spatial.clone(),
-                relationships: Vec::new(),
             })
             .collect()
     }
@@ -240,7 +278,7 @@ impl TemporalAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::perception::{Modality, ObservationId, SpatialContext};
+    use crate::perception::{Modality, ObservationId};
 
     fn make_obs(source: &str) -> Observation {
         Observation {
@@ -249,7 +287,6 @@ mod tests {
             modality: Modality::System,
             timestamp: Instant::now(),
             confidence: 1.0,
-            spatial: None,
             data: serde_json::json!({"value": 42}),
         }
     }

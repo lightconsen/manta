@@ -50,7 +50,7 @@ async fn perception_registry_has_device_sources() {
     let sources = reg.list_sources().await;
     assert!(!sources.is_empty(), "Should have registered sources");
     assert!(
-        sources.contains(&"device_sensor".to_string()),
+        sources.contains(&"device:sensor-01:sensor.read_temperature".to_string()),
         "Device capabilities should be registered as perception sources: {:?}",
         sources,
     );
@@ -118,7 +118,7 @@ async fn perception_with_devices_and_tool_registered() {
     let perception_registry = gateway.perception_registry().expect("registry present");
     let sources = perception_registry.list_sources().await;
     assert!(
-        sources.contains(&"device_sensor".to_string()),
+        sources.contains(&"device:sensor-01:sensor.read_temperature".to_string()),
         "Device capabilities should be perception sources: {:?}",
         sources,
     );

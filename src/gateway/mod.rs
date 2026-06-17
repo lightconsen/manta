@@ -190,6 +190,9 @@ pub struct DeviceConfig {
     /// OS device bridge configuration.
     #[serde(default)]
     pub os_bridge: crate::device::os_bridge::OsBridgeConfig,
+    /// Control lane configuration (optional high-priority safety loop).
+    #[serde(default)]
+    pub control: crate::device::ControlConfig,
     /// Optional directory to scan for native plugin shared libraries
     /// (`.so`, `.dylib`, `.dll`) at startup.  Each plugin must export the
     /// `syscity_driver_*` C ABI functions.
@@ -210,6 +213,7 @@ impl Default for DeviceConfig {
             health_check: crate::device::HealthCheckConfig::default(),
             hot_plug: crate::device::HotPlugConfig::default(),
             os_bridge: crate::device::os_bridge::OsBridgeConfig::default(),
+            control: crate::device::ControlConfig::default(),
             #[cfg(feature = "native-plugins")]
             native_plugins_dir: None,
         }
@@ -231,6 +235,18 @@ pub struct PerceptionConfig {
     /// Aggregation window in seconds for temporal fusion.
     #[serde(default = "default_aggregation_window")]
     pub aggregation_window_secs: u64,
+    /// Audio input source name ("microphone" or "system_output").
+    #[serde(default = "default_audio_source")]
+    pub audio_source: String,
+    /// Microphone sample rate in Hz (default 16_000).
+    #[serde(default = "default_audio_sample_rate")]
+    pub audio_sample_rate: u32,
+    /// Silence threshold in dB for voice activity detection (default -40.0).
+    #[serde(default = "default_silence_threshold_db")]
+    pub silence_threshold_db: f32,
+    /// Enable microphone as a perception source.
+    #[serde(default)]
+    pub enable_microphone: bool,
 }
 
 fn default_scene_history() -> usize {
@@ -241,6 +257,18 @@ fn default_aggregation_window() -> u64 {
     5
 }
 
+fn default_audio_source() -> String {
+    "microphone".to_string()
+}
+
+fn default_audio_sample_rate() -> u32 {
+    16_000
+}
+
+fn default_silence_threshold_db() -> f32 {
+    -40.0
+}
+
 impl Default for PerceptionConfig {
     fn default() -> Self {
         Self {
@@ -248,6 +276,10 @@ impl Default for PerceptionConfig {
             poll_interval_secs: 0,
             scene_history: 1000,
             aggregation_window_secs: 5,
+            audio_source: "microphone".to_string(),
+            audio_sample_rate: 16_000,
+            silence_threshold_db: -40.0,
+            enable_microphone: false,
         }
     }
 }
@@ -1236,6 +1268,176 @@ pub struct Gateway {
     perception_registry: Option<Arc<crate::perception::PerceptionRegistry>>,
 }
 
+/// Initialize the perception fusion layer.
+///
+/// 1. Creates the [`PerceptionRegistry`] with the configured aggregation strategy.
+/// 2. Registers computer adapter sources (screenshot, system monitor).
+/// 3. Registers device capability sources (from the device subsystem).
+/// 4. Registers the microphone source (if enabled).
+/// 5. Registers the [`PerceptionQueryTool`] with [`FusionEngine`].
+/// 6. Spawns a background poll loop (if configured).
+/// 7. Stores the [`PerceptionInit`] on `state.perception_init`.
+///
+/// Returns `Some(Arc<PerceptionRegistry>)` when perception is enabled,
+/// `None` otherwise.
+async fn init_perception(
+    config: &PerceptionConfig,
+    state: &GatewayState,
+    background_tasks: &mut Vec<JoinHandle<()>>,
+    device_registry: Option<Arc<crate::device::registry::DeviceRegistry>>,
+) -> Option<Arc<crate::perception::PerceptionRegistry>> {
+    if !config.enabled {
+        return None;
+    }
+
+    let reg = Arc::new(crate::perception::PerceptionRegistry::new(
+        crate::perception::AggregationStrategy::Latest,
+        config.aggregation_window_secs,
+    ));
+
+    // Register computer adapter sources
+    let computer_adapter = state.tools.computer_adapter.read().await.clone();
+    if let Some(ref adapter) = computer_adapter {
+        reg.register_source(Arc::new(
+            crate::perception::ScreenshotAdapter::new(adapter.clone()),
+        ))
+        .await;
+
+        let monitor = Arc::new(tokio::sync::Mutex::new(
+            crate::computer::system::SystemMonitor::new(),
+        ));
+        reg.register_source(Arc::new(
+            crate::perception::SystemMonitorAdapter::new(monitor),
+        ))
+        .await;
+    }
+
+    // Register device capabilities as perception sources
+    if let Some(ref device_registry) = device_registry {
+        for device_id in device_registry.list().await {
+            if let Some(device) = device_registry.get(&device_id).await {
+                for cap in &device.capabilities {
+                    reg.register_source(Arc::new(
+                        crate::perception::DeviceSourceAdapter::new(
+                            device.id().to_string(),
+                            cap.clone(),
+                        ),
+                    ))
+                    .await;
+                }
+            }
+        }
+    }
+
+    // Register microphone as a perception source
+    if config.enable_microphone {
+        let audio_source = match config.audio_source.as_str() {
+            "system_output" => crate::computer::audio::AudioSource::SystemOutput,
+            _ => crate::computer::audio::AudioSource::Microphone,
+        };
+        let adapter_config = crate::perception::AudioAdapterConfig {
+            audio_source,
+            sample_rate: config.audio_sample_rate,
+            silence_threshold_db: config.silence_threshold_db,
+            channel_capacity: 256,
+            reprobe_interval_secs: 0,
+        };
+        reg.register_source(Arc::new(
+            crate::perception::MicrophoneAdapter::new(adapter_config),
+        ))
+        .await;
+        tracing::info!(
+            "Microphone perception source registered (source={}, rate={}Hz)",
+            config.audio_source,
+            config.audio_sample_rate,
+        );
+    }
+
+    // Register the perception query tool with fusion support
+    let tool = Arc::new(
+        crate::tools::perception_tool::PerceptionQueryTool::new(reg.clone())
+            .with_fusion(crate::perception::FusionConfig::default()),
+    );
+    state.tools.registry.register_dynamic(tool);
+
+    // Spawn background poll loop
+    if config.poll_interval_secs > 0 {
+        let r = reg.clone();
+        let interval = std::time::Duration::from_secs(config.poll_interval_secs);
+        let handle = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            loop {
+                ticker.tick().await;
+                r.poll_all().await;
+            }
+        });
+        background_tasks.push(handle);
+    }
+
+    // Store PerceptionInit on state (poll_handle is tracked via background_tasks)
+    *state.perception_init.write().await = Some(crate::gateway::state::PerceptionInit {
+        registry: reg.clone(),
+        poll_handle: None,
+    });
+
+    Some(reg)
+}
+
+/// Initialize the control lane (optional high-priority safety loop).
+///
+/// When [`DeviceConfig::control`] is enabled, this function:
+/// 1. Creates a [`ControlHandlerRegistry`].
+/// 2. Collects [`ControlHandler`]s from registered device drivers.
+/// 3. Spawns the control loop on the current runtime (or a dedicated
+///    single-threaded runtime if configured).
+/// 4. Stores a [`ControlInit`] on `state.control_init`.
+async fn init_control(
+    device_config: &crate::gateway::DeviceConfig,
+    state: &GatewayState,
+) {
+    if !device_config.control.enabled {
+        return;
+    }
+
+    // Get the device registry — need it for the control loop.
+    let registry = match state.device_init.read().await.as_ref() {
+        Some(di) => di.registry.clone(),
+        None => {
+            tracing::warn!("Control lane enabled but no device registry available");
+            return;
+        }
+    };
+
+    let handlers = crate::device::control::new_handler_registry();
+
+    // Collect control handlers from registered device drivers.
+    // Only drivers that implement `control_handler()` on DeviceDriver
+    // will contribute handlers.
+    // (Handlers are registered by driver name, then mapped to device IDs
+    //  at runtime by the control loop.)
+    // For now, the control loop only uses the registry for health checks;
+    // handler registration will be expanded in future iterations.
+
+    // Spawn the control loop on the current runtime.
+    let handle = crate::device::control::spawn_control_loop(
+        registry.clone(),
+        handlers.clone(),
+        device_config.control.clone(),
+    );
+
+    *state.control_init.write().await = Some(crate::gateway::state::ControlInit {
+        registry,
+        runtime: None,
+        handle: Some(handle),
+        handlers,
+    });
+
+    tracing::info!(
+        "Control lane initialized (interval: {}ms)",
+        device_config.control.loop_interval_ms,
+    );
+}
+
 /// Validate authentication configuration for ambiguity and conflicts.
 ///
 /// Fails fast when both `shared_token` and OAuth providers are configured
@@ -1354,6 +1556,8 @@ impl Gateway {
             start_time: Instant::now(),
             config_path: config_path.clone(),
             device_init: RwLock::new(None),
+            perception_init: RwLock::new(None),
+            control_init: RwLock::new(None),
             auth: AuthState {
                 manager: security_init.auth_manager.clone(),
                 pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
@@ -1601,6 +1805,7 @@ impl Gateway {
             &config.device,
             device_drivers,
             &state.tools.registry,
+            None,
         )
         .await?;
 
@@ -1611,6 +1816,7 @@ impl Gateway {
                 di.registry.clone(),
                 &config.device.os_bridge,
                 state.tools.registry.clone(),
+                None,
             ) {
                 di.os_bridge_handle = Some(handle);
             }
@@ -1624,72 +1830,18 @@ impl Gateway {
         let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> =
             state.device_init.read().await.as_ref().map(|di| di.registry.clone());
 
-        // Initialize perception fusion layer
+        // Initialize perception fusion layer (delegated to helper)
         let perception_registry: Option<Arc<crate::perception::PerceptionRegistry>> =
-            if config.perception.enabled {
-                let reg = Arc::new(crate::perception::PerceptionRegistry::new(
-                    crate::perception::AggregationStrategy::Latest,
-                    config.perception.aggregation_window_secs,
-                ));
+            init_perception(
+                &config.perception,
+                state.as_ref(),
+                &mut background_tasks,
+                device_registry.clone(),
+            )
+            .await;
 
-                // Register computer adapter sources
-                if let Some(ref adapter) = tools_init.computer_adapter {
-                    reg.register_source(Arc::new(
-                        crate::perception::ScreenshotAdapter::new(adapter.clone()),
-                    ))
-                    .await;
-
-                    let monitor = Arc::new(tokio::sync::Mutex::new(
-                        crate::computer::system::SystemMonitor::new(),
-                    ));
-                    reg.register_source(Arc::new(
-                        crate::perception::SystemMonitorAdapter::new(monitor),
-                    ))
-                    .await;
-                }
-
-                // Register device capabilities as perception sources
-                if let Some(ref device_registry) = device_registry {
-                    for device_id in device_registry.list().await {
-                        if let Some(device) = device_registry.get(&device_id).await {
-                            for cap in &device.capabilities {
-                                reg.register_source(Arc::new(
-                                    crate::perception::DeviceSourceAdapter::new(
-                                        device.id().to_string(),
-                                        cap.clone(),
-                                    ),
-                                ))
-                                .await;
-                            }
-                        }
-                    }
-                }
-
-                // Register the perception query tool
-                let tool = Arc::new(
-                    crate::tools::perception_tool::PerceptionQueryTool::new(reg.clone()),
-                );
-                state.tools.registry.register_dynamic(tool);
-
-                // Spawn background poll loop
-                if config.perception.poll_interval_secs > 0 {
-                    let r = reg.clone();
-                    let interval =
-                        std::time::Duration::from_secs(config.perception.poll_interval_secs);
-                    let handle = tokio::spawn(async move {
-                        let mut ticker = tokio::time::interval(interval);
-                        loop {
-                            ticker.tick().await;
-                            r.poll_all().await;
-                        }
-                    });
-                    background_tasks.push(handle);
-                }
-
-                Some(reg)
-            } else {
-                None
-            };
+        // Initialize control lane (optional, runs alongside perception)
+        init_control(&config.device, state.as_ref()).await;
 
         // Start message processing workers
         let inbound_handle = tokio::spawn(Self::process_inbound_entries(

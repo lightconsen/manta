@@ -3,6 +3,7 @@
 //! Each physical device type (motor, camera, sensor, etc.) implements
 //! [`DeviceDriver`] to provide probe, connect, and lifecycle management.
 
+use crate::device::control::ControlHandler;
 use crate::device::Device;
 use crate::error::Result;
 use serde_json::Value;
@@ -108,6 +109,18 @@ pub trait DeviceDriver: Send + Sync {
     ///
     /// Returns `None` by default. Override to return `Some(&self)`.
     fn as_lifecycle(&self) -> Option<&dyn DeviceLifecycle> {
+        None
+    }
+
+    /// Return an optional [`ControlHandler`] for the control lane.
+    ///
+    /// Drivers that implement fast-path safety or rule-based actions
+    /// (e.g. emergency stop, motion safety checks) can return a handler
+    /// that will be invoked by the control loop on each tick.
+    ///
+    /// Returns `None` by default.  Only meaningful when the control lane
+    /// is enabled.
+    fn control_handler(&self) -> Option<ControlHandler> {
         None
     }
 }

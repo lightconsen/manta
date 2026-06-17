@@ -9,21 +9,35 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::perception::PerceptionRegistry;
+use crate::perception::{FusionConfig, FusionEngine, PerceptionRegistry};
 use crate::tools::{Tool, ToolCapabilities, ToolContext, ToolExecutionResult};
 
 /// Tool that queries the perception fusion layer.
 ///
 /// Calling this tool triggers a poll of all registered perception sources,
 /// ingests observations into the scene graph, and returns matching entities.
+/// When [`FusionEngine`] is configured, results include cross-modal fused entities.
 pub struct PerceptionQueryTool {
     registry: Arc<PerceptionRegistry>,
+    fusion_engine: Option<FusionEngine>,
 }
 
 impl PerceptionQueryTool {
     /// Create a new perception query tool.
     pub fn new(registry: Arc<PerceptionRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            fusion_engine: None,
+        }
+    }
+
+    /// Enable cross-modal fusion with the given configuration.
+    ///
+    /// When set, the tool output will include `fused_entities` derived from
+    /// temporal and modality-based correlation of observations.
+    pub fn with_fusion(mut self, config: FusionConfig) -> Self {
+        self.fusion_engine = Some(FusionEngine::new(config));
+        self
     }
 }
 
@@ -66,6 +80,10 @@ impl Tool for PerceptionQueryTool {
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of entities to return"
+                },
+                "enable_fusion": {
+                    "type": "boolean",
+                    "description": "When true, run cross-modal fusion on observations and include fused_entities in output"
                 }
             }
         })
@@ -77,15 +95,30 @@ impl Tool for PerceptionQueryTool {
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let query = parse_query(&args);
+        let enable_fusion = args
+            .get("enable_fusion")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // Poll all sources and query
         self.registry.poll_all().await;
         let result = self.registry.query(&query).await;
 
-        let output = serde_json::json!({
+        let mut output = serde_json::json!({
             "entities": result.entities,
             "sources": self.registry.list_sources().await,
+            "source_statuses": self.registry.list_source_statuses().await,
         });
+
+        // Post-process through FusionEngine if enabled
+        if enable_fusion {
+            if let Some(engine) = &self.fusion_engine {
+                let observations = self.registry.all_observations().await;
+                let fused = engine.fuse(&observations);
+                output["fused_entities"] =
+                    serde_json::to_value(&fused).unwrap_or(serde_json::Value::Null);
+            }
+        }
 
         Ok(ToolExecutionResult::success(
             serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),

@@ -1,7 +1,7 @@
 //! Core perception types and the [`PerceptionSource`] trait.
 //!
 //! An [`Observation`] is a single datum from any sensor, carrying a timestamp,
-//! confidence, modality, and optional spatial context.  The [`PerceptionSource`]
+//! confidence, and modality.  The [`PerceptionSource`]
 //! trait abstracts over both poll-based (screenshot, system monitor) and
 //! streaming (observable device capability) sensors.
 
@@ -40,19 +40,10 @@ impl std::fmt::Display for ObservationId {
     }
 }
 
-/// Optional spatial context for an observation.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SpatialContext {
-    /// Pixel region, if available (e.g. screenshot sub-region).
-    pub region: Option<crate::computer::Rect>,
-    /// Human-readable location label, e.g. `"display-1"`, `"lab-bench-left"`.
-    pub location: Option<String>,
-}
-
 /// A single observation from any perception source.
 ///
-/// Observations carry enough metadata to be fused into a [`SceneGraph`] and
-/// filtered by [`PerceptionQuery`].
+/// Observations carry enough metadata to be fused and filtered by
+/// [`PerceptionQuery`].
 #[derive(Debug, Clone)]
 pub struct Observation {
     /// Unique identifier.
@@ -65,10 +56,37 @@ pub struct Observation {
     pub timestamp: Instant,
     /// Confidence estimate in `[0.0, 1.0]`.  `1.0` = ground truth.
     pub confidence: f32,
-    /// Optional spatial context.
-    pub spatial: Option<SpatialContext>,
     /// Payload — arbitrary structured data (screenshot dimensions, system metrics, etc.).
     pub data: serde_json::Value,
+}
+
+/// Reports whether a perception source is fully operational or degraded.
+///
+/// Allows the LLM to distinguish between "microphone is working but no
+/// sound detected" and "microphone hardware is unavailable".
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum SourceStatus {
+    /// Source is fully operational — hardware available, no errors.
+    Healthy,
+
+    /// Source is unavailable or degraded, with a human-readable reason.
+    Unavailable {
+        /// Description of why the source is unavailable.
+        message: String,
+    },
+}
+
+impl SourceStatus {
+    /// Returns `true` if the source is healthy.
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, Self::Healthy)
+    }
+}
+
+impl Default for SourceStatus {
+    fn default() -> Self {
+        Self::Healthy
+    }
 }
 
 /// Unified interface for any perception source.
@@ -83,6 +101,15 @@ pub trait PerceptionSource: Send + Sync {
 
     /// The modality this source produces.
     fn modality(&self) -> Modality;
+
+    /// Current operational status of this source.
+    ///
+    /// Returns [`SourceStatus::Healthy`] by default. Adapters that depend on
+    /// optional hardware (e.g. microphone) should override this to report
+    /// `Unavailable` when the hardware cannot be accessed.
+    fn status(&self) -> SourceStatus {
+        SourceStatus::Healthy
+    }
 
     /// Poll once for the latest observation(s).
     ///
@@ -132,7 +159,6 @@ impl PerceptionSource for ScreenshotAdapter {
                     modality: Modality::Rgb,
                     timestamp: ts,
                     confidence: 1.0,
-                    spatial: None,
                     data: serde_json::json!({
                         "width": ss.width,
                         "height": ss.height,
@@ -182,7 +208,6 @@ impl PerceptionSource for SystemMonitorAdapter {
             modality: Modality::System,
             timestamp: ts,
             confidence: 1.0,
-            spatial: None,
             data: serde_json::to_value(&status).unwrap_or_default(),
         }]
     }
@@ -192,45 +217,63 @@ impl PerceptionSource for SystemMonitorAdapter {
 ///
 /// If the capability implements [`ObservableCapability`], the adapter also
 /// provides a [`subscribe`] stream that maps [`DeviceEvent`]s to [`Observation`]s.
+///
+/// By default all capabilities are mapped to [`Modality::Device`]. Use
+/// [`with_modality`](DeviceSourceAdapter::with_modality) to specify a more
+/// specific modality based on the capability's sensor type.
 pub struct DeviceSourceAdapter {
+    source_name: String,
     device_id: String,
     capability: Arc<dyn Capability>,
+    modality: Modality,
 }
 
 impl DeviceSourceAdapter {
     /// Create a new device sensor perception source.
     ///
     /// The source name is `"device:{device_id}:{capability_name}"`.
+    /// Modality defaults to [`Modality::Device`]; override with
+    /// [`with_modality`](DeviceSourceAdapter::with_modality).
     pub fn new(device_id: impl Into<String>, capability: Arc<dyn Capability>) -> Self {
+        let device_id = device_id.into();
+        let source_name = format!("device:{}:{}", &device_id, capability.name());
         Self {
-            device_id: device_id.into(),
+            source_name,
+            device_id,
             capability,
+            modality: Modality::Device,
         }
+    }
+
+    /// Override the sensor modality for this adapter.
+    ///
+    /// Use this when the capability represents a specific sensor type
+    /// (e.g. `Modality::Rgb` for a camera, `Modality::Audio` for a
+    /// microphone device) rather than the generic `Modality::Device`.
+    pub fn with_modality(mut self, modality: Modality) -> Self {
+        self.modality = modality;
+        self
     }
 }
 
 #[async_trait]
 impl PerceptionSource for DeviceSourceAdapter {
     fn name(&self) -> &str {
-        // Lazy approximation; real name is stable across the struct's lifetime.
-        // We could store it in a field, but the trait only returns &str.
-        // This is computed once in observe() — for &str we keep a fixed pattern.
-        "device_sensor"
+        &self.source_name
     }
 
     fn modality(&self) -> Modality {
-        Modality::Device
+        self.modality
     }
 
     async fn observe(&self) -> Vec<Observation> {
         let result: CapabilityResult = self.capability.execute(serde_json::json!({})).await;
         vec![Observation {
             id: ObservationId::new(),
-            source: format!("device:{}:{}", self.device_id, self.capability.name()),
-            modality: Modality::Device,
+            source: self.name().to_string(),
+            modality: self.modality,
             timestamp: Instant::now(),
             confidence: if result.success { 1.0 } else { 0.0 },
-            spatial: None,
             data: result.output.unwrap_or(serde_json::Value::Null),
         }]
     }
@@ -239,6 +282,7 @@ impl PerceptionSource for DeviceSourceAdapter {
         let observable = self.capability.as_observable()?;
         let device_rx = observable.subscribe();
         let device_id = self.device_id.clone();
+        let modality = self.modality; // Copy for the 'static task
 
         // Bridge: map DeviceEvent → Observation into a fresh broadcast channel.
         let (tx, rx) = broadcast::channel(256);
@@ -248,10 +292,9 @@ impl PerceptionSource for DeviceSourceAdapter {
                 let obs = Observation {
                     id: ObservationId::new(),
                     source: format!("device:{}:{}", device_id, event.capability),
-                    modality: Modality::Device,
+                    modality,
                     timestamp: Instant::now(),
                     confidence: 1.0,
-                    spatial: None,
                     data: event.data,
                 };
                 if tx.send(obs).is_err() {
@@ -261,5 +304,44 @@ impl PerceptionSource for DeviceSourceAdapter {
         });
 
         Some(rx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::device::mock::MockCapability;
+
+    #[tokio::test]
+    async fn test_device_source_adapter_unique_names() {
+        let cap1 = Arc::new(MockCapability::new("temperature"));
+        let cap2 = Arc::new(MockCapability::new("pressure"));
+
+        let adapter1 = DeviceSourceAdapter::new("device-01", cap1);
+        let adapter2 = DeviceSourceAdapter::new("device-01", cap2);
+        let adapter3 = DeviceSourceAdapter::new("device-02", Arc::new(MockCapability::new("temperature")));
+
+        assert_eq!(adapter1.name(), "device:device-01:temperature");
+        assert_eq!(adapter2.name(), "device:device-01:pressure");
+        assert_eq!(adapter3.name(), "device:device-02:temperature");
+
+        // Verify all three names are distinct
+        let mut names = vec![
+            adapter1.name().to_string(),
+            adapter2.name().to_string(),
+            adapter3.name().to_string(),
+        ];
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_device_source_adapter_observe_uses_name() {
+        let cap = Arc::new(MockCapability::new("temp.sensor"));
+        let adapter = DeviceSourceAdapter::new("my-dev", cap);
+        let obs = adapter.observe().await;
+        assert!(!obs.is_empty());
+        assert_eq!(obs[0].source, adapter.name());
     }
 }

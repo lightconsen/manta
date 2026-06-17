@@ -21,6 +21,7 @@ use crate::device::registry::DeviceRegistry;
 use crate::device::DeviceDriver;
 use crate::device::DriverFactory;
 use crate::gateway::DeviceConfig;
+use crate::perception::{DeviceSourceAdapter, PerceptionRegistry};
 use crate::tools::device_tool::DeviceToolWrapper;
 use crate::tools::ToolRegistry;
 
@@ -53,6 +54,7 @@ pub async fn init_devices(
     config: &DeviceConfig,
     drivers: Vec<Arc<dyn DeviceDriver>>,
     tool_registry: &ToolRegistry,
+    perception_registry: Option<&PerceptionRegistry>,
 ) -> crate::Result<Option<DeviceInit>> {
     if !config.enabled || drivers.is_empty() {
         return Ok(None);
@@ -67,12 +69,21 @@ pub async fn init_devices(
     let present = device_registry.probe_all().await?;
     for driver_name in &present {
         let device = device_registry.connect(driver_name).await?;
+        let device_id = device.id().to_string();
 
         // Register capabilities as tools in ToolRegistry so the LLM can call them.
         // Use register_dynamic since we only have &ToolRegistry (Arc-friendly).
         for cap in &device.capabilities {
             let wrapper = DeviceToolWrapper::new(driver_name.clone(), cap.clone());
             tool_registry.register_dynamic(Arc::new(wrapper));
+
+            // Also register as a perception source if a registry is provided.
+            if let Some(per_reg) = perception_registry {
+                per_reg.register_source(Arc::new(
+                    DeviceSourceAdapter::new(device_id.clone(), cap.clone()),
+                ))
+                .await;
+            }
         }
     }
 
@@ -136,6 +147,7 @@ pub fn spawn_os_bridge_from_config(
     registry: Arc<DeviceRegistry>,
     os_bridge: &OsBridgeConfig,
     tool_registry: Arc<ToolRegistry>,
+    perception_registry: Option<Arc<PerceptionRegistry>>,
 ) -> Option<JoinHandle<()>> {
     if !os_bridge.enabled || os_bridge.matchers.is_empty() {
         return None;
@@ -151,6 +163,7 @@ pub fn spawn_os_bridge_from_config(
         registry,
         matchers,
         tool_registry,
+        perception_registry,
         build_driver,
     ))
 }
@@ -169,6 +182,7 @@ pub async fn reload_devices(
     factory: &DriverFactory,
     config: &DeviceConfig,
     tool_registry: &ToolRegistry,
+    perception_registry: Option<&PerceptionRegistry>,
 ) -> crate::Result<Option<DeviceInit>> {
     // 1. Disconnect all old devices
     old.registry.disconnect_all().await;
@@ -187,9 +201,14 @@ pub async fn reload_devices(
     // 3. Deregister all old device tools
     tool_registry.deregister_prefix("device_");
 
+    // 3b. Deregister old device perception sources
+    if let Some(per_reg) = perception_registry {
+        per_reg.deregister_prefix("device:").await;
+    }
+
     // 4. Re-run discovery and init
     let drivers = discover_drivers_from_config(factory, config);
-    init_devices(config, drivers, tool_registry).await
+    init_devices(config, drivers, tool_registry, perception_registry).await
 }
 
 #[cfg(test)]
@@ -227,7 +246,7 @@ mod tests {
             enabled: false,
             ..Default::default()
         };
-        let result = init_devices(&config, vec![], &ToolRegistry::new())
+        let result = init_devices(&config, vec![], &ToolRegistry::new(), None)
             .await
             .expect("init_devices should succeed when disabled");
         assert!(result.is_none());
@@ -246,6 +265,7 @@ mod tests {
             &config,
             vec![Arc::new(driver)],
             &tool_registry,
+            None,
         )
         .await
         .expect("init_devices should succeed")
@@ -267,7 +287,7 @@ mod tests {
     #[tokio::test]
     async fn test_init_devices_empty_drivers() {
         let config = DeviceConfig::default();
-        let result = init_devices(&config, vec![], &ToolRegistry::new())
+        let result = init_devices(&config, vec![], &ToolRegistry::new(), None)
             .await
             .expect("init_devices should succeed with no drivers");
         assert!(result.is_none());

@@ -27,6 +27,7 @@ use super::platform::create_os_monitor;
 use super::{MatcherEntry, OsDeviceAction, OsDeviceEvent};
 use crate::device::registry::DeviceRegistry;
 use crate::device::DeviceDriver;
+use crate::perception::{DeviceSourceAdapter, PerceptionRegistry};
 use crate::tools::device_tool::DeviceToolWrapper;
 use crate::tools::ToolRegistry;
 
@@ -48,6 +49,7 @@ pub fn spawn_os_bridge_loop(
     registry: Arc<DeviceRegistry>,
     matchers: Vec<MatcherEntry>,
     tool_registry: Arc<ToolRegistry>,
+    perception_registry: Option<Arc<PerceptionRegistry>>,
     build_driver: DriverBuilder,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -64,6 +66,7 @@ pub fn spawn_os_bridge_loop(
                         &registry,
                         &matchers,
                         &tool_registry,
+                        perception_registry.as_deref(),
                         &build_driver,
                         &mut devnode_map,
                         event,
@@ -87,29 +90,31 @@ async fn handle_os_event(
     registry: &DeviceRegistry,
     matchers: &[MatcherEntry],
     tool_registry: &ToolRegistry,
+    perception_registry: Option<&PerceptionRegistry>,
     build_driver: &DriverBuilder,
     devnode_map: &mut HashMap<String, (String, String)>,
     event: OsDeviceEvent,
 ) {
     match event.action {
         OsDeviceAction::Added => {
-            handle_added(registry, matchers, tool_registry, build_driver, devnode_map, event).await;
+            handle_added(registry, matchers, tool_registry, perception_registry, build_driver, devnode_map, event).await;
         }
         OsDeviceAction::Removed => {
-            handle_removed(registry, tool_registry, devnode_map, event).await;
+            handle_removed(registry, tool_registry, perception_registry, devnode_map, event).await;
         }
         OsDeviceAction::Changed => {
-            handle_changed(registry, matchers, tool_registry, build_driver, devnode_map, event)
+            handle_changed(registry, matchers, tool_registry, perception_registry, build_driver, devnode_map, event)
                 .await;
         }
     }
 }
 
-/// Handle a device Added event: match, build driver, probe, connect, register tools.
+/// Handle a device Added event: match, build driver, probe, connect, register tools and perception sources.
 async fn handle_added(
     registry: &DeviceRegistry,
     matchers: &[MatcherEntry],
     tool_registry: &ToolRegistry,
+    perception_registry: Option<&PerceptionRegistry>,
     build_driver: &DriverBuilder,
     devnode_map: &mut HashMap<String, (String, String)>,
     event: OsDeviceEvent,
@@ -165,10 +170,17 @@ async fn handle_added(
 
         let device_id = device.id().to_string();
 
-        // Register each capability as a tool
+        // Register each capability as a tool and (optionally) as a perception source
         for cap in &device.capabilities {
             let wrapper = DeviceToolWrapper::new(driver_name.clone(), cap.clone());
             tool_registry.register_dynamic(Arc::new(wrapper));
+
+            if let Some(per_reg) = perception_registry {
+                per_reg.register_source(Arc::new(
+                    DeviceSourceAdapter::new(device_id.clone(), cap.clone()),
+                ))
+                .await;
+            }
         }
 
         // Track the devnode → driver / device mapping
@@ -181,10 +193,11 @@ async fn handle_added(
     }
 }
 
-/// Handle a device Removed event: look up devnode, disconnect, deregister tools.
+/// Handle a device Removed event: look up devnode, disconnect, deregister tools and perception sources.
 async fn handle_removed(
     registry: &DeviceRegistry,
     tool_registry: &ToolRegistry,
+    perception_registry: Option<&PerceptionRegistry>,
     devnode_map: &mut HashMap<String, (String, String)>,
     event: OsDeviceEvent,
 ) {
@@ -202,8 +215,14 @@ async fn handle_removed(
     registry.disconnect(&device_id).await.ok();
 
     // Deregister all tools for this device
-    let prefix = format!("device_{}_", driver_name);
-    tool_registry.deregister_prefix(&prefix);
+    let tool_prefix = format!("device_{}_", driver_name);
+    tool_registry.deregister_prefix(&tool_prefix);
+
+    // Deregister perception sources for this device
+    let per_prefix = format!("device:{}:", device_id);
+    if let Some(per_reg) = perception_registry {
+        per_reg.deregister_prefix(&per_prefix).await;
+    }
 
     tracing::info!("OS bridge: auto-disconnected '{device_id}' (removed)");
 }
@@ -213,6 +232,7 @@ async fn handle_changed(
     registry: &DeviceRegistry,
     matchers: &[MatcherEntry],
     tool_registry: &ToolRegistry,
+    perception_registry: Option<&PerceptionRegistry>,
     build_driver: &DriverBuilder,
     devnode_map: &mut HashMap<String, (String, String)>,
     event: OsDeviceEvent,
@@ -220,7 +240,7 @@ async fn handle_changed(
     // If we don't know this devnode, treat it as a new addition
     if let Some(ref devnode) = event.devnode {
         if !devnode_map.contains_key(devnode) {
-            return handle_added(registry, matchers, tool_registry, build_driver, devnode_map, event)
+            return handle_added(registry, matchers, tool_registry, perception_registry, build_driver, devnode_map, event)
                 .await;
         }
     }
@@ -234,7 +254,7 @@ async fn handle_changed(
                 }
                 _ => {
                     tracing::info!("OS bridge: device '{driver_name}' gone after change, disconnecting");
-                    handle_removed(registry, tool_registry, devnode_map, event).await;
+                    handle_removed(registry, tool_registry, perception_registry, devnode_map, event).await;
                 }
             }
         }
@@ -289,6 +309,7 @@ mod tests {
             &registry,
             &matchers,
             &tool_registry,
+            None,
             &build_driver,
             &mut devnode_map,
             event,
@@ -332,6 +353,7 @@ mod tests {
             &registry,
             &matchers,
             &tool_registry,
+            None,
             &build_driver,
             &mut devnode_map,
             event,
@@ -362,6 +384,7 @@ mod tests {
             &registry,
             &[],
             &tool_registry,
+            None,
             &mock_driver_builder(),
             &mut devnode_map,
             event,
@@ -385,6 +408,7 @@ mod tests {
             &registry,
             &[],
             &tool_registry,
+            None,
             &mock_driver_builder(),
             &mut devnode_map,
             event,
@@ -407,6 +431,7 @@ mod tests {
             &registry,
             &[], // no matchers — should still run the "add" path but not match
             &tool_registry,
+            None,
             &mock_driver_builder(),
             &mut devnode_map,
             event,
@@ -435,6 +460,7 @@ mod tests {
             &registry,
             &[], // would trigger matcher if not skipped
             &tool_registry,
+            None,
             &mock_driver_builder(),
             &mut devnode_map,
             event,
@@ -457,6 +483,7 @@ mod tests {
             &registry,
             &[],
             &tool_registry,
+            None,
             &mock_driver_builder(),
             &mut devnode_map,
             event,

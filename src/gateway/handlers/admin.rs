@@ -165,44 +165,90 @@ pub async fn reload_all_handler(
             }
         }
 
-        let device_result = if let Some(old) = old_init {
-            let config = state.config.read().await;
-            crate::gateway::init::devices::reload_devices(
-                old,
-                &state.infra.driver_factory,
-                &config.device,
-                &state.tools.registry,
-            )
-            .await
-        } else {
-            // No previous init — run fresh init from config
-            let config = state.config.read().await;
-            let drivers =
-                crate::gateway::init::devices::discover_drivers_from_config(&state.infra.driver_factory, &config.device);
-            crate::gateway::init::devices::init_devices(
-                &config.device,
-                drivers,
-                &state.tools.registry,
-            )
-            .await
+        let device_result = {
+            // Get the perception registry from state (if initialized)
+            let per_init = state.perception_init.read().await;
+            let per_reg = per_init.as_ref().map(|pi| &*pi.registry);
+
+            if let Some(old) = old_init {
+                let config = state.config.read().await;
+                crate::gateway::init::devices::reload_devices(
+                    old,
+                    &state.infra.driver_factory,
+                    &config.device,
+                    &state.tools.registry,
+                    per_reg,
+                )
+                .await
+            } else {
+                // No previous init — run fresh init from config
+                let config = state.config.read().await;
+                let drivers =
+                    crate::gateway::init::devices::discover_drivers_from_config(&state.infra.driver_factory, &config.device);
+                crate::gateway::init::devices::init_devices(
+                    &config.device,
+                    drivers,
+                    &state.tools.registry,
+                    per_reg,
+                )
+                .await
+            }
         };
 
         match device_result {
             Ok(mut new_init) => {
                 // Spawn OS device bridge for the new device init
                 let config = state.config.read().await;
+                let per_init = state.perception_init.read().await;
+                let per_reg = per_init.as_ref().map(|pi| pi.registry.clone());
                 if let Some(ref mut di) = new_init {
                     if let Some(handle) = crate::gateway::init::devices::spawn_os_bridge_from_config(
                         &state.infra.driver_factory,
                         di.registry.clone(),
                         &config.device.os_bridge,
                         state.tools.registry.clone(),
+                        per_reg,
                     ) {
                         di.os_bridge_handle = Some(handle);
                     }
                 }
+                drop(per_init);
                 drop(config);
                 *state.device_init.write().await = new_init;
+
+                // Abort old control lane handle before re-initializing
+                let old_control = state.control_init.write().await.take();
+                if let Some(old) = old_control {
+                    if let Some(h) = old.handle {
+                        h.abort();
+                    }
+                }
+
+                // Re-init control lane from (possibly updated) config
+                let config = state.config.read().await;
+                // Re-borrow device_init to get the fresh registry
+                let registry = state.device_init.read().await.as_ref()
+                    .map(|di| di.registry.clone());
+                drop(config);
+
+                if let Some(reg) = registry {
+                    let handlers = crate::device::control::new_handler_registry();
+                    let handle = crate::device::control::spawn_control_loop(
+                        reg.clone(),
+                        handlers.clone(),
+                        state.config.read().await.device.control.clone(),
+                    );
+                    *state.control_init.write().await = Some(
+                        crate::gateway::state::ControlInit {
+                            registry: reg,
+                            runtime: None,
+                            handle: Some(handle),
+                            handlers,
+                        },
+                    );
+                    info!("Control lane re-initialized after device reload");
+                }
+
                 result["device"] = serde_json::json!({ "reloaded": true });
                 info!("Device subsystem reloaded from configuration");
             }

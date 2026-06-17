@@ -36,6 +36,7 @@ pub mod hid;
 pub mod gpio;
 #[cfg(feature = "native-plugins")]
 pub mod native_plugin;
+pub mod control;
 pub mod health;
 pub mod hotplug;
 pub mod mock;
@@ -47,6 +48,7 @@ pub mod status_bus;
 pub use capability::{Capability, CapabilityResult, DeviceEvent, ObservableCapability};
 pub use driver::{DeviceDriver, DeviceLifecycle};
 pub use driver_factory::{DriverConstructor, DriverFactory};
+pub use control::{ControlConfig, ControlHandler, ControlHandlerRegistry};
 pub use health::HealthCheckConfig;
 pub use hotplug::HotPlugConfig;
 pub use mock::{MockCapability, MockDeviceDriver, MockObservableCapability};

@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 
-use crate::perception::{Modality, Observation, ObservationId, PerceptionSource};
+use crate::perception::{Modality, Observation, ObservationId, PerceptionSource, SourceStatus};
 
 /// A configurable mock perception source for testing.
 pub struct MockPerceptionSource {
@@ -15,18 +15,21 @@ pub struct MockPerceptionSource {
     modality: Modality,
     data: serde_json::Value,
     confidence: f32,
+    status: SourceStatus,
 }
 
 impl MockPerceptionSource {
     /// Create a new mock source with the given name.
     ///
-    /// Defaults: `Modality::Other`, data = `json!(null)`, confidence = `1.0`.
+    /// Defaults: `Modality::Other`, data = `json!(null)`, confidence = `1.0`,
+    /// status = `Healthy`.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             modality: Modality::Other,
             data: serde_json::Value::Null,
             confidence: 1.0,
+            status: SourceStatus::Healthy,
         }
     }
 
@@ -47,6 +50,12 @@ impl MockPerceptionSource {
         self.confidence = confidence;
         self
     }
+
+    /// Set the operational status of this mock source.
+    pub fn with_status(mut self, status: SourceStatus) -> Self {
+        self.status = status;
+        self
+    }
 }
 
 #[async_trait]
@@ -59,6 +68,10 @@ impl PerceptionSource for MockPerceptionSource {
         self.modality
     }
 
+    fn status(&self) -> SourceStatus {
+        self.status.clone()
+    }
+
     async fn observe(&self) -> Vec<Observation> {
         vec![Observation {
             id: ObservationId::new(),
@@ -66,7 +79,6 @@ impl PerceptionSource for MockPerceptionSource {
             modality: self.modality,
             timestamp: Instant::now(),
             confidence: self.confidence,
-            spatial: None,
             data: self.data.clone(),
         }]
     }

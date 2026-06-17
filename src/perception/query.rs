@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::perception::scene_graph::Entity;
+use crate::perception::aggregator::Entity;
 use crate::perception::{Modality, Observation};
 
 /// Filter for querying the perception registry and scene graph.
@@ -98,7 +98,7 @@ pub struct QueryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::perception::{ObservationId, SpatialContext};
+    use crate::perception::ObservationId;
 
     fn make_obs(source: &str, modality: Modality, ts: Instant) -> Observation {
         Observation {
@@ -107,7 +107,6 @@ mod tests {
             modality,
             timestamp: ts,
             confidence: 1.0,
-            spatial: None,
             data: serde_json::json!({}),
         }
     }

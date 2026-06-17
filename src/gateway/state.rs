@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::task::JoinHandle;
 
 use crate::acp::AcpControlPlane;
 use crate::agent::{
@@ -22,6 +23,7 @@ use crate::agent::{
     GroupSessionManager, RouteResolver, SessionFileManager, SessionManager, TranscriptStore,
 };
 use crate::adapters::Storage;
+use crate::device::control::ControlHandlerRegistry;
 use crate::device::DriverFactory;
 use crate::gateway::init::devices::DeviceInit;
 use crate::gateway::AgentHandle;
@@ -174,6 +176,28 @@ pub struct SchedulerState {
     pub cron_scheduler: LateInit<Arc<Mutex<CronScheduler>>>,
 }
 
+/// Perception subsystem init state (registry, background poll handle).
+/// Replaced on hot-reload via the admin API.
+pub struct PerceptionInit {
+    /// The perception registry managing sources and scene graph.
+    pub registry: Arc<crate::perception::PerceptionRegistry>,
+    /// Background poll loop handle, if one was spawned.
+    pub poll_handle: Option<JoinHandle<()>>,
+}
+
+/// Control lane init state (registry, runtime, loop handle).
+/// Replaced on hot-reload via the admin API.
+pub struct ControlInit {
+    /// The device registry shared with the control lane.
+    pub registry: Arc<crate::device::registry::DeviceRegistry>,
+    /// The dedicated control runtime (kept alive for the loop).
+    pub runtime: Option<tokio::runtime::Runtime>,
+    /// The control loop join handle.
+    pub handle: Option<tokio::task::JoinHandle<()>>,
+    /// Registered control handlers (shared with driver connections).
+    pub handlers: ControlHandlerRegistry,
+}
+
 /// Shared gateway state grouped by domain.
 pub struct GatewayState {
     /// Configuration
@@ -185,6 +209,12 @@ pub struct GatewayState {
     /// Device subsystem init state (registry, health check handle).
     /// Replaced on hot-reload to re-probe/re-connect devices.
     pub device_init: RwLock<Option<DeviceInit>>,
+    /// Perception fusion layer init state (registry, poll loop handle).
+    /// Replaced on hot-reload via the admin API.
+    pub perception_init: RwLock<Option<PerceptionInit>>,
+    /// Control lane init state (runtime, handlers, loop handle).
+    /// Replaced on hot-reload via the admin API.
+    pub control_init: RwLock<Option<ControlInit>>,
 
     pub auth: AuthState,
     pub agents: AgentState,

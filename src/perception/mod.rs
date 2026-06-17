@@ -2,8 +2,8 @@
 //!
 //! Unifies fragmented perception sources (screenshots, system monitoring, device
 //! sensors) under a common data model and query interface.  The [`PerceptionRegistry`]
-//! manages multiple [`PerceptionSource`]s, ingests observations into a [`SceneGraph`],
-//! and exposes them via [`PerceptionQuery`].
+//! manages multiple [`PerceptionSource`]s, ingests observations into a
+//! [`TemporalAggregator`], and exposes them via [`PerceptionQuery`].
 //!
 //! # Architecture
 //!
@@ -17,21 +17,23 @@
 //! ```
 
 mod aggregator;
+pub mod audio_adapter;
+mod fusion;
 pub mod mock;
 mod observation;
 mod query;
 mod registry;
-mod scene_graph;
 
-pub use aggregator::{AggregationStrategy, TemporalAggregator};
+pub use aggregator::{AggregationStrategy, Entity, EntityId, TemporalAggregator};
+pub use audio_adapter::{AudioAdapterConfig, MicrophoneAdapter};
+pub use fusion::{FusedEntity, FusionConfig, FusionEngine};
 pub use mock::MockPerceptionSource;
 pub use observation::{
     DeviceSourceAdapter, Observation, ObservationId, PerceptionSource, ScreenshotAdapter,
-    SpatialContext, SystemMonitorAdapter,
+    SourceStatus, SystemMonitorAdapter,
 };
 pub use query::{PerceptionQuery, QueryResult};
 pub use registry::PerceptionRegistry;
-pub use scene_graph::{Entity, EntityId, Relationship, SceneGraph};
 pub use crate::tools::perception_tool::PerceptionQueryTool;
 
 /// Sensor modality classification.
