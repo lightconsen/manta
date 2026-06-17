@@ -31,6 +31,8 @@ pub struct DetectedElement {
 }
 
 #[cfg(feature = "vision")]
+pub mod model_download;
+#[cfg(feature = "vision")]
 pub mod ocr_rapid;
 #[cfg(feature = "vision")]
 pub mod ui_onnx;
@@ -42,4 +44,7 @@ mod preprocess;
 pub use preprocess::{
     decode_screenshot, image_to_nchw_tensor, normalize_image, resize_with_pad,
 };
+
+#[cfg(feature = "vision")]
+pub use model_download::{resolve_or_download_vision_models, VisionModelPaths};
 
