@@ -11,11 +11,44 @@
 //! in the same process.
 
 use std::sync::Arc;
+use std::time::Instant;
 
+use async_trait::async_trait;
+use syscity::computer::{
+    ActionResult, ComputerAdapter, DesktopAction, Rect, Screenshot, UiElement, WaitCondition,
+};
 use syscity::device::mock::{MockCapability, MockDeviceDriver};
 use syscity::device::{Capability, DeviceDriver};
 
 use super::*;
+
+/// Stub ComputerAdapter that returns a controlled fake Screenshot.
+struct StubScreenshotComputer {
+    screenshot_value: Screenshot,
+}
+
+#[async_trait]
+impl ComputerAdapter for StubScreenshotComputer {
+    async fn screenshot(&self, _region: Option<Rect>) -> syscity::computer::Result<Screenshot> {
+        Ok(self.screenshot_value.clone())
+    }
+
+    async fn read_ui_tree(&self, _app: Option<&str>) -> syscity::computer::Result<Vec<UiElement>> {
+        Ok(vec![])
+    }
+
+    async fn execute(&self, _action: DesktopAction) -> syscity::computer::Result<ActionResult> {
+        Ok(ActionResult::success("stub"))
+    }
+
+    async fn wait_for(
+        &self,
+        _condition: WaitCondition,
+        _timeout: Duration,
+    ) -> syscity::computer::Result<bool> {
+        Ok(true)
+    }
+}
 
 /// Create a config with perception enabled and in-memory storage to
 /// avoid SQLite file-lock conflicts between sequential tests.
@@ -50,7 +83,7 @@ async fn perception_registry_has_device_sources() {
     let sources = reg.list_sources().await;
     assert!(!sources.is_empty(), "Should have registered sources");
     assert!(
-        sources.contains(&"device:sensor-01:sensor.read_temperature".to_string()),
+        sources.contains(&"device:dev-sensor-01:sensor.read_temperature".to_string()),
         "Device capabilities should be registered as perception sources: {:?}",
         sources,
     );
@@ -118,7 +151,7 @@ async fn perception_with_devices_and_tool_registered() {
     let perception_registry = gateway.perception_registry().expect("registry present");
     let sources = perception_registry.list_sources().await;
     assert!(
-        sources.contains(&"device:sensor-01:sensor.read_temperature".to_string()),
+        sources.contains(&"device:dev-sensor-01:sensor.read_temperature".to_string()),
         "Device capabilities should be perception sources: {:?}",
         sources,
     );
@@ -133,4 +166,71 @@ async fn perception_with_devices_and_tool_registered() {
         tool_names.contains(&"device_sensor-01_sensor_read_temperature".to_string()),
         "Device tool should also be registered"
     );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn perception_computer_sources_list_and_query() {
+    // Uses PerceptionRegistry directly (not via Gateway) to avoid the
+    // need for a display server / computer adapter in the test environment.
+    let reg = Arc::new(syscity::perception::PerceptionRegistry::new(
+        syscity::perception::AggregationStrategy::Latest,
+        10,
+    ));
+
+    // Register ScreenshotAdapter with a stub ComputerAdapter (no display
+    // server needed — returns a controlled fake Screenshot).
+    let stub = Arc::new(StubScreenshotComputer {
+        screenshot_value: Screenshot {
+            base64: "dGVzdA==".to_string(),
+            width: 1920,
+            height: 1080,
+            timestamp: Instant::now(),
+        },
+    });
+    reg.register_source(Arc::new(
+        syscity::perception::ScreenshotAdapter::new(stub),
+    ))
+    .await;
+
+    // Register SystemMonitorAdapter (always works cross-platform).
+    let monitor = Arc::new(tokio::sync::Mutex::new(
+        syscity::computer::system::SystemMonitor::new(),
+    ));
+    reg.register_source(Arc::new(
+        syscity::perception::SystemMonitorAdapter::new(monitor),
+    ))
+    .await;
+
+    // Verify list_sources includes both computer-backed sources.
+    let sources = reg.list_sources().await;
+    assert!(
+        sources.contains(&"screenshot".to_string()),
+        "screenshot source missing: {sources:?}"
+    );
+    assert!(
+        sources.contains(&"system_monitor".to_string()),
+        "system_monitor source missing: {sources:?}"
+    );
+
+    // Poll and query — both entities should appear.
+    reg.poll_all().await;
+    let result = reg
+        .query(&syscity::perception::PerceptionQuery::default())
+        .await;
+    let ids: Vec<String> = result.entities.iter().map(|e| e.id.to_string()).collect();
+    assert!(
+        ids.contains(&"screenshot".to_string()),
+        "screenshot entity missing: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"system_monitor".to_string()),
+        "system_monitor entity missing: {ids:?}"
+    );
+
+    // Filter by modality: System → only system_monitor.
+    let q = syscity::perception::PerceptionQuery { modalities: Some(vec![syscity::perception::Modality::System]), ..Default::default() };
+    let result = reg.query(&q).await;
+    assert_eq!(result.entities.len(), 1, "expected 1 System entity");
+    assert_eq!(result.entities[0].id.to_string(), "system_monitor");
 }

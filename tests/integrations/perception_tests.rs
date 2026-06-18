@@ -4,18 +4,23 @@
 //! poll observations, query entities by modality/source, and exercise the
 //! PerceptionQueryTool.
 
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
-
 use async_trait::async_trait;
+use syscity::computer::{
+    ActionResult, ComputerAdapter, DesktopAction, HeadlessComputerAdapter, Rect, Screenshot,
+    UiElement, WaitCondition,
+};
+use syscity::computer::system::SystemMonitor;
 use syscity::perception::mock::MockPerceptionSource;
 use syscity::perception::{
     AdapterConfig, AdapterError, AggregationStrategy, AgentPerceptionAdapter, Event, Focus,
     Modality, Observation, ObservationId, PerceptionContext, PerceptionContextConfig,
     PerceptionQuery, PerceptionQueryTool, PerceptionRegistry, PerceptionSource,
-    PerceptionSummarizer,
+    PerceptionSummarizer, ScreenshotAdapter, SystemMonitorAdapter,
 };
-use syscity::tools::{Tool, ToolContext};
+use syscity::tools::{Tool, ToolContext, ToolRegistry};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
+use tokio::sync::Mutex;
 
 /// Create a registry with mock sources.
 async fn setup_registry() -> Arc<PerceptionRegistry> {
@@ -65,8 +70,7 @@ async fn perception_query_by_modality() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let mut q = PerceptionQuery::default();
-    q.modalities = Some(vec![Modality::System]);
+    let q = PerceptionQuery { modalities: Some(vec![Modality::System]), ..Default::default() };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 1, "expected 1 system entity");
     assert_eq!(result.entities[0].modality, Modality::System);
@@ -77,8 +81,7 @@ async fn perception_query_by_source() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let mut q = PerceptionQuery::default();
-    q.sources = Some(vec!["camera".to_string()]);
+    let mut q = PerceptionQuery { sources: Some(vec!["camera".to_string()]), ..Default::default() };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 1, "expected 1 camera entity");
     assert_eq!(result.entities[0].id.to_string(), "camera");
@@ -93,8 +96,7 @@ async fn perception_query_by_label() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let mut q = PerceptionQuery::default();
-    q.label_contains = Some("Rgb".to_string());
+    let q = PerceptionQuery { label_contains: Some("Rgb".to_string()), ..Default::default() };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 1, "expected 1 entity with label containing 'Rgb'");
 }
@@ -104,8 +106,7 @@ async fn perception_query_with_limit() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let mut q = PerceptionQuery::default();
-    q.limit = Some(2);
+    let q = PerceptionQuery { limit: Some(2), ..Default::default() };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 2, "expected 2 entities (limited)");
 }
@@ -115,8 +116,7 @@ async fn perception_query_no_matches() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let mut q = PerceptionQuery::default();
-    q.modalities = Some(vec![Modality::Audio]);
+    let q = PerceptionQuery { modalities: Some(vec![Modality::Audio]), ..Default::default() };
     let result = reg.query(&q).await;
     assert!(result.entities.is_empty(), "expected no entities for Audio modality");
 }
@@ -344,5 +344,177 @@ async fn pipeline_e2e_two_agents_independent_focus() {
     let extra_b = tokio::time::timeout(Duration::from_millis(100), b.next_event()).await;
     assert!(extra_a.is_err(), "agent A should not receive Audio event");
     assert!(extra_b.is_err(), "agent B should not receive System event");
+}
+
+// ---------------------------------------------------------------------------
+// ScreenshotAdapter Integration Tests
+// ---------------------------------------------------------------------------
+
+/// Stub ComputerAdapter that returns a controlled fake Screenshot (happy path).
+struct StubScreenshotComputer {
+    screenshot_value: Screenshot,
+}
+
+#[async_trait::async_trait]
+impl ComputerAdapter for StubScreenshotComputer {
+    async fn screenshot(&self, _region: Option<Rect>) -> syscity::computer::Result<Screenshot> {
+        Ok(self.screenshot_value.clone())
+    }
+
+    async fn read_ui_tree(&self, _app: Option<&str>) -> syscity::computer::Result<Vec<UiElement>> {
+        Ok(vec![])
+    }
+
+    async fn execute(&self, _action: DesktopAction) -> syscity::computer::Result<ActionResult> {
+        Ok(ActionResult::success("stub"))
+    }
+
+    async fn wait_for(
+        &self,
+        _condition: WaitCondition,
+        _timeout: Duration,
+    ) -> syscity::computer::Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn screenshot_adapter_name_and_modality() {
+    let headless = HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new()));
+    let adapter = ScreenshotAdapter::new(Arc::new(headless));
+    assert_eq!(adapter.name(), "screenshot");
+    assert_eq!(adapter.modality(), Modality::Rgb);
+    assert!(adapter.status().is_healthy());
+}
+
+#[tokio::test]
+async fn screenshot_adapter_observe_handles_no_display() {
+    // HeadlessComputerAdapter without virtual display → ComputerError::NoDisplay
+    // → ScreenshotAdapter swallows the error and returns empty Vec.
+    let headless = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
+    let adapter = ScreenshotAdapter::new(headless);
+    let obs = adapter.observe().await;
+    assert!(obs.is_empty(), "expected empty observations when no display server");
+}
+
+#[tokio::test]
+async fn screenshot_adapter_observe_happy_path() {
+    let stub = Arc::new(StubScreenshotComputer {
+        screenshot_value: Screenshot {
+            base64: "dGVzdA==".to_string(),
+            width: 1920,
+            height: 1080,
+            timestamp: Instant::now(),
+        },
+    });
+    let adapter = ScreenshotAdapter::new(stub);
+    let obs = adapter.observe().await;
+    assert_eq!(obs.len(), 1, "expected 1 observation");
+    assert_eq!(obs[0].source, "screenshot");
+    assert_eq!(obs[0].modality, Modality::Rgb);
+    assert_eq!(obs[0].confidence, 1.0);
+    assert_eq!(obs[0].data["width"], 1920);
+    assert_eq!(obs[0].data["height"], 1080);
+    assert_eq!(obs[0].data["base64_length"], "dGVzdA==".len());
+}
+
+// ---------------------------------------------------------------------------
+// SystemMonitorAdapter Integration Tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn system_monitor_adapter_name_and_modality() {
+    let monitor = Arc::new(Mutex::new(SystemMonitor::new()));
+    let adapter = SystemMonitorAdapter::new(monitor);
+    assert_eq!(adapter.name(), "system_monitor");
+    assert_eq!(adapter.modality(), Modality::System);
+    assert!(adapter.status().is_healthy());
+}
+
+#[tokio::test]
+async fn system_monitor_adapter_observe_returns_status() {
+    let monitor = Arc::new(Mutex::new(SystemMonitor::new()));
+    let adapter = SystemMonitorAdapter::new(monitor);
+    let obs = adapter.observe().await;
+    assert_eq!(obs.len(), 1, "expected 1 observation");
+    assert_eq!(obs[0].source, "system_monitor");
+    assert_eq!(obs[0].modality, Modality::System);
+    assert_eq!(obs[0].confidence, 1.0);
+
+    // SystemStatus fields should be present in the observation data.
+    let data = &obs[0].data;
+    assert!(data.get("hostname").is_some(), "hostname should be present");
+    assert!(
+        data.get("cpu_usage_percent").is_some(),
+        "cpu_usage_percent should be present"
+    );
+    assert!(
+        data.get("memory_total_mb").is_some(),
+        "memory_total_mb should be present"
+    );
+    assert!(
+        data.get("os_name").is_some(),
+        "os_name should be present"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Combined Registry Tests — ScreenshotAdapter + SystemMonitorAdapter
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn screenshot_and_system_monitor_in_registry() {
+    let reg = Arc::new(PerceptionRegistry::new(AggregationStrategy::Latest, 10));
+
+    // Register ScreenshotAdapter with a stub ComputerAdapter that returns
+    // a fake Screenshot (happy path — avoids needing a display server).
+    let stub = Arc::new(StubScreenshotComputer {
+        screenshot_value: Screenshot {
+            base64: "dGVzdA==".to_string(),
+            width: 1920,
+            height: 1080,
+            timestamp: Instant::now(),
+        },
+    });
+    reg.register_source(Arc::new(ScreenshotAdapter::new(stub)))
+        .await;
+
+    // Register SystemMonitorAdapter.
+    let monitor = Arc::new(Mutex::new(SystemMonitor::new()));
+    reg.register_source(Arc::new(SystemMonitorAdapter::new(monitor)))
+        .await;
+
+    reg.poll_all().await;
+
+    // Query all — both should appear.
+    let result = reg.query(&PerceptionQuery::default()).await;
+    let ids: Vec<String> = result.entities.iter().map(|e| e.id.to_string()).collect();
+    assert!(
+        ids.contains(&"screenshot".to_string()),
+        "screenshot entity missing: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"system_monitor".to_string()),
+        "system_monitor entity missing: {ids:?}"
+    );
+
+    // Filter by modality: Rgb → only screenshot.
+    let q = PerceptionQuery { modalities: Some(vec![Modality::Rgb]), ..Default::default() };
+    let result = reg.query(&q).await;
+    assert_eq!(result.entities.len(), 1, "expected 1 Rgb entity");
+    assert_eq!(result.entities[0].id.to_string(), "screenshot");
+    // Screenshot properties contain the observation data under the "data" key.
+    let ss_data = &result.entities[0].properties["data"];
+    assert_eq!(ss_data["width"].as_u64(), Some(1920));
+    assert_eq!(ss_data["height"].as_u64(), Some(1080));
+
+    // Filter by modality: System → only system_monitor.
+    let q = PerceptionQuery { modalities: Some(vec![Modality::System]), ..Default::default() };
+    let result = reg.query(&q).await;
+    assert_eq!(result.entities.len(), 1, "expected 1 System entity");
+    assert_eq!(result.entities[0].id.to_string(), "system_monitor");
+    // SystemMonitor properties under "data" should have hostname.
+    let sm_data = &result.entities[0].properties["data"];
+    assert!(sm_data.get("hostname").is_some(), "hostname should be present");
 }
 
