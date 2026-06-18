@@ -1,11 +1,11 @@
 # Adapters Module
 
-External service adapters for storage and API clients.
+External service adapters for storage and API clients (located in `src/adapters/`).
 
 ## Design
 
 - **`api.rs`** — `ApiClient` for making HTTP requests to external services with retry and timeout support.
-- **`storage.rs`** — Storage abstraction layer with multiple backends:
+- **`storage.rs`** (`src/adapters/storage.rs`) — Storage abstraction layer with multiple backends:
   - `Storage` trait — Unified interface for key-value and structured storage
   - `InMemoryStorage` — Ephemeral HashMap-based storage for testing
   - `FileStorage` — Persistent file-based storage

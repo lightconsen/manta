@@ -59,19 +59,22 @@ pub struct OutboundContext {
 }
 
 pub enum SseEvent {
+    Token { text: String },
     ToolStart { name: String },
-    ToolComplete { name: String, result: String },
-    ContentDelta { text: String },
+    ToolEnd { name: String, result: serde_json::Value },
     Done,
     Error { message: String },
+    Heartbeat,
 }
 
-pub struct TrajectoryEntry {
-    pub timestamp: DateTime<Utc>,
-    pub action: String,
-    pub input: serde_json::Value,
-    pub output: serde_json::Value,
-    pub duration_ms: u64,
+pub enum TrajectoryEntry {
+    Start { timestamp: SystemTime, session_id: String, agent_id: String },
+    ToolCall { timestamp: SystemTime, name: String, arguments: serde_json::Value },
+    ToolResult { timestamp: SystemTime, name: String, result: serde_json::Value, duration_ms: u64 },
+    LlmCall { timestamp: SystemTime, provider: String, model: String, input_tokens: Option<u32>, output_tokens: Option<u32>, duration_ms: u64 },
+    Reasoning { timestamp: SystemTime, step: String, detail: String },
+    Finish { timestamp: SystemTime, output: String },
+    Error { timestamp: SystemTime, message: String },
 }
 ```
 

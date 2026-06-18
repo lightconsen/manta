@@ -1,4 +1,12 @@
-# Server Module
+# Server Module (Legacy / Demo)
+
+> **Note**: This module is a legacy HTTP server that predates the current
+> [`gateway`](./gateway.md) module. The production entry point is
+> `syscity start` which launches `Gateway` (Axum on `/v1/...`). The
+> `server` module (`src/server/`) exposes an older `/chat`, `/entities`,
+> and `/webhooks` API and is **not** wired into the CLI or production
+> startup path. It is retained as a reference example and may be removed
+> in a future release.
 
 HTTP server for Syscity providing REST API endpoints and WebSocket support.
 

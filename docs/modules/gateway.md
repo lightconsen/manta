@@ -54,6 +54,8 @@ The control plane for Syscity, managing channels, agents, and the HTTP/WebSocket
 | Workspace | `workspace_dir`, `workspace_only` |
 | Browser | `browser` |
 | Computer | `computer` |
+| Device | `device` (with sub-fields: `enabled`, `drivers`, `health_check`, `hot_plug`, `os_bridge`, `control`, `native_plugins_dir`) |
+| Perception | `perception` (with sub-fields: `enabled`, `poll_interval_secs`, `scene_history`, `aggregation_window_secs`, `audio_source`, `enable_microphone`, `persistence_backend`, `enable_summary`, `summarizer_kind`, `summary_refresh_secs`) |
 | Dreaming | `dreaming` |
 | Standing Orders | `standing_orders` |
 | Capabilities | `capabilities` |
@@ -104,6 +106,8 @@ pub struct GatewayConfig {
     pub dreaming: MemoryDreamingConfig,
     pub standing_orders: StandingOrderConfig,
     pub capabilities: CapabilitiesConfig,
+    pub device: DeviceConfig,
+    pub perception: PerceptionConfig,
 }
 ```
 

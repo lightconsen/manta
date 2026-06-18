@@ -27,6 +27,13 @@ Command-line interface for Syscity using the `clap` crate.
   - `session` — Session management
   - `setup` — Initial setup wizard
   - `skill` — Skill management
+  - `device` — Device pairing management
+  - `approval` — Approval queue management
+  - `audit` — Audit log queries
+  - `provider` — LLM provider management
+  - `doctor` — Diagnostic system with hints
+  - `capabilities` — Check available OS capability sets
+  - `tui` — Interactive terminal UI client
 
 ### Top-level Commands
 
@@ -39,6 +46,8 @@ Command-line interface for Syscity using the `clap` crate.
 | `logs` | Show and tail daemon logs |
 | `health` | Health check |
 | `assistant-run` | Run as an assistant process (internal) |
+| `capabilities` | Check and display available OS capability sets |
+| `tui` | Interactive terminal UI client |
 
 ## Key Types
 
@@ -82,6 +91,9 @@ pub enum Commands {
     Audit { command: AuditCommands },
     Doctor { command: DoctorCommands },
     Setup,
+    Provider { command: ProviderCommands },
+    Capabilities,
+    Tui { host: String, port: u16, token: Option<String>, session: Option<String> },
 }
 ```
 

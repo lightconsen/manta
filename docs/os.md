@@ -34,7 +34,7 @@ ToolRegistry ──▶ CapabilitySet ──▶ platform tools
 
 ## OS Control Scope
 
-Permission levels restrict what OS actions an agent may perform. See `src/capabilities/mod.rs::OsControlScope`.
+Permission levels restrict what OS actions an agent may perform. See `src/computer/capabilities/mod.rs::OsControlScope` (formerly `src/capabilities/`, relocated).
 
 | Scope | Meaning | Example Operations |
 |-------|---------|-------------------|
@@ -225,8 +225,8 @@ Pre-defined profiles make it easy to constrain what the agent can do:
 ## Module Relationships
 
 ```
-src/capabilities/     # platform sets and registry
-src/computer/         # unified adapter, verification, rollback, headless, remote
+src/computer/capabilities/  # platform sets and registry (relocated from src/capabilities/)
+src/computer/              # unified adapter, verification, rollback, headless, remote
 src/planner/          # goal decomposition, DAG execution, persistent queues
 src/tools/            # individual tools and ToolRegistry
 src/security/         # sandbox, audit, content filtering
