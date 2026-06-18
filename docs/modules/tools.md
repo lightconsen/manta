@@ -32,7 +32,6 @@ Capabilities the AI assistant can use to interact with the world.
 | Todo | `todo` |
 | Cron | `cron` |
 | TTS | `tts` |
-| Team | `team_communicate` |
 | Gateway | `gateway` |
 | ACP | `acp_session`, `acp_spawn` |
 | MCP | `mcp_connection` (auto-discovers MCP server tools) |

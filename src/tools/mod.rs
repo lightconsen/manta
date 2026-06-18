@@ -758,7 +758,6 @@ pub mod session;
 pub mod shell;
 pub mod shell_safety;
 pub mod stt;
-pub mod team_communicate_tool;
 pub mod time;
 pub mod todo_tool;
 pub mod tts;
@@ -795,7 +794,6 @@ pub use session::{
 };
 pub use shell::ShellTool;
 pub use stt::SttTool;
-pub use team_communicate_tool::TeamCommunicateTool;
 pub use time::TimeTool;
 pub use todo_tool::TodoTool;
 pub use tts::TtsTool;

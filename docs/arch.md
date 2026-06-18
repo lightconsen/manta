@@ -159,7 +159,6 @@ GoalPlanner::achieve()
 - [`modules/skills.md`](modules/skills.md) — Skill system
 - [`modules/standing_orders.md`](modules/standing_orders.md) — Standing background agent programs
 - [`modules/tailscale.md`](modules/tailscale.md) — Tailscale integration
-- [`modules/team.md`](modules/team.md) — Team mesh coordination
 - [`modules/tools.md`](modules/tools.md) — Tool system
 - [`modules/tui.md`](modules/tui.md) — Terminal UI client
 - [`modules/utils.md`](modules/utils.md) — Utilities (batch, logging, pool, profiling)

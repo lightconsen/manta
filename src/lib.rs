@@ -69,7 +69,6 @@ pub mod standing_orders;
 pub mod skills;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
-pub mod team;
 pub mod tui;
 pub mod tools;
 pub mod utils;
