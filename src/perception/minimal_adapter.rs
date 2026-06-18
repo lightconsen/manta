@@ -51,6 +51,15 @@ pub struct AdapterConfig {
     /// Max events mirrored into [`Snapshot::recent_events`]. Older
     /// events fall off the back of the ring.
     pub max_recent: usize,
+    /// How often to refresh the cached LLM-generated environment
+    /// summary. `None` disables the refresh task entirely (e.g. tests
+    /// or when no summarizer is wired). When `Some`, the refresh task
+    /// only runs if a summarizer was passed to [`MinimalAdapter::new`].
+    /// Default: `Some(60s)`.
+    pub summary_refresh_interval: Option<Duration>,
+    /// Window of recent events / aggregates fed into each summary
+    /// refresh call. Default: 60s.
+    pub summary_window: Duration,
 }
 
 impl Default for AdapterConfig {
@@ -58,6 +67,8 @@ impl Default for AdapterConfig {
         Self {
             max_pending: 256,
             max_recent: 64,
+            summary_refresh_interval: Some(Duration::from_secs(60)),
+            summary_window: Duration::from_secs(60),
         }
     }
 }
@@ -76,6 +87,12 @@ struct Inner {
 
     temporal: Arc<DefaultTemporalProcessor>,
     summarizer: Option<Arc<dyn PerceptionSummarizer>>,
+
+    /// Cached output of the last successful `summarizer.summarize()`
+    /// call. Read by [`AgentPerceptionAdapter::now`] so the snapshot
+    /// includes a narrative without paying an LLM round-trip on every
+    /// prompt build.
+    last_summary: Mutex<Option<String>>,
 
     shutdown: AtomicBool,
     config: AdapterConfig,
@@ -134,17 +151,27 @@ impl MinimalAdapter {
             notify: Notify::new(),
             recent: Mutex::new(VecDeque::with_capacity(config.max_recent)),
             temporal,
-            summarizer,
+            summarizer: summarizer.clone(),
+            last_summary: Mutex::new(None),
             shutdown: AtomicBool::new(false),
-            config,
+            config: config.clone(),
         });
 
         let derived_handle = spawn_derived_task(inner.clone(), derived_hub);
         let raw_handle = spawn_raw_task(inner.clone(), raw_hub);
+        let mut handles = vec![derived_handle, raw_handle];
+
+        // Optional periodic summary refresh — only spawn if both an
+        // interval and a summarizer are configured. Without this, the
+        // wrapped LLM is never actually called.
+        if let (Some(interval), Some(_)) = (config.summary_refresh_interval, summarizer.as_ref()) {
+            let summary_handle = spawn_summary_refresh_task(inner.clone(), interval);
+            handles.push(summary_handle);
+        }
 
         Arc::new(Self {
             inner,
-            handles: Mutex::new(vec![derived_handle, raw_handle]),
+            handles: Mutex::new(handles),
         })
     }
 }
@@ -219,6 +246,84 @@ fn spawn_raw_task(inner: Arc<Inner>, raw_hub: Arc<PerceptionStreamHub>) -> JoinH
     })
 }
 
+/// Periodically rebuild the cached environment summary by calling the
+/// configured summarizer. The cache is read by `now()` so the snapshot
+/// can include a narrative without paying an LLM round-trip on every
+/// prompt build.
+fn spawn_summary_refresh_task(inner: Arc<Inner>, interval: Duration) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        // First tick fires immediately — skip it so we don't summarize
+        // an empty pipeline at startup.
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            if inner.shutdown.load(Ordering::SeqCst) {
+                break;
+            }
+            // Skip the round-trip when there's nothing worth
+            // summarizing — keeps the LLM bill down on idle agents.
+            let has_signal = {
+                let r = inner.recent.lock().expect("recent poisoned");
+                !r.is_empty()
+            } || !inner.temporal.snapshot_aggregates().is_empty();
+            if !has_signal {
+                continue;
+            }
+            match summarize_with_inner(&inner, inner.config.summary_window).await {
+                Ok(summary) => {
+                    let trimmed = summary.trim().to_string();
+                    if !trimmed.is_empty() {
+                        *inner.last_summary.lock().expect("last_summary poisoned") =
+                            Some(trimmed);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("perception summary refresh failed: {}", e);
+                }
+            }
+        }
+    })
+}
+
+/// Build the summary prompt and dispatch to the wrapped summarizer.
+/// Shared between the on-demand `summarize()` API and the periodic
+/// refresh task.
+async fn summarize_with_inner(inner: &Inner, dur: Duration) -> Result<String, AdapterError> {
+    let summarizer = inner
+        .summarizer
+        .clone()
+        .ok_or_else(|| AdapterError::Summarizer("no summarizer configured".into()))?;
+
+    let cutoff = SystemTime::now()
+        .checked_sub(dur)
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let recent: Vec<Event> = inner
+        .recent
+        .lock()
+        .expect("recent poisoned")
+        .iter()
+        .filter(|e| e.at() >= cutoff)
+        .cloned()
+        .collect();
+
+    let aggregates = inner.temporal.snapshot_aggregates();
+    let aggregates_vec: Vec<_> = aggregates.values().collect();
+
+    let user_msg = serde_json::json!({
+        "duration_ms": dur.as_millis(),
+        "recent_events": recent,
+        "aggregates": aggregates_vec,
+    })
+    .to_string();
+    let system =
+        "You are a perception summariser. Given recent events and sliding-window \
+         aggregates from an agent's sensors, write ONE concise sentence describing \
+         what is happening in the agent's environment.";
+
+    summarizer.summarize(system, &user_msg).await
+}
+
 #[async_trait]
 impl AgentPerceptionAdapter for MinimalAdapter {
     async fn focus(&self, focus: Focus) {
@@ -252,11 +357,18 @@ impl AgentPerceptionAdapter for MinimalAdapter {
             .iter()
             .cloned()
             .collect();
+        let summary = self
+            .inner
+            .last_summary
+            .lock()
+            .expect("last_summary poisoned")
+            .clone();
         Snapshot {
             at: SystemTime::now(),
             entities: Vec::new(),
             aggregates,
             recent_events: recent,
+            summary,
         }
     }
 
@@ -277,40 +389,18 @@ impl AgentPerceptionAdapter for MinimalAdapter {
     }
 
     async fn summarize(&self, dur: Duration) -> Result<String, AdapterError> {
-        let summarizer = self
-            .inner
-            .summarizer
-            .clone()
-            .ok_or_else(|| AdapterError::Summarizer("no summarizer configured".into()))?;
-
-        let cutoff = SystemTime::now()
-            .checked_sub(dur)
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let recent: Vec<Event> = self
-            .inner
-            .recent
-            .lock()
-            .expect("recent poisoned")
-            .iter()
-            .filter(|e| e.at() >= cutoff)
-            .cloned()
-            .collect();
-
-        let aggregates = self.inner.temporal.snapshot_aggregates();
-        let aggregates_vec: Vec<_> = aggregates.values().collect();
-
-        let user_msg = serde_json::json!({
-            "duration_ms": dur.as_millis(),
-            "recent_events": recent,
-            "aggregates": aggregates_vec,
-        })
-        .to_string();
-        let system =
-            "You are a perception summariser. Given recent events and sliding-window \
-             aggregates from an agent's sensors, write ONE concise sentence describing \
-             what is happening in the agent's environment.";
-
-        summarizer.summarize(system, &user_msg).await
+        let summary = summarize_with_inner(&self.inner, dur).await?;
+        // Mirror into the cache so the next `now()` carries the
+        // freshest narrative.
+        let trimmed = summary.trim().to_string();
+        if !trimmed.is_empty() {
+            *self
+                .inner
+                .last_summary
+                .lock()
+                .expect("last_summary poisoned") = Some(trimmed.clone());
+        }
+        Ok(summary)
     }
 
     async fn shutdown(self: Arc<Self>) {
@@ -547,5 +637,120 @@ mod tests {
             Ok(None) => {}
             other => panic!("expected None on shutdown, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_summary_refresh_populates_snapshot_summary() {
+        use std::sync::atomic::AtomicUsize;
+
+        // Counts how many times the summarizer was hit by the
+        // background refresh task.
+        struct CountingSum {
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl PerceptionSummarizer for CountingSum {
+            async fn summarize(
+                &self,
+                _system: &str,
+                _user: &str,
+            ) -> Result<String, AdapterError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok("the cpu is on fire".into())
+            }
+        }
+
+        let raw_hub = Arc::new(PerceptionStreamHub::new(64));
+        let derived_hub = Arc::new(DerivedStreamHub::new(64));
+        let temporal = Arc::new(DefaultTemporalProcessor::with_default_window());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let summarizer: Arc<dyn PerceptionSummarizer> = Arc::new(CountingSum {
+            calls: calls.clone(),
+        });
+
+        // Tight refresh interval so the test doesn't take 60s.
+        let cfg = AdapterConfig {
+            summary_refresh_interval: Some(Duration::from_millis(80)),
+            summary_window: Duration::from_secs(60),
+            ..Default::default()
+        };
+        let adapter = MinimalAdapter::new(
+            raw_hub,
+            derived_hub.clone(),
+            temporal,
+            Some(summarizer),
+            Focus::default(),
+            cfg,
+        );
+
+        // Inject signal so the refresh task has something to summarize.
+        derived_hub.publish(anomaly_event("cpu"));
+
+        // Wait until the refresh task has fired and the cache populates.
+        let mut cached = None;
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            let snap = adapter.now();
+            if let Some(s) = snap.summary {
+                cached = Some(s);
+                break;
+            }
+        }
+        let cached = cached.expect("summary cache never populated");
+        assert_eq!(cached, "the cpu is on fire");
+        assert!(
+            calls.load(Ordering::SeqCst) >= 1,
+            "summarizer should have been called by the refresh task"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_summary_refresh_skipped_when_pipeline_idle() {
+        use std::sync::atomic::AtomicUsize;
+
+        struct CountingSum {
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl PerceptionSummarizer for CountingSum {
+            async fn summarize(
+                &self,
+                _system: &str,
+                _user: &str,
+            ) -> Result<String, AdapterError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok("idle".into())
+            }
+        }
+
+        let raw_hub = Arc::new(PerceptionStreamHub::new(64));
+        let derived_hub = Arc::new(DerivedStreamHub::new(64));
+        let temporal = Arc::new(DefaultTemporalProcessor::with_default_window());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let summarizer: Arc<dyn PerceptionSummarizer> = Arc::new(CountingSum {
+            calls: calls.clone(),
+        });
+
+        let cfg = AdapterConfig {
+            summary_refresh_interval: Some(Duration::from_millis(50)),
+            summary_window: Duration::from_secs(60),
+            ..Default::default()
+        };
+        let _adapter = MinimalAdapter::new(
+            raw_hub,
+            derived_hub,
+            temporal,
+            Some(summarizer),
+            Focus::default(),
+            cfg,
+        );
+
+        // No events, no aggregates → refresh task should keep skipping.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "summarizer should not be called when there is no signal"
+        );
     }
 }

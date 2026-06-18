@@ -1462,6 +1462,11 @@ async fn init_perception(
     // raw_hub by handing the registry the hub's broadcast sender.
     reg.set_raw_hub_sender(Some(perception_context.raw_hub().sender()))
         .await;
+    // Wire health-transition anomalies onto the derived hub so per-agent
+    // adapters see source faults (Healthy → Degraded → Quarantined and
+    // back) without polling the health endpoint.
+    reg.set_derived_hub_sender(Some(perception_context.derived_hub().sender()))
+        .await;
     let sync_handle = crate::perception::spawn_stream_hub_sync(
         perception_context.raw_hub().clone(),
         reg.clone(),

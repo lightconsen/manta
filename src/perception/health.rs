@@ -174,13 +174,19 @@ impl HealthTracker {
     }
 
     /// Record a successful poll. Resets failure streak and timeouts toward defaults.
-    pub fn record_success(&mut self, name: &str) {
+    ///
+    /// Returns the new `HealthState` iff this call **changed** the state
+    /// (typically `Degraded`/`Quarantined` → `Healthy` after recovery).
+    /// Callers can use this to emit recovery anomalies on the derived
+    /// event hub.
+    pub fn record_success(&mut self, name: &str) -> Option<HealthState> {
         let cfg = self.config.clone();
         let entry = self
             .sources
             .entry(name.to_string())
             .or_insert_with(|| SourceHealth::new(cfg.default_timeout, cfg.default_interval));
 
+        let prev = entry.state;
         entry.success_count = entry.success_count.saturating_add(1);
         entry.last_success = Some(Instant::now());
         entry.last_error = None;
@@ -190,25 +196,30 @@ impl HealthTracker {
         entry.state = HealthState::Healthy;
         entry.current_timeout_ms = cfg.default_timeout.as_millis() as u64;
         entry.current_interval_ms = cfg.default_interval.as_millis() as u64;
+
+        if prev != entry.state { Some(entry.state) } else { None }
     }
 
     /// Record a poll timeout (no response within current_timeout).
-    pub fn record_timeout(&mut self, name: &str) {
-        self.record_failure_inner(name, "poll timeout".to_string());
+    /// Returns the new state iff the failure caused a transition.
+    pub fn record_timeout(&mut self, name: &str) -> Option<HealthState> {
+        self.record_failure_inner(name, "poll timeout".to_string())
     }
 
     /// Record a generic error from observe().
-    pub fn record_error(&mut self, name: &str, err: String) {
-        self.record_failure_inner(name, err);
+    /// Returns the new state iff the failure caused a transition.
+    pub fn record_error(&mut self, name: &str, err: String) -> Option<HealthState> {
+        self.record_failure_inner(name, err)
     }
 
-    fn record_failure_inner(&mut self, name: &str, msg: String) {
+    fn record_failure_inner(&mut self, name: &str, msg: String) -> Option<HealthState> {
         let cfg = self.config.clone();
         let entry = self
             .sources
             .entry(name.to_string())
             .or_insert_with(|| SourceHealth::new(cfg.default_timeout, cfg.default_interval));
 
+        let prev = entry.state;
         entry.failure_count = entry.failure_count.saturating_add(1);
         entry.consecutive_failures = entry.consecutive_failures.saturating_add(1);
         entry.last_failure = Some(Instant::now());
@@ -230,6 +241,8 @@ impl HealthTracker {
         } else {
             entry.state
         };
+
+        if prev != entry.state { Some(entry.state) } else { None }
     }
 }
 

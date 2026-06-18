@@ -36,6 +36,11 @@ pub struct Snapshot {
     /// Most recent events still queued in the per-agent adapter.
     /// Bounded by adapter configuration (typical: last 64 events).
     pub recent_events: Vec<Event>,
+    /// Optional LLM-generated narrative summary of the recent
+    /// environment, refreshed on a configurable cadence by the adapter.
+    /// `None` when no summarizer is configured or the first refresh
+    /// hasn't completed yet.
+    pub summary: Option<String>,
 }
 
 impl Snapshot {
@@ -46,6 +51,7 @@ impl Snapshot {
             entities: Vec::new(),
             aggregates: HashMap::new(),
             recent_events: Vec::new(),
+            summary: None,
         }
     }
 
@@ -66,10 +72,23 @@ impl Snapshot {
     /// first; typical: 8). The output is intentionally short so it
     /// doesn't bloat the prompt.
     pub fn format_for_prompt(&self, max_recent: usize) -> Option<String> {
-        if self.entities.is_empty() && self.aggregates.is_empty() && self.recent_events.is_empty() {
+        if self.entities.is_empty()
+            && self.aggregates.is_empty()
+            && self.recent_events.is_empty()
+            && self.summary.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
+        {
             return None;
         }
         let mut out = String::from("## Perception\n");
+
+        if let Some(s) = self.summary.as_ref() {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                out.push_str("\n### Summary\n");
+                out.push_str(trimmed);
+                out.push('\n');
+            }
+        }
 
         if !self.aggregates.is_empty() {
             out.push_str("\n### Sensors (current)\n");
