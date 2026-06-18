@@ -52,7 +52,6 @@ pub mod embed;
 pub mod error;
 pub mod eval;
 pub mod export;
-pub mod flow;
 pub mod gateway;
 pub mod heartbeat;
 pub mod inbound;
@@ -72,7 +71,6 @@ pub mod standing_orders;
 pub mod skills;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
-pub mod taskflow;
 pub mod team;
 pub mod tui;
 pub mod tools;

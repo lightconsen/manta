@@ -146,7 +146,6 @@ GoalPlanner::achieve()
 - [`modules/cron.md`](modules/cron.md) — Scheduled task execution
 - [`modules/eval.md`](modules/eval.md) — Evaluation framework
 - [`modules/export.md`](modules/export.md) — Conversation and memory export
-- [`modules/flow.md`](modules/flow.md) — DAG-based workflow engine
 - [`modules/gateway.md`](modules/gateway.md) — Gateway control plane
 - [`modules/heartbeat.md`](modules/heartbeat.md) — Periodic wake/heartbeat
 - [`modules/inbound.md`](modules/inbound.md) — Inbound message pipeline
@@ -162,7 +161,6 @@ GoalPlanner::achieve()
 - [`modules/skills.md`](modules/skills.md) — Skill system
 - [`modules/standing_orders.md`](modules/standing_orders.md) — Standing background agent programs
 - [`modules/tailscale.md`](modules/tailscale.md) — Tailscale integration
-- [`modules/taskflow.md`](modules/taskflow.md) — Durable execution
 - [`modules/team.md`](modules/team.md) — Team mesh coordination
 - [`modules/tools.md`](modules/tools.md) — Tool system
 - [`modules/tui.md`](modules/tui.md) — Terminal UI client
