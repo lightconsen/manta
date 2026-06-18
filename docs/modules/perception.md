@@ -502,6 +502,202 @@ If poll_interval_secs > 0:
   The handle is tracked in background_tasks for graceful shutdown.
 ```
 
+## Streaming Pipeline & Agent Context Injection
+
+Beyond the synchronous `perception_query` path, perception ships an
+end-to-end streaming pipeline that lifts raw observations into a curated,
+per-agent `Snapshot` and splices it directly into the agent's system
+prompt as a `## Perception` section.
+
+### Topology
+
+```
+[Poll Source]                   [Stream Source]
+    │ observe()                       │ subscribe()
+    │ (timeout-bounded by HealthTracker)
+    └──────► PerceptionRegistry ◄─────┘
+                    │
+                    │ aggregator (sliding-window stats)
+                    │ raw_hub.send(Observation)         ── broadcast::Sender<Observation>
+                    │
+                    ├──► TemporalProcessor ────┐
+                    │     (debounce, throttle) │
+                    │                          ├──► derived_hub
+                    └──► FusionEngine ─────────┘    broadcast::Sender<Event>
+                          (cross-modal binding)            │
+                                                           │
+                          HealthTracker transitions ───────┤
+                          → Event::Anomaly { SourceFault } │
+                                                           │
+                                                           ▼
+                                              ┌─────────────────────────┐
+                                              │  Per-Agent              │
+                                              │  MinimalAdapter         │
+                                              │  ┌────────────────────┐ │
+                                              │  │ AttentionGate      │ │ task-keyword filter
+                                              │  │ SalienceFilter     │ │ severity / novelty
+                                              │  │ Bounded queue (64) │ │
+                                              │  │ Summary refresh    │ │ background LLM (60s)
+                                              │  └────────────────────┘ │
+                                              └────────────┬────────────┘
+                                                           │
+                                              now() → Snapshot { entities,
+                                                                 aggregates,
+                                                                 recent_events,
+                                                                 summary }
+                                                           │
+                                                           ▼
+                                              Agent::build_fresh_context()
+                                              → Snapshot::format_for_prompt(8)
+                                              → "## Perception\n### Summary…"
+```
+
+### The Two Hubs
+
+| Hub | Carries | Producers | Subscribers |
+|---|---|---|---|
+| `raw_hub` (`broadcast::Sender<Observation>`) | every raw observation, poll-mirrored or streamed | `PerceptionRegistry::poll_all` (mirrors poll results), `PerceptionSource::subscribe()` (forwards stream sources) | `TemporalProcessor`, `FusionEngine` |
+| `derived_hub` (`broadcast::Sender<Event>`) | discrete cognitive events | `TemporalProcessor` (`Tick`, debounced `Discrete`), `FusionEngine` (`Bound`/`Unbound`), `PerceptionRegistry::emit_anomaly` (health transitions), stream sources that natively emit anomalies | per-agent `MinimalAdapter` |
+
+The two-hub split keeps high-volume raw samples away from agent attention,
+and lets the cognitive layer (TemporalProcessor + FusionEngine) be the
+sole producer of agent-visible events for normal operation.
+
+### Event Types on derived_hub
+
+```rust
+pub enum Event {
+    Tick { source, modality, at },                  // routine pulse
+    Discrete { source, modality, kind, payload },   // debounced state change
+    Bound { entity: FusedEntity },                  // cross-modal binding
+    Unbound { entity_id },                          // entity dropped
+    Anomaly { source, reason: AnomalyKind, severity: u8 },
+}
+```
+
+### Health-Driven Anomalies
+
+`HealthTracker::record_success/record_timeout/record_error` return
+`Option<HealthState>` — `Some(state)` only when the call **transitions**
+the source's state. `PerceptionRegistry::poll_all` and `probe_source`
+collect those transitions and emit one `Event::Anomaly` per transition:
+
+| Transition | `severity` |
+|---|---|
+| `→ Healthy` (recovery) | 32 |
+| `→ Degraded` | 128 |
+| `→ Quarantined` | 220 |
+
+Per-agent adapters surface these as `### Recent events` lines, so a slow
+or quarantined source becomes immediately visible in the agent's prompt
+without polling a `/health` endpoint.
+
+### MinimalAdapter
+
+One `MinimalAdapter` per agent. Subscribes to `derived_hub`, applies
+attention + salience filters, holds a bounded recent-events queue
+(default last 64), and serves cheap synchronous `Snapshot`s.
+
+```rust
+pub struct AdapterConfig {
+    pub recent_events_capacity: usize,            // default 64
+    pub summary_refresh_interval: Option<Duration>, // default Some(60s)
+    pub summary_window: Duration,                 // default 60s
+    // …attention / salience tunables
+}
+```
+
+Two consumption paths:
+
+- **Streaming** — `next_event() -> Option<Event>` pulls one at a time and
+  removes it from the queue. Used by event-driven agent loops.
+- **Snapshot** — `now() -> Snapshot` mirrors the queue + aggregates
+  without consuming. Idempotent; safe to call once per LLM turn.
+
+### Snapshot
+
+```rust
+pub struct Snapshot {
+    pub at: SystemTime,
+    pub entities: Vec<FusedEntity>,
+    pub aggregates: HashMap<(String, Modality), Aggregate>,
+    pub recent_events: Vec<Event>,
+    pub summary: Option<String>,   // LLM-cached narrative
+}
+```
+
+`format_for_prompt(max_recent)` renders the snapshot as a Markdown block
+with stable ordering. Returns `None` when **all four sections** are empty,
+so the agent prompt never grows an empty `## Perception` heading.
+
+```markdown
+## Perception
+
+### Summary
+<one-sentence environment narrative — when summarizer configured>
+
+### Sensors (current)
+- cpu (System): {"mean": 12.3, "p95": 30.1}
+- mic_level (Audio): {"rms": 0.04}
+
+### Entities
+- "Submit Button" ([Vision], conf=0.92)
+
+### Recent events
+- [SourceFault] camera0: Quarantined (sev=220)
+- [Discrete] file_watcher: ./src/main.rs Modified
+```
+
+### Cached LLM Summary
+
+When `AdapterConfig.summary_refresh_interval` is `Some` and a
+`PerceptionSummarizer` (e.g. `LlmProviderSummarizer`) is wired in,
+`MinimalAdapter::new` spawns a background task:
+
+```
+tokio::time::interval(refresh_interval)
+  │ tick (skip first; skip if pipeline idle — no recent events / aggregates)
+  ▼
+PerceptionSummarizer::summarize(window = summary_window)
+  │
+  ▼
+inner.last_summary (Mutex<Option<String>>)
+  │
+  └──► next now() splices into Snapshot.summary
+```
+
+Idle-skip guards LLM cost: if there are no recent events **and** no
+aggregates, the summarizer is not called. On-demand `summarize()` writes
+through to the same cache, so manual calls also benefit subsequent
+`now()`s.
+
+### Per-Source Stream Routing
+
+| Source kind | Path |
+|---|---|
+| **CPU sample** (poll) | `observe()` → registry → aggregator → `Aggregate` → `Snapshot.aggregates` → `### Sensors` |
+| **Screen OCR** (poll) | `observe()` → raw_hub → `FusionEngine` → `Bound` event → adapter queue → `### Entities` + `### Recent events` |
+| **File watcher** (stream) | `subscribe()` → raw_hub → `TemporalProcessor` (debounce) → `Discrete` event → adapter → `### Recent events` |
+| **Microphone** (stream) | `subscribe()` → raw_hub → optional fusion → adapter → `### Entities` (if bound to vision) or `### Recent events` |
+| **Any source timeout** | `HealthTracker` transition → registry `emit_anomaly` → derived_hub → adapter → `### Recent events` |
+| **Environmental narrative** | adapter background task (60s) → summarizer LLM → cache → `### Summary` |
+
+### Gateway Wiring
+
+In `init_perception`:
+
+```rust
+let reg = Arc::new(PerceptionRegistry::new(...));
+reg.set_raw_hub_sender(Some(raw_hub.sender())).await;
+reg.set_derived_hub_sender(Some(perception_context.derived_hub().sender())).await;
+```
+
+Per-agent: `Gateway::spawn_agent_inner` constructs a `MinimalAdapter`
+bound to the agent's task keywords, hands it a `derived_hub` receiver,
+and stores it on the agent. `Agent::build_fresh_context` calls
+`adapter.now().format_for_prompt(8)` and splices the result before the
+agent's task block.
+
 ## Lifecycle Management
 
 ### Hotplug / Config Reload
@@ -569,12 +765,12 @@ The poll loop is a simple `tokio::spawn` with no backpressure, error
 recovery, or adaptive rate limiting. A slow `observe()` call can delay
 the entire poll cycle.
 
-### 3. Real-Time Streaming Consumers
+### 3. Real-Time Streaming Consumers — RESOLVED
 
-`MicrophoneAdapter::subscribe()` and `DeviceSourceAdapter::subscribe()`
-bridge events but no consumer in the system currently uses the streaming
-path. There's no mechanism for the LLM to receive real-time observation
-pushes.
+Per-agent `MinimalAdapter`s now subscribe to `derived_hub` and inject
+`Snapshot.recent_events` into the agent prompt's `### Recent events`
+section every turn. See **Streaming Pipeline & Agent Context Injection**
+above.
 
 ### 4. Adaptive Fusion Parameters
 
