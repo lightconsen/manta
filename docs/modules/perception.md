@@ -82,14 +82,17 @@ and fused access.
 
 ```
 src/perception/
-├── mod.rs           — Modality enum, module declarations, public re-exports
-├── observation.rs   — Observation, PerceptionSource trait, four Adapter impls
-├── aggregator.rs    — TemporalAggregator, AggregationStrategy, Entity, EntityId
-├── query.rs         — PerceptionQuery, QueryResult
-├── registry.rs      — PerceptionRegistry (sources + aggregator + query)
-├── fusion.rs        — FusionEngine, FusedEntity, FusionConfig (cross-modal fusion)
-├── audio_adapter.rs — MicrophoneAdapter, AudioAdapterConfig
-└── mock.rs          — MockPerceptionSource (test utility)
+├── mod.rs                 — Modality enum, module declarations, public re-exports
+├── observation.rs         — Observation, PerceptionSource trait, four Adapter impls
+├── aggregator.rs          — TemporalAggregator, AggregationStrategy, Entity, EntityId
+├── query.rs               — PerceptionQuery, QueryResult
+├── registry.rs            — PerceptionRegistry (sources + aggregator + query)
+├── fusion.rs              — FusionEngine, FusedEntity, FusionConfig (cross-modal fusion)
+├── audio_adapter.rs       — MicrophoneAdapter, AudioAdapterConfig
+├── template_summarizer.rs — TemplateSummarizer (rule-based, zero-LLM, default)
+├── local_summarizer.rs    — LocalLlamaSummarizer (Qwen2.5 GGUF, needs `local-summarizer` feature)
+├── llm_summarizer.rs      — LlmProviderSummarizer (uses agent's LLM provider)
+└── mock.rs                — MockPerceptionSource (test utility)
 
 src/tools/
 └── perception_tool.rs — PerceptionQueryTool (Tool trait impl, with fusion support)
@@ -405,6 +408,16 @@ Gateway construction
 ### Configuration
 
 ```rust
+/// Backend selection for the perception summary engine.
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SummarizerKind {
+    #[default]
+    Template,  // rule-based, zero-LLM (free)
+    Local,     // Qwen2.5-1.5B GGUF via llama-cpp-2 (requires `local-summarizer` feature)
+    Llm,       // existing LLM provider (billed like a normal model call)
+}
+
 pub struct PerceptionConfig {
     pub enabled: bool,                  // default false
     pub poll_interval_secs: u64,        // 0 = disable auto-poll
@@ -414,6 +427,9 @@ pub struct PerceptionConfig {
     pub audio_sample_rate: u32,         // default 16000
     pub silence_threshold_db: f32,      // default -40.0
     pub enable_microphone: bool,        // default false
+    pub enable_summary: bool,           // default false — master switch for periodic summary
+    pub summarizer_kind: SummarizerKind, // default Template
+    pub summary_refresh_secs: Option<u64>, // default None (runtime default 60s)
 }
 ```
 
@@ -426,6 +442,11 @@ audio_source = "microphone"
 audio_sample_rate = 16000
 silence_threshold_db = -40.0
 poll_interval_secs = 5
+
+# Summary section (off by default — no LLM tokens paid).
+# enable_summary = true
+# summarizer_kind = "template"   # "template" (default, free) / "local" / "llm"
+# summary_refresh_secs = 60
 ```
 
 ## Data Flow
@@ -537,7 +558,7 @@ prompt as a `## Perception` section.
                                               │  │ AttentionGate      │ │ task-keyword filter
                                               │  │ SalienceFilter     │ │ severity / novelty
                                               │  │ Bounded queue (64) │ │
-                                              │  │ Summary refresh    │ │ background LLM (60s)
+                                              │  │ Summary refresh    │ │ template / local / LLM (60s)
                                               │  └────────────────────┘ │
                                               └────────────┬────────────┘
                                                            │
@@ -600,9 +621,10 @@ attention + salience filters, holds a bounded recent-events queue
 
 ```rust
 pub struct AdapterConfig {
-    pub recent_events_capacity: usize,            // default 64
-    pub summary_refresh_interval: Option<Duration>, // default Some(60s)
-    pub summary_window: Duration,                 // default 60s
+    pub enable_summary: bool,                         // default false
+    pub recent_events_capacity: usize,                // default 64
+    pub summary_refresh_interval: Option<Duration>,   // default Some(60s) when enable_summary=true
+    pub summary_window: Duration,                     // default 60s
     // …attention / salience tunables
 }
 ```
@@ -648,28 +670,65 @@ so the agent prompt never grows an empty `## Perception` heading.
 - [Discrete] file_watcher: ./src/main.rs Modified
 ```
 
-### Cached LLM Summary
+### Cached Summary (Three Backends)
 
-When `AdapterConfig.summary_refresh_interval` is `Some` and a
-`PerceptionSummarizer` (e.g. `LlmProviderSummarizer`) is wired in,
-`MinimalAdapter::new` spawns a background task:
+The summary is **off by default** (`AdapterConfig.enable_summary = false`).
+When enabled, `MinimalAdapter::new` spawns a background task that calls
+the configured summarizer every `refresh_interval`:
 
 ```
-tokio::time::interval(refresh_interval)
-  │ tick (skip first; skip if pipeline idle — no recent events / aggregates)
-  ▼
-PerceptionSummarizer::summarize(window = summary_window)
+enable_summary = true?
   │
-  ▼
-inner.last_summary (Mutex<Option<String>>)
+  ├── build_summarizer(kind)
+  │     ├── SummarizerKind::Template  → TemplateSummarizer (rule-based, free)
+  │     ├── SummarizerKind::Local     → LocalLlamaSummarizer (Qwen2.5 GGUF)
+  │     └── SummarizerKind::Llm       → LlmProviderSummarizer (existing LLM)
   │
-  └──► next now() splices into Snapshot.summary
+  ├── tokio::time::interval(refresh_interval)
+  │     │ tick (skip first; skip if pipeline idle — no recent events / aggregates)
+  │     ▼
+  │   PerceptionSummarizer::summarize(window = summary_window)
+  │     │
+  │     ▼
+  │   inner.last_summary (Mutex<Option<String>>)
+  │     │
+  │     └──► next now() splices into Snapshot.summary
 ```
 
-Idle-skip guards LLM cost: if there are no recent events **and** no
-aggregates, the summarizer is not called. On-demand `summarize()` writes
-through to the same cache, so manual calls also benefit subsequent
-`now()`s.
+#### Backend Comparison
+
+| Backend | Cost | Quality | Latency | Dependencies |
+|---------|------|---------|---------|--------------|
+| `Template` | Free | Deterministic, rule-based | < 1 ms | None (always available) |
+| `Local` | Free (CPU) | Natural language, ~1.5B params | < 250 ms (M-series) | `local-summarizer` feature, ~1 GB download |
+| `Llm` | LLM tokens | Full model capability | Network-bound | LLM provider configured |
+
+#### Template Summarizer Output
+
+The `TemplateSummarizer` parses the JSON structured input and emits ordered
+clauses up to 200 characters:
+1. **Anomalies** with severity ≥ 128 (e.g. `"camera0 quarantined (sev=220)"`)
+2. **Top-3 changes** by absolute numeric delta (e.g. `"cpu 12→87"`)
+3. **Top-3 aggregates** with mean (e.g. `"cpu avg 45.3"`)
+4. Fallback: `"Environment nominal"` when nothing notable
+
+#### Idle-Skip Guard
+
+Even when `enable_summary = true`, the refresh task skips calling the
+summarizer if there are no recent events **and** no aggregates in the
+current window. This prevents wasteful no-op refreshes during quiet
+periods. On-demand `adapter.summarize()` calls still write through to
+the same cache, so manual calls benefit subsequent `now()`s.
+
+#### When to enable
+
+- **Default (`enable_summary = false`)**: recommended for capable LLMs
+  that can read `### Recent events` and `### Sensors` directly. The
+  summary section largely duplicates those blocks.
+- **Enable (`enable_summary = true`)**: small / context-tight agents
+  that benefit from a one-line environment narrative. Use `template`
+  for zero cost, `local` for free natural language, or `llm` if you
+  already have a provider configured.
 
 ### Per-Source Stream Routing
 

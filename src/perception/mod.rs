@@ -29,6 +29,8 @@ pub mod fusion_adaptive;
 pub mod fusion_stream;
 pub mod health;
 pub mod llm_summarizer;
+#[cfg(feature = "local-summarizer")]
+pub mod local_summarizer;
 pub mod minimal_adapter;
 pub mod mock;
 mod observation;
@@ -38,6 +40,7 @@ mod registry;
 pub mod salience_filter;
 pub mod snapshot;
 pub mod stream;
+pub mod template_summarizer;
 pub mod temporal_processor;
 
 pub use aggregator::{AggregationStrategy, Entity, EntityId, TemporalAggregator};
@@ -56,6 +59,8 @@ pub use fusion_stream::{
 };
 pub use health::{HealthConfig, HealthState, HealthTracker, SourceHealth};
 pub use llm_summarizer::LlmProviderSummarizer;
+#[cfg(feature = "local-summarizer")]
+pub use local_summarizer::LocalLlamaSummarizer;
 pub use minimal_adapter::{AdapterConfig, MinimalAdapter};
 pub use mock::MockPerceptionSource;
 pub use observation::{
@@ -70,6 +75,7 @@ pub use registry::PerceptionRegistry;
 pub use salience_filter::SalienceFilter;
 pub use snapshot::Snapshot;
 pub use stream::{spawn_stream_hub_sync, PerceptionStreamHub};
+pub use template_summarizer::TemplateSummarizer;
 pub use temporal_processor::{
     spawn_temporal_processor, DefaultTemporalProcessor, TemporalProcessor,
     DEFAULT_TEMPORAL_WINDOW,

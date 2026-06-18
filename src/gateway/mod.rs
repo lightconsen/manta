@@ -220,6 +220,20 @@ impl Default for DeviceConfig {
     }
 }
 
+/// Backend selection for the perception summary engine.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SummarizerKind {
+    /// Rule-based, zero-LLM template summarizer (default, free).
+    #[default]
+    Template,
+    /// Small local GGUF model via llama-cpp-2 (requires `local-summarizer`
+    /// feature).
+    Local,
+    /// Agent's existing LLM provider (billed like a normal model call).
+    Llm,
+}
+
 /// Perception fusion layer configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerceptionConfig {
@@ -259,6 +273,19 @@ pub struct PerceptionConfig {
     /// The prune task runs every 6 hours.
     #[serde(default = "default_persistence_retention_days")]
     pub persistence_retention_days: u64,
+    /// Master switch for the periodic summary refresh. When `false`, the
+    /// background task that populates `Snapshot::summary` is never spawned
+    /// even if a summarizer backend is configured. On-demand
+    /// `adapter.summarize()` calls still work. Default: `false`.
+    #[serde(default)]
+    pub enable_summary: bool,
+    /// Backend when `enable_summary` is `true`. Default: `Template`.
+    #[serde(default)]
+    pub summarizer_kind: SummarizerKind,
+    /// Refresh interval in seconds for the summary background task.
+    /// When `None` (or absent in config), defaults to 60 seconds.
+    #[serde(default)]
+    pub summary_refresh_secs: Option<u64>,
 }
 
 fn default_scene_history() -> usize {
@@ -303,6 +330,9 @@ impl Default for PerceptionConfig {
             persistence_backend: "none".to_string(),
             persistence_dir: None,
             persistence_retention_days: 7,
+            enable_summary: false,
+            summarizer_kind: SummarizerKind::default(),
+            summary_refresh_secs: None,
         }
     }
 }
@@ -2763,22 +2793,42 @@ async fn spawn_agent_inner(
     let computer_adapter = state.tools.computer_adapter.read().await.clone();
 
     // Mint a per-agent perception adapter if the perception pipeline
-    // is initialized. Wraps the agent's provider as a summarizer so
-    // `adapter.summarize()` lands on the same LLM the agent uses.
+    // is initialized. Dispatches to the configured summarizer backend
+    // (Template / Local / Llm) and respects the master enable_summary
+    // switch so that the default deployment pays zero LLM tokens for
+    // the periodic `### Summary` block.
     let perception_adapter: Option<Arc<dyn crate::perception::AgentPerceptionAdapter>> = {
         let init = state.perception_init.read().await;
-        init.as_ref().map(|p| {
-            let summarizer: Arc<dyn crate::perception::PerceptionSummarizer> = Arc::new(
-                crate::perception::LlmProviderSummarizer::new(provider.clone())
-                    .with_model(model.clone()),
-            );
-            let adapter = p.context.new_adapter(
+        let p_cfg = &state.config.read().await.perception;
+        // Build summarizer in the async block (not inside a sync closure)
+        // because the Local variant requires async (model download).
+        if let Some(p) = init.as_ref() {
+            let summarizer: Option<Arc<dyn crate::perception::PerceptionSummarizer>> =
+                if p_cfg.enable_summary {
+                    Some(build_summarizer(
+                        &p_cfg.summarizer_kind,
+                        provider.clone(),
+                        model.clone(),
+                    ).await)
+                } else {
+                    None
+                };
+            let adapter_cfg = crate::perception::AdapterConfig {
+                enable_summary: p_cfg.enable_summary,
+                summary_refresh_interval: p_cfg
+                    .summary_refresh_secs
+                    .or(Some(60))
+                    .map(std::time::Duration::from_secs),
+                ..Default::default()
+            };
+            Some(p.context.new_adapter(
                 crate::perception::Focus::default(),
-                Some(summarizer),
-                crate::perception::AdapterConfig::default(),
-            );
-            adapter as Arc<dyn crate::perception::AgentPerceptionAdapter>
-        })
+                summarizer,
+                adapter_cfg,
+            ) as Arc<dyn crate::perception::AgentPerceptionAdapter>)
+        } else {
+            None
+        }
     };
 
     let agent = if let Some(mm) = memory_manager {
@@ -5604,6 +5654,55 @@ pub struct SetMentionPolicyRequest {
 pub struct AddMentionPatternRequest {
     channel: String,
     pattern: String,
+}
+
+// ── Perception Summarizer Factory ──────────────────────────────────────────
+
+/// Build the summarizer backend selected by configuration.
+///
+/// * `Template` — always available, zero-LLM, rule-based.
+/// * `Llm` — uses the agent's LLM provider (same cost as a normal model call).
+/// * `Local` — requires the `local-summarizer` feature (Qwen2.5-1.5B GGUF).
+///   If the feature is missing or model loading fails, falls back to
+///   `Template` with a warning so agent spawn never panics.
+async fn build_summarizer(
+    kind: &SummarizerKind,
+    provider: Arc<dyn crate::providers::Provider>,
+    model: String,
+) -> Arc<dyn crate::perception::PerceptionSummarizer> {
+    match kind {
+        SummarizerKind::Template => {
+            Arc::new(crate::perception::TemplateSummarizer::new())
+        }
+        SummarizerKind::Llm => Arc::new(
+            crate::perception::LlmProviderSummarizer::new(provider)
+                .with_model(model),
+        ),
+        SummarizerKind::Local => {
+            #[cfg(feature = "local-summarizer")]
+            {
+                match crate::perception::local_summarizer::LocalLlamaSummarizer::new_auto().await
+                {
+                    Ok(s) => return Arc::new(s),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Local summarizer init failed: {e}; falling \
+                             back to TemplateSummarizer"
+                        );
+                    }
+                }
+            }
+            #[cfg(not(feature = "local-summarizer"))]
+            {
+                tracing::warn!(
+                    "summarizer_kind = \"local\" but feature \
+                     local-summarizer is not enabled; falling back to \
+                     TemplateSummarizer"
+                );
+            }
+            Arc::new(crate::perception::TemplateSummarizer::new())
+        }
+    }
 }
 
 #[cfg(test)]

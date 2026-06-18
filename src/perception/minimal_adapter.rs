@@ -60,6 +60,14 @@ pub struct AdapterConfig {
     /// Window of recent events / aggregates fed into each summary
     /// refresh call. Default: 60s.
     pub summary_window: Duration,
+    /// Master switch for the LLM-generated environment summary. When
+    /// `false`, the periodic refresh task is never spawned and
+    /// [`Snapshot::summary`] stays `None` even if a summarizer is
+    /// supplied. On-demand [`AgentPerceptionAdapter::summarize`] calls
+    /// still work — they always go through the wrapped summarizer.
+    /// Default: `false` (off). Enable for small / context-tight
+    /// agents that benefit from a one-line environment narrative.
+    pub enable_summary: bool,
 }
 
 impl Default for AdapterConfig {
@@ -69,6 +77,7 @@ impl Default for AdapterConfig {
             max_recent: 64,
             summary_refresh_interval: Some(Duration::from_secs(60)),
             summary_window: Duration::from_secs(60),
+            enable_summary: false,
         }
     }
 }
@@ -161,12 +170,19 @@ impl MinimalAdapter {
         let raw_handle = spawn_raw_task(inner.clone(), raw_hub);
         let mut handles = vec![derived_handle, raw_handle];
 
-        // Optional periodic summary refresh — only spawn if both an
-        // interval and a summarizer are configured. Without this, the
-        // wrapped LLM is never actually called.
-        if let (Some(interval), Some(_)) = (config.summary_refresh_interval, summarizer.as_ref()) {
-            let summary_handle = spawn_summary_refresh_task(inner.clone(), interval);
-            handles.push(summary_handle);
+        // Optional periodic summary refresh — only spawn when the
+        // user has explicitly opted in (`enable_summary = true`),
+        // wired a summarizer, and configured a refresh interval.
+        // Without all three, the wrapped LLM is never actually called
+        // by the background loop. On-demand `summarize()` still works
+        // when a summarizer is wired.
+        if config.enable_summary {
+            if let (Some(interval), Some(_)) =
+                (config.summary_refresh_interval, summarizer.as_ref())
+            {
+                let summary_handle = spawn_summary_refresh_task(inner.clone(), interval);
+                handles.push(summary_handle);
+            }
         }
 
         Arc::new(Self {
@@ -670,6 +686,7 @@ mod tests {
 
         // Tight refresh interval so the test doesn't take 60s.
         let cfg = AdapterConfig {
+            enable_summary: true,
             summary_refresh_interval: Some(Duration::from_millis(80)),
             summary_window: Duration::from_secs(60),
             ..Default::default()
@@ -732,6 +749,7 @@ mod tests {
         });
 
         let cfg = AdapterConfig {
+            enable_summary: true,
             summary_refresh_interval: Some(Duration::from_millis(50)),
             summary_window: Duration::from_secs(60),
             ..Default::default()
@@ -752,5 +770,63 @@ mod tests {
             0,
             "summarizer should not be called when there is no signal"
         );
+    }
+
+    #[tokio::test]
+    async fn test_summary_disabled_never_calls_summarizer() {
+        use std::sync::atomic::AtomicUsize;
+
+        struct CountingSum {
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl PerceptionSummarizer for CountingSum {
+            async fn summarize(
+                &self,
+                _system: &str,
+                _user: &str,
+            ) -> Result<String, AdapterError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok("nope".into())
+            }
+        }
+
+        let raw_hub = Arc::new(PerceptionStreamHub::new(64));
+        let derived_hub = Arc::new(DerivedStreamHub::new(64));
+        let temporal = Arc::new(DefaultTemporalProcessor::with_default_window());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let summarizer: Arc<dyn PerceptionSummarizer> = Arc::new(CountingSum {
+            calls: calls.clone(),
+        });
+
+        // enable_summary explicitly OFF — even with summarizer + tight
+        // refresh interval + lots of derived events, the refresh task
+        // must not be spawned.
+        let cfg = AdapterConfig {
+            enable_summary: false,
+            summary_refresh_interval: Some(Duration::from_millis(40)),
+            summary_window: Duration::from_secs(60),
+            ..Default::default()
+        };
+        let adapter = MinimalAdapter::new(
+            raw_hub,
+            derived_hub.clone(),
+            temporal,
+            Some(summarizer),
+            Focus::default(),
+            cfg,
+        );
+
+        // Inject signal; refresh task (if it existed) would fire.
+        derived_hub.publish(anomaly_event("cpu"));
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "background refresh task must not run when enable_summary=false"
+        );
+        // And the snapshot summary must stay None.
+        assert!(adapter.now().summary.is_none());
     }
 }
