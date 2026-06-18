@@ -50,7 +50,6 @@ pub mod device;
 pub mod dirs;
 pub mod embed;
 pub mod error;
-pub mod eval;
 pub mod export;
 pub mod gateway;
 pub mod heartbeat;

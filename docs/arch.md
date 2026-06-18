@@ -49,7 +49,7 @@ Syscity is a Rust-based personal AI assistant platform. It routes messages from 
 | Memory | Conversations, semantic search, tiered storage, dreaming | `memory` |
 | Providers | LLM routing, fallbacks, streaming, cost guard | `providers`, `model_router` |
 | Extensions | Plugins, skills, MCP, browser automation | `plugins`, `skills`, `mcp`, `browser` |
-| Operations | Cron, heartbeat, standing orders, export, eval | `cron`, `heartbeat`, `standing_orders`, `export`, `eval` |
+| Operations | Cron, heartbeat, standing orders, export | `cron`, `heartbeat`, `standing_orders`, `export` |
 
 ## Data Flow
 
@@ -144,7 +144,6 @@ GoalPlanner::achieve()
 - [`modules/config.md`](modules/config.md) — Configuration loading, validation, hot reload
 - [`modules/core.md`](modules/core.md) — Domain models and shared types
 - [`modules/cron.md`](modules/cron.md) — Scheduled task execution
-- [`modules/eval.md`](modules/eval.md) — Evaluation framework
 - [`modules/export.md`](modules/export.md) — Conversation and memory export
 - [`modules/gateway.md`](modules/gateway.md) — Gateway control plane
 - [`modules/heartbeat.md`](modules/heartbeat.md) — Periodic wake/heartbeat
