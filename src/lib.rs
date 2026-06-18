@@ -65,7 +65,6 @@ pub mod plugins;
 pub mod providers;
 pub mod secrets;
 pub mod security;
-pub mod server;
 pub mod standing_orders;
 pub mod skills;
 #[cfg(feature = "tailscale")]

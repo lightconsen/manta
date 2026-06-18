@@ -43,7 +43,7 @@ Syscity is a Rust-based personal AI assistant platform. It routes messages from 
 | Layer | Responsibility | Key Module |
 |-------|----------------|------------|
 | Interface | CLI, TUI, chat channels, webhooks | `cli`, `channels`, `tui` |
-| Control Plane | HTTP/WebSocket server, lifecycle, auth | `gateway`, `server`, `security` |
+| Control Plane | HTTP/WebSocket server, lifecycle, auth | `gateway`, `security` |
 | Conversation | Session management, message routing, context | `agent`, `channels`, `inbound`, `outbound` |
 | Reasoning | Tool selection, planning, desktop/server automation | `tools`, `planner`, `computer`, `capabilities` |
 | Memory | Conversations, semantic search, tiered storage, dreaming | `memory` |
@@ -156,7 +156,6 @@ GoalPlanner::achieve()
 - [`modules/plugins.md`](modules/plugins.md) — Plugin system
 - [`modules/providers.md`](modules/providers.md) — LLM provider implementations
 - [`modules/security.md`](modules/security.md) — Security layer
-- [`modules/server.md`](modules/server.md) — HTTP/WebSocket server
 - [`modules/skills.md`](modules/skills.md) — Skill system
 - [`modules/standing_orders.md`](modules/standing_orders.md) — Standing background agent programs
 - [`modules/tailscale.md`](modules/tailscale.md) — Tailscale integration
