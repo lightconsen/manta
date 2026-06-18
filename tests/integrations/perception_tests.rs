@@ -12,10 +12,10 @@ use syscity::computer::{
 use syscity::computer::system::SystemMonitor;
 use syscity::perception::mock::MockPerceptionSource;
 use syscity::perception::{
-    AdapterConfig, AdapterError, AggregationStrategy, AgentPerceptionAdapter, Event, Focus,
-    Modality, Observation, ObservationId, PerceptionContext, PerceptionContextConfig,
+    AdapterConfig, AdapterError, AggregationStrategy, AgentPerceptionAdapter, AnomalyKind, Event,
+    Focus, Modality, Observation, ObservationId, PerceptionContext, PerceptionContextConfig,
     PerceptionQuery, PerceptionQueryTool, PerceptionRegistry, PerceptionSource,
-    PerceptionSummarizer, ScreenshotAdapter, SystemMonitorAdapter,
+    PerceptionSummarizer, ScreenshotAdapter, SystemMonitorAdapter, TemplateSummarizer,
 };
 use syscity::tools::{Tool, ToolContext, ToolRegistry};
 use std::sync::Arc;
@@ -344,6 +344,86 @@ async fn pipeline_e2e_two_agents_independent_focus() {
     let extra_b = tokio::time::timeout(Duration::from_millis(100), b.next_event()).await;
     assert!(extra_a.is_err(), "agent A should not receive Audio event");
     assert!(extra_b.is_err(), "agent B should not receive System event");
+}
+
+// ---------------------------------------------------------------------------
+// Real summarizer wiring — TemplateSummarizer in MinimalAdapter refresh loop.
+// Verifies the concrete (non-stub) summarizer is actually invoked by the
+// 60s refresh task and that `enable_summary=false` truly silences it.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn pipeline_e2e_template_summarizer_runs_in_refresh_loop() {
+    // Wire the *real* TemplateSummarizer (no stub) and verify the
+    // refresh task actually invokes it, populating Snapshot.summary
+    // with rule-based output.
+    let summarizer: Arc<dyn PerceptionSummarizer> = Arc::new(TemplateSummarizer::new());
+    let ctx = PerceptionContext::start(PerceptionContextConfig::default());
+    let adapter = ctx.new_adapter(
+        Focus::default(),
+        Some(summarizer),
+        AdapterConfig {
+            enable_summary: true,
+            summary_refresh_interval: Some(Duration::from_millis(80)),
+            summary_window: Duration::from_secs(60),
+            ..Default::default()
+        },
+    );
+
+    // High-severity anomaly so the template's "quarantined" rule fires.
+    ctx.derived_hub().publish(Event::Anomaly {
+        source: "camera0".into(),
+        reason: AnomalyKind::SourceFault,
+        severity: 220,
+        at: SystemTime::now(),
+    });
+
+    // Wait for the refresh tick + cache to populate.
+    let mut cached: Option<String> = None;
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        if let Some(s) = adapter.now().summary {
+            cached = Some(s);
+            break;
+        }
+    }
+    let cached = cached.expect("refresh task never populated Snapshot.summary");
+    assert!(
+        cached.contains("camera0 quarantined"),
+        "expected template rule output, got: {cached:?}"
+    );
+}
+
+#[tokio::test]
+async fn pipeline_e2e_enable_summary_false_silences_real_summarizer() {
+    // Same wiring as above but enable_summary=false — the refresh task
+    // must not be spawned and Snapshot.summary stays None even after
+    // events flow through the pipeline.
+    let summarizer: Arc<dyn PerceptionSummarizer> = Arc::new(TemplateSummarizer::new());
+    let ctx = PerceptionContext::start(PerceptionContextConfig::default());
+    let adapter = ctx.new_adapter(
+        Focus::default(),
+        Some(summarizer),
+        AdapterConfig {
+            enable_summary: false,
+            summary_refresh_interval: Some(Duration::from_millis(40)),
+            summary_window: Duration::from_secs(60),
+            ..Default::default()
+        },
+    );
+
+    ctx.derived_hub().publish(Event::Anomaly {
+        source: "camera0".into(),
+        reason: AnomalyKind::SourceFault,
+        severity: 220,
+        at: SystemTime::now(),
+    });
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(
+        adapter.now().summary.is_none(),
+        "Snapshot.summary must stay None when enable_summary=false"
+    );
 }
 
 // ---------------------------------------------------------------------------

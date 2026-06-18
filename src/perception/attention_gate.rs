@@ -221,4 +221,44 @@ mod tests {
         // Entity has no `source()` — admitted despite the source whitelist.
         assert!(gate.admit(&ev));
     }
+
+    #[test]
+    fn test_freq_budget_zero_disables_rate_limit() {
+        // Hz = 0 is the documented "no rate limit" sentinel — the
+        // `if hz > 0.0` branch in admit() must short-circuit so bursts
+        // pass without modifying `last_admit`.
+        let focus = Focus::default().with_freq_budget(Modality::System, 0.0);
+        let mut gate = AttentionGate::new(focus);
+        for _ in 0..5 {
+            assert!(gate.admit(&change("cpu", Modality::System)));
+        }
+        assert!(gate.last_admit.is_empty(), "hz=0 must not record timestamps");
+    }
+
+    #[test]
+    fn test_entity_passes_modality_whitelist_when_no_modality() {
+        // Even with a strict modality whitelist, Entity events have no
+        // `modality()` so the modality guard is skipped (entities span
+        // sources by design — see module doc).
+        use crate::perception::FusedEntity;
+        use std::collections::HashMap;
+        let focus = Focus::default().with_modalities([Modality::Audio]);
+        let mut gate = AttentionGate::new(focus);
+        let now_inst = Instant::now();
+        let ev = Event::Entity {
+            entity: FusedEntity {
+                id: "e1".into(),
+                label: "x".into(),
+                created_at: now_inst,
+                updated_at: now_inst,
+                confidence: 1.0,
+                modalities: vec![],
+                observation_ids: vec![],
+                properties: HashMap::new(),
+                correlation_key: "k".into(),
+            },
+            at: SystemTime::now(),
+        };
+        assert!(gate.admit(&ev));
+    }
 }

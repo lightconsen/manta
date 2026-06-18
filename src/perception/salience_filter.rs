@@ -362,4 +362,90 @@ mod tests {
         assert!(f.baselines.is_empty());
         assert!(f.recent.is_empty());
     }
+
+    #[test]
+    fn test_baseline_max_age_expiry_resets_to_fresh() {
+        // After baseline_max_age elapses, the next obs must become a
+        // fresh baseline (no Change emitted) — guards against stale
+        // baselines triggering spurious Changes when the agent re-focuses
+        // after a long gap.
+        let mut c = cfg_with_threshold(Modality::System, 5.0);
+        c.baseline_max_age = Duration::from_millis(50);
+        let mut f = SalienceFilter::new(c);
+        // Install baseline.
+        f.evaluate(&obs(
+            "cpu",
+            Modality::System,
+            serde_json::json!({"cpu_pct": 10.0}),
+            1.0,
+        ));
+        std::thread::sleep(Duration::from_millis(80));
+        // 10 → 90 = 800% delta, well above the 5% threshold — but the
+        // baseline is now stale, so the filter installs a new baseline
+        // and emits no event.
+        let ev = f.evaluate(&obs(
+            "cpu",
+            Modality::System,
+            serde_json::json!({"cpu_pct": 90.0}),
+            1.0,
+        ));
+        assert!(ev.is_none(), "stale-baseline path should suppress event");
+    }
+
+    #[test]
+    fn test_non_numeric_payload_change_uses_inequality_path() {
+        // When neither the baseline nor the new observation produces a
+        // scalar via `extract_scalar`, the filter falls through to the
+        // payload-inequality branch (`baseline.payload != obs.data`).
+        let c = cfg_with_threshold(Modality::Other, 0.1);
+        let mut f = SalienceFilter::new(c);
+        // Baseline with non-numeric payload.
+        f.evaluate(&obs(
+            "plug",
+            Modality::Other,
+            serde_json::json!({"state": "on"}),
+            1.0,
+        ));
+        // Different non-numeric payload — inequality path emits Change.
+        let ev = f
+            .evaluate(&obs(
+                "plug",
+                Modality::Other,
+                serde_json::json!({"state": "off"}),
+                1.0,
+            ))
+            .expect("inequality path should emit Change");
+        match ev {
+            Event::Change { source, modality, from, to, .. } => {
+                assert_eq!(source, "plug");
+                assert_eq!(modality, Modality::Other);
+                assert_eq!(from["state"], "on");
+                assert_eq!(to["state"], "off");
+            }
+            other => panic!("expected Change, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_dedup_window_expiry_lets_repeat_through_as_baseline_replace() {
+        // Identical payloads inside dedup_window are suppressed. After
+        // the window expires, the same payload is no longer dedup'd —
+        // it goes through the baseline-fresh path and (since the value
+        // didn't actually change) emits no Change either.
+        let mut c = cfg_with_threshold(Modality::System, 0.1);
+        c.dedup_window = Duration::from_millis(50);
+        let mut f = SalienceFilter::new(c);
+        let payload = serde_json::json!({"cpu_pct": 10.0});
+        f.evaluate(&obs("cpu", Modality::System, payload.clone(), 1.0));
+        // Within the window — dedup'd.
+        assert!(f
+            .evaluate(&obs("cpu", Modality::System, payload.clone(), 1.0))
+            .is_none());
+        std::thread::sleep(Duration::from_millis(80));
+        // After expiry, the dedup record is stale so the dedup guard
+        // doesn't trip — but value is identical so no Change emitted.
+        assert!(f
+            .evaluate(&obs("cpu", Modality::System, payload, 1.0))
+            .is_none());
+    }
 }
