@@ -54,6 +54,61 @@ impl Snapshot {
     pub fn item_count(&self) -> usize {
         self.entities.len() + self.recent_events.len()
     }
+
+    /// Format the snapshot as a compact, prompt-ready Markdown block
+    /// suitable for splicing into an agent's system prompt.
+    ///
+    /// Returns `None` if there is nothing worth showing (no entities,
+    /// no aggregates, no recent events) — callers can use this to
+    /// avoid emitting an empty `## Perception` section.
+    ///
+    /// `max_recent` caps how many recent events are listed (oldest
+    /// first; typical: 8). The output is intentionally short so it
+    /// doesn't bloat the prompt.
+    pub fn format_for_prompt(&self, max_recent: usize) -> Option<String> {
+        if self.entities.is_empty() && self.aggregates.is_empty() && self.recent_events.is_empty() {
+            return None;
+        }
+        let mut out = String::from("## Perception\n");
+
+        if !self.aggregates.is_empty() {
+            out.push_str("\n### Sensors (current)\n");
+            // Stable ordering: sort by (source, modality) string repr.
+            let mut keys: Vec<&(String, Modality)> = self.aggregates.keys().collect();
+            keys.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| format!("{:?}", a.1).cmp(&format!("{:?}", b.1))));
+            for key in keys {
+                if let Some(agg) = self.aggregates.get(key) {
+                    out.push_str(&format!(
+                        "- {} ({:?}): {}\n",
+                        key.0,
+                        key.1,
+                        agg.stats,
+                    ));
+                }
+            }
+        }
+
+        if !self.entities.is_empty() {
+            out.push_str("\n### Entities\n");
+            for e in &self.entities {
+                out.push_str(&format!(
+                    "- {} ({:?}, conf={:.2})\n",
+                    e.label, e.modalities, e.confidence,
+                ));
+            }
+        }
+
+        if !self.recent_events.is_empty() {
+            out.push_str("\n### Recent events\n");
+            let n = self.recent_events.len();
+            let start = n.saturating_sub(max_recent);
+            for ev in &self.recent_events[start..] {
+                out.push_str(&format!("- {}\n", ev.short_label()));
+            }
+        }
+
+        Some(out)
+    }
 }
 
 fn serialize_aggregate_map<S>(

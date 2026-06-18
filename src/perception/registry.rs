@@ -27,6 +27,12 @@ pub struct PerceptionRegistry {
     health: RwLock<HealthTracker>,
     /// Durable observation store. Defaults to [`NullObservationStore`] (no-op).
     store: Arc<dyn ObservationStore>,
+    /// Optional broadcast sink that mirrors every successfully polled
+    /// observation onto the streaming pipeline's `raw_hub`. When set,
+    /// poll-only sources (Screenshot, SystemMonitor, etc.) become
+    /// visible to per-agent [`super::MinimalAdapter`]s alongside truly
+    /// streaming sources.
+    raw_hub_tx: RwLock<Option<broadcast::Sender<Observation>>>,
 }
 
 impl PerceptionRegistry {
@@ -52,6 +58,7 @@ impl PerceptionRegistry {
             )),
             health: RwLock::new(HealthTracker::new(health_config)),
             store: Arc::new(NullObservationStore),
+            raw_hub_tx: RwLock::new(None),
         }
     }
 
@@ -66,6 +73,14 @@ impl PerceptionRegistry {
     /// in-memory aggregation window).
     pub fn store(&self) -> Arc<dyn ObservationStore> {
         self.store.clone()
+    }
+
+    /// Mirror every successfully polled observation into the given
+    /// broadcast sender. Pass [`super::PerceptionStreamHub::sender`]'s
+    /// publishing handle to bridge poll-only sources into the streaming
+    /// pipeline.
+    pub async fn set_raw_hub_sender(&self, tx: Option<broadcast::Sender<Observation>>) {
+        *self.raw_hub_tx.write().await = tx;
     }
 
     /// Register a perception source.
@@ -140,6 +155,17 @@ impl PerceptionRegistry {
             aggregator.push(obs.clone());
         }
         drop(aggregator);
+
+        // Mirror onto the streaming pipeline if attached. `send` returns
+        // an error iff there are no active subscribers — that's fine,
+        // it just means no agent is listening yet.
+        if !all_obs.is_empty() {
+            if let Some(tx) = self.raw_hub_tx.read().await.as_ref() {
+                for obs in &all_obs {
+                    let _ = tx.send(obs.clone());
+                }
+            }
+        }
 
         // Best-effort durable persistence — log on error but never propagate,
         // as the in-memory window is the source of truth for live queries.

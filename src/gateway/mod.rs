@@ -1447,9 +1447,32 @@ async fn init_perception(
         background_tasks.push(handle);
     }
 
+    // Spin up the streaming pipeline (raw_hub → temporal/fusion →
+    // derived_hub) that per-agent MinimalAdapters subscribe to. Then
+    // attach every streaming source already known to the registry, and
+    // spawn a periodic sync so hot-plugged sources are picked up.
+    let perception_context = Arc::new(crate::perception::PerceptionContext::start(
+        crate::perception::PerceptionContextConfig::default(),
+    ));
+    perception_context
+        .raw_hub()
+        .sync_with_registry(reg.as_ref())
+        .await;
+    // Bridge poll-only sources (Screenshot, SystemMonitor, …) into
+    // raw_hub by handing the registry the hub's broadcast sender.
+    reg.set_raw_hub_sender(Some(perception_context.raw_hub().sender()))
+        .await;
+    let sync_handle = crate::perception::spawn_stream_hub_sync(
+        perception_context.raw_hub().clone(),
+        reg.clone(),
+        std::time::Duration::from_secs(5),
+    );
+    background_tasks.push(sync_handle);
+
     // Store PerceptionInit on state (poll_handle is tracked via background_tasks)
     *state.perception_init.write().await = Some(crate::gateway::state::PerceptionInit {
         registry: reg.clone(),
+        context: perception_context,
         poll_handle: None,
     });
 
@@ -2734,6 +2757,24 @@ async fn spawn_agent_inner(
     };
     let computer_adapter = state.tools.computer_adapter.read().await.clone();
 
+    // Mint a per-agent perception adapter if the perception pipeline
+    // is initialized. Wraps the agent's provider as a summarizer so
+    // `adapter.summarize()` lands on the same LLM the agent uses.
+    let perception_adapter: Option<Arc<dyn crate::perception::AgentPerceptionAdapter>> = {
+        let init = state.perception_init.read().await;
+        init.as_ref().map(|p| {
+            let summarizer: Arc<dyn crate::perception::PerceptionSummarizer> = Arc::new(
+                crate::perception::LlmProviderSummarizer::new(provider.clone())
+                    .with_model(model.clone()),
+            );
+            let adapter = p.context.new_adapter(
+                crate::perception::Focus::default(),
+                Some(summarizer),
+                crate::perception::AdapterConfig::default(),
+            );
+            adapter as Arc<dyn crate::perception::AgentPerceptionAdapter>
+        })
+    };
 
     let agent = if let Some(mm) = memory_manager {
         let chat_history = mm.chat_history();
@@ -2753,6 +2794,9 @@ async fn spawn_agent_inner(
             builder = builder
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
+        }
+        if let Some(pa) = perception_adapter.clone() {
+            builder = builder.with_perception_adapter(pa);
         }
         // Attach planner state store for crash recovery on restart.
         let planner_db = crate::dirs::syscity_dir().join("planner.db");
@@ -2776,6 +2820,9 @@ async fn spawn_agent_inner(
             builder = builder
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
+        }
+        if let Some(pa) = perception_adapter.clone() {
+            builder = builder.with_perception_adapter(pa);
         }
         // Attach planner state store for crash recovery on restart.
         let planner_db = crate::dirs::syscity_dir().join("planner.db");

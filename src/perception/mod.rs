@@ -28,6 +28,7 @@ mod fusion;
 pub mod fusion_adaptive;
 pub mod fusion_stream;
 pub mod health;
+pub mod llm_summarizer;
 pub mod minimal_adapter;
 pub mod mock;
 mod observation;
@@ -54,6 +55,7 @@ pub use fusion_stream::{
     DEFAULT_FUSION_TICK,
 };
 pub use health::{HealthConfig, HealthState, HealthTracker, SourceHealth};
+pub use llm_summarizer::LlmProviderSummarizer;
 pub use minimal_adapter::{AdapterConfig, MinimalAdapter};
 pub use mock::MockPerceptionSource;
 pub use observation::{

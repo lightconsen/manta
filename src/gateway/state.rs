@@ -176,11 +176,17 @@ pub struct SchedulerState {
     pub cron_scheduler: LateInit<Arc<Mutex<CronScheduler>>>,
 }
 
-/// Perception subsystem init state (registry, background poll handle).
+/// Perception subsystem init state (registry, streaming context,
+/// background poll handle).
 /// Replaced on hot-reload via the admin API.
 pub struct PerceptionInit {
     /// The perception registry managing sources and scene graph.
     pub registry: Arc<crate::perception::PerceptionRegistry>,
+    /// Shared streaming infrastructure (raw_hub + derived_hub +
+    /// temporal processor + fusion engine). Per-agent
+    /// [`crate::perception::AgentPerceptionAdapter`]s are minted from
+    /// this context.
+    pub context: Arc<crate::perception::PerceptionContext>,
     /// Background poll loop handle, if one was spawned.
     pub poll_handle: Option<JoinHandle<()>>,
 }

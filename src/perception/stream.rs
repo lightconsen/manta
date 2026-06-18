@@ -54,6 +54,13 @@ impl PerceptionStreamHub {
         self.tx.subscribe()
     }
 
+    /// Borrow the publishing handle so external producers (e.g. the
+    /// poll-based [`PerceptionRegistry`]) can fan observations into the
+    /// streaming pipeline alongside truly streaming sources.
+    pub fn sender(&self) -> broadcast::Sender<Observation> {
+        self.tx.clone()
+    }
+
     /// Number of currently active subscribers (informational).
     pub fn receiver_count(&self) -> usize {
         self.tx.receiver_count()

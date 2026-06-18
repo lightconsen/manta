@@ -101,6 +101,25 @@ impl Event {
         }
     }
 
+    /// Compact one-line label for prompt injection / logs. Avoids
+    /// dumping full JSON payloads.
+    pub fn short_label(&self) -> String {
+        match self {
+            Event::Change { source, modality, from, to, .. } => {
+                format!("change {source} ({modality:?}): {from} → {to}")
+            }
+            Event::Discrete { source, kind, .. } => {
+                format!("discrete {source}: {kind}")
+            }
+            Event::Anomaly { source, reason, severity, .. } => {
+                format!("anomaly {source}: {reason:?} (sev={severity})")
+            }
+            Event::Entity { entity, .. } => {
+                format!("entity {} ({:?})", entity.label, entity.modalities)
+            }
+        }
+    }
+
     /// Modality when the event has one (`Discrete`/`Anomaly`/`Entity` may
     /// span modalities or have none).
     pub fn modality(&self) -> Option<Modality> {
