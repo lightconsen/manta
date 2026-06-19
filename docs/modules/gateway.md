@@ -22,6 +22,26 @@ The control plane for Syscity, managing channels, agents, and the HTTP/WebSocket
 - **Command Provider** (`command_provider.rs`) — Command resolution and provisioning
 - **Handlers** (`handlers/`) — REST API handlers for health, device pairing, admin, etc.
 
+### Module Layout
+
+`gateway/mod.rs` was split into focused submodules (2026-06-20) to keep the
+control-plane core readable. The entry point (`mod.rs`) now holds `GatewayState`
+access checks and the `Gateway` struct shell; behavior lives in:
+
+- **`lifecycle.rs`** — `start_gateway` / `stop_gateway` / `build_router` free
+  functions (startup sequence, graceful shutdown, Axum router assembly).
+- **`dispatch.rs`** — inbound message entry worker and routed message dispatch.
+- **`hot_reload.rs`** — config-change handlers for Main / Agent / Channel /
+  Plugin / Gateway file types.
+- **`init/`** — subsystem constructors: `channels.rs` (8 channel-type inits),
+  `devices.rs`, `storage.rs`, `agents.rs`, `pipelines.rs`, `security.rs`,
+  `services.rs`, `tools.rs`.
+- **`runtime.rs`** — runtime event/command types (`BufferedMessage`,
+  `AgentHandle`, `AgentCommand`, `AgentQuery`, `GatewayEvent`, `AgentStatus`).
+- **`agent_spawn.rs`** — `spawn_agent_inner` and adapter wiring.
+- **`config.rs`** / **`state.rs`** / **`types.rs`** / **`watchdog.rs`** —
+  configuration, shared state, request/response DTOs, repair/watchdog logic.
+
 ### Startup Flow
 
 1. Load configuration

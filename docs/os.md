@@ -6,12 +6,12 @@ This document describes how Syscity agents perceive and operate the host operati
 
 The agent should interact with the OS through the same layered abstractions used elsewhere in Syscity:
 
-- **CapabilitySet** groups platform-specific tools by environment (Linux server, macOS desktop, Windows desktop, Android, iOS).
+- **PlatformToolSet** groups platform-specific tools by environment (Linux server, macOS desktop, Windows desktop, Android, iOS).
 - **ToolRegistry** manages individual tool lifecycle, permissions, circuit breakers, and approvals.
 - **ComputerAdapter** provides a unified cross-platform API for desktop/server perception and action.
 - **GoalPlanner** decomposes high-level objectives into task DAGs executed against the adapter.
 
-The LLM always invokes individual `Tool`s; `CapabilitySet` and `ComputerAdapter` are organizational and abstraction layers, not execution units.
+The LLM always invokes individual `Tool`s; `PlatformToolSet` and `ComputerAdapter` are organizational and abstraction layers, not execution units.
 
 ## Core Architecture
 
@@ -22,7 +22,7 @@ Agent / GoalPlanner
 ComputerAdapter ──▶ unified API: screenshot, read_ui_tree, execute, wait_for
         │
         ▼
-ToolRegistry ──▶ CapabilitySet ──▶ platform tools
+ToolRegistry ──▶ PlatformToolSet ──▶ platform tools
         │                              │
         │                              ├──▶ macOS: AXUIElement, AppleScript
         │                              ├──▶ Windows: UI Automation, PowerShell
@@ -34,7 +34,7 @@ ToolRegistry ──▶ CapabilitySet ──▶ platform tools
 
 ## OS Control Scope
 
-Permission levels restrict what OS actions an agent may perform. See `src/computer/capabilities/mod.rs::OsControlScope` (formerly `src/capabilities/`, relocated).
+Permission levels restrict what OS actions an agent may perform. See `src/computer/platform/mod.rs::OsControlScope`.
 
 | Scope | Meaning | Example Operations |
 |-------|---------|-------------------|
@@ -157,22 +157,22 @@ re-inspect to verify
 | Android | ADB | screenshot, tap/swipe, input, app install/launch/force-stop, UI tree dump |
 | iOS | libimobiledevice | device list, screenshot, app management |
 
-These are implemented as additional `CapabilitySet`s registered alongside desktop/server sets.
+These are implemented as additional `PlatformToolSet`s registered alongside desktop/server sets.
 
 ## Capability Registry
 
-`CapabilityRegistry` holds all registered sets, checks platform constraints at runtime, and exports available tools into `ToolRegistry`.
+`PlatformCapabilityRegistry` holds all registered sets, checks platform constraints at runtime, and exports available tools into `ToolRegistry`.
 
 ```rust
-pub struct CapabilityRegistry {
-    sets: Vec<Box<dyn CapabilitySet>>,
+pub struct PlatformCapabilityRegistry {
+    sets: Vec<Box<dyn PlatformToolSet>>,
     disabled: HashSet<String>,
     availability_cache: RwLock<HashMap<String, bool>>,
 }
 
-impl CapabilityRegistry {
-    pub fn register(&mut self, set: Box<dyn CapabilitySet>);
-    pub fn available_sets(&self) -> Vec<&dyn CapabilitySet>;
+impl PlatformCapabilityRegistry {
+    pub fn register(&mut self, set: Box<dyn PlatformToolSet>);
+    pub fn available_sets(&self) -> Vec<&dyn PlatformToolSet>;
     pub fn export_to_tool_registry(&self, registry: &mut ToolRegistry, strategy: ToolConflictStrategy);
     pub fn export_with_scope(&self, registry: &mut ToolRegistry, max_scope: OsControlScope, strategy: ToolConflictStrategy);
 }
@@ -225,9 +225,9 @@ Pre-defined profiles make it easy to constrain what the agent can do:
 ## Module Relationships
 
 ```
-src/computer/capabilities/  # platform sets and registry (relocated from src/capabilities/)
-src/computer/              # unified adapter, verification, rollback, headless, remote
-src/planner/          # goal decomposition, DAG execution, persistent queues
-src/tools/            # individual tools and ToolRegistry
-src/security/         # sandbox, audit, content filtering
+src/computer/platform/  # platform tool sets and PlatformCapabilityRegistry
+src/computer/           # unified adapter, verification, rollback, headless, remote
+src/planner/            # goal decomposition, DAG execution, persistent queues
+src/tools/              # individual tools and ToolRegistry
+src/security/           # sandbox, audit, content filtering
 ```
