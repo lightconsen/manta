@@ -22,10 +22,6 @@ pub async fn list_mcp_servers_handler(State(state): State<Arc<GatewayState>>) ->
     }))
 }
 
-#[allow(dead_code)]
-pub fn mcp_default_timeout() -> u64 {
-    30
-}
 
 #[allow(dead_code)]
 /// Connect to an MCP server
