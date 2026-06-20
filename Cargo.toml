@@ -209,8 +209,6 @@ hot-reload = ["notify-debouncer-full"]
 vision = ["ort", "image", "ndarray"]
 pgvector = ["dep:pgvector", "pgvector/sqlx", "sqlx/postgres"]
 sqlite-vec = ["dep:sqlite-vec", "dep:libsqlite3-sys"]
-# TUI is no longer optional; kept as a no-op feature for backwards compatibility
-tui = []
 
 # Note: Discord and Slack use reqwest for HTTP API calls
 # WhatsApp, QQ, Lark use reqwest with custom implementations

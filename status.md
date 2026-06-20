@@ -145,7 +145,7 @@
 |------|------|
 | ~~`src/flow/`、`src/taskflow/`、`src/server/`、`src/eval/`~~ | 已于 2026-06-18 全部删除 |
 | ~~`docs/os.md` 多处路径~~ | 已于 2026-06-20 修正：`src/computer/capabilities/` → `src/computer/platform/`，`CapabilitySet`→`PlatformToolSet`，`CapabilityRegistry`→`PlatformCapabilityRegistry` |
-| ~~`Cargo.toml` 中 `tui` feature~~ | 已标注为 no-op（兼容保留），无代码引用 `feature = "tui"` |
+| ~~`Cargo.toml` 中 `tui` feature~~ | 已于 2026-06-20 删除（空 no-op feature，代码无 `#[cfg(feature = "tui")]`，CI/脚本均无引用） |
 | `outbound.md` 多处 enum 描述 | 与代码漂移 |
 
 ---
@@ -172,7 +172,7 @@
 10. `providers/preset.rs`：vendor 列表外置 TOML，主代码内只保留 hand-rolled fallback。
 11. `agent` heuristics：抽到 `agent/heuristics.rs`，规范中英文关键词。
 12. `Snapshot::format_for_prompt`：`### Sensors` 加 top-N 截断防爆 token。
-13. ~~删除 `Cargo.toml` 中已 no-op 的 `tui` feature 或在 comment 中明示其语义~~ 已于 2026-06-20 在 comment 中标注（兼容保留）。
+13. ~~删除 `Cargo.toml` 中已 no-op 的 `tui` feature 或在 comment 中明示其语义~~ 已于 2026-06-20 删除该空 feature。
 
 ---
 
