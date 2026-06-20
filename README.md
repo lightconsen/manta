@@ -49,7 +49,7 @@ Syscity provides the **perception layer**, **action layer**, **memory layer**, a
                               │
 ┌─────────────────────────────────────────────────────────────┐
 │                      Agent Runtime                            │
-│  LLM Routing · Tool Loop · Memory · Agent Teams · MCP        │
+│  LLM Routing · Tool Loop · Memory · Sub-Agents (ACP) · MCP  │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
@@ -80,7 +80,7 @@ Syscity provides the **perception layer**, **action layer**, **memory layer**, a
 ## Cognition
 
 - **Multi-Provider LLM** — OpenAI, Anthropic, DeepSeek, Azure, Ollama, and custom endpoints
-- **Agent Teams** — Create hierarchies of agents with roles and delegation
+- **Sub-Agents (ACP)** — Spawn and delegate to sub-agents via the Agent Control Protocol
 - **Vector Memory** — Long-term semantic memory with conversation history
 - **MCP Support** — Model Context Protocol servers for external tool integration
 - **WASM Plugins** — Extend capabilities with sandboxed WebAssembly plugins
@@ -119,17 +119,23 @@ Open `http://127.0.0.1:18080` for the Web UI.
 
 ### Physical AI in Action
 
-```bash
-# Chat from the terminal
-syscity chat --message "Take a screenshot and tell me what's on my screen"
+Open the Web UI, or attach the terminal client:
 
-# The agent can:
-# - Capture your screen
-# - Read the UI tree of frontmost windows
-# - Click buttons or type text
-# - Execute AppleScript to control apps
-# - Run shell commands and return results
+```bash
+# Interactive terminal UI (connects to the running daemon)
+syscity tui
 ```
+
+Then ask the agent something like *"Take a screenshot and tell me what's on
+my screen"*. The agent can:
+
+- Capture your screen
+- Read the UI tree of frontmost windows
+- Click buttons or type text
+- Execute AppleScript to control apps
+- Run shell commands and return results
+
+See the [Getting Started guide](docs/getting-started.md) for a full walkthrough.
 
 ## macOS Physical Control (Best Experience)
 
@@ -158,12 +164,13 @@ export SYSCITY_MODEL="gpt-4o"
 
 ## Documentation
 
+- [Getting Started](docs/getting-started.md)
+- [Build from Source](docs/build.md)
 - [Architecture](docs/arch.md)
-- [OS Capability Architecture](docs/os-capability-arch.md)
+- [OS Capability Architecture](docs/os.md)
 - [Protocol](docs/protocol.md)
-- [Commands](docs/command.md)
-- [Channels](docs/modules/channels.md)
-- [Providers](docs/modules/providers.md)
+- [Slash Commands](docs/command.md)
+- [Full documentation index](docs/README.md)
 
 ## License
 
