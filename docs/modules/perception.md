@@ -601,7 +601,9 @@ pub enum Event {
 `HealthTracker::record_success/record_timeout/record_error` return
 `Option<HealthState>` — `Some(state)` only when the call **transitions**
 the source's state. `PerceptionRegistry::poll_all` and `probe_source`
-collect those transitions and emit one `Event::Anomaly` per transition:
+collect those transitions and emit one `Event::Anomaly` per transition.
+`poll_all` records all per-source outcomes under a single `health`
+write-lock acquisition per tick (rather than one lock per source):
 
 | Transition | `severity` |
 |---|---|
@@ -651,6 +653,11 @@ pub struct Snapshot {
 `format_for_prompt(max_recent)` renders the snapshot as a Markdown block
 with stable ordering. Returns `None` when **all four sections** are empty,
 so the agent prompt never grows an empty `## Perception` heading.
+
+The `### Sensors` section is grouped by modality and capped at
+`MAX_SENSORS_PER_MODALITY` (5) entries per modality (sorted by source
+name); any excess is summarized as a `… +N more <Modality> sensor(s)`
+line so a chatty modality can't blow up the prompt token budget.
 
 ```markdown
 ## Perception

@@ -34,7 +34,8 @@ src/providers/
 ├── gemini.rs               # Google Gemini generateContent protocol
 ├── fallback.rs             # Multi-provider fallback chain
 ├── mock.rs                 # Programmable test provider
-├── preset.rs               # All builtin vendor definitions
+├── preset.rs               # TOML loader + hand-rolled fallback
+├── presets.toml            # Builtin vendor definitions (embedded via include_str!)
 ├── resolver.rs             # Config → provider dispatch
 ├── stream_wrappers.rs      # Composable stream processing wrappers
 └── sdk.rs                  # Plugin SDK types
@@ -50,7 +51,13 @@ src/providers/
 
 All three accept `ProviderInstanceConfig`, making them fully config-driven. Vendors like Moonshot/Minimax are variants of `OpenAiProvider` with different stream families, not separate provider files.
 
-### Builtin Presets (`preset.rs`)
+### Builtin Presets (`presets.toml` + `preset.rs`)
+
+Vendor definitions live in `presets.toml`, embedded at compile time via
+`include_str!` and parsed once per `builtin_providers()` call. Adding a new
+vendor is a data-only change (one TOML table). If the embedded TOML ever fails
+to parse, `preset.rs` logs the error and falls back to a minimal hand-rolled
+set (OpenAI + Anthropic) so the gateway still boots.
 
 | Preset | Default Protocol | Default Base URL | Auth | Notes |
 |--------|-----------------|------------------|------|-------|
@@ -159,7 +166,7 @@ pub struct ProviderInstanceConfig {
 - Vendor ≠ Protocol separation — Kimi supports both OpenAI and Anthropic protocols via `ProtocolVariant` selection
 - Config-driven providers — `OpenAiProvider::from_config()`, `AnthropicProvider::from_config()`, `GeminiProvider::from_config()`
 - Redundant files eliminated — `ollama.rs`, `moonshot.rs`, `minimax.rs` replaced by resolver-based dispatch
-- New OpenAI-compatible vendor = one line in `preset.rs` + nothing else
+- New OpenAI-compatible vendor = one TOML table in `presets.toml` + nothing else
 - Full backward compatibility — existing `ProviderType` enum mapped to preset names
 - Auth profile store with SQLite persistence (`AuthProfileStore`) — key state metadata only (failure counts, cooldown, status); raw keys remain in config
 - API key rotation with `AuthProfile` / `AuthProfileManager` — automatic failover between multiple keys per provider

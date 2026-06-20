@@ -118,9 +118,9 @@
 ### 代码优化
 
 * ~~`gateway/mod.rs` 拆分（见上文 II.1）~~ 已于 2026-06-20 完成。
-* `agent`：`is_desktop_task` / `is_complex_task` 关键词启发式应抽到 `agent/heuristics.rs`，便于针对 i18n 场景维护（已混入中文关键词）。
-* `perception`：`PerceptionRegistry` 内部多个 `RwLock<HashMap<...>>`，建议加 `parking_lot` 或者评估 `dashmap`，poll 路径上锁次数较多。
-* `providers/preset.rs`：每加一个新 vendor 仍是 hand-coded match 分支，可考虑数据驱动 + `serde` 反序列化保留 hand-rolled 兼容。
+* ~~`agent`：`is_desktop_task` / `is_complex_task` 关键词启发式应抽到 `agent/heuristics.rs`~~ 已于 2026-06-20 抽出并补齐中英文关键词。
+* ~~`perception`：`PerceptionRegistry` 内部多个 `RwLock<HashMap<...>>`，poll 路径上锁次数较多~~ 已于 2026-06-20 在 `poll_all` 改批量单次写锁（O(n)→O(1) 锁获取）；`dashmap`/`parking_lot` 替换暂不必要。
+* ~~`providers/preset.rs`：每加一个新 vendor 仍是 hand-coded match 分支~~ 已于 2026-06-20 外置到 `presets.toml`（`include_str!` + `serde`），主代码仅保留两 vendor 的 hand-rolled 解析失败降级。
 * `tools`：`ToolContext` 字段已 20+，可拆分子结构（identity / sandbox / model）；调用者构造越来越冗长。
 * `inbound` / `outbound`：两边都各自维护 `*_pipeline.rs` + 多个 stage 文件，但 `Default*Pipeline` 都是 hard-coded 顺序；可以引入小型 stage trait 列表以便插件扩展。
 
@@ -128,7 +128,7 @@
 
 * `agent/prompt_builder`：当前 `## Perception` block 与 `### Recent events / Sensors / Entities` 在小型 LLM 下偏冗长。`enable_summary=false` 是新默认，但 prompt 里仍可以裁剪：
   * 当 `Snapshot.entities` 与 `aggregates` 都为空时，应连标题都不输出（已实现 `format_for_prompt` 返回 None）。✓
-  * `### Sensors` 输出是完整 JSON dump，建议截断到 top-N（per modality）以防爆 token。
+  * ~~`### Sensors` 输出是完整 JSON dump，建议截断到 top-N（per modality）以防爆 token。~~ 已于 2026-06-20 实现 per-modality top-5 截断，超出以 `… +N more` 概括。✓
 * `planner/DECOMPOSITION_SYSTEM_PROMPT`：已包含 `tool_call`，但样例少。建议加 1-2 条 device-tool 示例，指明何时优先用 `device_*` vs 通用 `shell`。
 * `skills` 触发词：当前 priority 只参与排序，未参与冲突解释；可在 prompt 中加 `Skill triggered:` 注释，方便用户调试。
 * `eval`：~~尚无 prompt~~（模块已删除）。
@@ -180,5 +180,5 @@
 * **核心路径成熟**：channels / inbound / agent / outbound / providers / memory / device / perception / tools / acp / plugins / mcp 这一主链已经从单元测试到 E2E 测试完整覆盖，且文档贴近代码。
 * **历史包袱已清理**：`flow`、`taskflow`、`server`、`eval` 四大孤岛已于 2026-06-18 全部删除。
 * **文档健康度** 大约 85%：核心模块文档准确，外围模块（`outbound`、`adapters`、`heartbeat`、`os.md`）存在与实际代码漂移的局部错误。
-* **Prompt 优化空间** 主要在 perception/skills/planner 三处，已有 `enable_summary=false` 的较好默认，下一步是裁掉 `### Sensors` 大 JSON。
+* **Prompt 优化空间** 主要在 skills/planner 两处，已有 `enable_summary=false` 的较好默认，且 `### Sensors` 已于 2026-06-20 加 per-modality top-N 截断。
 * **集成质量**：~~`team` 处于「实现胜过集成」状态~~（已于 2026-06-18 删除,多 agent 协作统一走 ACP）。

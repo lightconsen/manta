@@ -20,6 +20,7 @@ The central orchestrator that handles conversations, manages context, calls tool
 - **`personality.rs`** — Agent personality and agent registry.
 - **`turns.rs`** — Thread and turn management for conversation threading.
 - **`artifacts.rs`** — Artifact store for generated files and outputs.
+- **`heuristics.rs`** — Desktop/complex task detection keyword heuristics (`is_desktop_task` / `is_complex_task`, EN + ZH keyword lists).
 
 ## Key Types
 
