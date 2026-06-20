@@ -105,7 +105,7 @@
 ### 功能完整度
 
 * ~~`flow` / `taskflow`：**功能齐**但**未接线**，等同于 PoC~~（已于 2026-06-18 删除）。
-* `heartbeat`：doc 提到「cron-like 表达式」，实际仅有活跃时段 + 固定 interval；未发现 cron 解析。
+* `heartbeat`：~~doc 提到「cron-like 表达式」，实际仅有活跃时段 + 固定 interval；未发现 cron 解析。~~ 已于 2026-06-20 修文档为 interval-only 并指向 `cron` 模块。
 * `eval`：~~缺 LLM-as-a-Judge 实际打分调用器~~（模块已删除,2026-06-18）。
 * `tailscale`：`status()` 只返回字符串，无结构化字段；运维侧不便。
 * ~~`team`：缺 broadcast 持久化，重启即丢消息~~（已删除）。
@@ -162,7 +162,7 @@
 
 5. ~~**`team` 上挂 `GatewayState`**~~：模块已删除（2026-06-18）。
 6. ~~`eval` 接入 CLI~~：模块已删除。
-7. **`heartbeat`**：要么删 doc 中「cron-like 表达式」表述，要么真接 cron 解析（与 `cron` 模块共享 `CronExpression`）。
+7. ~~**`heartbeat`**：要么删 doc 中「cron-like 表达式」表述，要么真接 cron 解析（与 `cron` 模块共享 `CronExpression`）。~~ 已于 2026-06-20 按现状修文档：heartbeat 定位为 interval-only，cron 表达式调度归 `cron` 模块（避免重复造轮子）。
 8. **`tools::ToolContext`**：拆分 `ToolIdentity` / `ToolSandbox` / `ToolModel` 三个子 struct。
 
 ### P2（细节）
@@ -179,6 +179,6 @@
 
 * **核心路径成熟**：channels / inbound / agent / outbound / providers / memory / device / perception / tools / acp / plugins / mcp 这一主链已经从单元测试到 E2E 测试完整覆盖，且文档贴近代码。
 * **历史包袱已清理**：`flow`、`taskflow`、`server`、`eval` 四大孤岛已于 2026-06-18 全部删除。
-* **文档健康度** 大约 85%：核心模块文档准确，外围模块（`outbound`、`adapters`、`heartbeat`、`os.md`）存在与实际代码漂移的局部错误。
+* **文档健康度** 大约 90%：核心模块文档准确；`outbound`、`adapters`、`heartbeat`、`os.md` 等外围漂移已于 2026-06-20 修齐。
 * **Prompt 优化空间** 主要在 skills/planner 两处，已有 `enable_summary=false` 的较好默认，且 `### Sensors` 已于 2026-06-20 加 per-modality top-N 截断。
 * **集成质量**：~~`team` 处于「实现胜过集成」状态~~（已于 2026-06-18 删除,多 agent 协作统一走 ACP）。

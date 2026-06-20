@@ -72,7 +72,7 @@ pub enum WakePriority {
 
 ## Implemented Features
 
-- Configurable heartbeat scheduling with cron-like expressions
+- Interval-based task scheduling from `HEARTBEAT.md` (duration strings like `5m`, `30s`, `2h30m`)
 - Active hours window (HH:MM format validation)
 - Configurable check interval
 - Wake priority levels for task scheduling
@@ -81,4 +81,14 @@ pub enum WakePriority {
 - Heartbeat event logging
 - Integration with Gateway lifecycle
 - Config validation for time format
+
+## Scope vs. `cron`
+
+Heartbeat is intentionally **interval-only** — each `HEARTBEAT.md` task fires
+on a fixed `Duration` cadence (`is_task_due` compares `last.elapsed()` against
+the parsed interval). It does **not** parse cron expressions. Calendar-style
+scheduling (5/6-field cron expressions, timezones, one-shot `At`, retry, wake
+modes) is handled by the separate [`cron`](cron.md) module via its `Schedule`
+enum (`At` / `Every` / `Cron`). Use `cron` when you need cron expressions;
+use heartbeat for simple periodic agent wakes within active hours.
 
