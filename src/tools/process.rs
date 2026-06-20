@@ -220,7 +220,7 @@ impl Tool for ProcessTool {
                 if let Some(dir) = working_dir {
                     cmd.current_dir(dir);
                 } else {
-                    cmd.current_dir(&context.working_directory);
+                    cmd.current_dir(&context.working_directory());
                 }
 
                 if let Some(vars) = env {

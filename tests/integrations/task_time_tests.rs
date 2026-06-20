@@ -122,7 +122,7 @@ async fn todo_update_nonexistent_fails() {
 async fn todo_clears_completed() {
     let tool = TodoTool::new();
     let mut ctx = test_context();
-    ctx.conversation_id = format!("todo-clear-{}", std::process::id());
+    ctx.identity.conversation_id = format!("todo-clear-{}", std::process::id());
 
     let r1 = tool
         .execute(json!({"action": "create", "content": "task 1"}), &ctx)

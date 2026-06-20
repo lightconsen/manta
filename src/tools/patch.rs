@@ -81,19 +81,19 @@ impl Tool for ApplyPatchTool {
         };
 
         let target_dir = if args.directory.is_empty() {
-            context.working_directory.clone()
+            context.working_directory().clone()
         } else {
             std::path::PathBuf::from(&args.directory)
         };
 
         // Path sandboxing: validate that target_dir stays within working_directory
-        let canonical_workdir = tokio::fs::canonicalize(&context.working_directory)
+        let canonical_workdir = tokio::fs::canonicalize(context.working_directory())
             .await
             .ok();
         let canonical_target = if target_dir.is_absolute() {
             tokio::fs::canonicalize(&target_dir).await.ok()
         } else {
-            tokio::fs::canonicalize(context.working_directory.join(&target_dir))
+            tokio::fs::canonicalize(context.working_directory().join(&target_dir))
                 .await
                 .ok()
         };

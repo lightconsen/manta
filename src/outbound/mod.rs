@@ -17,6 +17,7 @@ use std::sync::Arc;
 pub mod reply_dispatcher;
 pub mod side_effects;
 pub mod sse;
+pub mod stage;
 pub mod trajectory;
 
 use crate::channels::reply_prefix::{ReplyPrefixEngine, TemplateContext};

@@ -434,7 +434,7 @@ impl Tool for GlobTool {
         let base_path = args["path"]
             .as_str()
             .map(|p| context.resolve_path(std::path::Path::new(p)))
-            .unwrap_or_else(|| context.workspace_root.clone());
+            .unwrap_or_else(|| context.workspace_root().clone());
 
         if !context.is_path_allowed(&base_path) {
             return Ok(ToolExecutionResult::error(format!(

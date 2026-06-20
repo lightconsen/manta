@@ -20,6 +20,7 @@ Communication interfaces through which users interact with Syscity.
 - **Thread binding** — `ThreadBindingManager` with policies for conversation placement decisions.
 - **Identity validation** — `IdentityValidator` and `SenderIdentity` for sender verification.
 - **Reply prefix** — `ReplyPrefixEngine` with templates for prepending model info to replies.
+  *Responsibility boundary:* The template engine lives in `channels::reply_prefix` but is **applied** by the outbound pipeline (`DefaultOutboundPipeline`), not by channels themselves. `ReplyDispatcher` and `MessageFormatter` do not add prefixes — they receive already-prefixed content. See `docs/modules/outbound.md`.
 - **Account snapshots** — `AccountSnapshotStore` for channel health snapshots.
 - **ACP bridge** — `ChannelAcpBridge` for routing ACP commands through channels.
 - **Session envelopes** — `SessionEnvelopeManager` for tracking session context.

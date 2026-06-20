@@ -150,7 +150,7 @@ async fn session_status_tool_requires_id() {
     );
     let tool = SessionStatusTool::new(Some(store));
     let mut ctx = test_context();
-    ctx.conversation_id = String::new();
+    ctx.identity.conversation_id = String::new();
     let result = tool.execute(json!({}), &ctx).await.unwrap();
     assert!(!result.success, "Expected failure without id");
     let err = result.error.unwrap();
@@ -270,7 +270,7 @@ async fn apply_patch_applies_valid_patch() {
 
     let tool = ApplyPatchTool::new();
     let mut ctx = test_context();
-    ctx.working_directory = temp_dir.path().to_path_buf();
+    ctx.sandbox.working_directory = temp_dir.path().to_path_buf();
     let result = tool
         .execute(
             json!({

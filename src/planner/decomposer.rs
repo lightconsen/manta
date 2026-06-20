@@ -219,6 +219,8 @@ Available DesktopAction types (JSON shape):
 
 Note: Tool names starting with "device_" (e.g. "device_oscilloscope_01_read_waveform", "device_motor_03_move_to") are device capabilities registered by connected hardware. Use "tool_call" for any device operation. The list of available tool names is provided in the available_tools list.
 
+When to use `device_*` vs generic `shell`: Prefer device tools for hardware interaction (oscilloscope, motor, sensor read) because they use the device's structured API. Use `shell` only for software-side operations (file manipulation, network queries, process management) where no device tool exists.
+
 Available verification types:
 - { "success": {} }
 - { "ui_tree_contains": { "role": "button", "label": "OK" } }
@@ -231,6 +233,14 @@ Available verification types:
 
 Example output:
 [
+  {
+    "id": "read-oscilloscope",
+    "description": "Read channel 1 waveform from connected oscilloscope via device tool",
+    "dependencies": [],
+    "action": { "tool_call": { "tool_name": "device_oscilloscope_01_read_waveform", "args": { "channel": 1 } } },
+    "verification": { "success": {} },
+    "max_retries": 2
+  },
   {
     "id": "open-browser",
     "description": "Launch the web browser",

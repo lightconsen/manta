@@ -287,11 +287,11 @@ impl Tool for ImageGenerateTool {
         };
 
         let api_key = context
-            .environment
+            .environment()
             .get("OPENAI_API_KEY")
             .cloned()
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .or_else(|| context.environment.get("DALLE_API_KEY").cloned())
+            .or_else(|| context.environment().get("DALLE_API_KEY").cloned())
             .or_else(|| std::env::var("DALLE_API_KEY").ok());
 
         if api_key.is_none() {
@@ -374,7 +374,7 @@ impl Tool for ImageGenerateTool {
                         context.resolve_path(std::path::Path::new(&out))
                     } else {
                         context
-                            .workspace_root
+                            .workspace_root()
                             .join(format!("generated_image_{}.png", uuid::Uuid::new_v4()))
                     };
 

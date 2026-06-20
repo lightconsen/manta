@@ -297,7 +297,7 @@ Supports regex patterns and can search recursively through directories."#
         let path = args["path"]
             .as_str()
             .map(|p| context.resolve_path(std::path::Path::new(p)))
-            .unwrap_or_else(|| context.workspace_root.clone());
+            .unwrap_or_else(|| context.workspace_root().clone());
 
         // Validate path
         if !context.is_path_allowed(&path) {

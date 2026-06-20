@@ -268,7 +268,7 @@ async fn glob_no_matches_returns_empty() {
     let temp_dir = tempfile::tempdir().unwrap();
     let tool = GlobTool::new();
     let mut ctx = test_context();
-    ctx.workspace_root = temp_dir.path().to_path_buf();
+    ctx.sandbox.workspace_root = temp_dir.path().to_path_buf();
     let result = tool
         .execute(json!({"pattern": "*.nonexistent"}), &ctx)
         .await;

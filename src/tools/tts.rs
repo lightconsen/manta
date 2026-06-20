@@ -98,13 +98,13 @@ impl Tool for TtsTool {
             std::path::PathBuf::from(out)
         } else {
             context
-                .working_directory
+                .working_directory()
                 .join(format!("tts_{}.mp3", uuid::Uuid::new_v4()))
         };
 
         // Try OpenAI TTS API first
         let api_key = context
-            .environment
+            .environment()
             .get("OPENAI_API_KEY")
             .cloned()
             .or_else(|| std::env::var("OPENAI_API_KEY").ok());
@@ -291,7 +291,7 @@ mod tests {
             .unwrap();
 
         // Clean up any generated TTS audio files from the working directory
-        if let Ok(dir) = std::fs::read_dir(&ctx.working_directory) {
+        if let Ok(dir) = std::fs::read_dir(ctx.working_directory()) {
             for entry in dir.flatten() {
                 let path = entry.path();
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");

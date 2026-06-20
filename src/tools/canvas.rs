@@ -351,7 +351,7 @@ impl Tool for CanvasTool {
                         markdown.push_str(&format!("**{}**\n\n", t));
                     }
                     for (id, src) in &images {
-                        let resolved = resolve_image_src(src, &_context.working_directory).await;
+                        let resolved = resolve_image_src(src, &_context.working_directory()).await;
                         markdown.push_str(&format!("![{}]({})\n\n", id, resolved));
                     }
 

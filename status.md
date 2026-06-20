@@ -107,7 +107,7 @@
 * ~~`flow` / `taskflow`：**功能齐**但**未接线**，等同于 PoC~~（已于 2026-06-18 删除）。
 * `heartbeat`：~~doc 提到「cron-like 表达式」，实际仅有活跃时段 + 固定 interval；未发现 cron 解析。~~ 已于 2026-06-20 修文档为 interval-only 并指向 `cron` 模块。
 * `eval`：~~缺 LLM-as-a-Judge 实际打分调用器~~（模块已删除,2026-06-18）。
-* `tailscale`：`status()` 只返回字符串，无结构化字段；运维侧不便。
+* ~~`tailscale`：`status()` 只返回字符串，无结构化字段；运维侧不便。~~ 已于 2026-06-20 改为 `TailscaleStatus` struct（解析 `--json`）。
 * ~~`team`：缺 broadcast 持久化，重启即丢消息~~（已删除）。
 
 ### 系统集成
@@ -121,22 +121,22 @@
 * ~~`agent`：`is_desktop_task` / `is_complex_task` 关键词启发式应抽到 `agent/heuristics.rs`~~ 已于 2026-06-20 抽出并补齐中英文关键词。
 * ~~`perception`：`PerceptionRegistry` 内部多个 `RwLock<HashMap<...>>`，poll 路径上锁次数较多~~ 已于 2026-06-20 在 `poll_all` 改批量单次写锁（O(n)→O(1) 锁获取）；`dashmap`/`parking_lot` 替换暂不必要。
 * ~~`providers/preset.rs`：每加一个新 vendor 仍是 hand-coded match 分支~~ 已于 2026-06-20 外置到 `presets.toml`（`include_str!` + `serde`），主代码仅保留两 vendor 的 hand-rolled 解析失败降级。
-* `tools`：`ToolContext` 字段已 20+，可拆分子结构（identity / sandbox / model）；调用者构造越来越冗长。
-* `inbound` / `outbound`：两边都各自维护 `*_pipeline.rs` + 多个 stage 文件，但 `Default*Pipeline` 都是 hard-coded 顺序；可以引入小型 stage trait 列表以便插件扩展。
+* ~~`tools`：`ToolContext` 字段已 20+，可拆分子结构（identity / sandbox / model）；调用者构造越来越冗长。~~ 已于 2026-06-20 拆分为 `ToolIdentity`/`ToolSandbox`/`ToolModel` 三子 struct，以 Deref + accessor 减少调用处改动。
+* ~~`inbound` / `outbound`：两边都各自维护 `*_pipeline.rs` + 多个 stage 文件，但 `Default*Pipeline` 都是 hard-coded 顺序；可以引入小型 stage trait 列表以便插件扩展。~~ 已于 2026-06-20 引入 `InboundStage`/`OutboundStage` trait + Vec-based runner + 7 个 stage wrapper（Inbound）和 6 个 stage wrapper（Outbound），gateway wiring 暂保持不变。
 
 ### Prompt 优化
 
 * `agent/prompt_builder`：当前 `## Perception` block 与 `### Recent events / Sensors / Entities` 在小型 LLM 下偏冗长。`enable_summary=false` 是新默认，但 prompt 里仍可以裁剪：
   * 当 `Snapshot.entities` 与 `aggregates` 都为空时，应连标题都不输出（已实现 `format_for_prompt` 返回 None）。✓
   * ~~`### Sensors` 输出是完整 JSON dump，建议截断到 top-N（per modality）以防爆 token。~~ 已于 2026-06-20 实现 per-modality top-5 截断，超出以 `… +N more` 概括。✓
-* `planner/DECOMPOSITION_SYSTEM_PROMPT`：已包含 `tool_call`，但样例少。建议加 1-2 条 device-tool 示例，指明何时优先用 `device_*` vs 通用 `shell`。
-* `skills` 触发词：当前 priority 只参与排序，未参与冲突解释；可在 prompt 中加 `Skill triggered:` 注释，方便用户调试。
+* ~~`planner/DECOMPOSITION_SYSTEM_PROMPT`：已包含 `tool_call`，但样例少。建议加 1-2 条 device-tool 示例，指明何时优先用 `device_*` vs 通用 `shell`。~~ 已于 2026-06-20 增加 device-tool 示例及说明。
+* ~~`skills` 触发词：当前 priority 只参与排序，未参与冲突解释；可在 prompt 中加 `Skill triggered:` 注释，方便用户调试。~~ 已于 2026-06-20 增加 `Skill triggered:` 注释（通过 `find_trigger_text` + `to_prompt_section` 展示）。
 * `eval`：~~尚无 prompt~~（模块已删除）。
 
 ### 架构
 
 * 见 II 节。
-* 一个潜在抽象问题：`channels` 的 `MessageFormatter` / `ReplyPrefixEngine` 与 `outbound/reply_dispatcher` 职责模糊；reply prefix 既出现在 `channels` 也出现在 `outbound`，需在某处文档明确「谁负责加 prefix」。
+* ~~一个潜在抽象问题：`channels` 的 `MessageFormatter` / `ReplyPrefixEngine` 与 `outbound/reply_dispatcher` 职责模糊；reply prefix 既出现在 `channels` 也出现在 `outbound`，需在某处文档明确「谁负责加 prefix」。~~ 已于 2026-06-20 在 `channels.md` 和 `outbound.md` 中明确职责边界：channels 拥有模板引擎定义，outbound 负责执行 prefix 添加。
 
 ### 冗余/死代码
 
@@ -163,7 +163,7 @@
 5. ~~**`team` 上挂 `GatewayState`**~~：模块已删除（2026-06-18）。
 6. ~~`eval` 接入 CLI~~：模块已删除。
 7. ~~**`heartbeat`**：要么删 doc 中「cron-like 表达式」表述，要么真接 cron 解析（与 `cron` 模块共享 `CronExpression`）。~~ 已于 2026-06-20 按现状修文档：heartbeat 定位为 interval-only，cron 表达式调度归 `cron` 模块（避免重复造轮子）。
-8. **`tools::ToolContext`**：拆分 `ToolIdentity` / `ToolSandbox` / `ToolModel` 三个子 struct。
+8. ~~**`tools::ToolContext`**：拆分 `ToolIdentity` / `ToolSandbox` / `ToolModel` 三个子 struct。~~ 已于 2026-06-20 完成：Deref<Target=ToolIdentity> + sandbox accessor 方法，零外部调用处改动。
 
 ### P2（细节）
 

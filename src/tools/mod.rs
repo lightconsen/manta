@@ -59,13 +59,36 @@ impl std::fmt::Display for ToolId {
     }
 }
 
-/// The execution context for a tool
+/// Identity fields: who is calling the tool.
 #[derive(Debug, Clone)]
-pub struct ToolContext {
+pub struct ToolIdentity {
     /// The user ID executing the tool
     pub user_id: String,
     /// The conversation ID
     pub conversation_id: String,
+    /// Identifier of the sender/user that triggered the invocation.
+    pub sender_id: Option<String>,
+    /// Whether the sender is the system owner.
+    pub sender_is_owner: bool,
+    /// Optional per-user RBAC context.
+    pub user_context: Option<UserContext>,
+}
+
+impl Default for ToolIdentity {
+    fn default() -> Self {
+        Self {
+            user_id: String::new(),
+            conversation_id: String::new(),
+            sender_id: None,
+            sender_is_owner: false,
+            user_context: None,
+        }
+    }
+}
+
+/// Sandbox / execution environment: where and how the tool runs.
+#[derive(Debug, Clone)]
+pub struct ToolSandbox {
     /// The working directory for file operations
     pub working_directory: std::path::PathBuf,
     /// Environment variables
@@ -86,41 +109,82 @@ pub struct ToolContext {
     pub fd_limit: Option<u64>,
     /// Maximum process count (for preventing fork bombs)
     pub process_limit: Option<u64>,
-    /// Minimum trust level from active skills.
-    /// When `Community`, privileged (write/exec) tools are excluded from
-    /// `get_available()`.
-    pub skill_trust: SkillTrust,
     /// Root directory for file operations (workspace boundary).
-    /// All relative paths are resolved against this directory.
     pub workspace_root: std::path::PathBuf,
     /// When true, file operations are restricted to `workspace_root`.
-    /// Attempts to read/write outside the workspace are rejected.
     pub workspace_only: bool,
-    /// Optional per-user RBAC context. When set together with
-    /// `tool_policy`, it drives additional tool filtering beyond the
-    /// legacy `SkillTrust` boundary.
-    pub user_context: Option<UserContext>,
-    /// Optional per-context RBAC policy. When set together with
-    /// `user_context`, it is evaluated in `ToolRegistry::is_excluded`.
-    pub tool_policy: Option<ToolPolicy>,
-    /// Name of the LLM model driving the current invocation.
-    /// Used for model-based tool gating.
-    pub model_name: Option<String>,
-    /// Name of the LLM provider driving the current invocation.
-    /// Used for provider-based tool gating.
-    pub provider_name: Option<String>,
-    /// Identifier of the sender/user that triggered the invocation.
-    /// Used for sender-based tool gating.
-    pub sender_id: Option<String>,
-    /// Whether the sender is the system owner.
-    pub sender_is_owner: bool,
-    /// Optional allowlist of plugin tool prefixes/names.
-    /// When set, only plugin tools matching these prefixes are exposed.
-    pub plugin_allowlist: Option<Vec<String>>,
-    /// Capabilities of the current model (vision, tool use, etc.).
-    pub model_capabilities: ModelCapabilities,
     /// Optional sandbox policy applied to tool execution.
     pub sandbox_policy: Option<SandboxPolicy>,
+    /// Optional allowlist of plugin tool prefixes/names.
+    pub plugin_allowlist: Option<Vec<String>>,
+}
+
+impl Default for ToolSandbox {
+    fn default() -> Self {
+        Self {
+            working_directory: std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            environment: default_tool_environment(),
+            timeout: Duration::from_secs(30),
+            allowed_paths: Vec::new(),
+            allowed_commands: Vec::new(),
+            sandboxed: false,
+            memory_limit: None,
+            cpu_limit: None,
+            fd_limit: None,
+            process_limit: None,
+            workspace_root: crate::dirs::workspace_data_dir(),
+            workspace_only: true,
+            sandbox_policy: None,
+            plugin_allowlist: None,
+        }
+    }
+}
+
+/// Model / policy metadata: capabilities and access control.
+#[derive(Debug, Clone)]
+pub struct ToolModel {
+    /// Name of the LLM model driving the current invocation.
+    pub model_name: Option<String>,
+    /// Name of the LLM provider driving the current invocation.
+    pub provider_name: Option<String>,
+    /// Capabilities of the current model (vision, tool use, etc.).
+    pub model_capabilities: ModelCapabilities,
+    /// Minimum trust level from active skills.
+    pub skill_trust: SkillTrust,
+    /// Optional per-context RBAC policy.
+    pub tool_policy: Option<ToolPolicy>,
+}
+
+impl Default for ToolModel {
+    fn default() -> Self {
+        Self {
+            model_name: None,
+            provider_name: None,
+            model_capabilities: ModelCapabilities::default(),
+            skill_trust: SkillTrust::Trusted,
+            tool_policy: None,
+        }
+    }
+}
+
+/// The execution context for a tool
+///
+/// Groups fields into three sub-structs for construction ergonomics:
+/// - `identity`: who is making the call (`user_id`, `conversation_id`, etc.)
+/// - `sandbox`: execution environment (working directory, timeouts, limits)
+/// - `model`: LLM / policy metadata (model name, capabilities, trust)
+///
+/// Common identity fields are accessible via `Deref` — `ctx.user_id` still works.
+/// Sandbox fields have convenience accessors: `ctx.working_directory()`.
+#[derive(Debug, Clone)]
+pub struct ToolContext {
+    /// Identity fields (who is calling the tool)
+    pub identity: ToolIdentity,
+    /// Sandbox / execution environment
+    pub sandbox: ToolSandbox,
+    /// Model / policy metadata
+    pub model: ToolModel,
 }
 
 /// Allowed environment variables that are safe to forward to child processes.
@@ -151,168 +215,172 @@ fn default_tool_environment() -> HashMap<String, String> {
 impl Default for ToolContext {
     fn default() -> Self {
         Self {
-            user_id: String::new(),
-            conversation_id: String::new(),
-            working_directory: std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from(".")),
-            environment: default_tool_environment(),
-            timeout: Duration::from_secs(30),
-            allowed_paths: Vec::new(),
-            allowed_commands: Vec::new(),
-            sandboxed: false,
-            memory_limit: None,
-            cpu_limit: None,
-            fd_limit: None,
-            process_limit: None,
-            skill_trust: SkillTrust::Trusted,
-            workspace_root: crate::dirs::workspace_data_dir(),
-            workspace_only: true,
-            user_context: None,
-            tool_policy: None,
-            model_name: None,
-            provider_name: None,
-            sender_id: None,
-            sender_is_owner: false,
-            plugin_allowlist: None,
-            model_capabilities: ModelCapabilities::default(),
-            sandbox_policy: None,
+            identity: ToolIdentity::default(),
+            sandbox: ToolSandbox::default(),
+            model: ToolModel::default(),
         }
     }
 }
 
+impl std::ops::Deref for ToolContext {
+    type Target = ToolIdentity;
+    fn deref(&self) -> &Self::Target {
+        &self.identity
+    }
+}
+
 impl ToolContext {
+    /// Convenience accessors for commonly-used sandbox fields.
+    pub fn working_directory(&self) -> &std::path::PathBuf { &self.sandbox.working_directory }
+    pub fn environment(&self) -> &HashMap<String, String> { &self.sandbox.environment }
+    pub fn timeout(&self) -> Duration { self.sandbox.timeout }
+    pub fn sandboxed(&self) -> bool { self.sandbox.sandboxed }
+    pub fn allowed_paths(&self) -> &[std::path::PathBuf] { &self.sandbox.allowed_paths }
+    pub fn allowed_commands(&self) -> &[String] { &self.sandbox.allowed_commands }
+    pub fn workspace_root(&self) -> &std::path::PathBuf { &self.sandbox.workspace_root }
+    pub fn workspace_only(&self) -> bool { self.sandbox.workspace_only }
+    pub fn memory_limit(&self) -> Option<usize> { self.sandbox.memory_limit }
+    pub fn cpu_limit(&self) -> Option<u64> { self.sandbox.cpu_limit }
+    pub fn fd_limit(&self) -> Option<u64> { self.sandbox.fd_limit }
+    pub fn process_limit(&self) -> Option<u64> { self.sandbox.process_limit }
+    pub fn sandbox_policy(&self) -> Option<&SandboxPolicy> { self.sandbox.sandbox_policy.as_ref() }
+    pub fn plugin_allowlist(&self) -> Option<&[String]> { self.sandbox.plugin_allowlist.as_deref() }
+
     /// Create a new tool context
     pub fn new(user_id: impl Into<String>, conversation_id: impl Into<String>) -> Self {
         Self {
-            user_id: user_id.into(),
-            conversation_id: conversation_id.into(),
+            identity: ToolIdentity {
+                user_id: user_id.into(),
+                conversation_id: conversation_id.into(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
 
     /// Set the workspace root directory
     pub fn with_workspace_root(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.workspace_root = path.into();
+        self.sandbox.workspace_root = path.into();
         self
     }
 
     /// Set workspace-only mode (restrict file ops to workspace_root)
     pub fn with_workspace_only(mut self, enabled: bool) -> Self {
-        self.workspace_only = enabled;
+        self.sandbox.workspace_only = enabled;
         self
     }
 
     /// Set the minimum skill trust level (controls which tools are exposed).
     pub fn with_skill_trust(mut self, trust: SkillTrust) -> Self {
-        self.skill_trust = trust;
+        self.model.skill_trust = trust;
         self
     }
 
     /// Set the RBAC user context for policy evaluation.
     pub fn with_user_context(mut self, ctx: UserContext) -> Self {
-        self.user_context = Some(ctx);
+        self.identity.user_context = Some(ctx);
         self
     }
 
     /// Set the RBAC policy applied to this context.
     pub fn with_tool_policy(mut self, policy: ToolPolicy) -> Self {
-        self.tool_policy = Some(policy);
+        self.model.tool_policy = Some(policy);
         self
     }
 
     /// Set the model name for model-based tool gating.
     pub fn with_model_name(mut self, model: impl Into<String>) -> Self {
-        self.model_name = Some(model.into());
+        self.model.model_name = Some(model.into());
         self
     }
 
     /// Set the provider name for provider-based tool gating.
     pub fn with_provider_name(mut self, provider: impl Into<String>) -> Self {
-        self.provider_name = Some(provider.into());
+        self.model.provider_name = Some(provider.into());
         self
     }
 
     /// Set the sender identifier for sender-based tool gating.
     pub fn with_sender_id(mut self, sender: impl Into<String>) -> Self {
-        self.sender_id = Some(sender.into());
+        self.identity.sender_id = Some(sender.into());
         self
     }
 
     /// Mark the sender as the system owner.
     pub fn with_sender_is_owner(mut self, is_owner: bool) -> Self {
-        self.sender_is_owner = is_owner;
+        self.identity.sender_is_owner = is_owner;
         self
     }
 
     /// Set an allowlist of plugin tool prefixes/names.
     pub fn with_plugin_allowlist(mut self, allowlist: Vec<String>) -> Self {
-        self.plugin_allowlist = Some(allowlist);
+        self.sandbox.plugin_allowlist = Some(allowlist);
         self
     }
 
     /// Set the model capabilities for model-based tool gating.
     pub fn with_model_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
-        self.model_capabilities = capabilities;
+        self.model.model_capabilities = capabilities;
         self
     }
 
     /// Set the sandbox policy applied to tool execution.
     pub fn with_sandbox_policy(mut self, policy: SandboxPolicy) -> Self {
-        self.sandbox_policy = Some(policy);
+        self.sandbox.sandbox_policy = Some(policy);
         self
     }
 
     /// Set the working directory
     pub fn with_working_dir(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.working_directory = path.into();
+        self.sandbox.working_directory = path.into();
         self
     }
 
     /// Set the timeout
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.sandbox.timeout = timeout;
         self
     }
 
     /// Add an allowed path
     pub fn allow_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.allowed_paths.push(path.into());
+        self.sandbox.allowed_paths.push(path.into());
         self
     }
 
     /// Add an allowed command
     pub fn allow_command(mut self, command: impl Into<String>) -> Self {
-        self.allowed_commands.push(command.into());
+        self.sandbox.allowed_commands.push(command.into());
         self
     }
 
     /// Set sandboxed mode
-    pub fn sandboxed(mut self, sandboxed: bool) -> Self {
-        self.sandboxed = sandboxed;
+    pub fn with_sandboxed(mut self, sandboxed: bool) -> Self {
+        self.sandbox.sandboxed = sandboxed;
         self
     }
 
     /// Set memory limit in bytes (only effective when sandboxed)
     pub fn with_memory_limit(mut self, bytes: usize) -> Self {
-        self.memory_limit = Some(bytes);
+        self.sandbox.memory_limit = Some(bytes);
         self
     }
 
     /// Set CPU time limit in seconds (only effective when sandboxed)
     pub fn with_cpu_limit(mut self, seconds: u64) -> Self {
-        self.cpu_limit = Some(seconds);
+        self.sandbox.cpu_limit = Some(seconds);
         self
     }
 
     /// Set file descriptor limit (only effective when sandboxed)
     pub fn with_fd_limit(mut self, count: u64) -> Self {
-        self.fd_limit = Some(count);
+        self.sandbox.fd_limit = Some(count);
         self
     }
 
     /// Set process limit for preventing fork bombs (only effective when sandboxed)
     pub fn with_process_limit(mut self, count: u64) -> Self {
-        self.process_limit = Some(count);
+        self.sandbox.process_limit = Some(count);
         self
     }
 
@@ -323,12 +391,12 @@ impl ToolContext {
         use std::io;
 
         // Only apply limits if sandboxed
-        if !self.sandboxed {
+        if !self.sandbox.sandboxed {
             return Ok(());
         }
 
         // Apply memory limit
-        if let Some(memory_limit) = self.memory_limit {
+        if let Some(memory_limit) = self.sandbox.memory_limit {
             // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
             // limits for the current process. It is async-signal-safe and does not
             // access invalid memory.
@@ -345,7 +413,7 @@ impl ToolContext {
         }
 
         // Apply CPU limit
-        if let Some(cpu_limit) = self.cpu_limit {
+        if let Some(cpu_limit) = self.sandbox.cpu_limit {
             // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
             // limits for the current process. It is async-signal-safe and does not
             // access invalid memory.
@@ -362,7 +430,7 @@ impl ToolContext {
         }
 
         // Apply file descriptor limit
-        if let Some(fd_limit) = self.fd_limit {
+        if let Some(fd_limit) = self.sandbox.fd_limit {
             // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
             // limits for the current process. It is async-signal-safe and does not
             // access invalid memory.
@@ -379,7 +447,7 @@ impl ToolContext {
         }
 
         // Apply process limit (NPROC)
-        if let Some(process_limit) = self.process_limit {
+        if let Some(process_limit) = self.sandbox.process_limit {
             // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
             // limits for the current process. It is async-signal-safe and does not
             // access invalid memory.
@@ -407,22 +475,22 @@ impl ToolContext {
 
     /// Get a human-readable summary of resource limits
     pub fn resource_limits_summary(&self) -> String {
-        if !self.sandboxed {
+        if !self.sandbox.sandboxed {
             return "No sandbox (no resource limits)".to_string();
         }
 
         let mut parts = vec!["Sandbox active".to_string()];
 
-        if let Some(mem) = self.memory_limit {
+        if let Some(mem) = self.sandbox.memory_limit {
             parts.push(format!("Memory: {} MB", mem / 1024 / 1024));
         }
-        if let Some(cpu) = self.cpu_limit {
+        if let Some(cpu) = self.sandbox.cpu_limit {
             parts.push(format!("CPU: {}s", cpu));
         }
-        if let Some(fd) = self.fd_limit {
+        if let Some(fd) = self.sandbox.fd_limit {
             parts.push(format!("FDs: {}", fd));
         }
-        if let Some(proc) = self.process_limit {
+        if let Some(proc) = self.sandbox.process_limit {
             parts.push(format!("Processes: {}", proc));
         }
 
@@ -436,10 +504,10 @@ impl ToolContext {
     /// Check if a path is allowed
     pub fn is_path_allowed(&self, path: &std::path::Path) -> bool {
         // ── allowlist check ────────────────────────────────────────────────
-        if !self.allowed_paths.is_empty() {
+        if !self.sandbox.allowed_paths.is_empty() {
             let path_canon = path.canonicalize().ok();
             let path_raw = path.to_path_buf();
-            let in_allowlist = self.allowed_paths.iter().any(|allowed| {
+            let in_allowlist = self.sandbox.allowed_paths.iter().any(|allowed| {
                 // Try canonical comparison first (handles symlinks)
                 if let Ok(ref ac) = allowed.canonicalize() {
                     if let Some(ref pc) = path_canon {
@@ -457,15 +525,15 @@ impl ToolContext {
         }
 
         // ── workspace boundary check ──────────────────────
-        if self.workspace_only {
+        if self.sandbox.workspace_only {
             let resolved = self.resolve_path(path);
             let resolved_canon = resolved.canonicalize().ok();
-            let root_canon = self.workspace_root.canonicalize().ok();
+            let root_canon = self.sandbox.workspace_root.canonicalize().ok();
 
             let within = if let (Some(ref rc), Some(ref wc)) = (resolved_canon, root_canon) {
                 rc.starts_with(wc)
             } else {
-                resolved.starts_with(&self.workspace_root)
+                resolved.starts_with(&self.sandbox.workspace_root)
             };
 
             if !within {
@@ -501,17 +569,17 @@ impl ToolContext {
         if expanded.is_absolute() {
             expanded
         } else {
-            self.workspace_root.join(expanded)
+            self.sandbox.workspace_root.join(expanded)
         }
     }
 
     /// Check if a command is allowed
     pub fn is_command_allowed(&self, command: &str) -> bool {
-        if self.allowed_commands.is_empty() {
+        if self.sandbox.allowed_commands.is_empty() {
             return true;
         }
         let cmd = command.split_whitespace().next().unwrap_or(command);
-        self.allowed_commands.iter().any(|allowed| allowed == cmd)
+        self.sandbox.allowed_commands.iter().any(|allowed| allowed == cmd)
     }
 }
 
@@ -710,7 +778,7 @@ pub trait Tool: Send + Sync {
 
     /// Get the timeout for this tool (defaults to context timeout)
     fn timeout(&self, context: &ToolContext) -> Duration {
-        context.timeout
+        context.timeout()
     }
 
     /// Convert to a function definition for LLM providers
@@ -999,7 +1067,7 @@ impl ToolRegistry {
         if self.is_degraded(name) {
             return true;
         }
-        if context.skill_trust < SkillTrust::Trusted && self.is_privileged(name) {
+        if context.model.skill_trust < SkillTrust::Trusted && self.is_privileged(name) {
             return true;
         }
 
@@ -1009,7 +1077,7 @@ impl ToolRegistry {
 
         // Plugin allowlist at the context level (runtime restriction).
         if is_dynamic && Self::is_plugin_like_name(name) {
-            if let Some(ref allowlist) = context.plugin_allowlist {
+            if let Some(ref allowlist) = context.plugin_allowlist() {
                 let allowed = allowlist
                     .iter()
                     .any(|prefix| name == prefix || name.starts_with(prefix));
@@ -1020,7 +1088,7 @@ impl ToolRegistry {
         }
 
         // Sandbox policy: require sandboxed tools.
-        if let Some(ref sandbox_policy) = context.sandbox_policy {
+        if let Some(ref sandbox_policy) = context.sandbox_policy() {
             if sandbox_policy.require_sandboxed {
                 let caps = self.tool_capabilities(name);
                 if !caps.sandboxed {
@@ -1029,15 +1097,15 @@ impl ToolRegistry {
             }
         }
 
-        if let (Some(user_ctx), Some(policy)) = (&context.user_context, &context.tool_policy) {
+        if let (Some(user_ctx), Some(policy)) = (&context.user_context, &context.model.tool_policy) {
             let capabilities = self.tool_capabilities(name);
             let eval_ctx = PolicyEvaluationContext {
-                model_name: context.model_name.clone(),
-                provider_name: context.provider_name.clone(),
+                model_name: context.model.model_name.clone(),
+                provider_name: context.model.provider_name.clone(),
                 sender_id: context.sender_id.clone(),
                 sender_is_owner: context.sender_is_owner,
-                plugin_allowlist: context.plugin_allowlist.clone(),
-                model_capabilities: context.model_capabilities.clone(),
+                plugin_allowlist: context.plugin_allowlist().map(|s| s.to_vec()),
+                model_capabilities: context.model.model_capabilities.clone(),
                 is_dynamic,
                 is_mcp,
             };
@@ -1680,7 +1748,7 @@ impl ToolRegistry {
         };
 
         let tool_name = call.name.clone();
-        let timeout = context.timeout;
+        let timeout = context.timeout();
 
         // Try static tools first
         if let Some(tool) = self.get(&tool_name) {
@@ -2262,7 +2330,7 @@ mod tests {
             .allow_command("ls");
 
         assert_eq!(ctx.user_id, "user1");
-        assert_eq!(ctx.timeout, Duration::from_secs(60));
+        assert_eq!(ctx.timeout(), Duration::from_secs(60));
         assert!(ctx.is_command_allowed("ls"));
         assert!(!ctx.is_command_allowed("rm"));
     }

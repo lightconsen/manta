@@ -28,8 +28,8 @@ Agent Output
 | 1 | Trajectory | Persist execution trace |
 | 2 | Canvas | Detect and render A2UI components |
 | 3 | SSE | Stream tool call events to clients |
-| 4 | Reply Prefix | Prepend model info / metadata |
-| 5 | Reply Dispatch | Route to correct channel |
+| 4 | Reply Prefix | Prepend model info / metadata (optional, gated by `DefaultOutboundPipeline::with_reply_prefix_engine()`) |
+| 5 | Reply Dispatch | Route to correct channel (receives already-prefixed content, does NOT add prefixes) |
 | 6 | Side Effects | Execute post-delivery actions |
 
 ## Key Types

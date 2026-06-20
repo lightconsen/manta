@@ -258,6 +258,11 @@ pub struct Skill {
  /// Source storage level (bundled, user, workspace, project)
     #[serde(skip)]
     pub source_level: StorageLevel,
+ /// Transient: set by `prefilter_skills` when a keyword/regex trigger matched.
+    /// When `Some(pattern)`, `to_prompt_section` prepends a `// Skill triggered by:`
+    /// comment so the LLM can see why this skill was activated.
+    #[serde(skip)]
+    pub trigger_text: Option<String>,
 }
 
 fn default_version() -> String {
@@ -290,6 +295,7 @@ impl Skill {
             eligibility_errors: Vec::new(),
             enabled: true,
             source_level: StorageLevel::User,
+            trigger_text: None,
         }
     }
 
@@ -334,6 +340,11 @@ impl Skill {
 
  /// Check if this skill matches the given input
     pub fn matches(&self, input: &str) -> bool {
+        self.find_trigger_text(input).is_some()
+    }
+
+    /// Like `matches()`, but returns the first matching trigger pattern text.
+    pub fn find_trigger_text(&self, input: &str) -> Option<String> {
         let input_lower = input.to_lowercase();
 
         for trigger in &self.triggers {
@@ -341,29 +352,29 @@ impl Skill {
                 TriggerType::Regex => {
                     if let Ok(re) = regex::Regex::new(&trigger.pattern) {
                         if re.is_match(input) {
-                            return true;
+                            return Some(trigger.pattern.clone());
                         }
                     }
                 }
                 TriggerType::Keyword => {
                     if input_lower.contains(&trigger.pattern.to_lowercase()) {
-                        return true;
+                        return Some(trigger.pattern.clone());
                     }
                 }
                 TriggerType::Command => {
                     if input_lower.starts_with(&format!("/{}", trigger.pattern.to_lowercase())) {
-                        return true;
+                        return Some(format!("/{}", trigger.pattern));
                     }
                 }
                 TriggerType::Intent => {
                     if input_lower.contains(&trigger.pattern.to_lowercase()) {
-                        return true;
+                        return Some(trigger.pattern.clone());
                     }
                 }
             }
         }
 
-        false
+        None
     }
 
  /// Check if this skill is a command (starts with /)
@@ -383,6 +394,11 @@ impl Skill {
     /// so the complete section fits within `n` characters (with `…` suffix).
     pub fn to_prompt_section(&self, max_prompt_chars: Option<usize>) -> String {
         let mut section = String::new();
+
+ // Add trigger annotation for debugging — shows why this skill was activated.
+        if let Some(ref trigger) = self.trigger_text {
+            section.push_str(&format!("// Skill triggered by: \"{}\"\n", trigger));
+        }
 
  // Add emoji and name
         if !self.metadata.emoji.is_empty() {
@@ -892,6 +908,11 @@ impl SkillManager {
 
  // Prefer higher-trust skills first.
         matched.sort_by_key(|b| std::cmp::Reverse(b.metadata.trust));
+
+        // Store trigger text for prompt annotation.
+        for skill in &mut matched {
+            skill.trigger_text = skill.find_trigger_text(input);
+        }
 
         if max_skills > 0 {
             matched.truncate(max_skills);

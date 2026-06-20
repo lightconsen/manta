@@ -131,7 +131,7 @@ impl Tool for ShellTool {
             .as_str()
             .map(|p| context.resolve_path(std::path::Path::new(p)))
             .or_else(|| self.default_cwd.clone())
-            .unwrap_or_else(|| context.workspace_root.clone());
+            .unwrap_or_else(|| context.workspace_root().clone());
 
         // Validate working directory
         if !context.is_path_allowed(&working_dir) {
@@ -155,22 +155,22 @@ impl Tool for ShellTool {
             .arg(command_str)
             .current_dir(&working_dir)
             .env_clear()
-            .envs(&context.environment)
+            .envs(context.environment())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
         // Apply resource limits in sandboxed mode (Unix only)
         #[cfg(unix)]
         {
-            if context.sandboxed {
+            if context.sandboxed() {
                 let limits_summary = context.resource_limits_summary();
                 debug!("Applying resource limits: {}", limits_summary);
 
                 // Clone the limits to move into the closure
-                let memory_limit = context.memory_limit;
-                let cpu_limit = context.cpu_limit;
-                let fd_limit = context.fd_limit;
-                let process_limit = context.process_limit;
+                let memory_limit = context.memory_limit();
+                let cpu_limit = context.cpu_limit();
+                let fd_limit = context.fd_limit();
+                let process_limit = context.process_limit();
 
                 // SAFETY: pre_exec runs in the child process after fork but before exec.
                 // We only call async-signal-safe libc functions (setrlimit) here, which
@@ -228,7 +228,7 @@ impl Tool for ShellTool {
             }
         }
 
-        let result = timeout(context.timeout, cmd.output()).await;
+        let result = timeout(context.timeout(), cmd.output()).await;
 
         let duration = start_time.elapsed();
 
@@ -263,10 +263,10 @@ impl Tool for ShellTool {
                 Ok(ToolExecutionResult::error(format!("Execution failed: {}", e)))
             }
             Err(_) => {
-                error!("Command timed out after {:?}", context.timeout);
+                error!("Command timed out after {:?}", context.timeout());
                 Ok(ToolExecutionResult::error(format!(
                     "Command timed out after {:?}",
-                    context.timeout
+                    context.timeout()
                 )))
             }
         }
@@ -275,7 +275,7 @@ impl Tool for ShellTool {
     fn is_available(&self, context: &ToolContext) -> bool {
         // Shell is available if we're not in strict sandbox mode
         // or if there are allowed commands specified
-        !context.sandboxed || !context.allowed_commands.is_empty()
+        !context.sandboxed() || !context.allowed_commands().is_empty()
     }
 }
 

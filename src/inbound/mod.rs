@@ -21,6 +21,7 @@ pub mod dispatch;
 pub mod media;
 pub mod queue;
 pub mod router;
+pub mod stage;
 
 pub use debounce::{InboundDebouncer, InboundDebouncerConfig};
 pub use dispatch::{AutoReplyDispatch, AutoReplyDispatchConfig, DispatchResult};

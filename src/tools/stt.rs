@@ -145,7 +145,7 @@ impl Tool for SttTool {
 
         // Try OpenAI Whisper API
         let api_key = context
-            .environment
+            .environment()
             .get("OPENAI_API_KEY")
             .cloned()
             .or_else(|| std::env::var("OPENAI_API_KEY").ok());

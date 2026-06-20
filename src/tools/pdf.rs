@@ -229,7 +229,7 @@ impl Tool for PdfTool {
         let output_path = if let Some(out) = args.output {
             std::path::PathBuf::from(out)
         } else {
-            context.working_directory.join("output.pdf")
+            context.working_directory().join("output.pdf")
         };
 
         // Generate HTML as intermediate format

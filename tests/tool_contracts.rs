@@ -280,10 +280,10 @@ fn tool_context_default_contract() {
 
     assert!(ctx.user_id.is_empty());
     assert!(ctx.conversation_id.is_empty());
-    assert!(!ctx.sandboxed);
-    assert_eq!(ctx.skill_trust, SkillTrust::Trusted);
-    assert!(ctx.allowed_paths.is_empty());
-    assert!(ctx.allowed_commands.is_empty());
+    assert!(!ctx.sandboxed());
+    assert_eq!(ctx.model.skill_trust, SkillTrust::Trusted);
+    assert!(ctx.allowed_paths().is_empty());
+    assert!(ctx.allowed_commands().is_empty());
 }
 
 #[test]
@@ -293,19 +293,19 @@ fn tool_context_builder_contract() {
         .with_timeout(Duration::from_secs(10))
         .allow_path("/tmp")
         .allow_command("ls")
-        .sandboxed(true)
+        .with_sandboxed(true)
         .with_memory_limit(1024 * 1024)
         .with_skill_trust(SkillTrust::Community);
 
     assert_eq!(ctx.user_id, "u1");
     assert_eq!(ctx.conversation_id, "c1");
-    assert_eq!(ctx.working_directory, std::path::PathBuf::from("/tmp"));
-    assert_eq!(ctx.timeout, Duration::from_secs(10));
+    assert_eq!(*ctx.working_directory(), std::path::PathBuf::from("/tmp"));
+    assert_eq!(ctx.timeout(), Duration::from_secs(10));
     assert!(ctx.is_path_allowed(std::path::Path::new("/tmp")));
     assert!(ctx.is_command_allowed("ls"));
-    assert!(ctx.sandboxed);
-    assert_eq!(ctx.memory_limit, Some(1024 * 1024));
-    assert_eq!(ctx.skill_trust, SkillTrust::Community);
+    assert!(ctx.sandboxed());
+    assert_eq!(ctx.memory_limit(), Some(1024 * 1024));
+    assert_eq!(ctx.model.skill_trust, SkillTrust::Community);
 }
 
 #[test]
