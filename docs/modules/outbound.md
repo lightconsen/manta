@@ -16,7 +16,7 @@ Agent Output
 ```
 
 - **`trajectory.rs`** — `TrajectoryLog` and `TrajectoryWriter` for execution trace persistence
-- **`canvas.rs`** — Canvas rendering for A2UI components in agent output
+- **`canvas.rs`** — Canvas rendering for A2UI components in agent output (imported from `crate::canvas`)
 - **`sse.rs`** — `SseStreamer` for Server-Sent Events to connected clients
 - **`reply_dispatcher.rs`** — `ReplyDispatcher` for routing messages to the correct channel
 - **`side_effects.rs`** — `SideEffectExecutor` for post-delivery actions (memory storage, cron, webhooks)

@@ -73,11 +73,10 @@
 
 * ~~`src/server/mod.rs` 与 `src/gateway/` 提供两套 HTTP API~~。`src/server/` 已于 2026-06-18 删除；生产入口仅为 `gateway`。
 
-### 3. `flow` vs `taskflow` 重复
+### 3. ~~`flow` vs `taskflow` 重复~~（已解决）
 
-* 两套都是 DAG / 检查点执行框架。`flow` 偏审批门 + 失败策略；`taskflow` 偏 SQLite checkpoint。
-* `planner` 自带一套 `DagScheduler + RollbackManager`，并实际接入了 `Agent::spawn_with_computer_adapter`。
-* 三者并存导致认知负担。**建议**先把 `flow` / `taskflow` 标记 `#[deprecated]` 或迁出 `experimental/`，等真有 RFC 再回归主线。
+* ~~两套都是 DAG / 检查点执行框架。`flow` 偏审批门 + 失败策略；`taskflow` 偏 SQLite checkpoint。~~
+* `flow` / `taskflow` 已于 2026-06-18（commit `dc7529a`）删除；DAG / 检查点执行统一走 `src/planner/`（`DagScheduler + RollbackManager`，已接入 `Agent::spawn_with_computer_adapter`）。
 
 ### 4. ~~`eval` 无 CI 入口~~（已删除）
 
@@ -91,13 +90,13 @@
 
 | 漂移点 | 现状 |
 |--------|------|
-| `outbound.md` 列 `canvas.rs` 在 outbound 内部 | 实际是 `crate::canvas` 顶层模块，outbound 只 import |
-| `outbound.md` `SseEvent { ToolStart, ToolComplete, ContentDelta, Done, Error }` | 实际为 `{ Token, ToolStart, ToolEnd, Done, Error, Heartbeat }` |
-| `outbound.md` `TrajectoryEntry { timestamp, action, input, output, duration_ms }` | 实际为 typed enum `Start/ToolCall/ToolResult/LlmCall/Reasoning/Finish/Error` |
-| `adapters.md` 暗示 `src/storage/` | 实际全在 `src/adapters/storage.rs`，`src/storage/` 不存在 |
+| `outbound.md` 列 `canvas.rs` 在 outbound 内部 | ~~实际是 `crate::canvas` 顶层模块，outbound 只 import~~ 已于 2026-06-20 修正：注明 `imported from crate::canvas` |
+| `outbound.md` `SseEvent { ToolStart, ToolComplete, ContentDelta, Done, Error }` | ~~实际为 `{ Token, ToolStart, ToolEnd, Done, Error, Heartbeat }`~~ 文档已正确，无差异 |
+| `outbound.md` `TrajectoryEntry { timestamp, action, input, output, duration_ms }` | ~~实际为 typed enum `Start/ToolCall/ToolResult/LlmCall/Reasoning/Finish/Error`~~ 文档已正确，无差异 |
+| `adapters.md` 暗示 `src/storage/` | ~~实际全在 `src/adapters/storage.rs`，`src/storage/` 不存在~~ 文档已正确（line 8 已写 `src/adapters/storage.rs`） |
 | `docs/os.md` 多处路径 | ~~引用已删除目录~~ 已于 2026-06-20 修正 |
-| `cli.md` 列出的 `Commands` 枚举 | 实测有差异；`syscity tui` 等子命令未列出 |
-| `gateway.md` 的 `GatewayConfig` 字段表 | 缺 `perception`、`device`、`os_bridge` 等新增字段 |
+| `cli.md` 列出的 `Commands` 枚举 | ~~实测有差异；`syscity tui` 等子命令未列出~~ 已于 2026-06-20 修正（去重并补齐 tui/capabilities） |
+| `gateway.md` 的 `GatewayConfig` 字段表 | ~~缺 `perception`、`device`、`os_bridge` 等新增字段~~ 已于 2026-06-20 补齐 |
 
 ---
 
@@ -105,7 +104,7 @@
 
 ### 功能完整度
 
-* `flow` / `taskflow`：**功能齐**但**未接线**，等同于 PoC。
+* ~~`flow` / `taskflow`：**功能齐**但**未接线**，等同于 PoC~~（已于 2026-06-18 删除）。
 * `heartbeat`：doc 提到「cron-like 表达式」，实际仅有活跃时段 + 固定 interval；未发现 cron 解析。
 * `eval`：~~缺 LLM-as-a-Judge 实际打分调用器~~（模块已删除,2026-06-18）。
 * `tailscale`：`status()` 只返回字符串，无结构化字段；运维侧不便。
@@ -146,7 +145,7 @@
 | ~~`src/flow/`、`src/taskflow/`、`src/server/`、`src/eval/`~~ | 已于 2026-06-18 全部删除 |
 | ~~`docs/os.md` 多处路径~~ | 已于 2026-06-20 修正：`src/computer/capabilities/` → `src/computer/platform/`，`CapabilitySet`→`PlatformToolSet`，`CapabilityRegistry`→`PlatformCapabilityRegistry` |
 | ~~`Cargo.toml` 中 `tui` feature~~ | 已于 2026-06-20 删除（空 no-op feature，代码无 `#[cfg(feature = "tui")]`，CI/脚本均无引用） |
-| `outbound.md` 多处 enum 描述 | 与代码漂移 |
+| ~~`outbound.md` 多处 enum 描述~~ | ~~与代码漂移~~ 已于 2026-06-20 确认 enum 定义已正确，仅 canvas 位置标注已修 |
 
 ---
 
@@ -156,8 +155,8 @@
 
 1. ~~**裁定 flow / taskflow / server 的去留**~~：三者均已删除（2026-06-18）。
 2. ~~**拆分 `gateway/mod.rs`**~~：已于 2026-06-20 完成。按 lifecycle / dispatch / hot_reload / init·channels / runtime 五个子模块抽出，`mod.rs` 3642 → 1077 行。
-3. **同步文档与代码**：列出的 6 处漂移点至少修齐 outbound、cli、gateway、adapters、os.md。
-4. **`PerceptionConfig`、`DeviceConfig`、`os_bridge` 字段补入 `gateway.md` GatewayConfig 字段表**。
+3. ~~**同步文档与代码**：列出的 6 处漂移点至少修齐 outbound、cli、gateway、adapters、os.md。~~ 已于 2026-06-20 全部修正（outbound canvas 位置标注 + enum 确认正确、adapters 路径已正确、cli 去重补齐、os.md 路径修正、gateway 字段表补齐）。
+4. ~~**`PerceptionConfig`、`DeviceConfig`、`os_bridge` 字段补入 `gateway.md` GatewayConfig 字段表**~~：已于 2026-06-20 完成。
 
 ### P1（架构清理）
 

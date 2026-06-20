@@ -27,13 +27,8 @@ Command-line interface for Syscity using the `clap` crate.
   - `session` — Session management
   - `setup` — Initial setup wizard
   - `skill` — Skill management
-  - `device` — Device pairing management
-  - `approval` — Approval queue management
-  - `audit` — Audit log queries
-  - `provider` — LLM provider management
-  - `doctor` — Diagnostic system with hints
-  - `capabilities` — Check available OS capability sets
   - `tui` — Interactive terminal UI client
+  - `capabilities` — Check available OS capability sets
 
 ### Top-level Commands
 
