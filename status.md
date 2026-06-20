@@ -167,10 +167,10 @@
 
 ### P2（细节）
 
-9. `perception/registry.rs`：评估 `dashmap` / `parking_lot::RwLock` 替换。
-10. `providers/preset.rs`：vendor 列表外置 TOML，主代码内只保留 hand-rolled fallback。
-11. `agent` heuristics：抽到 `agent/heuristics.rs`，规范中英文关键词。
-12. `Snapshot::format_for_prompt`：`### Sensors` 加 top-N 截断防爆 token。
+9. ~~`perception/registry.rs`：评估 `dashmap` / `parking_lot::RwLock` 替换。~~ 已于 2026-06-20 改批量为单次锁获取 O(1)→O(n)
+10. ~~`providers/preset.rs`：vendor 列表外置 TOML，主代码内只保留 hand-rolled fallback。~~ 已于 2026-06-20 外置 presets.toml，9 vendor + 解析失败降级
+11. ~~`agent` heuristics：抽到 `agent/heuristics.rs`，规范中英文关键词。~~ 已于 2026-06-20 抽出并补充中文关键词
+12. ~~`Snapshot::format_for_prompt`：`### Sensors` 加 top-N 截断防爆 token。~~ 已于 2026-06-20 按 modality 分组 top-5 截断
 13. ~~删除 `Cargo.toml` 中已 no-op 的 `tui` feature 或在 comment 中明示其语义~~ 已于 2026-06-20 删除该空 feature。
 
 ---

@@ -1,0 +1,132 @@
+# Built-in LLM provider presets.
+#
+# Each top-level table key is the preset name used in config (e.g. `openai`,
+# `kimi`). The `name` field of the resulting `ProviderDefinition` is filled
+# from this key automatically — do not repeat it here.
+#
+# Field encodings (serde):
+#   protocol              = "open_ai" | "anthropic" | "gemini"
+#   auth_method           = "bearer" | "api_key_header" | "google_api_key" | "none"
+#   default_stream_family = "OpenAi" | "Anthropic" | "OpenAiReasoning"
+#                           | "AnthropicThinking" | "GoogleThinking"
+#                           | "OpenRouter" | "Moonshot" | "Minimax" | "Generic"
+#
+# A vendor may expose multiple protocol endpoints (see `kimi`).
+
+[openai]
+display_name = "OpenAI"
+[[openai.variants]]
+protocol = "open_ai"
+default_base_url = "https://api.openai.com/v1"
+default_model = "gpt-4o-mini"
+auth_method = "bearer"
+default_max_context = 128000
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "OpenAi"
+
+[deepseek]
+display_name = "DeepSeek"
+[[deepseek.variants]]
+protocol = "open_ai"
+default_base_url = "https://api.deepseek.com/v1"
+default_model = "deepseek-chat"
+auth_method = "bearer"
+default_max_context = 128000
+default_supports_vision = false
+default_supports_tools = true
+default_stream_family = "OpenAi"
+
+[ollama]
+display_name = "Ollama"
+[[ollama.variants]]
+protocol = "open_ai"
+default_base_url = "http://localhost:11434/v1"
+default_model = "llama3.2"
+auth_method = "none"
+default_max_context = 8192
+default_supports_vision = false
+default_supports_tools = true
+default_stream_family = "OpenAi"
+
+[qwen]
+display_name = "Qwen"
+[[qwen.variants]]
+protocol = "open_ai"
+default_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+default_model = "qwen-max"
+auth_method = "bearer"
+default_max_context = 128000
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "OpenAi"
+
+# Kimi (Moonshot): supports both OpenAI and Anthropic protocols.
+[kimi]
+display_name = "Moonshot (Kimi)"
+[[kimi.variants]]
+protocol = "open_ai"
+default_base_url = "https://api.moonshot.cn/v1"
+default_model = "kimi-k2"
+auth_method = "bearer"
+default_max_context = 128000
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "Moonshot"
+[[kimi.variants]]
+protocol = "anthropic"
+default_base_url = "https://api.moonshot.cn/anthropic"
+default_model = "kimi-k2"
+auth_method = "api_key_header"
+default_max_context = 128000
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "Anthropic"
+
+[anthropic]
+display_name = "Anthropic"
+[[anthropic.variants]]
+protocol = "anthropic"
+default_base_url = "https://api.anthropic.com"
+default_model = "claude-sonnet-4-20250514"
+auth_method = "api_key_header"
+default_max_context = 200000
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "Anthropic"
+
+[azure]
+display_name = "Azure OpenAI"
+[[azure.variants]]
+protocol = "open_ai"
+default_base_url = "https://YOUR_RESOURCE.openai.azure.com"
+default_model = "gpt-4o"
+auth_method = "bearer"
+default_max_context = 128000
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "OpenAi"
+
+[gemini]
+display_name = "Gemini"
+[[gemini.variants]]
+protocol = "gemini"
+default_base_url = "https://generativelanguage.googleapis.com/v1beta"
+default_model = "gemini-2.0-flash"
+auth_method = "google_api_key"
+default_max_context = 1048576
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "GoogleThinking"
+
+[minimax]
+display_name = "MiniMax"
+[[minimax.variants]]
+protocol = "open_ai"
+default_base_url = "https://api.minimax.chat/v1"
+default_model = "abab6.5s-chat"
+auth_method = "bearer"
+default_max_context = 128000
+default_supports_vision = false
+default_supports_tools = true
+default_stream_family = "Minimax"

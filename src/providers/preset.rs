@@ -3,19 +3,64 @@
 //! Each preset defines a known LLM vendor with its protocol variants (endpoints).
 //! A single vendor may expose multiple protocols (e.g. Kimi supports both
 //! OpenAI-compatible and Anthropic-compatible endpoints).
+//!
+//! The vendor list lives in `presets.toml` (embedded at compile time via
+//! [`include_str!`]) so adding a new vendor is a data-only change. If the
+//! embedded TOML ever fails to parse, [`builtin_providers`] logs the error
+//! and falls back to a minimal hand-rolled set (OpenAI + Anthropic) so the
+//! system still boots.
 
 use std::collections::HashMap;
 
+use serde::Deserialize;
+
 use super::stream_wrappers::ProviderStreamFamily;
 use super::{AuthMethod, Protocol, ProtocolVariant, ProviderDefinition};
+
+/// Embedded preset table, parsed once per call.
+const PRESETS_TOML: &str = include_str!("presets.toml");
+
+/// A preset entry as stored in `presets.toml`. The provider `name` is
+/// supplied by the table key, so it is not repeated in the file.
+#[derive(Debug, Deserialize)]
+struct RawPreset {
+    display_name: String,
+    variants: Vec<ProtocolVariant>,
+}
 
 /// All built-in provider definitions.
 ///
 /// The key is the preset name used in config (e.g. `"openai"`, `"kimi"`).
 pub fn builtin_providers() -> HashMap<&'static str, ProviderDefinition> {
-    let mut m = HashMap::new();
+    match toml::from_str::<HashMap<String, RawPreset>>(PRESETS_TOML) {
+        Ok(raw) => raw
+            .into_iter()
+            .map(|(name, p)| {
+                let def = ProviderDefinition {
+                    name: name.clone(),
+                    display_name: p.display_name,
+                    variants: p.variants,
+                };
+                // Leak the key to obtain a `&'static str`. The preset set is
+                // small and built once; this keeps the long-standing
+                // `&'static str` key contract without churn at call sites.
+                (Box::leak(name.into_boxed_str()) as &'static str, def)
+            })
+            .collect(),
+        Err(e) => {
+            tracing::error!(
+                "failed to parse embedded provider presets.toml ({e}); \
+                 falling back to minimal hand-rolled set"
+            );
+            fallback_providers()
+        }
+    }
+}
 
-    // ── OpenAI ──
+/// Minimal hand-rolled provider set used only if `presets.toml` fails to
+/// parse. Keeps the gateway bootable with the two most common vendors.
+fn fallback_providers() -> HashMap<&'static str, ProviderDefinition> {
+    let mut m = HashMap::new();
     m.insert(
         "openai",
         ProviderDefinition {
@@ -33,96 +78,6 @@ pub fn builtin_providers() -> HashMap<&'static str, ProviderDefinition> {
             }],
         },
     );
-
-    // ── DeepSeek ──
-    m.insert(
-        "deepseek",
-        ProviderDefinition {
-            name: "deepseek".into(),
-            display_name: "DeepSeek".into(),
-            variants: vec![ProtocolVariant {
-                protocol: Protocol::OpenAi,
-                default_base_url: "https://api.deepseek.com/v1".into(),
-                default_model: "deepseek-chat".into(),
-                auth_method: AuthMethod::Bearer,
-                default_max_context: 128_000,
-                default_supports_vision: false,
-                default_supports_tools: true,
-                default_stream_family: ProviderStreamFamily::OpenAi,
-            }],
-        },
-    );
-
-    // ── Ollama (local) ──
-    m.insert(
-        "ollama",
-        ProviderDefinition {
-            name: "ollama".into(),
-            display_name: "Ollama".into(),
-            variants: vec![ProtocolVariant {
-                protocol: Protocol::OpenAi,
-                default_base_url: "http://localhost:11434/v1".into(),
-                default_model: "llama3.2".into(),
-                auth_method: AuthMethod::None,
-                default_max_context: 8_192,
-                default_supports_vision: false,
-                default_supports_tools: true,
-                default_stream_family: ProviderStreamFamily::OpenAi,
-            }],
-        },
-    );
-
-    // ── Qwen (Alibaba Cloud) ──
-    m.insert(
-        "qwen",
-        ProviderDefinition {
-            name: "qwen".into(),
-            display_name: "Qwen".into(),
-            variants: vec![ProtocolVariant {
-                protocol: Protocol::OpenAi,
-                default_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".into(),
-                default_model: "qwen-max".into(),
-                auth_method: AuthMethod::Bearer,
-                default_max_context: 128_000,
-                default_supports_vision: true,
-                default_supports_tools: true,
-                default_stream_family: ProviderStreamFamily::OpenAi,
-            }],
-        },
-    );
-
-    // ── Kimi (Moonshot): supports both OpenAI and Anthropic protocols ──
-    m.insert(
-        "kimi",
-        ProviderDefinition {
-            name: "kimi".into(),
-            display_name: "Moonshot (Kimi)".into(),
-            variants: vec![
-                ProtocolVariant {
-                    protocol: Protocol::OpenAi,
-                    default_base_url: "https://api.moonshot.cn/v1".into(),
-                    default_model: "kimi-k2".into(),
-                    auth_method: AuthMethod::Bearer,
-                    default_max_context: 128_000,
-                    default_supports_vision: true,
-                    default_supports_tools: true,
-                    default_stream_family: ProviderStreamFamily::Moonshot,
-                },
-                ProtocolVariant {
-                    protocol: Protocol::Anthropic,
-                    default_base_url: "https://api.moonshot.cn/anthropic".into(),
-                    default_model: "kimi-k2".into(),
-                    auth_method: AuthMethod::ApiKeyHeader,
-                    default_max_context: 128_000,
-                    default_supports_vision: true,
-                    default_supports_tools: true,
-                    default_stream_family: ProviderStreamFamily::Anthropic,
-                },
-            ],
-        },
-    );
-
-    // ── Anthropic ──
     m.insert(
         "anthropic",
         ProviderDefinition {
@@ -140,64 +95,6 @@ pub fn builtin_providers() -> HashMap<&'static str, ProviderDefinition> {
             }],
         },
     );
-
-    // ── Azure OpenAI ──
-    m.insert(
-        "azure",
-        ProviderDefinition {
-            name: "azure".into(),
-            display_name: "Azure OpenAI".into(),
-            variants: vec![ProtocolVariant {
-                protocol: Protocol::OpenAi,
-                default_base_url: "https://YOUR_RESOURCE.openai.azure.com".into(),
-                default_model: "gpt-4o".into(),
-                auth_method: AuthMethod::Bearer,
-                default_max_context: 128_000,
-                default_supports_vision: true,
-                default_supports_tools: true,
-                default_stream_family: ProviderStreamFamily::OpenAi,
-            }],
-        },
-    );
-
-    // ── Gemini ──
-    m.insert(
-        "gemini",
-        ProviderDefinition {
-            name: "gemini".into(),
-            display_name: "Gemini".into(),
-            variants: vec![ProtocolVariant {
-                protocol: Protocol::Gemini,
-                default_base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
-                default_model: "gemini-2.0-flash".into(),
-                auth_method: AuthMethod::GoogleApiKey,
-                default_max_context: 1_048_576,
-                default_supports_vision: true,
-                default_supports_tools: true,
-                default_stream_family: ProviderStreamFamily::GoogleThinking,
-            }],
-        },
-    );
-
-    // ── MiniMax ──
-    m.insert(
-        "minimax",
-        ProviderDefinition {
-            name: "minimax".into(),
-            display_name: "MiniMax".into(),
-            variants: vec![ProtocolVariant {
-                protocol: Protocol::OpenAi,
-                default_base_url: "https://api.minimax.chat/v1".into(),
-                default_model: "abab6.5s-chat".into(),
-                auth_method: AuthMethod::Bearer,
-                default_max_context: 128_000,
-                default_supports_vision: false,
-                default_supports_tools: true,
-                default_stream_family: ProviderStreamFamily::Minimax,
-            }],
-        },
-    );
-
     m
 }
 
@@ -217,6 +114,26 @@ mod tests {
         assert!(providers.contains_key("qwen"));
         assert!(providers.contains_key("minimax"));
         assert!(providers.contains_key("azure"));
+    }
+
+    #[test]
+    fn test_embedded_toml_parses() {
+        // If the embedded TOML is malformed we would fall back to 2 entries;
+        // the full set proves the file parsed cleanly.
+        let providers = builtin_providers();
+        assert!(
+            providers.len() >= 9,
+            "expected full preset set from presets.toml, got {}",
+            providers.len()
+        );
+    }
+
+    #[test]
+    fn test_names_match_keys() {
+        let providers = builtin_providers();
+        for (key, def) in &providers {
+            assert_eq!(*key, def.name, "preset key must match definition name");
+        }
     }
 
     #[test]

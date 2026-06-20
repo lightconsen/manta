@@ -20,6 +20,12 @@ use serde::Serialize;
 
 use crate::perception::{Aggregate, Event, FusedEntity, Modality};
 
+/// Maximum number of sensor aggregates rendered per modality in
+/// [`Snapshot::format_for_prompt`]. Caps token usage when a single
+/// modality has many sources; excess entries are summarized as a
+/// `… +N more` line.
+const MAX_SENSORS_PER_MODALITY: usize = 5;
+
 /// Snapshot of the world according to perception, at a single instant.
 #[derive(Debug, Clone, Serialize)]
 pub struct Snapshot {
@@ -92,16 +98,30 @@ impl Snapshot {
 
         if !self.aggregates.is_empty() {
             out.push_str("\n### Sensors (current)\n");
-            // Stable ordering: sort by (source, modality) string repr.
-            let mut keys: Vec<&(String, Modality)> = self.aggregates.keys().collect();
-            keys.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| format!("{:?}", a.1).cmp(&format!("{:?}", b.1))));
-            for key in keys {
-                if let Some(agg) = self.aggregates.get(key) {
+            // Group by modality, then cap each modality to the top-N
+            // entries (sorted by source name) so a chatty modality can't
+            // blow up the prompt token budget. Stable ordering throughout.
+            let mut by_modality: HashMap<Modality, Vec<&(String, Modality)>> = HashMap::new();
+            for key in self.aggregates.keys() {
+                by_modality.entry(key.1).or_default().push(key);
+            }
+            let mut modalities: Vec<Modality> = by_modality.keys().copied().collect();
+            modalities.sort_by_key(|m| format!("{m:?}"));
+
+            for modality in modalities {
+                let keys = by_modality.get_mut(&modality).expect("modality present");
+                keys.sort_by(|a, b| a.0.cmp(&b.0));
+                let total = keys.len();
+                for key in keys.iter().take(MAX_SENSORS_PER_MODALITY) {
+                    if let Some(agg) = self.aggregates.get(*key) {
+                        out.push_str(&format!("- {} ({:?}): {}\n", key.0, key.1, agg.stats));
+                    }
+                }
+                if total > MAX_SENSORS_PER_MODALITY {
                     out.push_str(&format!(
-                        "- {} ({:?}): {}\n",
-                        key.0,
-                        key.1,
-                        agg.stats,
+                        "- … +{} more {:?} sensor(s)\n",
+                        total - MAX_SENSORS_PER_MODALITY,
+                        modality,
                     ));
                 }
             }
@@ -186,5 +206,29 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert!(v["aggregates"].is_array());
         assert_eq!(v["aggregates"][0]["source"], "cpu");
+    }
+
+    #[test]
+    fn test_sensors_truncated_per_modality() {
+        let mut s = Snapshot::empty();
+        // 8 System sensors — exceeds MAX_SENSORS_PER_MODALITY (5).
+        for i in 0..8 {
+            s.aggregates.insert(
+                (format!("sensor_{i:02}"), Modality::System),
+                Aggregate {
+                    source: format!("sensor_{i:02}"),
+                    modality: Modality::System,
+                    window: Duration::from_secs(2),
+                    stats: serde_json::json!({"v": i}),
+                    at: SystemTime::UNIX_EPOCH,
+                },
+            );
+        }
+        let out = s.format_for_prompt(8).expect("non-empty snapshot");
+        // First 5 (sorted) are present; the 6th onward are not.
+        assert!(out.contains("sensor_00"));
+        assert!(out.contains("sensor_04"));
+        assert!(!out.contains("sensor_05"));
+        assert!(out.contains("+3 more"));
     }
 }

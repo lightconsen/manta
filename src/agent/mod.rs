@@ -51,6 +51,7 @@ pub mod context;
 pub mod cost_guard;
 pub mod disk_budget;
 pub mod group;
+pub mod heuristics;
 pub mod personality;
 pub mod planner;
 pub mod prompt_builder;
@@ -109,87 +110,9 @@ pub use transcript::{
 pub use turns::{Thread, ThreadManager, Turn, TurnState};
 
 use self::session_store::SessionStore;
+use self::heuristics::{is_complex_task, is_desktop_task};
 
 /// Fast check for desktop-operation tasks that should use ComputerUseLoop.
-fn is_desktop_task(message: &str) -> bool {
-    let lower = message.to_lowercase();
-
-    // Keywords that indicate the user wants GUI/desktop interaction.
-    let desktop_keywords = [
-        "click",
-        "screenshot",
-        "screen shot",
-        "take a screenshot",
-        "open app",
-        "open application",
-        "launch app",
-        "type in",
-        "type text",
-        "type ",
-        "press",
-        "press key",
-        "keyboard",
-        "mouse",
-        "scroll",
-        "drag",
-        "right-click",
-        "double-click",
-        "desktop",
-        "gui",
-        "window",
-        "browser",
-        "chrome",
-        "safari",
-        "firefox",
-        "edge",
-        "file explorer",
-        "finder",
-        "spotlight",
-        "menu bar",
-        "taskbar",
-        "dock",
-        "notification",
-        "对话框",
-        "点击",
-        "截图",
-        "屏幕",
-        "打开应用",
-        "打开软件",
-        "输入",
-        "键盘",
-        "鼠标",
-        "滚动",
-        "拖拽",
-        "桌面",
-        "窗口",
-        "浏览器",
-    ];
-
-    for kw in &desktop_keywords {
-        if lower.contains(kw) {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// Fast check for complex multi-step tasks that should use GoalPlanner.
-fn is_complex_task(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    const KEYWORDS: &[&str] = &[
-        "deploy", "install", "setup", "configure", "build", "compile",
-        "migrate", "backup", "restore", "pipeline", "orchestrate",
-        "setup environment", "deploy to", "configure ssl", "configure https",
-        "install and", "build and", "clone and", "docker compose",
-        // Device / sensor orchestration
-        "read sensor", "capture waveform", "oscilloscope", "multimeter",
-        "motor", "actuator",
-    ];
-    KEYWORDS.iter().any(|kw| lower.contains(kw))
-}
-
-/// Parse an LLM response into a LoopDecision.
 fn parse_loop_decision(text: &str) -> crate::Result<crate::computer::LoopDecision> {
     let trimmed = text.trim();
 
@@ -3944,28 +3867,6 @@ mod tests {
         assert!(!is_obviously_time_sensitive("what is the weather"));
         assert!(!is_obviously_time_sensitive("explain quantum computing"));
         assert!(!is_obviously_time_sensitive("what time zone is EST"));
-    }
-
-    // ── is_desktop_task ───────────────────────────────────────────────────────
-
-    #[test]
-    fn test_is_desktop_task_positive() {
-        assert!(is_desktop_task("click the button"));
-        assert!(is_desktop_task("take a screenshot"));
-        assert!(is_desktop_task("open Chrome"));
-        assert!(is_desktop_task("type hello in the search box"));
-        assert!(is_desktop_task("press cmd+space"));
-        assert!(is_desktop_task("截图"));
-        assert!(is_desktop_task("点击确认按钮"));
-        assert!(is_desktop_task("打开浏览器"));
-    }
-
-    #[test]
-    fn test_is_desktop_task_negative() {
-        assert!(!is_desktop_task("hello"));
-        assert!(!is_desktop_task("what is the weather"));
-        assert!(!is_desktop_task("explain quantum computing"));
-        assert!(!is_desktop_task("write a poem"));
     }
 
     // ── parse_loop_decision ───────────────────────────────────────────────────

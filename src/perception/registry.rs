@@ -178,24 +178,37 @@ impl PerceptionRegistry {
             });
         }
 
-        // Drain results, updating health and ingesting into the aggregator.
-        // Health-state transitions are collected here so we can emit
-        // anomalies after dropping the health write lock.
+        // Drain results, collecting per-source outcomes. We batch all
+        // health-tracker mutations into a single write-lock acquisition
+        // afterwards rather than locking once per result, which keeps the
+        // poll path's lock churn at O(1) instead of O(sources).
         let mut all_obs = Vec::new();
-        let mut transitions: Vec<(String, HealthState)> = Vec::new();
+        let mut outcomes: Vec<(String, bool)> = Vec::new(); // (name, succeeded)
         while let Some((name, result)) = futs.next().await {
             match result {
                 Ok(obs) => {
-                    if let Some(new_state) = self.health.write().await.record_success(&name) {
-                        transitions.push((name.clone(), new_state));
-                    }
                     all_obs.extend(obs);
+                    outcomes.push((name, true));
                 }
                 Err(_elapsed) => {
                     tracing::warn!("perception source '{}' poll timed out", name);
-                    if let Some(new_state) = self.health.write().await.record_timeout(&name) {
-                        transitions.push((name.clone(), new_state));
-                    }
+                    outcomes.push((name, false));
+                }
+            }
+        }
+
+        // Apply all health transitions under one write lock.
+        let mut transitions: Vec<(String, HealthState)> = Vec::new();
+        {
+            let mut health = self.health.write().await;
+            for (name, succeeded) in &outcomes {
+                let transition = if *succeeded {
+                    health.record_success(name)
+                } else {
+                    health.record_timeout(name)
+                };
+                if let Some(new_state) = transition {
+                    transitions.push((name.clone(), new_state));
                 }
             }
         }
