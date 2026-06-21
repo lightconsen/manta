@@ -164,7 +164,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run local-embeddings tests
-        run: cargo test --features local-embeddings -- --skip e2e::
+        run: "cargo test --features local-embeddings -- --skip e2e::"
 
   test-macos:
     name: Test (macOS)
@@ -370,7 +370,7 @@ jobs:
         uses: taiki-e/install-action@cargo-tarpaulin
 
       - name: Generate coverage report
-        run: cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e::
+        run: "cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e::"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
