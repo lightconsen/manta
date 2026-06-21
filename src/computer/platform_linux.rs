@@ -1225,9 +1225,9 @@ async fn browse_files(
     if let Some(filter) = filter_description {
         let lower = filter.to_lowercase();
         if lower.contains("recent") {
-            entries.sort_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
+            entries.sort_by_key(|a| std::cmp::Reverse(a.modified_secs));
         } else if lower.contains("large") || lower.contains("big") || lower.contains("biggest") {
-            entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+            entries.sort_by_key(|a| std::cmp::Reverse(a.size_bytes));
         } else if lower.contains("directory") || lower.contains("dir") || lower.contains("folder") {
             entries.retain(|e| e.is_directory);
         } else if lower.contains("file") {

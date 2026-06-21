@@ -169,7 +169,7 @@ impl FusionEngine {
         }
 
         let mut sorted: Vec<&'a Observation> = observations.to_vec();
-        sorted.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        sorted.sort_by_key(|a| a.timestamp);
 
         let window = Duration::from_millis(temporal_window_ms);
         let mut clusters: Vec<Vec<&'a Observation>> = Vec::new();

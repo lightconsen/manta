@@ -27,22 +27,18 @@
 //! \0
 //! ```
 
-use std::collections::HashMap;
-use std::ffi::{CStr, OsStr};
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::Arc;
+// This module performs low-level Linux netlink/socket syscalls that cannot be
+// expressed safely in Rust.  Each unsafe block is documented with the
+// invariants that the caller must uphold.
+#![allow(unsafe_code)]
 
-use tokio::io::Interest;
+use std::collections::HashMap;
+use std::os::unix::io::RawFd;
+
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use super::{OsDeviceAction, OsDeviceEvent, OsDeviceMonitor};
-
-// This module performs low-level Linux netlink/socket syscalls that cannot be
-// expressed safely in Rust.  Each unsafe block is documented with the
-// invariants that the caller must uphold.
-#[allow(unsafe_code)]
 
 // ── Netlink constants ────────────────────────────────────────────────────
 

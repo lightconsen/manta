@@ -806,15 +806,15 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 if let Some(ref desc) = filter_description {
                     let desc_lower = desc.to_lowercase();
                     if desc_lower.contains("recent") || desc_lower.contains("latest") {
-                        entries.sort_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
+                        entries.sort_by_key(|a| std::cmp::Reverse(a.modified_secs));
                     } else if desc_lower.contains("largest") || desc_lower.contains("biggest") {
-                        entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+                        entries.sort_by_key(|a| std::cmp::Reverse(a.size_bytes));
                     } else if desc_lower.contains("smallest") {
-                        entries.sort_by(|a, b| a.size_bytes.cmp(&b.size_bytes));
+                        entries.sort_by_key(|a| a.size_bytes);
                     } else if desc_lower.contains("log") {
                         entries.retain(|e| e.name.ends_with(".log") || e.name.contains("log"));
                     } else if desc_lower.contains("old") || desc_lower.contains("earliest") {
-                        entries.sort_by(|a, b| a.modified_secs.cmp(&b.modified_secs));
+                        entries.sort_by_key(|a| a.modified_secs);
                     }
                 }
                 entries.truncate(max);

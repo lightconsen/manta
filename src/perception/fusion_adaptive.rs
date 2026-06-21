@@ -52,7 +52,7 @@ impl SensorNoiseTracker {
             return;
         }
         let mut sorted: Vec<&Observation> = obs.iter().collect();
-        sorted.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        sorted.sort_by_key(|a| a.timestamp);
 
         // For each adjacent pair of distinct modalities, record |Δt|.
         for win in sorted.windows(2) {

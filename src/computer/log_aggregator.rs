@@ -454,6 +454,7 @@ async fn tail_macos_log(
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 async fn tail_macos_log(
     _predicate: Option<&str>,
     _level: &str,
@@ -624,6 +625,7 @@ fn parse_macos_log_line(line: &str, source_name: &str) -> Option<LogEntry> {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 fn parse_macos_log_line(_line: &str, _source_name: &str) -> Option<LogEntry> {
     None
 }

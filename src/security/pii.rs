@@ -255,7 +255,7 @@ impl PiiDetector {
         let mut result = text.to_string();
         // Replace longest matches first to avoid partial replacements.
         let mut sorted = findings.clone();
-        sorted.sort_by(|a, b| b.original.len().cmp(&a.original.len()));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.original.len()));
 
         for finding in &sorted {
             result = result.replace(&finding.original, &finding.redacted);

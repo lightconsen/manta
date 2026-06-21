@@ -58,7 +58,7 @@ impl PerceptionSummarizer for TemplateSummarizer {
                     }
                 })
                 .collect();
-            high_sev.sort_by(|a, b| b.1.cmp(&a.1));
+            high_sev.sort_by_key(|a| std::cmp::Reverse(a.1));
             high_sev.dedup_by(|a, b| a.0 == b.0);
             for (src, sev) in high_sev.into_iter().take(3) {
                 let label = if sev >= 220 {

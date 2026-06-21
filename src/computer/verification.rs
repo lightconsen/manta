@@ -327,13 +327,7 @@ fn compute_screenshot_diff(a: &Screenshot, b: &Screenshot) -> u32 {
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &a.base64),
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b.base64),
     ) {
-        (Ok(a_bytes), Ok(b_bytes)) => {
-            if a_bytes == b_bytes {
-                0
-            } else {
-                u32::MAX
-            }
-        }
+        (Ok(a_bytes), Ok(b_bytes)) if a_bytes == b_bytes => 0,
         _ => u32::MAX,
     }
 }

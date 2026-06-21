@@ -101,7 +101,7 @@ impl UserManagerTool {
         let opts: Vec<&str> = options
             .map(|s| s.split_whitespace().collect())
             .unwrap_or_default();
-        let all_args: Vec<&str> = opts.iter().copied().chain(args.into_iter()).collect();
+        let all_args: Vec<&str> = opts.iter().copied().chain(args).collect();
         match Self::run_cmd("useradd", &all_args, 30).await {
             Some((success, output)) => (success, output),
             None => (false, "Failed to execute useradd".to_string()),

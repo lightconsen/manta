@@ -432,7 +432,11 @@ mod tests {
         let params = json!({});
         let result = GpioDriver::from_config(params);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("pins"));
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(err.to_string().contains("pins"));
     }
 
     #[test]

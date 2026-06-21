@@ -711,10 +711,10 @@ async fn detect_screen_resolution() -> Option<(u32, u32)> {
             .await
         {
             let text = String::from_utf8_lossy(&output.stdout);
+            let re = regex::Regex::new(r"(\d+)x(\d+)\+").ok()?;
             for line in text.lines() {
                 // Look for "*+" marking the current mode.
                 if line.contains("*+") {
-                    let re = regex::Regex::new(r"(\d+)x(\d+)\+").ok()?;
                     if let Some(caps) = re.captures(line) {
                         let w = caps.get(1)?.as_str().parse().ok()?;
                         let h = caps.get(2)?.as_str().parse().ok()?;

@@ -142,7 +142,7 @@ impl RapidOcr {
         }
 
         // Sort by vertical position (top-to-bottom reading order)
-        blocks.sort_by(|a, b| a.bounds.y.cmp(&b.bounds.y));
+        blocks.sort_by_key(|a| a.bounds.y);
 
         Ok(blocks)
     }

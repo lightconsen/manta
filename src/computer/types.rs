@@ -166,12 +166,7 @@ impl DpiScale {
                     // "  dimensions:    3840x2160 pixels (1016x572 millimeters)"
                     if let Some(px_part) = line.split("pixels").next() {
                         if let Some(x) = px_part.split('x').next() {
-                            if let Ok(w) = x
-                                .trim()
-                                .split_whitespace()
-                                .last()
-                                .unwrap_or("0")
-                                .parse::<f32>()
+                            if let Ok(w) = x.split_whitespace().last().unwrap_or("0").parse::<f32>()
                             {
                                 screen_w_px = w;
                             }
@@ -192,7 +187,7 @@ impl DpiScale {
                 let dpi = (screen_w_px / (screen_w_mm / 25.4)).round();
                 if dpi > 96.0 {
                     return Self {
-                        scale: (dpi / 96.0).max(1.0).min(4.0),
+                        scale: (dpi / 96.0).clamp(1.0, 4.0),
                     };
                 }
             }
