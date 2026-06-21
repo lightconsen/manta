@@ -2,7 +2,6 @@
 //!
 //! Executes post-response side effects: memory storage, cron scheduling,
 //! webhook triggers, analytics logging, etc.
-//!
 
 use std::collections::HashMap;
 use std::sync::Arc;

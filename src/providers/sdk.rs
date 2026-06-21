@@ -2,7 +2,6 @@
 //!
 //! Extends the core provider trait with capability discovery,
 //! provider packs, and dynamic registration hooks.
-//!
 
 use std::collections::HashMap;
 
@@ -67,7 +66,6 @@ pub enum ProviderHealth {
 }
 
 /// A "provider pack" — a bundle of related providers shipped as a unit.
-///
 pub struct ProviderPack {
     pub name: String,
     pub version: String,

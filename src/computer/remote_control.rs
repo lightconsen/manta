@@ -9,10 +9,10 @@
 //! ```rust,no_run
 //! use std::sync::Arc;
 //!
-//! use syscity::computer::ComputerAdapter;
 //! use syscity::computer::remote_control::{
 //!     RemoteControlAdapter, RemoteControlConfig, RemoteProtocol,
 //! };
+//! use syscity::computer::ComputerAdapter;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = RemoteControlConfig {
@@ -24,7 +24,8 @@
 //!     },
 //!     ..Default::default()
 //! };
-//! let adapter = RemoteControlAdapter::new(config, Arc::new(syscity::tools::ToolRegistry::new())).await?;
+//! let adapter =
+//!     RemoteControlAdapter::new(config, Arc::new(syscity::tools::ToolRegistry::new())).await?;
 //! let screenshot = adapter.screenshot(None).await?;
 //! # Ok(())
 //! # }

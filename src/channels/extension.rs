@@ -3,7 +3,6 @@
 //! Defines how external channels integrate with the Inbound and Outbound
 //! pipelines. Replaces the ad-hoc per-channel message loops with a unified
 //! extension interface.
-//!
 
 use std::sync::Arc;
 

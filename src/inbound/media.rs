@@ -9,7 +9,6 @@
 //! - STT providers (Whisper, local CLI)
 //! - Image optimisation pipeline (resize, compress, HEIC conversion)
 //! - Video frame extraction
-//!
 
 use std::sync::Arc;
 

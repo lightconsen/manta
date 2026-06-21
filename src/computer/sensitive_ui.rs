@@ -16,7 +16,12 @@
 //!     role: "window".to_string(),
 //!     label: None,
 //!     value: None,
-//!     bounds: Rect { x: 0, y: 0, width: 100, height: 100 },
+//!     bounds: Rect {
+//!         x: 0,
+//!         y: 0,
+//!         width: 100,
+//!         height: 100,
+//!     },
 //!     enabled: true,
 //!     focused: false,
 //!     children: vec![],

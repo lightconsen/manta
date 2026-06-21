@@ -5,7 +5,6 @@
 //! - Per-user: authenticated user limits
 //! - Per-IP: IP-based limits for anonymous requests
 //! - Per-endpoint: specific endpoint restrictions
-//!
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -3,7 +3,6 @@
 //! Routes agent responses back to the correct channel endpoint.
 //! This replaces the ad-hoc `channel.send_message()` calls scattered
 //! through the agent loop with a unified dispatch layer.
-//!
 
 use std::collections::HashMap;
 use std::sync::Arc;

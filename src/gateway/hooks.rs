@@ -2,7 +2,6 @@
 //!
 //! Provides a hook registry that allows plugins and internal modules to
 //! intercept, transform, or suppress GatewayEvents before/after broadcast.
-//!
 
 use std::sync::Arc;
 

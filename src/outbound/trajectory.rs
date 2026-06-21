@@ -2,7 +2,6 @@
 //!
 //! Captures the execution trace of an agent turn: tool calls,
 //! reasoning steps, provider latencies, and other observability data.
-//!
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
