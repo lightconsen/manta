@@ -355,7 +355,7 @@ impl HeartbeatRunner {
         if custom_prompt.is_none()
             && heartbeat_content
                 .as_ref()
-                .map_or(true, |c| is_heartbeat_content_empty(c))
+                .is_none_or(|c| is_heartbeat_content_empty(c))
         {
             self._emit_event(HeartbeatEvent::Completed {
                 status: HeartbeatStatus::Idle,

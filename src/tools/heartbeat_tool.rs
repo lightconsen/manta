@@ -103,9 +103,9 @@ impl HeartbeatTool {
     /// Format a Duration back to human-readable string
     fn format_duration(d: std::time::Duration) -> String {
         let secs = d.as_secs();
-        if secs >= 3600 && secs % 3600 == 0 {
+        if secs >= 3600 && secs.is_multiple_of(3600) {
             format!("{}h", secs / 3600)
-        } else if secs >= 60 && secs % 60 == 0 {
+        } else if secs >= 60 && secs.is_multiple_of(60) {
             format!("{}m", secs / 60)
         } else {
             format!("{}s", secs)

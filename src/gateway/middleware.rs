@@ -98,7 +98,7 @@ pub fn extract_client_ip_with_trusted(req: &Request, trusted_proxies: &[IpAddr])
     // OR if no ConnectInfo is available (backward compat: trust headers)
     let should_trust_headers = direct_ip
         .as_ref()
-        .map_or(true, |ip| trusted_proxies.contains(ip) || is_localhost(*ip));
+        .is_none_or(|ip| trusted_proxies.contains(ip) || is_localhost(*ip));
 
     if should_trust_headers {
         if let Some(forwarded) = req.headers().get("x-forwarded-for") {

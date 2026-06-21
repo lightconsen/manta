@@ -152,7 +152,7 @@ impl CandidateMatcher {
                 let candidate = SenderCandidate::with_confidence(known.clone(), confidence);
                 if best
                     .as_ref()
-                    .map_or(true, |b| candidate.confidence > b.confidence)
+                    .is_none_or(|b| candidate.confidence > b.confidence)
                 {
                     best = Some(candidate);
                 }

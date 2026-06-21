@@ -327,7 +327,7 @@ impl ThreadBindingManager {
         match self.policy.placement_hint {
             PlacementHint::Current => PlacementDecision::UseCurrent,
             PlacementHint::Child => {
-                if self.policy.max_children.map_or(true, |_max| {
+                if self.policy.max_children.is_none_or(|_max| {
                     // Runtime check on child count would need to be done in
                     // a separate step since we hold the read lock here
                     true

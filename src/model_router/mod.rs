@@ -1611,7 +1611,7 @@ impl ModelRouter {
                     .as_ref()
                     .map(|p| p.input_per_1k + p.output_per_1k)
                     .unwrap_or(f64::MAX);
-                if best.map_or(true, |(_, best_cost)| cost < best_cost) {
+                if best.is_none_or(|(_, best_cost)| cost < best_cost) {
                     best = Some((c, cost));
                 }
             }
