@@ -6,7 +6,7 @@
 fail-under = 80
 
 # Output formats
-out = ["Html", "Xml", "Terminal"]
+out = ["Html", "Xml", "Stdout"]
 
 # Exclude test files and generated code from coverage
 exclude-files = [

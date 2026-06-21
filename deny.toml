@@ -18,6 +18,16 @@ ignore = [
     { id = "RUSTSEC-2026-0098", reason = "transitive dependency via serenity 0.12.5 -> tokio-tungstenite 0.21.0 -> rustls 0.22.4; serenity has not released a fix" },
     { id = "RUSTSEC-2026-0099", reason = "transitive dependency via serenity 0.12.5 -> tokio-tungstenite 0.21.0 -> rustls 0.22.4; serenity has not released a fix" },
     { id = "RUSTSEC-2026-0104", reason = "transitive dependency via serenity 0.12.5 -> tokio-tungstenite 0.21.0 -> rustls 0.22.4; serenity has not released a fix" },
+    # `instant` is unmaintained but still widely used as a wasmtime/lance transitive dependency.
+    { id = "RUSTSEC-2024-0384", reason = "transitive unmaintained dependency; no actionable upgrade path" },
+    # `paste` is unmaintained but used by several transitive dependencies.
+    { id = "RUSTSEC-2024-0436", reason = "transitive unmaintained dependency; no actionable upgrade path" },
+    # `proc-macro-error2` is unmaintained but used by transitive proc-macro crates.
+    { id = "RUSTSEC-2026-0173", reason = "transitive unmaintained dependency; no actionable upgrade path" },
+    # `rustls-pemfile` is unmaintained but locked by rustls 0.22/0.23 transitive tree.
+    { id = "RUSTSEC-2025-0134", reason = "transitive unmaintained dependency; upgrade blocked by upstream" },
+    # `serde_yml` is unsound/unmaintained but currently used for YAML config/tool output.
+    { id = "RUSTSEC-2025-0068", reason = "transitive unsound dependency; migrating to serde_yaml_ng is planned" },
 ]
 
 [licenses]
@@ -36,6 +46,8 @@ allow = [
     "BSL-1.0",
     "Zlib",
     "CDLA-Permissive-2.0",
+    "0BSD",
+    "GPL-3.0",
 ]
 confidence-threshold = 0.8
 
