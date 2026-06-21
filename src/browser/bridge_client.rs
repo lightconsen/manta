@@ -408,10 +408,24 @@ mod tests {
 
     #[test]
     fn test_bridge_client_from_env_missing() {
-        // Ensure env vars are not set
+        // Save any existing env vars so the test is independent of the
+        // outside environment (e.g. CI may set BROWSER_BRIDGE_URL).
+        let saved_url = std::env::var("BROWSER_BRIDGE_URL").ok();
+        let saved_token = std::env::var("BROWSER_BRIDGE_TOKEN").ok();
+
         std::env::remove_var("BROWSER_BRIDGE_URL");
         std::env::remove_var("BROWSER_BRIDGE_TOKEN");
         assert!(BridgeClient::from_env().is_none());
+
+        // Restore previous values so later tests are not affected.
+        match saved_url {
+            Some(url) => std::env::set_var("BROWSER_BRIDGE_URL", url),
+            None => std::env::remove_var("BROWSER_BRIDGE_URL"),
+        }
+        match saved_token {
+            Some(token) => std::env::set_var("BROWSER_BRIDGE_TOKEN", token),
+            None => std::env::remove_var("BROWSER_BRIDGE_TOKEN"),
+        }
     }
 
     #[test]
