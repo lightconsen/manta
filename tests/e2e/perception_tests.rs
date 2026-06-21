@@ -68,10 +68,8 @@ async fn perception_registry_has_device_sources() {
         MockCapability::new("sensor.read_temperature")
             .with_result(serde_json::json!({"celsius": 23.5})),
     );
-    let driver: Arc<dyn DeviceDriver> = Arc::new(
-        MockDeviceDriver::new("sensor-01", true)
-            .with_capabilities(vec![temp_cap]),
-    );
+    let driver: Arc<dyn DeviceDriver> =
+        Arc::new(MockDeviceDriver::new("sensor-01", true).with_capabilities(vec![temp_cap]));
 
     let config = perception_config(port);
     let gateway = Gateway::with_devices(config, None, vec![driver])
@@ -79,7 +77,9 @@ async fn perception_registry_has_device_sources() {
         .expect("Failed to create gateway with devices");
 
     // Perception registry is present with device sources
-    let reg = gateway.perception_registry().expect("Perception registry should be present");
+    let reg = gateway
+        .perception_registry()
+        .expect("Perception registry should be present");
     let sources = reg.list_sources().await;
     assert!(!sources.is_empty(), "Should have registered sources");
     assert!(
@@ -137,10 +137,8 @@ async fn perception_with_devices_and_tool_registered() {
         MockCapability::new("sensor.read_temperature")
             .with_result(serde_json::json!({"celsius": 23.5})),
     );
-    let driver: Arc<dyn DeviceDriver> = Arc::new(
-        MockDeviceDriver::new("sensor-01", true)
-            .with_capabilities(vec![temp_cap]),
-    );
+    let driver: Arc<dyn DeviceDriver> =
+        Arc::new(MockDeviceDriver::new("sensor-01", true).with_capabilities(vec![temp_cap]));
 
     let config = perception_config(port);
     let gateway = Gateway::with_devices(config, None, vec![driver])
@@ -188,19 +186,14 @@ async fn perception_computer_sources_list_and_query() {
             timestamp: Instant::now(),
         },
     });
-    reg.register_source(Arc::new(
-        syscity::perception::ScreenshotAdapter::new(stub),
-    ))
-    .await;
+    reg.register_source(Arc::new(syscity::perception::ScreenshotAdapter::new(stub)))
+        .await;
 
     // Register SystemMonitorAdapter (always works cross-platform).
-    let monitor = Arc::new(tokio::sync::Mutex::new(
-        syscity::computer::system::SystemMonitor::new(),
-    ));
-    reg.register_source(Arc::new(
-        syscity::perception::SystemMonitorAdapter::new(monitor),
-    ))
-    .await;
+    let monitor =
+        Arc::new(tokio::sync::Mutex::new(syscity::computer::system::SystemMonitor::new()));
+    reg.register_source(Arc::new(syscity::perception::SystemMonitorAdapter::new(monitor)))
+        .await;
 
     // Verify list_sources includes both computer-backed sources.
     let sources = reg.list_sources().await;
@@ -219,17 +212,17 @@ async fn perception_computer_sources_list_and_query() {
         .query(&syscity::perception::PerceptionQuery::default())
         .await;
     let ids: Vec<String> = result.entities.iter().map(|e| e.id.to_string()).collect();
-    assert!(
-        ids.contains(&"screenshot".to_string()),
-        "screenshot entity missing: {ids:?}"
-    );
+    assert!(ids.contains(&"screenshot".to_string()), "screenshot entity missing: {ids:?}");
     assert!(
         ids.contains(&"system_monitor".to_string()),
         "system_monitor entity missing: {ids:?}"
     );
 
     // Filter by modality: System → only system_monitor.
-    let q = syscity::perception::PerceptionQuery { modalities: Some(vec![syscity::perception::Modality::System]), ..Default::default() };
+    let q = syscity::perception::PerceptionQuery {
+        modalities: Some(vec![syscity::perception::Modality::System]),
+        ..Default::default()
+    };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 1, "expected 1 System entity");
     assert_eq!(result.entities[0].id.to_string(), "system_monitor");

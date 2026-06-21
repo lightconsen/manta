@@ -5,15 +5,17 @@
 //! - Capability checks reject unsupported actions
 //! - Missing required arguments produce validation errors
 
-use super::*;
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use async_trait::async_trait;
 use syscity::channels::{Channel, ChannelCapabilities, ChatType, ConversationId, OutgoingMessage};
 use syscity::core::models::Id;
 use syscity::gateway::{GatewayConfig, GatewayState};
 use syscity::tools::message::MessageTool;
 use tokio::sync::{broadcast, mpsc, RwLock};
+
+use super::*;
 
 // ── Dummy pipelines (required by GatewayState but unused by these tests) ─────
 
@@ -52,7 +54,8 @@ impl syscity::outbound::OutboundPipeline for DummyOutboundPipeline {
     }
 }
 
-// ── Test helper: construct a minimal GatewayState ─────────────────────────────
+// ── Test helper: construct a minimal GatewayState
+// ─────────────────────────────
 
 async fn make_test_state(config: GatewayConfig) -> GatewayState {
     let (event_tx, _) = broadcast::channel(1);

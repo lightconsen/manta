@@ -4,22 +4,23 @@
 //! poll observations, query entities by modality/source, and exercise the
 //! PerceptionQueryTool.
 
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
+
 use async_trait::async_trait;
+use syscity::computer::system::SystemMonitor;
 use syscity::computer::{
     ActionResult, ComputerAdapter, DesktopAction, HeadlessComputerAdapter, Rect, Screenshot,
     UiElement, WaitCondition,
 };
-use syscity::computer::system::SystemMonitor;
 use syscity::perception::mock::MockPerceptionSource;
 use syscity::perception::{
-    AdapterConfig, AdapterError, AggregationStrategy, AgentPerceptionAdapter, AnomalyKind, Event,
+    AdapterConfig, AdapterError, AgentPerceptionAdapter, AggregationStrategy, AnomalyKind, Event,
     Focus, Modality, Observation, ObservationId, PerceptionContext, PerceptionContextConfig,
     PerceptionQuery, PerceptionQueryTool, PerceptionRegistry, PerceptionSource,
     PerceptionSummarizer, ScreenshotAdapter, SystemMonitorAdapter, TemplateSummarizer,
 };
 use syscity::tools::{Tool, ToolContext, ToolRegistry};
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::Mutex;
 
 /// Create a registry with mock sources.
@@ -70,7 +71,10 @@ async fn perception_query_by_modality() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let q = PerceptionQuery { modalities: Some(vec![Modality::System]), ..Default::default() };
+    let q = PerceptionQuery {
+        modalities: Some(vec![Modality::System]),
+        ..Default::default()
+    };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 1, "expected 1 system entity");
     assert_eq!(result.entities[0].modality, Modality::System);
@@ -81,7 +85,10 @@ async fn perception_query_by_source() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let mut q = PerceptionQuery { sources: Some(vec!["camera".to_string()]), ..Default::default() };
+    let mut q = PerceptionQuery {
+        sources: Some(vec!["camera".to_string()]),
+        ..Default::default()
+    };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 1, "expected 1 camera entity");
     assert_eq!(result.entities[0].id.to_string(), "camera");
@@ -96,7 +103,10 @@ async fn perception_query_by_label() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let q = PerceptionQuery { label_contains: Some("Rgb".to_string()), ..Default::default() };
+    let q = PerceptionQuery {
+        label_contains: Some("Rgb".to_string()),
+        ..Default::default()
+    };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 1, "expected 1 entity with label containing 'Rgb'");
 }
@@ -106,7 +116,10 @@ async fn perception_query_with_limit() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let q = PerceptionQuery { limit: Some(2), ..Default::default() };
+    let q = PerceptionQuery {
+        limit: Some(2),
+        ..Default::default()
+    };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 2, "expected 2 entities (limited)");
 }
@@ -116,7 +129,10 @@ async fn perception_query_no_matches() {
     let reg = setup_registry().await;
     reg.poll_all().await;
 
-    let q = PerceptionQuery { modalities: Some(vec![Modality::Audio]), ..Default::default() };
+    let q = PerceptionQuery {
+        modalities: Some(vec![Modality::Audio]),
+        ..Default::default()
+    };
     let result = reg.query(&q).await;
     assert!(result.entities.is_empty(), "expected no entities for Audio modality");
 }
@@ -234,12 +250,8 @@ async fn pipeline_e2e_snapshot_reflects_temporal_aggregate() {
         .await;
 
     for v in [10.0, 20.0, 30.0_f64] {
-        tx.send(raw_obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": v}),
-        ))
-        .unwrap();
+        tx.send(raw_obs("cpu", Modality::System, serde_json::json!({"cpu_pct": v})))
+            .unwrap();
     }
 
     // Poll Snapshot::aggregates until the temporal processor has caught up.
@@ -262,13 +274,10 @@ async fn pipeline_e2e_snapshot_reflects_temporal_aggregate() {
 async fn pipeline_e2e_summarize_uses_real_recent_events() {
     let summarizer: Arc<dyn PerceptionSummarizer> = Arc::new(EchoSummarizer);
     let ctx = PerceptionContext::start(PerceptionContextConfig::default());
-    let adapter = ctx.new_adapter(
-        Focus::default(),
-        Some(summarizer),
-        AdapterConfig::default(),
-    );
+    let adapter = ctx.new_adapter(Focus::default(), Some(summarizer), AdapterConfig::default());
 
-    // Publish an anomaly directly to derived_hub — bypasses gating, lands in `recent`.
+    // Publish an anomaly directly to derived_hub — bypasses gating, lands in
+    // `recent`.
     ctx.derived_hub().publish(Event::Anomaly {
         source: "cpu".into(),
         reason: syscity::perception::AnomalyKind::SourceFault,
@@ -284,7 +293,8 @@ async fn pipeline_e2e_summarize_uses_real_recent_events() {
         .await
         .expect("summary should succeed");
     assert!(summary.starts_with("echo:"), "got {summary}");
-    // Make sure the user prompt actually carried payload (more than just an empty wrapper).
+    // Make sure the user prompt actually carried payload (more than just an empty
+    // wrapper).
     let bytes: usize = summary["echo:".len()..]
         .split('-')
         .next()
@@ -524,18 +534,9 @@ async fn system_monitor_adapter_observe_returns_status() {
     // SystemStatus fields should be present in the observation data.
     let data = &obs[0].data;
     assert!(data.get("hostname").is_some(), "hostname should be present");
-    assert!(
-        data.get("cpu_usage_percent").is_some(),
-        "cpu_usage_percent should be present"
-    );
-    assert!(
-        data.get("memory_total_mb").is_some(),
-        "memory_total_mb should be present"
-    );
-    assert!(
-        data.get("os_name").is_some(),
-        "os_name should be present"
-    );
+    assert!(data.get("cpu_usage_percent").is_some(), "cpu_usage_percent should be present");
+    assert!(data.get("memory_total_mb").is_some(), "memory_total_mb should be present");
+    assert!(data.get("os_name").is_some(), "os_name should be present");
 }
 
 // ---------------------------------------------------------------------------
@@ -569,17 +570,17 @@ async fn screenshot_and_system_monitor_in_registry() {
     // Query all — both should appear.
     let result = reg.query(&PerceptionQuery::default()).await;
     let ids: Vec<String> = result.entities.iter().map(|e| e.id.to_string()).collect();
-    assert!(
-        ids.contains(&"screenshot".to_string()),
-        "screenshot entity missing: {ids:?}"
-    );
+    assert!(ids.contains(&"screenshot".to_string()), "screenshot entity missing: {ids:?}");
     assert!(
         ids.contains(&"system_monitor".to_string()),
         "system_monitor entity missing: {ids:?}"
     );
 
     // Filter by modality: Rgb → only screenshot.
-    let q = PerceptionQuery { modalities: Some(vec![Modality::Rgb]), ..Default::default() };
+    let q = PerceptionQuery {
+        modalities: Some(vec![Modality::Rgb]),
+        ..Default::default()
+    };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 1, "expected 1 Rgb entity");
     assert_eq!(result.entities[0].id.to_string(), "screenshot");
@@ -589,7 +590,10 @@ async fn screenshot_and_system_monitor_in_registry() {
     assert_eq!(ss_data["height"].as_u64(), Some(1080));
 
     // Filter by modality: System → only system_monitor.
-    let q = PerceptionQuery { modalities: Some(vec![Modality::System]), ..Default::default() };
+    let q = PerceptionQuery {
+        modalities: Some(vec![Modality::System]),
+        ..Default::default()
+    };
     let result = reg.query(&q).await;
     assert_eq!(result.entities.len(), 1, "expected 1 System entity");
     assert_eq!(result.entities[0].id.to_string(), "system_monitor");
@@ -597,4 +601,3 @@ async fn screenshot_and_system_monitor_in_registry() {
     let sm_data = &result.entities[0].properties["data"];
     assert!(sm_data.get("hostname").is_some(), "hostname should be present");
 }
-

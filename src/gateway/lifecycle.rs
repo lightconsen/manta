@@ -291,12 +291,6 @@ pub(crate) async fn start_gateway(
 
     info!("Gateway control plane listening on ws://{}", addr);
 
-    // Start Tailscale if enabled
-    #[cfg(feature = "tailscale")]
-    if config.tailscale_enabled {
-        start_tailscale(&state).await?;
-    }
-
     // Forward ApprovalRequired events from the tool registry into the Gateway event bus
     {
         let mut approval_rx = state.tools.approval_queue.event_tx.subscribe();
@@ -532,12 +526,11 @@ pub(crate) async fn stop_gateway(
         }
     }
 
-    // 12. Tailscale.
+    // 12. Tailscale authenticator is managed within GatewayState; the Tailscale
+    //     daemon itself is started externally.
     #[cfg(feature = "tailscale")]
-    if tailscale_enabled {
-        if let Err(e) = crate::tailscale::stop().await {
-            warn!("Failed to stop Tailscale: {}", e);
-        }
+    if _tailscale_enabled {
+        info!("Tailscale authentication mode enabled");
     }
 
     // 13. Abort remaining background tasks.
@@ -722,39 +715,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .merge(admin_router)
         .merge(ws_router)
         .layer(cors_layer)
-}
-
-// ── Tailscale helper ─────────────────────────────────────────────────
-
-/// Start Tailscale if the feature is enabled.
-#[cfg(feature = "tailscale")]
-async fn start_tailscale(state: &GatewayState) -> crate::Result<()> {
-    let credential = state.auth.tailscale_authenticator.as_ref().map(|a| a.credential());
-    let auth_key = credential.and_then(|c| c.auth_key.clone());
-    let hostname = credential.and_then(|c| c.hostname.clone());
-
-    info!(
-        "Starting Tailscale with auth_key={} hostname={}",
-        auth_key.as_deref().unwrap_or("(none)"),
-        hostname.as_deref().unwrap_or("(default)"),
-    );
-
-    crate::tailscale::start(auth_key, hostname).await.map_err(|e| {
-        crate::error::SyscityError::ExternalService {
-            source: "Failed to start Tailscale".to_string(),
-            cause: Some(Box::new(e)),
-        }
-    })?;
-
-    let tailscale_ip = crate::tailscale::ip().await.unwrap_or_else(|| "unknown".to_string());
-    info!("Tailscale started, IP: {}", tailscale_ip);
-
-    let mut settings = state.infra.runtime_settings.write().await;
-    settings.insert(
-        "tailscale_ip".to_string(),
-        serde_json::json!(tailscale_ip),
-    );
-    Ok(())
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

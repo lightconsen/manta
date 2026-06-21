@@ -1043,9 +1043,10 @@ impl Gateway {
     ///
     /// Extensions are wired into the inbound/outbound pipelines and replace
     /// the ad-hoc per-channel initialisation code.
-
     /// Get or spawn agent by ID (on-demand)
-    pub async fn get_or_spawn_agent(&self, agent_id: &str) -> crate::Result<Option<AgentHandle>> {
+    pub async fn get_or_spawn_agent(&self,
+        agent_id: &str,
+    ) -> crate::Result<Option<AgentHandle>> {
         // First check if already spawned
         {
             let agents = self.state.agents.agents.read().await;

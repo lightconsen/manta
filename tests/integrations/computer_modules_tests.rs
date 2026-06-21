@@ -2,10 +2,14 @@
 //!
 //! These tests exercise real bugs found during code review:
 //!
-//! - sensitive_ui  : privilege escalation (0 coverage), nested trees, Chinese keywords
-//! - screenshot_encoder : `which` command cross-platform, NetworkCondition edge cases
-//! - audio         : analyze_segment edge cases (empty, boundary, edge conditions)
-//! - system        : blocking sleep in async context (verified via timeout behavior)
+//! - sensitive_ui  : privilege escalation (0 coverage), nested trees, Chinese
+//!   keywords
+//! - screenshot_encoder : `which` command cross-platform, NetworkCondition edge
+//!   cases
+//! - audio         : analyze_segment edge cases (empty, boundary, edge
+//!   conditions)
+//! - system        : blocking sleep in async context (verified via timeout
+//!   behavior)
 
 // ---------------------------------------------------------------------------
 // sensitive_ui
@@ -64,13 +68,8 @@ mod sensitive_ui_tests {
     fn test_privilege_escalation_sudo_prompt() {
         let detector = SensitiveUiDetector::new();
         // A dialog with sudo in the label
-        let tree = make_node(
-            "sudo-dlg",
-            "alert",
-            Some("sudo requires your password"),
-            None,
-            vec![],
-        );
+        let tree =
+            make_node("sudo-dlg", "alert", Some("sudo requires your password"), None, vec![]);
         let findings = detector.scan_tree(&tree);
         assert!(
             findings
@@ -85,13 +84,7 @@ mod sensitive_ui_tests {
     fn test_privilege_escalation_uac() {
         let detector = SensitiveUiDetector::new();
         // Windows UAC prompt
-        let tree = make_node(
-            "uac-dlg",
-            "dialog",
-            Some("User Account Control"),
-            None,
-            vec![],
-        );
+        let tree = make_node("uac-dlg", "dialog", Some("User Account Control"), None, vec![]);
         let findings = detector.scan_tree(&tree);
         assert!(
             findings
@@ -106,13 +99,7 @@ mod sensitive_ui_tests {
     fn test_privilege_escalation_chinese() {
         let detector = SensitiveUiDetector::new();
         // Chinese privilege escalation prompt (one of the signals)
-        let tree = make_node(
-            "auth-cn",
-            "dialog",
-            Some("需要管理员权限"),
-            None,
-            vec![],
-        );
+        let tree = make_node("auth-cn", "dialog", Some("需要管理员权限"), None, vec![]);
         let findings = detector.scan_tree(&tree);
         assert!(
             findings
@@ -127,13 +114,8 @@ mod sensitive_ui_tests {
     fn test_privilege_escalation_enter_password() {
         let detector = SensitiveUiDetector::new();
         // "Enter password to" is a signal for privilege escalation
-        let tree = make_node(
-            "pwd-prompt",
-            "prompt",
-            Some("Enter password to continue"),
-            None,
-            vec![],
-        );
+        let tree =
+            make_node("pwd-prompt", "prompt", Some("Enter password to continue"), None, vec![]);
         let findings = detector.scan_tree(&tree);
         assert!(
             findings
@@ -148,13 +130,8 @@ mod sensitive_ui_tests {
     fn test_no_false_positive_privilege_escalation() {
         let detector = SensitiveUiDetector::new();
         // A regular info dialog should NOT trigger privilege escalation
-        let tree = make_node(
-            "info-dlg",
-            "dialog",
-            Some("Operation completed successfully"),
-            None,
-            vec![],
-        );
+        let tree =
+            make_node("info-dlg", "dialog", Some("Operation completed successfully"), None, vec![]);
         let findings = detector.scan_tree(&tree);
         assert!(
             !findings
@@ -234,10 +211,7 @@ mod sensitive_ui_tests {
             .iter()
             .filter(|f| f.element_id == "name-input")
             .collect();
-        assert!(
-            name_findings.is_empty(),
-            "'Name' field should not be detected as sensitive"
-        );
+        assert!(name_findings.is_empty(), "'Name' field should not be detected as sensitive");
     }
 
     // ── Destruction confirmation with value field ───────────────────────
@@ -452,8 +426,9 @@ mod screenshot_encoder_tests {
 
 #[cfg(test)]
 mod audio_integration_tests {
-    use syscity::computer::audio::{AudioCapture, AudioSegment, AudioSource, DetectedAudioEvent};
     use std::time::Instant;
+
+    use syscity::computer::audio::{AudioCapture, AudioSegment, AudioSource, DetectedAudioEvent};
 
     fn make_segment(samples: Vec<f32>, duration_ms: u64) -> AudioSegment {
         AudioSegment {
@@ -511,11 +486,7 @@ mod audio_integration_tests {
     fn test_analyze_loud_beep_is_error_chime() {
         let capture = AudioCapture::new().unwrap();
         // Loud tonal beep: high RMS, low ZCR, short duration
-        let samples: Vec<f32> = (0..160)
-            .map(|i| {
-                if i < 80 { 0.9 } else { 0.0 }
-            })
-            .collect();
+        let samples: Vec<f32> = (0..160).map(|i| if i < 80 { 0.9 } else { 0.0 }).collect();
         // ZCR of a constant high value followed by zero should be low
         let seg = make_segment(samples, 10);
         let events = capture.analyze_segment(&seg);
@@ -530,11 +501,7 @@ mod audio_integration_tests {
     fn test_analyze_quiet_beep_is_notification() {
         let capture = AudioCapture::new().unwrap();
         // Quiet tonal beep: moderate RMS, low ZCR, short duration
-        let samples: Vec<f32> = (0..160)
-            .map(|i| {
-                if i < 80 { 0.05 } else { 0.0 }
-            })
-            .collect();
+        let samples: Vec<f32> = (0..160).map(|i| if i < 80 { 0.05 } else { 0.0 }).collect();
         let seg = make_segment(samples, 10);
         let events = capture.analyze_segment(&seg);
         assert!(

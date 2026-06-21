@@ -3,17 +3,18 @@ use serde_json;
 use syscity::providers::{Message, Role, ToolCall};
 
 fn bench_message_serialization(c: &mut Criterion) {
-    let msg = Message::assistant("This is a moderately long assistant response that contains some reasoning about the problem at hand.")
-        .with_tool_calls(vec![
-            ToolCall {
-                id: "call_abc123".to_string(),
-                call_type: "function".to_string(),
-                function: syscity::providers::FunctionCall {
-                    name: "shell".to_string(),
-                    arguments: "{\"command\":\"ls -la\"}".to_string(),
-                },
-            },
-        ]);
+    let msg = Message::assistant(
+        "This is a moderately long assistant response that contains some reasoning about the \
+         problem at hand.",
+    )
+    .with_tool_calls(vec![ToolCall {
+        id: "call_abc123".to_string(),
+        call_type: "function".to_string(),
+        function: syscity::providers::FunctionCall {
+            name: "shell".to_string(),
+            arguments: "{\"command\":\"ls -la\"}".to_string(),
+        },
+    }]);
 
     c.bench_function("message_serialize", |b| {
         b.iter(|| {

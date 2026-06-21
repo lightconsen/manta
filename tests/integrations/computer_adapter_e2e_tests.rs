@@ -12,13 +12,8 @@ use std::time::Duration;
 
 use syscity::computer::headless::HeadlessComputerAdapter;
 use syscity::computer::types::{MouseButton, Point, Screenshot};
-use syscity::computer::use_loop::{
-    ComputerUseLoop, LoopConfig, LoopDecision, LoopState,
-};
-use syscity::computer::{
-    ComputerAdapter, ComputerError, DesktopAction,
-};
-
+use syscity::computer::use_loop::{ComputerUseLoop, LoopConfig, LoopDecision, LoopState};
+use syscity::computer::{ComputerAdapter, ComputerError, DesktopAction};
 use syscity::tools::ToolRegistry;
 
 // ---------------------------------------------------------------------------
@@ -55,18 +50,18 @@ async fn test_adapter_get_system_status() {
     assert!(result.data.is_some(), "should have status data");
 
     let data = result.data.unwrap();
-    assert!(data.get("hostname").is_some() || data.get("os").is_some(),
-        "status data should contain system info keys: {:?}", data);
+    assert!(
+        data.get("hostname").is_some() || data.get("os").is_some(),
+        "status data should contain system info keys: {:?}",
+        data
+    );
 }
 
 #[tokio::test]
 async fn test_adapter_list_processes() {
     let adapter = headless_adapter();
     let result = adapter
-        .execute(DesktopAction::ListProcesses {
-            filter: None,
-            limit: None,
-        })
+        .execute(DesktopAction::ListProcesses { filter: None, limit: None })
         .await
         .expect("ListProcesses should succeed");
     assert!(result.success, "process list should succeed");
@@ -123,7 +118,9 @@ async fn test_adapter_read_ui_tree_headless() {
 #[tokio::test]
 async fn test_adapter_convenience_click_at() {
     let adapter = headless_adapter();
-    let result = adapter.click_at(Point::new(100, 200), MouseButton::Left).await;
+    let result = adapter
+        .click_at(Point::new(100, 200), MouseButton::Left)
+        .await;
     // Click requires a display — expect error, but not a panic
     if let Err(e) = result {
         // Any error is acceptable — the key is it didn't panic
@@ -182,13 +179,9 @@ async fn test_loop_single_action_then_done() {
             step_count += 1;
             async move {
                 if count == 0 {
-                    Ok(LoopDecision::Action(DesktopAction::Wait {
-                        milliseconds: 5,
-                    }))
+                    Ok(LoopDecision::Action(DesktopAction::Wait { milliseconds: 5 }))
                 } else {
-                    Ok(LoopDecision::Done {
-                        message: "done waiting".into(),
-                    })
+                    Ok(LoopDecision::Done { message: "done waiting".into() })
                 }
             }
         })
@@ -198,10 +191,7 @@ async fn test_loop_single_action_then_done() {
     assert!(result.success);
     assert_eq!(result.steps_taken, 1, "should have taken 1 step");
     assert_eq!(result.history.len(), 1, "history should have 1 record");
-    assert_eq!(
-        result.history[0].action,
-        DesktopAction::Wait { milliseconds: 5 },
-    );
+    assert_eq!(result.history[0].action, DesktopAction::Wait { milliseconds: 5 },);
     assert!(result.history[0].result.success);
 }
 
@@ -223,9 +213,7 @@ async fn test_loop_max_steps_reached() {
 
     let result = loop_
         .run("keep waiting", |_state: LoopState| async move {
-            Ok(LoopDecision::Action(DesktopAction::Wait {
-                milliseconds: 1,
-            }))
+            Ok(LoopDecision::Action(DesktopAction::Wait { milliseconds: 1 }))
         })
         .await
         .expect("loop should complete without error");
@@ -254,8 +242,11 @@ async fn test_loop_need_help() {
         .expect("loop should complete without error");
 
     assert!(!result.success, "NeedHelp should result in failure");
-    assert!(result.message.contains("cannot complete"),
-        "message should contain the reason: {}", result.message);
+    assert!(
+        result.message.contains("cannot complete"),
+        "message should contain the reason: {}",
+        result.message
+    );
     assert_eq!(result.steps_taken, 0);
 }
 
@@ -310,13 +301,9 @@ async fn test_loop_verify_after_each_disabled_does_not_crash() {
             step_count += 1;
             async move {
                 if count == 0 {
-                    Ok(LoopDecision::Action(DesktopAction::Wait {
-                        milliseconds: 1,
-                    }))
+                    Ok(LoopDecision::Action(DesktopAction::Wait { milliseconds: 1 }))
                 } else {
-                    Ok(LoopDecision::Done {
-                        message: "done".into(),
-                    })
+                    Ok(LoopDecision::Done { message: "done".into() })
                 }
             }
         })
@@ -348,9 +335,7 @@ async fn test_loop_records_screenshot_in_loop_state() {
             async move {
                 // Record the screenshot the loop provided
                 *cap.lock().await = Some(state.screenshot);
-                Ok(LoopDecision::Done {
-                    message: "checked".into(),
-                })
+                Ok(LoopDecision::Done { message: "checked".into() })
             }
         })
         .await
@@ -473,9 +458,7 @@ async fn test_loop_zero_settle_delay() {
             step_count += 1;
             async move {
                 if count == 0 {
-                    Ok(LoopDecision::Action(DesktopAction::Wait {
-                        milliseconds: 1,
-                    }))
+                    Ok(LoopDecision::Action(DesktopAction::Wait { milliseconds: 1 }))
                 } else {
                     Ok(LoopDecision::Done {
                         message: "done with zero settle".into(),

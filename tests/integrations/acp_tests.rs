@@ -1,5 +1,6 @@
-use super::*;
 use syscity::agent::session_store::AppendMessageParams;
+
+use super::*;
 
 #[tokio::test]
 async fn acp_spawn_tool_executes_without_agent_builder() {
@@ -265,7 +266,8 @@ async fn apply_patch_applies_valid_patch() {
     std::fs::write(&file_path, "old line\nsecond line\n").unwrap();
 
     let patch = format!(
-        "--- a/patch_target.txt\n+++ b/patch_target.txt\n@@ -1,2 +1,2 @@\n-old line\n+new line\n second line\n"
+        "--- a/patch_target.txt\n+++ b/patch_target.txt\n@@ -1,2 +1,2 @@\n-old line\n+new line\n \
+         second line\n"
     );
 
     let tool = ApplyPatchTool::new();

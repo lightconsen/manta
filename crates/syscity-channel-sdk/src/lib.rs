@@ -69,7 +69,8 @@ pub const WIT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../wit/chann
 pub mod types {
     /// Placeholder types - these will be replaced by wit_bindgen in your crate
     ///
-    /// When you generate bindings, use the types from your generated `bindings` module.
+    /// When you generate bindings, use the types from your generated `bindings`
+    /// module.
 
     /// Chat type enum
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

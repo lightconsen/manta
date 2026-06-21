@@ -5,6 +5,7 @@
 //! capabilities directly.
 
 use std::sync::Arc;
+
 use syscity::device::mock::{make_mock_device_registry, MockCapability, MockDeviceDriver};
 use syscity::device::Capability;
 use syscity::device::{DeviceStatus, HealthCheckConfig, HotPlugConfig};
@@ -181,7 +182,8 @@ async fn test_status_bus_reconnect_events() {
     }
 }
 
-/// Verify that init_devices spawns a health-check loop when the interval is > 0.
+/// Verify that init_devices spawns a health-check loop when the interval is >
+/// 0.
 #[tokio::test]
 async fn test_init_devices_spawns_health_loop() {
     let sensor = Arc::new(MockCapability::new("sensor.read"));
@@ -211,7 +213,8 @@ async fn test_init_devices_spawns_health_loop() {
     }
 }
 
-/// Verify that init_devices does not spawn background loops when intervals are 0.
+/// Verify that init_devices does not spawn background loops when intervals are
+/// 0.
 #[tokio::test]
 async fn test_init_devices_no_handle_when_interval_zero() {
     let sensor = Arc::new(MockCapability::new("sensor.read"));

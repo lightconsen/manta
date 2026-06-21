@@ -5,7 +5,8 @@
 
 /// Emit an event with a type name and a JSON payload.
 ///
-/// Returns `true` if the event was sent, `false` if no event channel is configured.
+/// Returns `true` if the event was sent, `false` if no event channel is
+/// configured.
 ///
 /// # Example
 /// ```ignore

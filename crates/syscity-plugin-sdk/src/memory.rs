@@ -3,9 +3,10 @@
 //! Per-plugin, in-memory storage. Data is lost when the plugin is reloaded.
 //! Use [`store`](super::store) for persistent storage.
 
-use crate::ffi_call_to_string;
 use std::string::{String, ToString};
 use std::vec::Vec;
+
+use crate::ffi_call_to_string;
 
 /// Store a value in memory. Returns `true` on success.
 ///

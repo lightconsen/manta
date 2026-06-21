@@ -341,7 +341,8 @@ async fn goal_planner_tool_call_device() {
         registry.set_hooks(hooks);
     }
 
-    // Register mock provider BEFORE starting gateway, same as start_test_gateway_with_mock
+    // Register mock provider BEFORE starting gateway, same as
+    // start_test_gateway_with_mock
     let router = gateway.model_router();
     router
         .add_provider_instance("mock", Arc::new(mock))

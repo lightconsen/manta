@@ -2,8 +2,9 @@
 //!
 //! Access plugin configuration values set in `plugin.json` / `config.json`.
 
-use crate::ffi_call_to_string;
 use std::string::String;
+
+use crate::ffi_call_to_string;
 
 /// Get a config value by key. Returns `None` if the key does not exist.
 ///

@@ -2,8 +2,9 @@
 //!
 //! Read session ID and arbitrary context values set by Syscity.
 
-use crate::ffi_call_to_string;
 use std::string::String;
+
+use crate::ffi_call_to_string;
 
 /// Get the current session ID. Returns `None` if no session is active.
 ///

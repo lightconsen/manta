@@ -42,9 +42,8 @@ impl GpioDriver {
     /// Optional: `name`.
     pub fn from_config(params: Value) -> crate::Result<Arc<dyn DeviceDriver>> {
         let pins_array = params.get("pins").and_then(Value::as_array).ok_or_else(|| {
-            crate::error::SyscityError::Validation(
-                "gpio.pins is required".into(),
-            )
+            crate::error::SyscityError::Validation("gpio.pins is required".into())
+        })?;
 
         if pins_array.is_empty() {
             return Err(crate::error::SyscityError::Validation(

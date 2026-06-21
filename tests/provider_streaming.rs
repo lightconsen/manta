@@ -1,7 +1,8 @@
 //! Provider Streaming Tests
 //!
 //! These tests verify that OpenAI and Anthropic providers correctly parse
-//! Server-Sent Events (SSE) streams. Tests run serially to avoid mock conflicts.
+//! Server-Sent Events (SSE) streams. Tests run serially to avoid mock
+//! conflicts.
 
 use futures::StreamExt;
 use serial_test::serial;
@@ -20,9 +21,15 @@ async fn openai_provider_streams_text_chunks() {
 
     // SSE format: each event is "data: {...}\n\n"
     let sse_body = concat!(
-        "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
-        "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
-        "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":\
+         1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"\
+         assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":\
+         1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \
+         world\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":\
+         1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\
+         \"stop\"}]}\n\n",
         "data: [DONE]\n\n",
     );
 
@@ -93,9 +100,12 @@ async fn anthropic_provider_streams_text_chunks() {
     // Anthropic SSE format uses event types
     let sse_body = concat!(
         "event: message_start\n",
-        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_01Test\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-3-5-sonnet\",\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n",
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_01Test\",\"type\":\"message\"\
+         ,\"role\":\"assistant\",\"content\":[],\"model\":\"claude-3-5-sonnet\",\"stop_reason\":\
+         null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n",
         "event: content_block_start\n",
-        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\
+         \"text\":\"\"}}\n\n",
         "event: content_block_delta\n",
         "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"\
          text\":\"Greetings\"}}\n\n",

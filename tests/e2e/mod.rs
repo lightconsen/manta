@@ -2,13 +2,14 @@
 //!
 //! Simulates a complete frontend client connecting via WebSocket.
 
-pub use futures_util::{SinkExt, StreamExt};
-pub use serde_json::json;
-pub use serial_test::serial;
 pub use std::collections::VecDeque;
 pub use std::path::Path;
 use std::sync::Arc;
 pub use std::time::Duration;
+
+pub use futures_util::{SinkExt, StreamExt};
+pub use serde_json::json;
+pub use serial_test::serial;
 use syscity::device::DeviceDriver;
 pub use syscity::gateway::protocol::AuthMode;
 pub use syscity::gateway::{Gateway, GatewayConfig};
@@ -22,14 +23,16 @@ pub use tokio_tungstenite::{
     tungstenite::protocol::WebSocketConfig,
 };
 
-// ── Type Aliases ──────────────────────────────────────────────────────────────
+// ── Type Aliases
+// ──────────────────────────────────────────────────────────────
 
 pub type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 pub type WsWrite = futures_util::stream::SplitSink<WsStream, Message>;
 pub type WsRead = futures_util::stream::SplitStream<WsStream>;
 
-// ── API Key Discovery ─────────────────────────────────────────────────────────
+// ── API Key Discovery
+// ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct LocalProviderConfig {
@@ -131,15 +134,16 @@ pub fn skip_if_no_provider() -> Option<LocalProviderConfig> {
     let provider = pick_test_provider();
     if provider.is_none() {
         eprintln!(
-            "Skipping LLM test: no provider configured. \
-             Set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
-             or create start-local-*.sh scripts in the project root."
+            "Skipping LLM test: no provider configured. Set SYSCITY_TEST_PROVIDER_KEY + \
+             SYSCITY_TEST_PROVIDER env vars, or create start-local-*.sh scripts in the project \
+             root."
         );
     }
     provider
 }
 
-// ── Gateway Setup ─────────────────────────────────────────────────────────────
+// ── Gateway Setup
+// ─────────────────────────────────────────────────────────────
 
 pub fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
     let mut config = GatewayConfig::default();
@@ -225,7 +229,8 @@ pub async fn start_test_gateway_with_mock(port: u16, mock: MockProvider) {
         .await
         .expect("Failed to register mock provider");
 
-    // Register a model alias so the router can resolve "mock-model" -> mock provider
+    // Register a model alias so the router can resolve "mock-model" -> mock
+    // provider
     router
         .set_alias(ModelAlias {
             name: "mock-model".to_string(),
@@ -346,7 +351,8 @@ pub fn llm_mock_provider_for_tool(tool_name: &str) -> MockProvider {
     })
 }
 
-// ── Frontend Simulator ────────────────────────────────────────────────────────
+// ── Frontend Simulator
+// ────────────────────────────────────────────────────────
 
 /// Simulates a web frontend connected over WebSocket.
 pub struct FrontendSimulator {
@@ -582,10 +588,11 @@ pub fn resp_payload(resp: &serde_json::Value) -> Option<&serde_json::Value> {
     resp.get("payload")
 }
 
-// ── Chat-Triggered Tool Test Helper ───────────────────────────────────────────
+// ── Chat-Triggered Tool Test Helper
+// ───────────────────────────────────────────
 
-/// Helper: send a chat prompt and collect events, returning tool.result payloads.
-/// The test passes as long as chat.final arrives within the timeout.
+/// Helper: send a chat prompt and collect events, returning tool.result
+/// payloads. The test passes as long as chat.final arrives within the timeout.
 pub async fn run_tool_chat_test(
     port: u16,
     prompt: &str,
@@ -674,10 +681,10 @@ mod computer_tests;
 mod device_tests;
 mod health_tests;
 mod llm_chat_tests;
-mod perception_tests;
-mod screen_recorder_tests;
 mod mock_chat_tests;
+mod perception_tests;
 mod planner_tests;
+mod screen_recorder_tests;
 mod session_tests;
 mod tool_chat_tests;
 mod vision_tests;

@@ -224,7 +224,7 @@ impl ComputerAdapter for WindowsComputerAdapter {
             DesktopAction::LaunchApp { name, wait_for_ready, .. } => {
                 let script = format!(
                     r#"Start-Process "{}""#,
-                    name.replace('"', "\""")
+                    name.replace('"', "\\\")
                 );
                 let args = serde_json::json!({ "script": script });
                 self.registry

@@ -33,8 +33,8 @@ fn chrome_available() -> bool {
 fn skip_if_no_chrome() {
     if !chrome_available() {
         eprintln!(
-            "Skipping browser E2E test: Chrome/Chromium not found. \
-             Install Chrome or set CHROME_PATH env var."
+            "Skipping browser E2E test: Chrome/Chromium not found. Install Chrome or set \
+             CHROME_PATH env var."
         );
     }
 }
@@ -49,7 +49,8 @@ async fn tool_browser_navigate_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40120,
-        "Use ONLY the browser tool. Navigate to https://example.com and tell me the page title. Do not use any other tool.",
+        "Use ONLY the browser tool. Navigate to https://example.com and tell me the page title. \
+         Do not use any other tool.",
         "browser",
     )
     .await;
@@ -65,7 +66,8 @@ async fn tool_browser_snapshot_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40121,
-        "Use ONLY the browser tool. Navigate to https://example.com, take a snapshot, and list interactive elements. Do not use any other tool.",
+        "Use ONLY the browser tool. Navigate to https://example.com, take a snapshot, and list \
+         interactive elements. Do not use any other tool.",
         "browser",
     )
     .await;
@@ -81,7 +83,8 @@ async fn tool_browser_screenshot_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40122,
-        "Use ONLY the browser tool. Navigate to https://example.com, take a screenshot, and report the result. Do not use any other tool.",
+        "Use ONLY the browser tool. Navigate to https://example.com, take a screenshot, and \
+         report the result. Do not use any other tool.",
         "browser",
     )
     .await;
@@ -97,7 +100,8 @@ async fn tool_browser_pdf_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40123,
-        "Use ONLY the browser tool. Navigate to https://example.com and save the page as a PDF. Do not use any other tool.",
+        "Use ONLY the browser tool. Navigate to https://example.com and save the page as a PDF. \
+         Do not use any other tool.",
         "browser",
     )
     .await;
@@ -113,7 +117,8 @@ async fn tool_browser_click_and_type_invoked_via_chat() {
     }
     let _results = run_tool_chat_test(
         40124,
-        "Use ONLY the browser tool. Navigate to https://example.com, click the 'More information...' link, and tell me what page you land on. Do not use any other tool.",
+        "Use ONLY the browser tool. Navigate to https://example.com, click the 'More \
+         information...' link, and tell me what page you land on. Do not use any other tool.",
         "browser",
     )
     .await;

@@ -5,6 +5,7 @@
 //! into the Agent via the builder pattern. Tests use isolated temp directories.
 
 use std::sync::Arc;
+
 use syscity::agent::{
     AgentBuilder, AgentConfig, ArtifactStore, BudgetCategory, DiskBudgetManager,
     SessionFileManager, TranscriptStore,

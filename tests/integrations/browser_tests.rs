@@ -235,7 +235,8 @@ async fn test_navigation_guard_schemes() {
         .is_err());
 }
 
-// ── Direct Browser Tool Integration Tests (require compatible Chrome) ───────────
+// ── Direct Browser Tool Integration Tests (require compatible Chrome)
+// ───────────
 
 #[tokio::test]
 #[serial]

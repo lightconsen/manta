@@ -1,5 +1,6 @@
-use super::*;
 use syscity::providers::Role;
+
+use super::*;
 
 /// Build a MockProvider that drives a two-turn shell tool conversation.
 ///
@@ -131,7 +132,8 @@ async fn mock_file_tool_invoked_via_chat() {
     client
         .send_chat(
             &sid,
-            "Use the file_write tool to create a file at /tmp/syscity-mock-e2e.txt with content 'mock-e2e-content'.",
+            "Use the file_write tool to create a file at /tmp/syscity-mock-e2e.txt with content \
+             'mock-e2e-content'.",
         )
         .await;
 

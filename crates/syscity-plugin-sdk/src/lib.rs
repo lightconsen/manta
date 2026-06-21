@@ -1,6 +1,7 @@
 //! Syscity Plugin SDK
 //!
-//! A high-level Rust SDK for building WASM plugins for the Syscity AI assistant platform.
+//! A high-level Rust SDK for building WASM plugins for the Syscity AI assistant
+//! platform.
 //!
 //! # Quick Start
 //!
@@ -25,7 +26,8 @@
 //!
 //! # WIT Component Model
 //!
-//! Enable the `wit` feature to use auto-generated bindings from WIT definitions:
+//! Enable the `wit` feature to use auto-generated bindings from WIT
+//! definitions:
 //!
 //! ```ignore
 //! // In your plugin's Cargo.toml:
@@ -130,7 +132,8 @@ extern "C" {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: call an FFI function that writes to an output buffer, return a `String`.
+// Helper: call an FFI function that writes to an output buffer, return a
+// `String`.
 // ---------------------------------------------------------------------------
 
 /// Call an FFI function that writes to an output buffer, return a `String`.

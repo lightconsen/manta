@@ -2,8 +2,9 @@
 //!
 //! Access the plugin's own identity information.
 
-use crate::ffi_call_to_string;
 use std::string::String;
+
+use crate::ffi_call_to_string;
 
 /// Get this plugin's unique identifier.
 ///

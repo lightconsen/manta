@@ -298,7 +298,6 @@ impl Default for MentionGate {
 /// - `*` wildcard at start or end (e.g. `*bot`, `spam*`)
 /// - `*` as full wildcard matching everything
 // ── Implicit Mention Detection ────────────────────────────────────────────────
-
 /// Check if the message is a direct reply to a bot message.
 pub fn is_reply_to_bot(bot_user_id: &str, reply_to_user_id: Option<&str>) -> bool {
     reply_to_user_id.map_or(false, |uid| uid == bot_user_id)

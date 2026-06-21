@@ -10,9 +10,10 @@
 //!
 //! Requires the `vision` feature (enabled by default).
 
+use std::io::Cursor;
+
 use base64::Engine;
 use image::DynamicImage;
-use std::io::Cursor;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -21,12 +22,16 @@ fn test_image_32x32() -> DynamicImage {
     let mut img = DynamicImage::new_rgb8(32, 32);
     for y in 0..32 {
         for x in 0..32 {
-            img.as_mut_rgb8().unwrap().put_pixel(x, y, image::Rgb([0, 0, 255]));
+            img.as_mut_rgb8()
+                .unwrap()
+                .put_pixel(x, y, image::Rgb([0, 0, 255]));
         }
     }
     for y in 12..20 {
         for x in 8..24 {
-            img.as_mut_rgb8().unwrap().put_pixel(x, y, image::Rgb([255, 255, 255]));
+            img.as_mut_rgb8()
+                .unwrap()
+                .put_pixel(x, y, image::Rgb([255, 255, 255]));
         }
     }
     img
@@ -50,8 +55,7 @@ fn make_test_screenshot(img: &DynamicImage) -> syscity::computer::types::Screens
 
 fn roundtrip_base64_png(img: &DynamicImage) -> DynamicImage {
     let ss = make_test_screenshot(img);
-    syscity::computer::vision::decode_screenshot(&ss)
-        .expect("decode_screenshot should succeed")
+    syscity::computer::vision::decode_screenshot(&ss).expect("decode_screenshot should succeed")
 }
 
 // ── Preprocessing Pipeline Tests ───────────────────────────────────────
@@ -81,7 +85,9 @@ fn test_resize_with_pad_non_square() {
     let mut img = DynamicImage::new_rgb8(16, 32);
     for y in 0..32 {
         for x in 0..16 {
-            img.as_mut_rgb8().unwrap().put_pixel(x, y, image::Rgb([128, 128, 128]));
+            img.as_mut_rgb8()
+                .unwrap()
+                .put_pixel(x, y, image::Rgb([128, 128, 128]));
         }
     }
     let (_padded, scale, _pad_x, _pad_y, _orig_w) =
@@ -94,7 +100,9 @@ fn test_normalize_image_channel_values() {
     let mut img = DynamicImage::new_rgb8(2, 2);
     for y in 0..2 {
         for x in 0..2 {
-            img.as_mut_rgb8().unwrap().put_pixel(x, y, image::Rgb([128, 128, 128]));
+            img.as_mut_rgb8()
+                .unwrap()
+                .put_pixel(x, y, image::Rgb([128, 128, 128]));
         }
     }
     let normalized = syscity::computer::vision::normalize_image(&img, [0.5; 3], [0.5; 3]);
@@ -174,7 +182,11 @@ fn test_compute_iou_logic() {
         let area1 = w1 * h1;
         let area2 = w2 * h2;
         let union_area = area1 + area2 - inter_area;
-        if union_area <= 0.0 { 0.0 } else { inter_area / union_area }
+        if union_area <= 0.0 {
+            0.0
+        } else {
+            inter_area / union_area
+        }
     }
 
     // Identical boxes
@@ -194,14 +206,16 @@ fn test_nms_different_classes_kept() {
     // Simulate NMS logic matching OmniParserDetector::non_max_suppression
     let detections = vec![
         (0usize, 0.9f32, 50.0, 50.0, 20.0, 20.0), // class 0, high conf
-        (1, 0.8, 51.0, 51.0, 20.0, 20.0),           // class 1, same area
+        (1, 0.8, 51.0, 51.0, 20.0, 20.0),         // class 1, same area
     ];
     let mut sorted = detections;
     sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let mut kept = Vec::new();
     let suppressed = vec![false; sorted.len()];
     for i in 0..sorted.len() {
-        if suppressed[i] { continue; }
+        if suppressed[i] {
+            continue;
+        }
         kept.push(sorted[i]);
     }
     assert_eq!(kept.len(), 2, "NMS should keep both different-class detections");
@@ -224,8 +238,7 @@ fn test_to_ui_elements_conversion() {
         },
     ];
 
-    let elements =
-        syscity::computer::vision::ui_onnx::OmniParserDetector::to_ui_elements(detected);
+    let elements = syscity::computer::vision::ui_onnx::OmniParserDetector::to_ui_elements(detected);
     assert_eq!(elements.len(), 2);
     assert_eq!(elements[0].role, "button");
     assert_eq!(elements[0].label, Some("OK".to_string()));
@@ -248,8 +261,9 @@ fn test_to_ui_elements_empty() {
 
 #[test]
 fn test_yolo_parse_transposed_layout() {
-    // Re-implement YOLO parsing logic to match OmniParserDetector::parse_yolo_output
-    // for a [batch=1, features=14, anchors=3] layout
+    // Re-implement YOLO parsing logic to match
+    // OmniParserDetector::parse_yolo_output for a [batch=1, features=14,
+    // anchors=3] layout
     let shape = vec![1usize, 14, 3];
     let mut data = vec![0.0f32; 1 * 14 * 3];
 
@@ -261,8 +275,8 @@ fn test_yolo_parse_transposed_layout() {
     data[0 * num_anchors + 0] = 320.0; // cx
     data[1 * num_anchors + 0] = 240.0; // cy
     data[2 * num_anchors + 0] = 100.0; // w
-    data[3 * num_anchors + 0] = 50.0;  // h
-    data[4 * num_anchors + 0] = 0.9;   // class 0
+    data[3 * num_anchors + 0] = 50.0; // h
+    data[4 * num_anchors + 0] = 0.9; // class 0
 
     // Detection 1: class 1 (checkbox), lower confidence
     data[0 * num_anchors + 1] = 100.0;
@@ -274,19 +288,31 @@ fn test_yolo_parse_transposed_layout() {
     let mut detections = Vec::new();
     for i in 0..num_anchors {
         let (cx, cy, w, h) = if is_transposed {
-            (data[0 * num_anchors + i], data[1 * num_anchors + i],
-             data[2 * num_anchors + i], data[3 * num_anchors + i])
+            (
+                data[0 * num_anchors + i],
+                data[1 * num_anchors + i],
+                data[2 * num_anchors + i],
+                data[3 * num_anchors + i],
+            )
         } else {
-            (data[i * 14 + 0], data[i * 14 + 1],
-             data[i * 14 + 2], data[i * 14 + 3])
+            (data[i * 14 + 0], data[i * 14 + 1], data[i * 14 + 2], data[i * 14 + 3])
         };
-        if w <= 0.0 || h <= 0.0 || cx < 0.0 || cy < 0.0 { continue; }
+        if w <= 0.0 || h <= 0.0 || cx < 0.0 || cy < 0.0 {
+            continue;
+        }
 
         let mut best_class = 0usize;
         let mut best_score = f32::NEG_INFINITY;
         for c in 0..num_classes {
-            let score = if is_transposed { data[(4 + c) * num_anchors + i] } else { data[i * 14 + 4 + c] };
-            if score > best_score { best_score = score; best_class = c; }
+            let score = if is_transposed {
+                data[(4 + c) * num_anchors + i]
+            } else {
+                data[i * 14 + 4 + c]
+            };
+            if score > best_score {
+                best_score = score;
+                best_class = c;
+            }
         }
         if best_score >= 0.3 {
             detections.push((best_class, best_score, cx, cy, w, h));

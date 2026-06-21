@@ -3,8 +3,9 @@
 //! Data persists across plugin reloads. Scoped by plugin ID — plugins cannot
 //! access each other's store entries.
 
-use crate::ffi_call_to_string;
 use std::string::String;
+
+use crate::ffi_call_to_string;
 
 /// Set a key-value pair in the persistent store. Returns `true` on success.
 ///
@@ -16,7 +17,8 @@ pub fn set(key: &str, value: &str) -> bool {
     unsafe { super::store_set(key.as_ptr(), key.len(), value.as_ptr(), value.len()) > 0 }
 }
 
-/// Get a value from the persistent store. Returns `None` if the key does not exist.
+/// Get a value from the persistent store. Returns `None` if the key does not
+/// exist.
 ///
 /// # Example
 /// ```ignore

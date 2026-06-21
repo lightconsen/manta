@@ -2,8 +2,9 @@
 //!
 //! Blocking HTTP calls from within the WASM sandbox.
 
-use crate::ffi_call_to_string;
 use std::string::String;
+
+use crate::ffi_call_to_string;
 
 const JSON_CONTENT_TYPE: &str = "application/json";
 

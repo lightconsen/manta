@@ -1,9 +1,9 @@
 //! Provider Contract Tests
 //!
 //! These tests verify that Provider response types maintain stable JSON
-//! serialization contracts. Any change that breaks serialization/deserialization
-//! of Message, ToolCall, CompletionResponse, etc. signals a breaking change for
-//! LLM integrations.
+//! serialization contracts. Any change that breaks
+//! serialization/deserialization of Message, ToolCall, CompletionResponse, etc.
+//! signals a breaking change for LLM integrations.
 
 use serde_json::json;
 use syscity::providers::*;

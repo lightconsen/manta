@@ -7,6 +7,7 @@
 //! security policies without requiring live network connections.
 
 use std::sync::Arc;
+
 use syscity::channels::lark::{LarkChannel, LarkConfig};
 use syscity::channels::qq::{QqChannel, QqConfig};
 use syscity::channels::slack::{SlackChannel, SlackConfig};

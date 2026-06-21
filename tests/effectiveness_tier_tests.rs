@@ -285,7 +285,8 @@ async fn effectiveness_data_consistency_across_backends() {
         promotion_threshold: 0.7,
         demotion_threshold: 0.2,
         min_recalls_for_adjustment: 3,
-        importance_boost: 0.5, // big jump: Working → LongTerm in one go? No — evaluate checks only next tier
+        importance_boost: 0.5, /* big jump: Working → LongTerm in one go? No — evaluate checks
+                                * only next tier */
         importance_penalty: 0.1,
         max_importance: 1.0,
         min_importance: 0.0,

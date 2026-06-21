@@ -9,8 +9,9 @@
 //! ```
 
 use std::path::Path;
-use syscity::computer::screen_recorder::{RecorderConfig, ScreenRecorder, VideoFrame};
+
 use syscity::computer::resolve_or_download_ffmpeg;
+use syscity::computer::screen_recorder::{RecorderConfig, ScreenRecorder, VideoFrame};
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -30,11 +31,7 @@ fn make_test_frame(width: u32, height: u32, fill: u8) -> VideoFrame {
 #[ignore = "Downloads ffmpeg (~30 MB) if not on PATH"]
 async fn test_resolve_ffmpeg_path() {
     let result = resolve_or_download_ffmpeg().await;
-    assert!(
-        result.is_ok(),
-        "resolve_or_download_ffmpeg should succeed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "resolve_or_download_ffmpeg should succeed: {:?}", result.err());
     let path = result.unwrap();
     assert!(
         path.exists() || path == Path::new("ffmpeg"),
@@ -56,21 +53,11 @@ async fn test_resolve_ffmpeg_is_executable() {
         .await
         .expect("ffmpeg -version should run");
 
-    assert!(
-        output.status.success(),
-        "ffmpeg -version exited with status: {}",
-        output.status
-    );
+    assert!(output.status.success(), "ffmpeg -version exited with status: {}", output.status);
 
     let version = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !version.is_empty(),
-        "ffmpeg -version should produce output"
-    );
-    assert!(
-        version.to_lowercase().contains("ffmpeg"),
-        "Output should mention ffmpeg"
-    );
+    assert!(!version.is_empty(), "ffmpeg -version should produce output");
+    assert!(version.to_lowercase().contains("ffmpeg"), "Output should mention ffmpeg");
 }
 
 // ── Video encoding tests ──────────────────────────────────────────────
@@ -98,7 +85,9 @@ async fn test_save_buffer_to_video_creates_file() {
 
     // Inject 5 frames of 16x16 RGBA using the public API
     for i in 0..5 {
-        recorder.inject_frame(make_test_frame(16, 16, (i * 50) as u8)).await;
+        recorder
+            .inject_frame(make_test_frame(16, 16, (i * 50) as u8))
+            .await;
     }
 
     // Save via the private method — we can't call it directly,
@@ -107,11 +96,7 @@ async fn test_save_buffer_to_video_creates_file() {
     recorder.stop().await.expect("stop() should save video");
 
     // Verify the file was created and has content
-    assert!(
-        tmp.exists(),
-        "Output file should exist: {}",
-        tmp.display()
-    );
+    assert!(tmp.exists(), "Output file should exist: {}", tmp.display());
     let metadata = std::fs::metadata(&tmp).expect("metadata");
     assert!(
         metadata.len() > 0,

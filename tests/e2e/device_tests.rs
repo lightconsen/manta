@@ -14,8 +14,9 @@ use syscity::model_router::ModelAlias;
 
 use super::*;
 
-// Re-exported from super: MockProvider, ProviderMessage, Role, ToolCall, FunctionCall,
-// Gateway, test_config, json, timeout, Duration, FrontendSimulator, Message
+// Re-exported from super: MockProvider, ProviderMessage, Role, ToolCall,
+// FunctionCall, Gateway, test_config, json, timeout, Duration,
+// FrontendSimulator, Message
 
 #[tokio::test]
 #[serial_test::serial]
@@ -254,5 +255,6 @@ async fn test_status_events_available_through_gateway_registry() {
         .expect("event should not be lagged");
 
     assert_eq!(event.device_id, "dev-sensor-01");
-    // Note: event.current reflects the status read from the device after the operation
+    // Note: event.current reflects the status read from the device after the
+    // operation
 }
