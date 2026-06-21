@@ -88,23 +88,15 @@ pub async fn init_computer_adapter(
         }
     }
 
-    if crate::computer::has_display_server() {
-        match crate::computer::create_adapter(tool_registry.clone()).await {
-            Ok(adapter) => {
-                info!("Computer adapter initialized for desktop automation");
-                Some(Arc::from(adapter))
-            }
-            Err(e) => {
-                warn!("Failed to initialize computer adapter: {}", e);
-                None
-            }
+    match crate::computer::create_adapter(tool_registry.clone()).await {
+        Ok(adapter) => {
+            info!("Computer adapter initialized for desktop automation");
+            Some(Arc::from(adapter))
         }
-    } else {
-        warn!(
-            "No display server detected and no remote_control host configured; desktop automation \
-             disabled"
-        );
-        None
+        Err(e) => {
+            warn!("Failed to initialize computer adapter: {}", e);
+            None
+        }
     }
 }
 
