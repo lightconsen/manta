@@ -8,11 +8,12 @@
 //! 5. Server issues a device token to the client
 //! 6. Client reconnects using the device token in `auth.token`
 
-use base64::Engine as _;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+
+use base64::Engine as _;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 

@@ -8,8 +8,19 @@
 //!
 //! ```rust
 //! use syscity::computer::sensitive_ui::SensitiveUiDetector;
+//! use syscity::computer::types::{Rect, UiElement};
 //!
 //! let detector = SensitiveUiDetector::new();
+//! let ui_tree = UiElement {
+//!     id: "".to_string(),
+//!     role: "window".to_string(),
+//!     label: None,
+//!     value: None,
+//!     bounds: Rect { x: 0, y: 0, width: 100, height: 100 },
+//!     enabled: true,
+//!     focused: false,
+//!     children: vec![],
+//! };
 //! let findings = detector.scan_tree(&ui_tree);
 //! if !findings.is_empty() {
 //!     println!("⚠️ Sensitive UI detected: {:?}", findings);
@@ -54,27 +65,18 @@ impl SensitiveUiDetector {
     }
 
     /// Scan a UI element tree and return all sensitive findings.
-    pub fn scan_tree(&self,
-        root: &UiElement,
-    ) -> Vec<SensitiveUiFinding> {
+    pub fn scan_tree(&self, root: &UiElement) -> Vec<SensitiveUiFinding> {
         let mut findings = Vec::new();
         self.walk(root, &mut findings, &root.role);
         findings
     }
 
     /// Returns true if any sensitive UI was detected.
-    pub fn has_sensitive_ui(&self,
-        root: &UiElement,
-    ) -> bool {
+    pub fn has_sensitive_ui(&self, root: &UiElement) -> bool {
         !self.scan_tree(root).is_empty()
     }
 
-    fn walk(
-        &self,
-        node: &UiElement,
-        findings: &mut Vec<SensitiveUiFinding>,
-        parent_role: &str,
-    ) {
+    fn walk(&self, node: &UiElement, findings: &mut Vec<SensitiveUiFinding>, parent_role: &str) {
         let label_lower = node.label.as_deref().unwrap_or("").to_lowercase();
         let role_lower = node.role.to_lowercase();
         let value_lower = node.value.as_deref().unwrap_or("").to_lowercase();
@@ -83,7 +85,10 @@ impl SensitiveUiDetector {
         if self.is_password_field(&role_lower, &label_lower) {
             findings.push(SensitiveUiFinding {
                 category: SensitiveUiType::PasswordField,
-                description: format!("Password input: {}", node.label.as_deref().unwrap_or("(unlabeled)")),
+                description: format!(
+                    "Password input: {}",
+                    node.label.as_deref().unwrap_or("(unlabeled)")
+                ),
                 element_id: node.id.clone(),
                 path: format!("{}/{}", parent_role, role_lower),
             });
@@ -93,7 +98,10 @@ impl SensitiveUiDetector {
         if self.is_payment_field(&role_lower, &label_lower) {
             findings.push(SensitiveUiFinding {
                 category: SensitiveUiType::PaymentField,
-                description: format!("Payment input: {}", node.label.as_deref().unwrap_or("(unlabeled)")),
+                description: format!(
+                    "Payment input: {}",
+                    node.label.as_deref().unwrap_or("(unlabeled)")
+                ),
                 element_id: node.id.clone(),
                 path: format!("{}/{}", parent_role, role_lower),
             });
@@ -103,7 +111,10 @@ impl SensitiveUiDetector {
         if self.is_payment_page(&role_lower, &label_lower, &value_lower) {
             findings.push(SensitiveUiFinding {
                 category: SensitiveUiType::PaymentPage,
-                description: format!("Payment page detected: {}", node.label.as_deref().unwrap_or("(unlabeled)")),
+                description: format!(
+                    "Payment page detected: {}",
+                    node.label.as_deref().unwrap_or("(unlabeled)")
+                ),
                 element_id: node.id.clone(),
                 path: role_lower.clone(),
             });
@@ -113,7 +124,10 @@ impl SensitiveUiDetector {
         if self.is_destructive_confirmation(&role_lower, &label_lower, &value_lower) {
             findings.push(SensitiveUiFinding {
                 category: SensitiveUiType::DestructiveConfirmation,
-                description: format!("Destructive action confirmation: {}", node.label.as_deref().unwrap_or("(unlabeled)")),
+                description: format!(
+                    "Destructive action confirmation: {}",
+                    node.label.as_deref().unwrap_or("(unlabeled)")
+                ),
                 element_id: node.id.clone(),
                 path: role_lower.clone(),
             });
@@ -123,7 +137,10 @@ impl SensitiveUiDetector {
         if self.is_privilege_escalation(&role_lower, &label_lower, &value_lower) {
             findings.push(SensitiveUiFinding {
                 category: SensitiveUiType::PrivilegeEscalation,
-                description: format!("Privilege escalation dialog: {}", node.label.as_deref().unwrap_or("(unlabeled)")),
+                description: format!(
+                    "Privilege escalation dialog: {}",
+                    node.label.as_deref().unwrap_or("(unlabeled)")
+                ),
                 element_id: node.id.clone(),
                 path: role_lower.clone(),
             });
@@ -138,10 +155,7 @@ impl SensitiveUiDetector {
     // Heuristic rules
     // ------------------------------------------------------------------
 
-    fn is_password_field(&self,
-        role: &str,
-        label: &str,
-    ) -> bool {
+    fn is_password_field(&self, role: &str, label: &str) -> bool {
         let role_signals = [
             "password",
             "secure_text",
@@ -165,10 +179,7 @@ impl SensitiveUiDetector {
             || label_signals.iter().any(|s| label.contains(s))
     }
 
-    fn is_payment_field(&self,
-        _role: &str,
-        label: &str,
-    ) -> bool {
+    fn is_payment_field(&self, _role: &str, label: &str) -> bool {
         let label_signals = [
             "card number",
             "credit card",
@@ -187,11 +198,7 @@ impl SensitiveUiDetector {
         label_signals.iter().any(|s| label.contains(s))
     }
 
-    fn is_payment_page(&self,
-        role: &str,
-        label: &str,
-        value: &str,
-    ) -> bool {
+    fn is_payment_page(&self, role: &str, label: &str, value: &str) -> bool {
         let combined = format!("{} {} {}", role, label, value);
         let signals = [
             "checkout",
@@ -206,11 +213,7 @@ impl SensitiveUiDetector {
         signals.iter().any(|s| combined.contains(s))
     }
 
-    fn is_destructive_confirmation(&self,
-        role: &str,
-        label: &str,
-        value: &str,
-    ) -> bool {
+    fn is_destructive_confirmation(&self, role: &str, label: &str, value: &str) -> bool {
         let combined = format!("{} {} {}", role, label, value);
         let signals = [
             "delete",
@@ -233,11 +236,7 @@ impl SensitiveUiDetector {
         is_dialog && signals.iter().any(|s| combined.contains(s))
     }
 
-    fn is_privilege_escalation(&self,
-        role: &str,
-        label: &str,
-        value: &str,
-    ) -> bool {
+    fn is_privilege_escalation(&self, role: &str, label: &str, value: &str) -> bool {
         let combined = format!("{} {} {}", role, label, value);
         let signals = [
             "sudo",
@@ -251,9 +250,8 @@ impl SensitiveUiDetector {
             "需要管理员权限",
             "请输入密码",
         ];
-        let is_dialog = role.contains("dialog")
-            || role.contains("alert")
-            || role.contains("prompt");
+        let is_dialog =
+            role.contains("dialog") || role.contains("alert") || role.contains("prompt");
 
         is_dialog && signals.iter().any(|s| combined.contains(s))
     }
@@ -285,7 +283,9 @@ mod tests {
         let detector = SensitiveUiDetector::new();
         let tree = make_node("text_field", Some("Password"));
         let findings = detector.scan_tree(&tree);
-        assert!(findings.iter().any(|f| matches!(f.category, SensitiveUiType::PasswordField)));
+        assert!(findings
+            .iter()
+            .any(|f| matches!(f.category, SensitiveUiType::PasswordField)));
     }
 
     #[test]
@@ -293,7 +293,9 @@ mod tests {
         let detector = SensitiveUiDetector::new();
         let tree = make_node("password_field", None);
         let findings = detector.scan_tree(&tree);
-        assert!(findings.iter().any(|f| matches!(f.category, SensitiveUiType::PasswordField)));
+        assert!(findings
+            .iter()
+            .any(|f| matches!(f.category, SensitiveUiType::PasswordField)));
     }
 
     #[test]
@@ -301,7 +303,9 @@ mod tests {
         let detector = SensitiveUiDetector::new();
         let tree = make_node("text_field", Some("Card Number"));
         let findings = detector.scan_tree(&tree);
-        assert!(findings.iter().any(|f| matches!(f.category, SensitiveUiType::PaymentField)));
+        assert!(findings
+            .iter()
+            .any(|f| matches!(f.category, SensitiveUiType::PaymentField)));
     }
 
     #[test]
@@ -318,7 +322,9 @@ mod tests {
             children: vec![],
         };
         let findings = detector.scan_tree(&tree);
-        assert!(findings.iter().any(|f| matches!(f.category, SensitiveUiType::DestructiveConfirmation)));
+        assert!(findings
+            .iter()
+            .any(|f| matches!(f.category, SensitiveUiType::DestructiveConfirmation)));
     }
 
     #[test]
@@ -334,6 +340,8 @@ mod tests {
         let detector = SensitiveUiDetector::new();
         let tree = make_node("text_field", Some("输入密码"));
         let findings = detector.scan_tree(&tree);
-        assert!(findings.iter().any(|f| matches!(f.category, SensitiveUiType::PasswordField)));
+        assert!(findings
+            .iter()
+            .any(|f| matches!(f.category, SensitiveUiType::PasswordField)));
     }
 }

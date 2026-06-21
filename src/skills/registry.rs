@@ -3,39 +3,41 @@
 //! Provides a client for discovering, installing, and managing skills
 //! from a remote registry (e.g., skills.syscity.dev or ClawHub).
 
+use std::path::PathBuf;
+
+use reqwest;
+use serde::{Deserialize, Serialize};
+use tokio::fs;
+use tracing::{debug, info, instrument, warn};
+
 use crate::dirs;
 use crate::error::{Result, SyscityError};
 use crate::skills::frontmatter::SkillFile;
-use reqwest;
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use tokio::fs;
-use tracing::{debug, info, instrument, warn};
 
 /// Skill listing from registry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillListing {
- /// Skill name
+    /// Skill name
     pub name: String,
- /// Human-readable description
+    /// Human-readable description
     pub description: String,
- /// Author name
+    /// Author name
     pub author: String,
- /// Version string
+    /// Version string
     pub version: String,
- /// Download count
+    /// Download count
     #[serde(default)]
     pub downloads: u64,
- /// Rating (0.0 - 5.0)
+    /// Rating (0.0 - 5.0)
     #[serde(default)]
     pub rating: f32,
- /// Categories
+    /// Categories
     #[serde(default)]
     pub categories: Vec<String>,
- /// Tags
+    /// Tags
     #[serde(default)]
     pub tags: Vec<String>,
- /// Emoji icon
+    /// Emoji icon
     #[serde(default)]
     pub emoji: String,
 }
@@ -43,13 +45,13 @@ pub struct SkillListing {
 /// Skill update information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillUpdate {
- /// Skill name
+    /// Skill name
     pub name: String,
- /// Current installed version
+    /// Current installed version
     pub current_version: String,
- /// Latest available version
+    /// Latest available version
     pub latest_version: String,
- /// Release notes
+    /// Release notes
     pub release_notes: Option<String>,
 }
 
@@ -57,16 +59,16 @@ pub struct SkillUpdate {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SkillRegistry {
- /// Registry base URL
+    /// Registry base URL
     url: String,
- /// Cache directory for downloaded skills
+    /// Cache directory for downloaded skills
     cache_dir: PathBuf,
- /// HTTP client
+    /// HTTP client
     client: reqwest::Client,
 }
 
 impl SkillRegistry {
- /// Create a new skill registry client
+    /// Create a new skill registry client
     pub fn new(url: impl Into<String>) -> Result<Self> {
         let cache_dir = dirs::skills_dir().join(".registry-cache");
 
@@ -83,17 +85,17 @@ impl SkillRegistry {
         })
     }
 
- /// Create registry with default URL
+    /// Create registry with default URL
     pub fn default_registry() -> Result<Self> {
         Self::new("https://skills.syscity.dev")
     }
 
- /// Get the ClawHub registry
+    /// Get the ClawHub registry
     pub fn clawhub() -> Result<Self> {
         Self::new("https://clawhub.syscity.dev")
     }
 
- /// Search for skills in the registry
+    /// Search for skills in the registry
     #[instrument(skip(self))]
     pub async fn search(&self, query: &str) -> Result<Vec<SkillListing>> {
         let url = format!("{}/api/v1/skills/search?q={}", self.url, urlencoding::encode(query));
@@ -120,7 +122,7 @@ impl SkillRegistry {
         Ok(listings)
     }
 
- /// Get popular skills from registry
+    /// Get popular skills from registry
     #[instrument(skip(self))]
     pub async fn list_popular(&self, limit: usize) -> Result<Vec<SkillListing>> {
         let url = format!("{}/api/v1/skills/popular?limit={}", self.url, limit);
@@ -146,7 +148,7 @@ impl SkillRegistry {
         Ok(listings)
     }
 
- /// Get skill details from registry
+    /// Get skill details from registry
     #[instrument(skip(self))]
     pub async fn get_skill_info(&self, name: &str) -> Result<SkillListing> {
         let url = format!("{}/api/v1/skills/{}", self.url, name);
@@ -178,12 +180,12 @@ impl SkillRegistry {
         Ok(listing)
     }
 
- /// Install a skill from the registry
+    /// Install a skill from the registry
     #[instrument(skip(self))]
     pub async fn install(&self, name: &str) -> Result<PathBuf> {
         info!("Installing skill '{}' from registry", name);
 
- // Check if already installed
+        // Check if already installed
         let skill_dir = dirs::skills_dir().join(name);
 
         if skill_dir.exists() {
@@ -194,7 +196,7 @@ impl SkillRegistry {
             )));
         }
 
- // Download skill
+        // Download skill
         let url = format!("{}/api/v1/skills/{}/download", self.url, name);
 
         debug!("Downloading from: {}", url);
@@ -221,12 +223,12 @@ impl SkillRegistry {
 
         let content = response.bytes().await.map_err(SyscityError::Http)?;
 
- // Create skill directory
+        // Create skill directory
         fs::create_dir_all(&skill_dir)
             .await
             .map_err(SyscityError::Io)?;
 
- // Write SKILL.md
+        // Write SKILL.md
         let skill_file = skill_dir.join("SKILL.md");
         fs::write(&skill_file, content)
             .await
@@ -236,7 +238,7 @@ impl SkillRegistry {
         Ok(skill_dir)
     }
 
- /// Install skill with specific version
+    /// Install skill with specific version
     #[instrument(skip(self))]
     pub async fn install_version(&self, name: &str, version: &str) -> Result<PathBuf> {
         info!("Installing skill '{}' version '{}' from registry", name, version);
@@ -274,12 +276,12 @@ impl SkillRegistry {
         Ok(skill_dir)
     }
 
- /// Update a skill to the latest version
+    /// Update a skill to the latest version
     #[instrument(skip(self))]
     pub async fn update(&self, name: &str) -> Result<SkillUpdate> {
         info!("Updating skill '{}'", name);
 
- // Get current version
+        // Get current version
         let skill_dir = dirs::skills_dir().join(name);
 
         if !skill_dir.exists() {
@@ -293,13 +295,13 @@ impl SkillRegistry {
             .await
             .map_err(SyscityError::Io)?;
 
- // Parse current skill to get version
+        // Parse current skill to get version
         let current_skill = SkillFile::parse(&current_content, skill_file.clone())
             .map_err(|e| SyscityError::Validation(format!("Failed to parse skill: {}", e)))?;
 
         let current_version = current_skill.frontmatter.version;
 
- // Check for updates
+        // Check for updates
         let listing = self.get_skill_info(name).await?;
 
         if listing.version == current_version {
@@ -312,7 +314,7 @@ impl SkillRegistry {
             });
         }
 
- // Download and install update
+        // Download and install update
         self.install_version(name, &listing.version).await?;
 
         info!("Skill '{}' updated from v{} to v{}", name, current_version, listing.version);
@@ -325,7 +327,7 @@ impl SkillRegistry {
         })
     }
 
- /// Check for available updates for all installed skills
+    /// Check for available updates for all installed skills
     #[instrument(skip(self))]
     pub async fn check_updates(&self) -> Result<Vec<SkillUpdate>> {
         debug!("Checking for skill updates");
@@ -334,7 +336,7 @@ impl SkillRegistry {
 
         let mut updates = Vec::new();
 
- // List installed skills
+        // List installed skills
         let mut entries = fs::read_dir(&skill_dir).await.map_err(SyscityError::Io)?;
 
         while let Some(entry) = entries.next_entry().await.map_err(SyscityError::Io)? {
@@ -346,7 +348,7 @@ impl SkillRegistry {
                         if let Ok(skill) = SkillFile::parse(&content, skill_file.clone()) {
                             let name = skill.frontmatter.name;
 
- // Check registry for newer version
+                            // Check registry for newer version
                             if let Ok(listing) = self.get_skill_info(&name).await {
                                 if listing.version != skill.frontmatter.version {
                                     updates.push(SkillUpdate {
@@ -367,7 +369,7 @@ impl SkillRegistry {
         Ok(updates)
     }
 
- /// List skills by category
+    /// List skills by category
     #[instrument(skip(self))]
     pub async fn list_by_category(&self, category: &str) -> Result<Vec<SkillListing>> {
         let url = format!("{}/api/v1/skills/category/{}", self.url, category);
@@ -391,7 +393,7 @@ impl SkillRegistry {
         Ok(listings)
     }
 
- /// List skills by tag
+    /// List skills by tag
     #[instrument(skip(self))]
     pub async fn list_by_tag(&self, tag: &str) -> Result<Vec<SkillListing>> {
         let url = format!("{}/api/v1/skills/tag/{}", self.url, tag);
@@ -415,7 +417,7 @@ impl SkillRegistry {
         Ok(listings)
     }
 
- /// Uninstall a skill
+    /// Uninstall a skill
     #[instrument(skip(self))]
     pub async fn uninstall(&self, name: &str) -> Result<()> {
         info!("Uninstalling skill '{}'", name);

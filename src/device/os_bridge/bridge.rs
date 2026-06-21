@@ -97,19 +97,37 @@ async fn handle_os_event(
 ) {
     match event.action {
         OsDeviceAction::Added => {
-            handle_added(registry, matchers, tool_registry, perception_registry, build_driver, devnode_map, event).await;
+            handle_added(
+                registry,
+                matchers,
+                tool_registry,
+                perception_registry,
+                build_driver,
+                devnode_map,
+                event,
+            )
+            .await;
         }
         OsDeviceAction::Removed => {
             handle_removed(registry, tool_registry, perception_registry, devnode_map, event).await;
         }
         OsDeviceAction::Changed => {
-            handle_changed(registry, matchers, tool_registry, perception_registry, build_driver, devnode_map, event)
-                .await;
+            handle_changed(
+                registry,
+                matchers,
+                tool_registry,
+                perception_registry,
+                build_driver,
+                devnode_map,
+                event,
+            )
+            .await;
         }
     }
 }
 
-/// Handle a device Added event: match, build driver, probe, connect, register tools and perception sources.
+/// Handle a device Added event: match, build driver, probe, connect, register
+/// tools and perception sources.
 async fn handle_added(
     registry: &DeviceRegistry,
     matchers: &[MatcherEntry],
@@ -176,10 +194,12 @@ async fn handle_added(
             tool_registry.register_dynamic(Arc::new(wrapper));
 
             if let Some(per_reg) = perception_registry {
-                per_reg.register_source(Arc::new(
-                    DeviceSourceAdapter::new(device_id.clone(), cap.clone()),
-                ))
-                .await;
+                per_reg
+                    .register_source(Arc::new(DeviceSourceAdapter::new(
+                        device_id.clone(),
+                        cap.clone(),
+                    )))
+                    .await;
             }
         }
 
@@ -193,7 +213,8 @@ async fn handle_added(
     }
 }
 
-/// Handle a device Removed event: look up devnode, disconnect, deregister tools and perception sources.
+/// Handle a device Removed event: look up devnode, disconnect, deregister tools
+/// and perception sources.
 async fn handle_removed(
     registry: &DeviceRegistry,
     tool_registry: &ToolRegistry,
@@ -240,8 +261,16 @@ async fn handle_changed(
     // If we don't know this devnode, treat it as a new addition
     if let Some(ref devnode) = event.devnode {
         if !devnode_map.contains_key(devnode) {
-            return handle_added(registry, matchers, tool_registry, perception_registry, build_driver, devnode_map, event)
-                .await;
+            return handle_added(
+                registry,
+                matchers,
+                tool_registry,
+                perception_registry,
+                build_driver,
+                devnode_map,
+                event,
+            )
+            .await;
         }
     }
 
@@ -253,8 +282,17 @@ async fn handle_changed(
                     tracing::debug!("OS bridge: device '{driver_name}' still present after change");
                 }
                 _ => {
-                    tracing::info!("OS bridge: device '{driver_name}' gone after change, disconnecting");
-                    handle_removed(registry, tool_registry, perception_registry, devnode_map, event).await;
+                    tracing::info!(
+                        "OS bridge: device '{driver_name}' gone after change, disconnecting"
+                    );
+                    handle_removed(
+                        registry,
+                        tool_registry,
+                        perception_registry,
+                        devnode_map,
+                        event,
+                    )
+                    .await;
                 }
             }
         }
@@ -263,14 +301,14 @@ async fn handle_changed(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::device::mock::MockDeviceDriver;
-    use crate::device::{Capability, CapabilityResult};
     use async_trait::async_trait;
     use serde_json::json;
 
     use super::super::OsDeviceAction;
     use super::super::{DeviceMatcher, MatcherEntry, OsDeviceEvent};
+    use super::*;
+    use crate::device::mock::MockDeviceDriver;
+    use crate::device::{Capability, CapabilityResult};
 
     /// A driver builder that always returns a MockDeviceDriver.
     fn mock_driver_builder() -> DriverBuilder {

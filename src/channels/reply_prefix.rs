@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 
 /// Context for rendering a reply prefix template.
@@ -189,10 +190,14 @@ impl ReplyPrefixTemplate {
     fn render_placeholder(&self, key: &str, ctx: &TemplateContext) -> String {
         match key {
             "model_name" => ctx.model_name.as_deref().unwrap_or("unknown").to_string(),
-            "model_provider" => ctx.model_provider.as_deref().unwrap_or("unknown").to_string(),
-            "timestamp" => {
-                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string()
-            }
+            "model_provider" => ctx
+                .model_provider
+                .as_deref()
+                .unwrap_or("unknown")
+                .to_string(),
+            "timestamp" => chrono::Utc::now()
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string(),
             "date" => chrono::Utc::now().format("%Y-%m-%d").to_string(),
             "time" => chrono::Utc::now().format("%H:%M:%S").to_string(),
             "session_id" => ctx.session_id.as_deref().unwrap_or("unknown").to_string(),
@@ -268,11 +273,7 @@ impl ReplyPrefixEngine {
     }
 
     /// Render asynchronously.
-    pub async fn render_async(
-        &self,
-        ctx: &TemplateContext,
-        channel: Option<&str>,
-    ) -> String {
+    pub async fn render_async(&self, ctx: &TemplateContext, channel: Option<&str>) -> String {
         let templates = self.templates.read().await;
         let mut prefix = String::new();
         for tmpl in templates.iter() {
@@ -284,12 +285,7 @@ impl ReplyPrefixEngine {
     }
 
     /// Prepend the rendered prefix to a message content.
-    pub fn apply(
-        &self,
-        content: &str,
-        ctx: &TemplateContext,
-        channel: Option<&str>,
-    ) -> String {
+    pub fn apply(&self, content: &str, ctx: &TemplateContext, channel: Option<&str>) -> String {
         let prefix = self.render(ctx, channel);
         if prefix.is_empty() {
             content.to_string()
@@ -320,7 +316,8 @@ impl Default for ReplyPrefixEngine {
     }
 }
 
-// ── Template presets ───────────────────────────────────────────────────────────
+// ── Template presets
+// ───────────────────────────────────────────────────────────
 
 /// Preset: model tag prefix `[Provider/Model]`.
 pub fn model_tag_template() -> ReplyPrefixTemplate {
@@ -357,9 +354,8 @@ mod tests {
 
     #[test]
     fn test_template_with_all_fields() {
-        let tmpl = ReplyPrefixTemplate::new(
-            "[{{model_name}}|{{session_id}}|{{channel}}|{{user_id}}]",
-        );
+        let tmpl =
+            ReplyPrefixTemplate::new("[{{model_name}}|{{session_id}}|{{channel}}|{{user_id}}]");
         let ctx = TemplateContext::new()
             .with_model("gpt-4")
             .with_session("sess_1")

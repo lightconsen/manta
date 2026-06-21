@@ -7,8 +7,9 @@
 //! The policy system also supports fine-grained *tool gating* via model,
 //! provider, sender, plugin, and sandbox dimensions.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+use serde::{Deserialize, Serialize};
 
 /// A user role used for tool-level access control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
@@ -229,7 +230,12 @@ impl ToolPolicy {
         tool_name: &str,
         capabilities: &crate::tools::sdk::ToolCapabilities,
     ) -> bool {
-        self.evaluate_with_context(user, tool_name, capabilities, &PolicyEvaluationContext::default())
+        self.evaluate_with_context(
+            user,
+            tool_name,
+            capabilities,
+            &PolicyEvaluationContext::default(),
+        )
     }
 
     /// Evaluate policy with full runtime context.
@@ -338,8 +344,7 @@ impl ToolPolicy {
             return false;
         }
         if let Some(ref sender) = eval.sender_id {
-            if !self.allowed_senders.is_empty()
-                && !self.allowed_senders.iter().any(|a| a == sender)
+            if !self.allowed_senders.is_empty() && !self.allowed_senders.iter().any(|a| a == sender)
             {
                 return false;
             }

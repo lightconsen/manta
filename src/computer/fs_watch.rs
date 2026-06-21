@@ -18,9 +18,10 @@
 //! }
 //! ```
 
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -76,30 +77,30 @@ impl FileWatcher {
         let (tx, rx) = mpsc::unbounded_channel();
         let tx_clone = tx.clone();
 
-        let watcher = notify::recommended_watcher(
-            move |res: std::result::Result<Event, notify::Error>| match res {
-                Ok(event) => {
-                    let kind: FileChangeKind = (&event.kind).into();
-                    for path in event.paths {
-                        if let Err(e) = tx_clone.send(FileChangeEvent {
-                            path: path.clone(),
-                            kind,
-                        }) {
-                            warn!("Failed to send file change event: {}", e);
+        let watcher =
+            notify::recommended_watcher(move |res: std::result::Result<Event, notify::Error>| {
+                match res {
+                    Ok(event) => {
+                        let kind: FileChangeKind = (&event.kind).into();
+                        for path in event.paths {
+                            if let Err(e) =
+                                tx_clone.send(FileChangeEvent { path: path.clone(), kind })
+                            {
+                                warn!("Failed to send file change event: {}", e);
+                            }
                         }
                     }
+                    Err(e) => {
+                        error!("File watcher error: {}", e);
+                    }
                 }
-                Err(e) => {
-                    error!("File watcher error: {}", e);
-                }
-            },
-        )
-        .map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "Failed to create file watcher: {}",
-                e
-            ))
-        })?;
+            })
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!(
+                    "Failed to create file watcher: {}",
+                    e
+                ))
+            })?;
 
         Ok(Self {
             watcher,
@@ -158,12 +159,14 @@ impl FileWatcher {
             return Ok(());
         }
 
-        self.watcher.watch(&path, RecursiveMode::NonRecursive).map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "Failed to watch file {:?}: {}",
-                path, e
-            ))
-        })?;
+        self.watcher
+            .watch(&path, RecursiveMode::NonRecursive)
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!(
+                    "Failed to watch file {:?}: {}",
+                    path, e
+                ))
+            })?;
 
         self.watched_paths.insert(path.clone());
         info!("Watching file: {:?}", path);
@@ -236,8 +239,9 @@ pub struct FileWatchResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn test_file_watcher_new() {
@@ -262,10 +266,7 @@ mod tests {
             FileChangeKind::from(&EventKind::Remove(RemoveKind::File)),
             FileChangeKind::Removed
         );
-        assert_eq!(
-            FileChangeKind::from(&EventKind::Other),
-            FileChangeKind::Mixed
-        );
+        assert_eq!(FileChangeKind::from(&EventKind::Other), FileChangeKind::Mixed);
     }
 
     #[tokio::test]
@@ -285,9 +286,7 @@ mod tests {
         let mut found = None;
         while tokio::time::Instant::now() < deadline {
             let timeout_left = deadline - tokio::time::Instant::now();
-            if let Ok(Some(event)) =
-                tokio::time::timeout(timeout_left, watcher.recv()).await
-            {
+            if let Ok(Some(event)) = tokio::time::timeout(timeout_left, watcher.recv()).await {
                 if let Some(name) = event.path.file_name() {
                     let s = name.to_string_lossy();
                     if !s.starts_with('.') {

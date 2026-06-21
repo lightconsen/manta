@@ -3,15 +3,18 @@
 //! Provides three distinct tools:
 //!
 //! * [`MemoryTool`] — legacy combined store/retrieve/search/list/delete/update
-//! * [`MemorySearchTool`] — hybrid vector + FTS5 semantic search with optional storage
-//! * [`MemoryGetTool`] — exact lookup and CRUD mutations (store / retrieve / delete / update)
+//! * [`MemorySearchTool`] — hybrid vector + FTS5 semantic search with optional
+//!   storage
+//! * [`MemoryGetTool`] — exact lookup and CRUD mutations (store / retrieve /
+//!   delete / update)
 
-use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
-use std::sync::Arc;
 use tracing::{debug, info};
 
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use crate::memory::{Memory, MemoryId, MemoryManager, MemoryQuery, MemoryStore, SqliteMemoryStore};
 
 /// Memory tool for storing and retrieving information
@@ -341,7 +344,8 @@ Memories are automatically searched and relevant ones injected into new conversa
     }
 }
 
-// ── MemorySearchTool ──────────────────────────────────────────────────────────
+// ── MemorySearchTool
+// ──────────────────────────────────────────────────────────
 
 /// Semantic / hybrid memory search tool.
 ///
@@ -535,7 +539,8 @@ Actions:
     }
 }
 
-// ── MemoryGetTool ─────────────────────────────────────────────────────────────
+// ── MemoryGetTool
+// ─────────────────────────────────────────────────────────────
 
 /// Exact-ID memory operations: retrieve, delete, update, and list.
 ///

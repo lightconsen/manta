@@ -18,24 +18,24 @@ use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::acp::AcpControlPlane;
+use crate::adapters::Storage;
 use crate::agent::{
     session_store::SessionStore, AgentRegistry, ArtifactStore, CostGuard, DiskBudgetManager,
     GroupSessionManager, RouteResolver, SessionFileManager, SessionManager, TranscriptStore,
 };
-use crate::adapters::Storage;
-use crate::device::control::ControlHandlerRegistry;
-use crate::device::DriverFactory;
-use crate::gateway::init::devices::DeviceInit;
-use crate::gateway::AgentHandle;
 use crate::canvas::CanvasManager;
+use crate::channels::snapshot::AccountSnapshotStore;
 use crate::channels::{
     Channel, ChannelAcpBridge, ChannelExtensionRegistry, ChannelHealthMonitor, IncomingMessage,
 };
-use crate::channels::snapshot::AccountSnapshotStore;
 use crate::config::hot_reload::HotReloadManager;
 use crate::cron::cron::CronScheduler;
+use crate::device::control::ControlHandlerRegistry;
+use crate::device::DriverFactory;
 use crate::gateway::hooks::EventHookRegistry;
+use crate::gateway::init::devices::DeviceInit;
 use crate::gateway::rate_limit::MultiTierRateLimiter;
+use crate::gateway::AgentHandle;
 use crate::gateway::RepairState;
 use crate::gateway::{GatewayConfig, GatewayEvent};
 use crate::heartbeat::{HeartbeatEvent, WakeRequest};
@@ -47,12 +47,12 @@ use crate::outbound::{OutboundPipeline, ReplyDispatcher, SideEffectExecutor, Sse
 use crate::planner::TaskScheduler;
 use crate::plugins::PluginManager;
 use crate::providers::ProviderSdk;
+use crate::security::device_pairing::DevicePairingStore;
 use crate::security::{
-    mention_gate::MentionGate, persistent_audit::PersistentAuditLog, pairing::PairingStore,
+    mention_gate::MentionGate, pairing::PairingStore, persistent_audit::PersistentAuditLog,
     tailscale::TailscaleAuthenticator, trusted_proxy::TrustedProxyAuthenticator, AuthManager,
     RateLimiter,
 };
-use crate::security::device_pairing::DevicePairingStore;
 use crate::skills::SkillManager;
 use crate::tools::{
     approval::ApprovalQueue, command_gate::CommandGate, mcp::McpManager, ToolRegistry, ToolSdk,
@@ -98,7 +98,8 @@ pub struct ChannelState {
     pub snapshot_store: Option<AccountSnapshotStore>,
     pub health_monitor: Option<Arc<ChannelHealthMonitor>>,
     pub acp_bridge: Option<Arc<ChannelAcpBridge>>,
-    /// Session to channel mapping: session_id -> (channel_name, channel_specific_id).
+    /// Session to channel mapping: session_id -> (channel_name,
+    /// channel_specific_id).
     pub session_channels: Arc<RwLock<HashMap<String, (String, String)>>>,
     /// Webhook session storage: platform_key -> session_uuid.
     pub webhook_sessions: Arc<RwLock<HashMap<String, String>>>,

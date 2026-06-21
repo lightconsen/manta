@@ -4,18 +4,20 @@
 //! `generateContent` / `streamGenerateContent` endpoints on
 //! `generativelanguage.googleapis.com`.
 
-use super::{
-    CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream,
-    Message, Provider, ProviderInstanceConfig, Role, ToolCall, Usage,
-};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
+
 use async_trait::async_trait;
 use futures::Stream;
 use reqwest::header::{HeaderMap, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
+
+use super::{
+    CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, Message, Provider,
+    ProviderInstanceConfig, Role, ToolCall, Usage,
+};
 
 /// Google Gemini provider
 #[derive(Debug, Clone)]
@@ -127,9 +129,7 @@ impl GeminiProvider {
                         }
                     }
                 } else {
-                    parts.push(GeminiPart::Text {
-                        text: msg.content.clone(),
-                    });
+                    parts.push(GeminiPart::Text { text: msg.content.clone() });
                 }
 
                 // Include tool calls from assistant messages
@@ -137,8 +137,7 @@ impl GeminiProvider {
                     for tc in calls {
                         parts.push(GeminiPart::FunctionCall {
                             name: tc.function.name.clone(),
-                            args: serde_json::from_str(&tc.function.arguments)
-                                .unwrap_or_default(),
+                            args: serde_json::from_str(&tc.function.arguments).unwrap_or_default(),
                         });
                     }
                 }
@@ -160,14 +159,16 @@ impl GeminiProvider {
         }
         Some(GeminiContent {
             role: "user".to_string(),
-            parts: vec![GeminiPart::Text {
-                text: system_text.join("\n"),
-            }],
+            parts: vec![GeminiPart::Text { text: system_text.join("\n") }],
         })
     }
 
     /// Parse a Gemini generateContent response into internal format.
-    fn parse_gemini_response(&self, resp: GeminiResponse, model: &str) -> crate::Result<CompletionResponse> {
+    fn parse_gemini_response(
+        &self,
+        resp: GeminiResponse,
+        model: &str,
+    ) -> crate::Result<CompletionResponse> {
         let candidate = resp.candidates.into_iter().next().ok_or_else(|| {
             crate::error::SyscityError::ExternalService {
                 source: format!(
@@ -180,12 +181,10 @@ impl GeminiProvider {
                 cause: None,
             }
         })?;
-        let content = candidate
-            .content
-            .unwrap_or(GeminiContent {
-                role: "model".to_string(),
-                parts: vec![],
-            });
+        let content = candidate.content.unwrap_or(GeminiContent {
+            role: "model".to_string(),
+            parts: vec![],
+        });
 
         // Extract text and function calls from parts
         let mut text_parts = Vec::new();
@@ -209,10 +208,7 @@ impl GeminiProvider {
             }
         }
 
-        let finish_reason = match candidate.finish_reason {
-            Some(r) => Some(format!("{:?}", r)),
-            None => None,
-        };
+        let finish_reason = candidate.finish_reason.map(|r| format!("{:?}", r));
 
         Ok(CompletionResponse {
             message: Message {
@@ -221,7 +217,11 @@ impl GeminiProvider {
                 content_blocks: None,
                 reasoning_content: None,
                 name: None,
-                tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                tool_calls: if tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(tool_calls)
+                },
                 tool_call_id: None,
                 metadata: None,
             },
@@ -242,12 +242,7 @@ impl GeminiProvider {
         } else {
             "generateContent"
         };
-        format!(
-            "{}/models/{}:{}",
-            self.base_url.trim_end_matches('/'),
-            model,
-            endpoint,
-        )
+        format!("{}/models/{}:{}", self.base_url.trim_end_matches('/'), model, endpoint,)
     }
 }
 
@@ -360,8 +355,10 @@ impl Provider for GeminiProvider {
                     if is_retryable && retries < max_retries {
                         retries += 1;
                         let delay = Duration::from_secs(2_u64.pow(retries as u32 - 1));
-                        warn!("Retryable error, retrying after {:?}... (attempt {}/{})",
-                            delay, retries, max_retries);
+                        warn!(
+                            "Retryable error, retrying after {:?}... (attempt {}/{})",
+                            delay, retries, max_retries
+                        );
                         tokio::time::sleep(delay).await;
                         continue;
                     }
@@ -448,8 +445,10 @@ impl Provider for GeminiProvider {
                     if is_retryable && retries < max_retries {
                         retries += 1;
                         let delay = Duration::from_secs(2_u64.pow(retries as u32 - 1));
-                        warn!("Retryable stream error, retrying after {:?}... (attempt {}/{})",
-                            delay, retries, max_retries);
+                        warn!(
+                            "Retryable stream error, retrying after {:?}... (attempt {}/{})",
+                            delay, retries, max_retries
+                        );
                         tokio::time::sleep(delay).await;
                         continue;
                     }
@@ -462,11 +461,7 @@ impl Provider for GeminiProvider {
 
     async fn health_check(&self) -> crate::Result<bool> {
         let model = &self.default_model;
-        let url = format!(
-            "{}/models/{}",
-            self.base_url.trim_end_matches('/'),
-            model,
-        );
+        let url = format!("{}/models/{}", self.base_url.trim_end_matches('/'), model,);
         let response = self
             .client
             .get(&url)
@@ -539,26 +534,35 @@ impl Serialize for GeminiPart {
             }
             GeminiPart::InlineData { inline_data } => {
                 let mut map = serde_json::Map::new();
-                map.insert("inlineData".to_string(), serde_json::json!({
-                    "mimeType": inline_data.mime_type,
-                    "data": inline_data.data,
-                }));
+                map.insert(
+                    "inlineData".to_string(),
+                    serde_json::json!({
+                        "mimeType": inline_data.mime_type,
+                        "data": inline_data.data,
+                    }),
+                );
                 serde_json::Value::Object(map).serialize(serializer)
             }
             GeminiPart::FunctionCall { name, args } => {
                 let mut map = serde_json::Map::new();
-                map.insert("functionCall".to_string(), serde_json::json!({
-                    "name": name,
-                    "args": args,
-                }));
+                map.insert(
+                    "functionCall".to_string(),
+                    serde_json::json!({
+                        "name": name,
+                        "args": args,
+                    }),
+                );
                 serde_json::Value::Object(map).serialize(serializer)
             }
             GeminiPart::FunctionResponse { name, response } => {
                 let mut map = serde_json::Map::new();
-                map.insert("functionResponse".to_string(), serde_json::json!({
-                    "name": name,
-                    "response": response,
-                }));
+                map.insert(
+                    "functionResponse".to_string(),
+                    serde_json::json!({
+                        "name": name,
+                        "response": response,
+                    }),
+                );
                 serde_json::Value::Object(map).serialize(serializer)
             }
         }
@@ -571,28 +575,50 @@ impl<'de> Deserialize<'de> for GeminiPart {
         D: serde::Deserializer<'de>,
     {
         let value = serde_json::Value::deserialize(deserializer)?;
-        let map = value.as_object().ok_or_else(|| {
-            serde::de::Error::custom("expected object for GeminiPart")
-        })?;
+        let map = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("expected object for GeminiPart"))?;
 
         if let Some(text) = map.get("text").and_then(|v| v.as_str()) {
             return Ok(GeminiPart::Text { text: text.to_string() });
         }
         if let Some(inline_data_val) = map.get("inlineData") {
-            let mime_type = inline_data_val.get("mimeType").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let data = inline_data_val.get("data").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let mime_type = inline_data_val
+                .get("mimeType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let data = inline_data_val
+                .get("data")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             return Ok(GeminiPart::InlineData {
                 inline_data: GeminiInlineData { mime_type, data },
             });
         }
         if let Some(fc) = map.get("functionCall") {
-            let name = fc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let args = fc.get("args").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
+            let name = fc
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let args = fc
+                .get("args")
+                .cloned()
+                .unwrap_or(serde_json::Value::Object(Default::default()));
             return Ok(GeminiPart::FunctionCall { name, args });
         }
         if let Some(fr) = map.get("functionResponse") {
-            let name = fr.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let response = fr.get("response").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
+            let name = fr
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let response = fr
+                .get("response")
+                .cloned()
+                .unwrap_or(serde_json::Value::Object(Default::default()));
             return Ok(GeminiPart::FunctionResponse { name, response });
         }
 
@@ -861,10 +887,7 @@ mod tests {
 
     #[test]
     fn test_gemini_to_contents() {
-        let messages = vec![
-            Message::user("Hello"),
-            Message::assistant("Hi there!"),
-        ];
+        let messages = vec![Message::user("Hello"), Message::assistant("Hi there!")];
         let contents = GeminiProvider::to_gemini_contents(&messages);
         assert_eq!(contents.len(), 2);
         assert_eq!(contents[0].role, "user");
@@ -899,7 +922,9 @@ mod tests {
             usage_metadata: None,
         };
 
-        let result = provider.parse_gemini_response(resp, "gemini-2.0-flash").unwrap();
+        let result = provider
+            .parse_gemini_response(resp, "gemini-2.0-flash")
+            .unwrap();
         assert_eq!(result.message.content, "Hello back");
         assert_eq!(result.model, "gemini-2.0-flash");
         assert_eq!(result.message.role, Role::Assistant);
@@ -947,7 +972,9 @@ mod tests {
                 total_token_count: 15,
             }),
         };
-        let result = provider.parse_gemini_response(resp, "gemini-2.0-flash").unwrap();
+        let result = provider
+            .parse_gemini_response(resp, "gemini-2.0-flash")
+            .unwrap();
         let usage = result.usage.unwrap();
         assert_eq!(usage.prompt_tokens, 10);
         assert_eq!(usage.completion_tokens, 5);

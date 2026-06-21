@@ -32,10 +32,9 @@ mod platform;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+pub use platform::create_os_monitor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
-
-pub use platform::create_os_monitor;
 
 // ── Core types ───────────────────────────────────────────────────────────
 
@@ -100,8 +99,9 @@ pub enum DeviceMatcher {
     DevPattern(String),
     /// Match when ALL sub-matchers match (AND logic).
     ///
-    /// Useful for combining conditions, e.g. `Subsystem("tty")` + `KernelDriver("ftdi_sio")`
-    /// to only match USB serial adapters using a specific driver.
+    /// Useful for combining conditions, e.g. `Subsystem("tty")` +
+    /// `KernelDriver("ftdi_sio")` to only match USB serial adapters using a
+    /// specific driver.
     AllOf(Vec<DeviceMatcher>),
     /// Match by kernel driver name, e.g. `"ftdi_sio"`, `"usbhid"`, `"cdc_acm"`.
     ///
@@ -128,9 +128,7 @@ impl DeviceMatcher {
                     false
                 }
             }
-            DeviceMatcher::AllOf(matchers) => {
-                matchers.iter().all(|m| m.matches(event))
-            }
+            DeviceMatcher::AllOf(matchers) => matchers.iter().all(|m| m.matches(event)),
             DeviceMatcher::KernelDriver(driver) => {
                 let ev_driver = event.get("driver").or_else(|| event.get("id_driver"));
                 ev_driver == Some(driver.as_str())

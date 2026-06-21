@@ -1,8 +1,5 @@
 //! Config editor popup rendering.
 
-use crate::tui::event_loop::config_keys;
-use crate::tui::state::{AppState, InputMode};
-use crate::tui::ui::{dim_style, highlight_style, titled_block};
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Modifier, Style},
@@ -10,6 +7,10 @@ use ratatui::{
     widgets::{Cell, Paragraph, Row, Table},
     Frame,
 };
+
+use crate::tui::event_loop::config_keys;
+use crate::tui::state::{AppState, InputMode};
+use crate::tui::ui::{dim_style, highlight_style, titled_block};
 
 /// Render the config editor popup.
 pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
@@ -37,10 +38,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
 
             Row::new(vec![
                 Cell::from(Span::styled(key.clone(), style)),
-                Cell::from(Span::styled(
-                    truncate(&value, inner.width as usize / 2),
-                    style,
-                )),
+                Cell::from(Span::styled(truncate(&value, inner.width as usize / 2), style)),
             ])
             .style(style)
         })

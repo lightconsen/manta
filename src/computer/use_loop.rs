@@ -1,4 +1,5 @@
-//! Computer Use loop — the canonical screenshot → decide → execute → verify cycle.
+//! Computer Use loop — the canonical screenshot → decide → execute → verify
+//! cycle.
 //!
 //! This module implements the standard Anthropic Computer Use interaction
 //! pattern without tying itself to any specific LLM provider.  The caller
@@ -13,12 +14,13 @@
 //!     ok         = verifier.verify(criteria)     // validate
 //! ```
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::computer::{
     ActionResult, ComputerAdapter, ComputerError, DesktopAction, Result, Screenshot,
     VerificationConfig, VerificationCriteria, VerificationEngine,
 };
-use std::sync::Arc;
-use std::time::Duration;
 
 /// Configuration for the Computer Use loop.
 #[derive(Debug, Clone, Copy)]
@@ -109,18 +111,20 @@ pub struct ComputerUseLoop {
     execution_controller: Option<Arc<crate::acp::ExecutionController>>,
     /// Optional rollback manager for auto-rollback and step-by-step undo.
     rollback_manager: Option<Arc<tokio::sync::Mutex<crate::computer::RollbackManager>>>,
-    /// Paths to snapshot before each action (workspace dirs, config files, etc.).
+    /// Paths to snapshot before each action (workspace dirs, config files,
+    /// etc.).
     snapshot_paths: Vec<String>,
     /// Consecutive-failure threshold that triggers auto-rollback.
     auto_rollback_threshold: usize,
-    /// Tracks how many snapshots were taken for each step (index = step number).
+    /// Tracks how many snapshots were taken for each step (index = step
+    /// number).
     step_snapshot_counts: Arc<tokio::sync::Mutex<Vec<usize>>>,
 }
 
 impl ComputerUseLoop {
     pub fn new(adapter: Arc<dyn ComputerAdapter>) -> Self {
-        let verifier = VerificationEngine::new(adapter.clone())
-            .with_config(VerificationConfig::default());
+        let verifier =
+            VerificationEngine::new(adapter.clone()).with_config(VerificationConfig::default());
         Self {
             adapter,
             verifier,
@@ -134,8 +138,8 @@ impl ComputerUseLoop {
     }
 
     pub fn with_config(mut self, config: LoopConfig) -> Self {
-        self.verifier = VerificationEngine::new(self.adapter.clone())
-            .with_config(config.verification);
+        self.verifier =
+            VerificationEngine::new(self.adapter.clone()).with_config(config.verification);
         self.config = config;
         self
     }
@@ -185,9 +189,9 @@ impl ComputerUseLoop {
 
         if let Some(ref mgr) = self.rollback_manager {
             let mut mgr = mgr.lock().await;
-            mgr.rollback_last(total_snapshots).await.map_err(|e| {
-                ComputerError::Other(format!("Rollback failed: {}", e))
-            })?;
+            mgr.rollback_last(total_snapshots)
+                .await
+                .map_err(|e| ComputerError::Other(format!("Rollback failed: {}", e)))?;
         }
 
         let mut counts = self.step_snapshot_counts.lock().await;
@@ -206,11 +210,7 @@ impl ComputerUseLoop {
     ///
     /// `decide` is called every iteration with the current [`LoopState`].
     /// It must return a [`LoopDecision`] telling the loop what to do next.
-    pub async fn run<F, Fut>(
-        &self,
-        goal: &str,
-        mut decide: F,
-    ) -> Result<LoopResult>
+    pub async fn run<F, Fut>(&self, goal: &str, mut decide: F) -> Result<LoopResult>
     where
         F: FnMut(LoopState) -> Fut,
         Fut: std::future::Future<Output = Result<LoopDecision>>,
@@ -336,10 +336,7 @@ impl ComputerUseLoop {
                             }
                         }
                     }
-                    self.step_snapshot_counts
-                        .lock()
-                        .await
-                        .push(snapshots_taken);
+                    self.step_snapshot_counts.lock().await.push(snapshots_taken);
 
                     // 4. Act — execute the action.
                     let screenshot_before = Some(screenshot);
@@ -372,7 +369,11 @@ impl ComputerUseLoop {
                             }
 
                             last_verified = Some(verified);
-                            last_error = if verified { None } else { Some("Verification failed".to_string()) };
+                            last_error = if verified {
+                                None
+                            } else {
+                                Some("Verification failed".to_string())
+                            };
 
                             history.push(StepRecord {
                                 step,
@@ -398,10 +399,12 @@ impl ComputerUseLoop {
                                     || err_lower.contains("not found")
                                     || err_lower.contains("empty");
                                 if is_timing {
-                                    let new_delay = current_settle_delay_ms.saturating_mul(2).min(5000);
+                                    let new_delay =
+                                        current_settle_delay_ms.saturating_mul(2).min(5000);
                                     if new_delay > current_settle_delay_ms {
                                         tracing::warn!(
-                                            "Increasing settle delay from {}ms to {}ms after {} consecutive timing failures",
+                                            "Increasing settle delay from {}ms to {}ms after {} \
+                                             consecutive timing failures",
                                             current_settle_delay_ms,
                                             new_delay,
                                             consecutive_failures
@@ -440,11 +443,7 @@ impl ComputerUseLoop {
     /// Verify a single action using heuristics.
     ///
     /// Returns `true` if the action appears to have succeeded.
-    async fn verify_action(
-        &self,
-        action: &DesktopAction,
-        _result: &ActionResult,
-    ) -> Result<bool> {
+    async fn verify_action(&self, action: &DesktopAction, _result: &ActionResult) -> Result<bool> {
         match action {
             DesktopAction::Screenshot { .. } => {
                 // Screenshots are self-verifying.
@@ -470,9 +469,7 @@ impl ComputerUseLoop {
                 if *wait_for_ready {
                     self.verifier
                         .verify(
-                            &VerificationCriteria::ProcessRunning {
-                                name: name.clone(),
-                            },
+                            &VerificationCriteria::ProcessRunning { name: name.clone() },
                             &ActionResult::success(""),
                             None,
                         )
@@ -499,9 +496,7 @@ impl ComputerUseLoop {
                 if let Some(process_name) = name {
                     self.verifier
                         .verify(
-                            &VerificationCriteria::ProcessExited {
-                                name: process_name.clone(),
-                            },
+                            &VerificationCriteria::ProcessExited { name: process_name.clone() },
                             &ActionResult::success(""),
                             None,
                         )
@@ -552,9 +547,12 @@ mod tests {
         };
         // LoopDecision does not derive Serialize, but we can at least clone it.
         let _cloned = d.clone();
-        assert_eq!(d, LoopDecision::Done {
-            message: "finished".to_string()
-        });
+        assert_eq!(
+            d,
+            LoopDecision::Done {
+                message: "finished".to_string()
+            }
+        );
     }
 
     #[test]
@@ -582,14 +580,13 @@ mod tests {
     async fn test_execution_controller_cancels_loop() {
         // Verify that attaching an already-cancelled controller aborts the loop
         // immediately with a cancellation message.
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(
-            Arc::new(crate::tools::ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        )));
         let ctrl = crate::acp::ExecutionController::new();
         ctrl.cancel().await;
 
-        let loop_ = ComputerUseLoop::new(adapter)
-            .with_execution_controller(ctrl);
+        let loop_ = ComputerUseLoop::new(adapter).with_execution_controller(ctrl);
 
         let result = loop_
             .run("test goal", |_state| async {
@@ -610,20 +607,16 @@ mod tests {
     async fn test_undo_steps_with_rollback_manager() {
         let tmp = tempfile::tempdir().unwrap();
         let file = tmp.path().join("workspace.txt");
-        tokio::fs::write(&file, "original")
-            .await
-            .unwrap();
+        tokio::fs::write(&file, "original").await.unwrap();
 
         let mgr = Arc::new(tokio::sync::Mutex::new(
-            crate::computer::RollbackManager::with_backup_dir(
-                tmp.path().join("backups"),
-            ),
+            crate::computer::RollbackManager::with_backup_dir(tmp.path().join("backups")),
         ));
 
         let loop_ = ComputerUseLoop::new(Arc::new(
-            crate::computer::headless::HeadlessComputerAdapter::new(
-                Arc::new(crate::tools::ToolRegistry::new()),
-            ),
+            crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
+                crate::tools::ToolRegistry::new(),
+            )),
         ))
         .with_rollback_manager(mgr.clone())
         .with_snapshot_paths(vec![file.to_string_lossy().to_string()]);
@@ -652,27 +645,23 @@ mod tests {
         assert_eq!(undone, 1);
 
         // Only the last snapshot should have been restored
-        let content = tokio::fs::read_to_string(&file)
-            .await
-            .unwrap();
+        let content = tokio::fs::read_to_string(&file).await.unwrap();
         assert_eq!(content, "after-step-0");
 
         // Undo the remaining step
         let undone = loop_.undo_steps(1).await.unwrap();
         assert_eq!(undone, 1);
 
-        let content = tokio::fs::read_to_string(&file)
-            .await
-            .unwrap();
+        let content = tokio::fs::read_to_string(&file).await.unwrap();
         assert_eq!(content, "original");
     }
 
     #[tokio::test]
     async fn test_undo_last_step_no_manager_returns_false() {
         let loop_ = ComputerUseLoop::new(Arc::new(
-            crate::computer::headless::HeadlessComputerAdapter::new(
-                Arc::new(crate::tools::ToolRegistry::new()),
-            ),
+            crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
+                crate::tools::ToolRegistry::new(),
+            )),
         ));
 
         let undone = loop_.undo_last_step().await.unwrap();
@@ -681,13 +670,11 @@ mod tests {
 
     #[test]
     fn test_computer_use_loop_builder_methods() {
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(
-            Arc::new(crate::tools::ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        )));
         let mgr = Arc::new(tokio::sync::Mutex::new(
-            crate::computer::RollbackManager::with_backup_dir(
-                std::env::temp_dir().join("test"),
-            ),
+            crate::computer::RollbackManager::with_backup_dir(std::env::temp_dir().join("test")),
         ));
 
         let loop_ = ComputerUseLoop::new(adapter)

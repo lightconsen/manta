@@ -1,8 +1,8 @@
 //! Built-in provider presets.
 //!
-//! Each preset defines a known LLM vendor with its protocol variants (endpoints).
-//! A single vendor may expose multiple protocols (e.g. Kimi supports both
-//! OpenAI-compatible and Anthropic-compatible endpoints).
+//! Each preset defines a known LLM vendor with its protocol variants
+//! (endpoints). A single vendor may expose multiple protocols (e.g. Kimi
+//! supports both OpenAI-compatible and Anthropic-compatible endpoints).
 //!
 //! The vendor list lives in `presets.toml` (embedded at compile time via
 //! [`include_str!`]) so adding a new vendor is a data-only change. If the
@@ -49,8 +49,8 @@ pub fn builtin_providers() -> HashMap<&'static str, ProviderDefinition> {
             .collect(),
         Err(e) => {
             tracing::error!(
-                "failed to parse embedded provider presets.toml ({e}); \
-                 falling back to minimal hand-rolled set"
+                "failed to parse embedded provider presets.toml ({e}); falling back to minimal \
+                 hand-rolled set"
             );
             fallback_providers()
         }

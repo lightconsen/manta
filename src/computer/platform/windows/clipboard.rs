@@ -1,11 +1,12 @@
 //! Windows clipboard tool using PowerShell.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::info;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Read from or write to the Windows clipboard using PowerShell.
 #[derive(Debug)]
@@ -30,8 +31,8 @@ impl Tool for ClipboardTool {
     }
 
     fn description(&self) -> &str {
-        "Read from or write to the Windows clipboard using PowerShell. \
-         Supports text content. Use 'get' to read, 'set' to write."
+        "Read from or write to the Windows clipboard using PowerShell. Supports text content. Use \
+         'get' to read, 'set' to write."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -74,7 +75,13 @@ if ($text -eq $null -or $text -eq '') {
                 let output = timeout(
                     Duration::from_secs(5),
                     Command::new("powershell")
-                        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+                        .args([
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-Command",
+                            script,
+                        ])
                         .output(),
                 )
                 .await;
@@ -102,18 +109,14 @@ if ($text -eq $null -or $text -eq '') {
                     }
                     Ok(Ok(out)) => {
                         let stderr = String::from_utf8_lossy(&out.stderr);
-                        Ok(ToolExecutionResult::error(format!(
-                            "Get-Clipboard failed: {}",
-                            stderr
-                        )))
+                        Ok(ToolExecutionResult::error(format!("Get-Clipboard failed: {}", stderr)))
                     }
-                    Ok(Err(e)) => Ok(ToolExecutionResult::error(format!(
-                        "Failed to run PowerShell: {}",
-                        e
-                    ))),
-                    Err(_) => Ok(ToolExecutionResult::error(
-                        "Clipboard read timed out".to_string()
-                    )),
+                    Ok(Err(e)) => {
+                        Ok(ToolExecutionResult::error(format!("Failed to run PowerShell: {}", e)))
+                    }
+                    Err(_) => {
+                        Ok(ToolExecutionResult::error("Clipboard read timed out".to_string()))
+                    }
                 }
             }
             "set" => {
@@ -145,26 +148,19 @@ Add-Type -AssemblyName System.Windows.Forms
                 .await;
 
                 match output {
-                    Ok(Ok(out)) if out.status.success() => {
-                        Ok(ToolExecutionResult::success(format!(
-                            "Clipboard set ({} chars)",
-                            text.len()
-                        )))
-                    }
+                    Ok(Ok(out)) if out.status.success() => Ok(ToolExecutionResult::success(
+                        format!("Clipboard set ({} chars)", text.len()),
+                    )),
                     Ok(Ok(out)) => {
                         let stderr = String::from_utf8_lossy(&out.stderr);
-                        Ok(ToolExecutionResult::error(format!(
-                            "Set-Clipboard failed: {}",
-                            stderr
-                        )))
+                        Ok(ToolExecutionResult::error(format!("Set-Clipboard failed: {}", stderr)))
                     }
-                    Ok(Err(e)) => Ok(ToolExecutionResult::error(format!(
-                        "Failed to run PowerShell: {}",
-                        e
-                    ))),
-                    Err(_) => Ok(ToolExecutionResult::error(
-                        "Clipboard write timed out".to_string()
-                    )),
+                    Ok(Err(e)) => {
+                        Ok(ToolExecutionResult::error(format!("Failed to run PowerShell: {}", e)))
+                    }
+                    Err(_) => {
+                        Ok(ToolExecutionResult::error("Clipboard write timed out".to_string()))
+                    }
                 }
             }
             _ => Ok(ToolExecutionResult::error(format!(

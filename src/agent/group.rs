@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -18,13 +19,13 @@ use tracing::{debug, info};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GroupRole {
- /// Full control over the session.
+    /// Full control over the session.
     Owner,
- /// Can manage members and moderate.
+    /// Can manage members and moderate.
     Admin,
- /// Regular participant.
+    /// Regular participant.
     Member,
- /// Read-only observer.
+    /// Read-only observer.
     Observer,
 }
 
@@ -40,22 +41,22 @@ impl std::fmt::Display for GroupRole {
 }
 
 impl GroupRole {
- /// Check if this role can add/remove members.
+    /// Check if this role can add/remove members.
     pub fn can_manage_members(&self) -> bool {
         matches!(self, GroupRole::Owner | GroupRole::Admin)
     }
 
- /// Check if this role can terminate the session.
+    /// Check if this role can terminate the session.
     pub fn can_terminate_session(&self) -> bool {
         matches!(self, GroupRole::Owner | GroupRole::Admin)
     }
 
- /// Check if this role can spawn agents.
+    /// Check if this role can spawn agents.
     pub fn can_spawn_agents(&self) -> bool {
         matches!(self, GroupRole::Owner | GroupRole::Admin | GroupRole::Member)
     }
 
- /// Check if this role can send messages (not read-only).
+    /// Check if this role can send messages (not read-only).
     pub fn can_participate(&self) -> bool {
         matches!(self, GroupRole::Owner | GroupRole::Admin | GroupRole::Member)
     }
@@ -64,20 +65,20 @@ impl GroupRole {
 /// A member of a group session.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GroupMember {
- /// User ID (peer).
+    /// User ID (peer).
     pub user_id: String,
- /// Display name.
+    /// Display name.
     pub display_name: String,
- /// Role in the group.
+    /// Role in the group.
     pub role: GroupRole,
- /// When the member joined.
+    /// When the member joined.
     pub joined_at: chrono::DateTime<chrono::Utc>,
- /// Whether the member is currently active.
+    /// Whether the member is currently active.
     pub is_active: bool,
 }
 
 impl GroupMember {
- /// Create a new group member.
+    /// Create a new group member.
     pub fn new(
         user_id: impl Into<String>,
         display_name: impl Into<String>,
@@ -92,12 +93,12 @@ impl GroupMember {
         }
     }
 
- /// Mark the member as active.
+    /// Mark the member as active.
     pub fn mark_active(&mut self) {
         self.is_active = true;
     }
 
- /// Mark the member as inactive.
+    /// Mark the member as inactive.
     pub fn mark_inactive(&mut self) {
         self.is_active = false;
     }
@@ -106,26 +107,26 @@ impl GroupMember {
 /// Group-level session with member management.
 #[derive(Debug)]
 pub struct GroupSession {
- /// Session ID.
+    /// Session ID.
     pub id: String,
- /// Group name.
+    /// Group name.
     pub name: String,
- /// Members indexed by user_id.
+    /// Members indexed by user_id.
     members: HashMap<String, GroupMember>,
- /// Owner user ID.
+    /// Owner user ID.
     pub owner_id: String,
- /// When the group was created.
+    /// When the group was created.
     pub created_at: chrono::DateTime<chrono::Utc>,
- /// Last activity time.
+    /// Last activity time.
     pub last_activity: std::time::Instant,
- /// Whether the group is archived.
+    /// Whether the group is archived.
     pub is_archived: bool,
- /// Optional metadata (topic, description, etc.).
+    /// Optional metadata (topic, description, etc.).
     pub metadata: Option<serde_json::Value>,
 }
 
 impl GroupSession {
- /// Create a new group session.
+    /// Create a new group session.
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
@@ -152,7 +153,7 @@ impl GroupSession {
         }
     }
 
- /// Add a member to the group.
+    /// Add a member to the group.
     pub fn add_member(
         &mut self,
         user_id: impl Into<String>,
@@ -171,7 +172,7 @@ impl GroupSession {
         Ok(())
     }
 
- /// Remove a member from the group.
+    /// Remove a member from the group.
     pub fn remove_member(&mut self, user_id: &str) -> Result<(), GroupSessionError> {
         if user_id == self.owner_id {
             return Err(GroupSessionError::CannotRemoveOwner);
@@ -186,7 +187,7 @@ impl GroupSession {
         }
     }
 
- /// Update a member's role.
+    /// Update a member's role.
     pub fn update_member_role(
         &mut self,
         user_id: &str,
@@ -206,37 +207,37 @@ impl GroupSession {
         Ok(())
     }
 
- /// Get a member by user ID.
+    /// Get a member by user ID.
     pub fn get_member(&self, user_id: &str) -> Option<&GroupMember> {
         self.members.get(user_id)
     }
 
- /// Get mutable member reference.
+    /// Get mutable member reference.
     pub fn get_member_mut(&mut self, user_id: &str) -> Option<&mut GroupMember> {
         self.members.get_mut(user_id)
     }
 
- /// Get all members.
+    /// Get all members.
     pub fn get_members(&self) -> Vec<&GroupMember> {
         self.members.values().collect()
     }
 
- /// Get active members.
+    /// Get active members.
     pub fn get_active_members(&self) -> Vec<&GroupMember> {
         self.members.values().filter(|m| m.is_active).collect()
     }
 
- /// Get members by role.
+    /// Get members by role.
     pub fn get_members_by_role(&self, role: GroupRole) -> Vec<&GroupMember> {
         self.members.values().filter(|m| m.role == role).collect()
     }
 
- /// Check if a user is a member.
+    /// Check if a user is a member.
     pub fn is_member(&self, user_id: &str) -> bool {
         self.members.contains_key(user_id)
     }
 
- /// Check if a user has at least the given role.
+    /// Check if a user has at least the given role.
     pub fn has_role(&self, user_id: &str, min_role: GroupRole) -> bool {
         self.members
             .get(user_id)
@@ -244,18 +245,18 @@ impl GroupSession {
             .unwrap_or(false)
     }
 
- /// Get the number of members.
+    /// Get the number of members.
     pub fn member_count(&self) -> usize {
         self.members.len()
     }
 
- /// Archive the group session.
+    /// Archive the group session.
     pub fn archive(&mut self) {
         self.is_archived = true;
         info!("Archived group session {}", self.id);
     }
 
- /// Check if the session has timed out.
+    /// Check if the session has timed out.
     pub fn is_timed_out(&self, timeout: std::time::Duration) -> bool {
         self.last_activity.elapsed() > timeout
     }
@@ -289,16 +290,16 @@ pub enum GroupSessionError {
 /// Manager for all group sessions.
 #[derive(Debug, Default)]
 pub struct GroupSessionManager {
- /// Active group sessions.
+    /// Active group sessions.
     groups: HashMap<String, Arc<RwLock<GroupSession>>>,
- /// User ID -> list of group IDs they belong to.
+    /// User ID -> list of group IDs they belong to.
     user_index: HashMap<String, Vec<String>>,
- /// Session timeout.
+    /// Session timeout.
     timeout: std::time::Duration,
 }
 
 impl GroupSessionManager {
- /// Create a new group session manager.
+    /// Create a new group session manager.
     pub fn new() -> Self {
         Self {
             groups: HashMap::new(),
@@ -307,7 +308,7 @@ impl GroupSessionManager {
         }
     }
 
- /// Create a new group session.
+    /// Create a new group session.
     pub fn create_group(
         &mut self,
         id: impl Into<String>,
@@ -330,22 +331,22 @@ impl GroupSessionManager {
         arc
     }
 
- /// Get a group session by ID.
+    /// Get a group session by ID.
     pub fn get_group(&self, group_id: &str) -> Option<Arc<RwLock<GroupSession>>> {
         self.groups.get(group_id).cloned()
     }
 
- /// List all group IDs.
+    /// List all group IDs.
     pub fn list_groups(&self) -> Vec<String> {
         self.groups.keys().cloned().collect()
     }
 
- /// Get groups for a user.
+    /// Get groups for a user.
     pub fn get_user_groups(&self, user_id: &str) -> Vec<String> {
         self.user_index.get(user_id).cloned().unwrap_or_default()
     }
 
- /// Remove a group session.
+    /// Remove a group session.
     pub async fn remove_group(&mut self, group_id: &str) {
         if let Some(group) = self.groups.remove(group_id) {
             let members: Vec<String> = {
@@ -361,7 +362,7 @@ impl GroupSessionManager {
         }
     }
 
- /// Add a member to a group (with user index update).
+    /// Add a member to a group (with user index update).
     pub async fn add_member(
         &mut self,
         group_id: &str,
@@ -388,7 +389,7 @@ impl GroupSessionManager {
         Ok(())
     }
 
- /// Remove a member from a group (with user index update).
+    /// Remove a member from a group (with user index update).
     pub async fn remove_member(
         &mut self,
         group_id: &str,
@@ -411,7 +412,7 @@ impl GroupSessionManager {
         Ok(())
     }
 
- /// Cleanup timed-out groups.
+    /// Cleanup timed-out groups.
     pub async fn cleanup_timed_out(&mut self) {
         let timed_out: Vec<String> = {
             let mut ids = Vec::new();
@@ -429,12 +430,12 @@ impl GroupSessionManager {
         }
     }
 
- /// Set session timeout.
+    /// Set session timeout.
     pub fn set_timeout(&mut self, timeout: std::time::Duration) {
         self.timeout = timeout;
     }
 
- /// Get global stats.
+    /// Get global stats.
     pub fn stats(&self) -> GroupManagerStats {
         GroupManagerStats {
             group_count: self.groups.len(),
@@ -743,7 +744,7 @@ mod tests {
     fn test_group_manager_set_timeout() {
         let mut manager = GroupSessionManager::new();
         manager.set_timeout(std::time::Duration::from_secs(60));
- // Just verify it doesn't panic
+        // Just verify it doesn't panic
     }
 
     #[tokio::test]

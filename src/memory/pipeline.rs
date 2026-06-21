@@ -7,6 +7,7 @@
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info};
 
@@ -242,8 +243,9 @@ impl PipelineEmbeddingProvider for dyn EmbeddingProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
 
     struct MockProvider {
         batch_count: AtomicUsize,

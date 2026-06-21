@@ -5,8 +5,9 @@
 
 use std::path::PathBuf;
 
-use crate::plugins::registry::RegistryClient;
 use tracing::info;
+
+use crate::plugins::registry::RegistryClient;
 
 /// Installs and uninstalls plugins from remote registries.
 pub struct PluginInstaller {
@@ -25,11 +26,7 @@ impl PluginInstaller {
     ///
     /// TODO: actual tar.gz extraction once tar/flate2 are wired in.
     ///       For now the archive bytes are written as a single file.
-    pub async fn install(
-        &self,
-        name: &str,
-        registry_url: Option<&str>,
-    ) -> crate::Result<()> {
+    pub async fn install(&self, name: &str, registry_url: Option<&str>) -> crate::Result<()> {
         let url = registry_url.unwrap_or("https://plugins.syscity.dev");
         let client = RegistryClient::new(url);
         let index = client.fetch_index().await?;
@@ -45,10 +42,7 @@ impl PluginInstaller {
                 ))
             })?;
 
-        info!(
-            "Downloading plugin '{}' v{}...",
-            entry.name, entry.version
-        );
+        info!("Downloading plugin '{}' v{}...", entry.name, entry.version);
         let archive = client.download(entry).await?;
 
         let plugin_dir = self.plugins_dir.join(&entry.name);
@@ -57,10 +51,7 @@ impl PluginInstaller {
         // Write the downloaded archive
         let archive_path = plugin_dir.join(format!("{}-{}.tar.gz", entry.name, entry.version));
         tokio::fs::write(&archive_path, &archive).await?;
-        info!(
-            "Plugin '{}' archive saved to {:?}",
-            entry.name, archive_path
-        );
+        info!("Plugin '{}' archive saved to {:?}", entry.name, archive_path);
 
         // TODO: extract tar.gz using tar + flate2
         info!("Plugin '{}' installed to {:?}", entry.name, plugin_dir);

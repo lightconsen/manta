@@ -3,9 +3,11 @@
 //! Handles installation of dependencies using various package managers
 //! and installation methods (brew, npm, go, uv, download, etc.)
 
-use crate::skills::frontmatter::InstallSpec;
 use std::process::Stdio;
+
 use tracing::{error, info};
+
+use crate::skills::frontmatter::InstallSpec;
 
 /// Installation result
 #[derive(Debug, Clone)]

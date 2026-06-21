@@ -1,12 +1,13 @@
 //! Firewall manager tool — list and manage firewall rules.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::warn;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Action types for firewall management.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,16 +32,36 @@ pub enum FirewallBackend {
 
 impl FirewallBackend {
     fn detect() -> Self {
-        if std::process::Command::new("ufw").arg("status").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new("ufw")
+            .arg("status")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Self::Ufw;
         }
-        if std::process::Command::new("firewall-cmd").arg("--state").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new("firewall-cmd")
+            .arg("--state")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Self::Firewalld;
         }
-        if std::process::Command::new("nft").arg("list").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new("nft")
+            .arg("list")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Self::Nftables;
         }
-        if std::process::Command::new("iptables").arg("-L").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new("iptables")
+            .arg("-L")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Self::Iptables;
         }
         Self::Unknown
@@ -84,17 +105,18 @@ impl FirewallManagerTool {
     }
 
     async fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<(bool, String)> {
-        let result = timeout(
-            Duration::from_secs(timeout_secs),
-            Command::new(cmd).args(args).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(timeout_secs), Command::new(cmd).args(args).output()).await;
 
         match result {
             Ok(Ok(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let combined = if stderr.is_empty() { stdout } else { format!("{stdout}\n{stderr}") };
+                let combined = if stderr.is_empty() {
+                    stdout
+                } else {
+                    format!("{stdout}\n{stderr}")
+                };
                 Some((output.status.success(), combined))
             }
             Ok(Err(e)) => {
@@ -116,7 +138,10 @@ impl FirewallManagerTool {
                 for line in output.lines() {
                     if line.starts_with("Chain ") {
                         current_chain = line.split_whitespace().nth(1).unwrap_or("").to_string();
-                    } else if !line.trim().is_empty() && !line.starts_with("num") && !line.starts_with("target") {
+                    } else if !line.trim().is_empty()
+                        && !line.starts_with("num")
+                        && !line.starts_with("target")
+                    {
                         let parts: Vec<&str> = line.split_whitespace().collect();
                         if parts.len() >= 6 {
                             rules.push(FirewallRule {
@@ -162,12 +187,10 @@ impl FirewallManagerTool {
 
     async fn do_status(backend: FirewallBackend) -> (bool, String) {
         match backend {
-            FirewallBackend::Ufw => {
-                match Self::run_cmd("ufw", &["status", "verbose"], 15).await {
-                    Some((success, output)) => (success, output),
-                    None => (false, "ufw status failed".to_string()),
-                }
-            }
+            FirewallBackend::Ufw => match Self::run_cmd("ufw", &["status", "verbose"], 15).await {
+                Some((success, output)) => (success, output),
+                None => (false, "ufw status failed".to_string()),
+            },
             FirewallBackend::Firewalld => {
                 match Self::run_cmd("firewall-cmd", &["--state"], 15).await {
                     Some((success, output)) => (success, output),
@@ -180,12 +203,10 @@ impl FirewallManagerTool {
                     None => (false, "nft list failed".to_string()),
                 }
             }
-            _ => {
-                match Self::run_cmd("iptables", &["-L", "-n", "-v"], 15).await {
-                    Some((success, output)) => (success, output),
-                    None => (false, "iptables list failed".to_string()),
-                }
-            }
+            _ => match Self::run_cmd("iptables", &["-L", "-n", "-v"], 15).await {
+                Some((success, output)) => (success, output),
+                None => (false, "iptables list failed".to_string()),
+            },
         }
     }
 }
@@ -224,7 +245,10 @@ impl Tool for FirewallManagerTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action_str = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+        let action_str = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("status");
         let action = match action_str {
             "list" => FirewallAction::List,
             "add" => FirewallAction::Add,
@@ -235,7 +259,8 @@ impl Tool for FirewallManagerTool {
         let backend = FirewallBackend::detect();
         if matches!(backend, FirewallBackend::Unknown) {
             return Ok(ToolExecutionResult::error(
-                "No supported firewall backend found (tried ufw, firewalld, nftables, iptables)".to_string(),
+                "No supported firewall backend found (tried ufw, firewalld, nftables, iptables)"
+                    .to_string(),
             ));
         }
 
@@ -278,7 +303,8 @@ impl Tool for FirewallManagerTool {
             }
         };
 
-        let message = format!("Firewall '{}' completed (backend: {})", action_str, backend.as_str());
+        let message =
+            format!("Firewall '{}' completed (backend: {})", action_str, backend.as_str());
         Ok(ToolExecutionResult::success(message).with_data(data))
     }
 }

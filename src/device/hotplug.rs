@@ -30,8 +30,12 @@ pub struct HotPlugConfig {
     pub auto_connect: bool,
 }
 
-const fn default_scan_interval() -> u64 { 10 }
-const fn default_auto_connect() -> bool { true }
+const fn default_scan_interval() -> u64 {
+    10
+}
+const fn default_auto_connect() -> bool {
+    true
+}
 
 impl Default for HotPlugConfig {
     fn default() -> Self {
@@ -49,13 +53,9 @@ impl Default for HotPlugConfig {
 /// 2. Re-probes each absent driver.
 /// 3. If a driver now reports the device present, optionally auto-connects.
 /// 4. Emits [`DeviceStatusEvent`]s through the registry's status bus.
-pub fn spawn_hot_plug_loop(
-    registry: Arc<DeviceRegistry>,
-    config: HotPlugConfig,
-) -> JoinHandle<()> {
+pub fn spawn_hot_plug_loop(registry: Arc<DeviceRegistry>, config: HotPlugConfig) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut ticker =
-            tokio::time::interval(Duration::from_secs(config.scan_interval_secs));
+        let mut ticker = tokio::time::interval(Duration::from_secs(config.scan_interval_secs));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
@@ -72,10 +72,7 @@ pub fn spawn_hot_plug_loop(
                 // Re-probe the absent driver.
                 match registry.probe_driver(driver_name).await {
                     Ok(true) => {
-                        tracing::info!(
-                            "Hot-plug detected: driver '{}' now present",
-                            driver_name
-                        );
+                        tracing::info!("Hot-plug detected: driver '{}' now present", driver_name);
                         if config.auto_connect {
                             match registry.connect(driver_name).await {
                                 Ok(device) => {
@@ -97,11 +94,7 @@ pub fn spawn_hot_plug_loop(
                     }
                     Ok(false) => { /* hardware still absent */ }
                     Err(e) => {
-                        tracing::debug!(
-                            "Hot-plug probe error for '{}': {}",
-                            driver_name,
-                            e
-                        );
+                        tracing::debug!("Hot-plug probe error for '{}': {}", driver_name, e);
                     }
                 }
             }
@@ -111,16 +104,16 @@ pub fn spawn_hot_plug_loop(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
     use async_trait::async_trait;
     use tokio::sync::broadcast::error::TryRecvError;
 
-    use crate::device::DeviceDriver;
-
-    use crate::device::{Device, DeviceInfo, DeviceStatus};
+    use super::*;
     use crate::device::mock::MockDeviceDriver;
     use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
+    use crate::device::DeviceDriver;
+    use crate::device::{Device, DeviceInfo, DeviceStatus};
 
     struct ToggleProbeDriver {
         name: String,
@@ -130,10 +123,13 @@ mod tests {
     impl ToggleProbeDriver {
         fn new(name: &str, present: bool) -> (Self, Arc<AtomicBool>) {
             let p = Arc::new(AtomicBool::new(present));
-            (Self {
-                name: name.into(),
-                present: p.clone(),
-            }, p)
+            (
+                Self {
+                    name: name.into(),
+                    present: p.clone(),
+                },
+                p,
+            )
         }
     }
 
@@ -283,8 +279,8 @@ mod tests {
     #[tokio::test]
     async fn test_hot_plug_connect_error_handled() {
         let mut reg = DeviceRegistry::new();
-        let driver = MockDeviceDriver::new("sensor-01", true)
-            .with_connect_error("connection refused");
+        let driver =
+            MockDeviceDriver::new("sensor-01", true).with_connect_error("connection refused");
         reg.register(Arc::new(driver)).await;
         let registry = Arc::new(reg);
 

@@ -7,8 +7,12 @@
 //! # Usage
 //!
 //! ```rust,no_run
-//! use syscity::computer::remote_control::{RemoteControlAdapter, RemoteControlConfig, RemoteProtocol};
 //! use std::sync::Arc;
+//!
+//! use syscity::computer::ComputerAdapter;
+//! use syscity::computer::remote_control::{
+//!     RemoteControlAdapter, RemoteControlConfig, RemoteProtocol,
+//! };
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = RemoteControlConfig {
@@ -20,25 +24,27 @@
 //!     },
 //!     ..Default::default()
 //! };
-//! let adapter = RemoteControlAdapter::new(config, Arc::new(syscity::tools::ToolRegistry::new()))?;
+//! let adapter = RemoteControlAdapter::new(config, Arc::new(syscity::tools::ToolRegistry::new())).await?;
 //! let screenshot = adapter.screenshot(None).await?;
 //! # Ok(())
 //! # }
 //! ```
 
-use crate::computer::screenshot_encoder::maybe_encode_screenshot;
-use crate::computer::{
-    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton,
-    Point, Rect, Result, Screenshot, UiElement, WaitCondition,
-};
-use crate::tools::ToolRegistry;
-use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{info, warn};
+
+use crate::computer::screenshot_encoder::maybe_encode_screenshot;
+use crate::computer::{
+    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton, Point,
+    Rect, Result, Screenshot, UiElement, WaitCondition,
+};
+use crate::tools::ToolRegistry;
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -144,10 +150,7 @@ impl RemoteControlAdapter {
     ///
     /// Probes the remote host to detect its OS.  Fails if the host is
     /// unreachable or SSH authentication fails.
-    pub async fn new(
-        config: RemoteControlConfig,
-        registry: Arc<ToolRegistry>,
-    ) -> Result<Self> {
+    pub async fn new(config: RemoteControlConfig, registry: Arc<ToolRegistry>) -> Result<Self> {
         let mut adapter = Self {
             config,
             registry,
@@ -192,10 +195,7 @@ impl RemoteControlAdapter {
             }
         }
 
-        warn!(
-            "Could not detect OS of remote host {}",
-            self.config.host
-        );
+        warn!("Could not detect OS of remote host {}", self.config.host);
         self.remote_os = RemoteOs::Unknown;
         Ok(())
     }
@@ -239,10 +239,7 @@ impl RemoteControlAdapter {
     /// Run a command and return stdout as string.
     async fn run_remote_text(&self, cmd: &str, args: &[&str]) -> Result<String> {
         let output = self.run_remote(cmd, args).await.map_err(|e| {
-            ComputerError::Other(format!(
-                "SSH command failed on {}: {}",
-                self.config.host, e
-            ))
+            ComputerError::Other(format!("SSH command failed on {}: {}", self.config.host, e))
         })?;
 
         if !output.status.success() {
@@ -262,9 +259,11 @@ impl RemoteControlAdapter {
         let _args: Vec<String> = Vec::new();
 
         // Try gnome-screenshot first, then scrot, then import
-        let tools = [("gnome-screenshot", vec!["-f", "/dev/stdout"]),
-                     ("scrot", vec!["-"]),
-                     ("import", vec!["png:-"])];
+        let tools = [
+            ("gnome-screenshot", vec!["-f", "/dev/stdout"]),
+            ("scrot", vec!["-"]),
+            ("import", vec!["png:-"]),
+        ];
 
         for (tool, tool_args) in &tools {
             let mut ssh = self.ssh_cmd();
@@ -342,10 +341,7 @@ impl RemoteControlAdapter {
             .stdout(Stdio::piped());
 
         let output = ssh.output().await.map_err(|e| {
-            ComputerError::ScreenshotFailed(format!(
-                "screencapture failed on remote macOS: {}",
-                e
-            ))
+            ComputerError::ScreenshotFailed(format!("screencapture failed on remote macOS: {}", e))
         })?;
 
         if !output.status.success() || output.stdout.is_empty() {
@@ -358,8 +354,8 @@ impl RemoteControlAdapter {
 
         let raw_bytes = output.stdout;
         // Apply ScreenshotEncoder to reduce payload size over SSH.
-        let temp_path = std::env::temp_dir()
-            .join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
+        let temp_path =
+            std::env::temp_dir().join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
         let _ = tokio::fs::write(&temp_path, &raw_bytes).await;
         let encoded = maybe_encode_screenshot(&temp_path).await;
         let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(raw_bytes);
@@ -368,10 +364,8 @@ impl RemoteControlAdapter {
             let _ = tokio::fs::remove_file(&encoded).await;
         }
 
-        let base64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &final_bytes,
-        );
+        let base64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &final_bytes);
         #[cfg(feature = "image")]
         let (width, height) = if let Ok(img) = image::load_from_memory(&final_bytes) {
             (img.width(), img.height())
@@ -403,12 +397,15 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
 [System.Convert]::ToBase64String($ms.ToArray())
 "#;
 
-        let output = self.run_remote("powershell", &["-Command", ps]).await.map_err(|e| {
-            ComputerError::ScreenshotFailed(format!(
-                "PowerShell screenshot failed on remote Windows: {}",
-                e
-            ))
-        })?;
+        let output = self
+            .run_remote("powershell", &["-Command", ps])
+            .await
+            .map_err(|e| {
+                ComputerError::ScreenshotFailed(format!(
+                    "PowerShell screenshot failed on remote Windows: {}",
+                    e
+                ))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -422,12 +419,11 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
         let b64 = b64.trim();
 
         // Decode → apply ScreenshotEncoder → re-encode (reduces payload over SSH).
-        let final_b64 = if let Ok(decoded) = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            b64,
-        ) {
-            let temp_path = std::env::temp_dir()
-                .join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
+        let final_b64 = if let Ok(decoded) =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+        {
+            let temp_path =
+                std::env::temp_dir().join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
             let _ = tokio::fs::write(&temp_path, &decoded).await;
             let encoded = maybe_encode_screenshot(&temp_path).await;
             let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(decoded.clone());
@@ -435,20 +431,16 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
             if encoded != temp_path {
                 let _ = tokio::fs::remove_file(&encoded).await;
             }
-            base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &final_bytes,
-            )
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &final_bytes)
         } else {
             b64.to_string()
         };
 
         #[cfg(feature = "image")]
         let (width, height) = {
-            if let Ok(bytes) = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                &final_b64,
-            ) {
+            if let Ok(bytes) =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &final_b64)
+            {
                 if let Ok(img) = image::load_from_memory(&bytes) {
                     (img.width(), img.height())
                 } else {
@@ -479,8 +471,17 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
                     MouseButton::Middle => "2",
                     MouseButton::Right => "3",
                 };
-                self.run_remote_text("xdotool", &["mousemove", &point.x.to_string(), &point.y.to_string(), "click", btn])
-                    .await?;
+                self.run_remote_text(
+                    "xdotool",
+                    &[
+                        "mousemove",
+                        &point.x.to_string(),
+                        &point.y.to_string(),
+                        "click",
+                        btn,
+                    ],
+                )
+                .await?;
             }
             RemoteOs::Macos => {
                 let btn = match button {
@@ -496,12 +497,16 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
                     r#"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {})"#,
                     point.x, point.y
                 );
-                self.run_remote_text("powershell", &["-Command", &ps]).await?;
+                self.run_remote_text("powershell", &["-Command", &ps])
+                    .await?;
                 // TODO: simulate mouse click on Windows
             }
-            _ => return Err(ComputerError::UnsupportedPlatform(
-                format!("Remote click not supported for OS {:?}", self.remote_os)
-            )),
+            _ => {
+                return Err(ComputerError::UnsupportedPlatform(format!(
+                    "Remote click not supported for OS {:?}",
+                    self.remote_os
+                )))
+            }
         }
         Ok(ActionResult::success("clicked"))
     }
@@ -509,22 +514,33 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     async fn type_remote(&self, text: &str) -> Result<ActionResult> {
         match self.remote_os {
             RemoteOs::Linux => {
-                self.run_remote_text("xdotool", &["type", "--delay", "10", text]).await?;
+                self.run_remote_text("xdotool", &["type", "--delay", "10", text])
+                    .await?;
             }
             RemoteOs::Macos => {
-                self.run_remote_text("osascript", &["-e", &format!("tell application \"System Events\" to keystroke \"{}\"", text)])
-                    .await?;
+                self.run_remote_text(
+                    "osascript",
+                    &[
+                        "-e",
+                        &format!("tell application \"System Events\" to keystroke \"{}\"", text),
+                    ],
+                )
+                .await?;
             }
             RemoteOs::Windows => {
                 let ps = format!(
                     r#"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{}')"#,
                     text.replace("'", "''")
                 );
-                self.run_remote_text("powershell", &["-Command", &ps]).await?;
+                self.run_remote_text("powershell", &["-Command", &ps])
+                    .await?;
             }
-            _ => return Err(ComputerError::UnsupportedPlatform(
-                format!("Remote type not supported for OS {:?}", self.remote_os)
-            )),
+            _ => {
+                return Err(ComputerError::UnsupportedPlatform(format!(
+                    "Remote type not supported for OS {:?}",
+                    self.remote_os
+                )))
+            }
         }
         Ok(ActionResult::success("typed"))
     }
@@ -537,14 +553,18 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
             }
             RemoteOs::Macos => {
                 // Convert simple keys to AppleScript key codes or use cliclick
-                if self.run_remote_text("cliclick", &[&format!("kp:{}", joined)])
+                if self
+                    .run_remote_text("cliclick", &[&format!("kp:{}", joined)])
                     .await
                     .is_err()
                 {
-                    self.run_remote_text("osascript", &[
-                        "-e",
-                        &format!("tell application \"System Events\" to key code {}", joined),
-                    ])
+                    self.run_remote_text(
+                        "osascript",
+                        &[
+                            "-e",
+                            &format!("tell application \"System Events\" to key code {}", joined),
+                        ],
+                    )
                     .await?;
                 }
             }
@@ -553,11 +573,15 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
                     r#"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{}')"#,
                     joined
                 );
-                self.run_remote_text("powershell", &["-Command", &ps]).await?;
+                self.run_remote_text("powershell", &["-Command", &ps])
+                    .await?;
             }
-            _ => return Err(ComputerError::UnsupportedPlatform(
-                format!("Remote keypress not supported for OS {:?}", self.remote_os)
-            )),
+            _ => {
+                return Err(ComputerError::UnsupportedPlatform(format!(
+                    "Remote keypress not supported for OS {:?}",
+                    self.remote_os
+                )))
+            }
         }
         Ok(ActionResult::success("key pressed"))
     }
@@ -614,12 +638,18 @@ except Exception as e:
                                 role: meta[0].trim().to_string(),
                                 label: {
                                     let l = meta[1].trim().to_string();
-                                    if l.is_empty() { None } else { Some(l) }
+                                    if l.is_empty() {
+                                        None
+                                    } else {
+                                        Some(l)
+                                    }
                                 },
                                 value: None,
                                 bounds: Rect::new(
-                                    coords[0], coords[1],
-                                    coords[2] as u32, coords[3] as u32,
+                                    coords[0],
+                                    coords[1],
+                                    coords[2] as u32,
+                                    coords[3] as u32,
                                 ),
                                 enabled: meta[2].trim() == "1",
                                 focused: false,
@@ -648,7 +678,11 @@ except Exception as e:
                     elements.push(UiElement {
                         id: parts[0].to_string(),
                         role: "window".to_string(),
-                        label: if title.is_empty() { None } else { Some(title.to_string()) },
+                        label: if title.is_empty() {
+                            None
+                        } else {
+                            Some(title.to_string())
+                        },
                         value: None,
                         bounds: Rect::new(0, 0, 0, 0),
                         enabled: true,
@@ -693,7 +727,10 @@ function Dump-Tree($element, $depth) {
 }
 Dump-Tree $desktop 0
 "#;
-        if let Ok(output) = self.run_remote("powershell", &["-NoProfile", "-Command", ps_script]).await {
+        if let Ok(output) = self
+            .run_remote("powershell", &["-NoProfile", "-Command", ps_script])
+            .await
+        {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let mut elements = Vec::new();
@@ -715,12 +752,18 @@ Dump-Tree $desktop 0
                                 role: meta[0].trim().to_string(),
                                 label: {
                                     let l = meta[1].trim().to_string();
-                                    if l.is_empty() { None } else { Some(l) }
+                                    if l.is_empty() {
+                                        None
+                                    } else {
+                                        Some(l)
+                                    }
                                 },
                                 value: None,
                                 bounds: Rect::new(
-                                    coords[0], coords[1],
-                                    coords[2] as u32, coords[3] as u32,
+                                    coords[0],
+                                    coords[1],
+                                    coords[2] as u32,
+                                    coords[3] as u32,
                                 ),
                                 enabled: meta[2].trim() == "True",
                                 focused: false,
@@ -813,18 +856,20 @@ impl ComputerAdapter for RemoteControlAdapter {
             DesktopAction::ClipboardGet => {
                 let text = match self.remote_os {
                     RemoteOs::Linux => {
-                        self.run_remote_text("xclip", &["-o", "-selection", "clipboard"]).await?
+                        self.run_remote_text("xclip", &["-o", "-selection", "clipboard"])
+                            .await?
                     }
-                    RemoteOs::Macos => {
-                        self.run_remote_text("pbpaste", &[]).await?
-                    }
+                    RemoteOs::Macos => self.run_remote_text("pbpaste", &[]).await?,
                     RemoteOs::Windows => {
                         let ps = r#"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetText()"#;
-                        self.run_remote_text("powershell", &["-Command", ps]).await?
+                        self.run_remote_text("powershell", &["-Command", ps])
+                            .await?
                     }
-                    _ => return Err(ComputerError::UnsupportedPlatform(
-                        "Clipboard get not supported".to_string()
-                    )),
+                    _ => {
+                        return Err(ComputerError::UnsupportedPlatform(
+                            "Clipboard get not supported".to_string(),
+                        ))
+                    }
                 };
                 Ok(ActionResult::success(text))
             }
@@ -834,9 +879,14 @@ impl ComputerAdapter for RemoteControlAdapter {
                         let mut ssh = self.ssh_cmd();
                         ssh.arg("xclip").args(["-i", "-selection", "clipboard"]);
                         ssh.stdin(Stdio::piped());
-                        let mut child = ssh.spawn().map_err(|e| ComputerError::Other(e.to_string()))?;
+                        let mut child = ssh
+                            .spawn()
+                            .map_err(|e| ComputerError::Other(e.to_string()))?;
                         if let Some(mut stdin) = child.stdin.take() {
-                            stdin.write_all(text.as_bytes()).await.map_err(|e| ComputerError::Other(e.to_string()))?;
+                            stdin
+                                .write_all(text.as_bytes())
+                                .await
+                                .map_err(|e| ComputerError::Other(e.to_string()))?;
                         }
                         let _ = child.wait().await;
                     }
@@ -844,9 +894,14 @@ impl ComputerAdapter for RemoteControlAdapter {
                         let mut ssh = self.ssh_cmd();
                         ssh.arg("pbcopy");
                         ssh.stdin(Stdio::piped());
-                        let mut child = ssh.spawn().map_err(|e| ComputerError::Other(e.to_string()))?;
+                        let mut child = ssh
+                            .spawn()
+                            .map_err(|e| ComputerError::Other(e.to_string()))?;
                         if let Some(mut stdin) = child.stdin.take() {
-                            stdin.write_all(text.as_bytes()).await.map_err(|e| ComputerError::Other(e.to_string()))?;
+                            stdin
+                                .write_all(text.as_bytes())
+                                .await
+                                .map_err(|e| ComputerError::Other(e.to_string()))?;
                         }
                         let _ = child.wait().await;
                     }
@@ -855,18 +910,26 @@ impl ComputerAdapter for RemoteControlAdapter {
                             r#"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetText('{}')"#,
                             text.replace("'", "''")
                         );
-                        self.run_remote_text("powershell", &["-Command", &ps]).await?;
+                        self.run_remote_text("powershell", &["-Command", &ps])
+                            .await?;
                     }
-                    _ => return Err(ComputerError::UnsupportedPlatform(
-                        "Clipboard set not supported".to_string()
-                    )),
+                    _ => {
+                        return Err(ComputerError::UnsupportedPlatform(
+                            "Clipboard set not supported".to_string(),
+                        ))
+                    }
                 }
                 Ok(ActionResult::success("clipboard set"))
             }
             DesktopAction::LaunchApp { name, args, wait_for_ready } => {
                 let mut cmd_args = vec![name];
                 cmd_args.extend(args);
-                let output = self.run_remote_text(&cmd_args[0], &cmd_args[1..].iter().map(|s| s.as_str()).collect::<Vec<_>>()).await?;
+                let output = self
+                    .run_remote_text(
+                        &cmd_args[0],
+                        &cmd_args[1..].iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                    )
+                    .await?;
                 if wait_for_ready {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
@@ -879,7 +942,10 @@ impl ComputerAdapter for RemoteControlAdapter {
             DesktopAction::ListProcesses { filter: _, limit } => {
                 let args = vec!["aux"];
                 if let Some(l) = limit {
-                    let output = self.run_remote("ps", &args).await.map_err(|e| ComputerError::Other(e.to_string()))?;
+                    let output = self
+                        .run_remote("ps", &args)
+                        .await
+                        .map_err(|e| ComputerError::Other(e.to_string()))?;
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     let lines: Vec<_> = stdout.lines().take(l + 1).collect();
                     return Ok(ActionResult::success(lines.join("\n")));
@@ -890,7 +956,8 @@ impl ComputerAdapter for RemoteControlAdapter {
             DesktopAction::KillProcess { pid, name, force } => {
                 if let Some(pid) = pid {
                     let sig = if force { "-9" } else { "-15" };
-                    self.run_remote_text("kill", &[sig, &pid.to_string()]).await?;
+                    self.run_remote_text("kill", &[sig, &pid.to_string()])
+                        .await?;
                 } else if let Some(name) = name {
                     let cmd = if force { "killall" } else { "pkill" };
                     self.run_remote_text(cmd, &[&name]).await?;
@@ -898,7 +965,8 @@ impl ComputerAdapter for RemoteControlAdapter {
                 Ok(ActionResult::success("process killed"))
             }
             DesktopAction::ReadFileChunked { path, offset, limit_bytes } => {
-                let output = self.run_remote("tail", &["-c", &format!("+{}", offset + 1), &path])
+                let output = self
+                    .run_remote("tail", &["-c", &format!("+{}", offset + 1), &path])
                     .await
                     .map_err(|e| ComputerError::Other(e.to_string()))?;
                 let mut text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -910,30 +978,39 @@ impl ComputerAdapter for RemoteControlAdapter {
             DesktopAction::EditFile { path, search, replace } => {
                 // Use sed for remote file editing
                 let sed_expr = format!("s/{}/{}/g", search, replace);
-                self.run_remote_text("sed", &["-i", &sed_expr, &path]).await?;
+                self.run_remote_text("sed", &["-i", &sed_expr, &path])
+                    .await?;
                 Ok(ActionResult::success("file edited"))
             }
-            DesktopAction::Compress { sources, destination, format: _ } => {
+            DesktopAction::Compress {
+                sources,
+                destination,
+                format: _,
+            } => {
                 // Archive files/directories over SSH using zip.
                 let sources_str = sources.join(" ");
-                self.run_remote_text("zip", &["-r", &destination, &sources_str]).await?;
+                self.run_remote_text("zip", &["-r", &destination, &sources_str])
+                    .await?;
                 Ok(ActionResult::success("compressed"))
             }
             DesktopAction::Decompress { archive, destination } => {
                 // Extract archives over SSH based on extension.
                 self.run_remote_text("mkdir", &["-p", &destination]).await?;
                 if archive.ends_with(".zip") {
-                    self.run_remote_text("unzip", &[&archive, "-d", &destination]).await?;
+                    self.run_remote_text("unzip", &[&archive, "-d", &destination])
+                        .await?;
                 } else {
-                    self.run_remote_text("tar", &["-xvf", &archive, "-C", &destination]).await?;
+                    self.run_remote_text("tar", &["-xvf", &archive, "-C", &destination])
+                        .await?;
                 }
                 Ok(ActionResult::success("decompressed"))
             }
             _ => {
                 warn!("Remote adapter received unsupported action: {:?}", action);
-                Err(ComputerError::UnsupportedPlatform(
-                    format!("Action {:?} not supported over remote control", action)
-                ))
+                Err(ComputerError::UnsupportedPlatform(format!(
+                    "Action {:?} not supported over remote control",
+                    action
+                )))
             }
         }
     }
@@ -959,10 +1036,15 @@ impl ComputerAdapter for RemoteControlAdapter {
                 WaitCondition::WindowTitleContains { pattern } => {
                     // Use xdotool on Linux to search for a window matching the pattern.
                     if self.remote_os == RemoteOs::Linux {
-                        let output = self.run_remote("xdotool", &["search", "--name", pattern]).await;
+                        let output = self
+                            .run_remote("xdotool", &["search", "--name", pattern])
+                            .await;
                         output.map(|o| o.status.success()).unwrap_or(false)
                     } else {
-                        warn!("WindowTitleContains wait not supported on remote {:?}", self.remote_os);
+                        warn!(
+                            "WindowTitleContains wait not supported on remote {:?}",
+                            self.remote_os
+                        );
                         false
                     }
                 }
@@ -1037,7 +1119,8 @@ mod tests {
         );
 
         let cmd = adapter.ssh_cmd();
-        // We can't inspect the Command easily, but at least we verified it doesn't panic
+        // We can't inspect the Command easily, but at least we verified it doesn't
+        // panic
         let _ = cmd;
     }
 }

@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::time::SystemTime;
+
 use tracing::{debug, info, warn};
 
 /// Security audit report
@@ -540,7 +541,9 @@ impl SecurityAuditor {
                 },
             ],
             issues: vec![
-                "Command arguments are not validated, allowing shell injection through allowed commands".to_string(),
+                "Command arguments are not validated, allowing shell injection through allowed \
+                 commands"
+                    .to_string(),
             ],
             risk_level: RiskLevel::Medium,
         };
@@ -625,8 +628,9 @@ impl SecurityAuditor {
             return audit;
         }
 
-        use crate::security::secrets::SecretScanner;
         use std::path::Path;
+
+        use crate::security::secrets::SecretScanner;
 
         let scanner = SecretScanner::with_default_patterns();
         let source_extensions = [".rs", ".toml", ".yaml", ".yml", ".json", ".env"];
@@ -708,7 +712,9 @@ impl SecurityAuditor {
                         description: format!("{}: {}", finding.pattern, finding.description),
                         location: format!("{}:{}", file_path.display(), finding.line_number),
                         severity,
-                        recommendation: "Remove secrets from source code and use environment variables or a secrets manager".to_string(),
+                        recommendation: "Remove secrets from source code and use environment \
+                                         variables or a secrets manager"
+                            .to_string(),
                     });
                     audit.leaks_found += 1;
                 }
@@ -784,9 +790,9 @@ impl SecurityAuditor {
                         ),
                         location: file_path.display().to_string(),
                         severity: RiskLevel::Medium,
-                        recommendation:
-                            "Use structured error types and avoid including raw sensitive data in error messages"
-                                .to_string(),
+                        recommendation: "Use structured error types and avoid including raw \
+                                         sensitive data in error messages"
+                            .to_string(),
                     });
                 }
             }

@@ -2,9 +2,10 @@
 //!
 //! Provides security audit, DM pairing, and access control management.
 
-use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 use serde_json::json;
+
+use crate::error::{Result, SyscityError};
 
 /// Default daemon base URL.
 const DAEMON_URL: &str = "http://127.0.0.1:18080";

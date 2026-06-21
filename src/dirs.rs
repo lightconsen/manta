@@ -18,6 +18,7 @@
 //! └── memory/ # Legacy directory (deprecated, kept for backward compatibility)
 
 use std::path::{Path, PathBuf};
+
 use tracing::{debug, info};
 
 /// Base directory name
@@ -78,7 +79,8 @@ pub fn agent_dir(agent_id: &str) -> PathBuf {
     agents_dir().join(agent_id)
 }
 
-/// Get a specific agent's workspace directory (~/.syscity/agents/{id}/workspace)
+/// Get a specific agent's workspace directory
+/// (~/.syscity/agents/{id}/workspace)
 pub fn agent_workspace_dir(agent_id: &str) -> PathBuf {
     agent_dir(agent_id).join("workspace")
 }
@@ -90,8 +92,8 @@ pub fn agent_data_dir(agent_id: &str) -> PathBuf {
 
 /// Resolve a path, expanding `~` to the user's home directory.
 ///
-/// If the path starts with `~` or `~/`, it is expanded using the home directory.
-/// Otherwise, the path is returned unchanged.
+/// If the path starts with `~` or `~/`, it is expanded using the home
+/// directory. Otherwise, the path is returned unchanged.
 pub fn resolve_tilde(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
     if let Some(path_str) = path.to_str() {
@@ -189,7 +191,8 @@ pub fn default_log_file() -> PathBuf {
     logs_dir().join("daemon.log")
 }
 
-/// Get the workspace state file path (~/.syscity/workspace/.syscity/workspace-state.json)
+/// Get the workspace state file path
+/// (~/.syscity/workspace/.syscity/workspace-state.json)
 pub fn workspace_state_file() -> PathBuf {
     workspace_data_dir()
         .join(".syscity")
@@ -203,7 +206,7 @@ pub fn workspace_state_file() -> PathBuf {
 pub async fn init() -> crate::Result<PathBuf> {
     let base = syscity_dir();
 
- // Create all subdirectories
+    // Create all subdirectories
     let dirs = [
         &base,
         &memory_dir(),
@@ -234,7 +237,7 @@ pub async fn init() -> crate::Result<PathBuf> {
         }
     }
 
- // Seed default agent personality templates
+    // Seed default agent personality templates
     seed_default_agent_personality(&base).await?;
 
     info!("Syscity directories initialized at: {:?}", base);
@@ -253,7 +256,7 @@ async fn seed_default_agent_personality(base: &Path) -> crate::Result<()> {
 pub fn init_sync() -> crate::Result<PathBuf> {
     let base = syscity_dir();
 
- // Create all subdirectories
+    // Create all subdirectories
     let dirs = [
         &base,
         &memory_dir(),
@@ -282,7 +285,7 @@ pub fn init_sync() -> crate::Result<PathBuf> {
         }
     }
 
- // Seed default agent personality templates (sync)
+    // Seed default agent personality templates (sync)
     seed_default_agent_personality_sync(&base)?;
 
     info!("Syscity directories initialized at: {:?}", base);
@@ -322,29 +325,29 @@ pub fn path_for(file_type: FileType) -> PathBuf {
 /// Types of files that can be retrieved
 #[derive(Debug, Clone, Copy)]
 pub enum FileType {
- /// Main configuration file
+    /// Main configuration file
     Config,
- /// Memory database
+    /// Memory database
     MemoryDb,
- /// Log file
+    /// Log file
     Log,
- /// PID file
+    /// PID file
     Pid,
- /// SOUL.md personality file
+    /// SOUL.md personality file
     Soul,
- /// IDENTITY.md personality file
+    /// IDENTITY.md personality file
     Identity,
- /// BOOTSTRAP.md personality file
+    /// BOOTSTRAP.md personality file
     Bootstrap,
- /// USER.md user-specific memory file
+    /// USER.md user-specific memory file
     User,
- /// AGENTS.md operating instructions file
+    /// AGENTS.md operating instructions file
     Agents,
- /// TOOLS.md tool notes and conventions file
+    /// TOOLS.md tool notes and conventions file
     Tools,
- /// HEARTBEAT.md periodic task checklist file
+    /// HEARTBEAT.md periodic task checklist file
     Heartbeat,
- /// MEMORY.md curated long-term memory file
+    /// MEMORY.md curated long-term memory file
     Memory,
 }
 
@@ -354,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_syscity_dir_structure() {
- // Just verify the paths are constructed correctly
+        // Just verify the paths are constructed correctly
         let base = syscity_dir();
         assert!(base.to_string_lossy().contains(".syscity"));
 
@@ -478,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_is_initialized() {
- // Just verify it doesn't panic
+        // Just verify it doesn't panic
         let _ = is_initialized();
     }
 

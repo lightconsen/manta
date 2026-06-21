@@ -153,9 +153,9 @@ impl Tool for NodesTool {
     }
 
     fn description(&self) -> &str {
-        "Discover and control paired Tailscale nodes. Query status, \
-         ping devices, capture camera/screenshots, get location, \
-         and check device health. Requires Tailscale to be installed and running."
+        "Discover and control paired Tailscale nodes. Query status, ping devices, capture \
+         camera/screenshots, get location, and check device health. Requires Tailscale to be \
+         installed and running."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -337,10 +337,13 @@ impl Tool for NodesTool {
                     success: false,
                     output: String::new(),
                     error: Some(
-                        "Camera snap requires a remote agent on the target node. Not yet implemented."
+                        "Camera snap requires a remote agent on the target node. Not yet \
+                         implemented."
                             .to_string(),
                     ),
-                    data: Some(serde_json::json!({ "node_id": node_id, "capability": "camera_snap" })),
+                    data: Some(
+                        serde_json::json!({ "node_id": node_id, "capability": "camera_snap" }),
+                    ),
                     execution_time: start.elapsed(),
                 })
             }
@@ -350,7 +353,8 @@ impl Tool for NodesTool {
                     success: false,
                     output: String::new(),
                     error: Some(
-                        "Camera list requires a remote agent on the target node. Not yet implemented."
+                        "Camera list requires a remote agent on the target node. Not yet \
+                         implemented."
                             .to_string(),
                     ),
                     data: Some(serde_json::json!({ "node_id": node_id })),
@@ -363,7 +367,8 @@ impl Tool for NodesTool {
                     success: false,
                     output: String::new(),
                     error: Some(
-                        "Screen recording requires a remote agent on the target node. Not yet implemented."
+                        "Screen recording requires a remote agent on the target node. Not yet \
+                         implemented."
                             .to_string(),
                     ),
                     data: Some(serde_json::json!({
@@ -388,7 +393,8 @@ impl Tool for NodesTool {
                             success: false,
                             output: String::new(),
                             error: Some(
-                                "Location tracking requires Tailscale's geo features or a remote agent."
+                                "Location tracking requires Tailscale's geo features or a remote \
+                                 agent."
                                     .to_string(),
                             ),
                             data: Some(serde_json::json!({ "node_id": node_id })),

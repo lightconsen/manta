@@ -6,12 +6,12 @@
 //! The default stage list mirrors the current hard-coded order:
 //! `Trajectory → Canvas → SSE → ReplyPrefix → Dispatch → SideEffects`
 
-use async_trait::async_trait;
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use super::{
-    OutboundContext, OutboundResult, ReplyDispatcher,
-    SideEffectExecutor, SseEvent, SseStreamer,
+    OutboundContext, OutboundResult, ReplyDispatcher, SideEffectExecutor, SseEvent, SseStreamer,
     TrajectoryWriter,
 };
 use crate::canvas::CanvasUpdate;
@@ -75,7 +75,8 @@ pub trait OutboundStage: Send + Sync {
     fn name(&self) -> &str;
 
     /// Process the outbound data. Return [`OutboundStageAction::Continue`] to
-    /// proceed, or [`OutboundStageAction::SkipDispatch`] to skip channel dispatch.
+    /// proceed, or [`OutboundStageAction::SkipDispatch`] to skip channel
+    /// dispatch.
     async fn process(&self, ctx: &mut OutboundStageContext) -> OutboundStageAction;
 }
 
@@ -206,7 +207,9 @@ pub struct DispatchStage {
 
 impl DispatchStage {
     pub fn new(dispatcher: ReplyDispatcher) -> Self {
-        Self { dispatcher: Arc::new(dispatcher) }
+        Self {
+            dispatcher: Arc::new(dispatcher),
+        }
     }
 }
 
@@ -234,9 +237,13 @@ impl OutboundStage for DispatchStage {
                 show_typing: false,
                 custom: std::collections::HashMap::new(),
             },
-            usage: ctx.input.usage.clone(),
+            usage: ctx.input.usage,
         };
-        if let Err(e) = self.dispatcher.dispatch(&ctx.input.channel, outbound_msg).await {
+        if let Err(e) = self
+            .dispatcher
+            .dispatch(&ctx.input.channel, outbound_msg)
+            .await
+        {
             tracing::warn!("Reply dispatch failed for channel {}: {}", ctx.input.channel, e);
         }
         OutboundStageAction::Continue
@@ -292,7 +299,8 @@ pub async fn run_outbound_stages(
 
 // ── Default stage list helper ────────────────────────────────────────────────
 
-/// Build the default list of outbound stages matching the current pipeline order.
+/// Build the default list of outbound stages matching the current pipeline
+/// order.
 ///
 /// Stages: Trajectory → Canvas → SSE → ReplyPrefix → Dispatch → SideEffects
 pub fn default_outbound_stages(
@@ -324,14 +332,16 @@ pub fn default_outbound_stages(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::TrajectoryLog;
+    use crate::outbound::TrajectoryLog;
 
     /// A stage that always continues.
     struct PassStage;
 
     #[async_trait]
     impl OutboundStage for PassStage {
-        fn name(&self) -> &str { "pass" }
+        fn name(&self) -> &str {
+            "pass"
+        }
         async fn process(&self, _ctx: &mut OutboundStageContext) -> OutboundStageAction {
             OutboundStageAction::Continue
         }
@@ -342,7 +352,9 @@ mod tests {
 
     #[async_trait]
     impl OutboundStage for SkipStage {
-        fn name(&self) -> &str { "skip" }
+        fn name(&self) -> &str {
+            "skip"
+        }
         async fn process(&self, ctx: &mut OutboundStageContext) -> OutboundStageAction {
             ctx.skip_dispatch = true;
             OutboundStageAction::SkipDispatch
@@ -363,10 +375,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_continue() {
-        let stages: Vec<Box<dyn OutboundStage>> = vec![
-            Box::new(PassStage),
-            Box::new(PassStage),
-        ];
+        let stages: Vec<Box<dyn OutboundStage>> = vec![Box::new(PassStage), Box::new(PassStage)];
         let mut ctx = dummy_context();
         let result = run_outbound_stages(&stages, &mut ctx).await;
         assert_eq!(result.text, "hello world");
@@ -375,10 +384,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_skip_dispatch() {
-        let stages: Vec<Box<dyn OutboundStage>> = vec![
-            Box::new(PassStage),
-            Box::new(SkipStage),
-        ];
+        let stages: Vec<Box<dyn OutboundStage>> = vec![Box::new(PassStage), Box::new(SkipStage)];
         let mut ctx = dummy_context();
         let result = run_outbound_stages(&stages, &mut ctx).await;
         assert_eq!(result.text, "hello world");

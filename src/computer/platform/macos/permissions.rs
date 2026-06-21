@@ -41,8 +41,8 @@ pub fn trigger_accessibility_prompt() {
 
 /// Open System Settings to the Accessibility pane (best-effort).
 pub fn open_accessibility_settings() {
-    // macOS Ventura+ uses "System Settings", older versions use "System Preferences".
-    // Try the modern name first.
+    // macOS Ventura+ uses "System Settings", older versions use "System
+    // Preferences". Try the modern name first.
     let modern = Command::new("osascript")
         .arg("-e")
         .arg(r#"tell application "System Settings" to activate"#)
@@ -59,21 +59,15 @@ pub fn open_accessibility_settings() {
 pub fn accessibility_permission_guide() -> String {
     let app_name = std::env::current_exe()
         .ok()
-        .and_then(|p| {
-            p.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-        })
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
         .unwrap_or_else(|| "Syscity".to_string());
 
     format!(
-        "macOS Accessibility permission is required for desktop control tools \
-(screenshot, UI inspection, clicking, typing).\n\n\
-To grant permission:\n\
-1. Open System Settings → Privacy & Security → Accessibility\n\
-2. Click the '+' button\n\
-3. Select the terminal app running {} (e.g. Terminal.app, iTerm2.app, or VS Code)\n\
-4. Toggle the switch ON\n\n\
-Then restart {}.",
+        "macOS Accessibility permission is required for desktop control tools (screenshot, UI \
+         inspection, clicking, typing).\n\nTo grant permission:\n1. Open System Settings → \
+         Privacy & Security → Accessibility\n2. Click the '+' button\n3. Select the terminal app \
+         running {} (e.g. Terminal.app, iTerm2.app, or VS Code)\n4. Toggle the switch ON\n\nThen \
+         restart {}.",
         app_name, app_name
     )
 }

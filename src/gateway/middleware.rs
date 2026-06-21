@@ -7,6 +7,9 @@
 //! - API key authentication (optional)
 //! - Rate limiting
 
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
+
 use axum::{
     body::Body,
     extract::{ConnectInfo, Request, State},
@@ -14,8 +17,6 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 use tracing::{debug, warn};
 
 use crate::gateway::rate_limit::RequestScope;
@@ -80,8 +81,10 @@ fn is_private_ip(addr: IpAddr) -> bool {
 
 /// Extract client IP from request, respecting trusted proxies.
 ///
-/// - If `trusted_proxies` contains the direct connection IP, trusts `X-Forwarded-For`.
-/// - If the direct connection IP is *not* a trusted proxy, ignores forwarded headers.
+/// - If `trusted_proxies` contains the direct connection IP, trusts
+///   `X-Forwarded-For`.
+/// - If the direct connection IP is *not* a trusted proxy, ignores forwarded
+///   headers.
 /// - Falls back to `ConnectInfo<SocketAddr>` extension (TCP peer address).
 /// - Last resort: `X-Real-IP` header (no proxy verification — best-effort).
 pub fn extract_client_ip_with_trusted(req: &Request, trusted_proxies: &[IpAddr]) -> Option<IpAddr> {
@@ -161,7 +164,8 @@ pub async fn localhost_only_middleware(req: Request, next: Next) -> Result<Respo
 /// Middleware: Tailscale whois identity verification.
 ///
 /// - Localhost connections are always allowed.
-/// - Tailscale IPs (100.64.0.0/10) are verified via `TailscaleAuthenticator::is_authorized()`.
+/// - Tailscale IPs (100.64.0.0/10) are verified via
+///   `TailscaleAuthenticator::is_authorized()`.
 /// - Configured `allowed_tailnets` restricts which tailnets are permitted.
 /// - Uses `trusted_proxies` from config for X-Forwarded-For header resolution.
 pub async fn tailscale_auth_middleware(
@@ -248,7 +252,9 @@ pub async fn trusted_proxy_auth_middleware(
 
     match authenticator.authenticate(&req, direct_ip) {
         Ok(user) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     &user.user_id,
@@ -267,7 +273,9 @@ pub async fn trusted_proxy_auth_middleware(
         }
         Err(TrustedProxyError::UntrustedProxy { proxy_ip }) => {
             let target = proxy_ip.to_string();
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     "unknown",
@@ -283,7 +291,9 @@ pub async fn trusted_proxy_auth_middleware(
             Err(StatusCode::FORBIDDEN)
         }
         Err(TrustedProxyError::MissingHeader { header }) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     "unknown",
@@ -301,7 +311,9 @@ pub async fn trusted_proxy_auth_middleware(
             Err(StatusCode::BAD_REQUEST)
         }
         Err(TrustedProxyError::NoUserExtracted) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     "unknown",
@@ -316,7 +328,9 @@ pub async fn trusted_proxy_auth_middleware(
             Err(StatusCode::BAD_REQUEST)
         }
         Err(TrustedProxyError::Disabled) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     "unknown",
@@ -331,7 +345,9 @@ pub async fn trusted_proxy_auth_middleware(
             Err(StatusCode::FORBIDDEN)
         }
         Err(TrustedProxyError::UserNotAllowed { user_id }) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::TrustedProxyLogin,
                     &user_id,
@@ -437,7 +453,9 @@ pub async fn auth_middleware(
                 }
             }
             warn!("Invalid Authorization header format");
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::TokenValidation,
                     &actor,
@@ -453,7 +471,9 @@ pub async fn auth_middleware(
         }
         None => {
             warn!("Missing Authorization header");
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::TokenValidation,
                     &actor,
@@ -472,10 +492,10 @@ pub async fn auth_middleware(
 
 /// Middleware: Rate limiting
 ///
-/// Supports both legacy token bucket and multi-tier sliding window rate limiting.
-/// Multi-tier mode checks global, per-user, per-IP, per-endpoint, auth-specific
-/// scopes, control-plane writes, and lockout state. Adds X-RateLimit-* headers
-/// to responses.
+/// Supports both legacy token bucket and multi-tier sliding window rate
+/// limiting. Multi-tier mode checks global, per-user, per-IP, per-endpoint,
+/// auth-specific scopes, control-plane writes, and lockout state. Adds
+/// X-RateLimit-* headers to responses.
 pub async fn rate_limit_middleware(
     State(state): State<Arc<GatewayState>>,
     req: Request,
@@ -498,7 +518,8 @@ pub async fn rate_limit_middleware(
     let ip = extract_client_ip(&req);
 
     // Loopback exemption for multi-tier rate limiter.
-    if use_multi_tier && state.auth.multi_tier_rate_limiter.loopback_exempt() && is_localhost_ip(ip) {
+    if use_multi_tier && state.auth.multi_tier_rate_limiter.loopback_exempt() && is_localhost_ip(ip)
+    {
         return Ok(next.run(req).await);
     }
 
@@ -544,7 +565,9 @@ pub async fn rate_limit_middleware(
         // Multi-tier sliding window rate limiting
         let endpoint = req.uri().path().to_string();
 
-        let result = state.auth.multi_tier_rate_limiter
+        let result = state
+            .auth
+            .multi_tier_rate_limiter
             .check_scoped(&user_id, ip, &endpoint, &scope)
             .await;
 
@@ -599,7 +622,9 @@ pub async fn rate_limit_middleware(
                 let headers = response.headers_mut();
                 headers.insert(
                     "X-RateLimit-Limit",
-                    state.auth.rate_limiter
+                    state
+                        .auth
+                        .rate_limiter
                         .get_state(&user_id)
                         .await
                         .map(|s| s.capacity)
@@ -677,10 +702,17 @@ impl CspPolicy {
     /// Build the CSP string
     pub fn to_header_value(&self) -> String {
         match self {
-            CspPolicy::Strict => "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';".to_string(),
+            CspPolicy::Strict => "default-src 'self'; script-src 'self'; style-src 'self' \
+                                  'unsafe-inline'; img-src 'self' data:; font-src 'self'; \
+                                  connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri \
+                                  'self'; form-action 'self';"
+                .to_string(),
             CspPolicy::Api => "default-src 'none'; frame-ancestors 'none';".to_string(),
             CspPolicy::Admin { nonce } => format!(
-                "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';",
+                "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' \
+                 'nonce-{nonce}' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; \
+                 connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; \
+                 form-action 'self';",
                 nonce = nonce
             ),
         }
@@ -749,8 +781,9 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use super::*;
 
     #[test]
     fn test_is_localhost() {

@@ -4,9 +4,10 @@
 //! **Working** memory tier: hot, volatile, process-local context
 //! that is lost on restart.
 
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 

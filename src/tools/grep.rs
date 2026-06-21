@@ -1,14 +1,17 @@
 //! Grep tool for searching file contents
 //!
-//! This tool searches file contents using regex patterns, similar to the grep command.
+//! This tool searches file contents using regex patterns, similar to the grep
+//! command.
 
-use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use std::path::Path;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
 use tokio::fs;
 use tracing::{debug, info, warn};
+
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Maximum file size to search (5MB)
 const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024;
@@ -354,8 +357,9 @@ Supports regex patterns and can search recursively through directories."#
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     #[test]
     fn test_grep_tool_creation() {

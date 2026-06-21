@@ -3,11 +3,12 @@
 //! Verifies connections using the Tailscale local API (`tailscale whois`)
 //! and caches results to avoid repeated lookups.
 
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use serde::Deserialize;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
@@ -81,8 +82,9 @@ impl TailscaleAuthenticator {
 
     /// Check if an IP is authorized for the given tailnets.
     ///
-    /// Returns `true` if the user's tailnet matches one of the allowed tailnets.
-    /// If `allowed_tailnets` is empty, any Tailscale user is allowed.
+    /// Returns `true` if the user's tailnet matches one of the allowed
+    /// tailnets. If `allowed_tailnets` is empty, any Tailscale user is
+    /// allowed.
     pub async fn is_authorized(&self, ip: &str, allowed_tailnets: &[String]) -> bool {
         let Some(user) = self.authenticate(ip).await else {
             return false;

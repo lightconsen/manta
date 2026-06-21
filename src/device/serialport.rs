@@ -22,12 +22,13 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::device::capability::{Capability, CapabilityResult};
-use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
 use crate::device::driver::DeviceDriver;
+use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
 use crate::device::{Device, DeviceInfo};
 use crate::error::Result;
 
-// ── SerialPortDriver ──────────────────────────────────────────────────────────
+// ── SerialPortDriver
+// ──────────────────────────────────────────────────────────
 
 /// Driver for serial port devices.
 pub struct SerialPortDriver {
@@ -83,23 +84,27 @@ impl SerialPortDriver {
     /// Optional: `data_bits` (default 8), `stop_bits` (default `"1"`),
     /// `parity` (default `"none"`).
     pub fn from_config(params: Value) -> crate::Result<Arc<dyn DeviceDriver>> {
-        let path = params
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                crate::error::SyscityError::Validation(
-                    "serialport.path is required".into(),
-                )
-            })?;
+        let path = params.get("path").and_then(Value::as_str).ok_or_else(|| {
+            crate::error::SyscityError::Validation("serialport.path is required".into())
+        })?;
 
         let baud_rate = params
             .get("baud_rate")
             .and_then(Value::as_u64)
             .unwrap_or(9600) as u32;
 
-        let data_bits = parse_data_bits(params.get("data_bits").unwrap_or(&Value::Number(8.into())))?;
-        let stop_bits = parse_stop_bits(params.get("stop_bits").unwrap_or(&Value::String("1".into())))?;
-        let parity = parse_parity(params.get("parity").unwrap_or(&Value::String("none".into())))?;
+        let data_bits =
+            parse_data_bits(params.get("data_bits").unwrap_or(&Value::Number(8.into())))?;
+        let stop_bits = parse_stop_bits(
+            params
+                .get("stop_bits")
+                .unwrap_or(&Value::String("1".into())),
+        )?;
+        let parity = parse_parity(
+            params
+                .get("parity")
+                .unwrap_or(&Value::String("none".into())),
+        )?;
 
         let name = params
             .get("name")
@@ -158,12 +163,8 @@ impl DeviceDriver for SerialPortDriver {
         };
 
         let capabilities: Vec<Arc<dyn Capability>> = vec![
-            Arc::new(SerialReadCapability {
-                port: port_inner.clone(),
-            }),
-            Arc::new(SerialWriteCapability {
-                port: port_inner,
-            }),
+            Arc::new(SerialReadCapability { port: port_inner.clone() }),
+            Arc::new(SerialWriteCapability { port: port_inner }),
         ];
 
         Ok(Device::new(
@@ -177,7 +178,8 @@ impl DeviceDriver for SerialPortDriver {
     }
 }
 
-// ── Capabilities ──────────────────────────────────────────────────────────────
+// ── Capabilities
+// ──────────────────────────────────────────────────────────────
 
 struct SerialReadCapability {
     port: Arc<tokio::sync::Mutex<Box<dyn serialport::SerialPort>>>,
@@ -297,8 +299,9 @@ impl Capability for SerialWriteCapability {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn test_from_config_minimal() {
@@ -306,8 +309,8 @@ mod tests {
             "path": "/dev/ttyUSB0",
             "baud_rate": 115200,
         });
-        let driver = SerialPortDriver::from_config(params)
-            .expect("should build from minimal config");
+        let driver =
+            SerialPortDriver::from_config(params).expect("should build from minimal config");
         assert_eq!(driver.driver_name(), "/dev/ttyUSB0");
     }
 
@@ -318,8 +321,7 @@ mod tests {
             "path": "/dev/ttyUSB0",
             "baud_rate": 9600,
         });
-        let driver = SerialPortDriver::from_config(params)
-            .expect("should build");
+        let driver = SerialPortDriver::from_config(params).expect("should build");
         assert_eq!(driver.driver_name(), "sensor-port");
     }
 
@@ -358,8 +360,7 @@ mod tests {
             "path": "/dev/nonexistent-serial-test",
             "baud_rate": 9600,
         });
-        let driver = SerialPortDriver::from_config(params)
-            .expect("should build");
+        let driver = SerialPortDriver::from_config(params).expect("should build");
         let present = tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(driver.probe())
@@ -377,8 +378,7 @@ mod tests {
             "stop_bits": "2",
             "parity": "even",
         });
-        let driver = SerialPortDriver::from_config(params)
-            .expect("should build with all options");
+        let driver = SerialPortDriver::from_config(params).expect("should build with all options");
         assert_eq!(driver.driver_name(), "full-config");
     }
 

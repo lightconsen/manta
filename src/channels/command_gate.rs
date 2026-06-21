@@ -8,9 +8,10 @@
 //! - Channel-specific gate configuration
 //! - Integration with existing PairingStore and DmPolicy
 
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 /// Outcome of a command gate check.
@@ -260,10 +261,7 @@ impl AuthContext {
     ///
     /// Populates `is_allowlisted` from the channel's `allow_from` list and
     /// `is_paired` from the optional pairing store.
-    pub async fn from_message(
-        msg: &super::IncomingMessage,
-        policy: &super::ChannelPolicy,
-    ) -> Self {
+    pub async fn from_message(msg: &super::IncomingMessage, policy: &super::ChannelPolicy) -> Self {
         let user_id = msg.user_id.0.clone();
         let channel = match &msg.provenance {
             super::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
@@ -354,11 +352,7 @@ impl CommandGate {
     }
 
     /// Add a user to a group.
-    pub async fn add_user_to_group(
-        &self,
-        group_name: &str,
-        user_id: &str,
-    ) -> bool {
+    pub async fn add_user_to_group(&self, group_name: &str, user_id: &str) -> bool {
         let mut groups = self.groups.write().await;
         if let Some(group) = groups.get_mut(group_name) {
             group.add_member(user_id);
@@ -369,11 +363,7 @@ impl CommandGate {
     }
 
     /// Remove a user from a group.
-    pub async fn remove_user_from_group(
-        &self,
-        group_name: &str,
-        user_id: &str,
-    ) -> bool {
+    pub async fn remove_user_from_group(&self, group_name: &str, user_id: &str) -> bool {
         let mut groups = self.groups.write().await;
         groups
             .get_mut(group_name)
@@ -454,12 +444,10 @@ impl CommandGate {
         }
 
         match config.mode {
-            AuthorizerMode::Any => {
-                GateResult::Denied(format!(
-                    "Not authorized for command '{}' on {}. No authorizer approved.",
-                    ctx.command, ctx.channel
-                ))
-            }
+            AuthorizerMode::Any => GateResult::Denied(format!(
+                "Not authorized for command '{}' on {}. No authorizer approved.",
+                ctx.command, ctx.channel
+            )),
             AuthorizerMode::All => {
                 let approved_count = results.iter().filter(|r| **r).count();
                 let total = results.len();
@@ -476,11 +464,7 @@ impl CommandGate {
     }
 
     /// Evaluate a single authorizer against the auth context.
-    async fn evaluate_authorizer(
-        &self,
-        authorizer: &Authorizer,
-        ctx: &AuthContext,
-    ) -> bool {
+    async fn evaluate_authorizer(&self, authorizer: &Authorizer, ctx: &AuthContext) -> bool {
         match authorizer {
             Authorizer::GroupMember(group_name) => {
                 self.is_user_in_group(group_name, &ctx.user_id).await
@@ -490,9 +474,7 @@ impl CommandGate {
             Authorizer::Allowlisted => ctx.is_allowlisted,
             Authorizer::Public => true,
             Authorizer::DenyAll => false,
-            Authorizer::Custom { name } => {
-                *ctx.custom_flags.get(name).unwrap_or(&false)
-            }
+            Authorizer::Custom { name } => *ctx.custom_flags.get(name).unwrap_or(&false),
         }
     }
 
@@ -617,22 +599,17 @@ mod tests {
     #[tokio::test]
     async fn test_gate_deny_all() {
         let gate = CommandGate::new();
-        let config = CommandGateConfig::new("telegram")
-            .with_authorizer(Authorizer::DenyAll);
+        let config = CommandGateConfig::new("telegram").with_authorizer(Authorizer::DenyAll);
         gate.set_config(config).await;
 
         let ctx = AuthContext::new("user1", "telegram", "/help");
-        assert!(matches!(
-            gate.check(&ctx).await,
-            GateResult::Denied(_)
-        ));
+        assert!(matches!(gate.check(&ctx).await, GateResult::Denied(_)));
     }
 
     #[tokio::test]
     async fn test_gate_public_allows_all() {
         let gate = CommandGate::new();
-        let config = CommandGateConfig::new("telegram")
-            .with_authorizer(Authorizer::Public);
+        let config = CommandGateConfig::new("telegram").with_authorizer(Authorizer::Public);
         gate.set_config(config).await;
 
         let ctx = AuthContext::new("user1", "telegram", "/help");
@@ -642,7 +619,8 @@ mod tests {
     #[tokio::test]
     async fn test_gate_group_member() {
         let gate = CommandGate::new();
-        gate.add_group(AccessGroup::new("beta").with_description("Beta testers")).await;
+        gate.add_group(AccessGroup::new("beta").with_description("Beta testers"))
+            .await;
         gate.add_user_to_group("beta", "user1").await;
 
         let config = CommandGateConfig::new("telegram")
@@ -655,29 +633,20 @@ mod tests {
 
         // user2 is not in beta group
         let ctx2 = AuthContext::new("user2", "telegram", "/beta_cmd");
-        assert!(matches!(
-            gate.check(&ctx2).await,
-            GateResult::Denied(_)
-        ));
+        assert!(matches!(gate.check(&ctx2).await, GateResult::Denied(_)));
     }
 
     #[tokio::test]
     async fn test_gate_admin() {
         let gate = CommandGate::new();
-        let config = CommandGateConfig::new("discord")
-            .with_authorizer(Authorizer::Admin);
+        let config = CommandGateConfig::new("discord").with_authorizer(Authorizer::Admin);
         gate.set_config(config).await;
 
-        let ctx_admin = AuthContext::new("admin_user", "discord", "/admin_cmd")
-            .with_admin(true);
+        let ctx_admin = AuthContext::new("admin_user", "discord", "/admin_cmd").with_admin(true);
         assert_eq!(gate.check(&ctx_admin).await, GateResult::Allowed);
 
-        let ctx_user = AuthContext::new("regular_user", "discord", "/admin_cmd")
-            .with_admin(false);
-        assert!(matches!(
-            gate.check(&ctx_user).await,
-            GateResult::Denied(_)
-        ));
+        let ctx_user = AuthContext::new("regular_user", "discord", "/admin_cmd").with_admin(false);
+        assert!(matches!(gate.check(&ctx_user).await, GateResult::Denied(_)));
     }
 
     #[tokio::test]
@@ -693,17 +662,12 @@ mod tests {
         gate.set_config(config).await;
 
         // VIP user (not admin) should be allowed
-        let ctx_vip = AuthContext::new("vip_user", "telegram", "/cmd")
-            .with_admin(false);
+        let ctx_vip = AuthContext::new("vip_user", "telegram", "/cmd").with_admin(false);
         assert_eq!(gate.check(&ctx_vip).await, GateResult::Allowed);
 
         // Regular user (neither admin nor vip) should be denied
-        let ctx_user = AuthContext::new("user", "telegram", "/cmd")
-            .with_admin(false);
-        assert!(matches!(
-            gate.check(&ctx_user).await,
-            GateResult::Denied(_)
-        ));
+        let ctx_user = AuthContext::new("user", "telegram", "/cmd").with_admin(false);
+        assert!(matches!(gate.check(&ctx_user).await, GateResult::Denied(_)));
     }
 
     #[tokio::test]
@@ -725,10 +689,7 @@ mod tests {
         let ctx_admin_only = AuthContext::new("admin_user", "telegram", "/sensitive")
             .with_admin(true)
             .with_paired(false);
-        assert!(matches!(
-            gate.check(&ctx_admin_only).await,
-            GateResult::Denied(_)
-        ));
+        assert!(matches!(gate.check(&ctx_admin_only).await, GateResult::Denied(_)));
     }
 
     #[tokio::test]
@@ -740,15 +701,10 @@ mod tests {
         gate.set_config(config).await;
 
         // Admin command — gate applies, user is not admin → denied
-        let ctx_user = AuthContext::new("user", "telegram", "admin")
-            .with_admin(false);
-        assert!(matches!(
-            gate.check(&ctx_user).await,
-            GateResult::Denied(_)
-        ));
+        let ctx_user = AuthContext::new("user", "telegram", "admin").with_admin(false);
+        assert!(matches!(gate.check(&ctx_user).await, GateResult::Denied(_)));
 
-        let ctx_user_help = AuthContext::new("user", "telegram", "help")
-            .with_admin(false);
+        let ctx_user_help = AuthContext::new("user", "telegram", "help").with_admin(false);
         // No filter match = allowed
         assert_eq!(gate.check(&ctx_user_help).await, GateResult::Allowed);
     }
@@ -756,19 +712,17 @@ mod tests {
     #[tokio::test]
     async fn test_custom_authorizer() {
         let gate = CommandGate::new();
-        let config = CommandGateConfig::new("telegram")
-            .with_authorizer(Authorizer::Custom { name: "feature_flag_x".to_string() });
+        let config = CommandGateConfig::new("telegram").with_authorizer(Authorizer::Custom {
+            name: "feature_flag_x".to_string(),
+        });
         gate.set_config(config).await;
 
-        let ctx_enabled = AuthContext::new("user1", "telegram", "/cmd")
-            .with_flag("feature_flag_x", true);
+        let ctx_enabled =
+            AuthContext::new("user1", "telegram", "/cmd").with_flag("feature_flag_x", true);
         assert_eq!(gate.check(&ctx_enabled).await, GateResult::Allowed);
 
         let ctx_disabled = AuthContext::new("user1", "telegram", "/cmd");
-        assert!(matches!(
-            gate.check(&ctx_disabled).await,
-            GateResult::Denied(_)
-        ));
+        assert!(matches!(gate.check(&ctx_disabled).await, GateResult::Denied(_)));
     }
 
     #[tokio::test]
@@ -843,56 +797,43 @@ mod tests {
     #[tokio::test]
     async fn test_paired_user_authorizer() {
         let gate = CommandGate::new();
-        let config = CommandGateConfig::new("telegram")
-            .with_authorizer(Authorizer::PairedUser);
+        let config = CommandGateConfig::new("telegram").with_authorizer(Authorizer::PairedUser);
         gate.set_config(config).await;
 
-        let ctx_paired = AuthContext::new("user1", "telegram", "/cmd")
-            .with_paired(true);
+        let ctx_paired = AuthContext::new("user1", "telegram", "/cmd").with_paired(true);
         assert_eq!(gate.check(&ctx_paired).await, GateResult::Allowed);
 
-        let ctx_unpaired = AuthContext::new("user2", "telegram", "/cmd")
-            .with_paired(false);
-        assert!(matches!(
-            gate.check(&ctx_unpaired).await,
-            GateResult::Denied(_)
-        ));
+        let ctx_unpaired = AuthContext::new("user2", "telegram", "/cmd").with_paired(false);
+        assert!(matches!(gate.check(&ctx_unpaired).await, GateResult::Denied(_)));
     }
 
     #[tokio::test]
     async fn test_allowlisted_authorizer() {
         let gate = CommandGate::new();
-        let config = CommandGateConfig::new("telegram")
-            .with_authorizer(Authorizer::Allowlisted);
+        let config = CommandGateConfig::new("telegram").with_authorizer(Authorizer::Allowlisted);
         gate.set_config(config).await;
 
-        let ctx_allowed = AuthContext::new("user1", "telegram", "/cmd")
-            .with_allowlisted(true);
+        let ctx_allowed = AuthContext::new("user1", "telegram", "/cmd").with_allowlisted(true);
         assert_eq!(gate.check(&ctx_allowed).await, GateResult::Allowed);
 
-        let ctx_not_allowed = AuthContext::new("user2", "telegram", "/cmd")
-            .with_allowlisted(false);
-        assert!(matches!(
-            gate.check(&ctx_not_allowed).await,
-            GateResult::Denied(_)
-        ));
+        let ctx_not_allowed = AuthContext::new("user2", "telegram", "/cmd").with_allowlisted(false);
+        assert!(matches!(gate.check(&ctx_not_allowed).await, GateResult::Denied(_)));
     }
 
     #[tokio::test]
     async fn test_auth_context_from_message_allowlist() {
         let policy = crate::channels::ChannelPolicy::new(
             std::sync::Arc::new(tokio::sync::RwLock::new(None)),
-            std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::security::pairing::DmPolicy::Open,
-            )),
+            std::sync::Arc::new(tokio::sync::RwLock::new(crate::security::pairing::DmPolicy::Open)),
             std::sync::Arc::new(tokio::sync::RwLock::new(vec!["alice".to_string()])),
         );
 
-        let msg = crate::channels::IncomingMessage::new("alice", "conv1", "/help")
-            .with_provenance(crate::channels::InputProvenance::ExternalUser {
+        let msg = crate::channels::IncomingMessage::new("alice", "conv1", "/help").with_provenance(
+            crate::channels::InputProvenance::ExternalUser {
                 channel: "telegram".to_string(),
                 is_direct: true,
-            });
+            },
+        );
 
         let ctx = AuthContext::from_message(&msg, &policy).await;
         assert_eq!(ctx.user_id, "alice");
@@ -914,15 +855,12 @@ mod tests {
     async fn test_auth_context_from_message_detected_command() {
         let policy = crate::channels::ChannelPolicy::new(
             std::sync::Arc::new(tokio::sync::RwLock::new(None)),
-            std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::security::pairing::DmPolicy::Open,
-            )),
+            std::sync::Arc::new(tokio::sync::RwLock::new(crate::security::pairing::DmPolicy::Open)),
             std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         );
 
         let result = crate::tools::command_detector::detect_command("/skill list extra").unwrap();
-        let metadata = crate::channels::MessageMetadata::new()
-            .with_detected_command(&result);
+        let metadata = crate::channels::MessageMetadata::new().with_detected_command(&result);
         let msg = crate::channels::IncomingMessage::new("alice", "conv1", "/skill list extra")
             .with_metadata(metadata);
 

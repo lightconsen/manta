@@ -2,15 +2,16 @@
 //!
 //! This module provides storage abstractions and implementations.
 
-use crate::core::models::{Entity, Id};
-use crate::error::SyscityError;
-use async_trait::async_trait;
-use sqlx::Row;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+
+use async_trait::async_trait;
+use sqlx::Row;
 use thiserror::Error;
 
+use crate::core::models::{Entity, Id};
+use crate::error::SyscityError;
 // Re-export memory types for unified storage
 pub use crate::memory::{
     ChatHistoryStore, ChatMessage, EmbeddedChunk, Memory, MemoryId, MemoryQuery, MemoryStats,
@@ -79,7 +80,8 @@ pub trait Storage: Send + Sync {
     async fn health_check(&self) -> Result<(), StorageError>;
 
     /// Get conversation history for a session
-    /// Default implementation returns empty (for stores that don't support chat history)
+    /// Default implementation returns empty (for stores that don't support chat
+    /// history)
     async fn get_conversation_history(
         &self,
         _conversation_id: &str,
@@ -89,13 +91,15 @@ pub trait Storage: Send + Sync {
     }
 
     /// Get last conversation ID for a user
-    /// Default implementation returns None (for stores that don't support chat history)
+    /// Default implementation returns None (for stores that don't support chat
+    /// history)
     async fn get_last_conversation(&self, _user_id: &str) -> Result<Option<String>, StorageError> {
         Ok(None)
     }
 
     /// Get list of conversations for a user
-    /// Default implementation returns empty (for stores that don't support chat history)
+    /// Default implementation returns empty (for stores that don't support chat
+    /// history)
     async fn get_user_conversations(
         &self,
         _user_id: &str,
@@ -425,14 +429,16 @@ impl SqliteStorage {
         })?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON \
+             chat_messages(conversation_id, created_at DESC)",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Backend(format!("Failed to create chat index: {}", e)))?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(user_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(user_id, \
+             created_at DESC)",
         )
         .execute(&self.pool)
         .await
@@ -466,19 +472,23 @@ impl SqliteStorage {
         .map_err(|e| StorageError::Backend(format!("Failed to create memory index: {}", e)))?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE \
+             expires_at IS NOT NULL",
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| StorageError::Backend(format!("Failed to create memory expires index: {}", e)))?;
+        .map_err(|e| {
+            StorageError::Backend(format!("Failed to create memory expires index: {}", e))
+        })?;
 
         Ok(())
     }
 
     /// Convert a database row to an Entity
     fn row_to_entity(row: &sqlx::sqlite::SqliteRow) -> Result<Entity, StorageError> {
-        use crate::core::models::{Metadata, Status};
         use chrono::DateTime;
+
+        use crate::core::models::{Metadata, Status};
 
         let id_str: String = row.get("id");
         let id = Id::parse(&id_str)
@@ -696,7 +706,8 @@ fn rfc3339_to_system_time(s: &str) -> Option<std::time::SystemTime> {
         .map(|dt| dt.with_timezone(&chrono::Utc).into())
 }
 
-// Helper functions for INTEGER timestamp (Unix epoch seconds) - compatible with db.rs
+// Helper functions for INTEGER timestamp (Unix epoch seconds) - compatible with
+// db.rs
 fn system_time_to_secs(time: std::time::SystemTime) -> i64 {
     time.duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
@@ -754,7 +765,8 @@ impl VectorStore for SqliteStorage {
         // Load all chunks and compute similarity in Rust
         // For large datasets, this should use sqlite-vec extension or similar
         let rows = sqlx::query(
-            "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM vector_chunks"
+            "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM \
+             vector_chunks",
         )
         .fetch_all(&self.pool)
         .await

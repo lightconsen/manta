@@ -2,12 +2,13 @@
 //!
 //! Provides authentication, authorization, rate limiting, and sandboxing.
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::{rngs::OsRng, RngCore};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use rand::{rngs::OsRng, RngCore};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -1282,7 +1283,9 @@ mod secret_tests {
     #[test]
     fn test_detect_jwt() {
         let scanner = SecretScanner::with_default_patterns();
-        let text = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        let text = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.\
+                    eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.\
+                    SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
         let findings = scanner.scan(text);
         assert!(!findings.is_empty());
         assert!(findings.iter().any(|f| f.pattern == "JWT Token"));
@@ -1347,19 +1350,17 @@ pub mod pii;
 /// Content filter for tool outputs
 pub mod content_filter;
 
-// Re-export SecurityValidator and validation types from tools module for use in security tests
-pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};
-
-// Re-export PII types
-pub use pii::{DataClassification, DetectedPii, FilterResult, PiiDetector, PiiPattern};
-
+// Re-export SecurityValidator and validation types from tools module for use in
+// security tests
 // Re-export content filter types
 pub use content_filter::{ContentFilter, ContentFilterOutcome, FilterAction};
-
+// Re-export PII types
+pub use pii::{DataClassification, DetectedPii, FilterResult, PiiDetector, PiiPattern};
+// Re-export audit logger trait
+pub use runtime_audit::AuditLogger;
 // Re-export trusted proxy types
 pub use trusted_proxy::{
     TrustedProxyAuthenticator, TrustedProxyConfig, TrustedProxyError, TrustedProxyUser,
 };
 
-// Re-export audit logger trait
-pub use runtime_audit::AuditLogger;
+pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};

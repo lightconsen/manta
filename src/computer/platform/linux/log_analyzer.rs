@@ -1,11 +1,12 @@
 //! Log analyzer tool — read and search system and application logs.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Action types for log analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,27 +57,24 @@ impl LogAnalyzerTool {
             args.push(s);
         }
 
-        let result = timeout(
-            Duration::from_secs(15),
-            Command::new("journalctl").args(&args).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(15), Command::new("journalctl").args(&args).output()).await;
 
         match result {
             Ok(Ok(output)) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 stdout
                     .lines()
-                    .filter_map(|line| {
+                    .map(|line| {
                         // Try to parse: "Jan 15 10:23:00 hostname service[level]: message"
                         // or systemd-style: "Jan 15 10:23:00 app[1234]: message"
                         if line.len() < 20 {
-                            return Some(LogLine {
+                            return LogLine {
                                 timestamp: None,
                                 unit: None,
                                 level: None,
                                 message: line.to_string(),
-                            });
+                            };
                         }
                         let ts = &line[..15]; // "Jan 15 10:23:00"
                         let rest = &line[16..];
@@ -87,19 +85,19 @@ impl LogAnalyzerTool {
                             // Extract unit and level from prefix like "nginx[1234]" or "app[1234]:"
                             let unit = prefix.split('[').next().map(|s| s.to_string());
                             let level = None; // journalctl doesn't always include level inline
-                            Some(LogLine {
+                            LogLine {
                                 timestamp: Some(ts.to_string()),
                                 unit,
                                 level,
                                 message,
-                            })
+                            }
                         } else {
-                            Some(LogLine {
+                            LogLine {
                                 timestamp: Some(ts.to_string()),
                                 unit: None,
                                 level: None,
                                 message: rest.to_string(),
-                            })
+                            }
                         }
                     })
                     .collect()
@@ -112,18 +110,13 @@ impl LogAnalyzerTool {
         let cmd = if let Some(p) = path {
             format!("grep -i '{}' {} | tail -n {}", pattern, p, lines)
         } else {
-            format!(
-                "journalctl --no-pager | grep -i '{}' | tail -n {}",
-                pattern, lines
-            )
+            format!("journalctl --no-pager | grep -i '{}' | tail -n {}", pattern, lines)
         };
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let result = timeout(
-            Duration::from_secs(15),
-            Command::new(&shell).arg("-c").arg(&cmd).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(15), Command::new(&shell).arg("-c").arg(&cmd).output())
+                .await;
 
         match result {
             Ok(Ok(output)) => {
@@ -150,9 +143,8 @@ impl Tool for LogAnalyzerTool {
     }
 
     fn description(&self) -> &str {
-        "Read and search system logs using journalctl or grep. \
-         Supports reading recent logs, filtering by service, time range, \
-         and pattern search."
+        "Read and search system logs using journalctl or grep. Supports reading recent logs, \
+         filtering by service, time range, and pattern search."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -195,17 +187,17 @@ impl Tool for LogAnalyzerTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action_str = args.get("action").and_then(|v| v.as_str()).unwrap_or("read");
+        let action_str = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("read");
         let action = match action_str {
             "search" => LogAction::Search,
             "follow" => LogAction::Follow,
             _ => LogAction::Read,
         };
 
-        let lines = args
-            .get("lines")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(50) as usize;
+        let lines = args.get("lines").and_then(|v| v.as_i64()).unwrap_or(50) as usize;
 
         let logs = match action {
             LogAction::Read => {
@@ -239,10 +231,8 @@ impl Tool for LogAnalyzerTool {
             "logs": logs,
         });
 
-        Ok(
-            ToolExecutionResult::success(format!("Retrieved {} log lines", logs.len()))
-                .with_data(data),
-        )
+        Ok(ToolExecutionResult::success(format!("Retrieved {} log lines", logs.len()))
+            .with_data(data))
     }
 }
 

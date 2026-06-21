@@ -3,14 +3,15 @@
 //! These skills are always available and cannot be uninstalled.
 //! They provide core functionality for skill management and scheduling.
 
-use super::{Skill, SkillTrigger, StorageLevel, TriggerType};
 use std::collections::HashMap;
+
+use super::{Skill, SkillTrigger, StorageLevel, TriggerType};
 
 /// Get all built-in skills
 pub fn get_builtin_skills() -> HashMap<String, Skill> {
     let mut skills = HashMap::new();
 
- // Add each built-in skill
+    // Add each built-in skill
     let skill_creator = create_skill_creator();
     skills.insert(skill_creator.name.clone(), skill_creator);
 
@@ -63,7 +64,7 @@ fn create_skill_creator() -> Skill {
     .with_emoji("🛠️")
     .by("syscity");
 
- // Add triggers
+    // Add triggers
     skill.triggers = vec![
         SkillTrigger {
             trigger_type: TriggerType::Command,
@@ -95,7 +96,7 @@ fn create_skill_creator() -> Skill {
         },
     ];
 
- // Mark as built-in
+    // Mark as built-in
     skill.source_level = StorageLevel::Bundled;
     skill.is_eligible = true;
     skill.enabled = true;
@@ -113,7 +114,7 @@ fn create_find_skills() -> Skill {
     .with_emoji("🔍")
     .by("syscity");
 
- // Add triggers
+    // Add triggers
     skill.triggers = vec![
         SkillTrigger {
             trigger_type: TriggerType::Command,
@@ -152,7 +153,7 @@ fn create_find_skills() -> Skill {
         },
     ];
 
- // Mark as built-in
+    // Mark as built-in
     skill.source_level = StorageLevel::Bundled;
     skill.is_eligible = true;
     skill.enabled = true;
@@ -166,7 +167,7 @@ fn create_cron_skill() -> Skill {
         .with_emoji("⏰")
         .by("syscity");
 
- // Add triggers
+    // Add triggers
     skill.triggers = vec![
         SkillTrigger {
             trigger_type: TriggerType::Command,
@@ -212,7 +213,7 @@ fn create_cron_skill() -> Skill {
         },
     ];
 
- // Mark as built-in
+    // Mark as built-in
     skill.source_level = StorageLevel::Bundled;
     skill.is_eligible = true;
     skill.enabled = true;
@@ -1596,7 +1597,7 @@ fn create_nano_pdf_skill() -> Skill {
         },
     ];
 
- // Note: requires_bin takes ownership, must chain before assigning to skill
+    // Note: requires_bin takes ownership, must chain before assigning to skill
     let mut skill = skill.requires_bin("pdftotext").requires_bin("pandoc");
 
     skill.source_level = StorageLevel::Bundled;
@@ -2454,7 +2455,7 @@ mod tests {
         assert!(skill.is_eligible);
         assert!(skill.enabled);
         assert!(!skill.triggers.is_empty());
- // Nano PDF requires pdftotext and pandoc
+        // Nano PDF requires pdftotext and pandoc
         assert!(skill
             .metadata
             .requires

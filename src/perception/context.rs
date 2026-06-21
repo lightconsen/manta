@@ -25,10 +25,10 @@
 //! # Lifecycle
 //!
 //! - [`start`] spawns the two background tasks and returns the context.
-//! - [`new_adapter`] mints a per-agent adapter that subscribes to the
-//!   shared hubs.
-//! - [`shutdown`] aborts the temporal/fusion handles. Per-agent
-//!   adapters must be shut down separately by their owners.
+//! - [`new_adapter`] mints a per-agent adapter that subscribes to the shared
+//!   hubs.
+//! - [`shutdown`] aborts the temporal/fusion handles. Per-agent adapters must
+//!   be shut down separately by their owners.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -98,12 +98,8 @@ impl PerceptionContext {
         let temporal_handle = spawn_temporal_processor(raw_hub.clone(), temporal.clone());
 
         let engine = FusionEngine::new(config.fusion);
-        let fusion_handle = spawn_fusion_stream(
-            raw_hub.clone(),
-            derived_hub.clone(),
-            engine,
-            config.fusion_stream,
-        );
+        let fusion_handle =
+            spawn_fusion_stream(raw_hub.clone(), derived_hub.clone(), engine, config.fusion_stream);
 
         Self {
             raw_hub,
@@ -159,13 +155,15 @@ impl PerceptionContext {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Instant, SystemTime};
+
+    use tokio::sync::broadcast;
+
     use super::*;
     use crate::perception::{
-        AgentPerceptionAdapter, Event, Modality, MockPerceptionSource, Observation,
-        ObservationId, PerceptionSource,
+        AgentPerceptionAdapter, Event, MockPerceptionSource, Modality, Observation, ObservationId,
+        PerceptionSource,
     };
-    use std::time::{Instant, SystemTime};
-    use tokio::sync::broadcast;
 
     fn obs(source: &str, modality: Modality, conf: f32) -> Observation {
         Observation {
@@ -238,10 +236,7 @@ mod tests {
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(10)).await;
             let snap = adapter.now();
-            if let Some(agg) = snap
-                .aggregates
-                .get(&("cpu".to_string(), Modality::System))
-            {
+            if let Some(agg) = snap.aggregates.get(&("cpu".to_string(), Modality::System)) {
                 assert_eq!(agg.stats["count"], 1);
                 assert_eq!(agg.stats["mean"], 42.0);
                 return;

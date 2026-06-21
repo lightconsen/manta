@@ -141,7 +141,8 @@ impl PluginMetricsRegistry {
         }
     }
 
-    /// Register metrics for a plugin. If already registered, returns the existing entry.
+    /// Register metrics for a plugin. If already registered, returns the
+    /// existing entry.
     pub async fn register(&self, plugin_id: &str) -> Arc<PluginMetrics> {
         let mut map = self.metrics.write().await;
         map.entry(plugin_id.to_string())

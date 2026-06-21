@@ -1,7 +1,14 @@
 //! Slash Command System for Syscity Gateway
 //!
 //! Provides `/` commands via WebSocket RPC.
-//! Commands are exposed via `commands.list` and executed via `commands.execute`.
+//! Commands are exposed via `commands.list` and executed via
+//! `commands.execute`.
+
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+use tracing::debug;
 
 use crate::acp::{AcpSessionId, SpawnMode, SubagentConfig, ThreadBinding};
 use crate::agent::TranscriptFormat;
@@ -11,12 +18,9 @@ use crate::gateway::GatewayState;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter};
 use crate::tools::command_gate::UserLevel;
 use crate::tools::mcp::{McpServerConfig, McpToolWrapper};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::debug;
 
-// ── Command Definitions ───────────────────────────────────────────────────────
+// ── Command Definitions
+// ───────────────────────────────────────────────────────
 
 /// Command category for grouping
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,7 +342,8 @@ struct HelpPayload {
     tier: Option<CommandTier>,
 }
 
-// ── handlers ──────────────────────────────────────────────────────────────────
+// ── handlers
+// ──────────────────────────────────────────────────────────────────
 
 /// Handle `commands.list` — return the built-in command catalog
 pub fn handle_commands_list() -> serde_json::Value {
@@ -583,7 +588,8 @@ pub async fn handle_commands_execute(
     response
 }
 
-// ── Individual command handlers ───────────────────────────────────────────────
+// ── Individual command handlers
+// ───────────────────────────────────────────────
 
 fn handle_help(req: &WsRequest, args: &str) -> WsResponse {
     let help_args = HelpArgs::parse(args);
@@ -664,10 +670,7 @@ async fn handle_status(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse
     let sessions = state.agents.session_routing.read().await.len();
 
     let text = format!(
-        "📊 **Status**\n\n\
-        Active agents: {}\n\
-        Active sessions: {}\n\
-        Status: healthy",
+        "📊 **Status**\n\nActive agents: {}\nActive sessions: {}\nStatus: healthy",
         agents, sessions
     );
 
@@ -894,7 +897,9 @@ async fn handle_compact(
     let compact_result = agent_handle.agent.compact_context(&sid).await;
 
     // Flush transcript to disk as a compaction step
-    let export_result = state.infra.transcript_store
+    let export_result = state
+        .infra
+        .transcript_store
         .export(&sid, TranscriptFormat::Markdown)
         .await;
 
@@ -967,7 +972,9 @@ async fn handle_subagents(
     if trimmed.is_empty() || trimmed == "list" {
         let session_id = conn.read().await.subscriptions.first().cloned();
         let handles = if let Some(ref sid) = session_id {
-            state.agents.acp
+            state
+                .agents
+                .acp
                 .list_session_subagents(&AcpSessionId(sid.clone()))
                 .await
         } else {
@@ -1003,7 +1010,9 @@ async fn handle_subagents(
             if rest.is_empty() || rest == "all" {
                 let session_id = conn.read().await.subscriptions.first().cloned();
                 if let Some(sid) = session_id {
-                    match state.agents.acp
+                    match state
+                        .agents
+                        .acp
                         .terminate_session(&AcpSessionId(sid.clone()))
                         .await
                     {
@@ -1078,12 +1087,8 @@ async fn handle_subagents(
             match all.iter().find(|h| h.id == rest) {
                 Some(handle) => {
                     let text = format!(
-                        "🤖 **Subagent `{}`**\n\n\
-                        Status: `{:?}`\n\
-                        Mode: `{:?}`\n\
-                        Thread: `{}`\n\
-                        Session: `{}`\n\
-                        Parent: `{}`",
+                        "🤖 **Subagent `{}`**\n\nStatus: `{:?}`\nMode: `{:?}`\nThread: \
+                         `{}`\nSession: `{}`\nParent: `{}`",
                         handle.id,
                         status.unwrap_or(handle.status),
                         handle.mode,
@@ -1149,7 +1154,9 @@ async fn handle_subagents(
                     ),
                 }
             } else {
-                match state.agents.acp
+                match state
+                    .agents
+                    .acp
                     .steer_subagent(target_id, message.to_string())
                     .await
                 {
@@ -1205,7 +1212,9 @@ async fn handle_subagents(
                 ..SubagentConfig::default()
             };
 
-            match state.agents.acp
+            match state
+                .agents
+                .acp
                 .spawn_subagent(AcpSessionId(sid.clone()), route.agent_id, config)
                 .await
             {
@@ -1251,11 +1260,7 @@ async fn handle_skill(req: &WsRequest, state: &Arc<GatewayState>, args: &str) ->
     match mgr.get_skill(name).await {
         Some(skill) => {
             let text = format!(
-                "🎯 **Skill: {}**\n\n\
-                Version: {}\n\
-                Description: {}\n\
-                Enabled: {}\n\
-                Eligible: {}",
+                "🎯 **Skill: {}**\n\nVersion: {}\nDescription: {}\nEnabled: {}\nEligible: {}",
                 skill.name, skill.version, skill.description, skill.enabled, skill.is_eligible,
             );
             WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
@@ -1276,11 +1281,8 @@ async fn handle_acp(
         if let Some(sid) = session_id {
             if let Some(status) = state.agents.acp.get_status(sid.clone()).await {
                 let text = format!(
-                    "🤖 **ACP Session `{}`**\n\n\
-                    State: `{:?}`\n\
-                    Mode: `{:?}`\n\
-                    Iteration: {}/{}\n\
-                    Queue depth: {}",
+                    "🤖 **ACP Session `{}`**\n\nState: `{:?}`\nMode: `{:?}`\nIteration: \
+                     {}/{}\nQueue depth: {}",
                     sid,
                     status.runtime_state,
                     status.mode,
@@ -1319,7 +1321,8 @@ async fn handle_acp(
                 return WsResponse::err(
                     &req.id,
                     "INVALID_ARGS",
-                    "Usage: /acp spawn [parent_agent_id] (requires an active session or explicit parent)",
+                    "Usage: /acp spawn [parent_agent_id] (requires an active session or explicit \
+                     parent)",
                 );
             };
             let session_id = state.agents.acp.create_session(parent_id.clone()).await;
@@ -1355,7 +1358,9 @@ async fn handle_acp(
                 Some(rest.to_string())
             };
             if let Some(sid) = sid {
-                let _ = state.agents.acp
+                let _ = state
+                    .agents
+                    .acp
                     .terminate_session(&AcpSessionId(sid.clone()))
                     .await;
                 return WsResponse::ok(
@@ -1383,7 +1388,9 @@ async fn handle_acp(
                     "Usage: /acp steer <id> <message>",
                 );
             }
-            match state.agents.acp
+            match state
+                .agents
+                .acp
                 .steer_subagent(target_id, message.to_string())
                 .await
             {
@@ -1855,7 +1862,8 @@ async fn handle_queue(req: &WsRequest, state: &Arc<GatewayState>, args: &str) ->
     )
 }
 
-// ── Context / Session handlers ────────────────────────────────────────────────
+// ── Context / Session handlers
+// ────────────────────────────────────────────────
 
 async fn handle_context(
     req: &WsRequest,
@@ -1994,7 +2002,9 @@ async fn handle_export_session(
     let _path_hint = args.trim();
 
     if let Some(sid) = session_id {
-        match state.infra.transcript_store
+        match state
+            .infra
+            .transcript_store
             .export(&sid, TranscriptFormat::Html)
             .await
         {
@@ -2016,7 +2026,8 @@ async fn handle_export_session(
     WsResponse::ok(&req.id, serde_json::json!({ "text": "📄 No active session to export." }))
 }
 
-// ── Focus / Binding handlers ──────────────────────────────────────────────────
+// ── Focus / Binding handlers
+// ──────────────────────────────────────────────────
 
 async fn handle_focus(
     req: &WsRequest,
@@ -2063,7 +2074,8 @@ async fn handle_unfocus(
     WsResponse::ok(&req.id, serde_json::json!({ "text": "🎯 No active session to unfocus." }))
 }
 
-// ── Allowlist / Approval handlers ─────────────────────────────────────────────
+// ── Allowlist / Approval handlers
+// ─────────────────────────────────────────────
 
 async fn handle_allowlist(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
@@ -2125,7 +2137,9 @@ async fn handle_allowlist(req: &WsRequest, state: &Arc<GatewayState>, args: &str
 async fn handle_approve(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
     if trimmed.is_empty() || trimmed == "list" {
-        let pending = state.tools.approval_queue
+        let pending = state
+            .tools
+            .approval_queue
             .list_pending(ApprovalFilter::default())
             .await;
         if pending.is_empty() {
@@ -2205,7 +2219,8 @@ async fn handle_btw(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> W
     }
 }
 
-// ── MCP / Debug / Restart handlers ────────────────────────────────────────────
+// ── MCP / Debug / Restart handlers
+// ────────────────────────────────────────────
 
 async fn handle_mcp(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
@@ -2273,7 +2288,12 @@ async fn handle_mcp(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> W
                 }
             };
 
-            match state.tools.mcp_manager.connect(&server_id, config.clone()).await {
+            match state
+                .tools
+                .mcp_manager
+                .connect(&server_id, config.clone())
+                .await
+            {
                 Ok(tools) => {
                     if let Some(client_arc) = state.tools.mcp_manager.get_client(&server_id).await {
                         let max_tools = if config.max_tools == 0 {

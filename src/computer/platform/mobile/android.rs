@@ -3,11 +3,12 @@
 //! Provides screenshot, tap, swipe, text input, key events, app installation,
 //! launch, force-stop, and UI tree dump.
 
+use async_trait::async_trait;
+use serde_json::Value;
+
 use super::{has_adb, run_cmd};
 use crate::computer::platform::{OsControlScope, PlatformConstraints, PlatformToolSet};
 use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
-use async_trait::async_trait;
-use serde_json::Value;
 
 // ── Android Capability Set ─────────────────────────────────────────────────
 
@@ -133,25 +134,27 @@ impl Tool for AdbScreenshotTool {
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let adb_args = self.adb_args(&["exec-out", "screencap", "-p"]);
-        let (status, stdout, stderr) = run_cmd("adb", &adb_args.iter().map(|s| s.as_str()).collect::<Vec<_>>()).await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: "adb screencap failed".to_string(),
-                cause: Some(Box::new(e)),
-            })?;
+        let (status, stdout, stderr) =
+            run_cmd("adb", &adb_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                .await
+                .map_err(|e| crate::error::SyscityError::ExternalService {
+                    source: "adb screencap failed".to_string(),
+                    cause: Some(Box::new(e)),
+                })?;
 
         if !status.success() {
             return Ok(ToolExecutionResult::error(format!("adb screencap failed: {}", stderr)));
         }
 
-        let base64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            stdout.as_bytes(),
-        );
+        let base64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, stdout.as_bytes());
 
-        Ok(ToolExecutionResult::success("Screenshot captured").with_data(serde_json::json!({
-            "base64": base64,
-            "format": "png",
-        })))
+        Ok(
+            ToolExecutionResult::success("Screenshot captured").with_data(serde_json::json!({
+                "base64": base64,
+                "format": "png",
+            })),
+        )
     }
 }
 
@@ -228,10 +231,7 @@ impl Tool for AdbInputTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("tap");
+        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("tap");
 
         let shell_cmd = match action {
             "tap" => {
@@ -255,22 +255,23 @@ impl Tool for AdbInputTool {
                 format!("input text '{}'", text)
             }
             "key" => {
-                let keycode = args.get("keycode").and_then(|v| v.as_str()).unwrap_or("HOME");
+                let keycode = args
+                    .get("keycode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("HOME");
                 format!("input keyevent {}", keycode)
             }
             _ => return Ok(ToolExecutionResult::error(format!("Unknown action: {}", action))),
         };
 
         let adb_args = self.adb_args(&["shell", &shell_cmd]);
-        let (status, _stdout, stderr) = run_cmd(
-            "adb",
-            &adb_args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-        )
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "adb input failed".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
+        let (status, _stdout, stderr) =
+            run_cmd("adb", &adb_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                .await
+                .map_err(|e| crate::error::SyscityError::ExternalService {
+                    source: "adb input failed".to_string(),
+                    cause: Some(Box::new(e)),
+                })?;
 
         if !status.success() {
             return Ok(ToolExecutionResult::error(format!("adb input failed: {}", stderr)));
@@ -350,10 +351,7 @@ impl Tool for AdbAppManagerTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
 
         let adb_args = match action {
             "install" => {
@@ -374,32 +372,25 @@ impl Tool for AdbAppManagerTool {
                 self.adb_args(&["shell", "am", "force-stop", pkg])
             }
             "list_packages" => self.adb_args(&["shell", "pm", "list", "packages"]),
-            _ => {
-                return Ok(ToolExecutionResult::error(format!(
-                    "Unknown action: {}",
-                    action
-                )))
-            }
+            _ => return Ok(ToolExecutionResult::error(format!("Unknown action: {}", action))),
         };
 
-        let (status, stdout, stderr) = run_cmd(
-            "adb",
-            &adb_args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-        )
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "adb app manager failed".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
+        let (status, stdout, stderr) =
+            run_cmd("adb", &adb_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                .await
+                .map_err(|e| crate::error::SyscityError::ExternalService {
+                    source: "adb app manager failed".to_string(),
+                    cause: Some(Box::new(e)),
+                })?;
 
         if !status.success() {
-            return Ok(ToolExecutionResult::error(format!(
-                "adb app manager failed: {}",
-                stderr
-            )));
+            return Ok(ToolExecutionResult::error(format!("adb app manager failed: {}", stderr)));
         }
 
-        Ok(ToolExecutionResult::success(format!("Action '{}' completed\n{}", action, stdout)))
+        Ok(ToolExecutionResult::success(format!(
+            "Action '{}' completed\n{}",
+            action, stdout
+        )))
     }
 }
 
@@ -467,33 +458,26 @@ impl Tool for AdbUiTreeTool {
     ) -> crate::Result<ToolExecutionResult> {
         // Dump to device /sdcard/window_dump.xml, then pull it.
         let dump_args = self.adb_args(&["shell", "uiautomator", "dump", "/sdcard/window_dump.xml"]);
-        let (status, _, stderr) = run_cmd(
-            "adb",
-            &dump_args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-        )
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "adb uiautomator dump failed".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
+        let (status, _, stderr) =
+            run_cmd("adb", &dump_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                .await
+                .map_err(|e| crate::error::SyscityError::ExternalService {
+                    source: "adb uiautomator dump failed".to_string(),
+                    cause: Some(Box::new(e)),
+                })?;
 
         if !status.success() {
-            return Ok(ToolExecutionResult::error(format!(
-                "uiautomator dump failed: {}",
-                stderr
-            )));
+            return Ok(ToolExecutionResult::error(format!("uiautomator dump failed: {}", stderr)));
         }
 
         let pull_args = self.adb_args(&["pull", "/sdcard/window_dump.xml", "-"]);
-        let (status, stdout, stderr) = run_cmd(
-            "adb",
-            &pull_args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-        )
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "adb pull failed".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
+        let (status, stdout, stderr) =
+            run_cmd("adb", &pull_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                .await
+                .map_err(|e| crate::error::SyscityError::ExternalService {
+                    source: "adb pull failed".to_string(),
+                    cause: Some(Box::new(e)),
+                })?;
 
         if !status.success() {
             return Ok(ToolExecutionResult::error(format!("adb pull failed: {}", stderr)));

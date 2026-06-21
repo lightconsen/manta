@@ -3,11 +3,13 @@
 //! Implements `ChannelExtension` for Telegram, bridging the native
 //! `TelegramChannel` into the inbound/outbound pipeline architecture.
 
-use crate::channels::{Channel, ChannelExtension, IncomingMessage, OutgoingMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::{mpsc, RwLock};
 use tracing::warn;
+
+use crate::channels::{Channel, ChannelExtension, IncomingMessage, OutgoingMessage};
 
 /// Telegram channel extension.
 ///

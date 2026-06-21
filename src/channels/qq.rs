@@ -1,7 +1,16 @@
 //! QQ Channel Implementation
 //!
-//! This module implements the Channel trait for QQ using the Tencent QQ Bot API.
-//! Requires: Tencent developer account and bot registration.
+//! This module implements the Channel trait for QQ using the Tencent QQ Bot
+//! API. Requires: Tencent developer account and bot registration.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use futures::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, info, warn};
 
 use crate::channels::{
     Channel, ChannelCapabilities, ConversationId, FormattedContent, IncomingMessage,
@@ -9,13 +18,6 @@ use crate::channels::{
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
-use async_trait::async_trait;
-use futures::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, warn};
 
 /// QQ Bot API base URL
 const QQ_API_BASE: &str = "https://api.sgroup.qq.com";
@@ -205,8 +207,9 @@ impl QqChannel {
 
     /// Check if a QQ user is authorized to interact.
     ///
-    /// Returns `(is_authorized, optional_reply_message)`. Callers (webhook/event handlers)
-    /// should send the reply to the user when `is_authorized` is false.
+    /// Returns `(is_authorized, optional_reply_message)`. Callers
+    /// (webhook/event handlers) should send the reply to the user when
+    /// `is_authorized` is false.
     pub async fn check_access(
         &self,
         user_id: &str,
@@ -251,7 +254,8 @@ impl QqChannel {
         }
     }
 
-    /// Check if QQ number is allowed (legacy; prefer `check_access` for policy-aware checks)
+    /// Check if QQ number is allowed (legacy; prefer `check_access` for
+    /// policy-aware checks)
     fn is_qq_allowed(&self, qq: &str) -> bool {
         if self.config.allowed_qqs.is_empty() {
             return true;
@@ -665,7 +669,8 @@ impl Channel for QqChannel {
     }
 }
 
-// ── QQ Guild Bot WebSocket Gateway ─────────────────────────────────────────────
+// ── QQ Guild Bot WebSocket Gateway
+// ─────────────────────────────────────────────
 
 /// QQ WebSocket opcodes
 #[allow(dead_code)]
@@ -684,10 +689,7 @@ async fn qq_get_gateway_url(base_url: &str, token: &str) -> crate::Result<String
         .send()
         .await
         .map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "QQ gateway request failed: {}",
-                e
-            ))
+            crate::error::SyscityError::Internal(format!("QQ gateway request failed: {}", e))
         })?;
 
     let status = resp.status();
@@ -724,14 +726,9 @@ async fn qq_connect_and_listen(
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::Message;
 
-    let (ws_stream, _) = connect_async(ws_url)
-        .await
-        .map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "QQ WebSocket connection failed: {}",
-                e
-            ))
-        })?;
+    let (ws_stream, _) = connect_async(ws_url).await.map_err(|e| {
+        crate::error::SyscityError::Internal(format!("QQ WebSocket connection failed: {}", e))
+    })?;
 
     info!("QQ WebSocket: connected to gateway");
 
@@ -741,16 +738,10 @@ async fn qq_connect_and_listen(
     let heartbeat_interval = loop {
         match read.next().await {
             Some(Ok(Message::Text(text))) => {
-                let msg: serde_json::Value =
-                    serde_json::from_str(&text).unwrap_or_default();
+                let msg: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
                 if msg["op"].as_u64() == Some(QQ_OP_HELLO) {
-                    let interval = msg["d"]["heartbeat_interval"]
-                        .as_u64()
-                        .unwrap_or(45000);
-                    info!(
-                        "QQ WebSocket: received Hello, heartbeat interval={}ms",
-                        interval
-                    );
+                    let interval = msg["d"]["heartbeat_interval"].as_u64().unwrap_or(45000);
+                    info!("QQ WebSocket: received Hello, heartbeat interval={}ms", interval);
                     break interval;
                 } else {
                     debug!("QQ WebSocket: received non-Hello message before identify: {}", text);
@@ -898,9 +889,7 @@ async fn qq_connect_and_listen(
 
 /// Parse a QQ Guild Bot AT_MESSAGE_CREATE or DIRECT_MESSAGE_CREATE event
 /// into an IncomingMessage.
-fn parse_qq_message(
-    data: &serde_json::Value,
-) -> Option<crate::channels::IncomingMessage> {
+fn parse_qq_message(data: &serde_json::Value) -> Option<crate::channels::IncomingMessage> {
     let content = data["content"].as_str()?;
     let author_id = data["author"]["id"].as_str()?;
     let _channel_id = data["channel_id"].as_str();

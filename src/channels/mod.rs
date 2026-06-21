@@ -3,12 +3,14 @@
 //! Channels are communication interfaces through which users interact
 //! with the AI assistant (CLI, Telegram, Discord, Slack, etc.).
 
-use crate::core::models::Id;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
+
+use crate::core::models::Id;
 
 pub mod formatter;
 pub mod health;
@@ -78,65 +80,56 @@ pub mod acp_bridge;
 pub mod authorization;
 pub mod command_gate;
 pub mod envelope;
-pub mod resolver;
-pub mod thread_binding;
 pub mod extension;
 pub mod identity;
 pub mod reply_prefix;
+pub mod resolver;
 pub mod snapshot;
+pub mod thread_binding;
 
 #[cfg(feature = "telegram")]
 pub mod telegram_extension;
 
-pub use extension::{
-    ChannelExtension, ChannelExtensionConfig, ChannelExtensionRegistry, ChannelSenderBridge,
-};
-
-pub use identity::{
-    discord_identity, slack_identity, telegram_identity, IdentityValidator,
-    IdentityValidatorConfig, IdentityValidationError, SenderIdentity,
-};
-
-pub use reply_prefix::{
-    cost_aware_template, minimal_model_template, model_tag_template,
-    timestamp_model_template, ReplyPrefixEngine, ReplyPrefixTemplate, TemplateContext,
-};
-
-pub use snapshot::{
-    error_snapshot, healthy_snapshot, muted_snapshot, warning_snapshot,
-    AccountSnapshot, AccountSnapshotStore, DisplayTone,
-};
-
 pub use acp_bridge::{
-    parse_acp_command, AcpCommandRequest, ChannelAcpBinding, ChannelAcpBridge, AcpForwardResult,
+    parse_acp_command, AcpCommandRequest, AcpForwardResult, ChannelAcpBinding, ChannelAcpBridge,
 };
-
 pub use command_gate::{
     parse_command, AccessGroup, AuthContext, Authorizer, AuthorizerMode, CommandGate,
     CommandGateConfig, GateResult,
 };
-
 pub use envelope::{SessionEnvelopeContext, SessionEnvelopeManager};
-
+pub use extension::{
+    ChannelExtension, ChannelExtensionConfig, ChannelExtensionRegistry, ChannelSenderBridge,
+};
+pub use formatter::{
+    DiscordFormatter, MessageFormatter, PlainTextFormatter, SlackFormatter, TelegramHtmlFormatter,
+};
+pub use identity::{
+    discord_identity, slack_identity, telegram_identity, IdentityValidationError,
+    IdentityValidator, IdentityValidatorConfig, SenderIdentity,
+};
+pub use reply_prefix::{
+    cost_aware_template, minimal_model_template, model_tag_template, timestamp_model_template,
+    ReplyPrefixEngine, ReplyPrefixTemplate, TemplateContext,
+};
 pub use resolver::{
     resolve_conversation, ArtifactBindingProvider, CommandProvider, ConversationResolution,
     ConversationResolver, FallbackProvider, FocusedBindingProvider, InboundProvider,
     PluginBindingProvider, ResolutionProvider, ResolutionSource,
 };
-
-pub use thread_binding::{
-    acp_policy, branching_policy, strict_policy, PlacementDecision, PlacementHint,
-    SpawnTarget, ThreadBindingManager, ThreadBindingPolicy, TrackedThreadBinding,
+pub use snapshot::{
+    error_snapshot, healthy_snapshot, muted_snapshot, warning_snapshot, AccountSnapshot,
+    AccountSnapshotStore, DisplayTone,
 };
-
 #[cfg(feature = "telegram")]
 pub use telegram_extension::TelegramChannelExtension;
-
-pub use formatter::{
-    DiscordFormatter, MessageFormatter, PlainTextFormatter, SlackFormatter, TelegramHtmlFormatter,
+pub use thread_binding::{
+    acp_policy, branching_policy, strict_policy, PlacementDecision, PlacementHint, SpawnTarget,
+    ThreadBindingManager, ThreadBindingPolicy, TrackedThreadBinding,
 };
 
-// ── Input Provenance ──────────────────────────────────────────────────────────
+// ── Input Provenance
+// ──────────────────────────────────────────────────────────
 
 /// Describes the origin of an incoming message.
 ///
@@ -144,7 +137,8 @@ pub use formatter::{
 /// depending on where the message came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InputProvenance {
-    /// Message sent by a human user over an external channel (Telegram, Discord, …).
+    /// Message sent by a human user over an external channel (Telegram,
+    /// Discord, …).
     ExternalUser {
         /// The channel type (e.g. `"telegram"`, `"discord"`).
         channel: String,
@@ -158,7 +152,8 @@ pub enum InputProvenance {
     },
     /// Message generated internally by the system (scheduled tasks, hooks, …).
     InternalSystem {
-        /// A label identifying the internal source (e.g. `"cron"`, `"webhook"`).
+        /// A label identifying the internal source (e.g. `"cron"`,
+        /// `"webhook"`).
         source: String,
     },
 }
@@ -189,7 +184,8 @@ impl Default for InputProvenance {
     }
 }
 
-// ── Mention Gating ────────────────────────────────────────────────────────────
+// ── Mention Gating
+// ────────────────────────────────────────────────────────────
 
 /// Mention state for a message received in a group/room.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,7 +200,8 @@ pub enum MentionState {
 }
 
 impl MentionState {
-    /// Return `true` if the message should be processed (either DM or explicit mention).
+    /// Return `true` if the message should be processed (either DM or explicit
+    /// mention).
     pub fn should_process(&self, require_mention: bool) -> bool {
         match self {
             MentionState::DirectMessage => true,
@@ -214,7 +211,8 @@ impl MentionState {
     }
 }
 
-// ── User identifier ───────────────────────────────────────────────────────────
+// ── User identifier
+// ───────────────────────────────────────────────────────────
 
 /// A user identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -955,35 +953,26 @@ pub mod validation {
 }
 
 // Re-export channel implementations
-#[cfg(feature = "telegram")]
-pub use telegram::{TelegramChannel, TelegramConfig};
-
 #[cfg(feature = "discord")]
 pub use discord::{DiscordChannel, DiscordConfig};
-
-#[cfg(feature = "slack")]
-pub use slack::{SlackChannel, SlackConfig};
-
-#[cfg(feature = "whatsapp")]
-pub use whatsapp::{WhatsappChannel, WhatsappConfig};
-
-#[cfg(feature = "qq")]
-pub use qq::{QqChannel, QqConfig};
-
-#[cfg(feature = "feishu")]
-pub use lark::{LarkChannel, LarkConfig};
-
-#[cfg(feature = "signal")]
-pub use signal::{SignalChannel, SignalConfig};
-
 #[cfg(feature = "imessage")]
 pub use imessage::{ImessageChannel, ImessageConfig};
-
-#[cfg(feature = "webchat")]
-pub use webchat::{WebchatChannel, WebchatConfig};
-
+#[cfg(feature = "feishu")]
+pub use lark::{LarkChannel, LarkConfig};
 #[cfg(feature = "plugins")]
 pub use plugin_host::{PluginChannel, PluginChannelRegistry, PluginManifest};
+#[cfg(feature = "qq")]
+pub use qq::{QqChannel, QqConfig};
+#[cfg(feature = "signal")]
+pub use signal::{SignalChannel, SignalConfig};
+#[cfg(feature = "slack")]
+pub use slack::{SlackChannel, SlackConfig};
+#[cfg(feature = "telegram")]
+pub use telegram::{TelegramChannel, TelegramConfig};
+#[cfg(feature = "webchat")]
+pub use webchat::{WebchatChannel, WebchatConfig};
+#[cfg(feature = "whatsapp")]
+pub use whatsapp::{WhatsappChannel, WhatsappConfig};
 
 /// Extended channel registry that supports both native and WASM plugins
 #[cfg(feature = "plugins")]
@@ -992,7 +981,8 @@ pub struct ExtendedChannelRegistry {
     native: ChannelRegistry,
     /// WASM plugin channels
     plugins: Option<PluginChannelRegistry>,
-    /// Cached plugin channel instances for name-based lookup (interior mutability for &self access)
+    /// Cached plugin channel instances for name-based lookup (interior
+    /// mutability for &self access)
     plugin_channels: Arc<RwLock<HashMap<String, Arc<PluginChannel>>>>,
     /// Parsed manifests for loaded plugins (name -> manifest)
     manifests: Arc<RwLock<HashMap<String, PluginManifest>>>,
@@ -1048,7 +1038,8 @@ impl ExtendedChannelRegistry {
         names
     }
 
-    /// Register a plugin channel externally (e.g., from PluginChannelRegistry callbacks).
+    /// Register a plugin channel externally (e.g., from PluginChannelRegistry
+    /// callbacks).
     pub async fn register_plugin_channel(
         &self,
         name: &str,
@@ -1209,17 +1200,25 @@ pub use state::{ChannelState, ChannelStateStore};
 /// clonable struct so callers pass one argument instead of three.
 #[derive(Clone)]
 pub struct ChannelPolicy {
-    pub pairing_store: std::sync::Arc<tokio::sync::RwLock<Option<std::sync::Arc<crate::security::pairing::PairingStore>>>>,
+    pub pairing_store: std::sync::Arc<
+        tokio::sync::RwLock<Option<std::sync::Arc<crate::security::pairing::PairingStore>>>,
+    >,
     pub dm_policy: std::sync::Arc<tokio::sync::RwLock<crate::security::pairing::DmPolicy>>,
     pub allow_from: std::sync::Arc<tokio::sync::RwLock<Vec<String>>>,
 }
 
 impl ChannelPolicy {
     pub fn new(
-        pairing_store: std::sync::Arc<tokio::sync::RwLock<Option<std::sync::Arc<crate::security::pairing::PairingStore>>>>,
+        pairing_store: std::sync::Arc<
+            tokio::sync::RwLock<Option<std::sync::Arc<crate::security::pairing::PairingStore>>>,
+        >,
         dm_policy: std::sync::Arc<tokio::sync::RwLock<crate::security::pairing::DmPolicy>>,
         allow_from: std::sync::Arc<tokio::sync::RwLock<Vec<String>>>,
     ) -> Self {
-        Self { pairing_store, dm_policy, allow_from }
+        Self {
+            pairing_store,
+            dm_policy,
+            allow_from,
+        }
     }
 }

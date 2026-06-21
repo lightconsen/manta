@@ -10,12 +10,14 @@
 //! npm install failed (lockfile conflict) → suggest "rm node_modules && npm i"
 //! ```
 
-use crate::computer::DesktopAction;
-use crate::memory::{Memory, MemoryQuery, MemoryStore};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tracing::info;
+
+use crate::computer::DesktopAction;
+use crate::memory::{Memory, MemoryQuery, MemoryStore};
 
 /// A recorded experience using a specific tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,15 +291,8 @@ impl ToolLearningEngine {
         let tool_name = tool_name.into();
 
         // First record the failure.
-        self.record_experience(
-            &tool_name,
-            action,
-            false,
-            Some(error),
-            None,
-            context,
-        )
-        .await?;
+        self.record_experience(&tool_name, action, false, Some(error), None, context)
+            .await?;
 
         // Then search for alternatives.
         self.suggest_alternative(&tool_name, error, context).await

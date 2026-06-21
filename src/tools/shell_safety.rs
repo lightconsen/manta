@@ -13,11 +13,12 @@
 //! | High-risk pattern matched (e.g. `sudo`, `curl \| bash`) | `NeedsApproval` |
 //! | Everything else | `Allow` |
 
-use crate::tools::approval::{ApprovalLevel, RiskLevel};
-use crate::tools::hooks::{PolicyHookFn, ToolPolicyDecision};
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
+
+use crate::tools::approval::{ApprovalLevel, RiskLevel};
+use crate::tools::hooks::{PolicyHookFn, ToolPolicyDecision};
 
 /// A list of pre-approved binary names / paths.
 ///
@@ -299,11 +300,12 @@ pub fn analyze_shell_command(command: &str, safe_bins: &SafeBinList) -> ShellSaf
 /// # Example
 ///
 /// ```rust,no_run
-/// use syscity::tools::shell_safety::{SafeBinList, shell_safety_policy};
 /// use syscity::tools::hooks::ToolHooks;
+/// use syscity::tools::shell_safety::{shell_safety_policy, SafeBinList};
 ///
 /// let safe_bins = SafeBinList::new().allow("docker");
-/// let hooks = ToolHooks::new().policy(shell_safety_policy(safe_bins));
+/// let policy = shell_safety_policy(safe_bins);
+/// let hooks = ToolHooks::new().policy(move |name, args| policy(name, args));
 /// ```
 pub fn shell_safety_policy(safe_bins: SafeBinList) -> PolicyHookFn {
     std::sync::Arc::new(move |name: &str, args: &serde_json::Value| {

@@ -8,13 +8,15 @@
 //! # Usage
 //!
 //! ```rust,no_run
-//! use syscity::computer::log_aggregator::{LogAggregator, LogSource, LogAlertRule, AlertAction};
+//! use syscity::computer::log_aggregator::{AlertAction, LogAggregator, LogAlertRule, LogSource};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut aggregator = LogAggregator::new();
 //!
 //! // Tail a log file
-//! aggregator.add_source(LogSource::file_tail("/var/log/app.log")).await?;
+//! aggregator
+//!     .add_source(LogSource::file_tail("/var/log/app.log"))
+//!     .await?;
 //!
 //! // Register an alert rule
 //! aggregator.add_rule(LogAlertRule {
@@ -34,16 +36,17 @@
 //! # }
 //! ```
 
-use chrono::{DateTime, Datelike, Utc};
-use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use chrono::{DateTime, Datelike, Utc};
+use regex::Regex;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
-use tracing::{warn};
+use tracing::warn;
 
 /// Severity level of a log entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,9 +83,7 @@ impl LogLevel {
             "info" | "information" | "notice" => Some(LogLevel::Info),
             "warn" | "warning" => Some(LogLevel::Warning),
             "error" | "err" | "failure" => Some(LogLevel::Error),
-            "fatal" | "panic" | "crit" | "critical" | "emerg" | "alert" => {
-                Some(LogLevel::Fatal)
-            }
+            "fatal" | "panic" | "crit" | "critical" | "emerg" | "alert" => Some(LogLevel::Fatal),
             _ => None,
         }
     }
@@ -115,7 +116,10 @@ pub enum LogSource {
     Journald { unit: Option<String> },
     /// macOS unified log stream.
     #[cfg(target_os = "macos")]
-    MacOsLog { predicate: Option<String>, level: String },
+    MacOsLog {
+        predicate: Option<String>,
+        level: String,
+    },
     /// Windows Event Log channel.
     #[cfg(target_os = "windows")]
     WindowsEvent { channel: String },
@@ -471,10 +475,7 @@ async fn tail_windows_event(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Use wevtutil to query recent events and then poll.
     let mut cmd = tokio::process::Command::new("wevtutil");
-    cmd.arg("qe")
-        .arg(channel)
-        .arg("/f:text")
-        .arg("/c:1");
+    cmd.arg("qe").arg(channel).arg("/f:text").arg("/c:1");
     cmd.stdout(std::process::Stdio::piped());
 
     let mut last_check = Instant::now();
@@ -647,7 +648,9 @@ fn parse_windows_event_line(_line: &str, _source_name: &str) -> Option<LogEntry>
 /// Strip a recognized timestamp prefix from the start of a log line.
 fn strip_timestamp_prefix(line: &str) -> &str {
     // ISO 8601 / RFC 3339.
-    let iso_re = Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?\s*").unwrap();
+    let iso_re =
+        Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?\s*")
+            .unwrap();
     if let Some(m) = iso_re.find(line) {
         return line[m.end()..].trim_start();
     }
@@ -661,7 +664,9 @@ fn strip_timestamp_prefix(line: &str) -> &str {
 
 fn extract_timestamp(line: &str) -> Option<DateTime<Utc>> {
     // Try ISO 8601 / RFC 3339 at the start of the line.
-    let iso_re = Regex::new(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?)").ok()?;
+    let iso_re =
+        Regex::new(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?)")
+            .ok()?;
     if let Some(caps) = iso_re.captures(line) {
         let s = caps.get(1)?.as_str();
         if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
@@ -674,8 +679,7 @@ fn extract_timestamp(line: &str) -> Option<DateTime<Utc>> {
     }
 
     // Try syslog-style: "Jan 15 10:30:00".
-    let syslog_re =
-        Regex::new(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})").ok()?;
+    let syslog_re = Regex::new(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})").ok()?;
     if let Some(caps) = syslog_re.captures(line) {
         let s = caps.get(1)?.as_str();
         let fmt = "%b %d %H:%M:%S";
@@ -694,7 +698,9 @@ fn extract_timestamp(line: &str) -> Option<DateTime<Utc>> {
 /// Extract severity level from the line and return the remainder text.
 fn extract_level_and_remainder(line: &str) -> (LogLevel, &str) {
     // Check for bracketed level: [ERROR], [WARN], etc.
-    let bracket_re = Regex::new(r"(?i)^\s*\[(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)\]\s*(.*)$").unwrap();
+    let bracket_re =
+        Regex::new(r"(?i)^\s*\[(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)\]\s*(.*)$")
+            .unwrap();
     if let Some(caps) = bracket_re.captures(line) {
         let level_str = caps.get(1).unwrap().as_str();
         let rest = caps.get(2).unwrap().as_str();
@@ -704,7 +710,9 @@ fn extract_level_and_remainder(line: &str) -> (LogLevel, &str) {
     }
 
     // Check for colon-separated level: ERROR: message, WARN - message.
-    let colon_re = Regex::new(r"(?i)^\s*(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)[\s:=\-]+(.*)$").unwrap();
+    let colon_re =
+        Regex::new(r"(?i)^\s*(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)[\s:=\-]+(.*)$")
+            .unwrap();
     if let Some(caps) = colon_re.captures(line) {
         let level_str = caps.get(1).unwrap().as_str();
         let rest = caps.get(2).unwrap().as_str();

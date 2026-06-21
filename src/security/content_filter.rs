@@ -1,4 +1,5 @@
-//! Content filter — scan tool outputs for PII and secrets before returning to users.
+//! Content filter — scan tool outputs for PII and secrets before returning to
+//! users.
 //!
 //! Combines [`PiiDetector`] and [`SecretScanner`] to automatically redact or
 //! block sensitive data in [`ToolExecutionResult`]s.
@@ -15,10 +16,11 @@
 //! assert!(outcome.output.contains("al***@example.com"));
 //! ```
 
+use serde_json::Value;
+
 use crate::security::pii::{DataClassification, DetectedPii, FilterResult, PiiDetector};
 use crate::security::secrets::{DetectedSecret, SecretScanner};
 use crate::tools::ToolExecutionResult;
-use serde_json::Value;
 
 /// Action taken by the content filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,8 +107,8 @@ impl ContentFilter {
     /// # Logic
     ///
     /// 1. Scan `output` + serialized `data` for PII and secrets.
-    /// 2. If any **Restricted** PII is found and `block_restricted` is true
-    ///    → return [`FilterAction::Blocked`] with a warning message.
+    /// 2. If any **Restricted** PII is found and `block_restricted` is true →
+    ///    return [`FilterAction::Blocked`] with a warning message.
     /// 3. If any **Confidential** PII or secrets are found and redaction is
     ///    enabled → redact them in-place and return [`FilterAction::Redacted`].
     /// 4. Otherwise → return [`FilterAction::Pass`] with original content.
@@ -153,8 +155,8 @@ impl ContentFilter {
                 pii_findings = findings;
                 if self.block_restricted {
                     action = FilterAction::Blocked;
-                    output = "⚠️ This response contains sensitive personal information \
-                        and has been blocked. Please review the content before sharing."
+                    output = "⚠️ This response contains sensitive personal information and has \
+                              been blocked. Please review the content before sharing."
                         .to_string();
                     data = None;
                 } else if self.redact_confidential {

@@ -5,16 +5,16 @@
 //! Security: config mutations are restricted to an allowlist of safe paths.
 //! The model/agent is not a trusted principal; this tool fails closed.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashSet;
-use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::gateway::GatewayState;
-
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::gateway::GatewayState;
 
 /// Gateway management tool — restart, inspect, and mutate gateway config.
 pub struct GatewayTool {
@@ -237,11 +237,11 @@ impl Tool for GatewayTool {
     }
 
     fn description(&self) -> &str {
-        "Restart, inspect config, apply config patches, or update the gateway. \
-         Actions: restart, config.get, config.schema.lookup, config.apply, config.patch, update.run. \
-         Use config.schema.lookup with a targeted dot path before config edits. \
-         Use config.patch for safe partial updates. Use config.apply only for full replacement. \
-         Config writes hot-reload when possible."
+        "Restart, inspect config, apply config patches, or update the gateway. Actions: restart, \
+         config.get, config.schema.lookup, config.apply, config.patch, update.run. Use \
+         config.schema.lookup with a targeted dot path before config edits. Use config.patch for \
+         safe partial updates. Use config.apply only for full replacement. Config writes \
+         hot-reload when possible."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -310,7 +310,9 @@ impl Tool for GatewayTool {
                 let reason = args.reason.as_deref().unwrap_or("gateway tool restart");
                 let note = args.note.as_deref().unwrap_or("Gateway restart scheduled");
                 info!("gateway tool: restart requested{} (reason={})", delay, reason);
-                self.state.auth.audit_log
+                self.state
+                    .auth
+                    .audit_log
                     .log(
                         crate::security::runtime_audit::AuditEventType::ConfigChange,
                         "admin",
@@ -453,7 +455,8 @@ impl Tool for GatewayTool {
                             success: false,
                             output: String::new(),
                             error: Some(format!(
-                                "Config hash mismatch: expected {} but current is {}. Fetch config.get first.",
+                                "Config hash mismatch: expected {} but current is {}. Fetch \
+                                 config.get first.",
                                 &expected[..expected.len().min(16)],
                                 &current_hash[..16]
                             )),

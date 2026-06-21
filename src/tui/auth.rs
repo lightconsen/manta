@@ -23,7 +23,8 @@ impl AuthConfig {
         }
     }
 
-    /// Build the WebSocket URL, appending the token query parameter when needed.
+    /// Build the WebSocket URL, appending the token query parameter when
+    /// needed.
     pub fn ws_url(&self, host: &str, port: u16, session_id: Option<&str>, client: &str) -> String {
         let mut url = format!("ws://{}:{}/ws", host, port);
         let mut first = true;

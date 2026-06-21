@@ -4,13 +4,14 @@
 //! introspection, then finally to `xdotool` + `xwininfo` for minimal
 //! window information.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Description of a UI element on Linux.
 #[derive(Debug, Clone, Serialize)]
@@ -235,10 +236,9 @@ impl Tool for X11AccessibilityTool {
     }
 
     fn description(&self) -> &str {
-        "Query the Linux X11 accessibility tree via AT-SPI2. \
-         Returns structured UI elements (buttons, text fields, etc.) \
-         from the active application.  Falls back to xdotool window info \
-         if AT-SPI2 is unavailable."
+        "Query the Linux X11 accessibility tree via AT-SPI2. Returns structured UI elements \
+         (buttons, text fields, etc.) from the active application.  Falls back to xdotool window \
+         info if AT-SPI2 is unavailable."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -262,8 +262,7 @@ impl Tool for X11AccessibilityTool {
         info!("Querying X11 accessibility tree via AT-SPI2");
 
         // Strategy 1: Python + pyatspi
-        let (success, stdout, stderr) =
-            Self::run_python(Self::build_python_script()).await?;
+        let (success, stdout, stderr) = Self::run_python(Self::build_python_script()).await?;
 
         if success {
             match serde_json::from_str::<Value>(&stdout) {
@@ -319,10 +318,8 @@ impl Tool for X11AccessibilityTool {
         }
 
         // All strategies failed
-        let err_msg = format!(
-            "AT-SPI2 unavailable and xdotool fallback failed: {} / {}",
-            stderr, fb_stderr
-        );
+        let err_msg =
+            format!("AT-SPI2 unavailable and xdotool fallback failed: {} / {}", stderr, fb_stderr);
         let result = AccessibilityResult {
             success: false,
             app: None,

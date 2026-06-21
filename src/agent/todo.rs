@@ -3,9 +3,10 @@
 //! This module implements a task management system that allows the agent
 //! to track and manage complex multi-step tasks.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Status of a task
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

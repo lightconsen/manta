@@ -88,9 +88,10 @@ impl Default for DerivedStreamHub {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, SystemTime};
+
     use super::*;
     use crate::perception::{AnomalyKind, Modality};
-    use std::time::{Duration, SystemTime};
 
     fn change_event(source: &str) -> Event {
         Event::Change {

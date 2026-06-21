@@ -5,6 +5,7 @@
 //! All functions take `state` / `config` explicitly instead of `&self`.
 
 use std::sync::Arc;
+
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
@@ -102,7 +103,12 @@ pub(crate) async fn init_plugin_channels(
                 if let Some(ref monitor) = state.channels.health_monitor {
                     let check_interval = std::time::Duration::from_secs(30);
                     let transport_timeout = std::time::Duration::from_secs(10);
-                    monitor.monitor_channel_with_timeout(name, channel, check_interval, transport_timeout);
+                    monitor.monitor_channel_with_timeout(
+                        name,
+                        channel,
+                        check_interval,
+                        transport_timeout,
+                    );
                 }
 
                 // Record snapshot
@@ -357,7 +363,8 @@ pub(crate) async fn init_discord_channel(
 ) -> crate::Result<()> {
     if let Some(token) = config.credentials.get("token") {
         // Create inbound bridge: Discord message_tx -> inbound pipeline
-        let (inbound_tx, mut inbound_rx) = mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
+        let (inbound_tx, mut inbound_rx) =
+            mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
         let mut discord_config = crate::channels::discord::DiscordConfig::new(token);
         discord_config.message_tx = Some(inbound_tx);
 
@@ -407,7 +414,8 @@ pub(crate) async fn init_slack_channel(
 ) -> crate::Result<()> {
     if let Some(token) = config.credentials.get("token") {
         // Create inbound bridge: Slack message_tx (Socket Mode) -> inbound pipeline
-        let (inbound_tx, mut inbound_rx) = mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
+        let (inbound_tx, mut inbound_rx) =
+            mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
         let mut slack_config = crate::channels::slack::SlackConfig::new(token);
         slack_config.message_tx = Some(inbound_tx);
         if let Some(app_token) = config.credentials.get("app_token") {
@@ -544,7 +552,8 @@ pub(crate) async fn init_qq_channel(
         config.credentials.get("bot_qq"),
     ) {
         // Create inbound bridge: QQ WebSocket -> inbound pipeline
-        let (inbound_tx, mut inbound_rx) = mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
+        let (inbound_tx, mut inbound_rx) =
+            mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
         let mut qq_config = crate::channels::qq::QqConfig::new(app_id, app_secret, bot_qq);
         qq_config.message_tx = Some(inbound_tx);
 
@@ -589,10 +598,7 @@ pub(crate) async fn init_qq_channel(
 }
 
 /// Register a channel extension in the extension registry.
-async fn register_channel_extension(
-    state: &GatewayState,
-    ext: Arc<dyn ChannelExtension>,
-) {
+async fn register_channel_extension(state: &GatewayState, ext: Arc<dyn ChannelExtension>) {
     let mut registry = state.channels.extensions.write().await;
     registry.register(ext);
 }

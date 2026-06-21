@@ -2,19 +2,20 @@
 //!
 //! This module implements the Channel trait for Slack using the Web API.
 
-use crate::channels::{
-    Channel, ChannelCapabilities, ChannelPolicy, ConversationId, FormattedContent,
-    IncomingMessage, MentionState, MessageMetadata, OutgoingMessage, UserId,
-};
-use crate::core::models::Id;
-use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
-use async_trait::async_trait;
 use std::sync::Arc;
+
+use async_trait::async_trait;
+#[cfg(feature = "slack")]
+use futures::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
-#[cfg(feature = "slack")]
-use futures::{SinkExt, StreamExt};
+use crate::channels::{
+    Channel, ChannelCapabilities, ChannelPolicy, ConversationId, FormattedContent, IncomingMessage,
+    MentionState, MessageMetadata, OutgoingMessage, UserId,
+};
+use crate::core::models::Id;
+use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 
 /// Slack channel configuration
 #[derive(Debug, Clone)]
@@ -66,7 +67,8 @@ impl SlackConfig {
 pub struct SlackChannel {
     config: SlackConfig,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Maps our internal message ID -> (slack_channel_id, slack_ts) for edit/delete
+    /// Maps our internal message ID -> (slack_channel_id, slack_ts) for
+    /// edit/delete
     message_ids:
         std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, (String, String)>>>,
     /// Pairing store for DM access control
@@ -150,25 +152,25 @@ impl SlackChannel {
                         Ok(RequestAccessResult::AlreadyPending { code, .. }) => (
                             false,
                             Some(format!(
-                                "Your access request is pending admin approval. Your pairing code: `{}`",
+                                "Your access request is pending admin approval. Your pairing \
+                                 code: `{}`",
                                 code
                             )),
                         ),
                         Ok(RequestAccessResult::NewRequest { code }) => (
                             false,
                             Some(format!(
-                                "Access requested. An admin will approve your request.\nYour pairing code: `{}`",
+                                "Access requested. An admin will approve your request.\nYour \
+                                 pairing code: `{}`",
                                 code
                             )),
                         ),
-                        Ok(RequestAccessResult::RateLimited { .. }) => (
-                            false,
-                            Some("Too many requests. Please try again later.".to_string()),
-                        ),
-                        Err(_) => (
-                            false,
-                            Some("An error occurred processing your request.".to_string()),
-                        ),
+                        Ok(RequestAccessResult::RateLimited { .. }) => {
+                            (false, Some("Too many requests. Please try again later.".to_string()))
+                        }
+                        Err(_) => {
+                            (false, Some("An error occurred processing your request.".to_string()))
+                        }
                     }
                 } else {
                     (false, Some("Access control is not configured.".to_string()))
@@ -177,7 +179,8 @@ impl SlackChannel {
         }
     }
 
-    /// Check if user is allowed (legacy; prefer `check_access` for policy-aware checks)
+    /// Check if user is allowed (legacy; prefer `check_access` for policy-aware
+    /// checks)
     #[allow(dead_code)]
     fn is_user_allowed(&self, user_id: &str) -> bool {
         if self.config.allowed_user_ids.is_empty() {
@@ -289,7 +292,6 @@ impl SlackChannel {
 
         result
     }
-
 }
 
 #[async_trait]
@@ -391,7 +393,8 @@ impl Channel for SlackChannel {
                                     }
                                     Err(e) => {
                                         warn!(
-                                            "Slack Socket Mode: connection error: {}. Reconnecting in {}s...",
+                                            "Slack Socket Mode: connection error: {}. \
+                                             Reconnecting in {}s...",
                                             e, backoff_secs
                                         );
                                     }
@@ -399,7 +402,8 @@ impl Channel for SlackChannel {
                             }
                             Err(e) => {
                                 warn!(
-                                    "Slack Socket Mode: failed to open connection: {}. Retrying in {}s...",
+                                    "Slack Socket Mode: failed to open connection: {}. Retrying \
+                                     in {}s...",
                                     e, backoff_secs
                                 );
                             }
@@ -519,14 +523,15 @@ impl Channel for SlackChannel {
             let msg_key = message_id.to_string();
             let (slack_channel, slack_ts) = {
                 let map = self.message_ids.read().await;
-                map.get(&msg_key).cloned().ok_or_else(|| {
-                    crate::error::SyscityError::NotFound {
+                map.get(&msg_key)
+                    .cloned()
+                    .ok_or_else(|| crate::error::SyscityError::NotFound {
                         resource: format!(
-                            "Slack message {} not found in tracking (may have been sent before bot started)",
+                            "Slack message {} not found in tracking (may have been sent before \
+                             bot started)",
                             msg_key
                         ),
-                    }
-                })?
+                    })?
             };
 
             let client = reqwest::Client::new();
@@ -575,14 +580,15 @@ impl Channel for SlackChannel {
             let msg_key = message_id.to_string();
             let (slack_channel, slack_ts) = {
                 let map = self.message_ids.read().await;
-                map.get(&msg_key).cloned().ok_or_else(|| {
-                    crate::error::SyscityError::NotFound {
+                map.get(&msg_key)
+                    .cloned()
+                    .ok_or_else(|| crate::error::SyscityError::NotFound {
                         resource: format!(
-                            "Slack message {} not found in tracking (may have been sent before bot started)",
+                            "Slack message {} not found in tracking (may have been sent before \
+                             bot started)",
                             msg_key
                         ),
-                    }
-                })?
+                    })?
             };
 
             let client = reqwest::Client::new();
@@ -695,14 +701,12 @@ async fn connect_and_listen(
 ) -> crate::Result<()> {
     use tokio_tungstenite::connect_async;
 
-    let (ws_stream, _) = connect_async(ws_url)
-        .await
-        .map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "Slack Socket Mode WebSocket connection failed: {}",
-                e
-            ))
-        })?;
+    let (ws_stream, _) = connect_async(ws_url).await.map_err(|e| {
+        crate::error::SyscityError::Internal(format!(
+            "Slack Socket Mode WebSocket connection failed: {}",
+            e
+        ))
+    })?;
 
     info!("Slack Socket Mode: WebSocket connected");
 
@@ -782,9 +786,7 @@ async fn handle_socket_mode_message(
     if let Some(eid) = envelope_id {
         let ack = serde_json::json!({ "envelope_id": eid });
         if let Err(e) = write
-            .send(tokio_tungstenite::tungstenite::protocol::Message::Text(
-                ack.to_string(),
-            ))
+            .send(tokio_tungstenite::tungstenite::protocol::Message::Text(ack.to_string()))
             .await
         {
             warn!("Slack Socket Mode: failed to send ACK: {}", e);
@@ -854,25 +856,25 @@ async fn check_access_inline(
                     Ok(RequestAccessResult::AlreadyPending { code, .. }) => (
                         false,
                         Some(format!(
-                            "Your access request is pending admin approval. Your pairing code: `{}`",
+                            "Your access request is pending admin approval. Your pairing code: \
+                             `{}`",
                             code
                         )),
                     ),
                     Ok(RequestAccessResult::NewRequest { code }) => (
                         false,
                         Some(format!(
-                            "Access requested. An admin will approve your request.\nYour pairing code: `{}`",
+                            "Access requested. An admin will approve your request.\nYour pairing \
+                             code: `{}`",
                             code
                         )),
                     ),
-                    Ok(RequestAccessResult::RateLimited { .. }) => (
-                        false,
-                        Some("Too many requests. Please try again later.".to_string()),
-                    ),
-                    Err(_) => (
-                        false,
-                        Some("An error occurred processing your request.".to_string()),
-                    ),
+                    Ok(RequestAccessResult::RateLimited { .. }) => {
+                        (false, Some("Too many requests. Please try again later.".to_string()))
+                    }
+                    Err(_) => {
+                        (false, Some("An error occurred processing your request.".to_string()))
+                    }
                 }
             } else {
                 (false, Some("Access control is not configured.".to_string()))
@@ -925,7 +927,8 @@ async fn handle_event_message(
     let policy = *dm_policy.read().await;
     let allow_list = allow_from.read().await.clone();
     let store = pairing_store.read().await.clone();
-    let (authorized, reply) = check_access_inline(event_user_id, &policy, &allow_list, &store).await;
+    let (authorized, reply) =
+        check_access_inline(event_user_id, &policy, &allow_list, &store).await;
 
     if !authorized {
         if let Some(reply_text) = reply {

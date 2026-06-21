@@ -2,7 +2,8 @@
 //!
 //! Extracted from `gateway/mod.rs` to reduce the main module size. Each
 //! function takes the pieces of [`Gateway`](super::Gateway) it needs
-//! explicitly (state, config, shutdown_token, task-trackers) instead of `&self`.
+//! explicitly (state, config, shutdown_token, task-trackers) instead of
+//! `&self`.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -20,13 +21,12 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tracing::{debug, error, info, warn};
 
+use super::agent_spawn::spawn_agent_inner;
+use super::*;
+use super::{GatewayConfig, GatewayState};
 use crate::agent::AgentConfig;
 use crate::config::hot_reload::ConfigFileType;
 use crate::tools::mcp::McpToolWrapper;
-
-use super::agent_spawn::spawn_agent_inner;
-use super::{GatewayConfig, GatewayState};
-use super::*;
 
 // ── start ────────────────────────────────────────────────────────────
 
@@ -110,23 +110,28 @@ pub(crate) async fn start_gateway(
         background_tasks.lock().await.push(hot_reload_handle);
 
         // Register config change handlers
-        super::hot_reload::register_hot_reload_handlers(
-            state.clone(),
-            config.clone(),
-            &hot_reload,
-        )
-        .await;
+        super::hot_reload::register_hot_reload_handlers(state.clone(), config.clone(), hot_reload)
+            .await;
     }
 
     // Initialize default agent (optional - requires provider configuration)
     let mut default_config = config.default_agent.clone();
     let default_agent_dir = crate::dirs::agents_dir().join("default");
     default_config.system_prompt = format!(
-        "{}\n\n## Agent Identity\n\nYour agent ID is: `default`\nYour agent directory is: `{}`\nYou may edit files in your agent directory (including HEARTBEAT.md) to manage your personality and periodic tasks when explicitly asked by the user.",
+        "{}\n\n## Agent Identity\n\nYour agent ID is: `default`\nYour agent directory is: \
+         `{}`\nYou may edit files in your agent directory (including HEARTBEAT.md) to manage your \
+         personality and periodic tasks when explicitly asked by the user.",
         default_config.system_prompt,
         default_agent_dir.display()
     );
-    match spawn_agent_in_lifecycle(state.clone(), "default".to_string(), default_config, agent_tasks).await {
+    match spawn_agent_in_lifecycle(
+        state.clone(),
+        "default".to_string(),
+        default_config,
+        agent_tasks,
+    )
+    .await
+    {
         Ok(()) => info!("Default agent spawned successfully"),
         Err(e) => {
             warn!("Failed to spawn default agent: {}", e);
@@ -172,8 +177,7 @@ pub(crate) async fn start_gateway(
         } else {
             DelegateTool::root().with_agent_resolver(resolver)
         };
-        state.tools.registry
-            .register_dynamic(Arc::new(delegate));
+        state.tools.registry.register_dynamic(Arc::new(delegate));
         info!("DelegateTool registered with agent resolver for target_agent routing");
     }
 
@@ -213,9 +217,8 @@ pub(crate) async fn start_gateway(
                     ..crate::memory::DreamConfig::default()
                 };
                 let tier_system_config = crate::memory::TierSystemConfig::default();
-                let mut engine =
-                    crate::memory::DreamEngine::new(dream_config, tier_system_config)
-                        .with_metrics(Arc::clone(&state.memory.dream_metrics));
+                let mut engine = crate::memory::DreamEngine::new(dream_config, tier_system_config)
+                    .with_metrics(Arc::clone(&state.memory.dream_metrics));
                 if let Some(ref workspace_dir) = config.workspace_dir {
                     engine = engine.with_workspace_dir(workspace_dir.clone());
                 }
@@ -250,8 +253,7 @@ pub(crate) async fn start_gateway(
             config.browser.pool.clone(),
             config.browser.profiles.clone(),
         ));
-        let mut bridge =
-            crate::browser::BrowserBridge::new(pool, config.browser.bridge_port);
+        let mut bridge = crate::browser::BrowserBridge::new(pool, config.browser.bridge_port);
         let token = bridge.token().to_string();
         match bridge.start().await {
             Ok(port) => {
@@ -291,7 +293,8 @@ pub(crate) async fn start_gateway(
 
     info!("Gateway control plane listening on ws://{}", addr);
 
-    // Forward ApprovalRequired events from the tool registry into the Gateway event bus
+    // Forward ApprovalRequired events from the tool registry into the Gateway event
+    // bus
     {
         let mut approval_rx = state.tools.approval_queue.event_tx.subscribe();
         let event_tx = state.events.tx.clone();
@@ -318,7 +321,11 @@ pub(crate) async fn start_gateway(
         let runner = crate::heartbeat::HeartbeatRunner::new(state.clone());
         let wake_tx = runner.wake_sender();
         let event_tx = runner.event_tx.clone();
-        state.scheduler.heartbeat_wake_tx.init(wake_tx.clone()).await;
+        state
+            .scheduler
+            .heartbeat_wake_tx
+            .init(wake_tx.clone())
+            .await;
         state.scheduler.heartbeat_event_tx.init(event_tx).await;
         let heartbeat_handle = tokio::spawn(async move {
             runner.start().await;
@@ -636,7 +643,10 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .layer(from_fn_with_state(state.clone(), super::middleware::rate_limit_middleware))
         .layer(from_fn_with_state(state.clone(), super::auth::session_cookie_middleware))
         .layer(from_fn_with_state(state.clone(), super::middleware::tailscale_auth_middleware))
-        .layer(from_fn_with_state(state.clone(), super::middleware::trusted_proxy_auth_middleware))
+        .layer(from_fn_with_state(
+            state.clone(),
+            super::middleware::trusted_proxy_auth_middleware,
+        ))
         .layer(from_fn(super::middleware::security_headers_middleware))
         .with_state(state.clone());
 
@@ -691,9 +701,7 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
             if !headers.is_empty() {
                 cors = cors.allow_headers(headers);
             }
-            cors.max_age(std::time::Duration::from_secs(
-                config.security.cors.max_age_secs as u64,
-            ))
+            cors.max_age(std::time::Duration::from_secs(config.security.cors.max_age_secs as u64))
         } else {
             CorsLayer::new()
         }
@@ -748,7 +756,8 @@ pub(crate) async fn init_mcp_servers(state: &Arc<GatewayState>, config: &Gateway
         }
 
         match state
-            .tools.mcp_manager
+            .tools
+            .mcp_manager
             .connect(server_id, server_config.clone())
             .await
         {

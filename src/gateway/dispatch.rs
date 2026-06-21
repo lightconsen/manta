@@ -10,9 +10,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::agent::session_store::AppendMessageParams;
-
 use super::{AgentCommand, AgentStatus, BufferedMessage, GatewayEvent, GatewayState};
+use crate::agent::session_store::AppendMessageParams;
 
 /// Unified worker that consumes `IncomingMessage`s from `inbound_entry`
 /// and drives them through the inbound pipeline.
@@ -99,7 +98,8 @@ pub(crate) async fn dispatch_routed_message(
             if let Some(member) = group.get_member(user_id) {
                 if !member.role.can_participate() {
                     warn!(
-                        "User {} (role: {}) cannot participate in group session {}, dropping message",
+                        "User {} (role: {}) cannot participate in group session {}, dropping \
+                         message",
                         user_id, member.role, session_id
                     );
                     return;
@@ -448,7 +448,8 @@ pub(crate) async fn send_to_agent(
                 }
                 crate::agent::ProgressEvent::ToolResultDelta { .. } => {
                     // Streaming tool chunks are accumulated locally and emitted
-                    // as a final ToolResult event; no per-chunk gateway event yet.
+                    // as a final ToolResult event; no per-chunk gateway event
+                    // yet.
                 }
                 crate::agent::ProgressEvent::Completed { response } => {
                     let _ = tx.send(GatewayEvent::Completed {

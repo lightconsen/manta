@@ -1,8 +1,9 @@
 //! Daemon management commands for Syscity
 
+use std::path::PathBuf;
+
 use crate::daemon::{DaemonConfig, DaemonManager};
 use crate::error::Result;
-use std::path::PathBuf;
 
 /// Run health check
 pub async fn run_health_check(_config: &crate::config::Config) -> Result<()> {

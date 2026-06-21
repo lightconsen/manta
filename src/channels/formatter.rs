@@ -1,6 +1,7 @@
 //! Message Formatting for Different Channels
 //!
-//! This module provides formatters to convert markdown to channel-specific formats.
+//! This module provides formatters to convert markdown to channel-specific
+//! formats.
 
 /// A formatter that converts markdown to channel-specific formats
 pub trait MessageFormatter: Send + Sync {

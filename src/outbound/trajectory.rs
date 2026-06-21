@@ -3,13 +3,13 @@
 //! Captures the execution trace of an agent turn: tool calls,
 //! reasoning steps, provider latencies, and other observability data.
 //!
-//!
 
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
@@ -19,26 +19,26 @@ use crate::error::Result;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum TrajectoryEntry {
- /// The agent started processing.
+    /// The agent started processing.
     Start {
         timestamp: SystemTime,
         session_id: String,
         agent_id: String,
     },
- /// A tool was invoked.
+    /// A tool was invoked.
     ToolCall {
         timestamp: SystemTime,
         name: String,
         arguments: serde_json::Value,
     },
- /// A tool returned a result.
+    /// A tool returned a result.
     ToolResult {
         timestamp: SystemTime,
         name: String,
         result: serde_json::Value,
         duration_ms: u64,
     },
- /// The LLM provider was called.
+    /// The LLM provider was called.
     LlmCall {
         timestamp: SystemTime,
         provider: String,
@@ -47,18 +47,18 @@ pub enum TrajectoryEntry {
         output_tokens: Option<u32>,
         duration_ms: u64,
     },
- /// A reasoning or planning step.
+    /// A reasoning or planning step.
     Reasoning {
         timestamp: SystemTime,
         step: String,
         detail: String,
     },
- /// The agent finished.
+    /// The agent finished.
     Finish {
         timestamp: SystemTime,
         output: String,
     },
- /// An error occurred.
+    /// An error occurred.
     Error {
         timestamp: SystemTime,
         message: String,
@@ -130,8 +130,8 @@ pub struct TrajectoryWriter {
 }
 
 impl TrajectoryWriter {
- /// Create a new writer with defaults (base dir: `~/.syscity/trajectory/`,
- /// max file 512 MB, max event 256 KB).
+    /// Create a new writer with defaults (base dir: `~/.syscity/trajectory/`,
+    /// max file 512 MB, max event 256 KB).
     pub fn new() -> Self {
         Self {
             base_dir: trajectory_dir(),
@@ -142,16 +142,16 @@ impl TrajectoryWriter {
         }
     }
 
- /// Override the base directory.
+    /// Override the base directory.
     pub fn with_dir(mut self, dir: PathBuf) -> Self {
         self.base_dir = dir;
         self
     }
 
- /// Append a single entry to the current file for the given session.
- ///
- /// Creates a new file when none is open, the session changes, or the
- /// current file exceeds `max_file_size`.
+    /// Append a single entry to the current file for the given session.
+    ///
+    /// Creates a new file when none is open, the session changes, or the
+    /// current file exceeds `max_file_size`.
     pub async fn append(&self, session_id: &str, entry: &TrajectoryEntry) -> Result<()> {
         let json = serde_json::to_string(entry)?;
 
@@ -166,17 +166,18 @@ impl TrajectoryWriter {
 
         let mut guard = self.current_file.lock().await;
 
- // Rotate file if needed.
+        // Rotate file if needed.
         let needs_new = match &*guard {
             None => true,
             Some((current_session, _)) => {
                 current_session != session_id
-                    || self.current_file_size.load(Ordering::Relaxed) + line_len > self.max_file_size
+                    || self.current_file_size.load(Ordering::Relaxed) + line_len
+                        > self.max_file_size
             }
         };
 
         if needs_new {
- // Dropping the old BufWriter flushes & closes the file.
+            // Dropping the old BufWriter flushes & closes the file.
             *guard = None;
 
             let filename = generate_filename(session_id);
@@ -192,13 +193,14 @@ impl TrajectoryWriter {
         if let Some((_, ref mut writer)) = &mut *guard {
             writer.write_all(line.as_bytes()).await?;
             writer.flush().await?;
-            self.current_file_size.fetch_add(line_len, Ordering::Relaxed);
+            self.current_file_size
+                .fetch_add(line_len, Ordering::Relaxed);
         }
 
         Ok(())
     }
 
- /// Write all entries from a `TrajectoryLog` for the given session.
+    /// Write all entries from a `TrajectoryLog` for the given session.
     pub async fn append_log(&self, session_id: &str, log: &TrajectoryLog) -> Result<()> {
         for entry in &log.entries {
             self.append(session_id, entry).await?;
@@ -206,10 +208,10 @@ impl TrajectoryWriter {
         Ok(())
     }
 
- /// Collect all JSONL files for a session, redact paths, and write a
- /// single export JSON file to `~/.syscity/trajectory/exports/`.
- ///
- /// Returns the path to the exported file.
+    /// Collect all JSONL files for a session, redact paths, and write a
+    /// single export JSON file to `~/.syscity/trajectory/exports/`.
+    ///
+    /// Returns the path to the exported file.
     pub async fn export_bundle(&self, session_id: &str) -> Result<PathBuf> {
         let files = self.session_files(session_id).await?;
         let mut all_text = Vec::new();
@@ -224,7 +226,7 @@ impl TrajectoryWriter {
             }
         }
 
- // Write as a JSON array of (redacted) JSON objects.
+        // Write as a JSON array of (redacted) JSON objects.
         let export_dir = self.base_dir.join("exports");
         tokio::fs::create_dir_all(&export_dir).await?;
         let export_path = export_dir.join(format!("{}-export.json", slugify(session_id)));
@@ -235,8 +237,8 @@ impl TrajectoryWriter {
         Ok(export_path)
     }
 
- /// Read all entries for a session from disk and reconstruct a
- /// `TrajectoryLog`.
+    /// Read all entries for a session from disk and reconstruct a
+    /// `TrajectoryLog`.
     pub async fn get_trajectory(&self, session_id: &str) -> Result<TrajectoryLog> {
         let files = self.session_files(session_id).await?;
         let mut log = TrajectoryLog::new();
@@ -255,7 +257,7 @@ impl TrajectoryWriter {
         Ok(log)
     }
 
- /// List unique session IDs found in the trajectory directory.
+    /// List unique session IDs found in the trajectory directory.
     pub async fn list_sessions(&self) -> Result<Vec<String>> {
         let mut sessions: Vec<String> = Vec::new();
 
@@ -268,8 +270,8 @@ impl TrajectoryWriter {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if name_str.starts_with("trajectory-") && name_str.ends_with(".jsonl") {
- // Extract session_id slug from: trajectory-YYYY-MM-DD-HHMMSS-slug.jsonl
- // The slug is everything after the last '-' in the stem.
+                // Extract session_id slug from: trajectory-YYYY-MM-DD-HHMMSS-slug.jsonl
+                // The slug is everything after the last '-' in the stem.
                 let stem = name_str
                     .strip_prefix("trajectory-")
                     .and_then(|s| s.strip_suffix(".jsonl"))
@@ -286,14 +288,14 @@ impl TrajectoryWriter {
         Ok(sessions)
     }
 
- /// Redact potentially sensitive paths and tokens from a string.
- ///
- /// - Replaces `~`, `/Users/<name>`, `/home/<name>` with `$HOME`
- /// - Replaces 32+ character hex strings with `[REDACTED]`
+    /// Redact potentially sensitive paths and tokens from a string.
+    ///
+    /// - Replaces `~`, `/Users/<name>`, `/home/<name>` with `$HOME`
+    /// - Replaces 32+ character hex strings with `[REDACTED]`
     pub fn redact(input: &str) -> String {
- // Regex for home directory patterns.
+        // Regex for home directory patterns.
         let home_re = regex::Regex::new(r"(~|/Users/\w+|/home/\w+)").unwrap();
- // Regex for 32+ character hex strings (API keys, tokens, etc.).
+        // Regex for 32+ character hex strings (API keys, tokens, etc.).
         let hex_re = regex::Regex::new(r"[0-9a-fA-F]{32,}").unwrap();
 
         let result = home_re.replace_all(input, "$$HOME");
@@ -301,9 +303,9 @@ impl TrajectoryWriter {
         result.to_string()
     }
 
- // ---- internal helpers ----
+    // ---- internal helpers ----
 
- /// Return all JSONL file paths in the base dir that belong to a session.
+    /// Return all JSONL file paths in the base dir that belong to a session.
     async fn session_files(&self, session_id: &str) -> Result<Vec<PathBuf>> {
         let slug = slugify(session_id);
         let mut files: Vec<PathBuf> = Vec::new();
@@ -349,11 +351,7 @@ pub fn trajectory_dir() -> PathBuf {
 fn generate_filename(session_id: &str) -> String {
     let now = chrono::Local::now();
     let slug = slugify(session_id);
-    format!(
-        "trajectory-{}-{}.jsonl",
-        now.format("%Y-%m-%d-%H%M%S"),
-        slug
-    )
+    format!("trajectory-{}-{}.jsonl", now.format("%Y-%m-%d-%H%M%S"), slug)
 }
 
 /// Convert a string to a safe filesystem slug: alphanumeric + hyphens only,
@@ -458,9 +456,9 @@ mod tests {
         assert!(json.contains("oops"));
     }
 
- // -----------------------------------------------------------------------
- // TrajectoryWriter tests
- // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // TrajectoryWriter tests
+    // -----------------------------------------------------------------------
 
     #[test]
     fn test_slugify_basic() {
@@ -489,7 +487,7 @@ mod tests {
         let name = generate_filename("test-session");
         assert!(name.starts_with("trajectory-"));
         assert!(name.ends_with("-test-session.jsonl"));
- // The middle part should be a date-time stamp like 2026-06-09-143022
+        // The middle part should be a date-time stamp like 2026-06-09-143022
         let parts: Vec<&str> = name.splitn(3, '-').collect();
         assert_eq!(parts.len(), 3);
         assert!(parts[2].ends_with("-test-session.jsonl"));
@@ -509,21 +507,15 @@ mod tests {
 
     #[test]
     fn test_redact_hex_strings() {
- // 32 hex chars → redacted
+        // 32 hex chars → redacted
         let hex32 = "abcdef0123456789abcdef0123456789";
-        assert_eq!(
-            TrajectoryWriter::redact(hex32),
-            "[REDACTED]"
-        );
+        assert_eq!(TrajectoryWriter::redact(hex32), "[REDACTED]");
 
- // 40 hex chars (SHA-1 length) → redacted
+        // 40 hex chars (SHA-1 length) → redacted
         let hex40 = "abcdef0123456789abcdef0123456789abcdef01";
-        assert_eq!(
-            TrajectoryWriter::redact(hex40),
-            "[REDACTED]"
-        );
+        assert_eq!(TrajectoryWriter::redact(hex40), "[REDACTED]");
 
- // Short hex (31 chars) → not redacted
+        // Short hex (31 chars) → not redacted
         let hex31 = "abcdef0123456789abcdef012345678";
         assert_eq!(TrajectoryWriter::redact(hex31), hex31);
     }
@@ -532,10 +524,7 @@ mod tests {
     fn test_redact_combined() {
         let input = "User /Users/alice/.syscity with token abcdef0123456789abcdef0123456789";
         let result = TrajectoryWriter::redact(input);
-        assert_eq!(
-            result,
-            "User $HOME/.syscity with token [REDACTED]"
-        );
+        assert_eq!(result, "User $HOME/.syscity with token [REDACTED]");
     }
 
     #[tokio::test]
@@ -592,11 +581,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = TrajectoryWriter::new().with_dir(dir.path().to_path_buf());
 
- // No files yet.
+        // No files yet.
         let sessions = writer.list_sessions().await.unwrap();
         assert!(sessions.is_empty());
 
- // Write entries for two sessions.
+        // Write entries for two sessions.
         let entry = TrajectoryEntry::Reasoning {
             timestamp: SystemTime::now(),
             step: "x".to_string(),
@@ -623,14 +612,11 @@ mod tests {
         };
         writer.append("export-session", &entry).await.unwrap();
 
-        let export_path = writer
-            .export_bundle("export-session")
-            .await
-            .unwrap();
+        let export_path = writer.export_bundle("export-session").await.unwrap();
 
         assert!(export_path.exists());
         let content = tokio::fs::read_to_string(&export_path).await.unwrap();
- // Paths should be redacted in the export.
+        // Paths should be redacted in the export.
         assert!(!content.contains("/Users/testuser"));
         assert!(content.contains("$HOME"));
     }

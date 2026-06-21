@@ -1,17 +1,19 @@
 //! Subagent Delegation Tool
 //!
 //! This tool allows an agent to spawn child agents for parallel task execution.
-//! Implements depth limiting, budget sharing, and tool restrictions for children.
+//! Implements depth limiting, budget sharing, and tool restrictions for
+//! children.
 //!
 //! Integrates with [`SubagentRegistry`] for lifecycle tracking and metrics, and
 //! supports opt-in [`ToolHooks`] for audit/observability.
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -46,7 +48,8 @@ pub struct TaskSpec {
     pub allowed_tools: Vec<String>,
     /// Context to pass to child
     pub context: HashMap<String, serde_json::Value>,
-    /// Target agent type for routing (e.g., "coder", "reviewer"). Defaults to "delegate".
+    /// Target agent type for routing (e.g., "coder", "reviewer"). Defaults to
+    /// "delegate".
     #[serde(default)]
     pub target_agent: Option<String>,
 }
@@ -240,7 +243,8 @@ impl DelegateTool {
         Self::new(0)
     }
 
-    /// Attach a shared [`SubagentRegistry`] (e.g. from a higher-level supervisor).
+    /// Attach a shared [`SubagentRegistry`] (e.g. from a higher-level
+    /// supervisor).
     pub fn with_registry(mut self, registry: Arc<SubagentRegistry>) -> Self {
         self.registry = registry;
         self
@@ -282,7 +286,10 @@ impl DelegateTool {
         // 2. Fall back to self.agent if not found or no target specified
         let child_agent = if let Some(ref resolver) = self.agent_resolver {
             if let Some(target) = &task.target_agent {
-                resolver.resolve(target).await.or_else(|| self.agent.clone())
+                resolver
+                    .resolve(target)
+                    .await
+                    .or_else(|| self.agent.clone())
             } else {
                 self.agent.clone()
             }
@@ -1043,10 +1050,16 @@ mod tests {
             "action": "cancel",
             "child_id": child_id
         });
-        let cancel_result = tool.execute(cancel_args, &context).await.expect("execute cancel");
+        let cancel_result = tool
+            .execute(cancel_args, &context)
+            .await
+            .expect("execute cancel");
         assert!(cancel_result.success);
 
-        let run = registry.get_run(&child_id).await.expect("run still in registry");
+        let run = registry
+            .get_run(&child_id)
+            .await
+            .expect("run still in registry");
         assert!(matches!(run.status, crate::agent::SubagentStatus::Killed));
     }
 }

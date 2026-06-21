@@ -4,11 +4,12 @@
 //! other tools programmatically via RPC. This enables self-orchestration and
 //! collapses multi-step chains into single inference turns.
 
+use std::process::Stdio;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::process::Stdio;
-use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -451,8 +452,9 @@ impl Default for CodeExecutionTool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Instant;
+
+    use super::*;
 
     #[test]
     fn test_code_validation() {

@@ -9,19 +9,19 @@
 
 pub mod config;
 
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use config::StandingOrderConfig;
 use cron::Schedule as CronSchedule;
-use std::str::FromStr;
 use tokio::sync::mpsc;
 use tokio::time::{sleep_until, Instant as TokioInstant};
 use tracing::{error, info, warn};
 
 use crate::channels::{ConversationId, IncomingMessage, InputProvenance, OutgoingMessage};
 use crate::gateway::GatewayState;
-use config::StandingOrderConfig;
 
 /// Manages a collection of standing order background tasks.
 ///
@@ -110,8 +110,7 @@ impl StandingOrderManager {
                         0
                     };
 
-                    let sleep_deadline =
-                        TokioInstant::now() + Duration::from_millis(delay_ms);
+                    let sleep_deadline = TokioInstant::now() + Duration::from_millis(delay_ms);
 
                     tokio::select! {
                         _ = sleep_until(sleep_deadline) => {
@@ -188,10 +187,7 @@ impl StandingOrderManager {
             });
         }
 
-        info!(
-            "Started {} standing order(s)",
-            self.shutdown_txs.len()
-        );
+        info!("Started {} standing order(s)", self.shutdown_txs.len());
     }
 
     /// Stop all running standing orders.

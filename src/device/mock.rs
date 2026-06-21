@@ -17,19 +17,22 @@
 //!     .with_capabilities(vec![Arc::new(cap)]);
 //! ```
 
-use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use async_trait::async_trait;
+use serde_json::Value;
+use tokio::sync::broadcast;
+
 use crate::device::capability::{Capability, CapabilityResult, DeviceEvent, ObservableCapability};
 use crate::device::driver::DeviceDriver;
 use crate::device::registry::DeviceRegistry;
+use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
 use crate::device::{Device, DeviceInfo};
 use crate::error::Result;
-use async_trait::async_trait;
-use serde_json::Value;
-use std::sync::Arc;
-use std::time::SystemTime;
-use tokio::sync::broadcast;
 
-// ── MockCapability ────────────────────────────────────────────────────────────
+// ── MockCapability
+// ────────────────────────────────────────────────────────────
 
 /// A configurable [`Capability`] implementation for testing.
 ///
@@ -64,10 +67,7 @@ impl MockCapability {
     }
 
     /// Override the execute behaviour with a custom function.
-    pub fn with_execute(
-        mut self,
-        f: Box<dyn Fn(Value) -> CapabilityResult + Send + Sync>,
-    ) -> Self {
+    pub fn with_execute(mut self, f: Box<dyn Fn(Value) -> CapabilityResult + Send + Sync>) -> Self {
         self.execute_fn = f;
         self
     }
@@ -98,10 +98,7 @@ impl MockCapability {
 
     /// Set the duration reported in the result (default 0).
     pub fn with_duration(mut self, ms: u64) -> Self {
-        let old_fn = std::mem::replace(
-            &mut self.execute_fn,
-            Box::new(|_| unreachable!()),
-        );
+        let old_fn = std::mem::replace(&mut self.execute_fn, Box::new(|_| unreachable!()));
         self.execute_fn = Box::new(move |params| {
             let mut result = old_fn(params);
             result.duration_ms = ms;
@@ -126,12 +123,14 @@ impl Capability for MockCapability {
     }
 }
 
-// ── MockObservableCapability ──────────────────────────────────────────────────
+// ── MockObservableCapability
+// ──────────────────────────────────────────────────
 
 /// A configurable [`ObservableCapability`] for testing streaming events.
 ///
 /// Creates a broadcast channel that test code can send events into,
-/// and consumers can subscribe to via [`subscribe`](ObservableCapability::subscribe).
+/// and consumers can subscribe to via
+/// [`subscribe`](ObservableCapability::subscribe).
 pub struct MockObservableCapability {
     inner: MockCapability,
     tx: broadcast::Sender<DeviceEvent>,
@@ -194,7 +193,8 @@ impl ObservableCapability for MockObservableCapability {
     }
 }
 
-// ── MockDeviceDriver ──────────────────────────────────────────────────────────
+// ── MockDeviceDriver
+// ──────────────────────────────────────────────────────────
 
 /// A configurable [`DeviceDriver`] implementation for testing.
 ///
@@ -302,7 +302,8 @@ impl DeviceDriver for MockDeviceDriver {
     }
 }
 
-// ── Helper functions ──────────────────────────────────────────────────────────
+// ── Helper functions
+// ──────────────────────────────────────────────────────────
 
 /// Build a [`DeviceRegistry`] populated with the given mock drivers.
 ///
@@ -320,8 +321,9 @@ pub async fn make_mock_device_registry(drivers: Vec<MockDeviceDriver>) -> Device
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     // ── MockCapability tests ───────────────────────────────────────────────
 
@@ -372,13 +374,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_capability_custom_execute() {
-        let cap = MockCapability::new("echo").with_execute(Box::new(|params| {
-            CapabilityResult {
-                success: true,
-                output: Some(params),
-                error: None,
-                duration_ms: 1,
-            }
+        let cap = MockCapability::new("echo").with_execute(Box::new(|params| CapabilityResult {
+            success: true,
+            output: Some(params),
+            error: None,
+            duration_ms: 1,
         }));
         let result = cap.execute(json!({"msg": "hi"})).await;
         assert_eq!(result.output, Some(json!({"msg": "hi"})));
@@ -402,8 +402,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_driver_connect() {
         let cap = MockCapability::new("read.temp");
-        let driver = MockDeviceDriver::new("thermometer", true)
-            .with_capabilities(vec![Arc::new(cap)]);
+        let driver =
+            MockDeviceDriver::new("thermometer", true).with_capabilities(vec![Arc::new(cap)]);
 
         let device = driver.connect().await.unwrap();
         assert_eq!(device.id(), "dev-thermometer");
@@ -414,8 +414,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_driver_connect_error() {
-        let driver = MockDeviceDriver::new("broken", true)
-            .with_connect_error("device not found");
+        let driver = MockDeviceDriver::new("broken", true).with_connect_error("device not found");
         let err = driver.connect().await.unwrap_err();
         assert!(err.to_string().contains("device not found"));
     }

@@ -40,8 +40,9 @@ pub struct AudioAdapterConfig {
     /// Broadcast channel capacity (default 256).
     pub channel_capacity: usize,
     /// Minimum interval in seconds between hardware re-probes when the
-    /// adapter is in [`Unavailable`](crate::perception::SourceStatus::Unavailable)
-    /// state.  `0` (default) disables re-probing.
+    /// adapter is in
+    /// [`Unavailable`](crate::perception::SourceStatus::Unavailable) state.
+    /// `0` (default) disables re-probing.
     ///
     /// When set to a positive value, [`observe`](Self::observe) will
     /// periodically attempt to re-create [`AudioCapture`] to detect
@@ -250,8 +251,9 @@ impl MicrophoneAdapter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Instant;
+
+    use super::*;
 
     #[test]
     fn test_name_and_modality() {

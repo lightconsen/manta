@@ -3,7 +3,9 @@
 //! Provides REST endpoints for remote browser control via Axum.
 //! Requires `browser` feature.
 
-use super::pool::BrowserPool;
+use std::net::SocketAddr;
+use std::sync::Arc;
+
 use axum::{
     extract::{Json, State},
     http::StatusCode,
@@ -14,10 +16,10 @@ use axum::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};
+
+use super::pool::BrowserPool;
 
 /// Shared state for the bridge server
 #[derive(Debug, Clone)]

@@ -3,6 +3,8 @@
 //! Provides session cookie management and OAuth2 authentication flows
 //! to complement the existing Bearer token auth in `security::AuthManager`.
 
+use std::sync::Arc;
+
 use axum::{
     extract::{Request, State},
     http::{header, StatusCode},
@@ -10,7 +12,6 @@ use axum::{
     response::Response,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::debug;
 
 use crate::gateway::GatewayState;
@@ -234,7 +235,10 @@ impl Default for CspConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';".to_string(),
+            policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+                     img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; \
+                     frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+                .to_string(),
             use_nonce: true,
         }
     }
@@ -250,8 +254,9 @@ pub fn generate_csp_nonce() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use axum::body::Body;
+
+    use super::*;
 
     #[test]
     fn test_build_set_cookie() {

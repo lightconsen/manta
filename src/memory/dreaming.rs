@@ -3,27 +3,29 @@
 //! Simulates human sleep memory consolidation through three phases:
 //! - Light: deduplication, tag cleanup, expiry removal (fast, cheap)
 //! - Deep: topic clustering, summary generation, cross-session linking (medium)
-//! - REM: cross-session pattern discovery, knowledge graph update (expensive, rare)
+//! - REM: cross-session pattern discovery, knowledge graph update (expensive,
+//!   rare)
 //!
 //! Triggered via cron scheduling (`DEFAULT_MEMORY_DREAMING_FREQUENCY`).
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
+use std::time::{Duration, Instant};
+
+use chrono::Utc;
+use cron::Schedule as CronSchedule;
+use serde::{Deserialize, Serialize};
 use sysinfo::{RefreshKind, System};
 use tokio::sync::RwLock;
+use tokio::time::{sleep_until, Instant as TokioInstant};
 use tracing::{debug, info, warn};
 
 use super::events::{MemoryEventBuilder, MemoryEventLog};
 use super::tier::{MemoryTier, TierAction, TierEvaluator, TierIndex, TierSystemConfig};
 use super::{Memory, MemoryQuery};
-use chrono::Utc;
-use cron::Schedule as CronSchedule;
-use std::str::FromStr;
-use std::time::{Duration, Instant};
-use tokio::time::{sleep_until, Instant as TokioInstant};
 
 /// Async callback for LLM-based entity extraction in REM dreams.
 /// Takes a prompt string and returns the LLM's response text.
@@ -397,7 +399,9 @@ fn estimate_tokens(text: &str) -> u32 {
 
 /// Capture current system memory usage in megabytes.
 fn current_memory_mb() -> Option<f64> {
-    let mut sys = System::new_with_specifics(RefreshKind::new().with_memory(sysinfo::MemoryRefreshKind::new()));
+    let mut sys = System::new_with_specifics(
+        RefreshKind::new().with_memory(sysinfo::MemoryRefreshKind::new()),
+    );
     sys.refresh_memory();
     Some(sys.used_memory() as f64 / 1024.0 / 1024.0)
 }
@@ -529,7 +533,8 @@ impl DreamEngine {
         a.iter().zip(b.iter()).map(|(x, y)| (x + y) / 2.0).collect()
     }
 
-    /// Run a Light Dream: deduplication, expiry cleanup, basic tier maintenance.
+    /// Run a Light Dream: deduplication, expiry cleanup, basic tier
+    /// maintenance.
     ///
     /// - Remove expired memories
     /// - Deduplicate by embedding similarity > threshold
@@ -686,7 +691,8 @@ impl DreamEngine {
             llm_tokens_input: ctx.input_tokens,
             llm_tokens_output: ctx.output_tokens,
             summary: format!(
-                "Light Dream: processed {} memories, removed {} duplicates/expired, promoted {}, demoted {}",
+                "Light Dream: processed {} memories, removed {} duplicates/expired, promoted {}, \
+                 demoted {}",
                 processed, removed, promoted, demoted
             ),
             errors,
@@ -702,7 +708,8 @@ impl DreamEngine {
         Ok(result)
     }
 
-    /// Run a Deep Dream: topic clustering, summary generation, cross-session linking.
+    /// Run a Deep Dream: topic clustering, summary generation, cross-session
+    /// linking.
     ///
     /// - Cluster memories by embedding similarity
     /// - Generate summary memories for dense clusters
@@ -898,9 +905,11 @@ impl DreamEngine {
         Ok(result)
     }
 
-    /// Run a REM Dream: cross-session pattern discovery, knowledge graph update.
+    /// Run a REM Dream: cross-session pattern discovery, knowledge graph
+    /// update.
     ///
-    /// - Extract entities and relationships via LLM-based NER (when callback provided)
+    /// - Extract entities and relationships via LLM-based NER (when callback
+    ///   provided)
     /// - Update knowledge graph
     /// - Detect recurring patterns across sessions
     pub async fn run_rem(
@@ -932,14 +941,13 @@ impl DreamEngine {
             let content_for_prompt = combined_content.join("\n---\n");
 
             let prompt = format!(
-                "Extract entities (people, places, organizations, concepts) and their relationships \
-                 from the following memory content. Each memory is separated by '---'.\n\n\
-                 Return ONLY a JSON object with this schema:\n\
-                 {{\n  \"entities\": [{{\"label\": \"name\", \"type\": \"person|place|organization|concept\", \"confidence\": 0.9}}],\n  \
-                 \"relationships\": [{{\"from\": \"entity_label\", \"to\": \"entity_label\", \"relation\": \"verb_phrase\", \"confidence\": 0.8}}]\n\
-                 }}\n\n\
-                 Memory content:\n{}\n\n\
-                 JSON:",
+                "Extract entities (people, places, organizations, concepts) and their \
+                 relationships from the following memory content. Each memory is separated by \
+                 '---'.\n\nReturn ONLY a JSON object with this schema:\n{{\n  \"entities\": \
+                 [{{\"label\": \"name\", \"type\": \"person|place|organization|concept\", \
+                 \"confidence\": 0.9}}],\n  \"relationships\": [{{\"from\": \"entity_label\", \
+                 \"to\": \"entity_label\", \"relation\": \"verb_phrase\", \"confidence\": \
+                 0.8}}]\n}}\n\nMemory content:\n{}\n\nJSON:",
                 content_for_prompt.chars().take(8000).collect::<String>()
             );
 
@@ -1110,11 +1118,9 @@ impl DreamEngine {
             llm_tokens_input: ctx.input_tokens,
             llm_tokens_output: ctx.output_tokens,
             summary: format!(
-                "REM Dream: processed {} memories, discovered {} entities, {} relations, created {} patterns",
-                processed,
-                node_count,
-                edge_count,
-                created
+                "REM Dream: processed {} memories, discovered {} entities, {} relations, created \
+                 {} patterns",
+                processed, node_count, edge_count, created
             ),
             errors,
         };
@@ -1243,7 +1249,8 @@ impl DreamEngine {
     }
 }
 
-// ── Dream Review Queue ─────────────────────────────────────────────────────────
+// ── Dream Review Queue
+// ─────────────────────────────────────────────────────────
 
 /// Action proposed by a dream phase for human review.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1594,9 +1601,10 @@ impl DreamScheduler {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::memory::{MemoryStore, UnifiedStore};
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_dream_light() {

@@ -1,19 +1,21 @@
 //! WebSocket client for the TUI.
 
-use crate::tui::auth::AuthConfig;
-use crate::tui::error::TuiError;
-use crate::VERSION;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
 use uuid::Uuid;
+
+use crate::tui::auth::AuthConfig;
+use crate::tui::error::TuiError;
+use crate::VERSION;
 
 const PROTOCOL_VERSION: u32 = 1;
 

@@ -8,14 +8,15 @@
 //! - `sse` – connect to an HTTP server via Server-Sent Events
 //! - `streamable_http` – POST requests with SSE response bodies
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, RwLock};
@@ -56,7 +57,8 @@ pub struct McpServerConfig {
     /// Arguments for the command (stdio only)
     #[serde(default)]
     pub args: Vec<String>,
-    /// Environment variables (supports `$VAR` references — resolved at connect time)
+    /// Environment variables (supports `$VAR` references — resolved at connect
+    /// time)
     #[serde(default)]
     pub env: HashMap<String, String>,
     /// Working directory (stdio only)
@@ -184,7 +186,8 @@ pub struct McpToolsCapability {
 /// Resource capability details returned in the MCP `initialize` response.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpResourcesCapability {
-    /// The server supports `resources/subscribe` and resource update notifications.
+    /// The server supports `resources/subscribe` and resource update
+    /// notifications.
     #[serde(default)]
     pub subscribe: bool,
     /// The server supports `notifications/resources/list_changed`.
@@ -238,12 +241,18 @@ impl McpServerCapabilities {
 
     /// Returns true if the server supports resource subscriptions.
     pub fn supports_resource_subscribe(&self) -> bool {
-        self.resources.as_ref().map(|c| c.subscribe).unwrap_or(false)
+        self.resources
+            .as_ref()
+            .map(|c| c.subscribe)
+            .unwrap_or(false)
     }
 
     /// Returns true if the server supports resource list-change notifications.
     pub fn supports_resource_list_changed(&self) -> bool {
-        self.resources.as_ref().map(|c| c.list_changed).unwrap_or(false)
+        self.resources
+            .as_ref()
+            .map(|c| c.list_changed)
+            .unwrap_or(false)
     }
 
     /// Returns true if the server supports prompts.
@@ -253,7 +262,10 @@ impl McpServerCapabilities {
 
     /// Returns true if the server supports prompt list-change notifications.
     pub fn supports_prompt_list_changed(&self) -> bool {
-        self.prompts.as_ref().map(|c| c.list_changed).unwrap_or(false)
+        self.prompts
+            .as_ref()
+            .map(|c| c.list_changed)
+            .unwrap_or(false)
     }
 }
 
@@ -412,7 +424,8 @@ pub struct McpClient {
     request_tx: Option<mpsc::UnboundedSender<McpRequest>>,
     /// Notification sender channel for server-pushed messages.
     notification_tx: Option<mpsc::UnboundedSender<McpNotification>>,
-    /// Broadcast channel for progress notifications used during streaming tool calls.
+    /// Broadcast channel for progress notifications used during streaming tool
+    /// calls.
     progress_tx: Option<broadcast::Sender<McpNotification>>,
     /// Server metadata returned during `initialize`
     server_info: Option<McpServerInfo>,
@@ -516,10 +529,7 @@ impl McpClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("info")
                     .to_string();
-                Some(McpNotification::Message {
-                    level,
-                    data: params.clone(),
-                })
+                Some(McpNotification::Message { level, data: params.clone() })
             }
             method => Some(McpNotification::Other {
                 method: method.to_string(),
@@ -528,7 +538,8 @@ impl McpClient {
         }
     }
 
-    /// Forward a notification to the manager channel and the progress broadcast channel.
+    /// Forward a notification to the manager channel and the progress broadcast
+    /// channel.
     fn emit_notification(
         notification: McpNotification,
         notification_tx: &Option<mpsc::UnboundedSender<McpNotification>>,
@@ -747,7 +758,9 @@ impl McpClient {
                                                 let _ = tx.send(response);
                                             }
                                         } else {
-                                            if let Some(notification) = McpClient::parse_notification(&response) {
+                                            if let Some(notification) =
+                                                McpClient::parse_notification(&response)
+                                            {
                                                 McpClient::emit_notification(
                                                     notification,
                                                     &notification_tx_sse,
@@ -888,7 +901,9 @@ impl McpClient {
                                                     let _ = tx.send(response);
                                                 }
                                             } else {
-                                                if let Some(notification) = McpClient::parse_notification(&response) {
+                                                if let Some(notification) =
+                                                    McpClient::parse_notification(&response)
+                                                {
                                                     McpClient::emit_notification(
                                                         notification,
                                                         &notification_tx_http,
@@ -979,7 +994,8 @@ impl McpClient {
             .map(|c| c.supports_resources())
             .unwrap_or(false)
         {
-            // Keep resource discovery lazy; list_resources() is available on demand.
+            // Keep resource discovery lazy; list_resources() is available on
+            // demand.
         }
 
         Ok(())
@@ -1151,10 +1167,7 @@ impl McpClient {
         });
         if let Some(hints) = model_hints {
             if let Some(obj) = params.as_object_mut() {
-                obj.insert(
-                    "modelPreferences".to_string(),
-                    json!({ "hints": hints }),
-                );
+                obj.insert("modelPreferences".to_string(), json!({ "hints": hints }));
             }
         }
 
@@ -1167,14 +1180,17 @@ impl McpClient {
 
         let response = self.send_request(request).await?;
         let result = response.result.ok_or_else(|| {
-            crate::error::SyscityError::Internal("No result from sampling/createMessage".to_string())
+            crate::error::SyscityError::Internal(
+                "No result from sampling/createMessage".to_string(),
+            )
         })?;
         serde_json::from_value::<McpSamplingResult>(result).map_err(|e| {
             crate::error::SyscityError::Internal(format!("Failed to parse sampling result: {}", e))
         })
     }
 
-    /// Call an MCP tool by name with a progress token for streaming notifications.
+    /// Call an MCP tool by name with a progress token for streaming
+    /// notifications.
     pub async fn call_tool_with_progress(
         &self,
         name: &str,
@@ -1187,10 +1203,7 @@ impl McpClient {
             "arguments": params,
         });
         if let Some(obj) = request_params.as_object_mut() {
-            obj.insert(
-                "_meta".to_string(),
-                json!({ "progressToken": progress_token }),
-            );
+            obj.insert("_meta".to_string(), json!({ "progressToken": progress_token }));
         }
 
         let request = McpRequest {
@@ -1569,9 +1582,8 @@ impl Tool for McpPromptTool {
         });
         let client = self.client.read().await;
         let result = client.get_prompt(&self.prompt_name, arguments).await?;
-        Ok(ToolExecutionResult::success(format!("MCP prompt result: {:?}", result)).with_data(
-            serde_json::to_value(result).unwrap_or_default(),
-        ))
+        Ok(ToolExecutionResult::success(format!("MCP prompt result: {:?}", result))
+            .with_data(serde_json::to_value(result).unwrap_or_default()))
     }
 }
 
@@ -1590,20 +1602,11 @@ pub enum McpEvent {
         resources: usize,
     },
     /// A server disconnected or was marked unhealthy.
-    Disconnected {
-        server_id: String,
-        reason: String,
-    },
+    Disconnected { server_id: String, reason: String },
     /// A server recovered after an automatic reconnect.
-    Recovered {
-        server_id: String,
-        attempt: u32,
-    },
+    Recovered { server_id: String, attempt: u32 },
     /// A subscribed resource changed on the server.
-    ResourceChanged {
-        server_id: String,
-        uri: String,
-    },
+    ResourceChanged { server_id: String, uri: String },
 }
 
 /// Health status of a single MCP server connection.
@@ -1702,10 +1705,8 @@ impl McpManager {
         let meta = McpConnectionMeta::new(client_arc.clone(), config.clone());
 
         // Wire notification and progress channels.
-        let (notification_tx, mut notification_rx) =
-            mpsc::unbounded_channel::<McpNotification>();
-        let (progress_tx, _progress_rx) =
-            broadcast::channel::<McpNotification>(128);
+        let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<McpNotification>();
+        let (progress_tx, _progress_rx) = broadcast::channel::<McpNotification>(128);
         {
             let mut c = client_arc.write().await;
             c.set_notification_tx(notification_tx);
@@ -1728,10 +1729,16 @@ impl McpManager {
                     }
                     McpNotification::ToolListChanged => {
                         // Refresh tool list in the background.
-                        if let Some(meta) = clients_for_notifications.read().await.get(&server_id_owned) {
+                        if let Some(meta) =
+                            clients_for_notifications.read().await.get(&server_id_owned)
+                        {
                             let c = meta.client.read().await;
-                            if c.server_capabilities().map(|c| c.supports_tools()).unwrap_or(false) {
-                                // list_tools requires &mut self; spawn a short task with a clone of the Arc.
+                            if c.server_capabilities()
+                                .map(|c| c.supports_tools())
+                                .unwrap_or(false)
+                            {
+                                // list_tools requires &mut self; spawn a short task with a clone of
+                                // the Arc.
                                 let client_clone = meta.client.clone();
                                 let sid = server_id_owned.clone();
                                 tokio::spawn(async move {
@@ -1744,7 +1751,8 @@ impl McpManager {
                         }
                     }
                     McpNotification::ResourceListChanged => {
-                        // Nothing automatic to do; consumers can re-list on demand.
+                        // Nothing automatic to do; consumers can re-list on
+                        // demand.
                     }
                     _ => {}
                 }
@@ -1761,7 +1769,8 @@ impl McpManager {
             tools: tools.len(),
             prompts: prompts.len(),
             resources: resources.len(),
-        }).await;
+        })
+        .await;
 
         // Start health monitor for this connection.
         self.start_health_monitor(server_id);
@@ -1777,7 +1786,8 @@ impl McpManager {
             self.emit_event(McpEvent::Disconnected {
                 server_id: server_id.to_string(),
                 reason: "manual_disconnect".to_string(),
-            }).await;
+            })
+            .await;
         }
         Ok(())
     }
@@ -1838,7 +1848,8 @@ impl McpManager {
                     self.emit_event(McpEvent::Recovered {
                         server_id: server_id.to_string(),
                         attempt: (attempt + 1) as u32,
-                    }).await;
+                    })
+                    .await;
                     return Ok(tools);
                 }
                 Err(e) => {
@@ -1848,15 +1859,13 @@ impl McpManager {
         }
         Err(crate::error::SyscityError::Internal(format!(
             "Failed to reconnect to MCP server '{}' after {} attempts",
-            server_id, delays.len()
+            server_id,
+            delays.len()
         )))
     }
 
     /// Spawn a background health monitor for a single server connection.
-    fn start_health_monitor(
-        &self,
-        server_id: &str,
-    ) -> tokio::task::JoinHandle<()> {
+    fn start_health_monitor(&self, server_id: &str) -> tokio::task::JoinHandle<()> {
         let server_id = server_id.to_string();
         let clients = self.clients.clone();
         let event_tx = self.event_tx.clone();
@@ -1925,10 +1934,7 @@ impl McpManager {
                         });
                     }
 
-                    warn!(
-                        "MCP server '{}' marked unhealthy; attempting recovery",
-                        server_id
-                    );
+                    warn!("MCP server '{}' marked unhealthy; attempting recovery", server_id);
 
                     let _ = clients.write().await.remove(&server_id);
 
@@ -1936,10 +1942,7 @@ impl McpManager {
                         clients: clients.clone(),
                         event_tx: event_tx.clone(),
                     };
-                    if let Err(e) = manager
-                        .reconnect_with_backoff(&server_id, config)
-                        .await
-                    {
+                    if let Err(e) = manager.reconnect_with_backoff(&server_id, config).await {
                         error!("MCP server '{}' recovery failed: {}", server_id, e);
                     }
                     break;

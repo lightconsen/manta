@@ -2,19 +2,21 @@
 //!
 //! Supports GPT-4, GPT-3.5, and other OpenAI models.
 
-use super::{
-    stream_wrappers::ProviderStreamFamily, CompletionChunk, CompletionRequest,
-    CompletionResponse, CompletionStream, FunctionDefinition, Message, Provider,
-    ProviderInstanceConfig, Role, ToolCall, Usage,
-};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
+
 use async_trait::async_trait;
 use futures::Stream;
 use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
+
+use super::{
+    stream_wrappers::ProviderStreamFamily, CompletionChunk, CompletionRequest, CompletionResponse,
+    CompletionStream, FunctionDefinition, Message, Provider, ProviderInstanceConfig, Role,
+    ToolCall, Usage,
+};
 
 /// OpenAI API client
 #[derive(Debug, Clone)]
@@ -27,17 +29,20 @@ pub struct OpenAiProvider {
     default_model: String,
     /// HTTP client
     client: reqwest::Client,
-    /// Optional stream family override (for protocol-variant vendors like Moonshot/Minimax)
+    /// Optional stream family override (for protocol-variant vendors like
+    /// Moonshot/Minimax)
     stream_family_override: Option<ProviderStreamFamily>,
 }
 
 impl OpenAiProvider {
-    /// Create a new OpenAI provider from an API key string (backward-compatible).
+    /// Create a new OpenAI provider from an API key string
+    /// (backward-compatible).
     pub fn new(api_key: impl Into<String>) -> crate::Result<Self> {
         Self::with_credential(crate::model_router::Credential::api_key(api_key))
     }
 
-    /// Create with a custom base URL from an API key string (backward-compatible).
+    /// Create with a custom base URL from an API key string
+    /// (backward-compatible).
     pub fn with_base_url(
         api_key: impl Into<String>,
         base_url: impl Into<String>,
@@ -47,7 +52,8 @@ impl OpenAiProvider {
         Ok(this)
     }
 
-    /// Create with a full `Credential` (supports OAuth2, Bearer token, API key).
+    /// Create with a full `Credential` (supports OAuth2, Bearer token, API
+    /// key).
     pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
@@ -204,7 +210,11 @@ impl OpenAiProvider {
                 // Extract text from multimodal content parts
                 parts
                     .iter()
-                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()).map(|text| text.to_string()))
+                    .filter_map(|p| {
+                        p.get("text")
+                            .and_then(|t| t.as_str())
+                            .map(|text| text.to_string())
+                    })
                     .collect::<Vec<_>>()
                     .join("\n")
             }
@@ -977,11 +987,10 @@ mod tests {
 
     #[test]
     fn test_to_openai_message_with_image() {
-        let msg = Message::user("")
-            .with_content_blocks(vec![
-                crate::providers::ContentBlock::text("Describe this"),
-                crate::providers::ContentBlock::image_base64("abc123", "image/png"),
-            ]);
+        let msg = Message::user("").with_content_blocks(vec![
+            crate::providers::ContentBlock::text("Describe this"),
+            crate::providers::ContentBlock::image_base64("abc123", "image/png"),
+        ]);
         let openai = OpenAiProvider::to_openai_message(&msg);
         assert_eq!(openai.role, "user");
         let content = openai.content.unwrap();
@@ -990,10 +999,7 @@ mod tests {
         assert_eq!(parts[0]["type"], "text");
         assert_eq!(parts[0]["text"], "Describe this");
         assert_eq!(parts[1]["type"], "image_url");
-        assert_eq!(
-            parts[1]["image_url"]["url"],
-            "data:image/png;base64,abc123"
-        );
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,abc123");
     }
 
     #[test]

@@ -16,8 +16,9 @@
 //! // point will carry session_id and user_id fields.
 //! ```
 
-use crate::core::models::Id;
 use tracing::Span;
+
+use crate::core::models::Id;
 
 /// Contextual metadata that follows a request across async boundaries.
 ///

@@ -8,10 +8,11 @@
 //! - `importance_score` and `source` columns
 //! - Batch query optimisation and connection pooling
 
-use async_trait::async_trait;
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
+
+use async_trait::async_trait;
+use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tracing::{debug, info, instrument};
 
 use super::{
@@ -102,7 +103,8 @@ impl DatabaseStore {
         Self::new("sqlite::memory:").await
     }
 
-    /// Create a store from an existing pool (for sharing connections with other services)
+    /// Create a store from an existing pool (for sharing connections with other
+    /// services)
     pub async fn new_with_pool(pool: Pool<Sqlite>) -> crate::Result<Self> {
         info!("Initializing unified database store from existing pool");
 
@@ -197,17 +199,52 @@ impl DatabaseStore {
 
         // --- indexes ---
         let indexes: &[(&str, &str)] = &[
-            ("idx_memories_user",         "CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id)"),
-            ("idx_memories_conv",         "CREATE INDEX IF NOT EXISTS idx_memories_conv ON memories(conversation_id)"),
-            ("idx_memories_type",         "CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type)"),
-            ("idx_memories_expires",      "CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL"),
-            ("idx_memories_created",      "CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at)"),
-            ("idx_memories_user_type",    "CREATE INDEX IF NOT EXISTS idx_memories_user_type ON memories(user_id, memory_type)"),
-            ("idx_memories_last_accessed","CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed)"),
-            ("idx_memories_importance",   "CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score)"),
-            ("idx_chat_conv",             "CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_messages(conversation_id)"),
-            ("idx_chat_user",             "CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_messages(user_id)"),
-            ("idx_chat_created",          "CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_messages(created_at)"),
+            (
+                "idx_memories_user",
+                "CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id)",
+            ),
+            (
+                "idx_memories_conv",
+                "CREATE INDEX IF NOT EXISTS idx_memories_conv ON memories(conversation_id)",
+            ),
+            (
+                "idx_memories_type",
+                "CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type)",
+            ),
+            (
+                "idx_memories_expires",
+                "CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE \
+                 expires_at IS NOT NULL",
+            ),
+            (
+                "idx_memories_created",
+                "CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at)",
+            ),
+            (
+                "idx_memories_user_type",
+                "CREATE INDEX IF NOT EXISTS idx_memories_user_type ON memories(user_id, \
+                 memory_type)",
+            ),
+            (
+                "idx_memories_last_accessed",
+                "CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed)",
+            ),
+            (
+                "idx_memories_importance",
+                "CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score)",
+            ),
+            (
+                "idx_chat_conv",
+                "CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_messages(conversation_id)",
+            ),
+            (
+                "idx_chat_user",
+                "CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_messages(user_id)",
+            ),
+            (
+                "idx_chat_created",
+                "CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_messages(created_at)",
+            ),
         ];
 
         for (name, sql) in indexes {
@@ -495,9 +532,8 @@ impl MemoryStore for DatabaseStore {
         debug!("Getting memory: {}", id);
 
         let row = sqlx::query(
-            "SELECT id, user_id, conversation_id, content, memory_type, embedding, \
-             created_at, expires_at, metadata, importance_score, source \
-             FROM memories WHERE id = ?",
+            "SELECT id, user_id, conversation_id, content, memory_type, embedding, created_at, \
+             expires_at, metadata, importance_score, source FROM memories WHERE id = ?",
         )
         .bind(&id.0)
         .fetch_optional(&self.pool)
@@ -512,7 +548,8 @@ impl MemoryStore for DatabaseStore {
                 // Update access tracking (best-effort)
                 let now = Self::system_time_to_secs(SystemTime::now());
                 let _ = sqlx::query(
-                    "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+                    "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE \
+                     id = ?",
                 )
                 .bind(now)
                 .bind(&id.0)
@@ -638,8 +675,8 @@ impl MemoryStore for DatabaseStore {
         debug!("Searching memories");
 
         let mut sql = "SELECT id, user_id, conversation_id, content, memory_type, embedding, \
-                       created_at, expires_at, metadata, importance_score, source \
-                       FROM memories WHERE 1=1"
+                       created_at, expires_at, metadata, importance_score, source FROM memories \
+                       WHERE 1=1"
             .to_string();
 
         if query.user_id.is_some() {
@@ -798,7 +835,8 @@ impl MemoryStore for DatabaseStore {
 
         let now = Self::system_time_to_secs(SystemTime::now());
         let expired_row = sqlx::query(
-            "SELECT COUNT(*) as count FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?",
+            "SELECT COUNT(*) as count FROM memories WHERE expires_at IS NOT NULL AND expires_at < \
+             ?",
         )
         .bind(now)
         .fetch_one(&self.pool)

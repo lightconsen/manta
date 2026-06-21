@@ -2,9 +2,10 @@
 //!
 //! Handles user configuration for skills in ~/.syscity/skills.json
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 /// Skill configuration file
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

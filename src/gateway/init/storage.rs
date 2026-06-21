@@ -4,6 +4,7 @@
 //! session store, persistent audit log, and optional unified vector store.
 
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -25,7 +26,8 @@ pub struct StorageInit {
     pub audit_log_dyn: Arc<dyn AuditLogger>,
 }
 
-/// Initialize the storage adapter, shared SQLite pool, session store, and audit log.
+/// Initialize the storage adapter, shared SQLite pool, session store, and audit
+/// log.
 pub async fn init_storage(config: &GatewayConfig) -> crate::Result<StorageInit> {
     #[allow(clippy::type_complexity)]
     let (storage, unified_vector_store, sqlite_pool): (

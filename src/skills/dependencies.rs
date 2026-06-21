@@ -3,8 +3,9 @@
 //! Provides dependency graph construction, topological ordering,
 //! circular dependency detection, and version constraint checking.
 
-use crate::skills::semver::{Version, VersionReq};
 use std::collections::{HashMap, HashSet, VecDeque};
+
+use crate::skills::semver::{Version, VersionReq};
 
 /// A parsed dependency specification: `name: ^1.0.0`
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,7 +214,8 @@ impl DependencyGraph {
         None
     }
 
-    /// Build a chain of skills: root -> its chain targets -> their chain targets
+    /// Build a chain of skills: root -> its chain targets -> their chain
+    /// targets
     pub fn build_chain(&self, root: &str) -> Result<Vec<String>, DependencyError> {
         let mut chain = Vec::new();
         let mut visited = HashSet::new();
@@ -228,9 +230,10 @@ impl DependencyGraph {
 
             chain.push(name.clone());
 
-            // After a skill, chain to skills that depend on it (reverse dependency)
-            // Or we could look for explicit chain annotations in the skill
-            // For now, this builds the dependency order which is the natural chain
+            // After a skill, chain to skills that depend on it (reverse
+            // dependency) Or we could look for explicit chain
+            // annotations in the skill For now, this builds the
+            // dependency order which is the natural chain
         }
 
         // Build the actual execution chain: dependency order first, then root

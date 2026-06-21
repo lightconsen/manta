@@ -7,16 +7,23 @@
 //! # Usage
 //!
 //! ```rust,no_run
-//! use syscity::computer::screenshot_encoder::{ScreenshotEncoder, NetworkCondition};
+//! use std::path::Path;
+//!
+//! use syscity::computer::screenshot_encoder::{NetworkCondition, ScreenshotEncoder};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let encoder = ScreenshotEncoder::detect().await?;
-//! let optimized = encoder.encode("/tmp/capture.png", NetworkCondition::Remote).await?;
+//! let encoder = ScreenshotEncoder::detect()
+//!     .await
+//!     .ok_or("screenshot encoder not available")?;
+//! let optimized = encoder
+//!     .encode(Path::new("/tmp/capture.png"), NetworkCondition::Remote)
+//!     .await?;
 //! # Ok(())
 //! # }
 //! ```
 
 use std::path::{Path, PathBuf};
+
 use tokio::process::Command;
 use tracing::{info, warn};
 
@@ -159,13 +166,9 @@ impl ScreenshotEncoder {
                 backend: EncodeBackend::ImageMagick,
             })
         } else if Self::has_cmd("ffmpeg").await {
-            Some(Self {
-                backend: EncodeBackend::Ffmpeg,
-            })
+            Some(Self { backend: EncodeBackend::Ffmpeg })
         } else if cfg!(target_os = "macos") && Self::has_cmd("sips").await {
-            Some(Self {
-                backend: EncodeBackend::Sips,
-            })
+            Some(Self { backend: EncodeBackend::Sips })
         } else {
             None
         }
@@ -230,8 +233,14 @@ impl ScreenshotEncoder {
 
         match result {
             Ok(out) if out.status.success() => {
-                let in_size = tokio::fs::metadata(input).await.map(|m| m.len()).unwrap_or(0);
-                let out_size = tokio::fs::metadata(&out_path).await.map(|m| m.len()).unwrap_or(0);
+                let in_size = tokio::fs::metadata(input)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                let out_size = tokio::fs::metadata(&out_path)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0);
                 info!(
                     "Screenshot encoded: {} → {} bytes ({:.0}% of original, {} @ quality {})",
                     in_size,

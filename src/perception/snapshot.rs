@@ -6,8 +6,8 @@
 //!
 //! 1. **Entities** — current cross-modal fusion state.
 //! 2. **Aggregates** — sliding-window stats per `(source, modality)`.
-//! 3. **Recent events** — events still queued in the adapter that the
-//!    agent hasn't consumed via [`super::AgentPerceptionAdapter::next_event`].
+//! 3. **Recent events** — events still queued in the adapter that the agent
+//!    hasn't consumed via [`super::AgentPerceptionAdapter::next_event`].
 //!
 //! Snapshots are **read-only and cheap to produce** — taking a snapshot
 //! does not consume queued events; it only mirrors them. The agent is
@@ -81,7 +81,11 @@ impl Snapshot {
         if self.entities.is_empty()
             && self.aggregates.is_empty()
             && self.recent_events.is_empty()
-            && self.summary.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
+            && self
+                .summary
+                .as_ref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
         {
             return None;
         }
@@ -179,8 +183,9 @@ struct AggregateEntry<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn test_empty_snapshot() {

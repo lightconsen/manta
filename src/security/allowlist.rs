@@ -1,4 +1,5 @@
-//! Multi-dimensional allowlist with compiled HashSet cache and wildcard support.
+//! Multi-dimensional allowlist with compiled HashSet cache and wildcard
+//! support.
 //!
 //! Allows fine-grained access control across multiple identity dimensions:
 //! ID, username, display name, tag, E164 phone number, prefixed identifiers,
@@ -26,7 +27,7 @@
 //!     id: "allow-2".to_string(),
 //!     sources: vec![
 //!         MatchSource::Username("admin".to_string()),
-//!         MatchSource::Username("*_bot".to_string()),  // wildcard
+//!         MatchSource::Username("*_bot".to_string()), // wildcard
 //!     ],
 //!     account_id: None,
 //!     channel_id: None,
@@ -39,10 +40,11 @@
 //! # }
 //! ```
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
@@ -325,7 +327,8 @@ impl Allowlist {
 
     /// Check if a value is allowed by any match source.
     ///
-    /// First checks the compiled exact-match cache, then evaluates wildcard patterns.
+    /// First checks the compiled exact-match cache, then evaluates wildcard
+    /// patterns.
     pub async fn is_allowed(&self, value: &str) -> bool {
         let normalized = value.to_lowercase();
 

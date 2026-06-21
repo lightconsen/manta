@@ -1,13 +1,14 @@
 //! macOS screenshot tool using `screencapture`.
 
-use crate::computer::screenshot_encoder::maybe_encode_screenshot;
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use base64::Engine;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::computer::screenshot_encoder::maybe_encode_screenshot;
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Take screenshots on macOS using the built-in `screencapture` utility.
 #[derive(Debug)]
@@ -32,9 +33,8 @@ impl Tool for ScreenshotTool {
     }
 
     fn description(&self) -> &str {
-        "Take a screenshot on macOS using `screencapture`. \
-         Returns a base64-encoded PNG image. \
-         Use when you need to visually verify the current screen state."
+        "Take a screenshot on macOS using `screencapture`. Returns a base64-encoded PNG image. Use \
+         when you need to visually verify the current screen state."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -60,10 +60,8 @@ impl Tool for ScreenshotTool {
         _args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let temp_path = std::env::temp_dir().join(format!(
-            "syscity_screenshot_{}.png",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_path =
+            std::env::temp_dir().join(format!("syscity_screenshot_{}.png", uuid::Uuid::new_v4()));
 
         info!("Taking screenshot: {}", temp_path.display());
 
@@ -124,18 +122,12 @@ impl Tool for ScreenshotTool {
             Ok(Ok(output)) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 warn!("screencapture failed: {}", stderr);
-                Ok(ToolExecutionResult::error(format!(
-                    "screencapture failed: {}",
-                    stderr
-                )))
+                Ok(ToolExecutionResult::error(format!("screencapture failed: {}", stderr)))
             }
-            Ok(Err(e)) => Ok(ToolExecutionResult::error(format!(
-                "Failed to run screencapture: {}",
-                e
-            ))),
-            Err(_) => Ok(ToolExecutionResult::error(
-                "screencapture timed out".to_string()
-            )),
+            Ok(Err(e)) => {
+                Ok(ToolExecutionResult::error(format!("Failed to run screencapture: {}", e)))
+            }
+            Err(_) => Ok(ToolExecutionResult::error("screencapture timed out".to_string())),
         }
     }
 

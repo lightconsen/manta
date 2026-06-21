@@ -2,19 +2,11 @@
 //!
 //! This module implements the Channel trait for Telegram using teloxide.
 
-use crate::channels::{
-    Channel, ChannelCapabilities, ChannelPolicy, ConversationId, FormattedContent,
-    IncomingMessage, MessageMetadata, OutgoingMessage,
-};
-use crate::core::models::Id;
-use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
-use tokio::sync::{mpsc, Notify, RwLock};
-use tracing::{debug, error, info, warn};
 
+use async_trait::async_trait;
 #[cfg(feature = "telegram")]
 use teloxide::{
     dispatching::{Dispatcher, UpdateFilterExt},
@@ -23,6 +15,15 @@ use teloxide::{
     types::{Message, MessageId, ParseMode},
     Bot,
 };
+use tokio::sync::{mpsc, Notify, RwLock};
+use tracing::{debug, error, info, warn};
+
+use crate::channels::{
+    Channel, ChannelCapabilities, ChannelPolicy, ConversationId, FormattedContent, IncomingMessage,
+    MessageMetadata, OutgoingMessage,
+};
+use crate::core::models::Id;
+use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 
 /// Telegram channel configuration
 #[derive(Debug, Clone)]
@@ -239,7 +240,8 @@ impl TelegramChannel {
             .replace_all(&result, "<code>$1</code>")
             .to_string();
 
-        // Code block: ```lang\ncode``` -> <pre><code class="language-lang">code</code></pre>
+        // Code block: ```lang\ncode``` -> <pre><code
+        // class="language-lang">code</code></pre>
         result = RE_CODE_BLOCK
             .replace_all(&result, "<pre><code>$2</code></pre>")
             .to_string();
@@ -323,10 +325,7 @@ impl Channel for TelegramChannel {
                         let sessions = session_map.clone();
                         let pol = policy.clone();
                         async move {
-                            handle_message_with_sender(
-                                bot, msg, tx, allowed, sessions, pol,
-                            )
-                            .await
+                            handle_message_with_sender(bot, msg, tx, allowed, sessions, pol).await
                         }
                     },
                 ));
@@ -797,7 +796,8 @@ async fn handle_message_with_sender(
                             .await
                         {
                             Ok(RequestAccessResult::AlreadyAuthorized) => {
-                                // Shouldn't happen since we just checked, but allow through
+                                // Shouldn't happen since we just checked, but
+                                // allow through
                             }
                             Ok(RequestAccessResult::NewRequest { code }) => {
                                 info!(
@@ -807,11 +807,10 @@ async fn handle_message_with_sender(
                                 bot.send_message(
                                     msg.chat.id,
                                     format!(
-                                        "🔒 This bot requires pairing.\n\n\
-                                        Your pairing code: **{}**\n\n\
-                                        Please share this code with an admin to get access.\n\
-                                        Or ask an admin to run:\n\
-                                        `syscity pairing approve telegram {}`",
+                                        "🔒 This bot requires pairing.\n\nYour pairing code: \
+                                         **{}**\n\nPlease share this code with an admin to get \
+                                         access.\nOr ask an admin to run:\n`syscity pairing \
+                                         approve telegram {}`",
                                         code, code
                                     ),
                                 )
@@ -823,9 +822,9 @@ async fn handle_message_with_sender(
                                 bot.send_message(
                                     msg.chat.id,
                                     format!(
-                                        "⏳ Your pairing request is still pending.\n\n\
-                                        Code: **{}**\n\n\
-                                        Please wait for an admin to approve your request.",
+                                        "⏳ Your pairing request is still pending.\n\nCode: \
+                                         **{}**\n\nPlease wait for an admin to approve your \
+                                         request.",
                                         code
                                     ),
                                 )
@@ -863,7 +862,8 @@ async fn handle_message_with_sender(
             }
         }
 
-        // Legacy: Also check allowed_usernames if not empty (for backward compatibility)
+        // Legacy: Also check allowed_usernames if not empty (for backward
+        // compatibility)
         if !allowed_usernames.is_empty() {
             let is_allowed = user
                 .as_ref()

@@ -12,10 +12,9 @@ use async_trait::async_trait;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::computer::system::SystemMonitor;
 use crate::device::{Capability, CapabilityResult};
 use crate::perception::Modality;
-
-use crate::computer::system::SystemMonitor;
 
 /// Unique observation identifier (UUID v4).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -48,18 +47,21 @@ impl std::fmt::Display for ObservationId {
 pub struct Observation {
     /// Unique identifier.
     pub id: ObservationId,
-    /// Source name, e.g. `"screenshot"`, `"system_monitor"`, `"device:sensor-01:temperature"`.
+    /// Source name, e.g. `"screenshot"`, `"system_monitor"`,
+    /// `"device:sensor-01:temperature"`.
     pub source: String,
     /// Sensor modality.
     pub modality: Modality,
-    /// Wall-clock capture timestamp (process-relative; not portable across restarts).
+    /// Wall-clock capture timestamp (process-relative; not portable across
+    /// restarts).
     pub timestamp: Instant,
     /// System time when the observation was created — durable across restarts.
     /// Used by persistent stores to sort and prune by absolute date.
     pub created_at: SystemTime,
     /// Confidence estimate in `[0.0, 1.0]`.  `1.0` = ground truth.
     pub confidence: f32,
-    /// Payload — arbitrary structured data (screenshot dimensions, system metrics, etc.).
+    /// Payload — arbitrary structured data (screenshot dimensions, system
+    /// metrics, etc.).
     pub data: serde_json::Value,
 }
 
@@ -88,9 +90,10 @@ impl Observation {
 ///
 /// Allows the LLM to distinguish between "microphone is working but no
 /// sound detected" and "microphone hardware is unavailable".
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub enum SourceStatus {
     /// Source is fully operational — hardware available, no errors.
+    #[default]
     Healthy,
 
     /// Source is unavailable or degraded, with a human-readable reason.
@@ -107,12 +110,6 @@ impl SourceStatus {
     }
 }
 
-impl Default for SourceStatus {
-    fn default() -> Self {
-        Self::Healthy
-    }
-}
-
 /// Unified interface for any perception source.
 ///
 /// Poll-based sources implement [`observe`] to return the latest snapshot.
@@ -120,7 +117,8 @@ impl Default for SourceStatus {
 /// observations.
 #[async_trait]
 pub trait PerceptionSource: Send + Sync {
-    /// Stable source identifier, e.g. `"screenshot"`, `"device:sensor-01:temperature"`.
+    /// Stable source identifier, e.g. `"screenshot"`,
+    /// `"device:sensor-01:temperature"`.
     fn name(&self) -> &str;
 
     /// The modality this source produces.
@@ -151,7 +149,8 @@ pub trait PerceptionSource: Send + Sync {
 
 // ── Adapter implementations ────────────────────────────────────────────
 
-/// Adapter that wraps a [`ComputerAdapter`] screenshot into a [`PerceptionSource`].
+/// Adapter that wraps a [`ComputerAdapter`] screenshot into a
+/// [`PerceptionSource`].
 pub struct ScreenshotAdapter {
     adapter: Arc<dyn crate::computer::ComputerAdapter>,
 }
@@ -239,10 +238,12 @@ impl PerceptionSource for SystemMonitorAdapter {
     }
 }
 
-/// Adapter that wraps a single device [`Capability`] into a [`PerceptionSource`].
+/// Adapter that wraps a single device [`Capability`] into a
+/// [`PerceptionSource`].
 ///
 /// If the capability implements [`ObservableCapability`], the adapter also
-/// provides a [`subscribe`] stream that maps [`DeviceEvent`]s to [`Observation`]s.
+/// provides a [`subscribe`] stream that maps [`DeviceEvent`]s to
+/// [`Observation`]s.
 ///
 /// By default all capabilities are mapped to [`Modality::Device`]. Use
 /// [`with_modality`](DeviceSourceAdapter::with_modality) to specify a more
@@ -347,7 +348,8 @@ mod tests {
 
         let adapter1 = DeviceSourceAdapter::new("device-01", cap1);
         let adapter2 = DeviceSourceAdapter::new("device-01", cap2);
-        let adapter3 = DeviceSourceAdapter::new("device-02", Arc::new(MockCapability::new("temperature")));
+        let adapter3 =
+            DeviceSourceAdapter::new("device-02", Arc::new(MockCapability::new("temperature")));
 
         assert_eq!(adapter1.name(), "device:device-01:temperature");
         assert_eq!(adapter2.name(), "device:device-01:pressure");

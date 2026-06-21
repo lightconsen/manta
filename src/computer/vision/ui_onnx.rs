@@ -4,8 +4,8 @@
 //! model) exported to ONNX.  Detects interactive elements such as buttons,
 //! text fields, checkboxes, icons, and images from a raw screenshot.
 //!
-//! This serves as a visual fallback when native accessibility APIs (AXUIElement,
-//! UIAutomation, AT-SPI) return empty or incomplete results.
+//! This serves as a visual fallback when native accessibility APIs
+//! (AXUIElement, UIAutomation, AT-SPI) return empty or incomplete results.
 //!
 //! Model file required:
 //! - `omniparser.onnx` — element detection model
@@ -14,7 +14,9 @@
 
 use super::{DetectedElement, Rect};
 use crate::computer::types::Screenshot;
-use crate::computer::vision::{decode_screenshot, image_to_nchw_tensor, normalize_image, resize_with_pad};
+use crate::computer::vision::{
+    decode_screenshot, image_to_nchw_tensor, normalize_image, resize_with_pad,
+};
 use crate::error::SyscityError;
 
 /// OmniParser-based UI element detector.
@@ -49,7 +51,9 @@ impl OmniParserDetector {
         let model = ort::session::Session::builder()
             .map_err(|e| SyscityError::Internal(format!("ORT builder error: {}", e)))?
             .commit_from_file(model_path)
-            .map_err(|e| SyscityError::Internal(format!("Failed to load OmniParser model: {}", e)))?;
+            .map_err(|e| {
+                SyscityError::Internal(format!("Failed to load OmniParser model: {}", e))
+            })?;
 
         Ok(Self {
             model,
@@ -96,20 +100,14 @@ impl OmniParserDetector {
         let img = decode_screenshot(screenshot)?;
 
         // Resize with padding to maintain aspect ratio
-        let (padded, scale, pad_x, pad_y, orig_w) = resize_with_pad(
-            &img,
-            self.input_size,
-            self.input_size,
-        );
+        let (padded, scale, pad_x, pad_y, orig_w) =
+            resize_with_pad(&img, self.input_size, self.input_size);
         let orig_h = img.height();
 
         // Simple normalization: divide by 255 (standard for YOLO)
         let normalized = normalize_image(&padded, [0.0; 3], [1.0; 3]);
-        let input_tensor = image_to_nchw_tensor(
-            normalized,
-            self.input_size as usize,
-            self.input_size as usize,
-        )?;
+        let input_tensor =
+            image_to_nchw_tensor(normalized, self.input_size as usize, self.input_size as usize)?;
 
         let input = ort::value::Tensor::from_array(input_tensor)
             .map_err(|e| SyscityError::Internal(format!("Tensor creation failed: {}", e)))?;
@@ -118,14 +116,18 @@ impl OmniParserDetector {
             let outputs = self
                 .model
                 .run(ort::inputs!["images" => input])
-                .map_err(|e| SyscityError::Internal(format!("Detection inference failed: {}", e)))?;
+                .map_err(|e| {
+                    SyscityError::Internal(format!("Detection inference failed: {}", e))
+                })?;
 
             // YOLO outputs are typically named "output0" or similar.
             let output_name = outputs
                 .iter()
                 .next()
                 .map(|(name, _)| name.to_string())
-                .ok_or_else(|| SyscityError::Internal("Detection model produced no outputs".to_string()))?;
+                .ok_or_else(|| {
+                    SyscityError::Internal("Detection model produced no outputs".to_string())
+                })?;
 
             outputs[output_name.as_str()]
                 .try_extract_array::<f32>()
@@ -149,9 +151,9 @@ impl OmniParserDetector {
             .into_iter()
             .map(|(class_id, conf, cx, cy, w, h)| {
                 // Remove padding and scale back
-                let cx_orig = ((cx - pad_x) / scale).clamp(0.0, orig_w as f32);
+                let cx_orig = ((cx - pad_x) / scale).clamp(0.0, orig_w);
                 let cy_orig = ((cy - pad_y) / scale).clamp(0.0, orig_h as f32);
-                let w_orig = (w / scale).clamp(0.0, orig_w as f32);
+                let w_orig = (w / scale).clamp(0.0, orig_w);
                 let h_orig = (h / scale).clamp(0.0, orig_h as f32);
 
                 let x = (cx_orig - w_orig / 2.0) as i32;
@@ -160,7 +162,11 @@ impl OmniParserDetector {
                 let height = h_orig as u32;
 
                 DetectedElement {
-                    role: CLASS_ROLES.get(class_id).copied().unwrap_or("unknown").to_string(),
+                    role: CLASS_ROLES
+                        .get(class_id)
+                        .copied()
+                        .unwrap_or("unknown")
+                        .to_string(),
                     label: None,
                     bounds: Rect::new(x, y, width, height),
                     confidence: conf,
@@ -173,7 +179,9 @@ impl OmniParserDetector {
 
     /// Parse YOLO-style output tensor into raw detections.
     ///
-    /// Supports both [batch, attrs, num_anchors] and [batch, num_anchors, attrs] layouts.
+    /// Supports both [batch, attrs, num_anchors] and [batch, num_anchors,
+    /// attrs] layouts.
+    #[allow(clippy::type_complexity)]
     fn parse_yolo_output(
         &self,
         output: &ndarray::ArrayViewD<f32>,
@@ -205,19 +213,9 @@ impl OmniParserDetector {
         for i in 0..num_anchors {
             // Extract box center, width, height
             let (cx, cy, w, h) = if is_transposed {
-                (
-                    output[[0, 0, i]],
-                    output[[0, 1, i]],
-                    output[[0, 2, i]],
-                    output[[0, 3, i]],
-                )
+                (output[[0, 0, i]], output[[0, 1, i]], output[[0, 2, i]], output[[0, 3, i]])
             } else {
-                (
-                    output[[0, i, 0]],
-                    output[[0, i, 1]],
-                    output[[0, i, 2]],
-                    output[[0, i, 3]],
-                )
+                (output[[0, i, 0]], output[[0, i, 1]], output[[0, i, 2]], output[[0, i, 3]])
             };
 
             // Skip invalid boxes
@@ -290,8 +288,14 @@ impl OmniParserDetector {
                 }
 
                 let iou = Self::compute_iou(
-                    detections[i].2, detections[i].3, detections[i].4, detections[i].5,
-                    detections[j].2, detections[j].3, detections[j].4, detections[j].5,
+                    detections[i].2,
+                    detections[i].3,
+                    detections[i].4,
+                    detections[i].5,
+                    detections[j].2,
+                    detections[j].3,
+                    detections[j].4,
+                    detections[j].5,
                 );
 
                 if iou >= self.nms_iou_threshold {
@@ -304,9 +308,16 @@ impl OmniParserDetector {
     }
 
     /// Compute Intersection over Union for two boxes in (cx, cy, w, h) format.
+    #[allow(clippy::too_many_arguments)]
     fn compute_iou(
-        cx1: f32, cy1: f32, w1: f32, h1: f32,
-        cx2: f32, cy2: f32, w2: f32, h2: f32,
+        cx1: f32,
+        cy1: f32,
+        w1: f32,
+        h1: f32,
+        cx2: f32,
+        cy2: f32,
+        w2: f32,
+        h2: f32,
     ) -> f32 {
         let x1_min = cx1 - w1 / 2.0;
         let y1_min = cy1 - h1 / 2.0;
@@ -339,7 +350,9 @@ impl OmniParserDetector {
     }
 
     /// Convert DetectedElement list to the canonical UiElement format.
-    pub fn to_ui_elements(detected: Vec<DetectedElement>) -> Vec<crate::computer::types::UiElement> {
+    pub fn to_ui_elements(
+        detected: Vec<DetectedElement>,
+    ) -> Vec<crate::computer::types::UiElement> {
         detected
             .into_iter()
             .map(|d| crate::computer::types::UiElement {
@@ -369,10 +382,17 @@ mod tests {
     #[test]
     fn test_compute_iou() {
         // Identical boxes → IoU = 1.0
-        assert!((OmniParserDetector::compute_iou(50.0, 50.0, 20.0, 20.0, 50.0, 50.0, 20.0, 20.0) - 1.0).abs() < 0.001);
+        assert!(
+            (OmniParserDetector::compute_iou(50.0, 50.0, 20.0, 20.0, 50.0, 50.0, 20.0, 20.0) - 1.0)
+                .abs()
+                < 0.001
+        );
 
         // Non-overlapping → IoU = 0.0
-        assert_eq!(OmniParserDetector::compute_iou(10.0, 10.0, 10.0, 10.0, 50.0, 50.0, 10.0, 10.0), 0.0);
+        assert_eq!(
+            OmniParserDetector::compute_iou(10.0, 10.0, 10.0, 10.0, 50.0, 50.0, 10.0, 10.0),
+            0.0
+        );
 
         // Partial overlap
         let iou = OmniParserDetector::compute_iou(10.0, 10.0, 20.0, 20.0, 15.0, 15.0, 20.0, 20.0);
@@ -383,8 +403,8 @@ mod tests {
     fn test_nms_logic() {
         // Test NMS without constructing a real detector
         let detections = vec![
-            (0, 0.9, 50.0, 50.0, 20.0, 20.0),  // High confidence
-            (0, 0.8, 51.0, 51.0, 20.0, 20.0),  // Same class, high overlap → should be suppressed
+            (0, 0.9, 50.0, 50.0, 20.0, 20.0),   // High confidence
+            (0, 0.8, 51.0, 51.0, 20.0, 20.0),   // Same class, high overlap → should be suppressed
             (1, 0.7, 100.0, 100.0, 30.0, 30.0), // Different class
         ];
 
@@ -393,14 +413,26 @@ mod tests {
         let mut suppressed = vec![false; detections.len()];
 
         for i in 0..detections.len() {
-            if suppressed[i] { continue; }
+            if suppressed[i] {
+                continue;
+            }
             kept.push(detections[i]);
             for j in (i + 1)..detections.len() {
-                if suppressed[j] { continue; }
-                if detections[i].0 != detections[j].0 { continue; }
+                if suppressed[j] {
+                    continue;
+                }
+                if detections[i].0 != detections[j].0 {
+                    continue;
+                }
                 let iou = OmniParserDetector::compute_iou(
-                    detections[i].2, detections[i].3, detections[i].4, detections[i].5,
-                    detections[j].2, detections[j].3, detections[j].4, detections[j].5,
+                    detections[i].2,
+                    detections[i].3,
+                    detections[i].4,
+                    detections[i].5,
+                    detections[j].2,
+                    detections[j].3,
+                    detections[j].4,
+                    detections[j].5,
                 );
                 if iou >= iou_threshold {
                     suppressed[j] = true;

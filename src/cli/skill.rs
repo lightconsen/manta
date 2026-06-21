@@ -1,10 +1,12 @@
 //! Skill management commands for Syscity
 
+use std::path::PathBuf;
+
+use clap::Subcommand;
+
 use crate::cli::OutputFormat;
 use crate::error::{Result, SyscityError};
 use crate::skills::{install_all, SkillFile};
-use clap::Subcommand;
-use std::path::PathBuf;
 
 /// Default daemon base URL.
 const DAEMON_URL: &str = "http://127.0.0.1:18080";
@@ -27,7 +29,8 @@ pub enum SkillCommands {
     },
     /// Install a skill from a directory, git repo, or registry
     Install {
-        /// Path to skill directory or git URL, or skill name when --registry is set
+        /// Path to skill directory or git URL, or skill name when --registry is
+        /// set
         source: String,
         /// Skill name (optional, defaults to directory name)
         #[arg(short, long)]

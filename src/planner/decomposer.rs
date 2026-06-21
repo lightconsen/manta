@@ -1,13 +1,17 @@
-//! LLM-based goal decomposer — break high-level goals into executable subtask DAGs.
+//! LLM-based goal decomposer — break high-level goals into executable subtask
+//! DAGs.
 //!
 //! The [`GoalDecomposer`] uses an LLM provider to analyse a goal, the available
 //! tool set, and emit a JSON array of [`SubTask`]s with dependency edges.
-//! These subtasks are then converted into the planner's [`Task`] / [`Plan`] types.
+//! These subtasks are then converted into the planner's [`Task`] / [`Plan`]
+//! types.
+
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 
 use crate::computer::{DesktopAction, VerificationCriteria};
 use crate::providers::{CompletionRequest, Message, Provider};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// A single subtask produced by the LLM decomposer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,7 +23,8 @@ pub struct SubTask {
     /// IDs of subtasks that must complete before this one starts.
     #[serde(default)]
     pub dependencies: Vec<String>,
-    /// Optional hint about which tool to use (e.g. "macos_screenshot", "browser").
+    /// Optional hint about which tool to use (e.g. "macos_screenshot",
+    /// "browser").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_hint: Option<String>,
     /// The concrete desktop action to execute.
@@ -40,11 +45,13 @@ fn default_max_retries() -> u32 {
 impl SubTask {
     /// Convert a [`SubTask`] into a planner [`Task`].
     ///
-    /// If no action was provided by the LLM, a zero-duration [`DesktopAction::Wait`]
-    /// is used as a placeholder so the executor can still run the step and apply
-    /// verification / retry logic.
+    /// If no action was provided by the LLM, a zero-duration
+    /// [`DesktopAction::Wait`] is used as a placeholder so the executor can
+    /// still run the step and apply verification / retry logic.
     pub fn into_task(self) -> super::Task {
-        let action = self.action.unwrap_or(DesktopAction::Wait { milliseconds: 0 });
+        let action = self
+            .action
+            .unwrap_or(DesktopAction::Wait { milliseconds: 0 });
         let mut task = super::Task::new(self.id, self.description, action);
         for dep in self.dependencies {
             task = task.depends_on(dep);
@@ -85,12 +92,12 @@ impl GoalDecomposer {
     ///
     /// # Arguments
     /// * `goal` — High-level natural language description of what to achieve.
-    /// * `available_tools` — Names of tools the agent has access to (injected into
-    ///   the prompt so the LLM can pick appropriate ones).
+    /// * `available_tools` — Names of tools the agent has access to (injected
+    ///   into the prompt so the LLM can pick appropriate ones).
     ///
     /// # Errors
-    /// Returns an error if the LLM call fails or if the response cannot be parsed
-    /// into valid subtasks.
+    /// Returns an error if the LLM call fails or if the response cannot be
+    /// parsed into valid subtasks.
     pub async fn decompose(
         &self,
         goal: &str,
@@ -259,7 +266,11 @@ Example output:
   }
 ]"#;
 
-fn build_decomposition_prompt(goal: &str, available_tools: &[String], extra_context: &str) -> String {
+fn build_decomposition_prompt(
+    goal: &str,
+    available_tools: &[String],
+    extra_context: &str,
+) -> String {
     let tools_str = if available_tools.is_empty() {
         "No specific tool list provided.".to_string()
     } else {
@@ -268,12 +279,14 @@ fn build_decomposition_prompt(goal: &str, available_tools: &[String], extra_cont
 
     if extra_context.is_empty() {
         format!(
-            "Goal: {}\n\n{}\n\nPlease decompose the goal into subtasks and output ONLY the JSON array.",
+            "Goal: {}\n\n{}\n\nPlease decompose the goal into subtasks and output ONLY the JSON \
+             array.",
             goal, tools_str
         )
     } else {
         format!(
-            "Goal: {}\n\n{}\n{}\n\nPlease decompose the goal into subtasks and output ONLY the JSON array.",
+            "Goal: {}\n\n{}\n{}\n\nPlease decompose the goal into subtasks and output ONLY the \
+             JSON array.",
             goal, tools_str, extra_context
         )
     }

@@ -1,12 +1,13 @@
 //! Linux X11 desktop control tool using `xdotool`.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::info;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Action to perform on the X11 desktop.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,7 +29,10 @@ pub enum DesktopAction {
     /// Get window list.
     ListWindows,
     /// Activate a window by name or ID.
-    ActivateWindow { name: Option<String>, window_id: Option<String> },
+    ActivateWindow {
+        name: Option<String>,
+        window_id: Option<String>,
+    },
 }
 
 /// Desktop control tool for Linux X11 via `xdotool`.
@@ -47,7 +51,8 @@ impl DesktopControlTool {
     }
 
     async fn run_xdotool(args: &[&str]) -> crate::Result<(bool, String, String)> {
-        let output = timeout(Duration::from_secs(10), Command::new("xdotool").args(args).output()).await;
+        let output =
+            timeout(Duration::from_secs(10), Command::new("xdotool").args(args).output()).await;
         match output {
             Ok(Ok(out)) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -67,8 +72,8 @@ impl Tool for DesktopControlTool {
     }
 
     fn description(&self) -> &str {
-        "Control the Linux X11 desktop using xdotool. \
-         Supports click, type, key presses, window inspection, and window activation."
+        "Control the Linux X11 desktop using xdotool. Supports click, type, key presses, window \
+         inspection, and window activation."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -146,7 +151,10 @@ impl Tool for DesktopControlTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("inspect");
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("inspect");
 
         info!("X11 desktop control action: {}", action);
 
@@ -154,7 +162,10 @@ impl Tool for DesktopControlTool {
             "inspect" => {
                 let (ok, active, err) = Self::run_xdotool(&["getactivewindow"]).await?;
                 if !ok {
-                    return Ok(ToolExecutionResult::error(format!("getactivewindow failed: {}", err)));
+                    return Ok(ToolExecutionResult::error(format!(
+                        "getactivewindow failed: {}",
+                        err
+                    )));
                 }
                 let win_id = active.trim();
 
@@ -186,7 +197,9 @@ impl Tool for DesktopControlTool {
                 let window_id = args.get("window_id").and_then(|v| v.as_str());
 
                 if let (Some(xv), Some(yv)) = (x, y) {
-                    let _ = Self::run_xdotool(&["mousemove", &format!("{}", xv), &format!("{}", yv)]).await?;
+                    let _ =
+                        Self::run_xdotool(&["mousemove", &format!("{}", xv), &format!("{}", yv)])
+                            .await?;
                 } else if let Some(wid) = window_id {
                     let _ = Self::run_xdotool(&["windowfocus", wid]).await?;
                     let _ = Self::run_xdotool(&["windowactivate", wid]).await?;
@@ -209,9 +222,14 @@ impl Tool for DesktopControlTool {
                 }
             }
             "key" => {
-                let keys: Vec<String> = args.get("keys")
+                let keys: Vec<String> = args
+                    .get("keys")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let key_str = keys.join("+");
                 let (ok, _, err) = Self::run_xdotool(&["key", &key_str]).await?;
@@ -222,7 +240,9 @@ impl Tool for DesktopControlTool {
                 }
             }
             "list_windows" => {
-                let (ok, stdout, err) = Self::run_xdotool(&["search", "--onlyvisible", ".*", "getwindowname", "%@"]).await?;
+                let (ok, stdout, err) =
+                    Self::run_xdotool(&["search", "--onlyvisible", ".*", "getwindowname", "%@"])
+                        .await?;
                 if ok {
                     Ok(ToolExecutionResult::success(format!("Visible windows:\n{}", stdout)))
                 } else {
@@ -240,10 +260,13 @@ impl Tool for DesktopControlTool {
                 let button = args.get("button").and_then(|v| v.as_u64()).unwrap_or(1);
 
                 if let (Some(xv), Some(yv)) = (x, y) {
-                    let _ = Self::run_xdotool(&["mousemove", &format!("{}", xv), &format!("{}", yv)]).await?;
+                    let _ =
+                        Self::run_xdotool(&["mousemove", &format!("{}", xv), &format!("{}", yv)])
+                            .await?;
                 }
 
-                let (ok, _, err) = Self::run_xdotool(&["click", "--repeat", "2", &format!("{}", button)]).await?;
+                let (ok, _, err) =
+                    Self::run_xdotool(&["click", "--repeat", "2", &format!("{}", button)]).await?;
                 if ok {
                     Ok(ToolExecutionResult::success(format!("Double-clicked button {}", button)))
                 } else {
@@ -253,11 +276,16 @@ impl Tool for DesktopControlTool {
             "scroll" => {
                 let x = args.get("x").and_then(|v| v.as_i64());
                 let y = args.get("y").and_then(|v| v.as_i64());
-                let direction = args.get("direction").and_then(|v| v.as_str()).unwrap_or("down");
+                let direction = args
+                    .get("direction")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("down");
                 let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(3);
 
                 if let (Some(xv), Some(yv)) = (x, y) {
-                    let _ = Self::run_xdotool(&["mousemove", &format!("{}", xv), &format!("{}", yv)]).await?;
+                    let _ =
+                        Self::run_xdotool(&["mousemove", &format!("{}", xv), &format!("{}", yv)])
+                            .await?;
                 }
 
                 let btn = match direction {
@@ -272,7 +300,10 @@ impl Tool for DesktopControlTool {
                     let _ = Self::run_xdotool(&["click", btn]).await?;
                 }
 
-                Ok(ToolExecutionResult::success(format!("Scrolled {} ({} clicks)", direction, amount)))
+                Ok(ToolExecutionResult::success(format!(
+                    "Scrolled {} ({} clicks)",
+                    direction, amount
+                )))
             }
             "drag" => {
                 let from_x = args.get("from_x").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -280,9 +311,16 @@ impl Tool for DesktopControlTool {
                 let to_x = args.get("to_x").and_then(|v| v.as_i64()).unwrap_or(0);
                 let to_y = args.get("to_y").and_then(|v| v.as_i64()).unwrap_or(0);
 
-                let _ = Self::run_xdotool(&["mousemove", &format!("{}", from_x), &format!("{}", from_y)]).await?;
+                let _ = Self::run_xdotool(&[
+                    "mousemove",
+                    &format!("{}", from_x),
+                    &format!("{}", from_y),
+                ])
+                .await?;
                 let _ = Self::run_xdotool(&["mousedown", "1"]).await?;
-                let _ = Self::run_xdotool(&["mousemove", &format!("{}", to_x), &format!("{}", to_y)]).await?;
+                let _ =
+                    Self::run_xdotool(&["mousemove", &format!("{}", to_x), &format!("{}", to_y)])
+                        .await?;
                 let (ok, _, err) = Self::run_xdotool(&["mouseup", "1"]).await?;
 
                 if ok {
@@ -301,7 +339,10 @@ impl Tool for DesktopControlTool {
                 if let Some(wid) = window_id {
                     let (ok, _, err) = Self::run_xdotool(&["windowactivate", wid]).await?;
                     if ok {
-                        return Ok(ToolExecutionResult::success(format!("Activated window {}", wid)));
+                        return Ok(ToolExecutionResult::success(format!(
+                            "Activated window {}",
+                            wid
+                        )));
                     } else {
                         return Ok(ToolExecutionResult::error(format!("Activate failed: {}", err)));
                     }
@@ -313,12 +354,21 @@ impl Tool for DesktopControlTool {
                         let first = wid.lines().next().unwrap_or("").trim();
                         let (ok2, _, err2) = Self::run_xdotool(&["windowactivate", first]).await?;
                         if ok2 {
-                            return Ok(ToolExecutionResult::success(format!("Activated window '{}' (id: {})", n, first)));
+                            return Ok(ToolExecutionResult::success(format!(
+                                "Activated window '{}' (id: {})",
+                                n, first
+                            )));
                         } else {
-                            return Ok(ToolExecutionResult::error(format!("Activate failed: {}", err2)));
+                            return Ok(ToolExecutionResult::error(format!(
+                                "Activate failed: {}",
+                                err2
+                            )));
                         }
                     }
-                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                    return Ok(ToolExecutionResult::error(format!(
+                        "Window '{}' not found: {}",
+                        n, err
+                    )));
                 }
 
                 Ok(ToolExecutionResult::error("Provide either 'name' or 'window_id'".to_string()))
@@ -342,15 +392,26 @@ impl Tool for DesktopControlTool {
                         let first = wid.lines().next().unwrap_or("").trim();
                         let (ok2, _, err2) = Self::run_xdotool(&["windowclose", first]).await?;
                         if ok2 {
-                            return Ok(ToolExecutionResult::success(format!("Closed window '{}' (id: {})", n, first)));
+                            return Ok(ToolExecutionResult::success(format!(
+                                "Closed window '{}' (id: {})",
+                                n, first
+                            )));
                         } else {
-                            return Ok(ToolExecutionResult::error(format!("Close failed: {}", err2)));
+                            return Ok(ToolExecutionResult::error(format!(
+                                "Close failed: {}",
+                                err2
+                            )));
                         }
                     }
-                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                    return Ok(ToolExecutionResult::error(format!(
+                        "Window '{}' not found: {}",
+                        n, err
+                    )));
                 }
 
-                Ok(ToolExecutionResult::error("Provide 'name' or 'window_id' for close_window".to_string()))
+                Ok(ToolExecutionResult::error(
+                    "Provide 'name' or 'window_id' for close_window".to_string(),
+                ))
             }
             _ => Ok(ToolExecutionResult::error(format!("Unknown action: {}", action))),
         }

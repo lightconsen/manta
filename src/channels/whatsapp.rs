@@ -1,19 +1,22 @@
 //! WhatsApp Channel Implementation
 //!
-//! This module implements the Channel trait for WhatsApp using the Meta Business API.
-//! Requires: WhatsApp Business Account, Phone Number ID, and Access Token.
+//! This module implements the Channel trait for WhatsApp using the Meta
+//! Business API. Requires: WhatsApp Business Account, Phone Number ID, and
+//! Access Token.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
 
 use crate::channels::{
     Channel, ChannelCapabilities, ConversationId, FormattedContent, OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
 
 /// Meta Business API base URL for WhatsApp
 const META_API_BASE: &str = "https://graph.facebook.com/v18.0";
@@ -243,9 +246,8 @@ impl WhatsappChannel {
                             (
                                 false,
                                 Some(format!(
-                                    "🔒 This bot requires pairing.\n\n\
-                                Your pairing code: *{}*\n\n\
-                                Please share this code with an admin to get access.",
+                                    "🔒 This bot requires pairing.\n\nYour pairing code: \
+                                     *{}*\n\nPlease share this code with an admin to get access.",
                                     code
                                 )),
                             )
@@ -253,9 +255,8 @@ impl WhatsappChannel {
                         Ok(RequestAccessResult::AlreadyPending { code, .. }) => (
                             false,
                             Some(format!(
-                                "⏳ Your pairing request is still pending.\n\n\
-                                Code: *{}*\n\n\
-                                Please wait for an admin to approve your request.",
+                                "⏳ Your pairing request is still pending.\n\nCode: \
+                                 *{}*\n\nPlease wait for an admin to approve your request.",
                                 code
                             )),
                         ),
@@ -379,11 +380,13 @@ impl WhatsappChannel {
     }
 
     /// Format text for WhatsApp
-    /// WhatsApp supports: *bold*, _italic_, ~strikethrough~, `code`, ```code blocks```
+    /// WhatsApp supports: *bold*, _italic_, ~strikethrough~, `code`, ```code
+    /// blocks```
     fn format_for_whatsapp(text: &str) -> String {
         let mut result = text.to_string();
 
-        // Step 1: Protect bold text (**text**) by extracting and replacing with numbered placeholders
+        // Step 1: Protect bold text (**text**) by extracting and replacing with
+        // numbered placeholders
         let bold_re = regex::Regex::new(r"\*\*(.+?)\*\*").unwrap();
         let mut bold_segments: Vec<String> = Vec::new();
         let mut counter = 0;
@@ -522,8 +525,9 @@ impl Channel for WhatsappChannel {
             .await
         {
             Ok(_) | Err(_) => {
-                // We expect an error for invalid "to" field, but connection should work
-                // In production, you might want to use a different health check endpoint
+                // We expect an error for invalid "to" field, but connection
+                // should work In production, you might want to
+                // use a different health check endpoint
             }
         }
 
@@ -673,7 +677,8 @@ mod tests {
         let input3 = "**bold** and *italic*";
         let output3 = WhatsappChannel::format_for_whatsapp(input3);
         assert!(output3.contains("*bold*"), "Expected '*bold*' in output: {}", output3);
-        // Note: If *italic* appears after **bold**, the placeholder approach may affect it
+        // Note: If *italic* appears after **bold**, the placeholder approach
+        // may affect it
     }
 
     #[test]

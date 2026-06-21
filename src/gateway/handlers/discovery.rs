@@ -1,10 +1,10 @@
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
@@ -280,7 +280,9 @@ pub async fn spawn_all_discovered_agents_handler(
                             .with_transcript_store(Arc::clone(&state.infra.transcript_store))
                             .with_artifact_store(Arc::clone(&state.infra.artifact_store))
                             .with_disk_budget(Arc::clone(&state.infra.disk_budget))
-                            .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+                            .with_session_file_manager(Arc::clone(
+                                &state.infra.session_file_manager,
+                            ))
                             .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
                     )
                 } else {
@@ -290,7 +292,9 @@ pub async fn spawn_all_discovered_agents_handler(
                             .with_transcript_store(Arc::clone(&state.infra.transcript_store))
                             .with_artifact_store(Arc::clone(&state.infra.artifact_store))
                             .with_disk_budget(Arc::clone(&state.infra.disk_budget))
-                            .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
+                            .with_session_file_manager(Arc::clone(
+                                &state.infra.session_file_manager,
+                            ))
                             .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
                     )
                 };

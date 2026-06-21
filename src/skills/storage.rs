@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
 use tracing::{debug, info, warn};
 
 /// Skill storage levels
@@ -469,8 +470,9 @@ pub fn find_workspace_root() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Mutex;
+
+    use super::*;
 
     static CWD_LOCK: Mutex<()> = Mutex::new(());
 

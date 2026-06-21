@@ -3,15 +3,17 @@
 //! Tools are capabilities that the AI assistant can use to interact
 //! with the world (execute shell commands, read files, search the web, etc.).
 
-use crate::providers::{FunctionCall, FunctionDefinition, ToolResult};
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio_stream::StreamExt;
+
+use crate::providers::{FunctionCall, FunctionDefinition, ToolResult};
 
 pub mod approval;
 pub mod rbac;
@@ -21,7 +23,6 @@ pub use approval::{
     ApprovalDecision, ApprovalFilter, ApprovalLevel, ApprovalQueue, ApprovalRequiredEvent,
     PendingApproval, PendingApprovalSummary, RiskLevel,
 };
-
 // Re-export RBAC types for convenience
 pub use rbac::{
     ModelCapabilities, PolicyEvaluationContext, Role, SandboxPolicy, ToolPolicy, UserContext,
@@ -60,7 +61,7 @@ impl std::fmt::Display for ToolId {
 }
 
 /// Identity fields: who is calling the tool.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ToolIdentity {
     /// The user ID executing the tool
     pub user_id: String,
@@ -72,18 +73,6 @@ pub struct ToolIdentity {
     pub sender_is_owner: bool,
     /// Optional per-user RBAC context.
     pub user_context: Option<UserContext>,
-}
-
-impl Default for ToolIdentity {
-    fn default() -> Self {
-        Self {
-            user_id: String::new(),
-            conversation_id: String::new(),
-            sender_id: None,
-            sender_is_owner: false,
-            user_context: None,
-        }
-    }
 }
 
 /// Sandbox / execution environment: where and how the tool runs.
@@ -175,9 +164,9 @@ impl Default for ToolModel {
 /// - `sandbox`: execution environment (working directory, timeouts, limits)
 /// - `model`: LLM / policy metadata (model name, capabilities, trust)
 ///
-/// Common identity fields are accessible via `Deref` — `ctx.user_id` still works.
-/// Sandbox fields have convenience accessors: `ctx.working_directory()`.
-#[derive(Debug, Clone)]
+/// Common identity fields are accessible via `Deref` — `ctx.user_id` still
+/// works. Sandbox fields have convenience accessors: `ctx.working_directory()`.
+#[derive(Debug, Clone, Default)]
 pub struct ToolContext {
     /// Identity fields (who is calling the tool)
     pub identity: ToolIdentity,
@@ -193,16 +182,7 @@ pub struct ToolContext {
 /// subprocess executions while preserving common system variables required by
 /// most programs.
 const ALLOWED_ENV_VARS: &[&str] = &[
-    "PATH",
-    "HOME",
-    "USER",
-    "SHELL",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TMPDIR",
-    "TERM",
-    "TZ",
+    "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM", "TZ",
 ];
 
 /// Build a whitelisted environment map from the current process environment.
@@ -210,16 +190,6 @@ fn default_tool_environment() -> HashMap<String, String> {
     std::env::vars()
         .filter(|(k, _)| ALLOWED_ENV_VARS.contains(&k.as_str()))
         .collect()
-}
-
-impl Default for ToolContext {
-    fn default() -> Self {
-        Self {
-            identity: ToolIdentity::default(),
-            sandbox: ToolSandbox::default(),
-            model: ToolModel::default(),
-        }
-    }
 }
 
 impl std::ops::Deref for ToolContext {
@@ -231,20 +201,48 @@ impl std::ops::Deref for ToolContext {
 
 impl ToolContext {
     /// Convenience accessors for commonly-used sandbox fields.
-    pub fn working_directory(&self) -> &std::path::PathBuf { &self.sandbox.working_directory }
-    pub fn environment(&self) -> &HashMap<String, String> { &self.sandbox.environment }
-    pub fn timeout(&self) -> Duration { self.sandbox.timeout }
-    pub fn sandboxed(&self) -> bool { self.sandbox.sandboxed }
-    pub fn allowed_paths(&self) -> &[std::path::PathBuf] { &self.sandbox.allowed_paths }
-    pub fn allowed_commands(&self) -> &[String] { &self.sandbox.allowed_commands }
-    pub fn workspace_root(&self) -> &std::path::PathBuf { &self.sandbox.workspace_root }
-    pub fn workspace_only(&self) -> bool { self.sandbox.workspace_only }
-    pub fn memory_limit(&self) -> Option<usize> { self.sandbox.memory_limit }
-    pub fn cpu_limit(&self) -> Option<u64> { self.sandbox.cpu_limit }
-    pub fn fd_limit(&self) -> Option<u64> { self.sandbox.fd_limit }
-    pub fn process_limit(&self) -> Option<u64> { self.sandbox.process_limit }
-    pub fn sandbox_policy(&self) -> Option<&SandboxPolicy> { self.sandbox.sandbox_policy.as_ref() }
-    pub fn plugin_allowlist(&self) -> Option<&[String]> { self.sandbox.plugin_allowlist.as_deref() }
+    pub fn working_directory(&self) -> &std::path::PathBuf {
+        &self.sandbox.working_directory
+    }
+    pub fn environment(&self) -> &HashMap<String, String> {
+        &self.sandbox.environment
+    }
+    pub fn timeout(&self) -> Duration {
+        self.sandbox.timeout
+    }
+    pub fn sandboxed(&self) -> bool {
+        self.sandbox.sandboxed
+    }
+    pub fn allowed_paths(&self) -> &[std::path::PathBuf] {
+        &self.sandbox.allowed_paths
+    }
+    pub fn allowed_commands(&self) -> &[String] {
+        &self.sandbox.allowed_commands
+    }
+    pub fn workspace_root(&self) -> &std::path::PathBuf {
+        &self.sandbox.workspace_root
+    }
+    pub fn workspace_only(&self) -> bool {
+        self.sandbox.workspace_only
+    }
+    pub fn memory_limit(&self) -> Option<usize> {
+        self.sandbox.memory_limit
+    }
+    pub fn cpu_limit(&self) -> Option<u64> {
+        self.sandbox.cpu_limit
+    }
+    pub fn fd_limit(&self) -> Option<u64> {
+        self.sandbox.fd_limit
+    }
+    pub fn process_limit(&self) -> Option<u64> {
+        self.sandbox.process_limit
+    }
+    pub fn sandbox_policy(&self) -> Option<&SandboxPolicy> {
+        self.sandbox.sandbox_policy.as_ref()
+    }
+    pub fn plugin_allowlist(&self) -> Option<&[String]> {
+        self.sandbox.plugin_allowlist.as_deref()
+    }
 
     /// Create a new tool context
     pub fn new(user_id: impl Into<String>, conversation_id: impl Into<String>) -> Self {
@@ -378,14 +376,16 @@ impl ToolContext {
         self
     }
 
-    /// Set process limit for preventing fork bombs (only effective when sandboxed)
+    /// Set process limit for preventing fork bombs (only effective when
+    /// sandboxed)
     pub fn with_process_limit(mut self, count: u64) -> Self {
         self.sandbox.process_limit = Some(count);
         self
     }
 
     /// Apply resource limits to the current process (Unix only)
-    /// This should be called in a pre_exec hook before spawning the child process
+    /// This should be called in a pre_exec hook before spawning the child
+    /// process
     #[cfg(unix)]
     pub fn apply_resource_limits(&self) -> std::io::Result<()> {
         use std::io;
@@ -546,7 +546,8 @@ impl ToolContext {
 
     /// Resolve a path relative to the workspace root.
     ///
-    /// * Absolute paths are returned as-is (but still subject to `is_path_allowed`).
+    /// * Absolute paths are returned as-is (but still subject to
+    ///   `is_path_allowed`).
     /// * Relative paths are joined with `workspace_root`.
     /// * `~` is expanded to the user's home directory.
     pub fn resolve_path(&self, path: &std::path::Path) -> std::path::PathBuf {
@@ -579,7 +580,10 @@ impl ToolContext {
             return true;
         }
         let cmd = command.split_whitespace().next().unwrap_or(command);
-        self.sandbox.allowed_commands.iter().any(|allowed| allowed == cmd)
+        self.sandbox
+            .allowed_commands
+            .iter()
+            .any(|allowed| allowed == cmd)
     }
 }
 
@@ -813,11 +817,11 @@ pub mod image;
 pub mod list_capabilities;
 pub mod mcp;
 pub mod memory;
-pub mod perception_tool;
 pub mod message;
 pub mod nodes;
 pub mod patch;
 pub mod pdf;
+pub mod perception_tool;
 pub mod process;
 pub mod sandbox;
 pub mod sandbox_interceptor;
@@ -875,11 +879,13 @@ struct CacheEntry {
     timestamp: std::time::Instant,
 }
 
-/// Registry of tools with optional caching, circuit breaker, and trust-level filtering.
+/// Registry of tools with optional caching, circuit breaker, and trust-level
+/// filtering.
 pub struct ToolRegistry {
     tools: HashMap<String, BoxedTool>,
     /// Dynamically registered tools (e.g. MCP auto-discovered tools).
-    /// Uses interior mutability so tools can be added through `Arc<ToolRegistry>`.
+    /// Uses interior mutability so tools can be added through
+    /// `Arc<ToolRegistry>`.
     dynamic_tools: std::sync::RwLock<HashMap<String, std::sync::Arc<dyn Tool>>>,
     /// Tool-name prefixes that have been logically deregistered (e.g. MCP
     /// server disconnect). Tools matching any blocked prefix are excluded
@@ -1077,7 +1083,7 @@ impl ToolRegistry {
 
         // Plugin allowlist at the context level (runtime restriction).
         if is_dynamic && Self::is_plugin_like_name(name) {
-            if let Some(ref allowlist) = context.plugin_allowlist() {
+            if let Some(allowlist) = context.plugin_allowlist() {
                 let allowed = allowlist
                     .iter()
                     .any(|prefix| name == prefix || name.starts_with(prefix));
@@ -1088,7 +1094,7 @@ impl ToolRegistry {
         }
 
         // Sandbox policy: require sandboxed tools.
-        if let Some(ref sandbox_policy) = context.sandbox_policy() {
+        if let Some(sandbox_policy) = context.sandbox_policy() {
             if sandbox_policy.require_sandboxed {
                 let caps = self.tool_capabilities(name);
                 if !caps.sandboxed {
@@ -1097,7 +1103,8 @@ impl ToolRegistry {
             }
         }
 
-        if let (Some(user_ctx), Some(policy)) = (&context.user_context, &context.model.tool_policy) {
+        if let (Some(user_ctx), Some(policy)) = (&context.user_context, &context.model.tool_policy)
+        {
             let capabilities = self.tool_capabilities(name);
             let eval_ctx = PolicyEvaluationContext {
                 model_name: context.model.model_name.clone(),
@@ -1145,7 +1152,8 @@ impl ToolRegistry {
                 .unwrap_or(false)
     }
 
-    /// Heuristic: plugin tools often use `__` separators (MCP or plugin runtime).
+    /// Heuristic: plugin tools often use `__` separators (MCP or plugin
+    /// runtime).
     fn is_plugin_like_name(name: &str) -> bool {
         name.contains("__")
     }
@@ -1400,8 +1408,8 @@ impl ToolRegistry {
             .unwrap_or(false)
     }
 
-    /// Get all tools as function definitions (excludes blocked and degraded tools).
-    /// Includes both statically- and dynamically-registered tools.
+    /// Get all tools as function definitions (excludes blocked and degraded
+    /// tools). Includes both statically- and dynamically-registered tools.
     pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
         let mut defs: Vec<FunctionDefinition> = self
             .tools
@@ -1453,9 +1461,10 @@ impl ToolRegistry {
     ///
     /// # Policy and Approval Flow
     ///
-    /// 1. Run policy hooks — if any hook returns `Deny`, return error immediately
+    /// 1. Run policy hooks — if any hook returns `Deny`, return error
+    ///    immediately
     /// 2. If any hook returns `NeedsApproval` and approval_queue is configured,
-    /// suspend execution and wait for human approval
+    ///    suspend execution and wait for human approval
     /// 3. Run before-hooks
     /// 4. Execute the tool
     /// 5. Run after-hooks
@@ -1483,7 +1492,8 @@ impl ToolRegistry {
             if caps.requires_approval {
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static APPROVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
-                let approval_id = format!("fallback-{:08x}", APPROVAL_COUNTER.fetch_add(1, Ordering::Relaxed));
+                let approval_id =
+                    format!("fallback-{:08x}", APPROVAL_COUNTER.fetch_add(1, Ordering::Relaxed));
                 policy_decision = ToolPolicyDecision::NeedsApproval {
                     approval_id,
                     tool_name: name.to_string(),
@@ -1491,7 +1501,10 @@ impl ToolRegistry {
                     risk_level: crate::tools::approval::RiskLevel::High,
                     approval_level: crate::tools::approval::ApprovalLevel::Ask,
                     requested_by: "system".to_string(),
-                    message: format!("Tool '{}' requires approval (fallsback from requires_approval flag)", name),
+                    message: format!(
+                        "Tool '{}' requires approval (fallsback from requires_approval flag)",
+                        name
+                    ),
                 };
             }
         }
@@ -1576,7 +1589,9 @@ impl ToolRegistry {
             tracing::debug!("Cache hit for tool: {}", name);
             let result = Ok(cached_result);
             if let Ok(ref exec_result) = result {
-                self.active_hooks().run_after(name, &args, exec_result).await;
+                self.active_hooks()
+                    .run_after(name, &args, exec_result)
+                    .await;
             }
             return self.filter_and_audit(name, context, Some(result)).await;
         }
@@ -1616,7 +1631,9 @@ impl ToolRegistry {
 
         // Run after-hooks
         if let Some(Ok(ref exec_result)) = execution_result {
-            self.active_hooks().run_after(name, &args, exec_result).await;
+            self.active_hooks()
+                .run_after(name, &args, exec_result)
+                .await;
         }
 
         self.filter_and_audit(name, context, execution_result).await
@@ -1926,10 +1943,7 @@ impl ToolRegistry {
 
 /// Consume a tool execution stream, accumulating chunks into a
 /// [`ToolExecutionResult`] while invoking `on_chunk` for each chunk.
-async fn consume_stream<S, F, Fut>(
-    mut stream: S,
-    on_chunk: &mut F,
-) -> ToolExecutionResult
+async fn consume_stream<S, F, Fut>(mut stream: S, on_chunk: &mut F) -> ToolExecutionResult
 where
     S: tokio_stream::Stream<Item = ToolExecutionChunk> + Unpin,
     F: FnMut(ToolExecutionChunk) -> Fut + Send,
@@ -2040,9 +2054,11 @@ impl ToolValidator for NameValidator {
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
         {
-            return Err(ToolValidationError::InvalidName(
-                format!("Tool name '{}' contains invalid characters. Use alphanumeric, underscore, or hyphen only", name)
-            ));
+            return Err(ToolValidationError::InvalidName(format!(
+                "Tool name '{}' contains invalid characters. Use alphanumeric, underscore, or \
+                 hyphen only",
+                name
+            )));
         }
 
         // Check doesn't start with number
@@ -2805,8 +2821,8 @@ mod tests {
         registry.register_dynamic(std::sync::Arc::new(PluginTool));
         registry.register_dynamic(std::sync::Arc::new(BlockedPluginTool));
 
-        let ctx = ToolContext::new("user", "conv1")
-            .with_plugin_allowlist(vec!["allowed__".to_string()]);
+        let ctx =
+            ToolContext::new("user", "conv1").with_plugin_allowlist(vec!["allowed__".to_string()]);
 
         let available: Vec<String> = registry
             .get_available(&ctx)
@@ -2909,8 +2925,7 @@ mod tests {
         let ctx = ToolContext::new("user", "conv1");
         let mut stream = tool.execute_stream(serde_json::json!({}), &ctx);
 
-        let chunks: Vec<ToolExecutionChunk> =
-            tokio_stream::StreamExt::collect(&mut stream).await;
+        let chunks: Vec<ToolExecutionChunk> = tokio_stream::StreamExt::collect(&mut stream).await;
         assert_eq!(chunks.len(), 1);
         assert!(matches!(chunks[0], ToolExecutionChunk::Output(ref s) if s == "final"));
     }
@@ -2937,7 +2952,9 @@ mod tests {
         assert!(result.is_ok(), "streaming execution should succeed");
         let result = result.unwrap();
         assert_eq!(result.output, "final");
-        assert!(chunks.iter().any(|c| matches!(c, ToolExecutionChunk::Output(s) if s == "final")));
+        assert!(chunks
+            .iter()
+            .any(|c| matches!(c, ToolExecutionChunk::Output(s) if s == "final")));
     }
 
     #[test]

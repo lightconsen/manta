@@ -6,9 +6,11 @@
 //! organizational unit that controls *which* tools are exposed for the current
 //! environment.
 
-use crate::tools::Tool;
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+use serde::{Deserialize, Serialize};
+
+use crate::tools::Tool;
 
 /// OS control permission scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -24,7 +26,8 @@ pub enum OsControlScope {
     Root = 3,
 }
 
-/// Platform constraints that determine whether a `PlatformToolSet` is available.
+/// Platform constraints that determine whether a `PlatformToolSet` is
+/// available.
 #[derive(Debug, Clone, Default)]
 pub struct PlatformConstraints {
     /// Target operating systems (e.g. `["linux"]`, `["macos"]`).
@@ -116,7 +119,11 @@ impl CapabilityProfile {
     pub fn apply(&self, registry: &mut PlatformCapabilityRegistry) {
         match self {
             CapabilityProfile::Minimal => {
-                let ids: Vec<String> = registry.all_sets().iter().map(|s| s.id().to_string()).collect();
+                let ids: Vec<String> = registry
+                    .all_sets()
+                    .iter()
+                    .map(|s| s.id().to_string())
+                    .collect();
                 for id in ids {
                     registry.disable(&id);
                 }
@@ -210,11 +217,11 @@ pub mod windows;
 pub use linux::LinuxToolset;
 pub use linux_desktop_wayland::LinuxDesktopWaylandToolset;
 pub use linux_desktop_x11::LinuxDesktopX11Toolset;
+#[cfg(target_os = "macos")]
+pub use macos::MacosToolset;
 pub use mobile::{AndroidToolset, IosToolset};
 pub use registry::PlatformCapabilityRegistry;
 pub use server_operator::{Diagnosis, ServerOperator, SystemInspector, SystemSnapshot};
-#[cfg(target_os = "macos")]
-pub use macos::MacosToolset;
 pub use windows::WindowsToolset;
 
 /// Return all platform tool sets compiled into this binary.

@@ -1,10 +1,10 @@
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
@@ -68,7 +68,9 @@ pub async fn add_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<AddMentionPatternRequest>,
 ) -> impl IntoResponse {
-    state.auth.mention_gate
+    state
+        .auth
+        .mention_gate
         .add_allowlist(&req.channel, &req.pattern)
         .await;
     (
@@ -83,12 +85,15 @@ pub async fn add_mention_allowlist_handler(
 }
 
 #[allow(dead_code)]
-/// `DELETE /api/v1/mentions/allowlist/:channel/:pattern` — remove from allowlist.
+/// `DELETE /api/v1/mentions/allowlist/:channel/:pattern` — remove from
+/// allowlist.
 pub async fn remove_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
     Path((channel, pattern)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let removed = state.auth.mention_gate
+    let removed = state
+        .auth
+        .mention_gate
         .remove_allowlist(&channel, &pattern)
         .await;
     (
@@ -129,7 +134,9 @@ pub async fn add_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<AddMentionPatternRequest>,
 ) -> impl IntoResponse {
-    state.auth.mention_gate
+    state
+        .auth
+        .mention_gate
         .add_blocklist(&req.channel, &req.pattern)
         .await;
     (
@@ -144,12 +151,15 @@ pub async fn add_mention_blocklist_handler(
 }
 
 #[allow(dead_code)]
-/// `DELETE /api/v1/mentions/blocklist/:channel/:pattern` — remove from blocklist.
+/// `DELETE /api/v1/mentions/blocklist/:channel/:pattern` — remove from
+/// blocklist.
 pub async fn remove_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
     Path((channel, pattern)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let removed = state.auth.mention_gate
+    let removed = state
+        .auth
+        .mention_gate
         .remove_blocklist(&channel, &pattern)
         .await;
     (

@@ -1,6 +1,7 @@
 //! Human-readable usage formatting
 //!
-//! Converts `ProviderUsageSnapshot` data into formatted strings for CLI display.
+//! Converts `ProviderUsageSnapshot` data into formatted strings for CLI
+//! display.
 //!
 //! ```rust,ignore
 //! let snapshot = tracker.snapshot("openai").await.unwrap();
@@ -176,8 +177,9 @@ fn format_time_until(target: DateTime<Utc>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use chrono::{Duration, Utc};
+
+    use super::*;
 
     fn test_window(label: &str, tokens: u32, requests: u64, cost: f64) -> UsageWindow {
         let now = Utc::now();

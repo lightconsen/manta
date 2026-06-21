@@ -1,7 +1,7 @@
 //! Artifacts System
 //!
-//! Tracks code snippets, documents, images, and links bound to session lifecycle.
-//! ts`.
+//! Tracks code snippets, documents, images, and links bound to session
+//! lifecycle. ts`.
 //!
 //! Features:
 //! - Artifact creation, retrieval, listing
@@ -9,27 +9,28 @@
 //! - Multiple artifact types
 //! - File-backed storage for large artifacts
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 /// Type of artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactType {
- /// Code snippet (any language).
+    /// Code snippet (any language).
     Code,
- /// Document / text content.
+    /// Document / text content.
     Document,
- /// Image (base64 or URL).
+    /// Image (base64 or URL).
     Image,
- /// External link.
+    /// External link.
     Link,
- /// Data (JSON, CSV, etc.).
+    /// Data (JSON, CSV, etc.).
     Data,
- /// Generic file.
+    /// Generic file.
     File,
 }
 
@@ -49,43 +50,43 @@ impl std::fmt::Display for ArtifactType {
 /// An artifact produced during a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifact {
- /// Unique artifact ID.
+    /// Unique artifact ID.
     pub id: String,
- /// Session ID this artifact belongs to.
+    /// Session ID this artifact belongs to.
     pub session_id: String,
- /// Human-readable title.
+    /// Human-readable title.
     pub title: String,
- /// Artifact type.
+    /// Artifact type.
     pub artifact_type: ArtifactType,
- /// Content (for small artifacts).
+    /// Content (for small artifacts).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
- /// File path (for large artifacts stored on disk).
+    /// File path (for large artifacts stored on disk).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
- /// For code artifacts: language identifier.
+    /// For code artifacts: language identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
- /// For link artifacts: URL.
+    /// For link artifacts: URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
- /// MIME type (if known).
+    /// MIME type (if known).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
- /// When the artifact was created.
+    /// When the artifact was created.
     pub created_at: DateTime<Utc>,
- /// Size in bytes.
+    /// Size in bytes.
     pub size_bytes: usize,
- /// Optional tags.
+    /// Optional tags.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
- /// Optional metadata.
+    /// Optional metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 }
 
 impl Artifact {
- /// Create a new code artifact.
+    /// Create a new code artifact.
     pub fn code(
         id: impl Into<String>,
         session_id: impl Into<String>,
@@ -112,7 +113,7 @@ impl Artifact {
         }
     }
 
- /// Create a new document artifact.
+    /// Create a new document artifact.
     pub fn document(
         id: impl Into<String>,
         session_id: impl Into<String>,
@@ -138,7 +139,7 @@ impl Artifact {
         }
     }
 
- /// Create a new link artifact.
+    /// Create a new link artifact.
     pub fn link(
         id: impl Into<String>,
         session_id: impl Into<String>,
@@ -163,7 +164,7 @@ impl Artifact {
         }
     }
 
- /// Create a new data artifact.
+    /// Create a new data artifact.
     pub fn data(
         id: impl Into<String>,
         session_id: impl Into<String>,
@@ -189,25 +190,25 @@ impl Artifact {
         }
     }
 
- /// Add a tag.
+    /// Add a tag.
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.tags.get_or_insert_with(Vec::new).push(tag.into());
         self
     }
 
- /// Add metadata.
+    /// Add metadata.
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = Some(metadata);
         self
     }
 
- /// Set file path for large artifacts.
+    /// Set file path for large artifacts.
     pub fn with_file_path(mut self, path: impl Into<String>) -> Self {
         self.file_path = Some(path.into());
         self
     }
 
- /// Get the content (from memory or file).
+    /// Get the content (from memory or file).
     pub async fn get_content(&self) -> Option<String> {
         if let Some(ref content) = self.content {
             return Some(content.clone());
@@ -218,7 +219,7 @@ impl Artifact {
         None
     }
 
- /// Render as markdown.
+    /// Render as markdown.
     pub async fn to_markdown(&self) -> String {
         match self.artifact_type {
             ArtifactType::Code => {
@@ -256,14 +257,14 @@ impl Artifact {
 
 /// In-memory artifact store with session-bound lifecycle.
 pub struct ArtifactStore {
- /// session_id -> Vec<Artifact>
+    /// session_id -> Vec<Artifact>
     artifacts: std::sync::Mutex<HashMap<String, Vec<Artifact>>>,
- /// Root directory for file-backed artifacts.
+    /// Root directory for file-backed artifacts.
     root_dir: PathBuf,
 }
 
 impl ArtifactStore {
- /// Create a new artifact store.
+    /// Create a new artifact store.
     pub fn new(root_dir: impl Into<PathBuf>) -> Self {
         Self {
             artifacts: std::sync::Mutex::new(HashMap::new()),
@@ -271,14 +272,14 @@ impl ArtifactStore {
         }
     }
 
- /// Initialize directories.
+    /// Initialize directories.
     pub async fn init(&self) -> std::io::Result<()> {
         tokio::fs::create_dir_all(&self.root_dir).await?;
         debug!("Artifact store initialized at {:?}", self.root_dir);
         Ok(())
     }
 
- /// Add an artifact to a session.
+    /// Add an artifact to a session.
     pub fn add(&self, artifact: Artifact) {
         let mut artifacts = self.artifacts.lock().expect("lock poisoned");
         let list = artifacts.entry(artifact.session_id.clone()).or_default();
@@ -290,13 +291,13 @@ impl ArtifactStore {
         );
     }
 
- /// Get all artifacts for a session.
+    /// Get all artifacts for a session.
     pub fn get_for_session(&self, session_id: &str) -> Vec<Artifact> {
         let artifacts = self.artifacts.lock().expect("lock poisoned");
         artifacts.get(session_id).cloned().unwrap_or_default()
     }
 
- /// Get a specific artifact by ID.
+    /// Get a specific artifact by ID.
     pub fn get(&self, session_id: &str, artifact_id: &str) -> Option<Artifact> {
         let artifacts = self.artifacts.lock().expect("lock poisoned");
         artifacts
@@ -304,13 +305,13 @@ impl ArtifactStore {
             .and_then(|list| list.iter().find(|a| a.id == artifact_id).cloned())
     }
 
- /// List all artifacts across all sessions.
+    /// List all artifacts across all sessions.
     pub fn list_all(&self) -> Vec<Artifact> {
         let artifacts = self.artifacts.lock().expect("lock poisoned");
         artifacts.values().flatten().cloned().collect()
     }
 
- /// List artifact IDs for a session.
+    /// List artifact IDs for a session.
     pub fn list_session(&self, session_id: &str) -> Vec<String> {
         let artifacts = self.artifacts.lock().expect("lock poisoned");
         artifacts
@@ -319,7 +320,7 @@ impl ArtifactStore {
             .unwrap_or_default()
     }
 
- /// Remove a specific artifact.
+    /// Remove a specific artifact.
     pub fn remove(&self, session_id: &str, artifact_id: &str) -> Option<Artifact> {
         let mut artifacts = self.artifacts.lock().expect("lock poisoned");
         if let Some(list) = artifacts.get_mut(session_id) {
@@ -331,7 +332,7 @@ impl ArtifactStore {
         None
     }
 
- /// Remove all artifacts for a session (cleanup on session end).
+    /// Remove all artifacts for a session (cleanup on session end).
     pub fn clear_session(&self, session_id: &str) -> Vec<Artifact> {
         let mut artifacts = self.artifacts.lock().expect("lock poisoned");
         let removed = artifacts.remove(session_id).unwrap_or_default();
@@ -339,7 +340,7 @@ impl ArtifactStore {
         removed
     }
 
- /// Export all artifacts for a session as a single markdown file.
+    /// Export all artifacts for a session as a single markdown file.
     pub async fn export_session(&self, session_id: &str) -> Result<PathBuf, String> {
         let artifacts = self.get_for_session(session_id);
         if artifacts.is_empty() {
@@ -361,7 +362,7 @@ impl ArtifactStore {
         Ok(path)
     }
 
- /// Get store stats.
+    /// Get store stats.
     pub fn stats(&self) -> ArtifactStoreStats {
         let artifacts = self.artifacts.lock().expect("lock poisoned");
         let total = artifacts.values().map(|v| v.len()).sum();
@@ -394,8 +395,9 @@ fn sanitize(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_code_artifact() {

@@ -5,10 +5,11 @@
 //! callers can use it to pick a fast/cheap model for simple commands or a
 //! capable model for power/admin commands.
 
+use serde::{Deserialize, Serialize};
+
 use crate::channels::ChannelCapabilities;
 use crate::gateway::commands::{CommandCategory, CommandDef, CommandTier};
 use crate::tools::command_gate::UserLevel;
-use serde::{Deserialize, Serialize};
 
 /// An inferred provider/model hint for a command invocation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,7 +17,8 @@ pub struct CommandProviderHint {
     /// Suggested provider identifier (e.g. "anthropic", "openai").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
-    /// Suggested model identifier or alias (e.g. "fast", "power", "claude-3-sonnet").
+    /// Suggested model identifier or alias (e.g. "fast", "power",
+    /// "claude-3-sonnet").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Human-readable reason for the hint.

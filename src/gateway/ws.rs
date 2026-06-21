@@ -4,14 +4,18 @@
 //!
 //! Protocol flow:
 //!   1. Client opens WebSocket to /ws
-//!   2. Server validates auth (session cookie or shared token) - rejects with 401 if missing
+//!   2. Server validates auth (session cookie or shared token) - rejects with
+//!      401 if missing
 //!   3. Server accepts WebSocket connection
 //!   4. Client sends `connect` req as first frame
 //!   5. Server validates auth + protocol version, replies `hello-ok`
 //!   6. Client sends method calls (e.g. `chat.send`), server replies `res`
-//!   7. Server pushes events (`chat.delta`, `tool.calling`, etc.) asynchronously
+//!   7. Server pushes events (`chat.delta`, `tool.calling`, etc.)
+//!      asynchronously
 
-use crate::agent::session_store::AppendMessageParams;
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -26,13 +30,12 @@ use futures::{
     SinkExt, StreamExt,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn, Instrument};
 use uuid::Uuid;
 
+use crate::agent::session_store::AppendMessageParams;
 use crate::core::context::RequestContext;
 use crate::gateway::protocol::*;
 use crate::gateway::{GatewayEvent, GatewayState};
@@ -720,7 +723,9 @@ async fn handle_device_auth(
         }
     };
 
-    let result = state.auth.device_pairing_store
+    let result = state
+        .auth
+        .device_pairing_store
         .request_access(&device.id, None, device.public_key.as_deref())
         .await;
 
@@ -936,7 +941,9 @@ async fn handle_chat_send(
     drop(cg);
 
     if is_new_session {
-        let _ = state.events.tx
+        let _ = state
+            .events
+            .tx
             .send(crate::gateway::GatewayEvent::SessionCreated {
                 session_id: session_id.clone(),
                 agent_id: routed
@@ -1475,7 +1482,9 @@ async fn handle_acp_spawn(
             .unwrap_or_else(|| "anonymous".to_string())
     };
 
-    let rate_result = state.auth.rate_limiter
+    let rate_result = state
+        .auth
+        .rate_limiter
         .check_with_cost(&crate::security::UserId::new(format!("acp:spawn:{}", actor)), 1.0)
         .await;
     if !rate_result.is_allowed() {
@@ -1517,14 +1526,18 @@ async fn handle_acp_spawn(
         max_crash_retries: 3,
     };
 
-    match state.agents.acp
+    match state
+        .agents
+        .acp
         .spawn_subagent(session_id.clone(), parent_id.clone(), config)
         .await
     {
         Ok(handle) => {
             let subagent_id = handle.id.clone();
 
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::AcpSpawn,
                     &actor,
@@ -1562,7 +1575,9 @@ async fn handle_acp_spawn(
             }
         }
         Err(e) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::AcpSpawn,
                     &actor,
@@ -1594,7 +1609,9 @@ async fn handle_acp_terminate(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
     let session_id = AcpSessionId(params.session_id.clone());
     match state.agents.acp.terminate_session(&session_id).await {
         Ok(count) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::AcpTerminate,
                     "ws-user",
@@ -1613,7 +1630,9 @@ async fn handle_acp_terminate(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
             )
         }
         Err(e) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::AcpTerminate,
                     "ws-user",
@@ -1661,7 +1680,9 @@ async fn handle_acp_message(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
 
     match state.agents.acp.send_message(&subagent.id, message).await {
         Ok(response) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::AcpMessage,
                     "ws-user",
@@ -1687,7 +1708,9 @@ async fn handle_acp_message(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
             )
         }
         Err(e) => {
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     AuditEventType::AcpMessage,
                     "ws-user",
@@ -1886,7 +1909,9 @@ async fn handle_acp_execute_session(req: &WsRequest, state: &Arc<GatewayState>) 
     );
     drop(_guard);
 
-    match state.agents.acp
+    match state
+        .agents
+        .acp
         .execute_session_with_max_iterations(agent_handle.agent, incoming, params.max_iterations)
         .instrument(span)
         .await
@@ -1949,7 +1974,9 @@ async fn handle_acp_execute_run(req: &WsRequest, state: &Arc<GatewayState>) -> W
     );
     drop(_guard);
 
-    match state.agents.acp
+    match state
+        .agents
+        .acp
         .execute_run_with_max_iterations(agent_handle.agent, incoming, params.max_iterations)
         .instrument(span)
         .await
@@ -2381,7 +2408,9 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         }
 
         // Register with model router
-        if let Err(e) = state.infra.model_router
+        if let Err(e) = state
+            .infra
+            .model_router
             .add_provider(&provider_name, provider_config)
             .await
         {
@@ -2406,7 +2435,11 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     // If this is the first alias, auto-set it as default
     let aliases = state.infra.model_router.list_aliases().await;
     if aliases.len() == 1 {
-        let _ = state.infra.model_router.switch_default_model(&payload.name).await;
+        let _ = state
+            .infra
+            .model_router
+            .switch_default_model(&payload.name)
+            .await;
     }
 
     // Register in catalog for discovery
@@ -2474,7 +2507,12 @@ async fn handle_models_set_default(req: &WsRequest, state: &Arc<GatewayState>) -
         Ok(p) => p,
         Err(res) => return res,
     };
-    match state.infra.model_router.switch_default_model(&payload.name).await {
+    match state
+        .infra
+        .model_router
+        .switch_default_model(&payload.name)
+        .await
+    {
         Ok(()) => WsResponse::ok(
             &req.id,
             serde_json::json!({ "status": "ok", "default_model": payload.name }),

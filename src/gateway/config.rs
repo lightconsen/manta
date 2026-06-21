@@ -5,8 +5,9 @@
 //! `gateway/mod.rs` so the control-plane file isn't dominated by data
 //! definitions.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 use crate::agent::AgentConfig;
 use crate::channels::ChannelType;
@@ -69,7 +70,8 @@ pub struct GatewayConfig {
     pub cost_guard: CostGuardConfig,
     /// Workspace directory for file operations.
     /// All relative paths are resolved against this directory.
-    /// When `workspace_only` is true, file operations are restricted to this directory.
+    /// When `workspace_only` is true, file operations are restricted to this
+    /// directory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_dir: Option<std::path::PathBuf>,
     /// When true, restrict file operations to `workspace_dir`.
@@ -491,7 +493,8 @@ pub struct SecurityConfig {
     /// Mention gating configuration
     #[serde(default)]
     pub mention_gating: crate::security::mention_gate::MentionGatingConfig,
-    /// Allowed Tailscale tailnets (empty = any tailnet allowed when auth_mode=tailscale)
+    /// Allowed Tailscale tailnets (empty = any tailnet allowed when
+    /// auth_mode=tailscale)
     #[serde(default)]
     pub allowed_tailnets: Vec<String>,
     /// Trusted proxy IPs for X-Forwarded-For header resolution
@@ -781,7 +784,8 @@ impl ChannelConfig {
 pub struct ConfigSnapshot {
     /// Timestamp when the snapshot was taken
     pub timestamp: String,
-    /// The hot-reloadable field values keyed by dotted path (e.g. "providers.openai.base_url")
+    /// The hot-reloadable field values keyed by dotted path (e.g.
+    /// "providers.openai.base_url")
     pub fields: HashMap<String, serde_json::Value>,
 }
 

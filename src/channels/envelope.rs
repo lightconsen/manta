@@ -7,10 +7,11 @@
 //! Used for interval calculation (e.g., time since last activity),
 //! session expiry checks, and session store location resolution.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 /// Context passed with each message envelope for session management.
@@ -68,11 +69,7 @@ impl SessionEnvelopeContext {
     }
 
     /// Add custom metadata.
-    pub fn with_metadata(
-        mut self,
-        key: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
+    pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
         self
     }
@@ -132,10 +129,7 @@ impl SessionEnvelopeManager {
     }
 
     /// Get or create an envelope context for a conversation.
-    pub async fn get_or_create(
-        &self,
-        conversation_id: &str,
-    ) -> SessionEnvelopeContext {
+    pub async fn get_or_create(&self, conversation_id: &str) -> SessionEnvelopeContext {
         let mut contexts = self.contexts.write().await;
         let store_path = self
             .default_store_path
@@ -152,7 +146,8 @@ impl SessionEnvelopeManager {
         contexts.get(conversation_id).cloned()
     }
 
-    /// Update the envelope context for a conversation after a message is processed.
+    /// Update the envelope context for a conversation after a message is
+    /// processed.
     ///
     /// Sets the previous timestamp to now and increments the message count.
     pub async fn update_after_message(&self, conversation_id: &str) {
@@ -232,8 +227,9 @@ fn sanitize_path_component(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     #[test]
     fn test_session_envelope_context_new() {
@@ -305,8 +301,8 @@ mod tests {
 
     #[test]
     fn test_metadata() {
-        let ctx = SessionEnvelopeContext::new(PathBuf::from("/tmp"))
-            .with_metadata("channel", "telegram");
+        let ctx =
+            SessionEnvelopeContext::new(PathBuf::from("/tmp")).with_metadata("channel", "telegram");
         assert_eq!(ctx.metadata.get("channel").unwrap(), "telegram");
     }
 
@@ -319,7 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_envelope_manager_update_after_message() {
-        let manager = SessionEnvelopeManager::new(PathBuf::from("/tmp"));;
+        let manager = SessionEnvelopeManager::new(PathBuf::from("/tmp"));
         let initial = manager.get_or_create("conv_1").await;
         assert_eq!(initial.message_count, 0);
         assert!(initial.previous_timestamp.is_none());

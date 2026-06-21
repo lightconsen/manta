@@ -1,12 +1,14 @@
 //! Three-layer command detector
 //!
-//! Detects commands inside an incoming message before it is routed to the agent.
+//! Detects commands inside an incoming message before it is routed to the
+//! agent.
 //!
 //! Layers (in priority order):
 //!
-//! 1. **Control commands** — system-level commands such as `/start`, `/help`, `/pair`.
-//! 2. **Command messages** — messages starting with `/` (or another configured prefix)
-//!    followed by a command name and arguments.
+//! 1. **Control commands** — system-level commands such as `/start`, `/help`,
+//!    `/pair`.
+//! 2. **Command messages** — messages starting with `/` (or another configured
+//!    prefix) followed by a command name and arguments.
 //! 3. **Inline tokens** — commands embedded inside conversational text, e.g.
 //!    "please run `/skill list`" or "@bot do something".
 
@@ -143,7 +145,7 @@ impl CommandDetector {
             .map(|s| s.as_str())
             .collect();
         let (command, args) = parse_command(content, &prefixes)?;
-        let raw = content.trim().split_whitespace().next()?.to_string();
+        let raw = content.split_whitespace().next()?.to_string();
 
         Some(CommandDetectionResult {
             layer: DetectionLayer::CommandMessage,

@@ -6,11 +6,13 @@
 //! Metrics:
 //! - Recall hit rate: was the memory referenced in the LLM response?
 //! - Type effectiveness: which memory types are most useful?
-//! - Auto-weight adjustment: boost high-performing memories, demote low-performing ones.
+//! - Auto-weight adjustment: boost high-performing memories, demote
+//!   low-performing ones.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 /// A single recall event tracked for effectiveness analysis.

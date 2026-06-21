@@ -31,9 +31,11 @@ pub struct HybridSearchConfig {
     pub max_results: usize,
     /// Minimum combined score to include a result. Default: 0.35.
     pub min_score: f32,
-    /// Temporal decay configuration for recency-aware scoring. Default: disabled.
+    /// Temporal decay configuration for recency-aware scoring. Default:
+    /// disabled.
     pub temporal_decay: TemporalDecayConfig,
-    /// MMR configuration for diversity re-ranking. Default: lambda=0.7, top_k=5.
+    /// MMR configuration for diversity re-ranking. Default: lambda=0.7,
+    /// top_k=5.
     pub mmr: MmrConfig,
 }
 
@@ -57,13 +59,15 @@ pub struct HybridSearchResult {
     pub content: String,
     /// Combined hybrid score in [0, 1].
     pub score: f32,
-    /// Which backend provided this result: `"vector"`, `"fts"`, or `"combined"`.
+    /// Which backend provided this result: `"vector"`, `"fts"`, or
+    /// `"combined"`.
     pub source: String,
     /// Human-readable citation, e.g. `"session:abc123#L5-L12"`.
     pub citation: String,
 }
 
-// ── Internal accumulator ──────────────────────────────────────────────────────
+// ── Internal accumulator
+// ──────────────────────────────────────────────────────
 
 #[derive(Default)]
 struct Entry {
@@ -73,7 +77,8 @@ struct Entry {
     citation: String,
 }
 
-// ── Normalisation ─────────────────────────────────────────────────────────────
+// ── Normalisation
+// ─────────────────────────────────────────────────────────────
 
 /// Normalise a slice of (score, key) pairs so that the maximum score maps to
 /// 1.0. Returns a `HashMap<key, normalised_score>`.
@@ -97,7 +102,8 @@ fn content_key(text: &str) -> String {
     format!("{:x}", hash)
 }
 
-// ── Public search function ────────────────────────────────────────────────────
+// ── Public search function
+// ────────────────────────────────────────────────────
 
 /// Run hybrid search over `vector_service` (semantic) and `session_search`
 /// (FTS5), merge results, and return up to `config.max_results` entries.
@@ -113,8 +119,13 @@ fn content_key(text: &str) -> String {
 /// #     vector: Arc<syscity::memory::VectorMemoryService>,
 /// #     fts: Arc<syscity::memory::SessionSearch>,
 /// # ) {
-/// let results = hybrid_search("what did we decide about the API?", &vector, &fts,
-///                              &HybridSearchConfig::default()).await;
+/// let results = hybrid_search(
+///     "what did we decide about the API?",
+///     &vector,
+///     &fts,
+///     &HybridSearchConfig::default(),
+/// )
+/// .await;
 /// for r in results {
 ///     println!("[{:.2}] {} — {}", r.score, r.citation, &r.content[..80.min(r.content.len())]);
 /// }
@@ -231,11 +242,13 @@ pub async fn hybrid_search(
     merged
 }
 
-// ── Temporal decay ────────────────────────────────────────────────────────────
+// ── Temporal decay
+// ────────────────────────────────────────────────────────────
 
 /// Configuration for exponential temporal decay applied to dated memory files.
 ///
-/// Decay formula: `score *= e^(-λ * age_days)` where `λ = ln(2) / half_life_days`.
+/// Decay formula: `score *= e^(-λ * age_days)` where `λ = ln(2) /
+/// half_life_days`.
 ///
 /// "Evergreen" files — those whose `citation` path does not contain a
 /// parseable `YYYY-MM-DD` date — are exempt from decay and returned unchanged.
@@ -291,7 +304,8 @@ pub fn apply_temporal_decay(results: &mut [HybridSearchResult], config: &Tempora
     });
 }
 
-// ── MMR Re-ranking ────────────────────────────────────────────────────────────
+// ── MMR Re-ranking
+// ────────────────────────────────────────────────────────────
 
 /// Configuration for Maximal Marginal Relevance re-ranking.
 ///
@@ -330,15 +344,27 @@ impl Default for MmrConfig {
 /// # Example
 ///
 /// ```rust
-/// use syscity::memory::hybrid::{HybridSearchResult, MmrConfig, mmr_rerank};
+/// use syscity::memory::hybrid::{mmr_rerank, HybridSearchResult, MmrConfig};
 ///
 /// let results = vec![
-///     HybridSearchResult { content: "Rust ownership model".into(), score: 0.9,
-///                          source: "vector".into(), citation: "doc:1".into() },
-///     HybridSearchResult { content: "Rust borrowing rules".into(), score: 0.85,
-///                          source: "fts".into(), citation: "doc:2".into() },
-///     HybridSearchResult { content: "Python async programming".into(), score: 0.7,
-///                          source: "vector".into(), citation: "doc:3".into() },
+///     HybridSearchResult {
+///         content: "Rust ownership model".into(),
+///         score: 0.9,
+///         source: "vector".into(),
+///         citation: "doc:1".into(),
+///     },
+///     HybridSearchResult {
+///         content: "Rust borrowing rules".into(),
+///         score: 0.85,
+///         source: "fts".into(),
+///         citation: "doc:2".into(),
+///     },
+///     HybridSearchResult {
+///         content: "Python async programming".into(),
+///         score: 0.7,
+///         source: "vector".into(),
+///         citation: "doc:3".into(),
+///     },
 /// ];
 /// let reranked = mmr_rerank(results, &MmrConfig::default());
 /// assert!(!reranked.is_empty());
@@ -724,7 +750,8 @@ mod tests {
         assert_eq!(results[1].content, "second");
         // First should still have higher score than second (order preserved)
         assert!(results[0].score > results[1].score, "Score order should be preserved");
-        // Both scores should be reduced from original (since today's date may have slight age)
+        // Both scores should be reduced from original (since today's date may have
+        // slight age)
         assert!(results[0].score <= 0.9);
         assert!(results[1].score <= 0.7);
     }

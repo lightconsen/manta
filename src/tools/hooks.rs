@@ -11,27 +11,30 @@
 //! ```rust,no_run
 //! use syscity::tools::hooks::{ToolHooks, ToolPolicyDecision};
 //!
-//! let hooks = ToolHooks::new()
-//!     .policy(|name, args| {
-//!         let name = name.to_string();
-//!         Box::pin(async move {
-//!             if name == "shell" {
-//!                 ToolPolicyDecision::Deny { reason: "shell tool is disabled".into() }
-//!             } else {
-//!                 ToolPolicyDecision::Allow
+//! let hooks = ToolHooks::new().policy(|name, args| {
+//!     let name = name.to_string();
+//!     Box::pin(async move {
+//!         if name == "shell" {
+//!             ToolPolicyDecision::Deny {
+//!                 reason: "shell tool is disabled".into(),
 //!             }
-//!         })
-//!     });
+//!         } else {
+//!             ToolPolicyDecision::Allow
+//!         }
+//!     })
+//! });
 //! ```
 
-use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use serde_json::Value;
+
 use super::{ApprovalLevel, RiskLevel, ToolExecutionResult};
 
-// ── Policy decision ───────────────────────────────────────────────────────────
+// ── Policy decision
+// ───────────────────────────────────────────────────────────
 
 /// The outcome of a policy hook evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,7 +83,8 @@ impl ToolPolicyDecision {
     }
 }
 
-// ── Hook type aliases ─────────────────────────────────────────────────────────
+// ── Hook type aliases
+// ─────────────────────────────────────────────────────────
 
 /// A boxed async function called before a tool executes.
 ///
@@ -108,7 +112,8 @@ pub type PolicyHookFn = Arc<
 
 /// A collection of before/after/policy hooks for tool execution.
 ///
-/// Hooks are opt-in and layered: all registered hooks run in registration order.
+/// Hooks are opt-in and layered: all registered hooks run in registration
+/// order.
 ///
 /// # Example
 ///
@@ -209,7 +214,8 @@ impl ToolHooks {
 
     /// Run all registered policy hooks for the given tool call.
     ///
-    /// Returns `Allow` if all hooks allow, or the first `Deny` or `NeedsApproval` encountered.
+    /// Returns `Allow` if all hooks allow, or the first `Deny` or
+    /// `NeedsApproval` encountered.
     pub async fn run_policy(&self, name: &str, args: &Value) -> ToolPolicyDecision {
         for hook in &self.policy_hooks {
             let decision = hook(name, args).await;
@@ -237,8 +243,9 @@ impl ToolHooks {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
 
     #[tokio::test]
     async fn test_before_hook_called() {

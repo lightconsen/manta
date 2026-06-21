@@ -1,17 +1,17 @@
-//! Hot-reload handlers — watch syscity.toml / agent / channel / plugin / gateway
-//! configs and apply changes without restarting the process.
+//! Hot-reload handlers — watch syscity.toml / agent / channel / plugin /
+//! gateway configs and apply changes without restarting the process.
 //!
 //! Extracted from `gateway/mod.rs`. Wired in `Gateway::start()` via
-//! `register_hot_reload_handlers(&self.state, self.config.clone(), &hot_reload)`.
+//! `register_hot_reload_handlers(&self.state, self.config.clone(),
+//! &hot_reload)`.
 
 use std::sync::Arc;
 
 use tracing::{error, info, warn};
 
+use super::{AgentCommand, ChannelConfig, GatewayConfig, GatewayState};
 use crate::agent::AgentConfig;
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
-
-use super::{AgentCommand, ChannelConfig, GatewayConfig, GatewayState};
 
 /// Register hot reload handlers for config changes.
 ///
@@ -82,7 +82,8 @@ pub(crate) async fn register_hot_reload_handlers(
                     };
 
                     if should_stop {
-                        // Remove channel from state (channel will be dropped, should clean up itself)
+                        // Remove channel from state (channel will be dropped, should clean up
+                        // itself)
                         let removed = {
                             let mut channels = state.channels.channels.write().await;
                             channels.remove(name).is_some()
@@ -253,10 +254,7 @@ pub(crate) async fn register_hot_reload_handlers(
                     let new_channel_config: ChannelConfig = match toml::from_str(&content) {
                         Ok(c) => c,
                         Err(e) => {
-                            error!(
-                                "Failed to parse channel config for '{}': {}",
-                                channel_name, e
-                            );
+                            error!("Failed to parse channel config for '{}': {}", channel_name, e);
                             return Ok(());
                         }
                     };
@@ -284,10 +282,9 @@ pub(crate) async fn register_hot_reload_handlers(
                     )
                     .await
                     {
-                        Ok(_) => info!(
-                            "✅ Hot-reloaded channel '{}' with updated config",
-                            channel_name
-                        ),
+                        Ok(_) => {
+                            info!("✅ Hot-reloaded channel '{}' with updated config", channel_name)
+                        }
                         Err(e) => {
                             error!("Failed to hot-reload channel '{}': {}", channel_name, e)
                         }
@@ -327,7 +324,8 @@ pub(crate) async fn register_hot_reload_handlers(
                         }
                         Err(e) => {
                             warn!(
-                                "State-preserving reload failed for '{}', falling back to unload+load: {}",
+                                "State-preserving reload failed for '{}', falling back to \
+                                 unload+load: {}",
                                 plugin_id, e
                             );
                             match state.infra.plugin_manager.unload_plugin(&plugin_id).await {
@@ -341,10 +339,7 @@ pub(crate) async fn register_hot_reload_handlers(
                                             )
                                         }
                                         Err(e) => {
-                                            error!(
-                                                "Failed to reload plugin '{}': {}",
-                                                plugin_id, e
-                                            )
+                                            error!("Failed to reload plugin '{}': {}", plugin_id, e)
                                         }
                                     }
                                 }
@@ -358,10 +353,7 @@ pub(crate) async fn register_hot_reload_handlers(
                                             )
                                         }
                                         Err(e) => {
-                                            warn!(
-                                                "Could not load plugin '{}': {}",
-                                                plugin_id, e
-                                            )
+                                            warn!("Could not load plugin '{}': {}", plugin_id, e)
                                         }
                                     }
                                 }
@@ -413,9 +405,7 @@ pub(crate) async fn register_hot_reload_handlers(
                     config.mcp = new_config.mcp;
                     config.hot_reload = new_config.hot_reload;
                     drop(config);
-                    info!(
-                        "✅ Applied gateway config updates (security, providers, mcp settings)"
-                    );
+                    info!("✅ Applied gateway config updates (security, providers, mcp settings)");
 
                     // Compute diff and log to audit
                     let post_config = state.config.read().await;
@@ -424,7 +414,9 @@ pub(crate) async fn register_hot_reload_handlers(
 
                     if !changes.is_empty() {
                         let details = serde_json::to_value(&changes).unwrap_or_default();
-                        state.auth.audit_log
+                        state
+                            .auth
+                            .audit_log
                             .log(
                                 crate::security::runtime_audit::AuditEventType::ConfigChange,
                                 "file_watcher",

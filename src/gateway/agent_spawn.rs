@@ -14,11 +14,11 @@ use tracing::{debug, error, info, warn};
 use crate::acp::AcpControlPlane;
 use crate::agent::session_store::AppendMessageParams;
 use crate::agent::{Agent, AgentConfig};
+use crate::config::CapabilitiesConfig;
 use crate::tools::approval::ApprovalQueue;
 use crate::tools::delegate_tool::AgentResolver;
 use crate::tools::mcp::McpManager;
 use crate::tools::ToolRegistry;
-use crate::config::CapabilitiesConfig;
 
 // ── GatewayAgentResolver ─────────────────────────────────────────────────────
 
@@ -86,16 +86,15 @@ pub(crate) async fn spawn_agent_inner(
         // Build summarizer in the async block (not inside a sync closure)
         // because the Local variant requires async (model download).
         if let Some(p) = init.as_ref() {
-            let summarizer: Option<Arc<dyn crate::perception::PerceptionSummarizer>> =
-                if p_cfg.enable_summary {
-                    Some(build_summarizer(
-                        &p_cfg.summarizer_kind,
-                        provider.clone(),
-                        model.clone(),
-                    ).await)
-                } else {
-                    None
-                };
+            let summarizer: Option<Arc<dyn crate::perception::PerceptionSummarizer>> = if p_cfg
+                .enable_summary
+            {
+                Some(
+                    build_summarizer(&p_cfg.summarizer_kind, provider.clone(), model.clone()).await,
+                )
+            } else {
+                None
+            };
             let adapter_cfg = crate::perception::AdapterConfig {
                 enable_summary: p_cfg.enable_summary,
                 summary_refresh_interval: p_cfg
@@ -104,11 +103,11 @@ pub(crate) async fn spawn_agent_inner(
                     .map(std::time::Duration::from_secs),
                 ..Default::default()
             };
-            Some(p.context.new_adapter(
-                crate::perception::Focus::default(),
-                summarizer,
-                adapter_cfg,
-            ) as Arc<dyn crate::perception::AgentPerceptionAdapter>)
+            Some(
+                p.context
+                    .new_adapter(crate::perception::Focus::default(), summarizer, adapter_cfg)
+                    as Arc<dyn crate::perception::AgentPerceptionAdapter>,
+            )
         } else {
             None
         }
@@ -523,8 +522,9 @@ pub(crate) async fn create_default_tool_registry(
     registry.register(Box::new(GlobTool::new()));
     registry.register(Box::new(GrepTool::new()));
 
-    // Register shell/execution tools wrapped in sandbox for path & timeout enforcement.
-    // ShellTool needs network access (git, curl, etc.); CodeExecutionTool does not.
+    // Register shell/execution tools wrapped in sandbox for path & timeout
+    // enforcement. ShellTool needs network access (git, curl, etc.);
+    // CodeExecutionTool does not.
     registry.register(Box::new(SandboxedTool::new(
         ShellTool::new(),
         SandboxConfig {
@@ -646,7 +646,8 @@ pub(crate) async fn create_default_tool_registry(
         {
             tool_reg.register(Box::new(crate::computer::platform::LinuxToolset::new()));
             tool_reg.register(Box::new(crate::computer::platform::LinuxDesktopX11Toolset::new()));
-            tool_reg.register(Box::new(crate::computer::platform::LinuxDesktopWaylandToolset::new()));
+            tool_reg
+                .register(Box::new(crate::computer::platform::LinuxDesktopWaylandToolset::new()));
         }
 
         #[cfg(target_os = "macos")]
@@ -749,9 +750,9 @@ pub(crate) async fn create_default_tool_registry(
 ///
 /// * `Template` — always available, zero-LLM, rule-based.
 /// * `Llm` — uses the agent's LLM provider (same cost as a normal model call).
-/// * `Local` — requires the `local-summarizer` feature (Qwen2.5-1.5B GGUF).
-///   If the feature is missing or model loading fails, falls back to
-///   `Template` with a warning so agent spawn never panics.
+/// * `Local` — requires the `local-summarizer` feature (Qwen2.5-1.5B GGUF). If
+///   the feature is missing or model loading fails, falls back to `Template`
+///   with a warning so agent spawn never panics.
 async fn build_summarizer(
     kind: &super::config::SummarizerKind,
     provider: Arc<dyn crate::providers::Provider>,
@@ -761,20 +762,17 @@ async fn build_summarizer(
         super::config::SummarizerKind::Template => {
             Arc::new(crate::perception::TemplateSummarizer::new())
         }
-        super::config::SummarizerKind::Llm => Arc::new(
-            crate::perception::LlmProviderSummarizer::new(provider)
-                .with_model(model),
-        ),
+        super::config::SummarizerKind::Llm => {
+            Arc::new(crate::perception::LlmProviderSummarizer::new(provider).with_model(model))
+        }
         super::config::SummarizerKind::Local => {
             #[cfg(feature = "local-summarizer")]
             {
-                match crate::perception::local_summarizer::LocalLlamaSummarizer::new_auto().await
-                {
+                match crate::perception::local_summarizer::LocalLlamaSummarizer::new_auto().await {
                     Ok(s) => return Arc::new(s),
                     Err(e) => {
                         tracing::warn!(
-                            "Local summarizer init failed: {e}; falling \
-                             back to TemplateSummarizer"
+                            "Local summarizer init failed: {e}; falling back to TemplateSummarizer"
                         );
                     }
                 }
@@ -782,9 +780,8 @@ async fn build_summarizer(
             #[cfg(not(feature = "local-summarizer"))]
             {
                 tracing::warn!(
-                    "summarizer_kind = \"local\" but feature \
-                     local-summarizer is not enabled; falling back to \
-                     TemplateSummarizer"
+                    "summarizer_kind = \"local\" but feature local-summarizer is not enabled; \
+                     falling back to TemplateSummarizer"
                 );
             }
             Arc::new(crate::perception::TemplateSummarizer::new())

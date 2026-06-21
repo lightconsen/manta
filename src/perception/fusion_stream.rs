@@ -29,8 +29,7 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 
 use crate::perception::{
-    DerivedStreamHub, Event, FusedEntity, FusionEngine, Observation,
-    PerceptionStreamHub,
+    DerivedStreamHub, Event, FusedEntity, FusionEngine, Observation, PerceptionStreamHub,
 };
 
 /// Default re-fuse cadence — balance between freshness and CPU cost.
@@ -154,10 +153,7 @@ pub fn spawn_fusion_stream(
                             modality_signature: signature,
                         },
                     );
-                    derived_hub.publish(Event::Entity {
-                        entity,
-                        at: SystemTime::now(),
-                    });
+                    derived_hub.publish(Event::Entity { entity, at: SystemTime::now() });
                 }
             }
 
@@ -188,13 +184,7 @@ mod tests {
     }
 
     fn obs(source: &str, modality: Modality, conf: f32) -> Observation {
-        Observation::new(
-            source,
-            modality,
-            std::time::Instant::now(),
-            conf,
-            serde_json::json!({}),
-        )
+        Observation::new(source, modality, std::time::Instant::now(), conf, serde_json::json!({}))
     }
 
     #[tokio::test]

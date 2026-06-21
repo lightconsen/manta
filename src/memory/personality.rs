@@ -15,26 +15,30 @@
 //!
 //! An mtime+size file cache avoids re-reading unchanged files on every turn.
 
-use crate::error::SyscityError;
-use crate::memory::soul::SoulAnalysis;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
+
 use tokio::fs;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use crate::error::SyscityError;
+use crate::memory::soul::SoulAnalysis;
+
 /// Controls which memory files are included in the system prompt.
 ///
-/// `Primary` produces the full prompt including MEMORY.md (for main session with user).
-/// `Subagent` omits MEMORY.md (contains personal context that shouldn't leak to strangers)
-/// and BOOTSTRAP.md (startup-only instructions irrelevant to subagents).
+/// `Primary` produces the full prompt including MEMORY.md (for main session
+/// with user). `Subagent` omits MEMORY.md (contains personal context that
+/// shouldn't leak to strangers) and BOOTSTRAP.md (startup-only instructions
+/// irrelevant to subagents).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryContext {
     /// Full prompt for the primary interactive session (includes MEMORY.md)
     Primary,
-    /// Reduced prompt for spawned subagents and cron jobs (excludes MEMORY.md, BOOTSTRAP.md)
+    /// Reduced prompt for spawned subagents and cron jobs (excludes MEMORY.md,
+    /// BOOTSTRAP.md)
     Subagent,
 }
 
@@ -67,7 +71,8 @@ pub fn truncate_with_head_tail(content: &str, max_chars: usize) -> String {
     )
 }
 
-// ── File cache ────────────────────────────────────────────────────────────────
+// ── File cache
+// ────────────────────────────────────────────────────────────────
 
 /// A cached view of a single file on disk.
 #[derive(Clone, Debug)]
@@ -298,7 +303,8 @@ impl PersonalityMemory {
         crate::memory::soul::SoulFile::parse(&raw)
     }
 
-    /// Write memory content, applying head/tail truncation if over the per-file cap.
+    /// Write memory content, applying head/tail truncation if over the per-file
+    /// cap.
     pub async fn write(&self, mem_type: MemoryType, content: &str) -> crate::Result<()> {
         // Apply head/tail truncation (preserves beginning + end of large files).
         let content_owned;
@@ -439,9 +445,7 @@ impl PersonalityMemory {
         if !assistant_msgs.is_empty() {
             let total_len: usize = assistant_msgs.iter().map(|m| m.content.len()).sum();
             let avg_len = total_len / assistant_msgs.len();
-            let has_emoji = assistant_msgs
-                .iter()
-                .any(|m| m.content.chars().any(|c| !c.is_ascii()));
+            let has_emoji = assistant_msgs.iter().any(|m| !m.content.is_ascii());
 
             analysis.detected_voice = if has_emoji {
                 Some("friendly with emoji".to_string())
@@ -579,7 +583,8 @@ impl PersonalityMemory {
         context: MemoryContext,
     ) -> crate::Result<String> {
         // personality files (loaded in priority order)
-        // AGENTS.md and TOOLS.md are loaded first as they provide operating instructions
+        // AGENTS.md and TOOLS.md are loaded first as they provide operating
+        // instructions
         let agents = self.read(MemoryType::Agents).await?;
         let tools_mem = self.read(MemoryType::Tools).await?;
         let identity = self.read(MemoryType::Identity).await?;
@@ -687,8 +692,9 @@ impl PersonalityMemory {
 
     /// Initialize default memory files if they don't exist
     ///
-    /// Uses workspace state tracking to avoid re-initializing existing workspaces.
-    /// Only creates files for brand-new workspaces (no state file, no user content).
+    /// Uses workspace state tracking to avoid re-initializing existing
+    /// workspaces. Only creates files for brand-new workspaces (no state
+    /// file, no user content).
     pub async fn initialize_defaults(&self) -> crate::Result<()> {
         use crate::memory::workspace_state::WorkspaceManager;
 
@@ -1121,10 +1127,11 @@ _Start writing when you're ready. This file grows with you._
 
 /// Tool for managing personality memory
 pub mod tool {
-    use super::*;
-    use crate::tools::{Tool, ToolContext, ToolExecutionResult};
     use async_trait::async_trait;
     use serde_json::json;
+
+    use super::*;
+    use crate::tools::{Tool, ToolContext, ToolExecutionResult};
 
     /// Tool for reading and writing personality memory
     #[derive(Debug)]
@@ -1426,7 +1433,8 @@ mod tests {
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         // Very small total budget so only the first section (Agents) fits.
         // Budget: "## Agents\n" (10) + content (20) + "\n" (1) = 31 chars fits.
-        // "## Soul\n" (8) + soul_content (20) + "\n" (1) = 29 chars would push total to 60, exceeding 58.
+        // "## Soul\n" (8) + soul_content (20) + "\n" (1) = 29 chars would push total to
+        // 60, exceeding 58.
         let memory = PersonalityMemory::with_dir(temp_dir.clone())
             .await
             .unwrap()

@@ -6,15 +6,16 @@
 //! Note: This tool has been refactored to use CronScheduler as the
 //! single source of truth for all cron functionality.
 
-use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use std::str::FromStr;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::json;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use crate::cron::cron::{CronJob, CronScheduler, DeliveryMode, ExecutionTarget, Schedule};
-use std::str::FromStr;
 
 /// Global scheduler reference for CronTool
 /// This is set by the Gateway after the CronScheduler is initialized
@@ -65,14 +66,15 @@ impl Tool for CronTool {
     }
 
     fn description(&self) -> &str {
-        "Schedule and manage recurring tasks using cron expressions. \
-         ALWAYS use this tool for any scheduling, scheduling queries, or task automation — \
-         do NOT use shell commands or other tools to schedule or query tasks. \
-         Actions: create (add a new job), list (show all jobs with their status — use this to answer 'what cron jobs exist?' or 'are any running?'), \
-         enable (resume a paused job), disable (pause a job), remove (delete a job), run (trigger a job immediately). \
-         The 'list' action returns each job's Status field: 'active' (enabled, waiting for next run), \
-         'running' (currently executing), 'disabled' (paused), or 'error' (failed, retry scheduled). \
-         Cron format: 'minute hour day month weekday' (e.g., '0 * * * *' = hourly, '*/5 * * * *' = every 5 minutes, '0 3 * * *' = daily at 3am)"
+        "Schedule and manage recurring tasks using cron expressions. ALWAYS use this tool for any \
+         scheduling, scheduling queries, or task automation — do NOT use shell commands or other \
+         tools to schedule or query tasks. Actions: create (add a new job), list (show all jobs \
+         with their status — use this to answer 'what cron jobs exist?' or 'are any running?'), \
+         enable (resume a paused job), disable (pause a job), remove (delete a job), run (trigger \
+         a job immediately). The 'list' action returns each job's Status field: 'active' (enabled, \
+         waiting for next run), 'running' (currently executing), 'disabled' (paused), or 'error' \
+         (failed, retry scheduled). Cron format: 'minute hour day month weekday' (e.g., '0 * * * \
+         *' = hourly, '*/5 * * * *' = every 5 minutes, '0 3 * * *' = daily at 3am)"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -204,9 +206,11 @@ impl Tool for CronTool {
 
                 info!("Created cron job '{}' with schedule '{}'", name, schedule_str);
 
-                Ok(ToolExecutionResult::success(
-                    format!("✅ Created cron job '{}'\nSchedule: {}\nCommand: {}\n\nThe job is now active and will run automatically according to the schedule.", name, schedule_str, command)
-                ))
+                Ok(ToolExecutionResult::success(format!(
+                    "✅ Created cron job '{}'\nSchedule: {}\nCommand: {}\n\nThe job is now active \
+                     and will run automatically according to the schedule.",
+                    name, schedule_str, command
+                )))
             }
             "list" => {
                 let guard = scheduler.lock().await;

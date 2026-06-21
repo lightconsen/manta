@@ -1,11 +1,11 @@
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use axum::{
     extract::State,
     http::{header, StatusCode},
     response::{IntoResponse, Json},
 };
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 use crate::gateway::*;
 use crate::gateway::{GatewayState, HealthReport, SubsystemHealth};
@@ -323,14 +323,17 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     let plugin_snapshots = state.infra.plugin_manager.metrics().all_snapshots().await;
     for (plugin_id, snap) in &plugin_snapshots {
         let plugin_label = &plugin_id.replace('"', "");
-        lines.push("# HELP syscity_plugin_tool_calls_total Total tool calls per plugin".to_string());
+        lines
+            .push("# HELP syscity_plugin_tool_calls_total Total tool calls per plugin".to_string());
         lines.push("# TYPE syscity_plugin_tool_calls_total counter".to_string());
         lines.push(format!(
             "syscity_plugin_tool_calls_total{{plugin=\"{}\"}} {}",
             plugin_label, snap.tool_calls
         ));
 
-        lines.push("# HELP syscity_plugin_tool_errors_total Total tool errors per plugin".to_string());
+        lines.push(
+            "# HELP syscity_plugin_tool_errors_total Total tool errors per plugin".to_string(),
+        );
         lines.push("# TYPE syscity_plugin_tool_errors_total counter".to_string());
         lines.push(format!(
             "syscity_plugin_tool_errors_total{{plugin=\"{}\"}} {}",
@@ -346,14 +349,17 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
             plugin_label, snap.http_requests
         ));
 
-        lines.push("# HELP syscity_plugin_http_errors_total Total HTTP errors per plugin".to_string());
+        lines.push(
+            "# HELP syscity_plugin_http_errors_total Total HTTP errors per plugin".to_string(),
+        );
         lines.push("# TYPE syscity_plugin_http_errors_total counter".to_string());
         lines.push(format!(
             "syscity_plugin_http_errors_total{{plugin=\"{}\"}} {}",
             plugin_label, snap.http_errors
         ));
 
-        lines.push("# HELP syscity_plugin_memory_bytes Current memory usage per plugin".to_string());
+        lines
+            .push("# HELP syscity_plugin_memory_bytes Current memory usage per plugin".to_string());
         lines.push("# TYPE syscity_plugin_memory_bytes gauge".to_string());
         lines.push(format!(
             "syscity_plugin_memory_bytes{{plugin=\"{}\"}} {}",
@@ -402,28 +408,40 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     let mcp_count = state.tools.mcp_manager.list_servers().await.len();
 
     // Storage
-    let storage_healthy = state.infra.storage.read().await.health_check().await.is_ok();
+    let storage_healthy = state
+        .infra
+        .storage
+        .read()
+        .await
+        .health_check()
+        .await
+        .is_ok();
 
     // Cost guard
     let cost_exceeded = state.agents.cost_guard.is_exceeded();
     let daily_spend = state.agents.cost_guard.daily_spend_cents() as f64 / 100.0;
 
     // Dream metrics
-    let dream_report = state.memory.dream_scheduler.get_opt().await.map(|scheduler| {
-        let metrics = scheduler.metrics();
-        crate::gateway::DreamHealthReport {
-            dreams_total: metrics.dreams_total.load(Ordering::Relaxed),
-            dreams_failed: metrics.dreams_failed.load(Ordering::Relaxed),
-            memories_processed_total: metrics.memories_processed_total.load(Ordering::Relaxed),
-            memories_created_total: metrics.memories_created_total.load(Ordering::Relaxed),
-            memories_removed_total: metrics.memories_removed_total.load(Ordering::Relaxed),
-            memories_promoted_total: metrics.memories_promoted_total.load(Ordering::Relaxed),
-            memories_demoted_total: metrics.memories_demoted_total.load(Ordering::Relaxed),
-            dream_duration_ms_total: metrics.dream_duration_ms_total.load(Ordering::Relaxed),
-            llm_tokens_input_total: metrics.llm_tokens_input_total.load(Ordering::Relaxed),
-            llm_tokens_output_total: metrics.llm_tokens_output_total.load(Ordering::Relaxed),
-        }
-    });
+    let dream_report = state
+        .memory
+        .dream_scheduler
+        .get_opt()
+        .await
+        .map(|scheduler| {
+            let metrics = scheduler.metrics();
+            crate::gateway::DreamHealthReport {
+                dreams_total: metrics.dreams_total.load(Ordering::Relaxed),
+                dreams_failed: metrics.dreams_failed.load(Ordering::Relaxed),
+                memories_processed_total: metrics.memories_processed_total.load(Ordering::Relaxed),
+                memories_created_total: metrics.memories_created_total.load(Ordering::Relaxed),
+                memories_removed_total: metrics.memories_removed_total.load(Ordering::Relaxed),
+                memories_promoted_total: metrics.memories_promoted_total.load(Ordering::Relaxed),
+                memories_demoted_total: metrics.memories_demoted_total.load(Ordering::Relaxed),
+                dream_duration_ms_total: metrics.dream_duration_ms_total.load(Ordering::Relaxed),
+                llm_tokens_input_total: metrics.llm_tokens_input_total.load(Ordering::Relaxed),
+                llm_tokens_output_total: metrics.llm_tokens_output_total.load(Ordering::Relaxed),
+            }
+        });
 
     // Overall: agents + providers are critical; others are warnings
     let overall_healthy = agent_ready && healthy_providers > 0;
@@ -517,13 +535,21 @@ pub async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl Into
 #[allow(dead_code)]
 pub async fn repair_status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     use std::sync::atomic::Ordering;
-    let last_cycle = state.agents.repair_state
+    let last_cycle = state
+        .agents
+        .repair_state
         .last_cycle_at
         .read()
         .await
         .map(|t| t.to_rfc3339());
-    let loop_running = state.agents.repair_state.loop_running.load(Ordering::Relaxed);
-    let records: Vec<_> = state.agents.repair_state
+    let loop_running = state
+        .agents
+        .repair_state
+        .loop_running
+        .load(Ordering::Relaxed);
+    let records: Vec<_> = state
+        .agents
+        .repair_state
         .records
         .read()
         .await
@@ -547,7 +573,11 @@ pub async fn cost_status_handler(State(state): State<Arc<GatewayState>>) -> impl
 
     let daily_cents = state.agents.cost_guard.daily_spend_cents();
     let hourly_actions = state.agents.cost_guard.hourly_action_count();
-    let budget_exceeded = state.agents.cost_guard.budget_exceeded.load(Ordering::Relaxed);
+    let budget_exceeded = state
+        .agents
+        .cost_guard
+        .budget_exceeded
+        .load(Ordering::Relaxed);
     let daily_limit = state.agents.cost_guard.daily_limit_cents;
     let hourly_limit = state.agents.cost_guard.hourly_action_limit;
 

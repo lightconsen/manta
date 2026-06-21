@@ -1,12 +1,13 @@
 //! Package manager tool — query, install, remove, and update packages.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::warn;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Action types for package management.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,19 +34,44 @@ pub enum PackageBackend {
 
 impl PackageBackend {
     fn detect() -> Self {
-        if std::process::Command::new("apt").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new("apt")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Self::Apt;
         }
-        if std::process::Command::new("dnf").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new("dnf")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Self::Dnf;
         }
-        if std::process::Command::new("pacman").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new("pacman")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Self::Pacman;
         }
-        if std::process::Command::new("apk").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new("apk")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Self::Apk;
         }
-        if std::process::Command::new("zypper").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new("zypper")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Self::Zypper;
         }
         Self::Unknown
@@ -88,17 +114,18 @@ impl PackageManagerTool {
     }
 
     async fn run_pkg_cmd(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<(bool, String)> {
-        let result = timeout(
-            Duration::from_secs(timeout_secs),
-            Command::new(cmd).args(args).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(timeout_secs), Command::new(cmd).args(args).output()).await;
 
         match result {
             Ok(Ok(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let combined = if stderr.is_empty() { stdout } else { format!("{stdout}\n{stderr}") };
+                let combined = if stderr.is_empty() {
+                    stdout
+                } else {
+                    format!("{stdout}\n{stderr}")
+                };
                 Some((output.status.success(), combined))
             }
             Ok(Err(e)) => {
@@ -137,7 +164,13 @@ impl PackageManagerTool {
                 }
             }
             PackageBackend::Dnf => {
-                match Self::run_pkg_cmd("rpm", &["-qa", "--queryformat", "%{NAME}\t%{VERSION}\n"], 30).await {
+                match Self::run_pkg_cmd(
+                    "rpm",
+                    &["-qa", "--queryformat", "%{NAME}\t%{VERSION}\n"],
+                    30,
+                )
+                .await
+                {
                     Some((true, output)) => output
                         .lines()
                         .filter_map(|line| {
@@ -157,27 +190,25 @@ impl PackageManagerTool {
                     _ => Vec::new(),
                 }
             }
-            PackageBackend::Pacman => {
-                match Self::run_pkg_cmd("pacman", &["-Q"], 30).await {
-                    Some((true, output)) => output
-                        .lines()
-                        .filter_map(|line| {
-                            let parts: Vec<&str> = line.split_whitespace().collect();
-                            if parts.len() >= 2 {
-                                Some(PackageEntry {
-                                    name: parts[0].to_string(),
-                                    version: parts[1].to_string(),
-                                    description: None,
-                                    installed: true,
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                    _ => Vec::new(),
-                }
-            }
+            PackageBackend::Pacman => match Self::run_pkg_cmd("pacman", &["-Q"], 30).await {
+                Some((true, output)) => output
+                    .lines()
+                    .filter_map(|line| {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            Some(PackageEntry {
+                                name: parts[0].to_string(),
+                                version: parts[1].to_string(),
+                                description: None,
+                                installed: true,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            },
             PackageBackend::Apk => {
                 match Self::run_pkg_cmd("apk", &["list", "--installed"], 30).await {
                     Some((true, output)) => output
@@ -187,7 +218,7 @@ impl PackageManagerTool {
                             let parts: Vec<&str> = name_ver.split('-').collect();
                             if parts.len() >= 2 {
                                 Some(PackageEntry {
-                                    name: parts[..parts.len()-1].join("-"),
+                                    name: parts[..parts.len() - 1].join("-"),
                                     version: parts.last()?.to_string(),
                                     description: None,
                                     installed: true,
@@ -212,38 +243,32 @@ impl PackageManagerTool {
                     Some((true, output)) => output
                         .lines()
                         .filter_map(|line| {
-                            if let Some(pos) = line.find(" - ") {
-                                Some(PackageEntry {
-                                    name: line[..pos].trim().to_string(),
-                                    version: String::new(),
-                                    description: Some(line[pos + 3..].to_string()),
-                                    installed: false,
-                                })
-                            } else {
-                                None
-                            }
+                            line.find(" - ").map(|pos| PackageEntry {
+                                name: line[..pos].trim().to_string(),
+                                version: String::new(),
+                                description: Some(line[pos + 3..].to_string()),
+                                installed: false,
+                            })
                         })
                         .take(50)
                         .collect(),
                     _ => Vec::new(),
                 }
             }
-            PackageBackend::Dnf => {
-                match Self::run_pkg_cmd("dnf", &["search", query], 60).await {
-                    Some((true, output)) => output
-                        .lines()
-                        .filter(|l| l.contains(query))
-                        .map(|line| PackageEntry {
-                            name: line.split_whitespace().next().unwrap_or("").to_string(),
-                            version: String::new(),
-                            description: None,
-                            installed: line.contains("@"),
-                        })
-                        .take(50)
-                        .collect(),
-                    _ => Vec::new(),
-                }
-            }
+            PackageBackend::Dnf => match Self::run_pkg_cmd("dnf", &["search", query], 60).await {
+                Some((true, output)) => output
+                    .lines()
+                    .filter(|l| l.contains(query))
+                    .map(|line| PackageEntry {
+                        name: line.split_whitespace().next().unwrap_or("").to_string(),
+                        version: String::new(),
+                        description: None,
+                        installed: line.contains("@"),
+                    })
+                    .take(50)
+                    .collect(),
+                _ => Vec::new(),
+            },
             _ => Vec::new(),
         }
     }
@@ -256,7 +281,7 @@ impl PackageManagerTool {
             PackageBackend::Apk => ("apk", vec!["add", package]),
             _ => return (false, "Unknown package manager".to_string()),
         };
-        match Self::run_pkg_cmd(cmd, &args.iter().map(|&s| s).collect::<Vec<_>>(), 300).await {
+        match Self::run_pkg_cmd(cmd, &args.to_vec(), 300).await {
             Some((success, output)) => (success, output),
             None => (false, "Failed to execute package manager".to_string()),
         }
@@ -270,7 +295,7 @@ impl PackageManagerTool {
             PackageBackend::Apk => ("apk", vec!["del", package]),
             _ => return (false, "Unknown package manager".to_string()),
         };
-        match Self::run_pkg_cmd(cmd, &args.iter().map(|&s| s).collect::<Vec<_>>(), 300).await {
+        match Self::run_pkg_cmd(cmd, &args.to_vec(), 300).await {
             Some((success, output)) => (success, output),
             None => (false, "Failed to execute package manager".to_string()),
         }
@@ -284,7 +309,7 @@ impl PackageManagerTool {
             PackageBackend::Apk => ("apk", vec!["update"]),
             _ => return (false, "Unknown package manager".to_string()),
         };
-        match Self::run_pkg_cmd(cmd, &args.iter().map(|&s| s).collect::<Vec<_>>(), 300).await {
+        match Self::run_pkg_cmd(cmd, &args.to_vec(), 300).await {
             Some((success, output)) => (success, output),
             None => (false, "Failed to execute package manager".to_string()),
         }
@@ -325,7 +350,10 @@ impl Tool for PackageManagerTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action_str = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+        let action_str = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
         let action = match action_str {
             "search" => PackageAction::Search,
             "install" => PackageAction::Install,
@@ -337,7 +365,8 @@ impl Tool for PackageManagerTool {
         let backend = PackageBackend::detect();
         if matches!(backend, PackageBackend::Unknown) {
             return Ok(ToolExecutionResult::error(
-                "No supported package manager found (tried apt, dnf, pacman, apk, zypper)".to_string(),
+                "No supported package manager found (tried apt, dnf, pacman, apk, zypper)"
+                    .to_string(),
             ));
         }
 

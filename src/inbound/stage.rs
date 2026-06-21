@@ -9,17 +9,18 @@
 //! Gateway wiring is *not* reworked here – the new Vec-based runner is tested
 //! in unit tests only. See `docs/modules/channels.md`.
 
-use async_trait::async_trait;
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
+use super::router::AgentRouter;
 use super::{
     debounce::InboundDebouncer, dispatch::DispatchResult, media::MediaUnderstandingResult,
-    queue::QueueMode, router::RouteResult, AutoReplyDispatch,
-    MediaUnderstandingPipeline, QueueModeResolver, RoutedMessage,
+    queue::QueueMode, router::RouteResult, AutoReplyDispatch, MediaUnderstandingPipeline,
+    QueueModeResolver, RoutedMessage,
 };
-use super::router::AgentRouter;
-use crate::channels::identity::IdentityValidator;
 use crate::channels::envelope::SessionEnvelopeManager;
+use crate::channels::identity::IdentityValidator;
 use crate::channels::IncomingMessage;
 
 // ── Actions ──────────────────────────────────────────────────────────────────
@@ -80,8 +81,8 @@ pub trait InboundStage: Send + Sync {
     fn name(&self) -> &str;
 
     /// Process a message. Return [`InboundStageAction::Continue`] to proceed,
-    /// [`InboundStageAction::Suppress`] to drop, or [`InboundStageAction::Debounce`]
-    /// to absorb into the debouncer.
+    /// [`InboundStageAction::Suppress`] to drop, or
+    /// [`InboundStageAction::Debounce`] to absorb into the debouncer.
     async fn process(&self, ctx: &mut InboundContext) -> InboundStageAction;
 }
 
@@ -231,7 +232,9 @@ pub struct EnvelopeStage {
 
 impl EnvelopeStage {
     pub fn new(envelope_manager: SessionEnvelopeManager) -> Self {
-        Self { envelope_manager: Arc::new(envelope_manager) }
+        Self {
+            envelope_manager: Arc::new(envelope_manager),
+        }
     }
 }
 
@@ -282,7 +285,10 @@ pub struct RouterStage {
 
 impl RouterStage {
     pub fn new(router: AgentRouter, routed_tx: tokio::sync::mpsc::Sender<RoutedMessage>) -> Self {
-        Self { router: Arc::new(router), routed_tx }
+        Self {
+            router: Arc::new(router),
+            routed_tx,
+        }
     }
 }
 
@@ -347,7 +353,8 @@ pub async fn run_inbound_stages(
 
 // ── Default stage list helper ────────────────────────────────────────────────
 
-/// Build the default list of inbound stages matching the current pipeline order.
+/// Build the default list of inbound stages matching the current pipeline
+/// order.
 ///
 /// Stages: Identity → Debounce → Media → Dispatch → Envelope → Queue → Router
 #[allow(clippy::too_many_arguments)]
@@ -422,10 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_continue() {
-        let stages: Vec<Box<dyn InboundStage>> = vec![
-            Box::new(PassStage),
-            Box::new(PassStage),
-        ];
+        let stages: Vec<Box<dyn InboundStage>> = vec![Box::new(PassStage), Box::new(PassStage)];
         let mut ctx = InboundContext::new(dummy_message());
         let result = run_inbound_stages(&stages, &mut ctx).await;
         assert!(result.is_some(), "all stages continue => Some(())");
@@ -449,7 +453,9 @@ mod tests {
         struct DebounceStage_;
         #[async_trait]
         impl InboundStage for DebounceStage_ {
-            fn name(&self) -> &str { "db" }
+            fn name(&self) -> &str {
+                "db"
+            }
             async fn process(&self, _: &mut InboundContext) -> InboundStageAction {
                 InboundStageAction::Debounce
             }

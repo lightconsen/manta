@@ -1,10 +1,10 @@
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::error;
 
@@ -57,8 +57,9 @@ pub async fn create_agent_handler(
     State(state): State<Arc<GatewayState>>,
     Json(config): Json<AgentConfig>,
 ) -> impl IntoResponse {
-    use crate::agent::Agent;
     use tracing::info;
+
+    use crate::agent::Agent;
 
     // Generate unique agent ID
     let agent_id = format!("agent-{}", uuid::Uuid::new_v4());

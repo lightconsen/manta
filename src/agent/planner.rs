@@ -3,12 +3,14 @@
 //! Automatically decomposes complex user requests into structured task plans
 //! using LLM-based analysis. Integrates with the Todo system for execution.
 
-use super::todo::TodoStore;
-use crate::providers::{CompletionRequest, Message, Provider};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+
+use super::todo::TodoStore;
+use crate::providers::{CompletionRequest, Message, Provider};
 
 /// A planned task with dependencies
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -330,7 +332,8 @@ Ensure tasks are in logical execution order. Tasks with no dependencies should c
 
             let mut task = store.create_task_with_id(&planned_task.id, content);
 
-            // Set priority based on complexity (higher complexity = higher priority to tackle early)
+            // Set priority based on complexity (higher complexity = higher priority to
+            // tackle early)
             task.set_priority(planned_task.complexity);
 
             // Store metadata
@@ -504,9 +507,10 @@ impl ActivePlan {
 
 /// Serializable snapshot of an ActivePlan for disk persistence.
 ///
-/// We don't persist the full `ActivePlan` because `TodoStore` isn't serializable.
-/// Instead, `PersistedPlan` captures the plan state and completed task IDs;
-/// the `TodoStore` is reconstructed on load via `TaskPlanner::plan_to_todos`.
+/// We don't persist the full `ActivePlan` because `TodoStore` isn't
+/// serializable. Instead, `PersistedPlan` captures the plan state and completed
+/// task IDs; the `TodoStore` is reconstructed on load via
+/// `TaskPlanner::plan_to_todos`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedPlan {
     /// The serializable task plan.
@@ -529,8 +533,8 @@ impl PersistedPlan {
 
     /// Reconstruct an ActivePlan from persisted state.
     ///
-    /// The `TodoStore` is rebuilt from the plan via `TaskPlanner::plan_to_todos`,
-    /// then completed tasks are marked.
+    /// The `TodoStore` is rebuilt from the plan via
+    /// `TaskPlanner::plan_to_todos`, then completed tasks are marked.
     pub fn into_active(self, planner: &TaskPlanner) -> ActivePlan {
         let mut todos = planner.plan_to_todos(&self.plan);
 
@@ -696,7 +700,8 @@ More text"#;
 
         plan.advance();
         assert!(plan.is_complete);
-        // advance() keeps index at last position, so current_task still returns the last task
+        // advance() keeps index at last position, so current_task still returns the
+        // last task
         assert!(plan.current_task().is_some());
     }
 

@@ -4,16 +4,16 @@
 //! channels via direct Channel trait method calls (Path B).  This is a
 //! side-effect operation: it does NOT loop back through the inbound pipeline.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::Arc;
 
+use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::channels::{Channel, ConversationId, MessageOptions, OutgoingMessage};
 use crate::core::models::Id;
 use crate::gateway::GatewayState;
-
-use super::{Tool, ToolContext, ToolExecutionResult};
 
 /// Send a message through a channel.
 pub struct MessageTool {
@@ -69,8 +69,8 @@ impl Tool for MessageTool {
 
     fn description(&self) -> &str {
         "Send messages and perform message actions through a channel (e.g., telegram, discord). \
-         Actions: send, reply, edit, delete, typing, react, unreact, pin, unpin, thread_create, poll. \
-         This is a side-effect operation that does not re-trigger the agent."
+         Actions: send, reply, edit, delete, typing, react, unreact, pin, unpin, thread_create, \
+         poll. This is a side-effect operation that does not re-trigger the agent."
     }
 
     fn parameters_schema(&self) -> Value {

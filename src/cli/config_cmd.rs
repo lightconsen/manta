@@ -3,9 +3,11 @@
 //! Get, set, unset, and validate configuration values directly.
 //! Supports nested dot-notation paths (e.g., providers.deepseek.api_key).
 
-use crate::error::Result;
-use clap::Subcommand;
 use std::path::PathBuf;
+
+use clap::Subcommand;
+
+use crate::error::Result;
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommands {
@@ -15,7 +17,8 @@ pub enum ConfigCommands {
         #[arg(short, long, value_enum, default_value = "toml")]
         format: super::ConfigFormat,
     },
-    /// Get a specific configuration value by key (dot-notation, e.g., gateway.host)
+    /// Get a specific configuration value by key (dot-notation, e.g.,
+    /// gateway.host)
     Get {
         /// Configuration key path
         key: String,

@@ -1,10 +1,11 @@
 //! Inbound/outbound pipeline initialization.
 //!
 //! Wires together the message routing pipeline: agent router, reply dispatcher,
-//! inbound debouncer, media understanding, outbound pipeline, side-effect executor,
-//! and SSE streamer.
+//! inbound debouncer, media understanding, outbound pipeline, side-effect
+//! executor, and SSE streamer.
 
 use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
 use crate::gateway::GatewayConfig;

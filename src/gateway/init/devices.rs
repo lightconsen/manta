@@ -11,6 +11,7 @@
 //! checks on all devices and logs warnings for degraded hardware.
 
 use std::sync::Arc;
+
 use tokio::task::JoinHandle;
 
 use crate::device::health::spawn_health_check_loop;
@@ -79,10 +80,12 @@ pub async fn init_devices(
 
             // Also register as a perception source if a registry is provided.
             if let Some(per_reg) = perception_registry {
-                per_reg.register_source(Arc::new(
-                    DeviceSourceAdapter::new(device_id.clone(), cap.clone()),
-                ))
-                .await;
+                per_reg
+                    .register_source(Arc::new(DeviceSourceAdapter::new(
+                        device_id.clone(),
+                        cap.clone(),
+                    )))
+                    .await;
             }
         }
     }
@@ -155,9 +158,8 @@ pub fn spawn_os_bridge_from_config(
 
     let matchers = os_bridge.matchers.clone();
     let factory = factory.clone();
-    let build_driver: DriverBuilder = Arc::new(move |kind: &str, params: serde_json::Value| {
-        factory.build(kind, params)
-    });
+    let build_driver: DriverBuilder =
+        Arc::new(move |kind: &str, params: serde_json::Value| factory.build(kind, params));
 
     Some(spawn_os_bridge_loop(
         registry,
@@ -213,12 +215,13 @@ pub async fn reload_devices(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::device::Capability;
-    use crate::device::mock::MockDeviceDriver;
-    use crate::gateway::DeviceDriverEntry;
     use async_trait::async_trait;
     use serde_json::json;
+
+    use super::*;
+    use crate::device::mock::MockDeviceDriver;
+    use crate::device::Capability;
+    use crate::gateway::DeviceDriverEntry;
 
     struct DummySensor;
 
@@ -261,15 +264,10 @@ mod tests {
         let config = DeviceConfig::default();
         let tool_registry = ToolRegistry::new();
 
-        let result = init_devices(
-            &config,
-            vec![Arc::new(driver)],
-            &tool_registry,
-            None,
-        )
-        .await
-        .expect("init_devices should succeed")
-        .expect("init_devices should return Some when enabled");
+        let result = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
+            .await
+            .expect("init_devices should succeed")
+            .expect("init_devices should return Some when enabled");
 
         // Verify the device is registered
         assert_eq!(result.registry.len().await, 1);

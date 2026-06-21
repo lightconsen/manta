@@ -44,8 +44,8 @@ impl Tool for TtsTool {
     }
 
     fn description(&self) -> &str {
-        "Convert text to speech audio. Supports OpenAI TTS API (requires OPENAI_API_KEY) \
-         or local system TTS (macOS say, Linux espeak/festival)."
+        "Convert text to speech audio. Supports OpenAI TTS API (requires OPENAI_API_KEY) or local \
+         system TTS (macOS say, Linux espeak/festival)."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -225,7 +225,8 @@ impl Tool for TtsTool {
             success: false,
             output: String::new(),
             error: Some(
-                "No TTS provider available. Set OPENAI_API_KEY, or install espeak (Linux) / use macOS."
+                "No TTS provider available. Set OPENAI_API_KEY, or install espeak (Linux) / use \
+                 macOS."
                     .to_string(),
             ),
             data: Some(serde_json::json!({

@@ -5,55 +5,56 @@
 //! - Bearer token (short-lived, e.g. some enterprise proxies)
 //! - OAuth2 client credentials (Azure AD, Google, etc.)
 
+use std::fmt;
+
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 /// Authentication credential for LLM providers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Credential {
- /// Simple API key (most common)
+    /// Simple API key (most common)
     ApiKey {
- /// The secret key
+        /// The secret key
         key: String,
     },
- /// Bearer token with optional expiration
+    /// Bearer token with optional expiration
     BearerToken {
- /// The token string
+        /// The token string
         token: String,
- /// When the token expires (if known)
+        /// When the token expires (if known)
         #[serde(skip_serializing_if = "Option::is_none")]
         expires_at: Option<DateTime<Utc>>,
     },
- /// OAuth2 client-credentials flow
+    /// OAuth2 client-credentials flow
     OAuth2 {
- /// Current access token
+        /// Current access token
         access_token: String,
- /// Refresh token (if available)
+        /// Refresh token (if available)
         #[serde(skip_serializing_if = "Option::is_none")]
         refresh_token: Option<String>,
- /// Token expiration time
+        /// Token expiration time
         expires_at: DateTime<Utc>,
- /// OAuth2 token endpoint URL
+        /// OAuth2 token endpoint URL
         token_url: String,
- /// OAuth2 client ID
+        /// OAuth2 client ID
         client_id: String,
- /// OAuth2 client secret
+        /// OAuth2 client secret
         #[serde(skip_serializing_if = "Option::is_none")]
         client_secret: Option<String>,
- /// Optional scope string
+        /// Optional scope string
         #[serde(skip_serializing_if = "Option::is_none")]
         scope: Option<String>,
     },
 }
 
 impl Credential {
- /// Create an API key credential (backward-compat helper).
+    /// Create an API key credential (backward-compat helper).
     pub fn api_key(key: impl Into<String>) -> Self {
         Self::ApiKey { key: key.into() }
     }
 
- /// Create a bearer token credential.
+    /// Create a bearer token credential.
     pub fn bearer_token(token: impl Into<String>) -> Self {
         Self::BearerToken {
             token: token.into(),
@@ -61,7 +62,7 @@ impl Credential {
         }
     }
 
- /// Build the Authorization header value for this credential.
+    /// Build the Authorization header value for this credential.
     pub fn authorization_header(&self) -> String {
         match self {
             Credential::ApiKey { key } => format!("Bearer {key}"),
@@ -70,7 +71,7 @@ impl Credential {
         }
     }
 
- /// Returns true if the credential has a known expiration and is past it.
+    /// Returns true if the credential has a known expiration and is past it.
     pub fn is_expired(&self) -> bool {
         match self {
             Credential::ApiKey { .. } => false,
@@ -81,7 +82,7 @@ impl Credential {
         }
     }
 
- /// Returns true if the credential expires within the given margin.
+    /// Returns true if the credential expires within the given margin.
     pub fn is_expiring_soon(&self, margin: Duration) -> bool {
         match self {
             Credential::ApiKey { .. } => false,
@@ -92,10 +93,11 @@ impl Credential {
         }
     }
 
- /// Refresh the credential if it supports refresh and is expired or expiring.
- ///
- /// For `OAuth2`, performs a client-credentials token refresh.
- /// For other variants this is a no-op.
+    /// Refresh the credential if it supports refresh and is expired or
+    /// expiring.
+    ///
+    /// For `OAuth2`, performs a client-credentials token refresh.
+    /// For other variants this is a no-op.
     pub async fn refresh_if_needed(&mut self, client: &reqwest::Client) -> crate::Result<()> {
         let needs_refresh = self.is_expired() || self.is_expiring_soon(Duration::minutes(5));
         if !needs_refresh {
@@ -160,7 +162,8 @@ impl Credential {
 
 /// Resolve a credential following the priority chain:
 ///
-/// 1. Environment variable (e.g. `SYSCITY_PROVIDER_{NAME}_KEY`) — highest priority
+/// 1. Environment variable (e.g. `SYSCITY_PROVIDER_{NAME}_KEY`) — highest
+///    priority
 /// 2. Bearer token / OAuth2 from auth_profile
 /// 3. API key from config `api_keys` list
 /// 4. Single `api_key` from config — lowest priority
@@ -174,21 +177,21 @@ pub fn resolve_from_env_and_config(
     let env_key =
         format!("SYSCITY_PROVIDER_{}_KEY", provider_name.to_uppercase().replace('-', "_"));
 
- // 1. Environment variable (highest priority)
+    // 1. Environment variable (highest priority)
     if let Ok(key) = std::env::var(&env_key) {
         if !key.is_empty() {
             return Some(Credential::ApiKey { key });
         }
     }
 
- // 2. Config api_keys list
+    // 2. Config api_keys list
     if let Some(key) = config_api_keys.first() {
         if !key.is_empty() {
             return Some(Credential::ApiKey { key: key.clone() });
         }
     }
 
- // 3. Single api_key from config
+    // 3. Single api_key from config
     if !config_api_key.is_empty() {
         return Some(Credential::ApiKey {
             key: config_api_key.to_string(),
@@ -359,7 +362,7 @@ mod tests {
         rt.block_on(async {
             let client = reqwest::Client::new();
             let mut cred = Credential::api_key("sk-test");
- // Should not panic or error
+            // Should not panic or error
             let result = cred.refresh_if_needed(&client).await;
             assert!(result.is_ok());
         });

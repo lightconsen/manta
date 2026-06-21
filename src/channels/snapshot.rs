@@ -7,10 +7,11 @@
 //! - `warn` — Channel has non-critical issues
 //! - `error` — Channel has critical issues
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 /// Diagnostic display tone for an account snapshot.
@@ -211,10 +212,7 @@ impl AccountSnapshotStore {
     }
 
     /// Get all snapshots for a channel.
-    pub async fn get_channel_snapshots(
-        &self,
-        channel_name: &str,
-    ) -> Vec<AccountSnapshot> {
+    pub async fn get_channel_snapshots(&self, channel_name: &str) -> Vec<AccountSnapshot> {
         let snapshots = self.snapshots.read().await;
         snapshots
             .get(channel_name)
@@ -273,10 +271,7 @@ impl AccountSnapshotStore {
         let mut lines = Vec::new();
         for snap in &all {
             let tone_marker = snap.tone.emoji();
-            let account = snap
-                .account_id
-                .as_deref()
-                .unwrap_or("default");
+            let account = snap.account_id.as_deref().unwrap_or("default");
             lines.push(format!(
                 "{} {} [{}] {} — {} msgs, {} errs, status: {}",
                 tone_marker,

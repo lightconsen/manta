@@ -54,7 +54,8 @@ impl OAuthFlow {
         let redirect_uri = format!("http://127.0.0.1:{}/callback", config.redirect_port);
 
         let mut url = format!(
-            "{}?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}",
+            "{}?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&\
+             code_challenge_method=S256&state={}",
             urlencoding::encode(&config.auth_url),
             urlencoding::encode(&config.client_id),
             urlencoding::encode(&redirect_uri),
@@ -69,7 +70,8 @@ impl OAuthFlow {
         url
     }
 
-    /// Exchange an authorization code for an access token (and optional refresh token).
+    /// Exchange an authorization code for an access token (and optional refresh
+    /// token).
     pub async fn exchange_code(
         &self,
         code: &str,

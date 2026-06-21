@@ -1,13 +1,14 @@
 //! Help popup rendering.
 
-use crate::tui::state::AppState;
-use crate::tui::ui::titled_block;
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Modifier, Style},
     widgets::{Row, Table},
     Frame,
 };
+
+use crate::tui::state::AppState;
+use crate::tui::ui::titled_block;
 
 /// Render the help popup.
 pub fn render(f: &mut Frame, state: &AppState, area: Rect) {

@@ -3,14 +3,16 @@
 //! This module initializes the tracing subscriber with the
 //! configuration specified in the config file.
 
-use crate::config::{Config, LogFormat};
-use crate::error::Result;
 use std::io;
 use std::path::Path;
+
 use tracing::Level;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+
+use crate::config::{Config, LogFormat};
+use crate::error::Result;
 
 /// Initialize logging based on configuration
 pub fn init_logging(config: &Config) -> Result<()> {

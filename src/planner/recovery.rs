@@ -3,8 +3,9 @@
 //! Called during daemon / CLI startup to detect plans that were interrupted
 //! by a crash or shutdown and give the user the option to continue.
 
-use crate::planner::{GoalPlanner, PlanResult, TaskStateStore};
 use tracing::{info, warn};
+
+use crate::planner::{GoalPlanner, PlanResult, TaskStateStore};
 
 /// Result of a startup recovery check.
 #[derive(Debug)]
@@ -26,15 +27,16 @@ pub enum RecoveryOutcome {
 /// 2. Prints a summary to stdout so the user can see what was interrupted.
 /// 3. If `auto_resume` is `true`, resumes the most recent incomplete plan
 ///    without prompting (headless / server mode).
-/// 4. If `auto_resume` is `false` and **stdin is a TTY**, asks the user
-///    whether to resume.  In non-TTY environments the prompt is skipped
-///    and the function returns [`RecoveryOutcome::Declined`].
+/// 4. If `auto_resume` is `false` and **stdin is a TTY**, asks the user whether
+///    to resume.  In non-TTY environments the prompt is skipped and the
+///    function returns [`RecoveryOutcome::Declined`].
 ///
 /// # Example
 /// ```rust,no_run
 /// # async fn example() -> syscity::Result<()> {
-/// use syscity::planner::{TaskStateStore, check_startup_recovery};
 /// use std::sync::Arc;
+///
+/// use syscity::planner::{check_startup_recovery, TaskStateStore};
 ///
 /// let store = TaskStateStore::new("sqlite://~/.syscity/planner.db").await?;
 /// // let planner = ... ;

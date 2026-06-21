@@ -1,16 +1,18 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
 use serde::Deserialize;
-use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::gateway::GatewayState;
 use crate::tools::mcp::McpToolWrapper;
 
-// ── Comprehensive reload ──────────────────────────────────────────────────────
+// ── Comprehensive reload
+// ──────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct ReloadRequest {
@@ -130,7 +132,9 @@ pub async fn reload_all_handler(
 
         if !changes.is_empty() {
             let details = serde_json::to_value(&changes).unwrap_or_default();
-            state.auth.audit_log
+            state
+                .auth
+                .audit_log
                 .log(
                     crate::security::runtime_audit::AuditEventType::ConfigChange,
                     "system",
@@ -183,8 +187,10 @@ pub async fn reload_all_handler(
             } else {
                 // No previous init — run fresh init from config
                 let config = state.config.read().await;
-                let drivers =
-                    crate::gateway::init::devices::discover_drivers_from_config(&state.infra.driver_factory, &config.device);
+                let drivers = crate::gateway::init::devices::discover_drivers_from_config(
+                    &state.infra.driver_factory,
+                    &config.device,
+                );
                 crate::gateway::init::devices::init_devices(
                     &config.device,
                     drivers,
@@ -227,7 +233,11 @@ pub async fn reload_all_handler(
                 // Re-init control lane from (possibly updated) config
                 let config = state.config.read().await;
                 // Re-borrow device_init to get the fresh registry
-                let registry = state.device_init.read().await.as_ref()
+                let registry = state
+                    .device_init
+                    .read()
+                    .await
+                    .as_ref()
                     .map(|di| di.registry.clone());
                 drop(config);
 
@@ -238,14 +248,12 @@ pub async fn reload_all_handler(
                         handlers.clone(),
                         state.config.read().await.device.control.clone(),
                     );
-                    *state.control_init.write().await = Some(
-                        crate::gateway::state::ControlInit {
-                            registry: reg,
-                            runtime: None,
-                            handle: Some(handle),
-                            handlers,
-                        },
-                    );
+                    *state.control_init.write().await = Some(crate::gateway::state::ControlInit {
+                        registry: reg,
+                        runtime: None,
+                        handle: Some(handle),
+                        handlers,
+                    });
                     info!("Control lane re-initialized after device reload");
                 }
 
@@ -254,8 +262,7 @@ pub async fn reload_all_handler(
             }
             Err(e) => {
                 error!("Failed to reload device subsystem: {}", e);
-                result["device"] =
-                    serde_json::json!({ "reloaded": false, "error": e.to_string() });
+                result["device"] = serde_json::json!({ "reloaded": false, "error": e.to_string() });
             }
         }
     }
@@ -292,7 +299,9 @@ pub async fn reload_all_handler(
         if let Some(ref new_cfg) = new_config {
             for (name, provider_config) in &new_cfg.providers {
                 if !current_names.contains(name) {
-                    if let Err(e) = state.infra.model_router
+                    if let Err(e) = state
+                        .infra
+                        .model_router
                         .add_provider(name, provider_config.clone())
                         .await
                     {
@@ -317,7 +326,9 @@ pub async fn reload_all_handler(
         let existing_servers = state.tools.mcp_manager.list_servers().await;
         for server_id in &existing_servers {
             // Deregister tools first
-            state.tools.registry
+            state
+                .tools
+                .registry
                 .deregister_prefix(&format!("mcp__{}__", server_id));
             if let Err(e) = state.tools.mcp_manager.disconnect(server_id).await {
                 warn!("Failed to disconnect MCP server '{}': {}", server_id, e);
@@ -334,14 +345,18 @@ pub async fn reload_all_handler(
                 if !server_config.auto_connect {
                     continue;
                 }
-                match state.tools.mcp_manager
+                match state
+                    .tools
+                    .mcp_manager
                     .connect(server_id, server_config.clone())
                     .await
                 {
                     Ok(tools) => {
                         info!("MCP server '{}' connected: {} tool(s)", server_id, tools.len());
                         // Register discovered tools
-                        if let Some(client_arc) = state.tools.mcp_manager.get_client(server_id).await {
+                        if let Some(client_arc) =
+                            state.tools.mcp_manager.get_client(server_id).await
+                        {
                             let max_tools = if server_config.max_tools == 0 {
                                 tools.len()
                             } else {
@@ -402,7 +417,8 @@ pub async fn reload_all_handler(
     (StatusCode::OK, Json(result)).into_response()
 }
 
-// ── Channel management ─────────────────────────────────────────────────────────
+// ── Channel management
+// ─────────────────────────────────────────────────────────
 
 /// GET /api/v1/channels — List all channels and their enabled status.
 pub async fn channel_list_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {

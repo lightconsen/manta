@@ -5,10 +5,11 @@
 //! configured with multiple keys; the system rotates to the next
 //! available key after a cooldown period.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -350,7 +351,8 @@ impl AuthProfileManager {
         self.register_profile(provider_name, profile).await;
     }
 
-    /// Create and register a profile from config, then load any persisted state.
+    /// Create and register a profile from config, then load any persisted
+    /// state.
     pub async fn register_from_config(&self, provider_name: &str, config: &AuthProfileConfig) {
         let keys: Vec<(String, String)> = config
             .keys

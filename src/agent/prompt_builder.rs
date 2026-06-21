@@ -1,10 +1,12 @@
 //! Dynamic Prompt Builder for Syscity
 //!
-//! Builds adaptive system prompts based on context, tools, task type, and conversation state.
-//! Provides runtime prompt customization for better agent performance.
+//! Builds adaptive system prompts based on context, tools, task type, and
+//! conversation state. Provides runtime prompt customization for better agent
+//! performance.
+
+use std::collections::HashMap;
 
 use crate::providers::{FunctionDefinition, Message};
-use std::collections::HashMap;
 
 /// Section of a dynamic prompt
 #[derive(Debug, Clone)]
@@ -266,16 +268,20 @@ impl ConversationPhase {
     pub fn context(self) -> &'static str {
         match self {
             ConversationPhase::New => {
-                "This is the start of our conversation. I'm getting to know your style and preferences."
+                "This is the start of our conversation. I'm getting to know your style and \
+                 preferences."
             }
             ConversationPhase::Early => {
-                "We're still early in our conversation. I'm learning your preferences and building context."
+                "We're still early in our conversation. I'm learning your preferences and building \
+                 context."
             }
             ConversationPhase::Established => {
-                "We have an established conversation with good context. I'll maintain consistency with previous work."
+                "We have an established conversation with good context. I'll maintain consistency \
+                 with previous work."
             }
             ConversationPhase::Deep => {
-                "This is a deep, ongoing conversation. I have extensive context and will reference it appropriately while staying focused on the current task."
+                "This is a deep, ongoing conversation. I have extensive context and will reference \
+                 it appropriately while staying focused on the current task."
             }
         }
     }

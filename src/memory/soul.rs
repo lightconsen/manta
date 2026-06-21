@@ -28,8 +28,9 @@
 //! Be genuinely helpful, not performatively helpful...
 //! ```
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 /// Structured agent behavior configuration.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,7 +228,8 @@ fn yaml_to_string(v: &serde_yml::Value) -> String {
     }
 }
 
-/// A parsed SOUL.md file with optional structured frontmatter and markdown body.
+/// A parsed SOUL.md file with optional structured frontmatter and markdown
+/// body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SoulFile {
     /// Structured configuration from YAML frontmatter (if present).

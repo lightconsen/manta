@@ -1,7 +1,8 @@
-use chrono::Timelike;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use chrono::Timelike;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
@@ -19,7 +20,8 @@ const HEARTBEAT_FILENAME: &str = "HEARTBEAT.md";
 
 /// State tracked per agent for heartbeat scheduling
 struct AgentHeartbeatState {
-    /// Resolved heartbeat config for this agent (agent override or global fallback)
+    /// Resolved heartbeat config for this agent (agent override or global
+    /// fallback)
     config: HeartbeatConfig,
     consecutive_idle: u32,
     last_run: Option<Instant>,
@@ -390,17 +392,24 @@ impl HeartbeatRunner {
                 };
 
                 if due_tasks.is_empty() && tasks.is_empty() {
-                    "Read HEARTBEAT.md if it exists. Follow it strictly. Do not invent or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.".to_string()
+                    "Read HEARTBEAT.md if it exists. Follow it strictly. Do not invent or repeat \
+                     old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK."
+                        .to_string()
                 } else if due_tasks.is_empty() {
-                    "Read HEARTBEAT.md. No tasks are due at this time. If nothing else needs attention, reply HEARTBEAT_OK.".to_string()
+                    "Read HEARTBEAT.md. No tasks are due at this time. If nothing else needs \
+                     attention, reply HEARTBEAT_OK."
+                        .to_string()
                 } else {
-                    let mut prompt =
-                        "Read HEARTBEAT.md. The following tasks are due for execution:\n\n"
-                            .to_string();
+                    let mut prompt = "Read HEARTBEAT.md. The following tasks are due for \
+                                      execution:\n\n"
+                        .to_string();
                     for task in &due_tasks {
                         prompt.push_str(&format!("- **{}**: {}\n", task.name, task.prompt));
                     }
-                    prompt.push_str("\nExecute the due tasks. For any completed task, note it so it can be tracked.");
+                    prompt.push_str(
+                        "\nExecute the due tasks. For any completed task, note it so it can be \
+                         tracked.",
+                    );
                     prompt
                 }
             }
@@ -486,7 +495,8 @@ impl HeartbeatRunner {
     }
 
     /// Resolve heartbeat config for an agent.
-    /// Uses agent-specific config if set, otherwise falls back to global GatewayConfig.
+    /// Uses agent-specific config if set, otherwise falls back to global
+    /// GatewayConfig.
     async fn resolve_agent_config(&self, handle: &crate::gateway::AgentHandle) -> HeartbeatConfig {
         if let Some(ref agent_heartbeat) = handle.config.heartbeat {
             return agent_heartbeat.clone();
@@ -537,8 +547,9 @@ fn parse_time(s: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     fn make_test_agent_handle(
         id: &str,

@@ -8,8 +8,9 @@
 //! # Usage
 //!
 //! ```rust,no_run
-//! use syscity::computer::screen_recorder::{ScreenRecorder, RecorderConfig};
 //! use std::time::Duration;
+//!
+//! use syscity::computer::screen_recorder::{RecorderConfig, ScreenRecorder};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut recorder = ScreenRecorder::new(RecorderConfig::default())?;
@@ -17,7 +18,10 @@
 //!
 //! // Wait a bit, then check if the scene has stabilised
 //! tokio::time::sleep(Duration::from_secs(2)).await;
-//! if recorder.is_scene_stable(Duration::from_millis(500), 1000).await {
+//! if recorder
+//!     .is_scene_stable(Duration::from_millis(500), 1000)
+//!     .await
+//! {
 //!     println!("Loading finished — scene is stable");
 //! }
 //!
@@ -32,6 +36,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -82,10 +87,7 @@ pub async fn resolve_or_download_ffmpeg() -> crate::computer::Result<PathBuf> {
         }
     }
     // 3. Download static build
-    info!(
-        "ffmpeg not found on PATH — downloading static build to {}",
-        cache.display()
-    );
+    info!("ffmpeg not found on PATH — downloading static build to {}", cache.display());
     if let Some(parent) = cache.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             crate::computer::ComputerError::Other(format!(
@@ -105,17 +107,12 @@ async fn download_bytes(url: &str) -> crate::computer::Result<Vec<u8>> {
         .timeout(Duration::from_secs(120))
         .user_agent("syscity/0.1")
         .build()
-        .map_err(|e| {
-            crate::computer::ComputerError::Other(format!("HTTP client: {}", e))
-        })?
+        .map_err(|e| crate::computer::ComputerError::Other(format!("HTTP client: {}", e)))?
         .get(url)
         .send()
         .await
         .map_err(|e| {
-            crate::computer::ComputerError::Other(format!(
-                "Download failed ({}): {}",
-                url, e
-            ))
+            crate::computer::ComputerError::Other(format!("Download failed ({}): {}", url, e))
         })?;
     if !response.status().is_success() {
         return Err(crate::computer::ComputerError::Other(format!(
@@ -124,24 +121,26 @@ async fn download_bytes(url: &str) -> crate::computer::Result<Vec<u8>> {
             url
         )));
     }
-    response.bytes().await.map(|b| b.to_vec()).map_err(|e| {
-        crate::computer::ComputerError::Other(format!("Download body: {}", e))
-    })
+    response
+        .bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| crate::computer::ComputerError::Other(format!("Download body: {}", e)))
 }
 
 /// Download a static ffmpeg binary for the current platform.
 #[cfg(target_os = "macos")]
 async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
     use std::io::Read;
+
     use zip::ZipArchive;
 
     let url = "https://evermeet.cx/ffmpeg/get/ffmpeg/zip";
     let data = download_bytes(url).await?;
 
     let cursor = std::io::Cursor::new(data);
-    let mut archive = ZipArchive::new(cursor).map_err(|e| {
-        crate::computer::ComputerError::Other(format!("Read zip: {}", e))
-    })?;
+    let mut archive = ZipArchive::new(cursor)
+        .map_err(|e| crate::computer::ComputerError::Other(format!("Read zip: {}", e)))?;
 
     let mut extracted = false;
     for i in 0..archive.len() {
@@ -154,11 +153,7 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
                 crate::computer::ComputerError::Other(format!("Read zip entry: {}", e))
             })?;
             std::fs::write(dest, &buf).map_err(|e| {
-                crate::computer::ComputerError::Other(format!(
-                    "Write {}: {}",
-                    dest.display(),
-                    e
-                ))
+                crate::computer::ComputerError::Other(format!("Write {}: {}", dest.display(), e))
             })?;
             extracted = true;
             break;
@@ -185,11 +180,7 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
         std::fs::remove_dir_all(&extract_dir).ok();
     }
     std::fs::create_dir_all(&extract_dir).map_err(|e| {
-        crate::computer::ComputerError::Other(format!(
-            "Create {}: {}",
-            extract_dir.display(),
-            e
-        ))
+        crate::computer::ComputerError::Other(format!("Create {}: {}", extract_dir.display(), e))
     })?;
 
     // pipe tar data to `tar -xJf -` (xz support is standard on modern Linux)
@@ -202,9 +193,7 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| {
-            crate::computer::ComputerError::Other(format!("spawn tar: {}", e))
-        })?;
+        .map_err(|e| crate::computer::ComputerError::Other(format!("spawn tar: {}", e)))?;
 
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(&data).await.map_err(|e| {
@@ -213,9 +202,10 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
     }
     drop(stdin); // close stdin → tar starts processing
 
-    let status = child.wait().await.map_err(|e| {
-        crate::computer::ComputerError::Other(format!("wait tar: {}", e))
-    })?;
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| crate::computer::ComputerError::Other(format!("wait tar: {}", e)))?;
     if !status.success() {
         return Err(crate::computer::ComputerError::Other(
             "tar extraction failed (is xz-utils installed?)".into(),
@@ -224,17 +214,11 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
 
     // Find the ffmpeg binary inside the extracted directory tree
     let found = find_file_recursively(&extract_dir, "ffmpeg").ok_or_else(|| {
-        crate::computer::ComputerError::Other(
-            "ffmpeg binary not found in extracted archive".into(),
-        )
+        crate::computer::ComputerError::Other("ffmpeg binary not found in extracted archive".into())
     })?;
     set_executable(&found)?;
-    std::fs::rename(&found, dest).map_err(|e| {
-        crate::computer::ComputerError::Other(format!(
-            "move ffmpeg: {}",
-            e
-        ))
-    })?;
+    std::fs::rename(&found, dest)
+        .map_err(|e| crate::computer::ComputerError::Other(format!("move ffmpeg: {}", e)))?;
     std::fs::remove_dir_all(&extract_dir).ok();
     info!("Downloaded ffmpeg to {}", dest.display());
     Ok(())
@@ -244,6 +228,7 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
 #[cfg(target_os = "windows")]
 async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
     use std::io::Read;
+
     use zip::ZipArchive;
 
     let url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
@@ -254,17 +239,12 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
         std::fs::remove_dir_all(&extract_dir).ok();
     }
     std::fs::create_dir_all(&extract_dir).map_err(|e| {
-        crate::computer::ComputerError::Other(format!(
-            "Create {}: {}",
-            extract_dir.display(),
-            e
-        ))
+        crate::computer::ComputerError::Other(format!("Create {}: {}", extract_dir.display(), e))
     })?;
 
     let cursor = std::io::Cursor::new(data);
-    let mut archive = ZipArchive::new(cursor).map_err(|e| {
-        crate::computer::ComputerError::Other(format!("Read zip: {}", e))
-    })?;
+    let mut archive = ZipArchive::new(cursor)
+        .map_err(|e| crate::computer::ComputerError::Other(format!("Read zip: {}", e)))?;
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| {
@@ -280,31 +260,20 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
             }
             let mut buf = Vec::new();
             entry.read_to_end(&mut buf).map_err(|e| {
-                crate::computer::ComputerError::Other(format!(
-                    "Read zip entry: {}",
-                    e
-                ))
+                crate::computer::ComputerError::Other(format!("Read zip entry: {}", e))
             })?;
             std::fs::write(&out, &buf).map_err(|e| {
-                crate::computer::ComputerError::Other(format!(
-                    "Write {}: {}",
-                    out.display(),
-                    e
-                ))
+                crate::computer::ComputerError::Other(format!("Write {}: {}", out.display(), e))
             })?;
         }
     }
 
     // Find ffmpeg.exe in the extracted tree
-    let found =
-        find_file_recursively(&extract_dir, "ffmpeg.exe").ok_or_else(|| {
-            crate::computer::ComputerError::Other(
-                "ffmpeg.exe not found in extracted archive".into(),
-            )
-        })?;
-    std::fs::rename(&found, dest).map_err(|e| {
-        crate::computer::ComputerError::Other(format!("move ffmpeg.exe: {}", e))
+    let found = find_file_recursively(&extract_dir, "ffmpeg.exe").ok_or_else(|| {
+        crate::computer::ComputerError::Other("ffmpeg.exe not found in extracted archive".into())
     })?;
+    std::fs::rename(&found, dest)
+        .map_err(|e| crate::computer::ComputerError::Other(format!("move ffmpeg.exe: {}", e)))?;
     std::fs::remove_dir_all(&extract_dir).ok();
     info!("Downloaded ffmpeg to {}", dest.display());
     Ok(())
@@ -313,8 +282,7 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 async fn download_ffmpeg(_dest: &Path) -> crate::computer::Result<()> {
     Err(crate::computer::ComputerError::Other(
-        "Automatic ffmpeg download not supported on this platform. \
-         Please install ffmpeg manually."
+        "Automatic ffmpeg download not supported on this platform. Please install ffmpeg manually."
             .into(),
     ))
 }
@@ -440,9 +408,7 @@ impl ScreenRecorder {
         let config = self.config;
 
         let handle = tokio::spawn(async move {
-            if let Err(e) =
-                run_ffmpeg_capture(config, buffer, running, ffmpeg_bin).await
-            {
+            if let Err(e) = run_ffmpeg_capture(config, buffer, running, ffmpeg_bin).await {
                 warn!("Screen recorder capture loop exited: {}", e);
             }
         });
@@ -487,12 +453,9 @@ impl ScreenRecorder {
     /// Check whether the scene has been "stable" for the given window.
     ///
     /// Stability is defined as: the pixel-wise difference between every
-    /// consecutive pair of frames in the window is below `pixel_diff_threshold`.
-    pub async fn is_scene_stable(
-        &self,
-        window: Duration,
-        pixel_diff_threshold: u32,
-    ) -> bool {
+    /// consecutive pair of frames in the window is below
+    /// `pixel_diff_threshold`.
+    pub async fn is_scene_stable(&self, window: Duration, pixel_diff_threshold: u32) -> bool {
         let frames = self.recent_frames(window).await;
         if frames.len() < 2 {
             return false; // Not enough history to decide.
@@ -529,10 +492,7 @@ impl ScreenRecorder {
     }
 
     /// Save the current frame buffer as an MP4 video using FFmpeg.
-    async fn save_buffer_to_video(
-        &self,
-        path: &Path,
-    ) -> crate::computer::Result<()> {
+    async fn save_buffer_to_video(&self, path: &Path) -> crate::computer::Result<()> {
         // Drain all frames from the buffer
         let frames: Vec<VideoFrame> = {
             let mut buf = self.frame_buffer.lock().await;
@@ -574,9 +534,7 @@ impl ScreenRecorder {
             })?;
 
         let mut stdin = child.stdin.take().ok_or_else(|| {
-            crate::computer::ComputerError::Other(
-                "Failed to open ffmpeg stdin".to_string(),
-            )
+            crate::computer::ComputerError::Other("Failed to open ffmpeg stdin".to_string())
         })?;
 
         for frame in &frames {
@@ -592,10 +550,7 @@ impl ScreenRecorder {
         drop(stdin);
 
         let status = child.wait().await.map_err(|e| {
-            crate::computer::ComputerError::Other(format!(
-                "Failed to wait for ffmpeg: {}",
-                e
-            ))
+            crate::computer::ComputerError::Other(format!("Failed to wait for ffmpeg: {}", e))
         })?;
 
         if !status.success() {
@@ -629,14 +584,10 @@ async fn run_ffmpeg_capture(
     ffmpeg_bin: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut cmd = build_ffmpeg_command(config, &ffmpeg_bin)?;
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
 
     let mut child = cmd.spawn()?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("ffmpeg has no stdout")?;
+    let stdout = child.stdout.take().ok_or("ffmpeg has no stdout")?;
 
     // Read raw RGBA frames from FFmpeg stdout.
     let mut reader = tokio::io::BufReader::new(stdout);
@@ -655,11 +606,7 @@ async fn run_ffmpeg_capture(
     let mut frame_data = vec![0u8; actual_frame_size];
 
     while running.load(Ordering::SeqCst) {
-        match tokio::time::timeout(
-            Duration::from_secs(2),
-            reader.read_exact(&mut frame_data),
-        )
-        .await
+        match tokio::time::timeout(Duration::from_secs(2), reader.read_exact(&mut frame_data)).await
         {
             Ok(Ok(_)) => {
                 let frame = VideoFrame {
@@ -721,7 +668,7 @@ fn build_ffmpeg_command(
                 .arg(format!("{}x{}", r.width, r.height))
                 .arg("-i")
                 .arg("1:"); // Capture display 1
-            // TODO: apply offset crop
+                            // TODO: apply offset crop
         } else {
             cmd.arg("-i").arg("1:");
         }
@@ -751,7 +698,7 @@ fn build_ffmpeg_command(
     cmd.arg("-pix_fmt").arg("rgba")
         .arg("-f").arg("rawvideo")
         .arg("-an") // No audio
-        .arg("-");  // stdout
+        .arg("-"); // stdout
 
     Ok(cmd)
 }
@@ -789,9 +736,7 @@ async fn detect_screen_resolution() -> Option<(u32, u32)> {
         {
             let text = String::from_utf8_lossy(&output.stdout);
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                if let Some(displays) =
-                    json.get("SPDisplaysDataType")?.as_array()
-                {
+                if let Some(displays) = json.get("SPDisplaysDataType")?.as_array() {
                     if let Some(first) = displays.first() {
                         let w = first
                             .get("_spdisplays_pixels")?
@@ -818,7 +763,10 @@ async fn detect_screen_resolution() -> Option<(u32, u32)> {
     {
         if let Ok(output) = tokio::process::Command::new("powershell")
             .arg("-Command")
-            .arg("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Size")
+            .arg(
+                "Add-Type -AssemblyName System.Windows.Forms; \
+                 [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Size",
+            )
             .output()
             .await
         {
@@ -926,7 +874,8 @@ mod tests {
         // (push + cap at max_frames).
         {
             let mut buf = recorder.frame_buffer.lock().await;
-            let max_frames = (recorder.config.fps as u64 * recorder.config.max_buffer_secs) as usize;
+            let max_frames =
+                (recorder.config.fps as u64 * recorder.config.max_buffer_secs) as usize;
             for i in 0..20 {
                 buf.push_back(make_test_frame(10, 10, i as u8));
                 while buf.len() > max_frames {

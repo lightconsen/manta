@@ -1,12 +1,13 @@
 //! macOS Computer adapter — wraps macOS CapabilitySet tools.
 
-use crate::computer::{
-    ActionResult, ClickTarget, ComputerAdapter, ComputerError, CompressionFormat,
-    DesktopAction, FileEntry, PackageManager, Rect, Result, Screenshot, UiElement, WaitCondition,
-};
-use crate::tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Duration;
+
+use crate::computer::{
+    ActionResult, ClickTarget, CompressionFormat, ComputerAdapter, ComputerError, DesktopAction,
+    FileEntry, PackageManager, Rect, Result, Screenshot, UiElement, WaitCondition,
+};
+use crate::tools::ToolRegistry;
 
 /// macOS adapter backed by `macos_screenshot`, `macos_accessibility`,
 /// `macos_desktop_control`, and `macos_applescript` tools.
@@ -43,9 +44,7 @@ impl ComputerAdapter for MacosComputerAdapter {
             .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
 
         if !result.success {
-            return Err(ComputerError::ScreenshotFailed(
-                result.error.unwrap_or_default(),
-            ));
+            return Err(ComputerError::ScreenshotFailed(result.error.unwrap_or_default()));
         }
 
         let data = result.data.as_ref();
@@ -70,10 +69,7 @@ impl ComputerAdapter for MacosComputerAdapter {
         })
     }
 
-    async fn read_ui_tree(
-        &self,
-        app: Option<&str>,
-    ) -> Result<Vec<UiElement>> {
+    async fn read_ui_tree(&self, app: Option<&str>) -> Result<Vec<UiElement>> {
         let args = if let Some(a) = app {
             serde_json::json!({ "action": "tree", "app": a })
         } else {
@@ -103,22 +99,21 @@ impl ComputerAdapter for MacosComputerAdapter {
         match action {
             DesktopAction::Screenshot { region } => {
                 let ss = self.screenshot(region).await?;
-                Ok(ActionResult::success("screenshot captured").with_data(
-                    serde_json::to_value(&ss).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success("screenshot captured")
+                    .with_data(serde_json::to_value(&ss).unwrap_or_default()))
             }
             DesktopAction::Click { target, button: _ } => {
                 let (x, y) = self.resolve_click_target(target).await?;
-                let script = format!(
-                    r#"tell application "System Events" to click at {{ {}, {} }}"#,
-                    x, y
-                );
+                let script =
+                    format!(r#"tell application "System Events" to click at {{ {}, {} }}"#, x, y);
                 let apple_args = serde_json::json!({ "script": script });
                 let result = self
                     .registry
                     .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("applescript tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -137,7 +132,9 @@ end tell"#,
                     .registry
                     .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("applescript tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -150,14 +147,19 @@ end tell"#,
                 };
                 let mut script = String::new();
                 for _ in 0..amount {
-                    script.push_str(&format!("tell application \"System Events\" to key code {}\ndelay 0.05\n", key_code));
+                    script.push_str(&format!(
+                        "tell application \"System Events\" to key code {}\ndelay 0.05\n",
+                        key_code
+                    ));
                 }
                 let apple_args = serde_json::json!({ "script": script });
                 let result = self
                     .registry
                     .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("applescript tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -179,7 +181,9 @@ end tell"#,
                     .registry
                     .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("applescript tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -189,7 +193,9 @@ end tell"#,
                     .registry
                     .execute("macos_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -199,7 +205,9 @@ end tell"#,
                     .registry
                     .execute("macos_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -209,7 +217,9 @@ end tell"#,
                     .registry
                     .execute("macos_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -219,7 +229,9 @@ end tell"#,
                     .registry
                     .execute("macos_clipboard", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("clipboard tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("clipboard tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -229,25 +241,31 @@ end tell"#,
                     .registry
                     .execute("macos_clipboard", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("clipboard tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("clipboard tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
-            DesktopAction::LaunchApp { name, args: _app_args, wait_for_ready } => {
+            DesktopAction::LaunchApp {
+                name,
+                args: _app_args,
+                wait_for_ready,
+            } => {
                 let script = format!(r#"tell application "{}" to activate"#, name);
                 let apple_args = serde_json::json!({ "script": script });
                 self.registry
                     .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("applescript tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
 
                 if wait_for_ready {
                     let ready = self
                         .wait_for(
-                            WaitCondition::ProcessRunning {
-                                name: name.clone(),
-                            },
+                            WaitCondition::ProcessRunning { name: name.clone() },
                             Duration::from_secs(10),
                         )
                         .await?;
@@ -272,7 +290,9 @@ end tell"#,
                     .registry
                     .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("applescript tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -287,9 +307,8 @@ end tell"#,
                 })
                 .await
                 .map_err(|e| ComputerError::Other(format!("System monitor failed: {}", e)))?;
-                Ok(ActionResult::success("System status retrieved").with_data(
-                    serde_json::to_value(&status).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success("System status retrieved")
+                    .with_data(serde_json::to_value(&status).unwrap_or_default()))
             }
             DesktopAction::ListProcesses { filter, limit } => {
                 let procs = tokio::task::spawn_blocking(move || {
@@ -298,9 +317,8 @@ end tell"#,
                 })
                 .await
                 .map_err(|e| ComputerError::Other(format!("Process list failed: {}", e)))?;
-                Ok(ActionResult::success(format!("Found {} processes", procs.len())).with_data(
-                    serde_json::to_value(&procs).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(format!("Found {} processes", procs.len()))
+                    .with_data(serde_json::to_value(&procs).unwrap_or_default()))
             }
             DesktopAction::KillProcess { pid, name, force } => {
                 let killed_pid = tokio::task::spawn_blocking(move || {
@@ -318,28 +336,16 @@ end tell"#,
                 })
                 .await
                 .map_err(|e| ComputerError::Other(format!("Restart failed: {}", e)))??;
-                Ok(ActionResult::success(format!(
-                    "Process restarted, new PID: {}",
-                    new_pid
-                )))
+                Ok(ActionResult::success(format!("Process restarted, new PID: {}", new_pid)))
             }
-            DesktopAction::SetProcessPriority {
-                pid,
-                name,
-                priority,
-            } => {
+            DesktopAction::SetProcessPriority { pid, name, priority } => {
                 let updated_pid = tokio::task::spawn_blocking(move || {
                     let mut monitor = crate::computer::system::SystemMonitor::new();
                     monitor.set_process_priority(pid, name.as_deref(), priority)
                 })
                 .await
-                .map_err(|e| {
-                    ComputerError::Other(format!("Priority change failed: {}", e))
-                })??;
-                Ok(ActionResult::success(format!(
-                    "Priority set for PID {}",
-                    updated_pid
-                )))
+                .map_err(|e| ComputerError::Other(format!("Priority change failed: {}", e)))??;
+                Ok(ActionResult::success(format!("Priority set for PID {}", updated_pid)))
             }
             DesktopAction::KeySequence { keys, delays_ms } => {
                 for (i, key) in keys.iter().enumerate() {
@@ -349,17 +355,20 @@ end tell"#,
                     }
                     let args = serde_json::json!({ "action": "key", "keys": [key] });
                     self.registry
-                        .execute("macos_desktop_control", args, &crate::tools::ToolContext::default())
+                        .execute(
+                            "macos_desktop_control",
+                            args,
+                            &crate::tools::ToolContext::default(),
+                        )
                         .await
-                        .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                        .ok_or_else(|| {
+                            ComputerError::ToolFailed("desktop control not found".to_string())
+                        })?
                         .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 }
                 Ok(ActionResult::success("Key sequence executed"))
             }
-            DesktopAction::ListPorts {
-                filter_protocol,
-                filter_state,
-            } => {
+            DesktopAction::ListPorts { filter_protocol, filter_state } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let filter_protocol = filter_protocol.clone();
                 let filter_state = filter_state.clone();
@@ -369,28 +378,21 @@ end tell"#,
                 .await
                 .map_err(|e| ComputerError::Other(format!("list ports failed: {}", e)))?
                 .map_err(|e| ComputerError::Other(format!("list ports failed: {}", e)))?;
-                Ok(ActionResult::success(format!("Found {} ports", ports.len())).with_data(
-                    serde_json::to_value(&ports).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(format!("Found {} ports", ports.len()))
+                    .with_data(serde_json::to_value(&ports).unwrap_or_default()))
             }
             DesktopAction::TestPing { target, count } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let result = inspector.test_ping(&target, count).await;
-                Ok(ActionResult::success(result.message.clone()).with_data(
-                    serde_json::to_value(&result).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(result.message.clone())
+                    .with_data(serde_json::to_value(&result).unwrap_or_default()))
             }
-            DesktopAction::TestTcpConnect {
-                target,
-                port,
-                timeout_ms,
-            } => {
+            DesktopAction::TestTcpConnect { target, port, timeout_ms } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let timeout = timeout_ms.map(Duration::from_millis);
                 let result = inspector.test_tcp_connect(&target, port, timeout).await;
-                Ok(ActionResult::success(result.message.clone()).with_data(
-                    serde_json::to_value(&result).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(result.message.clone())
+                    .with_data(serde_json::to_value(&result).unwrap_or_default()))
             }
             DesktopAction::ListFirewallRules => {
                 let inspector = crate::computer::network::NetworkInspector::new();
@@ -398,79 +400,67 @@ end tell"#,
                     .list_firewall_rules()
                     .await
                     .map_err(|e| ComputerError::Other(e.to_string()))?;
-                Ok(ActionResult::success(format!("Found {} firewall rules", rules.len())).with_data(
-                    serde_json::to_value(&rules).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(format!("Found {} firewall rules", rules.len()))
+                    .with_data(serde_json::to_value(&rules).unwrap_or_default()))
             }
             DesktopAction::BrowseFiles {
                 path,
                 filter_description,
                 max_results,
             } => {
-                let entries = browse_files(&path, filter_description.as_deref(), max_results)
-                    .await?;
-                Ok(ActionResult::success(format!("Found {} entries", entries.len())).with_data(
-                    serde_json::to_value(&entries).unwrap_or_default(),
-                ))
+                let entries =
+                    browse_files(&path, filter_description.as_deref(), max_results).await?;
+                Ok(ActionResult::success(format!("Found {} entries", entries.len()))
+                    .with_data(serde_json::to_value(&entries).unwrap_or_default()))
             }
-            DesktopAction::ReadFileChunked {
-                path,
-                offset,
-                limit_bytes,
-            } => {
+            DesktopAction::ReadFileChunked { path, offset, limit_bytes } => {
                 let content = read_file_chunked(&path, offset, limit_bytes).await?;
-                Ok(ActionResult::success(format!("Read {} bytes", content.len())).with_data(
-                    serde_json::json!({ "content": content }),
-                ))
+                Ok(ActionResult::success(format!("Read {} bytes", content.len()))
+                    .with_data(serde_json::json!({ "content": content })))
             }
             DesktopAction::InstallPackage {
                 manager,
                 packages,
                 timeout_secs,
-            } => {
-                install_package(manager, &packages, timeout_secs).await
-            }
-            DesktopAction::Compress {
-                sources,
-                destination,
-                format,
-            } => {
+            } => install_package(manager, &packages, timeout_secs).await,
+            DesktopAction::Compress { sources, destination, format } => {
                 compress_files(&sources, &destination, format).await
             }
-            DesktopAction::Decompress {
-                archive,
-                destination,
-            } => {
+            DesktopAction::Decompress { archive, destination } => {
                 decompress_archive(&archive, &destination).await
             }
             DesktopAction::WatchDirectory { path } => {
                 let mut guard = self.file_watcher.lock().await;
                 if guard.is_none() {
-                    let watcher = crate::computer::FileWatcher::new()
-                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    let watcher = crate::computer::FileWatcher::new().map_err(|e| {
+                        ComputerError::Other(format!("Failed to create file watcher: {}", e))
+                    })?;
                     *guard = Some(watcher);
                 }
                 guard
                     .as_mut()
                     .unwrap()
                     .watch_directory(&path)
-                    .map_err(|e| ComputerError::Other(format!("Failed to watch directory: {}", e)))?;
+                    .map_err(|e| {
+                        ComputerError::Other(format!("Failed to watch directory: {}", e))
+                    })?;
                 Ok(ActionResult::success(format!("Watching directory: {}", path)))
             }
             DesktopAction::UnwatchDirectory { path } => {
                 let mut guard = self.file_watcher.lock().await;
                 if let Some(ref mut watcher) = *guard {
-                    watcher
-                        .unwatch_directory(&path)
-                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch directory: {}", e)))?;
+                    watcher.unwatch_directory(&path).map_err(|e| {
+                        ComputerError::Other(format!("Failed to unwatch directory: {}", e))
+                    })?;
                 }
                 Ok(ActionResult::success(format!("Stopped watching directory: {}", path)))
             }
             DesktopAction::WatchFile { path } => {
                 let mut guard = self.file_watcher.lock().await;
                 if guard.is_none() {
-                    let watcher = crate::computer::FileWatcher::new()
-                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    let watcher = crate::computer::FileWatcher::new().map_err(|e| {
+                        ComputerError::Other(format!("Failed to create file watcher: {}", e))
+                    })?;
                     *guard = Some(watcher);
                 }
                 guard
@@ -483,33 +473,23 @@ end tell"#,
             DesktopAction::UnwatchFile { path } => {
                 let mut guard = self.file_watcher.lock().await;
                 if let Some(ref mut watcher) = *guard {
-                    watcher
-                        .unwatch_file(&path)
-                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch file: {}", e)))?;
+                    watcher.unwatch_file(&path).map_err(|e| {
+                        ComputerError::Other(format!("Failed to unwatch file: {}", e))
+                    })?;
                 }
                 Ok(ActionResult::success(format!("Stopped watching file: {}", path)))
             }
             DesktopAction::EditFile { path, search, replace } => {
                 edit_file(&path, &search, &replace).await
             }
-            DesktopAction::TransferFile {
-                source,
-                destination,
-                method,
-            } => {
+            DesktopAction::TransferFile { source, destination, method } => {
                 transfer_file(&source, &destination, method).await
             }
-            _ => Err(ComputerError::Other(
-                "Action not yet implemented on macOS".to_string(),
-            )),
+            _ => Err(ComputerError::Other("Action not yet implemented on macOS".to_string())),
         }
     }
 
-    async fn wait_for(
-        &self,
-        condition: WaitCondition,
-        timeout: Duration,
-    ) -> Result<bool> {
+    async fn wait_for(&self, condition: WaitCondition, timeout: Duration) -> Result<bool> {
         let deadline = std::time::Instant::now() + timeout;
         let poll_interval = Duration::from_millis(500);
 
@@ -586,7 +566,12 @@ impl MacosComputerAdapter {
                 let tree = self.read_ui_tree(None).await?;
                 let el = tree
                     .iter()
-                    .find(|e| e.label.as_ref().map(|l| l.contains(&label)).unwrap_or(false))
+                    .find(|e| {
+                        e.label
+                            .as_ref()
+                            .map(|l| l.contains(&label))
+                            .unwrap_or(false)
+                    })
                     .ok_or_else(|| ComputerError::ElementNotFound(label.clone()))?;
                 let center = el.center();
                 Ok((center.x, center.y))
@@ -597,7 +582,10 @@ impl MacosComputerAdapter {
                     .iter()
                     .find(|e| {
                         e.role == role
-                            && e.label.as_ref().map(|l| l.contains(&label)).unwrap_or(false)
+                            && e.label
+                                .as_ref()
+                                .map(|l| l.contains(&label))
+                                .unwrap_or(false)
                     })
                     .ok_or_else(|| ComputerError::ElementNotFound(format!("{}:{}", role, label)))?;
                 let center = el.center();
@@ -678,12 +666,15 @@ async fn read_file_chunked(path: &str, offset: u64, limit_bytes: u64) -> Result<
         .map_err(|e| ComputerError::Other(format!("Failed to read {}: {}", path, e)))?;
     buf.truncate(n);
 
-    String::from_utf8(buf).map_err(|e| {
-        ComputerError::Other(format!("File {} contains non-UTF-8 bytes: {}", path, e))
-    })
+    String::from_utf8(buf)
+        .map_err(|e| ComputerError::Other(format!("File {} contains non-UTF-8 bytes: {}", path, e)))
 }
 
-async fn install_package(manager: PackageManager, packages: &[String], timeout_secs: u64) -> Result<ActionResult> {
+async fn install_package(
+    manager: PackageManager,
+    packages: &[String],
+    timeout_secs: u64,
+) -> Result<ActionResult> {
     let (cmd, args) = match manager {
         PackageManager::Brew => ("brew", {
             let mut v = vec!["install"];
@@ -696,9 +687,10 @@ async fn install_package(manager: PackageManager, packages: &[String], timeout_s
             v
         }),
         _ => {
-            return Err(ComputerError::UnsupportedPlatform(
-                format!("Package manager {:?} not supported on macOS", manager),
-            ));
+            return Err(ComputerError::UnsupportedPlatform(format!(
+                "Package manager {:?} not supported on macOS",
+                manager
+            )));
         }
     };
 
@@ -715,11 +707,7 @@ async fn install_package(manager: PackageManager, packages: &[String], timeout_s
         return Ok(ActionResult::error(format!("{} install failed: {}", cmd, stderr)));
     }
 
-    Ok(ActionResult::success(format!(
-        "Installed {} with {}",
-        packages.join(", "),
-        cmd
-    )))
+    Ok(ActionResult::success(format!("Installed {} with {}", packages.join(", "), cmd)))
 }
 
 async fn compress_files(
@@ -728,50 +716,36 @@ async fn compress_files(
     format: CompressionFormat,
 ) -> Result<ActionResult> {
     let (cmd, args) = match format {
-        CompressionFormat::Zip => (
-            "zip",
-            {
-                let mut v = vec!["-r", destination];
-                v.extend(sources.iter().map(|s| s.as_str()));
-                v
-            },
-        ),
-        CompressionFormat::Tar => (
-            "tar",
-            {
-                let mut v = vec!["-cvf", destination];
-                v.extend(sources.iter().map(|s| s.as_str()));
-                v
-            },
-        ),
-        CompressionFormat::TarGz => (
-            "tar",
-            {
-                let mut v = vec!["-czvf", destination];
-                v.extend(sources.iter().map(|s| s.as_str()));
-                v
-            },
-        ),
-        CompressionFormat::TarBz2 => (
-            "tar",
-            {
-                let mut v = vec!["-cjvf", destination];
-                v.extend(sources.iter().map(|s| s.as_str()));
-                v
-            },
-        ),
-        CompressionFormat::TarXz => (
-            "tar",
-            {
-                let mut v = vec!["-cJvf", destination];
-                v.extend(sources.iter().map(|s| s.as_str()));
-                v
-            },
-        ),
+        CompressionFormat::Zip => ("zip", {
+            let mut v = vec!["-r", destination];
+            v.extend(sources.iter().map(|s| s.as_str()));
+            v
+        }),
+        CompressionFormat::Tar => ("tar", {
+            let mut v = vec!["-cvf", destination];
+            v.extend(sources.iter().map(|s| s.as_str()));
+            v
+        }),
+        CompressionFormat::TarGz => ("tar", {
+            let mut v = vec!["-czvf", destination];
+            v.extend(sources.iter().map(|s| s.as_str()));
+            v
+        }),
+        CompressionFormat::TarBz2 => ("tar", {
+            let mut v = vec!["-cjvf", destination];
+            v.extend(sources.iter().map(|s| s.as_str()));
+            v
+        }),
+        CompressionFormat::TarXz => ("tar", {
+            let mut v = vec!["-cJvf", destination];
+            v.extend(sources.iter().map(|s| s.as_str()));
+            v
+        }),
         _ => {
-            return Err(ComputerError::UnsupportedPlatform(
-                format!("Compression format {:?} not supported on macOS", format),
-            ));
+            return Err(ComputerError::UnsupportedPlatform(format!(
+                "Compression format {:?} not supported on macOS",
+                format
+            )));
         }
     };
 
@@ -809,9 +783,10 @@ async fn decompress_archive(archive: &str, destination: &str) -> Result<ActionRe
     } else if lower.ends_with(".tar") {
         ("tar", vec!["-xvf", archive, "-C", destination])
     } else {
-        return Err(ComputerError::UnsupportedPlatform(
-            format!("Cannot determine archive format for {}", archive),
-        ));
+        return Err(ComputerError::UnsupportedPlatform(format!(
+            "Cannot determine archive format for {}",
+            archive
+        )));
     };
 
     let output = tokio::process::Command::new(cmd)
@@ -828,10 +803,7 @@ async fn decompress_archive(archive: &str, destination: &str) -> Result<ActionRe
         )));
     }
 
-    Ok(ActionResult::success(format!(
-        "Extracted {} to {}",
-        archive, destination
-    )))
+    Ok(ActionResult::success(format!("Extracted {} to {}", archive, destination)))
 }
 
 async fn edit_file(path: &str, search: &str, replace: &str) -> Result<ActionResult> {

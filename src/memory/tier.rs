@@ -9,9 +9,10 @@
 //! Dreams promote memories between tiers based on importance, access patterns,
 //! and age. Each tier has capacity limits and retention rules.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
 
 use super::effectiveness::{EffectivenessConfig, EffectivenessStats};
 
@@ -242,8 +243,8 @@ impl TierEvaluator {
 
     /// Evaluate a memory and decide its tier action.
     ///
-    /// Factors: importance_score, access_count, age in current tier, config thresholds,
-    /// and optional effectiveness statistics (recall hit rate).
+    /// Factors: importance_score, access_count, age in current tier, config
+    /// thresholds, and optional effectiveness statistics (recall hit rate).
     pub fn evaluate(
         &self,
         memory: &super::Memory,

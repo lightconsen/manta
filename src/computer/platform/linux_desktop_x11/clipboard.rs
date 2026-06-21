@@ -1,11 +1,12 @@
 //! Linux X11 clipboard tool using `xclip`.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::info;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Read from or write to the X11 clipboard using `xclip`.
 #[derive(Debug)]
@@ -30,8 +31,8 @@ impl Tool for ClipboardTool {
     }
 
     fn description(&self) -> &str {
-        "Read from or write to the X11 clipboard using xclip. \
-         Supports text content. Use 'get' to read, 'set' to write."
+        "Read from or write to the X11 clipboard using xclip. Supports text content. Use 'get' to \
+         read, 'set' to write."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -90,18 +91,12 @@ impl Tool for ClipboardTool {
                     }
                     Ok(Ok(out)) => {
                         let stderr = String::from_utf8_lossy(&out.stderr);
-                        Ok(ToolExecutionResult::error(format!(
-                            "xclip failed: {}",
-                            stderr
-                        )))
+                        Ok(ToolExecutionResult::error(format!("xclip failed: {}", stderr)))
                     }
-                    Ok(Err(e)) => Ok(ToolExecutionResult::error(format!(
-                        "Failed to run xclip: {}",
-                        e
-                    ))),
-                    Err(_) => Ok(ToolExecutionResult::error(
-                        "xclip timed out".to_string()
-                    )),
+                    Ok(Err(e)) => {
+                        Ok(ToolExecutionResult::error(format!("Failed to run xclip: {}", e)))
+                    }
+                    Err(_) => Ok(ToolExecutionResult::error("xclip timed out".to_string())),
                 }
             }
             "set" => {
@@ -111,40 +106,31 @@ impl Tool for ClipboardTool {
                     .unwrap_or("")
                     .to_string();
 
-                let output = timeout(
-                    Duration::from_secs(5),
-                    async {
-                        let mut child = Command::new("xclip")
-                            .args(["-selection", "clipboard", "-i"])
-                            .stdin(std::process::Stdio::piped())
-                            .spawn()?;
-                        use tokio::io::AsyncWriteExt;
-                        if let Some(mut stdin) = child.stdin.take() {
-                            let _ = stdin.write_all(text.as_bytes()).await;
-                            let _ = stdin.shutdown().await;
-                        }
-                        child.wait().await
-                    },
-                )
+                let output = timeout(Duration::from_secs(5), async {
+                    let mut child = Command::new("xclip")
+                        .args(["-selection", "clipboard", "-i"])
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()?;
+                    use tokio::io::AsyncWriteExt;
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let _ = stdin.write_all(text.as_bytes()).await;
+                        let _ = stdin.shutdown().await;
+                    }
+                    child.wait().await
+                })
                 .await;
 
                 match output {
-                    Ok(Ok(status)) if status.success() => {
-                        Ok(ToolExecutionResult::success(format!(
-                            "Clipboard set ({} chars)",
-                            text.len()
-                        )))
+                    Ok(Ok(status)) if status.success() => Ok(ToolExecutionResult::success(
+                        format!("Clipboard set ({} chars)", text.len()),
+                    )),
+                    Ok(Ok(_)) => {
+                        Ok(ToolExecutionResult::error("xclip exited with error".to_string()))
                     }
-                    Ok(Ok(_)) => Ok(ToolExecutionResult::error(
-                        "xclip exited with error".to_string()
-                    )),
-                    Ok(Err(e)) => Ok(ToolExecutionResult::error(format!(
-                        "xclip process error: {}",
-                        e
-                    ))),
-                    Err(_) => Ok(ToolExecutionResult::error(
-                        "xclip timed out".to_string()
-                    )),
+                    Ok(Err(e)) => {
+                        Ok(ToolExecutionResult::error(format!("xclip process error: {}", e)))
+                    }
+                    Err(_) => Ok(ToolExecutionResult::error("xclip timed out".to_string())),
                 }
             }
             _ => Ok(ToolExecutionResult::error(format!(

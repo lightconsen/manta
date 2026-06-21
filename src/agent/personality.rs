@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
 use tokio::fs;
 use tracing::{debug, info, warn};
 
@@ -19,27 +20,29 @@ const DEFAULT_MAX_FILE_SIZE: usize = 4096;
 
 /// Controls which personality files are included in the system prompt.
 ///
-/// `Primary` produces the full prompt (Bootstrap + Identity + Soul + Agents + Tools).
-/// `Subagent` omits Bootstrap and User — these contain startup-only instructions
-/// that are irrelevant (and wasteful) for spawned subagents and cron jobs.
+/// `Primary` produces the full prompt (Bootstrap + Identity + Soul + Agents +
+/// Tools). `Subagent` omits Bootstrap and User — these contain startup-only
+/// instructions that are irrelevant (and wasteful) for spawned subagents and
+/// cron jobs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PersonalityContext {
- /// Full prompt for the primary interactive session.
+    /// Full prompt for the primary interactive session.
     Primary,
- /// Reduced prompt for spawned subagents and cron jobs.
+    /// Reduced prompt for spawned subagents and cron jobs.
     Subagent,
 }
 
 /// Parameters for seeding a new agent personality from the unified template.
 #[derive(Debug, Clone)]
 pub struct AgentTemplateParams {
- /// Agent directory name (used as fallback display name).
+    /// Agent directory name (used as fallback display name).
     pub agent_id: String,
- /// Human-readable display name (e.g. "Code Reviewer").
+    /// Human-readable display name (e.g. "Code Reviewer").
     pub display_name: String,
- /// Short description of the agent's role (e.g. "Senior code reviewer focused on safety").
+    /// Short description of the agent's role (e.g. "Senior code reviewer
+    /// focused on safety").
     pub description: String,
- /// Signature emoji.
+    /// Signature emoji.
     pub emoji: String,
 }
 
@@ -72,7 +75,7 @@ pub async fn seed_agent_personality(
         })?;
     }
 
- // Ensure workspace/ and data/ subdirectories exist
+    // Ensure workspace/ and data/ subdirectories exist
     let id = params.agent_id.clone();
     for sub in [&dirs::agent_workspace_dir(&id), &dirs::agent_data_dir(&id)] {
         if !sub.exists() {
@@ -85,7 +88,7 @@ pub async fn seed_agent_personality(
         }
     }
 
- // IDENTITY.md — simple heading + ## name format (parsed by display_name())
+    // IDENTITY.md — simple heading + ## name format (parsed by display_name())
     let identity_path = agent_dir.join("IDENTITY.md");
     if !identity_path.exists() {
         let identity = format_identity(params);
@@ -98,7 +101,7 @@ pub async fn seed_agent_personality(
         info!("Created IDENTITY.md for agent '{}'", id);
     }
 
- // SOUL.md — structured YAML frontmatter + markdown body
+    // SOUL.md — structured YAML frontmatter + markdown body
     let soul_path = agent_dir.join("SOUL.md");
     if !soul_path.exists() {
         let soul = format_soul(params);
@@ -163,35 +166,18 @@ pub fn seed_agent_personality_sync(
 
 fn format_identity(params: &AgentTemplateParams) -> String {
     format!(
-        "# {}\n\
-         \n\
-         ## name\n\
-         {}\n\
-         \n\
-         {}\n",
+        "# {}\n\n## name\n{}\n\n{}\n",
         params.display_name, params.display_name, params.description
     )
 }
 
 fn format_soul(params: &AgentTemplateParams) -> String {
     format!(
-        "---\n\
-         name: {}\n\
-         persona: {}\n\
-         voice: concise, direct, no filler\n\
-         emoji: \"{}\"\n\
-         behavior:\n\
-         proactive: false\n\
-         ask_before_destructive: true\n\
-         preferences:\n\
-         language: en-US\n\
-         format: markdown\n\
-         ---\n\
-         \n\
-         # Core Principles\n\
-         \n\
-         Be genuinely helpful, not performatively helpful.\n\
-         Prioritize correctness and clarity over speed.\n",
+        "---\nname: {}\npersona: {}\nvoice: concise, direct, no filler\nemoji: \
+         \"{}\"\nbehavior:\nproactive: false\nask_before_destructive: \
+         true\npreferences:\nlanguage: en-US\nformat: markdown\n---\n\n# Core Principles\n\nBe \
+         genuinely helpful, not performatively helpful.\nPrioritize correctness and clarity over \
+         speed.\n",
         params.display_name, params.description, params.emoji
     )
 }
@@ -199,32 +185,32 @@ fn format_soul(params: &AgentTemplateParams) -> String {
 /// Agent personality loaded from markdown files
 #[derive(Debug, Clone, Default)]
 pub struct AgentPersonality {
- /// Agent ID (directory name)
+    /// Agent ID (directory name)
     pub id: String,
- /// SOUL.md - Core personality, values, behavioral guidelines
+    /// SOUL.md - Core personality, values, behavioral guidelines
     pub soul: String,
- /// IDENTITY.md - Agent identity, name, role definition
+    /// IDENTITY.md - Agent identity, name, role definition
     pub identity: String,
- /// BOOTSTRAP.md - Initial startup behavior, first-run logic
+    /// BOOTSTRAP.md - Initial startup behavior, first-run logic
     pub bootstrap: String,
- /// USER.md - User-specific memory, preferences
+    /// USER.md - User-specific memory, preferences
     pub user: String,
- /// AGENTS.md - Operating instructions for other agents
+    /// AGENTS.md - Operating instructions for other agents
     pub agents: String,
- /// TOOLS.md - Tool notes and conventions
+    /// TOOLS.md - Tool notes and conventions
     pub tools: String,
- /// HEARTBEAT.md - Periodic task checklist and proactive work reminders
+    /// HEARTBEAT.md - Periodic task checklist and proactive work reminders
     pub heartbeat: String,
- /// MEMORY.md - Curated long-term memory (personal context)
+    /// MEMORY.md - Curated long-term memory (personal context)
     pub memory: String,
- /// Path to the agent directory
+    /// Path to the agent directory
     pub path: PathBuf,
- /// Whether this personality is valid (has at least SOUL.md or IDENTITY.md)
+    /// Whether this personality is valid (has at least SOUL.md or IDENTITY.md)
     pub is_valid: bool,
 }
 
 impl AgentPersonality {
- /// Load personality from an agent directory
+    /// Load personality from an agent directory
     pub async fn load(agent_dir: &Path) -> crate::Result<Self> {
         let id = agent_dir
             .file_name()
@@ -240,7 +226,7 @@ impl AgentPersonality {
             ..Default::default()
         };
 
- // Load each personality file
+        // Load each personality file
         personality.soul = personality.load_file("SOUL.md").await;
         personality.identity = personality.load_file("IDENTITY.md").await;
         personality.bootstrap = personality.load_file("BOOTSTRAP.md").await;
@@ -250,7 +236,7 @@ impl AgentPersonality {
         personality.heartbeat = personality.load_file("HEARTBEAT.md").await;
         personality.memory = personality.load_file("MEMORY.md").await;
 
- // Valid if has SOUL.md or IDENTITY.md
+        // Valid if has SOUL.md or IDENTITY.md
         personality.is_valid = !personality.soul.is_empty() || !personality.identity.is_empty();
 
         if personality.is_valid {
@@ -262,7 +248,7 @@ impl AgentPersonality {
         Ok(personality)
     }
 
- /// Load a specific file from the agent directory
+    /// Load a specific file from the agent directory
     async fn load_file(&self, filename: &str) -> String {
         let file_path = self.path.join(filename);
 
@@ -272,7 +258,7 @@ impl AgentPersonality {
 
         match fs::read_to_string(&file_path).await {
             Ok(content) => {
- // Truncate if too large
+                // Truncate if too large
                 if content.len() > DEFAULT_MAX_FILE_SIZE {
                     debug!(
                         "Personality file {} for agent {} exceeds {} bytes, truncating",
@@ -290,25 +276,27 @@ impl AgentPersonality {
         }
     }
 
- /// Convert personality to AgentConfig using the full (Primary) prompt.
+    /// Convert personality to AgentConfig using the full (Primary) prompt.
     pub fn to_agent_config(&self) -> AgentConfig {
         self.to_agent_config_for(PersonalityContext::Primary)
     }
 
- /// Convert personality to AgentConfig for the given context.
- ///
- /// Use [`PersonalityContext::Subagent`] when spawning child agents or cron
- /// jobs to omit startup-only sections (Bootstrap, User) and reduce token
- /// usage.
+    /// Convert personality to AgentConfig for the given context.
+    ///
+    /// Use [`PersonalityContext::Subagent`] when spawning child agents or cron
+    /// jobs to omit startup-only sections (Bootstrap, User) and reduce token
+    /// usage.
     pub fn to_agent_config_for(&self, ctx: PersonalityContext) -> AgentConfig {
         let system_prompt = match ctx {
             PersonalityContext::Primary => self.build_system_prompt(),
             PersonalityContext::Subagent => self.build_subagent_prompt(),
         };
 
- // Inject agent identity so the agent knows its own ID and can manage its files
+        // Inject agent identity so the agent knows its own ID and can manage its files
         let system_prompt = format!(
-            "{}\n\n## Agent Identity\n\nYour agent ID is: `{}`\nYour agent directory is: `{}`\nYou may edit files in your agent directory (including HEARTBEAT.md) to manage your personality and periodic tasks when explicitly asked by the user.",
+            "{}\n\n## Agent Identity\n\nYour agent ID is: `{}`\nYour agent directory is: \
+             `{}`\nYou may edit files in your agent directory (including HEARTBEAT.md) to manage \
+             your personality and periodic tasks when explicitly asked by the user.",
             system_prompt,
             self.id,
             self.path.display()
@@ -330,58 +318,59 @@ impl AgentPersonality {
         }
     }
 
- /// Build full system prompt from personality files
- /// Priority: BOOTSTRAP > IDENTITY > SOUL
+    /// Build full system prompt from personality files
+    /// Priority: BOOTSTRAP > IDENTITY > SOUL
     fn build_system_prompt(&self) -> String {
         let mut sections = Vec::new();
 
- // BOOTSTRAP.md - Initial behavior (highest priority)
+        // BOOTSTRAP.md - Initial behavior (highest priority)
         if !self.bootstrap.is_empty() {
             sections.push(format!("## Bootstrap\n{}\n", self.bootstrap.trim()));
         }
 
- // IDENTITY.md - Who the agent is
+        // IDENTITY.md - Who the agent is
         if !self.identity.is_empty() {
             sections.push(format!("## Identity\n{}\n", self.identity.trim()));
         }
 
- // SOUL.md - Core personality
+        // SOUL.md - Core personality
         if !self.soul.is_empty() {
             sections.push(format!("## Soul\n{}\n", self.soul.trim()));
         }
 
- // AGENTS.md - Operating instructions
+        // AGENTS.md - Operating instructions
         if !self.agents.is_empty() {
             sections.push(format!("## Agents\n{}\n", self.agents.trim()));
         }
 
- // TOOLS.md - Tool conventions
+        // TOOLS.md - Tool conventions
         if !self.tools.is_empty() {
             sections.push(format!("## Tools\n{}\n", self.tools.trim()));
         }
 
- // HEARTBEAT.md - Periodic tasks and proactive work
+        // HEARTBEAT.md - Periodic tasks and proactive work
         if !self.heartbeat.is_empty() {
             sections.push(format!("## Heartbeat\n{}\n", self.heartbeat.trim()));
         }
 
- // MEMORY.md - Curated long-term memory (personal context)
+        // MEMORY.md - Curated long-term memory (personal context)
         if !self.memory.is_empty() {
             sections.push(format!("## Memory\n{}\n", self.memory.trim()));
         }
 
         if sections.is_empty() {
- // Fallback to default
+            // Fallback to default
             AgentConfig::default().system_prompt
         } else {
             sections.join("\n")
         }
     }
 
- /// Build a reduced system prompt for subagents and cron jobs.
- ///
- /// Includes: Identity, Soul, Agents, Tools, User.
- /// Excludes: Bootstrap (startup-only), Heartbeat (periodic tasks), Memory (personal context).
+    /// Build a reduced system prompt for subagents and cron jobs.
+    ///
+    /// Includes: Identity, Soul, Agents, Tools, User.
+    /// Excludes: Bootstrap (startup-only), Heartbeat (periodic tasks), Memory
+    /// (personal context).
     fn build_subagent_prompt(&self) -> String {
         let mut sections = Vec::new();
 
@@ -405,10 +394,10 @@ impl AgentPersonality {
             sections.push(format!("## User\n{}\n", self.user.trim()));
         }
 
- // Explicitly excluded: bootstrap, heartbeat, memory
- // - Bootstrap: startup-only instructions irrelevant to subagents
- // - Heartbeat: periodic task checklist for main session only
- // - Memory: contains personal context that shouldn't leak to strangers
+        // Explicitly excluded: bootstrap, heartbeat, memory
+        // - Bootstrap: startup-only instructions irrelevant to subagents
+        // - Heartbeat: periodic task checklist for main session only
+        // - Memory: contains personal context that shouldn't leak to strangers
 
         if sections.is_empty() {
             AgentConfig::default().system_prompt
@@ -417,14 +406,14 @@ impl AgentPersonality {
         }
     }
 
- /// Get the agent's display name from identity
+    /// Get the agent's display name from identity
     pub fn display_name(&self) -> String {
         let lines: Vec<&str> = self.identity.lines().collect();
 
- // 1. Try structured format:
- // # Agent Identity
- // ## name
- // 小王
+        // 1. Try structured format:
+        // # Agent Identity
+        // ## name
+        // 小王
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
             if trimmed.eq_ignore_ascii_case("## name")
@@ -440,18 +429,18 @@ impl AgentPersonality {
             }
         }
 
- // 2. Fallback to first heading line
+        // 2. Fallback to first heading line
         lines
             .first()
             .and_then(|line| {
                 let trimmed = line.trim();
- // # Title → "Title"
+                // # Title → "Title"
                 trimmed.strip_prefix("#").map(|s| s.trim().to_string())
             })
             .unwrap_or_else(|| self.id.clone())
     }
 
- /// Check if this agent can handle a specific task type
+    /// Check if this agent can handle a specific task type
     pub fn can_handle(&self, task_type: &str) -> bool {
         let content = format!("{} {} {}", self.soul, self.identity, self.bootstrap);
         let keywords: Vec<&str> = match task_type {
@@ -467,38 +456,38 @@ impl AgentPersonality {
         keywords.iter().any(|kw| content_lower.contains(kw))
     }
 
- /// Get all possible aliases for this agent.
- ///
- /// Includes the display name, the agent ID, and short forms derived from both.
- /// Example: "secretary-xiaowang" with display name "秘书小王" produces
- /// `["secretary-xiaowang", "xiaowang", "秘书小王", "小王"]`.
+    /// Get all possible aliases for this agent.
+    ///
+    /// Includes the display name, the agent ID, and short forms derived from
+    /// both. Example: "secretary-xiaowang" with display name "秘书小王"
+    /// produces `["secretary-xiaowang", "xiaowang", "秘书小王", "小王"]`.
     pub fn aliases(&self) -> Vec<String> {
         let mut aliases = Vec::new();
 
- // Agent ID (always included)
+        // Agent ID (always included)
         aliases.push(self.id.clone());
 
- // Short form from ID: "secretary-xiaowang" -> "xiaowang"
+        // Short form from ID: "secretary-xiaowang" -> "xiaowang"
         if let Some(short) = self.id.rsplit('-').next() {
             if short != self.id {
                 aliases.push(short.to_string());
             }
         }
 
- // Display name from IDENTITY.md
+        // Display name from IDENTITY.md
         let display = self.display_name();
         if !display.is_empty() && display != self.id {
             aliases.push(display.clone());
- // Extract short nicknames from display name:
- // "秘书小王" -> "小王"
- // "My Agent Name" -> "My", "Agent", "Name", "Agent Name"
+            // Extract short nicknames from display name:
+            // "秘书小王" -> "小王"
+            // "My Agent Name" -> "My", "Agent", "Name", "Agent Name"
             for word in display.split_whitespace() {
                 let trimmed = word.trim();
                 if trimmed.len() >= 2 && !aliases.iter().any(|a| a == trimmed) {
                     aliases.push(trimmed.to_string());
                 }
             }
- // Also try last 2-4 chars as a common nickname pattern (Chinese)
+            // Also try last 2-4 chars as a common nickname pattern (Chinese)
             if display.chars().count() >= 3 {
                 let suffix: String = display
                     .chars()
@@ -521,14 +510,14 @@ impl AgentPersonality {
 /// Agent Registry for discovered personalities
 #[derive(Debug, Default)]
 pub struct AgentRegistry {
- /// Registered agent personalities
+    /// Registered agent personalities
     personalities: HashMap<String, AgentPersonality>,
- /// Whether agents have been discovered
+    /// Whether agents have been discovered
     discovered: bool,
 }
 
 impl AgentRegistry {
- /// Create new empty registry
+    /// Create new empty registry
     pub fn new() -> Self {
         Self {
             personalities: HashMap::new(),
@@ -536,12 +525,12 @@ impl AgentRegistry {
         }
     }
 
- /// Discover agents from the configured agents/ directory.
+    /// Discover agents from the configured agents/ directory.
     pub async fn discover(&mut self) -> crate::Result<usize> {
         self.discover_in_dir(&dirs::agents_dir()).await
     }
 
- /// Discover agents from a specific directory.
+    /// Discover agents from a specific directory.
     pub async fn discover_in_dir(&mut self, agents_dir: &Path) -> crate::Result<usize> {
         if !agents_dir.exists() {
             info!("Agents directory does not exist: {:?}", agents_dir);
@@ -556,17 +545,17 @@ impl AgentRegistry {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
- // Skip non-directories
+            // Skip non-directories
             if !path.is_dir() {
                 continue;
             }
 
- // Load personality
+            // Load personality
             match AgentPersonality::load(&path).await {
                 Ok(personality) => {
                     let agent_id = personality.id.clone();
                     if personality.is_valid {
- // Ensure agent subdirectories exist (workspace/, data/)
+                        // Ensure agent subdirectories exist (workspace/, data/)
                         let workspace_dir = dirs::agent_workspace_dir(&agent_id);
                         let data_dir = dirs::agent_data_dir(&agent_id);
                         for dir in [&workspace_dir, &data_dir] {
@@ -577,7 +566,7 @@ impl AgentRegistry {
                         self.personalities.insert(agent_id, personality);
                         count += 1;
                     } else {
- // Directory exists but no valid personality — seed from template
+                        // Directory exists but no valid personality — seed from template
                         info!(
                             "Agent '{}' has no personality files, seeding from template",
                             agent_id
@@ -594,7 +583,7 @@ impl AgentRegistry {
                         if let Err(e) = seed_agent_personality(&path, &params).await {
                             warn!("Failed to seed personality for '{}': {}", agent_id, e);
                         } else {
- // Reload after seeding
+                            // Reload after seeding
                             match AgentPersonality::load(&path).await {
                                 Ok(reloaded) if reloaded.is_valid => {
                                     self.personalities.insert(agent_id.clone(), reloaded);
@@ -616,7 +605,7 @@ impl AgentRegistry {
         self.discovered = true;
         info!("Discovered {} valid agents", count);
 
- // List discovered agents
+        // List discovered agents
         if count > 0 {
             debug!("Discovered agents:");
             for (id, personality) in &self.personalities {
@@ -627,44 +616,44 @@ impl AgentRegistry {
         Ok(count)
     }
 
- /// Get a personality by ID
+    /// Get a personality by ID
     pub fn get(&self, id: &str) -> Option<&AgentPersonality> {
         self.personalities.get(id)
     }
 
- /// Get all personality IDs
+    /// Get all personality IDs
     pub fn list(&self) -> Vec<String> {
         self.personalities.keys().cloned().collect()
     }
 
- /// Check if a personality exists
+    /// Check if a personality exists
     pub fn has(&self, id: &str) -> bool {
         self.personalities.contains_key(id)
     }
 
- /// Get number of registered personalities
+    /// Get number of registered personalities
     pub fn len(&self) -> usize {
         self.personalities.len()
     }
 
- /// Check if registry is empty
+    /// Check if registry is empty
     pub fn is_empty(&self) -> bool {
         self.personalities.is_empty()
     }
 
- /// Check if discovery has been run
+    /// Check if discovery has been run
     pub fn is_discovered(&self) -> bool {
         self.discovered
     }
 
- /// Find the best agent for a task
+    /// Find the best agent for a task
     pub fn find_for_task(&self, task_type: &str) -> Option<&AgentPersonality> {
         self.personalities
             .values()
             .find(|p| p.can_handle(task_type))
     }
 
- /// Get all personalities that can handle a task
+    /// Get all personalities that can handle a task
     pub fn find_all_for_task(&self, task_type: &str) -> Vec<&AgentPersonality> {
         self.personalities
             .values()
@@ -672,16 +661,16 @@ impl AgentRegistry {
             .collect()
     }
 
- /// Iterate over all personalities
+    /// Iterate over all personalities
     pub fn iter(&self) -> impl Iterator<Item = &AgentPersonality> {
         self.personalities.values()
     }
 
- /// Find an agent whose aliases match the given name.
- ///
- /// Matches exact alias strings (case-insensitive). Returns the first
- /// matching personality and the matched alias text so the caller can
- /// strip it from the original message.
+    /// Find an agent whose aliases match the given name.
+    ///
+    /// Matches exact alias strings (case-insensitive). Returns the first
+    /// matching personality and the matched alias text so the caller can
+    /// strip it from the original message.
     pub fn find_by_alias(&self, name: &str) -> Option<(&AgentPersonality, String)> {
         let name_lower = name.to_lowercase();
         for personality in self.personalities.values() {
@@ -802,7 +791,8 @@ mod tests {
         };
 
         let config = personality.to_agent_config_for(PersonalityContext::Subagent);
- // Excluded: Bootstrap (startup-only), Heartbeat (periodic tasks), Memory (personal context)
+        // Excluded: Bootstrap (startup-only), Heartbeat (periodic tasks), Memory
+        // (personal context)
         assert!(
             !config.system_prompt.contains("Bootstrap"),
             "Subagent should NOT include Bootstrap"
@@ -815,7 +805,7 @@ mod tests {
             !config.system_prompt.contains("User likes coffee"),
             "Subagent should NOT include Memory section content"
         );
- // Included: Identity, Soul, Agents, Tools, User
+        // Included: Identity, Soul, Agents, Tools, User
         assert!(config.system_prompt.contains("Identity"));
         assert!(config.system_prompt.contains("Soul"));
         assert!(config.system_prompt.contains("Agents"));
@@ -845,7 +835,7 @@ mod tests {
         };
 
         let config = personality.to_agent_config_for(PersonalityContext::Subagent);
- // Should not panic and should return the default system prompt
+        // Should not panic and should return the default system prompt
         assert!(!config.system_prompt.is_empty());
     }
 
@@ -906,7 +896,7 @@ mod tests {
         assert!(registry.find_by_alias("nonexistent").is_none());
     }
 
- // ── Template / seeding tests ─────────────────────────────────────────────
+    // ── Template / seeding tests ─────────────────────────────────────────────
 
     #[tokio::test]
     async fn seed_creates_identity_with_correct_format() {
@@ -1106,7 +1096,7 @@ mod tests {
         );
     }
 
- // ── helpers ──────────────────────────────────────────────────────────────
+    // ── helpers ──────────────────────────────────────────────────────────────
 
     fn unique_test_id(prefix: &str) -> String {
         let ts = std::time::SystemTime::now()

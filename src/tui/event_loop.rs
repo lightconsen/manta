@@ -1,5 +1,13 @@
 //! Central async event loop merging input, network, and rendering.
 
+use std::io::Stdout;
+use std::sync::Arc;
+
+use ratatui::Terminal;
+use serde_json::Value;
+use tokio::sync::{mpsc, RwLock};
+use tokio::time::Interval;
+
 use crate::tui::actions::TuiAction;
 use crate::tui::commands::{
     action_for_input, extract_inline_command, handle_slash_command, update_palette,
@@ -7,12 +15,6 @@ use crate::tui::commands::{
 use crate::tui::state::{AppState, InputMode, Popup, SessionSummary};
 use crate::tui::ui;
 use crate::tui::ws_client::{ClientEvent, WsClient, WsMessage};
-use ratatui::Terminal;
-use serde_json::Value;
-use std::io::Stdout;
-use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tokio::time::Interval;
 
 /// Run the main event loop until the user quits or a fatal error occurs.
 pub async fn run(
@@ -389,11 +391,7 @@ async fn handle_network_message(
 }
 
 /// Handle a gateway event.
-async fn handle_event(
-    event: ClientEvent,
-    state: Arc<RwLock<AppState>>,
-    _ws_client: &mut WsClient,
-) {
+async fn handle_event(event: ClientEvent, state: Arc<RwLock<AppState>>, _ws_client: &mut WsClient) {
     let mut s = state.write().await;
 
     match event.event.as_str() {
@@ -454,9 +452,12 @@ async fn handle_event(
                     .unwrap_or("tool")
                     .to_string();
                 let result = payload.get("result").cloned();
-                if let Some(msg) = s.messages.iter_mut().rev().find(|m| {
-                    m.role == "tool" && m.tool_name.as_deref() == Some(&tool_name)
-                }) {
+                if let Some(msg) = s
+                    .messages
+                    .iter_mut()
+                    .rev()
+                    .find(|m| m.role == "tool" && m.tool_name.as_deref() == Some(&tool_name))
+                {
                     msg.status = crate::tui::state::MessageStatus::Complete;
                     if let Some(idx) = msg.parts.iter_mut().find(|p| p.part_type == "tool-call") {
                         idx.result = result.clone();
@@ -638,10 +639,7 @@ async fn load_session_history(
     session_id: &str,
 ) -> Result<(), crate::tui::error::TuiError> {
     let result = ws_client
-        .request(
-            "chat.history",
-            Some(serde_json::json!({ "session_id": session_id })),
-        )
+        .request("chat.history", Some(serde_json::json!({ "session_id": session_id })))
         .await;
 
     let mut s = state.write().await;
@@ -678,7 +676,8 @@ async fn load_session_history(
                         .collect()
                 })
                 .unwrap_or_default();
-            s.messages_by_session.insert(session_id.to_string(), messages);
+            s.messages_by_session
+                .insert(session_id.to_string(), messages);
             if s.current_session.as_deref() == Some(session_id) {
                 s.load_session_messages(session_id);
             }

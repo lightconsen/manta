@@ -3,11 +3,13 @@
 //! This module provides CLI commands to add, stop, remove, list, and test
 //! channel configurations for the Syscity Gateway.
 
+use std::collections::HashMap;
+
+use clap::Subcommand;
+
 use crate::cli::ChannelType;
 use crate::error::Result;
 use crate::security::pairing::DmPolicy;
-use clap::Subcommand;
-use std::collections::HashMap;
 
 /// Channel management CLI commands
 #[derive(Debug, Subcommand)]
@@ -17,13 +19,15 @@ pub enum ChannelCommands {
         /// Channel type to add
         #[arg(value_enum)]
         channel: ChannelType,
-        /// Bot token or primary credential (env vars: TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, etc.)
+        /// Bot token or primary credential (env vars: TELEGRAM_BOT_TOKEN,
+        /// DISCORD_BOT_TOKEN, etc.)
         #[arg(short, long)]
         token: Option<String>,
         /// Agent to route messages to (defaults to "default" agent)
         #[arg(short, long)]
         agent: Option<String>,
-        /// Additional credentials as key=value pairs (e.g., --cred app_secret=xxx --cred app_id=yyy)
+        /// Additional credentials as key=value pairs (e.g., --cred
+        /// app_secret=xxx --cred app_id=yyy)
         #[arg(short = 'c', long = "cred", value_parser = parse_key_val)]
         credentials: Vec<(String, String)>,
     },

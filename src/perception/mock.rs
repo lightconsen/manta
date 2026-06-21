@@ -131,10 +131,7 @@ mod tests {
         let obs = src.observe().await;
         assert_eq!(obs.len(), 1);
         assert_eq!(obs[0].source, "mock_sensor");
-        assert_eq!(
-            obs[0].data,
-            serde_json::json!({"temperature": 25.0})
-        );
+        assert_eq!(obs[0].data, serde_json::json!({"temperature": 25.0}));
     }
 
     #[tokio::test]

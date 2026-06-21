@@ -24,7 +24,7 @@ pub struct TextBlock {
 /// A UI element detected visually (as opposed to via accessibility API).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DetectedElement {
-    pub role: String,       // "button", "text_field", "checkbox", "icon", etc.
+    pub role: String, // "button", "text_field", "checkbox", "icon", etc.
     pub label: Option<String>,
     pub bounds: Rect,
     pub confidence: f32,
@@ -41,10 +41,6 @@ pub mod ui_onnx;
 mod preprocess;
 
 #[cfg(feature = "vision")]
-pub use preprocess::{
-    decode_screenshot, image_to_nchw_tensor, normalize_image, resize_with_pad,
-};
-
-#[cfg(feature = "vision")]
 pub use model_download::{resolve_or_download_vision_models, VisionModelPaths};
-
+#[cfg(feature = "vision")]
+pub use preprocess::{decode_screenshot, image_to_nchw_tensor, normalize_image, resize_with_pad};

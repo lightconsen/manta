@@ -1,16 +1,19 @@
 //! Registry for discovering, registering, and managing devices.
 //!
-//! [`DeviceRegistry`] holds all registered [`DeviceDriver`](super::DeviceDriver)
-//! instances and the [`Device`](super::Device) objects they produce.
+//! [`DeviceRegistry`] holds all registered
+//! [`DeviceDriver`](super::DeviceDriver) instances and the
+//! [`Device`](super::Device) objects they produce.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::device::driver::DeviceDriver;
 use crate::device::status_bus::DeviceStatusEvent;
 use crate::device::{Device, DeviceStatus};
 use crate::error::{Result, SyscityError};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::SystemTime;
-use tokio::sync::{broadcast, Mutex, RwLock};
 
 /// RAII guard that provides exclusive access to a device.
 ///
@@ -77,6 +80,12 @@ struct DeviceEntry {
     driver_idx: usize,
 }
 
+impl Default for DeviceRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DeviceRegistry {
     /// Create an empty registry.
     ///
@@ -93,7 +102,8 @@ impl DeviceRegistry {
 
     /// Register a device driver.
     ///
-    /// Drivers are probed in registration order during [`probe_all`](Self::probe_all).
+    /// Drivers are probed in registration order during
+    /// [`probe_all`](Self::probe_all).
     pub async fn register(&self, driver: Arc<dyn DeviceDriver>) {
         self.drivers.lock().await.push(driver);
     }
@@ -109,11 +119,7 @@ impl DeviceRegistry {
                 Ok(true) => available.push(driver.driver_name().to_string()),
                 Ok(false) => { /* not present, skip */ }
                 Err(e) => {
-                    tracing::warn!(
-                        "Device probe error for '{}': {}",
-                        driver.driver_name(),
-                        e
-                    );
+                    tracing::warn!("Device probe error for '{}': {}", driver.driver_name(), e);
                 }
             }
         }
@@ -133,10 +139,8 @@ impl DeviceRegistry {
                 .iter()
                 .enumerate()
                 .find(|(_, d)| d.driver_name() == driver_name)
-                .ok_or_else(|| {
-                    crate::error::SyscityError::NotFound {
-                        resource: format!("Device driver '{}'", driver_name),
-                    }
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
+                    resource: format!("Device driver '{}'", driver_name),
                 })?;
             (idx, d.clone())
         };
@@ -155,12 +159,16 @@ impl DeviceRegistry {
         );
 
         // Create a lock entry for this device
-        self.locks.write().await.insert(id.clone(), Arc::new(RwLock::new(())));
+        self.locks
+            .write()
+            .await
+            .insert(id.clone(), Arc::new(RwLock::new(())));
 
         tracing::info!("Device connected: {} ({})", id, driver_name);
         // Drop the devices guard so emit_status_event can read them.
         drop(devices);
-        self.emit_status_event(&id, DeviceStatus::Disconnected).await;
+        self.emit_status_event(&id, DeviceStatus::Disconnected)
+            .await;
         Ok(device)
     }
 
@@ -246,7 +254,11 @@ impl DeviceRegistry {
                 None => DeviceStatus::Disconnected,
             };
             if let Some(e) = entry {
-                e.device.status.write().await.clone_from(&DeviceStatus::Disconnected);
+                e.device
+                    .status
+                    .write()
+                    .await
+                    .clone_from(&DeviceStatus::Disconnected);
                 tracing::info!("Device disconnected: {}", device_id);
             }
             prev
@@ -275,10 +287,7 @@ impl DeviceRegistry {
         let device = self.get(device_id).await?;
         let lock = self.locks.read().await.get(device_id)?.clone();
         let guard = lock.try_write_owned().ok()?;
-        Some(DeviceLock {
-            device,
-            _guard: guard,
-        })
+        Some(DeviceLock { device, _guard: guard })
     }
 
     /// Subscribe to device status change events.
@@ -306,7 +315,8 @@ impl DeviceRegistry {
         }
     }
 
-    /// Reconnect a device by disconnecting and re-connecting through its driver.
+    /// Reconnect a device by disconnecting and re-connecting through its
+    /// driver.
     ///
     /// The old device is disconnected, a fresh [`Device`] object is created
     /// via the driver's [`connect`](DeviceDriver::connect), and the new
@@ -329,7 +339,9 @@ impl DeviceRegistry {
         // Connect fresh device through the same driver.
         let new_device = {
             let drivers = self.drivers.lock().await;
-            drivers[driver_idx].connect().await
+            drivers[driver_idx]
+                .connect()
+                .await
                 .map_err(|e| SyscityError::ExternalService {
                     source: format!("Reconnect failed for '{}': {}", device_id, e),
                     cause: None,
@@ -421,17 +433,21 @@ impl DeviceRegistry {
     /// List registered driver names.
     pub async fn driver_names(&self) -> Vec<String> {
         let drivers = self.drivers.lock().await;
-        drivers.iter().map(|d| d.driver_name().to_string()).collect()
+        drivers
+            .iter()
+            .map(|d| d.driver_name().to_string())
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+    use tokio::sync::broadcast::error::TryRecvError;
+
     use super::*;
     use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
     use crate::device::DeviceInfo;
-    use async_trait::async_trait;
-    use tokio::sync::broadcast::error::TryRecvError;
 
     struct MockDriver {
         name: String,
@@ -726,14 +742,8 @@ mod tests {
         let reg = DeviceRegistry::new();
         let mut rx = reg.subscribe_status();
 
-        reg.set_device_status(
-            "ghost",
-            DeviceStatus::Error {
-                message: "x".into(),
-                since: 0,
-            },
-        )
-        .await;
+        reg.set_device_status("ghost", DeviceStatus::Error { message: "x".into(), since: 0 })
+            .await;
 
         assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     }

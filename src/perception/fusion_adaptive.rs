@@ -8,14 +8,16 @@
 //! Recommended deployment: spawn a background task that, every N seconds,
 //! pulls the latest observations from `PerceptionRegistry::all_observations()`,
 //! feeds them to `tracker.observe()`, then calls
-//! `engine.update_config(|c| c.temporal_window_ms = tracker.recommend_window_ms())`.
+//! `engine.update_config(|c| c.temporal_window_ms =
+//! tracker.recommend_window_ms())`.
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::perception::{Modality, Observation};
 
-/// Sample budget — how many recent inter-arrival samples to keep per modality pair.
+/// Sample budget — how many recent inter-arrival samples to keep per modality
+/// pair.
 const SAMPLE_BUDGET: usize = 256;
 
 /// Minimum window the tracker will ever recommend.
@@ -58,7 +60,10 @@ impl SensorNoiseTracker {
             if a.modality == b.modality {
                 continue;
             }
-            let dt_ms = b.timestamp.saturating_duration_since(a.timestamp).as_millis() as u64;
+            let dt_ms = b
+                .timestamp
+                .saturating_duration_since(a.timestamp)
+                .as_millis() as u64;
             let key = pair_key(a.modality, b.modality);
             let bucket = self.samples.entry(key).or_default();
             if bucket.len() == SAMPLE_BUDGET {
@@ -209,18 +214,12 @@ mod tests {
         let mut obs = Vec::new();
         for i in 0..32 {
             obs.push(obs_at(Modality::Rgb, base + Duration::from_millis(i * 200)));
-            obs.push(obs_at(
-                Modality::Audio,
-                base + Duration::from_millis(i * 200 + 200),
-            ));
+            obs.push(obs_at(Modality::Audio, base + Duration::from_millis(i * 200 + 200)));
         }
         t.observe(&obs);
         let rec = t.recommend_window_ms();
         // 200ms * 1.5 ≈ 300ms (within float rounding)
-        assert!(
-            (250..=400).contains(&rec),
-            "expected ~300ms window, got {rec}"
-        );
+        assert!((250..=400).contains(&rec), "expected ~300ms window, got {rec}");
     }
 
     #[test]
@@ -238,10 +237,7 @@ mod tests {
         let mut obs = Vec::new();
         for i in 0..(SAMPLE_BUDGET as u64 * 4) {
             obs.push(obs_at(Modality::Rgb, base + Duration::from_millis(i * 10)));
-            obs.push(obs_at(
-                Modality::Audio,
-                base + Duration::from_millis(i * 10 + 5),
-            ));
+            obs.push(obs_at(Modality::Audio, base + Duration::from_millis(i * 10 + 5)));
         }
         t.observe(&obs);
         // total samples per pair should be ≤ SAMPLE_BUDGET

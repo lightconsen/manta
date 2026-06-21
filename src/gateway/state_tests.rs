@@ -3,15 +3,21 @@
 //! Tests for `GatewayState::check_incoming_access` covering the four-layer
 //! security pipeline: blocklist → DM policy → mention gating → command gate.
 
+use std::collections::HashMap;
+
+use tempfile::tempdir;
+
 use super::*;
+use crate::acp::AcpControlPlane;
 use crate::channels::{ChannelType, MentionState};
 use crate::security::mention_gate::{MentionGate, MentionPolicy};
 use crate::security::pairing::{DmPolicy, PairingStore};
-use crate::tools::command_gate::CommandGate;
-use std::collections::HashMap;
-use tempfile::tempdir;
+use crate::tools::{
+    command_gate::CommandGate, mcp::McpManager, ApprovalQueue, ToolRegistry,
+};
 
-// ── Dummy pipeline implementations (required by GatewayState but unused here) ──
+// ── Dummy pipeline implementations (required by GatewayState but unused here)
+// ──
 
 pub struct DummyInboundPipeline;
 
@@ -48,7 +54,8 @@ impl crate::outbound::OutboundPipeline for DummyOutboundPipeline {
     }
 }
 
-// ── Test helper: construct a minimal GatewayState ──────────────────────────────
+// ── Test helper: construct a minimal GatewayState
+// ──────────────────────────────
 
 pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
     let (event_tx, _) = broadcast::channel(1);
@@ -100,13 +107,17 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         auth: AuthState {
             manager: Arc::new(crate::security::AuthManager::new()),
             pairing_store: Arc::new(PairingStore::new()),
-            device_pairing_store: Arc::new(crate::security::device_pairing::DevicePairingStore::new()),
+            device_pairing_store: Arc::new(
+                crate::security::device_pairing::DevicePairingStore::new(),
+            ),
             tailscale_authenticator: None,
             trusted_proxy_authenticator: None,
             rate_limiter: Arc::new(crate::security::RateLimiter::new(100, 10.0)),
-            multi_tier_rate_limiter: Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(
-                crate::gateway::rate_limit::MultiTierRateLimitConfig::default(),
-            )),
+            multi_tier_rate_limiter: Arc::new(
+                crate::gateway::rate_limit::MultiTierRateLimiter::new(
+                    crate::gateway::rate_limit::MultiTierRateLimitConfig::default(),
+                ),
+            ),
             audit_log: Arc::new(crate::security::persistent_audit::PersistentAuditLog::new()),
             command_gate: Arc::new(CommandGate::new()),
             mention_gate: Arc::new(MentionGate::new(MentionPolicy::Allow)),
@@ -180,7 +191,9 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
                     .expect("plugin manager"),
             ),
             driver_factory: crate::device::DriverFactory::new(),
-            model_router: Arc::new(ModelRouter::new(crate::model_router::ModelRouterConfig::default())),
+            model_router: Arc::new(ModelRouter::new(
+                crate::model_router::ModelRouterConfig::default(),
+            )),
             engine_metrics: None,
             #[cfg(feature = "browser")]
             browser_bridge: tokio::sync::RwLock::new(None),
@@ -285,7 +298,11 @@ async fn pairing_blocks_unauthorized_user_and_creates_request() {
 
     // A pairing request should have been created silently
     assert!(
-        !state.auth.pairing_store.is_authorized("slack", "newbie").await,
+        !state
+            .auth
+            .pairing_store
+            .is_authorized("slack", "newbie")
+            .await,
         "user should still not be authorized"
     );
 }
@@ -300,7 +317,9 @@ async fn pairing_allows_authorized_user() {
     let state = make_test_state(config).await;
 
     // Pre-authorize the user
-    let req = state.auth.pairing_store
+    let req = state
+        .auth
+        .pairing_store
         .request_access("slack", "alice", None)
         .await
         .expect("request access");
@@ -308,7 +327,9 @@ async fn pairing_allows_authorized_user() {
         crate::security::pairing::RequestAccessResult::NewRequest { code } => code,
         other => panic!("expected new request, got {:?}", other),
     };
-    state.auth.pairing_store
+    state
+        .auth
+        .pairing_store
         .approve("slack", &code, Some("admin"))
         .await;
 
@@ -378,7 +399,11 @@ async fn mention_gate_block_policy_blocks_mentions() {
 
     let state = make_test_state(config).await;
     // Set mention gate to Block
-    state.auth.mention_gate.set_policy(MentionPolicy::Block).await;
+    state
+        .auth
+        .mention_gate
+        .set_policy(MentionPolicy::Block)
+        .await;
 
     let result = state
         .check_incoming_access("discord", "user1", "hello", &MentionState::Mentioned)
@@ -398,7 +423,11 @@ async fn mention_gate_allow_policy_passes_mentions() {
     config.channels.insert("discord".to_string(), ch);
 
     let state = make_test_state(config).await;
-    state.auth.mention_gate.set_policy(MentionPolicy::Allow).await;
+    state
+        .auth
+        .mention_gate
+        .set_policy(MentionPolicy::Allow)
+        .await;
 
     let result = state
         .check_incoming_access("discord", "user1", "hello", &MentionState::Mentioned)
@@ -527,11 +556,12 @@ async fn open_policy_allows_any_user() {
 
 // ── HTTP Handler Integration Tests ───────────────────────────────────────────
 
+use std::sync::Arc;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use axum::Router;
-use std::sync::Arc;
 use tower::ServiceExt;
 
 #[tokio::test]

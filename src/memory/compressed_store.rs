@@ -10,10 +10,11 @@
 //! - Compact on disk (~10x vs raw JSON)
 //! - Suitable for Archival tier: rarely accessed, read in bulk
 
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+
+use async_trait::async_trait;
 use tokio::fs;
 use tracing::{debug, info, warn};
 
@@ -117,12 +118,12 @@ impl CompressedJsonlStore {
             shard.file_name().unwrap_or_default().to_string_lossy(),
             std::process::id()
         ));
-        fs::write(&tmp_path, compressed)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
+        fs::write(&tmp_path, compressed).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
                 context: format!("Failed to write temp shard: {:?}", tmp_path),
                 details: e.to_string(),
-            })?;
+            }
+        })?;
         fs::rename(&tmp_path, &shard)
             .await
             .map_err(|e| crate::error::SyscityError::Storage {
@@ -372,8 +373,9 @@ impl MemoryStore for CompressedJsonlStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_compressed_store_roundtrip() {

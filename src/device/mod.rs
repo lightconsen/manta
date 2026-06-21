@@ -23,32 +23,33 @@
 
 use std::sync::Arc;
 use std::time::SystemTime;
+
 use tokio::sync::RwLock;
 
 pub mod capability;
+pub mod control;
 pub mod driver;
 pub mod driver_factory;
-#[cfg(feature = "serialport")]
-pub mod serialport;
-#[cfg(feature = "hidapi")]
-pub mod hid;
 #[cfg(target_os = "linux")]
 pub mod gpio;
-#[cfg(feature = "native-plugins")]
-pub mod native_plugin;
-pub mod control;
 pub mod health;
+#[cfg(feature = "hidapi")]
+pub mod hid;
 pub mod hotplug;
 pub mod mock;
+#[cfg(feature = "native-plugins")]
+pub mod native_plugin;
 pub mod os_bridge;
 pub mod registry;
 pub mod safety;
+#[cfg(feature = "serialport")]
+pub mod serialport;
 pub mod status_bus;
 
 pub use capability::{Capability, CapabilityResult, DeviceEvent, ObservableCapability};
+pub use control::{ControlConfig, ControlHandler, ControlHandlerRegistry};
 pub use driver::{DeviceDriver, DeviceLifecycle};
 pub use driver_factory::{DriverConstructor, DriverFactory};
-pub use control::{ControlConfig, ControlHandler, ControlHandlerRegistry};
 pub use health::HealthCheckConfig;
 pub use hotplug::HotPlugConfig;
 pub use mock::{MockCapability, MockDeviceDriver, MockObservableCapability};
@@ -78,9 +79,10 @@ pub struct DeviceInfo {
 }
 
 /// Operational status of a device.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub enum DeviceStatus {
     /// Device is not connected / not present.
+    #[default]
     Disconnected,
     /// Device is connected and operating normally.
     Connected {
@@ -101,12 +103,6 @@ pub enum DeviceStatus {
         /// Timestamp of degradation.
         since: u64,
     },
-}
-
-impl Default for DeviceStatus {
-    fn default() -> Self {
-        Self::Disconnected
-    }
 }
 
 impl DeviceStatus {

@@ -2,10 +2,11 @@
 //!
 //! Tools for listing, querying, sending to, yielding, and inspecting sessions.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::Arc;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 
@@ -134,7 +135,8 @@ impl Tool for SessionsHistoryTool {
     }
 
     fn description(&self) -> &str {
-        "Get chat message history for a session. Returns user and assistant messages ordered oldest first."
+        "Get chat message history for a session. Returns user and assistant messages ordered \
+         oldest first."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -365,7 +367,8 @@ impl Tool for SessionsYieldTool {
     }
 
     fn description(&self) -> &str {
-        "Yield (cancel/pause) an active subagent. This sends a cancel signal to stop the current operation without terminating the subagent."
+        "Yield (cancel/pause) an active subagent. This sends a cancel signal to stop the current \
+         operation without terminating the subagent."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -459,7 +462,9 @@ impl Tool for SessionStatusTool {
     }
 
     fn description(&self) -> &str {
-        "Get the status of a session. Use session_key to target a specific session ('current', 'main', or a session ID). Use model to override the session's model (e.g. 'anthropic/claude-opus' or 'default' to reset)."
+        "Get the status of a session. Use session_key to target a specific session ('current', \
+         'main', or a session ID). Use model to override the session's model (e.g. \
+         'anthropic/claude-opus' or 'default' to reset)."
     }
 
     fn parameters_schema(&self) -> Value {

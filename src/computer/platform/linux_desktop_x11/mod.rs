@@ -39,14 +39,12 @@ impl PlatformToolSet for LinuxDesktopX11Toolset {
     }
 
     fn description(&self) -> &str {
-        "Linux X11 desktop automation: screenshots (maim/import/gnome-screenshot), \
-         desktop control (xdotool click/type/key/window management), \
-         and clipboard (xclip)."
+        "Linux X11 desktop automation: screenshots (maim/import/gnome-screenshot), desktop control \
+         (xdotool click/type/key/window management), and clipboard (xclip)."
     }
 
     fn constraints(&self) -> &PlatformConstraints {
-        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> =
-            std::sync::OnceLock::new();
+        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> = std::sync::OnceLock::new();
         CONSTRAINTS.get_or_init(|| PlatformConstraints {
             target_os: vec!["linux".to_string()],
             requires_gui: true,

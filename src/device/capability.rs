@@ -61,7 +61,8 @@ pub trait Capability: Send + Sync {
     /// Stable identifier, e.g. `"shell"`, `"click"`, `"motor.move_to"`.
     fn name(&self) -> &str;
 
-    /// JSON Schema describing the `params` argument of [`execute`](Self::execute).
+    /// JSON Schema describing the `params` argument of
+    /// [`execute`](Self::execute).
     fn param_schema(&self) -> Value;
 
     /// Execute this capability with the given parameters.

@@ -1,12 +1,13 @@
 //! Service manager tool — manage systemd services.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Action types for service management.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,11 +52,8 @@ impl ServiceManagerTool {
     }
 
     async fn run_systemctl(args: &[&str]) -> Option<(bool, String)> {
-        let result = timeout(
-            Duration::from_secs(30),
-            Command::new("systemctl").args(args).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(30), Command::new("systemctl").args(args).output()).await;
 
         match result {
             Ok(Ok(output)) => {
@@ -98,7 +96,8 @@ impl ServiceManagerTool {
                     for line in output.lines() {
                         if line.starts_with("   Active:") {
                             if let Some(st) = line.split(':').nth(1) {
-                                result.state = Some(st.split_whitespace().next().unwrap_or("").to_string());
+                                result.state =
+                                    Some(st.split_whitespace().next().unwrap_or("").to_string());
                             }
                         } else if line.starts_with("   Loaded:") {
                             result.enabled = Some(line.contains("enabled"));
@@ -173,13 +172,14 @@ impl ServiceManagerTool {
     }
 
     async fn list_services(limit: usize) -> Vec<ServiceResult> {
-        let cmd = format!("systemctl list-units --type=service --no-pager --no-legend | head -n {}", limit);
+        let cmd = format!(
+            "systemctl list-units --type=service --no-pager --no-legend | head -n {}",
+            limit
+        );
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let result = timeout(
-            Duration::from_secs(15),
-            Command::new(&shell).arg("-c").arg(&cmd).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(15), Command::new(&shell).arg("-c").arg(&cmd).output())
+                .await;
 
         match result {
             Ok(Ok(output)) if output.status.success() => {
@@ -219,10 +219,9 @@ impl Tool for ServiceManagerTool {
     }
 
     fn description(&self) -> &str {
-        "Manage systemd services on Linux. \
-         Supports status, start, stop, restart, enable, disable, and list. \
-         Use when the user asks to check a service, start/stop a daemon, \
-         or diagnose why a service is not running."
+        "Manage systemd services on Linux. Supports status, start, stop, restart, enable, disable, \
+         and list. Use when the user asks to check a service, start/stop a daemon, or diagnose why \
+         a service is not running."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -253,9 +252,9 @@ impl Tool for ServiceManagerTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action_str = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::SyscityError::Validation("Missing 'action' argument".to_string()))?;
+        let action_str = args["action"].as_str().ok_or_else(|| {
+            crate::error::SyscityError::Validation("Missing 'action' argument".to_string())
+        })?;
 
         let action = match action_str {
             "status" => ServiceAction::Status,
@@ -278,15 +277,16 @@ impl Tool for ServiceManagerTool {
             let services = Self::list_services(limit).await;
             let json = serde_json::to_string_pretty(&services)
                 .map_err(crate::error::SyscityError::Serialization)?;
-            return Ok(ToolExecutionResult::success(json)
-                .with_data(serde_json::to_value(services)?));
+            return Ok(
+                ToolExecutionResult::success(json).with_data(serde_json::to_value(services)?)
+            );
         }
 
-        let service = args["service"]
-            .as_str()
-            .ok_or_else(|| crate::error::SyscityError::Validation(
-                "Missing 'service' argument (required for all actions except 'list')".to_string()
-            ))?;
+        let service = args["service"].as_str().ok_or_else(|| {
+            crate::error::SyscityError::Validation(
+                "Missing 'service' argument (required for all actions except 'list')".to_string(),
+            )
+        })?;
 
         let result = match action {
             ServiceAction::Status => Self::get_status(service).await,
@@ -297,12 +297,11 @@ impl Tool for ServiceManagerTool {
             .map_err(crate::error::SyscityError::Serialization)?;
 
         let success = result.success;
-        let mut exec_result = ToolExecutionResult::success(json)
-            .with_data(serde_json::to_value(result)?);
+        let mut exec_result =
+            ToolExecutionResult::success(json).with_data(serde_json::to_value(result)?);
         if !success {
-            exec_result = ToolExecutionResult::error(
-                exec_result.output.clone()
-            ).with_data(exec_result.data.unwrap_or(Value::Null));
+            exec_result = ToolExecutionResult::error(exec_result.output.clone())
+                .with_data(exec_result.data.unwrap_or(Value::Null));
         }
 
         Ok(exec_result)

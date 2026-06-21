@@ -1,10 +1,10 @@
+use std::sync::Arc;
 
 use axum::{
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;

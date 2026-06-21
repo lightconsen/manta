@@ -3,12 +3,14 @@
 //! Allows agents to read and update their own HEARTBEAT.md to manage
 //! periodic tasks that the heartbeat runner will execute.
 
-use super::{Tool, ToolContext, ToolExecutionResult};
-use crate::heartbeat::parser::{parse_heartbeat_tasks, HeartbeatTask};
+use std::path::PathBuf;
+
 use async_trait::async_trait;
 use serde_json::json;
-use std::path::PathBuf;
 use tracing::{error, info};
+
+use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::heartbeat::parser::{parse_heartbeat_tasks, HeartbeatTask};
 
 /// Tool for managing agent heartbeat tasks
 #[derive(Debug)]
@@ -196,7 +198,9 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
                 success: false,
                 output: String::new(),
                 error: Some(
-                    "Please provide your actual agent_id (from your system prompt under 'Agent Identity') instead of 'me' or 'self'.".to_string()
+                    "Please provide your actual agent_id (from your system prompt under 'Agent \
+                     Identity') instead of 'me' or 'self'."
+                        .to_string(),
                 ),
                 data: None,
                 execution_time: std::time::Duration::default(),
@@ -299,7 +303,8 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
                     return Ok(ToolExecutionResult {
                         success: false,
                         output: format!(
-                            "Task '{}' already exists. Use remove_task first, or update to replace all tasks.",
+                            "Task '{}' already exists. Use remove_task first, or update to \
+                             replace all tasks.",
                             task_name
                         ),
                         error: Some(format!("Duplicate task name: {}", task_name)),

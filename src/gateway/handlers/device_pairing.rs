@@ -1,17 +1,19 @@
+use std::sync::Arc;
+use std::time::SystemTime;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{Html, IntoResponse, Json},
 };
 use serde::Deserialize;
-use std::sync::Arc;
-use std::time::SystemTime;
 use tracing::{info, warn};
 
 use crate::gateway::GatewayState;
 use crate::security::device_pairing::DevicePairingStore;
 
-// ── Request types ──────────────────────────────────────────────────────────────
+// ── Request types
+// ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct DeviceApproveRequest {
@@ -23,7 +25,8 @@ pub struct DeviceRevokeRequest {
     pub device_id: String,
 }
 
-// ── Handlers ───────────────────────────────────────────────────────────────────
+// ── Handlers
+// ───────────────────────────────────────────────────────────────────
 
 /// `GET /api/v1/device/pairing/pending` — list pending device pairing requests.
 pub async fn list_device_pending_handler(
@@ -52,7 +55,9 @@ pub async fn approve_device_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<DeviceApproveRequest>,
 ) -> impl IntoResponse {
-    match state.auth.device_pairing_store
+    match state
+        .auth
+        .device_pairing_store
         .approve(&req.code, Some("admin"))
         .await
     {

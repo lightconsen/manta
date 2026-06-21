@@ -11,10 +11,12 @@
 //! Composite tools are registered in the [`CompositeToolRegistry`] and can
 //! be referenced by name in plans or exposed to the LLM as first-class tools.
 
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
 use crate::computer::DesktopAction;
 use crate::planner::{Task, TaskId};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// A single step inside a composite tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,11 +70,7 @@ impl CompositeTool {
     }
 
     /// Add an optional (non-required) step.
-    pub fn optional_step(
-        mut self,
-        description: impl Into<String>,
-        action: DesktopAction,
-    ) -> Self {
+    pub fn optional_step(mut self, description: impl Into<String>, action: DesktopAction) -> Self {
         self.steps.push(ToolStep {
             description: description.into(),
             action,
@@ -82,11 +80,7 @@ impl CompositeTool {
     }
 
     /// Declare a parameter.
-    pub fn parameter(
-        mut self,
-        name: impl Into<String>,
-        default: Option<String>,
-    ) -> Self {
+    pub fn parameter(mut self, name: impl Into<String>, default: Option<String>) -> Self {
         self.parameters.insert(name.into(), default);
         self
     }
@@ -161,9 +155,7 @@ pub struct CompositeToolRegistry {
 
 impl CompositeToolRegistry {
     pub fn new() -> Self {
-        Self {
-            tools: HashMap::new(),
-        }
+        Self { tools: HashMap::new() }
     }
 
     /// Register a composite tool.
@@ -207,7 +199,11 @@ impl CompositeToolRegistry {
                 "Clone the repository",
                 DesktopAction::LaunchApp {
                     name: "git".to_string(),
-                    args: vec!["clone".to_string(), "{{repo_url}}".to_string(), "{{dest}}".to_string()],
+                    args: vec![
+                        "clone".to_string(),
+                        "{{repo_url}}".to_string(),
+                        "{{dest}}".to_string(),
+                    ],
                     wait_for_ready: true,
                 },
             )
@@ -307,24 +303,18 @@ fn substitute_params(action: &DesktopAction, bindings: &HashMap<String, String>)
     };
 
     match action {
-        DesktopAction::LaunchApp {
-            name,
-            args,
-            wait_for_ready,
-        } => DesktopAction::LaunchApp {
+        DesktopAction::LaunchApp { name, args, wait_for_ready } => DesktopAction::LaunchApp {
             name: sub(name),
             args: args.iter().map(|a| sub(a)).collect(),
             wait_for_ready: *wait_for_ready,
         },
-        DesktopAction::TransferFile {
-            source,
-            destination,
-            method,
-        } => DesktopAction::TransferFile {
-            source: sub(source),
-            destination: sub(destination),
-            method: *method,
-        },
+        DesktopAction::TransferFile { source, destination, method } => {
+            DesktopAction::TransferFile {
+                source: sub(source),
+                destination: sub(destination),
+                method: *method,
+            }
+        }
         DesktopAction::BrowseFiles {
             path,
             filter_description,
@@ -339,20 +329,14 @@ fn substitute_params(action: &DesktopAction, bindings: &HashMap<String, String>)
             search: sub(search),
             replace: sub(replace),
         },
-        DesktopAction::ReadFileChunked {
-            path,
-            offset,
-            limit_bytes,
-        } => DesktopAction::ReadFileChunked {
-            path: sub(path),
-            offset: *offset,
-            limit_bytes: *limit_bytes,
-        },
-        DesktopAction::Compress {
-            sources,
-            destination,
-            format,
-        } => DesktopAction::Compress {
+        DesktopAction::ReadFileChunked { path, offset, limit_bytes } => {
+            DesktopAction::ReadFileChunked {
+                path: sub(path),
+                offset: *offset,
+                limit_bytes: *limit_bytes,
+            }
+        }
+        DesktopAction::Compress { sources, destination, format } => DesktopAction::Compress {
             sources: sources.iter().map(|s| sub(s)).collect(),
             destination: sub(destination),
             format: *format,
@@ -367,24 +351,14 @@ fn substitute_params(action: &DesktopAction, bindings: &HashMap<String, String>)
         DesktopAction::CloseWindow { title_pattern } => DesktopAction::CloseWindow {
             title_pattern: sub(title_pattern),
         },
-        DesktopAction::Type { text } => DesktopAction::Type {
-            text: sub(text),
-        },
-        DesktopAction::ClipboardSet { text } => DesktopAction::ClipboardSet {
-            text: sub(text),
-        },
-        DesktopAction::WatchDirectory { path } => DesktopAction::WatchDirectory {
-            path: sub(path),
-        },
-        DesktopAction::UnwatchDirectory { path } => DesktopAction::UnwatchDirectory {
-            path: sub(path),
-        },
-        DesktopAction::WatchFile { path } => DesktopAction::WatchFile {
-            path: sub(path),
-        },
-        DesktopAction::UnwatchFile { path } => DesktopAction::UnwatchFile {
-            path: sub(path),
-        },
+        DesktopAction::Type { text } => DesktopAction::Type { text: sub(text) },
+        DesktopAction::ClipboardSet { text } => DesktopAction::ClipboardSet { text: sub(text) },
+        DesktopAction::WatchDirectory { path } => DesktopAction::WatchDirectory { path: sub(path) },
+        DesktopAction::UnwatchDirectory { path } => {
+            DesktopAction::UnwatchDirectory { path: sub(path) }
+        }
+        DesktopAction::WatchFile { path } => DesktopAction::WatchFile { path: sub(path) },
+        DesktopAction::UnwatchFile { path } => DesktopAction::UnwatchFile { path: sub(path) },
         DesktopAction::InstallPackage {
             manager,
             packages,

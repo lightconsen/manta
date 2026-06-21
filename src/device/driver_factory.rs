@@ -8,15 +8,14 @@
 //!
 //! The factory is stored in [`GatewayState`](crate::gateway::GatewayState) and
 //! shared between the static config-driver discovery path and the runtime OS
-//! bridge event path.  Because the inner registry is behind [`Arc`]`<`[`RwLock`]
-//! `>`, the factory can be cloned and drivers registered at any point — during
-//! startup, from native plugins, or programmatically.
+//! bridge event path.  Because the inner registry is behind
+//! [`Arc`]`<`[`RwLock`] `>`, the factory can be cloned and drivers registered
+//! at any point — during startup, from native plugins, or programmatically.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-
 #[cfg(feature = "native-plugins")]
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 use serde_json::Value;
 
@@ -74,11 +73,7 @@ impl DriverFactory {
     ///
     /// Convenience wrapper that wraps the function pointer into an
     /// [`Arc`]`<`[`dyn Fn`]`>`.
-    pub fn register_fn(
-        &self,
-        kind: &str,
-        ctor: fn(Value) -> crate::Result<Arc<dyn DeviceDriver>>,
-    ) {
+    pub fn register_fn(&self, kind: &str, ctor: fn(Value) -> crate::Result<Arc<dyn DeviceDriver>>) {
         self.register(kind, Arc::new(ctor));
     }
 
@@ -86,9 +81,10 @@ impl DriverFactory {
     ///
     /// Returns an error if `kind` is not registered.
     pub fn build(&self, kind: &str, params: Value) -> crate::Result<Arc<dyn DeviceDriver>> {
-        let map = self.inner.read().map_err(|_| SyscityError::Internal(
-            "DriverFactory lock poisoned".into(),
-        ))?;
+        let map = self
+            .inner
+            .read()
+            .map_err(|_| SyscityError::Internal("DriverFactory lock poisoned".into()))?;
         let ctor = map.get(kind).ok_or_else(|| SyscityError::NotFound {
             resource: format!("Device driver kind '{}'", kind),
         })?;
@@ -97,7 +93,10 @@ impl DriverFactory {
 
     /// Check if a driver kind is registered.
     pub fn has_kind(&self, kind: &str) -> bool {
-        self.inner.read().ok().is_some_and(|map| map.contains_key(kind))
+        self.inner
+            .read()
+            .ok()
+            .is_some_and(|map| map.contains_key(kind))
     }
 
     /// List all registered driver kinds.
@@ -120,11 +119,7 @@ impl DriverFactory {
         let kind = loader.kind().to_string();
         let ctor = loader.into_constructor();
         self.register(&kind, ctor);
-        tracing::info!(
-            "Registered native plugin driver '{}' from {:?}",
-            kind,
-            path,
-        );
+        tracing::info!("Registered native plugin driver '{}' from {:?}", kind, path,);
         Ok(())
     }
 
@@ -147,9 +142,10 @@ impl Default for DriverFactory {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::device::mock::MockDeviceDriver;
-    use serde_json::json;
 
     #[test]
     fn test_build_mock() {
@@ -183,11 +179,16 @@ mod tests {
     fn test_register_custom() {
         let factory = DriverFactory::new();
         factory.register_fn("custom", |params| {
-            let name = params.get("name").and_then(Value::as_str).unwrap_or("custom");
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("custom");
             Ok(Arc::new(MockDeviceDriver::new(name, true)))
         });
         assert!(factory.has_kind("custom"));
-        let driver = factory.build("custom", json!({ "name": "my-dev" })).unwrap();
+        let driver = factory
+            .build("custom", json!({ "name": "my-dev" }))
+            .unwrap();
         assert_eq!(driver.driver_name(), "my-dev");
     }
 

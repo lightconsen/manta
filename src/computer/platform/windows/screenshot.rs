@@ -1,6 +1,5 @@
 //! Windows screenshot tool using PowerShell and .NET.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use base64::Engine;
 use serde_json::Value;
@@ -8,9 +7,12 @@ use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
 
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
+
 /// Take screenshots on Windows using PowerShell + .NET System.Drawing.
 ///
-/// Falls back to `nircmd` if available. Compresses to JPEG to keep base64 small.
+/// Falls back to `nircmd` if available. Compresses to JPEG to keep base64
+/// small.
 #[derive(Debug)]
 pub struct ScreenshotTool;
 
@@ -33,8 +35,8 @@ impl Tool for ScreenshotTool {
     }
 
     fn description(&self) -> &str {
-        "Take a screenshot on Windows. Returns a base64-encoded image. \
-         Uses PowerShell + .NET System.Drawing, or nircmd if available."
+        "Take a screenshot on Windows. Returns a base64-encoded image. Uses PowerShell + .NET \
+         System.Drawing, or nircmd if available."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -55,10 +57,8 @@ impl Tool for ScreenshotTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let temp_path = std::env::temp_dir().join(format!(
-            "syscity_screenshot_{}.png",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_path =
+            std::env::temp_dir().join(format!("syscity_screenshot_{}.png", uuid::Uuid::new_v4()));
         let temp_str = temp_path.to_string_lossy();
 
         info!("Taking Windows screenshot: {}", temp_str);
@@ -109,15 +109,26 @@ $bmp.Dispose()
         let result = timeout(
             Duration::from_secs(15),
             Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_script])
+                .args([
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    &ps_script,
+                ])
                 .output(),
         )
         .await;
 
         match result {
             Ok(Ok(output)) if output.status.success() => {
-                let encoded_path = crate::computer::screenshot_encoder::maybe_encode_screenshot(&temp_path).await;
-                let format = if encoded_path.extension().map(|e| e == "jpg").unwrap_or(false) {
+                let encoded_path =
+                    crate::computer::screenshot_encoder::maybe_encode_screenshot(&temp_path).await;
+                let format = if encoded_path
+                    .extension()
+                    .map(|e| e == "jpg")
+                    .unwrap_or(false)
+                {
                     "jpeg"
                 } else {
                     "png"
@@ -153,18 +164,12 @@ $bmp.Dispose()
             Ok(Ok(output)) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 warn!("PowerShell screenshot failed: {}", stderr);
-                Ok(ToolExecutionResult::error(format!(
-                    "Screenshot failed: {}",
-                    stderr
-                )))
+                Ok(ToolExecutionResult::error(format!("Screenshot failed: {}", stderr)))
             }
-            Ok(Err(e)) => Ok(ToolExecutionResult::error(format!(
-                "Failed to run PowerShell: {}",
-                e
-            ))),
-            Err(_) => Ok(ToolExecutionResult::error(
-                "Screenshot timed out".to_string()
-            )),
+            Ok(Err(e)) => {
+                Ok(ToolExecutionResult::error(format!("Failed to run PowerShell: {}", e)))
+            }
+            Err(_) => Ok(ToolExecutionResult::error("Screenshot timed out".to_string())),
         }
     }
 

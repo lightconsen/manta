@@ -1,3 +1,4 @@
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
@@ -5,7 +6,6 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use serde::Deserialize;
-use std::sync::Arc;
 use tracing::warn;
 
 use crate::gateway::GatewayState;
@@ -179,7 +179,9 @@ pub async fn install_plugin_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<InstallPluginRequest>,
 ) -> impl IntoResponse {
-    match state.infra.plugin_manager
+    match state
+        .infra
+        .plugin_manager
         .install_plugin(&req.name, req.registry.as_deref())
         .await
     {
@@ -228,7 +230,9 @@ pub async fn search_plugins_handler(
     State(state): State<Arc<GatewayState>>,
     Query(params): Query<SearchQuery>,
 ) -> impl IntoResponse {
-    match state.infra.plugin_manager
+    match state
+        .infra
+        .plugin_manager
         .search_registry(&params.q, params.registry.as_deref())
         .await
     {

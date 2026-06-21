@@ -3,9 +3,10 @@
 //! This module defines the `Provider` trait for interacting with various LLM
 //! services (OpenAI, Anthropic, Local models, etc.).
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// A message role in a conversation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -118,7 +119,8 @@ impl Message {
         }
     }
 
-    /// Create a new user message with an identifiable name (for multi-user / group chats).
+    /// Create a new user message with an identifiable name (for multi-user /
+    /// group chats).
     pub fn user_named(name: impl Into<String>, content: impl Into<String>) -> Self {
         let mut msg = Self::user(content);
         msg.name = Some(name.into());
@@ -205,7 +207,11 @@ impl Message {
     pub fn has_images(&self) -> bool {
         self.content_blocks
             .as_ref()
-            .map(|blocks| blocks.iter().any(|b| matches!(b, ContentBlock::Image { .. })))
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::Image { .. }))
+            })
             .unwrap_or(false)
     }
 
@@ -234,10 +240,12 @@ pub struct ToolCall {
     pub call_type: String,
     /// The function to call
     pub function: FunctionCall,
-    /// Streaming index (position in the tool_calls array); set only during streaming deltas
+    /// Streaming index (position in the tool_calls array); set only during
+    /// streaming deltas
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<u32>,
-    /// Tool execution result (populated after execution, persisted for history replay)
+    /// Tool execution result (populated after execution, persisted for history
+    /// replay)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
 }
@@ -484,19 +492,18 @@ pub mod fallback;
 pub mod gemini;
 pub mod mock;
 pub mod openai;
-pub mod sdk;
 pub mod preset;
 pub mod resolver;
+pub mod sdk;
 pub mod stream_wrappers;
 
 pub use anthropic::AnthropicProvider;
 pub use fallback::{FallbackChainBuilder, FallbackProvider};
 pub use gemini::GeminiProvider;
-pub use openai::OpenAiProvider;
-pub use sdk::{ProviderCapabilities, ProviderHealth, ProviderMetadata, ProviderPack, ProviderSdk};
-
 /// Re-export the programmable mock provider for tests (unit + integration).
 pub use mock::MockProvider;
+pub use openai::OpenAiProvider;
+pub use sdk::{ProviderCapabilities, ProviderHealth, ProviderMetadata, ProviderPack, ProviderSdk};
 
 // ──── Protocol & Provider Architecture Types ────
 
@@ -707,8 +714,7 @@ mod tests {
 
     #[test]
     fn test_message_with_image() {
-        let msg = Message::user("describe this")
-            .with_image("iVBORw0KGgo=", "image/png");
+        let msg = Message::user("describe this").with_image("iVBORw0KGgo=", "image/png");
         assert!(msg.has_images());
         assert_eq!(msg.content_blocks.as_ref().unwrap().len(), 2);
         assert_eq!(msg.all_text(), "describe this");
@@ -716,11 +722,10 @@ mod tests {
 
     #[test]
     fn test_message_with_content_blocks() {
-        let msg = Message::user("")
-            .with_content_blocks(vec![
-                ContentBlock::text("What do you see?"),
-                ContentBlock::image_base64("abc123", "image/jpeg"),
-            ]);
+        let msg = Message::user("").with_content_blocks(vec![
+            ContentBlock::text("What do you see?"),
+            ContentBlock::image_base64("abc123", "image/jpeg"),
+        ]);
         assert!(msg.has_images());
         assert_eq!(msg.content_blocks.as_ref().unwrap().len(), 2);
         assert_eq!(msg.all_text(), "What do you see?");
@@ -739,7 +744,9 @@ mod tests {
         assert!(matches!(text, ContentBlock::Text { text } if text == "hello"));
 
         let img = ContentBlock::image_base64("data", "image/png");
-        assert!(matches!(img, ContentBlock::Image { base64, mime_type } if base64 == "data" && mime_type == "image/png"));
+        assert!(
+            matches!(img, ContentBlock::Image { base64, mime_type } if base64 == "data" && mime_type == "image/png")
+        );
     }
 
     #[test]

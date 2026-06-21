@@ -1,9 +1,10 @@
 //! Perception Fusion Layer.
 //!
-//! Unifies fragmented perception sources (screenshots, system monitoring, device
-//! sensors) under a common data model and query interface.  The [`PerceptionRegistry`]
-//! manages multiple [`PerceptionSource`]s, ingests observations into a
-//! [`TemporalAggregator`], and exposes them via [`PerceptionQuery`].
+//! Unifies fragmented perception sources (screenshots, system monitoring,
+//! device sensors) under a common data model and query interface.  The
+//! [`PerceptionRegistry`] manages multiple [`PerceptionSource`]s, ingests
+//! observations into a [`TemporalAggregator`], and exposes them via
+//! [`PerceptionQuery`].
 //!
 //! # Architecture
 //!
@@ -16,8 +17,8 @@
 //!                    Adapter       Adapter        Adapter
 //! ```
 
-mod aggregator;
 pub mod agent_adapter;
+mod aggregator;
 pub mod attention_gate;
 pub mod audio_adapter;
 pub mod context;
@@ -43,8 +44,8 @@ pub mod stream;
 pub mod template_summarizer;
 pub mod temporal_processor;
 
-pub use aggregator::{AggregationStrategy, Entity, EntityId, TemporalAggregator};
 pub use agent_adapter::{AdapterError, AgentPerceptionAdapter, PerceptionSummarizer};
+pub use aggregator::{AggregationStrategy, Entity, EntityId, TemporalAggregator};
 pub use attention_gate::AttentionGate;
 pub use audio_adapter::{AudioAdapterConfig, MicrophoneAdapter};
 pub use context::{PerceptionContext, PerceptionContextConfig, DEFAULT_RAW_HUB_CAPACITY};
@@ -77,9 +78,9 @@ pub use snapshot::Snapshot;
 pub use stream::{spawn_stream_hub_sync, PerceptionStreamHub};
 pub use template_summarizer::TemplateSummarizer;
 pub use temporal_processor::{
-    spawn_temporal_processor, DefaultTemporalProcessor, TemporalProcessor,
-    DEFAULT_TEMPORAL_WINDOW,
+    spawn_temporal_processor, DefaultTemporalProcessor, TemporalProcessor, DEFAULT_TEMPORAL_WINDOW,
 };
+
 pub use crate::tools::perception_tool::PerceptionQueryTool;
 
 /// Sensor modality classification.

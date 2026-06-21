@@ -4,8 +4,9 @@
 //! Re-exported via `pub use runtime::*;` so existing import paths
 //! (`crate::gateway::AgentHandle`, etc.) continue to work.
 
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::agent::{Agent, AgentConfig};
@@ -25,7 +26,8 @@ pub struct AgentHandle {
     pub id: String,
     /// Agent configuration
     pub config: AgentConfig,
-    /// Fire-and-forget command channel (ProcessMessage, Cancel, UpdateConfig, Shutdown)
+    /// Fire-and-forget command channel (ProcessMessage, Cancel, UpdateConfig,
+    /// Shutdown)
     pub tx: mpsc::Sender<AgentCommand>,
     /// Request/response query channel (introspection + skill invocations)
     pub query_tx: mpsc::Sender<AgentQuery>,
@@ -44,7 +46,8 @@ pub enum AgentCommand {
         message: String,
         user_id: String,
         channel: String,
-        /// Optional model override (e.g. from OpenAI-compatible API header/query).
+        /// Optional model override (e.g. from OpenAI-compatible API
+        /// header/query).
         #[serde(skip_serializing_if = "Option::is_none")]
         model_override: Option<String>,
     },
@@ -85,7 +88,8 @@ pub enum AgentQuery {
         session_id: String,
         message: String,
         user_id: String,
-        /// Trust level of the invoking skill — constrains which tools are available.
+        /// Trust level of the invoking skill — constrains which tools are
+        /// available.
         skill_trust: crate::tools::SkillTrust,
         response_tx:
             tokio::sync::oneshot::Sender<crate::error::Result<crate::channels::OutgoingMessage>>,
@@ -209,7 +213,8 @@ pub enum GatewayEvent {
         description: String,
         restart_count: u32,
     },
-    /// LLM generation completed (fires during progress callback, before AgentResponse)
+    /// LLM generation completed (fires during progress callback, before
+    /// AgentResponse)
     Completed {
         session_id: String,
         agent_id: String,

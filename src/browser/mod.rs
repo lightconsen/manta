@@ -3,7 +3,8 @@
 //! Provides:
 //! - **BrowserPool**: Persistent browser instance caching with idle eviction
 //! - **ARIA Snapshot**: LLM-friendly accessible tree with ref markers
-//! - **Profile Management**: Multiple browser configs (headless/headed, Chrome MCP)
+//! - **Profile Management**: Multiple browser configs (headless/headed, Chrome
+//!   MCP)
 //! - **Bridge Server**: HTTP API decoupling (P1)
 //! - **SSRF Guard**: Navigation security (P1)
 //! - **Sandbox**: Docker-isolated browser (P3)

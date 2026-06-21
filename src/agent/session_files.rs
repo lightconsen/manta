@@ -1,7 +1,7 @@
 //! Session Files — Scoped File System for Agent Sessions
 //!
-//! Provides each session with an isolated directory for temporary file operations.
-//! ts`.
+//! Provides each session with an isolated directory for temporary file
+//! operations. ts`.
 //!
 //! # Features
 //!
@@ -13,35 +13,36 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 /// Manager for session-scoped file operations.
 #[derive(Debug, Clone)]
 pub struct SessionFileManager {
- /// Root directory for all session files.
+    /// Root directory for all session files.
     root_dir: PathBuf,
- /// Per-session directories.
+    /// Per-session directories.
     sessions: Arc<RwLock<HashMap<String, SessionFileDir>>>,
- /// Default size quota per session (bytes).
+    /// Default size quota per session (bytes).
     default_quota: usize,
 }
 
 /// File directory for a single session.
 #[derive(Debug, Clone)]
 pub struct SessionFileDir {
- /// Session ID.
+    /// Session ID.
     pub session_id: String,
- /// Directory path.
+    /// Directory path.
     pub path: PathBuf,
- /// Size quota (bytes).
+    /// Size quota (bytes).
     pub quota: usize,
- /// Current usage (bytes).
+    /// Current usage (bytes).
     pub usage: usize,
 }
 
 impl SessionFileManager {
- /// Create a new session file manager.
+    /// Create a new session file manager.
     pub fn new(root_dir: impl Into<PathBuf>) -> Self {
         let root_dir = root_dir.into();
         Self {
@@ -51,13 +52,13 @@ impl SessionFileManager {
         }
     }
 
- /// Set the default quota per session.
+    /// Set the default quota per session.
     pub fn with_quota(mut self, quota: usize) -> Self {
         self.default_quota = quota;
         self
     }
 
- /// Initialize the root directory.
+    /// Initialize the root directory.
     pub async fn init(&self) -> crate::Result<()> {
         tokio::fs::create_dir_all(&self.root_dir)
             .await
@@ -68,7 +69,7 @@ impl SessionFileManager {
         Ok(())
     }
 
- /// Create a session directory (idempotent).
+    /// Create a session directory (idempotent).
     pub async fn create_session(
         &self,
         session_id: impl Into<String>,
@@ -76,7 +77,7 @@ impl SessionFileManager {
         let session_id = session_id.into();
         let session_path = self.root_dir.join(&session_id);
 
- // Create directory if it doesn't exist
+        // Create directory if it doesn't exist
         tokio::fs::create_dir_all(&session_path)
             .await
             .map_err(|e| crate::error::SyscityError::Storage {
@@ -84,7 +85,7 @@ impl SessionFileManager {
                 details: e.to_string(),
             })?;
 
- // Canonicalize to resolve symlinks (e.g. /tmp -> /private/tmp on macOS)
+        // Canonicalize to resolve symlinks (e.g. /tmp -> /private/tmp on macOS)
         let session_path = tokio::fs::canonicalize(&session_path)
             .await
             .unwrap_or(session_path);
@@ -105,13 +106,13 @@ impl SessionFileManager {
         Ok(dir)
     }
 
- /// Get the session directory (if it exists).
+    /// Get the session directory (if it exists).
     pub async fn get_session(&self, session_id: &str) -> Option<SessionFileDir> {
         let sessions = self.sessions.read().await;
         sessions.get(session_id).cloned()
     }
 
- /// Resolve a path within a session directory (with traversal protection).
+    /// Resolve a path within a session directory (with traversal protection).
     pub async fn resolve_path(&self, session_id: &str, relative_path: &str) -> Option<PathBuf> {
         let sessions = self.sessions.read().await;
         let session_dir = sessions.get(session_id)?;
@@ -120,7 +121,7 @@ impl SessionFileManager {
         let canonical = match tokio::fs::canonicalize(&resolved).await {
             Ok(p) => p,
             Err(_) => {
- // File doesn't exist yet — check parent directory is within session
+                // File doesn't exist yet — check parent directory is within session
                 let parent = resolved.parent()?;
                 let canonical_parent = match tokio::fs::canonicalize(parent).await {
                     Ok(p) => p,
@@ -134,7 +135,7 @@ impl SessionFileManager {
             }
         };
 
- // Ensure the resolved path is within the session directory
+        // Ensure the resolved path is within the session directory
         if !canonical.starts_with(&session_dir.path) {
             warn!("Path traversal blocked: {} in session {}", relative_path, session_id);
             return None;
@@ -143,7 +144,7 @@ impl SessionFileManager {
         Some(canonical)
     }
 
- /// List files in a session directory.
+    /// List files in a session directory.
     pub async fn list_files(&self, session_id: &str) -> Vec<String> {
         let sessions = self.sessions.read().await;
         let Some(dir) = sessions.get(session_id) else {
@@ -167,7 +168,7 @@ impl SessionFileManager {
         files
     }
 
- /// Clean up a session directory.
+    /// Clean up a session directory.
     pub async fn cleanup_session(&self, session_id: &str) -> crate::Result<()> {
         let path = {
             let mut sessions = self.sessions.write().await;
@@ -188,7 +189,7 @@ impl SessionFileManager {
         Ok(())
     }
 
- /// Get total size of all session directories.
+    /// Get total size of all session directories.
     pub async fn total_usage(&self) -> usize {
         let sessions = self.sessions.read().await;
         let mut total = 0;
@@ -198,7 +199,7 @@ impl SessionFileManager {
         total
     }
 
- /// Calculate directory size recursively.
+    /// Calculate directory size recursively.
     async fn dir_size(path: &Path) -> std::io::Result<usize> {
         let mut total = 0;
         let mut entries = tokio::fs::read_dir(path).await?;
@@ -213,7 +214,7 @@ impl SessionFileManager {
         Ok(total)
     }
 
- /// List all active sessions.
+    /// List all active sessions.
     pub async fn list_sessions(&self) -> Vec<String> {
         let sessions = self.sessions.read().await;
         sessions.keys().cloned().collect()
@@ -230,23 +231,23 @@ mod tests {
         let manager = SessionFileManager::new(&tmp);
         manager.init().await.unwrap();
 
- // Create session
+        // Create session
         let dir = manager.create_session("session_1").await.unwrap();
         assert!(dir.path.exists());
 
- // Resolve path
+        // Resolve path
         let path = manager.resolve_path("session_1", "test.txt").await;
         assert!(path.is_some());
 
- // Path traversal protection
+        // Path traversal protection
         let bad = manager.resolve_path("session_1", "../secret.txt").await;
         assert!(bad.is_none());
 
- // Cleanup
+        // Cleanup
         manager.cleanup_session("session_1").await.unwrap();
         assert!(!dir.path.exists());
 
- // Clean up temp dir
+        // Clean up temp dir
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
@@ -304,7 +305,7 @@ mod tests {
         manager.init().await.unwrap();
         manager.create_session("s1").await.unwrap();
 
- // New file in existing parent (session root)
+        // New file in existing parent (session root)
         let path = manager.resolve_path("s1", "file.txt").await;
         assert!(path.is_some());
     }
@@ -330,7 +331,7 @@ mod tests {
         manager.init().await.unwrap();
         manager.create_session("s1").await.unwrap();
 
- // Nested traversal
+        // Nested traversal
         let bad = manager.resolve_path("s1", "foo/../../secret.txt").await;
         assert!(bad.is_none());
     }
@@ -377,7 +378,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let manager = SessionFileManager::new(tmp.path());
         manager.init().await.unwrap();
- // Should not panic
+        // Should not panic
         manager.cleanup_session("nonexistent").await.unwrap();
     }
 

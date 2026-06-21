@@ -16,12 +16,13 @@
 //! allow_users = ["alice@example.com", "bob", "admin_*"]
 //! ```
 
-use axum::http::{HeaderMap, Request};
-use ipnet::IpNet;
-use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
+
+use axum::http::{HeaderMap, Request};
+use ipnet::IpNet;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 /// Configuration for trusted proxy authentication.
@@ -30,15 +31,17 @@ pub struct TrustedProxyConfig {
     /// Enable trusted proxy authentication.
     #[serde(default)]
     pub enabled: bool,
-    /// List of trusted proxy IPs or CIDR networks (e.g. "127.0.0.1", "10.0.0.0/8").
+    /// List of trusted proxy IPs or CIDR networks (e.g. "127.0.0.1",
+    /// "10.0.0.0/8").
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
     /// Headers to inspect for user identity, in priority order.
     /// The first header present and non-empty wins.
     #[serde(default)]
     pub required_headers: Vec<String>,
-    /// Allowlist of user identities. Empty means all extracted users are allowed.
-    /// Supports simple `*` wildcard at the start or end of a pattern.
+    /// Allowlist of user identities. Empty means all extracted users are
+    /// allowed. Supports simple `*` wildcard at the start or end of a
+    /// pattern.
     #[serde(default)]
     pub allow_users: Vec<String>,
 }
@@ -160,7 +163,8 @@ impl TrustedProxyAuthenticator {
 
     /// Authenticate a request using the direct proxy IP.
     ///
-    /// Returns the extracted user on success, or a descriptive error on failure.
+    /// Returns the extracted user on success, or a descriptive error on
+    /// failure.
     pub fn authenticate<B>(
         &self,
         req: &Request<B>,
@@ -260,8 +264,9 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use axum::http::{HeaderMap, HeaderValue};
+
+    use super::*;
 
     fn sample_config() -> TrustedProxyConfig {
         TrustedProxyConfig {
@@ -430,7 +435,9 @@ mod tests {
         let config = TrustedProxyConfig::disabled();
         let auth = TrustedProxyAuthenticator::new(config);
         let req = Request::builder().uri("/").body(()).unwrap();
-        let err = auth.authenticate(&req, Some("127.0.0.1".parse().unwrap())).unwrap_err();
+        let err = auth
+            .authenticate(&req, Some("127.0.0.1".parse().unwrap()))
+            .unwrap_err();
         assert_eq!(err, TrustedProxyError::Disabled);
     }
 }

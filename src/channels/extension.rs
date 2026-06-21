@@ -4,33 +4,34 @@
 //! pipelines. Replaces the ad-hoc per-channel message loops with a unified
 //! extension interface.
 //!
-//!
+
+use std::sync::Arc;
+
+use tokio::sync::mpsc;
 
 use crate::channels::{
     Channel, ChannelCapabilities, ChatType, ConversationId, IncomingMessage, OutgoingMessage,
 };
 use crate::core::models::Id;
-use std::sync::Arc;
-use tokio::sync::mpsc;
 
 /// A channel extension adapter.
 ///
 /// Wraps a raw `Channel` and wires it into the Inbound/Outbound pipelines.
 #[async_trait::async_trait]
 pub trait ChannelExtension: Send + Sync {
- /// Unique name of this extension (e.g. "telegram", "discord_webhook").
+    /// Unique name of this extension (e.g. "telegram", "discord_webhook").
     fn name(&self) -> &str;
 
- /// Start receiving messages and feed them into the inbound pipeline.
- ///
- /// The extension should convert raw channel events into `IncomingMessage`s
- /// and push them to `inbound_tx`.
+    /// Start receiving messages and feed them into the inbound pipeline.
+    ///
+    /// The extension should convert raw channel events into `IncomingMessage`s
+    /// and push them to `inbound_tx`.
     async fn run_inbound(&self, inbound_tx: mpsc::Sender<IncomingMessage>) -> crate::Result<()>;
 
- /// Start dispatching outbound messages back to the channel.
- ///
- /// The extension receives `OutgoingMessage`s from the reply dispatcher
- /// and delivers them to the underlying channel.
+    /// Start dispatching outbound messages back to the channel.
+    ///
+    /// The extension receives `OutgoingMessage`s from the reply dispatcher
+    /// and delivers them to the underlying channel.
     async fn run_outbound(
         &self,
         mut outbound_rx: mpsc::Receiver<OutgoingMessage>,

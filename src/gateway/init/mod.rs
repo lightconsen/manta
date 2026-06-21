@@ -4,8 +4,8 @@
 //! used by [`crate::gateway::Gateway::new`]. The functions are grouped by
 //! domain to keep the monolithic constructor readable.
 
-pub mod channels;
 pub mod agents;
+pub mod channels;
 pub mod devices;
 pub mod pipelines;
 pub mod security;

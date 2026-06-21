@@ -2,16 +2,16 @@
 //!
 //! This tool allows agents to spawn subagents for parallel task execution.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::Arc;
 use tracing::{info, warn};
 
+use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::acp::{AcpControlPlane, AcpSessionId, SpawnMode, SubagentConfig, ThreadBinding};
 use crate::channels::IncomingMessage;
-
-use super::{Tool, ToolContext, ToolExecutionResult};
 
 /// Tool for spawning subagents via ACP
 pub struct AcpSpawnTool {
@@ -46,7 +46,8 @@ struct SpawnSubagentArgs {
     /// Maximum execution time in seconds
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
-    /// Session ID to bind this subagent to. Future messages to this session will be routed to the subagent.
+    /// Session ID to bind this subagent to. Future messages to this session
+    /// will be routed to the subagent.
     #[serde(default)]
     pub bind_to_session: Option<String>,
 }
@@ -66,7 +67,9 @@ impl Tool for AcpSpawnTool {
     }
 
     fn description(&self) -> &str {
-        "Spawn a subagent to handle a specific task. The subagent can operate in 'run' mode (one-shot execution) or 'session' mode (persistent conversation). Use this for parallel task execution or delegating work to specialized agents."
+        "Spawn a subagent to handle a specific task. The subagent can operate in 'run' mode \
+         (one-shot execution) or 'session' mode (persistent conversation). Use this for parallel \
+         task execution or delegating work to specialized agents."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -316,7 +319,9 @@ impl Tool for AcpSessionTool {
     }
 
     fn description(&self) -> &str {
-        "Manage ACP (Agent Control Plane) sessions. List active sessions, get session info, terminate sessions, kill subagents, steer running subagents, or send messages to active subagents."
+        "Manage ACP (Agent Control Plane) sessions. List active sessions, get session info, \
+         terminate sessions, kill subagents, steer running subagents, or send messages to active \
+         subagents."
     }
 
     fn parameters_schema(&self) -> Value {

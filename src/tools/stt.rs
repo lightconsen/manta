@@ -3,10 +3,11 @@
 //! tool for transcribing audio to text.
 //! Uses OpenAI Whisper API as the backend.
 
+use std::path::Path;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use std::path::Path;
 use tracing::{info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
@@ -70,8 +71,8 @@ impl Tool for SttTool {
     }
 
     fn description(&self) -> &str {
-        "Transcribe audio to text using OpenAI Whisper API (requires OPENAI_API_KEY). \
-         Accepts common audio formats: mp3, wav, m4a, ogg, flac, webm, etc."
+        "Transcribe audio to text using OpenAI Whisper API (requires OPENAI_API_KEY). Accepts \
+         common audio formats: mp3, wav, m4a, ogg, flac, webm, etc."
     }
 
     fn parameters_schema(&self) -> Value {

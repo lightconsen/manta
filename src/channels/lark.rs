@@ -1,19 +1,22 @@
 //! Lark/Feishu Channel Implementation
 //!
-//! This module implements the Channel trait for Lark/Feishu using the ByteDance Lark Open Platform API.
-//! Requires: ByteDance developer account and bot registration.
+//! This module implements the Channel trait for Lark/Feishu using the ByteDance
+//! Lark Open Platform API. Requires: ByteDance developer account and bot
+//! registration.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
 
 use crate::channels::{
     Channel, ChannelCapabilities, ConversationId, FormattedContent, OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
 
 /// Lark API base URL
 const LARK_API_BASE: &str = "https://open.feishu.cn/open-apis";
@@ -184,8 +187,9 @@ impl LarkChannel {
 
     /// Check if a Lark user is authorized to interact.
     ///
-    /// Returns `(is_authorized, optional_reply_message)`. Callers (webhook handlers)
-    /// should send the reply to the user when `is_authorized` is false.
+    /// Returns `(is_authorized, optional_reply_message)`. Callers (webhook
+    /// handlers) should send the reply to the user when `is_authorized` is
+    /// false.
     pub async fn check_access(
         &self,
         user_id: &str,
@@ -230,7 +234,8 @@ impl LarkChannel {
         }
     }
 
-    /// Check if user is allowed (legacy; prefer `check_access` for policy-aware checks)
+    /// Check if user is allowed (legacy; prefer `check_access` for policy-aware
+    /// checks)
     fn is_user_allowed(&self, user_id: &str) -> bool {
         if self.config.allowed_users.is_empty() {
             return true;
@@ -625,7 +630,8 @@ mod tests {
     fn test_format_for_lark() {
         let input = "**bold** and *italic*";
         let output = LarkChannel::format_for_lark(input);
-        assert_eq!(output, "**bold** and *italic*"); // Lark supports standard markdown
+        assert_eq!(output, "**bold** and *italic*"); // Lark supports standard
+                                                     // markdown
     }
 
     #[test]

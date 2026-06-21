@@ -10,9 +10,11 @@
 //! "connection refused 127.0.0.1:5432"   → root: service down, fix: start postgres
 //! ```
 
-use crate::providers::{CompletionRequest, Message, Provider};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use crate::providers::{CompletionRequest, Message, Provider};
 
 /// Severity of a diagnosed issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -142,9 +144,7 @@ impl ErrorDiagnosisEngine {
 
     /// Create a diagnosis engine backed by an LLM for novel errors.
     pub fn with_provider(provider: Arc<dyn Provider>) -> Self {
-        Self {
-            provider: Some(provider),
-        }
+        Self { provider: Some(provider) }
     }
 
     /// Diagnose an error message and suggest fixes.
@@ -342,7 +342,8 @@ impl ErrorDiagnosisEngine {
 
         // Rule: service down (port unreachable but host is up).
         if lower.contains("connection refused") {
-            // Already handled above; this is a fallback for more specific cases.
+            // Already handled above; this is a fallback for more specific
+            // cases.
         }
         if lower.contains("could not connect to server")
             || lower.contains("refused")
@@ -576,10 +577,7 @@ mod tests {
     fn test_diagnose_command_not_found() {
         let engine = ErrorDiagnosisEngine::new();
         let diag = engine.heuristic_diagnose("bash: xdotool: command not found", "");
-        assert_eq!(
-            diag.root_causes[0].category,
-            ErrorCategory::MissingDependency
-        );
+        assert_eq!(diag.root_causes[0].category, ErrorCategory::MissingDependency);
         assert!(diag.severity >= Severity::Error);
     }
 
@@ -602,10 +600,7 @@ mod tests {
     fn test_diagnose_resource_exhaustion() {
         let engine = ErrorDiagnosisEngine::new();
         let diag = engine.heuristic_diagnose("ENOSPC: no space left on device", "");
-        assert_eq!(
-            diag.root_causes[0].category,
-            ErrorCategory::ResourceExhaustion
-        );
+        assert_eq!(diag.root_causes[0].category, ErrorCategory::ResourceExhaustion);
         assert_eq!(diag.severity, Severity::Critical);
     }
 
@@ -619,14 +614,8 @@ mod tests {
 
     #[test]
     fn test_parse_category() {
-        assert!(matches!(
-            parse_category("PermissionDenied"),
-            ErrorCategory::PermissionDenied
-        ));
-        assert!(matches!(
-            parse_category("network_issue"),
-            ErrorCategory::NetworkIssue
-        ));
+        assert!(matches!(parse_category("PermissionDenied"), ErrorCategory::PermissionDenied));
+        assert!(matches!(parse_category("network_issue"), ErrorCategory::NetworkIssue));
         assert!(matches!(parse_category("foo"), ErrorCategory::Unknown));
     }
 

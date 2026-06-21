@@ -8,14 +8,18 @@
 //! ## State Fields
 //!
 //! - `version`: State file format version (currently 1)
-//! - `bootstrap_seeded_at`: ISO 8601 timestamp when BOOTSTRAP.md was first created
-//! - `setup_completed_at`: ISO 8601 timestamp when setup completed (BOOTSTRAP.md deleted)
+//! - `bootstrap_seeded_at`: ISO 8601 timestamp when BOOTSTRAP.md was first
+//!   created
+//! - `setup_completed_at`: ISO 8601 timestamp when setup completed
+//!   (BOOTSTRAP.md deleted)
 //!
 //! ## State Transitions
 //!
 //! 1. **Brand new workspace**: No state file exists
-//! 2. **Bootstrap seeded**: `bootstrap_seeded_at` is set when BOOTSTRAP.md is created
-//! 3. **Setup completed**: `setup_completed_at` is set when BOOTSTRAP.md is deleted after user completes onboarding
+//! 2. **Bootstrap seeded**: `bootstrap_seeded_at` is set when BOOTSTRAP.md is
+//!    created
+//! 3. **Setup completed**: `setup_completed_at` is set when BOOTSTRAP.md is
+//!    deleted after user completes onboarding
 //!
 //! ## Workspace Detection
 //!
@@ -23,11 +27,13 @@
 //! - State file has `setup_completed_at`
 //! - State file has `bootstrap_seeded_at` AND BOOTSTRAP.md still exists
 //! - User content indicators exist (MEMORY.md, memory/ dir, .git/ dir)
-//! - Core template files have been customized (IDENTITY.md or USER.md differ from templates)
+//! - Core template files have been customized (IDENTITY.md or USER.md differ
+//!   from templates)
 
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::{debug, info, warn};
 
@@ -411,8 +417,9 @@ async fn is_git_available() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     fn create_test_workspace() -> (TempDir, WorkspaceManager) {
         let temp_dir = TempDir::new().unwrap();

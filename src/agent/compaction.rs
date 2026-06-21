@@ -1,7 +1,6 @@
 //! Pre-compaction Memory Flush Configuration
 //!
 //! Triggers a silent agent turn before compaction to store durable memories.
-//!
 
 use sha2::{Digest, Sha256};
 
@@ -39,17 +38,17 @@ Guidelines:
 /// Configuration for pre-compaction memory flush
 #[derive(Debug, Clone)]
 pub struct MemoryFlushConfig {
- /// Whether memory flush is enabled
+    /// Whether memory flush is enabled
     pub enabled: bool,
- /// Soft token threshold - flush triggers when session nears compaction
+    /// Soft token threshold - flush triggers when session nears compaction
     pub soft_threshold_tokens: usize,
- /// Force flush when transcript reaches this byte size
+    /// Force flush when transcript reaches this byte size
     pub force_flush_transcript_bytes: usize,
- /// Prompt shown to agent (should include YYYY-MM-DD placeholder)
+    /// Prompt shown to agent (should include YYYY-MM-DD placeholder)
     pub prompt: String,
- /// System prompt for the flush turn
+    /// System prompt for the flush turn
     pub system_prompt: String,
- /// Reserve tokens floor for compaction calculations
+    /// Reserve tokens floor for compaction calculations
     pub reserve_tokens_floor: usize,
 }
 
@@ -69,20 +68,21 @@ impl Default for MemoryFlushConfig {
 /// Session compaction state for tracking flush history
 #[derive(Debug, Clone, Default)]
 pub struct SessionCompactionState {
- /// Number of times compaction has run for this session
+    /// Number of times compaction has run for this session
     pub compaction_count: u64,
- /// Compaction count at last memory flush (for dedup)
+    /// Compaction count at last memory flush (for dedup)
     pub memory_flush_compaction_count: Option<u64>,
- /// SHA-256 hash (truncated) of last flushed context
+    /// SHA-256 hash (truncated) of last flushed context
     pub last_flush_context_hash: Option<String>,
 }
 
 /// Compute a lightweight context hash from session messages.
 /// Used for state-based flush deduplication.
 ///
-/// Hashes the message count plus the content of the last 3 user/assistant message pairs.
+/// Hashes the message count plus the content of the last 3 user/assistant
+/// message pairs.
 pub fn compute_context_hash(messages: &[(String, String)]) -> String {
- // Hash input: message count + content of last 3 user/assistant messages
+    // Hash input: message count + content of last 3 user/assistant messages
     let tail: Vec<_> = messages.iter().rev().take(6).collect(); // 3 pairs (user + assistant)
     let payload = format!(
         "{}:{}",
@@ -93,7 +93,7 @@ pub fn compute_context_hash(messages: &[(String, String)]) -> String {
             .join("\x00")
     );
     let hash = Sha256::digest(payload.as_bytes());
- // Truncate to 16 hex chars (collision-resistant enough for dedup)
+    // Truncate to 16 hex chars (collision-resistant enough for dedup)
     format!("{:x}", hash)[..16].to_string()
 }
 
@@ -111,17 +111,17 @@ pub fn should_run_memory_flush(
     let last_flush_compaction = state.memory_flush_compaction_count;
     let last_hash = state.last_flush_context_hash.as_deref();
 
- // Already flushed this compaction cycle
+    // Already flushed this compaction cycle
     if last_flush_compaction == Some(compaction_count) {
         return false;
     }
 
- // Context unchanged since last flush
+    // Context unchanged since last flush
     if last_hash == Some(current_hash) {
         return false;
     }
 
- // Check token threshold
+    // Check token threshold
     let threshold = context_window
         .saturating_sub(reserve_floor)
         .saturating_sub(soft_threshold);
@@ -190,17 +190,19 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_respects_compaction_count() {
- // Already flushed this cycle
+        // Already flushed this cycle
         assert!(!should_run_memory_flush(
-            5000, 8000,
+            5000,
+            8000,
             &make_config(1000, 2000),
             &make_state(5, Some(5), Some("xyz789")),
             "abc123",
         ));
 
- // Not flushed this cycle yet
+        // Not flushed this cycle yet
         assert!(should_run_memory_flush(
-            5000, 8000,
+            5000,
+            8000,
             &make_config(1000, 2000),
             &make_state(5, Some(4), Some("xyz789")),
             "abc123",
@@ -209,17 +211,19 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_respects_context_hash() {
- // Context unchanged since last flush
+        // Context unchanged since last flush
         assert!(!should_run_memory_flush(
-            5000, 8000,
+            5000,
+            8000,
             &make_config(1000, 2000),
             &make_state(5, Some(4), Some("abc123")),
             "abc123",
         ));
 
- // Context changed
+        // Context changed
         assert!(should_run_memory_flush(
-            5000, 8000,
+            5000,
+            8000,
             &make_config(1000, 2000),
             &make_state(5, Some(4), Some("xyz789")),
             "abc123",
@@ -228,17 +232,19 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_token_threshold() {
- // Tokens above threshold
+        // Tokens above threshold
         assert!(should_run_memory_flush(
-            6000, 8000,
+            6000,
+            8000,
             &make_config(1000, 2000),
             &make_state(0, None, None),
             "new",
         ));
 
- // Tokens below threshold
+        // Tokens below threshold
         assert!(!should_run_memory_flush(
-            1000, 8000,
+            1000,
+            8000,
             &make_config(1000, 2000),
             &make_state(0, None, None),
             "new",
@@ -267,14 +273,14 @@ mod tests {
         assert_eq!(state.last_flush_context_hash, None);
     }
 
- // ── Edge case tests for context hash deduplication ───────────────────────
+    // ── Edge case tests for context hash deduplication ───────────────────────
 
     #[test]
     fn test_compute_context_hash_empty_messages() {
         let messages: Vec<(String, String)> = vec![];
         let hash = compute_context_hash(&messages);
 
- // Should produce a valid hash even for empty input
+        // Should produce a valid hash even for empty input
         assert_eq!(hash.len(), 16, "Hash should be 16 hex characters");
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -285,7 +291,7 @@ mod tests {
         let hash = compute_context_hash(&messages);
 
         assert_eq!(hash.len(), 16);
- // Should be different from empty hash
+        // Should be different from empty hash
         let empty_hash = compute_context_hash(&[]);
         assert_ne!(hash, empty_hash);
     }
@@ -300,14 +306,14 @@ mod tests {
         let hash = compute_context_hash(&messages);
 
         assert_eq!(hash.len(), 16);
- // Hash should still be deterministic
+        // Hash should still be deterministic
         let hash2 = compute_context_hash(&messages);
         assert_eq!(hash, hash2);
     }
 
     #[test]
     fn test_compute_context_hash_uses_last_six_messages() {
- // Create 10 messages - hash uses last 6 messages plus total count
+        // Create 10 messages - hash uses last 6 messages plus total count
         let messages: Vec<(String, String)> = (0..10)
             .map(|i| {
                 (
@@ -319,7 +325,7 @@ mod tests {
 
         let hash_with_10 = compute_context_hash(&messages);
 
- // Create 6 messages with same content as last 6 of the 10-message set
+        // Create 6 messages with same content as last 6 of the 10-message set
         let messages_6: Vec<(String, String)> = (4..10)
             .map(|i| {
                 (
@@ -331,19 +337,21 @@ mod tests {
 
         let hash_with_6 = compute_context_hash(&messages_6);
 
- // Hashes should be DIFFERENT because message count differs (10 vs 6)
- // even though the last 6 messages have the same content
+        // Hashes should be DIFFERENT because message count differs (10 vs 6)
+        // even though the last 6 messages have the same content
         assert_ne!(hash_with_10, hash_with_6, "Hash should differ due to message count");
 
- // Now verify that changing only the early messages (not in last 6) keeps hash same
+        // Now verify that changing only the early messages (not in last 6) keeps hash
+        // same
         let mut messages_altered_early = messages.clone();
- // Change first message (won't affect hash since only last 6 are used)
+        // Change first message (won't affect hash since only last 6 are used)
         messages_altered_early[0] = ("user".to_string(), "Changed".to_string());
 
         let _hash_altered = compute_context_hash(&messages_altered_early);
 
- // This assertion would fail with current implementation since message count is included
- // The hash includes both count AND last 6 messages for robust deduplication
+        // This assertion would fail with current implementation since message
+        // count is included The hash includes both count AND last 6
+        // messages for robust deduplication
     }
 
     #[test]
@@ -365,9 +373,10 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_all_dedup_conditions() {
- // Test when all dedup conditions are met (should not flush)
+        // Test when all dedup conditions are met (should not flush)
         let result = should_run_memory_flush(
-            10000, 8000,
+            10000,
+            8000,
             &make_config(1000, 2000),
             &make_state(5, Some(5), Some("hash123")),
             "hash123",
@@ -377,9 +386,10 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_only_compaction_dedup() {
- // Only compaction count dedup (hash is different)
+        // Only compaction count dedup (hash is different)
         let result = should_run_memory_flush(
-            10000, 8000,
+            10000,
+            8000,
             &make_config(1000, 2000),
             &make_state(5, Some(5), Some("hash456")),
             "hash123",
@@ -389,9 +399,10 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_only_hash_dedup() {
- // Only hash dedup (compaction count is different)
+        // Only hash dedup (compaction count is different)
         let result = should_run_memory_flush(
-            10000, 8000,
+            10000,
+            8000,
             &make_config(1000, 2000),
             &make_state(5, Some(4), Some("hash123")),
             "hash123",
@@ -401,24 +412,26 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_neither_dedup_but_below_threshold() {
- // Neither dedup condition met, but below token threshold
+        // Neither dedup condition met, but below token threshold
         let result = should_run_memory_flush(
-            100, 8000,
+            100,
+            8000,
             &make_config(1000, 2000),
             &make_state(5, Some(4), Some("hash456")),
             "hash123",
         );
- // threshold = 8000 - 2000 - 1000 = 5000
- // 100 < 5000, so should not flush
+        // threshold = 8000 - 2000 - 1000 = 5000
+        // 100 < 5000, so should not flush
         assert!(!result, "Should not flush when below token threshold");
     }
 
     #[test]
     fn test_should_run_flush_exactly_at_threshold() {
- // Exactly at threshold
+        // Exactly at threshold
         let threshold = 8000 - 2000 - 1000; // 5000
         let result = should_run_memory_flush(
-            threshold, 8000,
+            threshold,
+            8000,
             &make_config(1000, 2000),
             &make_state(0, None, None),
             "hash123",
@@ -428,10 +441,11 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_one_below_threshold() {
- // One below threshold
+        // One below threshold
         let threshold = 8000 - 2000 - 1000; // 5000
         let result = should_run_memory_flush(
-            threshold - 1, 8000,
+            threshold - 1,
+            8000,
             &make_config(1000, 2000),
             &make_state(0, None, None),
             "hash123",
@@ -441,11 +455,12 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_with_zero_context_window() {
- // Edge case: zero context window
- // threshold = 0 - 0 - 1000 = 0 (saturating_sub)
- // With 100 tokens, 100 >= 0, should flush
+        // Edge case: zero context window
+        // threshold = 0 - 0 - 1000 = 0 (saturating_sub)
+        // With 100 tokens, 100 >= 0, should flush
         let result = should_run_memory_flush(
-            100, 0,
+            100,
+            0,
             &make_config(1000, 0),
             &make_state(0, None, None),
             "hash123",
@@ -455,9 +470,10 @@ mod tests {
 
     #[test]
     fn test_should_run_flush_new_session() {
- // Brand new session with no flush history
+        // Brand new session with no flush history
         let result = should_run_memory_flush(
-            10000, 8000,
+            10000,
+            8000,
             &make_config(1000, 2000),
             &make_state(0, None, None),
             "hash123",

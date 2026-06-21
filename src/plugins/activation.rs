@@ -33,10 +33,7 @@ impl PluginManifest {
     ///
     /// Returns an empty vec if no triggers are defined.
     pub fn get_triggers(&self) -> Vec<PluginTrigger> {
-        self.triggers
-            .as_ref()
-            .map(|t| t.clone())
-            .unwrap_or_default()
+        self.triggers.clone().unwrap_or_default()
     }
 
     /// Check if this plugin has an OnStartup trigger.
@@ -267,10 +264,11 @@ impl ActivationPlanner {
         // (they won't be in lazy_set if only OnStartup is defined)
         let manifests = self.discover_manifests().await?;
         for (id, manifest, _path) in &manifests {
-            if manifest.has_startup_trigger() && plan.load_order.contains(id) {
-                if !startup.contains(id) {
-                    startup.push(id.clone());
-                }
+            if manifest.has_startup_trigger()
+                && plan.load_order.contains(id)
+                && !startup.contains(id)
+            {
+                startup.push(id.clone());
             }
         }
 
@@ -331,8 +329,9 @@ pub struct ActivationPlan {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     fn create_minimal_manifest(id: &str, name: &str) -> serde_json::Value {
         serde_json::json!({

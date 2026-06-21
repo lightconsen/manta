@@ -1,9 +1,10 @@
 //! List capabilities tool — report what OS-specific capabilities are available.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Information about a single capability set.
 #[derive(Debug, Clone, Serialize)]
@@ -38,11 +39,10 @@ impl Tool for ListCapabilitiesTool {
     }
 
     fn description(&self) -> &str {
-        "List all OS-specific capability sets available on this host. \
-         Returns which platform controls (Linux Server, Desktop, etc.) \
-         are active and what tools they provide. \
-         Use when the user asks 'what can you do', 'what capabilities do you have', \
-         or to self-diagnose why a platform tool is missing."
+        "List all OS-specific capability sets available on this host. Returns which platform \
+         controls (Linux Server, Desktop, etc.) are active and what tools they provide. Use when \
+         the user asks 'what can you do', 'what capabilities do you have', or to self-diagnose why \
+         a platform tool is missing."
     }
 
     fn parameters_schema(&self) -> Value {

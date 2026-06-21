@@ -39,7 +39,8 @@ pub struct StandingOrderDef {
     /// The agent ID to target when this order fires.
     pub agent_id: String,
 
-    /// Cron expression (six-field: sec min hour day-of-month month day-of-week).
+    /// Cron expression (six-field: sec min hour day-of-month month
+    /// day-of-week).
     pub schedule: String,
 
     /// The prompt to send to the agent each time the schedule fires.

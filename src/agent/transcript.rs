@@ -9,28 +9,29 @@
 //! - File-based storage with automatic directory creation
 //! - Export API integration
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 /// A single message in a transcript.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptMessage {
- /// Role: "user", "assistant", "system", "tool"
+    /// Role: "user", "assistant", "system", "tool"
     pub role: String,
- /// Message content.
+    /// Message content.
     pub content: String,
- /// Timestamp.
+    /// Timestamp.
     pub timestamp: DateTime<Utc>,
- /// Optional metadata (tool name, etc.).
+    /// Optional metadata (tool name, etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 }
 
 impl TranscriptMessage {
- /// Create a new transcript message.
+    /// Create a new transcript message.
     pub fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: role.into(),
@@ -40,7 +41,7 @@ impl TranscriptMessage {
         }
     }
 
- /// Add metadata.
+    /// Add metadata.
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = Some(metadata);
         self
@@ -50,30 +51,30 @@ impl TranscriptMessage {
 /// A conversation transcript for a single session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transcript {
- /// Session ID.
+    /// Session ID.
     pub session_id: String,
- /// Channel name.
+    /// Channel name.
     pub channel: String,
- /// User ID (peer).
+    /// User ID (peer).
     pub peer: String,
- /// Conversation scope.
+    /// Conversation scope.
     pub scope: String,
- /// When the transcript started.
+    /// When the transcript started.
     pub started_at: DateTime<Utc>,
- /// When the transcript was last updated.
+    /// When the transcript was last updated.
     pub updated_at: DateTime<Utc>,
- /// Messages in the conversation.
+    /// Messages in the conversation.
     pub messages: Vec<TranscriptMessage>,
- /// Optional title (auto-generated or user-set).
+    /// Optional title (auto-generated or user-set).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
- /// Optional tags.
+    /// Optional tags.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
 }
 
 impl Transcript {
- /// Create a new transcript.
+    /// Create a new transcript.
     pub fn new(
         session_id: impl Into<String>,
         channel: impl Into<String>,
@@ -94,50 +95,50 @@ impl Transcript {
         }
     }
 
- /// Append a message.
+    /// Append a message.
     pub fn append(&mut self, msg: TranscriptMessage) {
         self.messages.push(msg);
         self.updated_at = Utc::now();
     }
 
- /// Append a user message.
+    /// Append a user message.
     pub fn append_user(&mut self, content: impl Into<String>) {
         self.append(TranscriptMessage::new("user", content));
     }
 
- /// Append an assistant message.
+    /// Append an assistant message.
     pub fn append_assistant(&mut self, content: impl Into<String>) {
         self.append(TranscriptMessage::new("assistant", content));
     }
 
- /// Append a system message.
+    /// Append a system message.
     pub fn append_system(&mut self, content: impl Into<String>) {
         self.append(TranscriptMessage::new("system", content));
     }
 
- /// Append a tool result message.
+    /// Append a tool result message.
     pub fn append_tool(&mut self, content: impl Into<String>, tool_name: impl Into<String>) {
         let msg = TranscriptMessage::new("tool", content)
             .with_metadata(serde_json::json!({ "tool": tool_name.into() }));
         self.append(msg);
     }
 
- /// Set the transcript title.
+    /// Set the transcript title.
     pub fn set_title(&mut self, title: impl Into<String>) {
         self.title = Some(title.into());
     }
 
- /// Add a tag.
+    /// Add a tag.
     pub fn add_tag(&mut self, tag: impl Into<String>) {
         self.tags.get_or_insert_with(Vec::new).push(tag.into());
     }
 
- /// Get message count.
+    /// Get message count.
     pub fn message_count(&self) -> usize {
         self.messages.len()
     }
 
- /// Get the total content size in bytes.
+    /// Get the total content size in bytes.
     pub fn content_size(&self) -> usize {
         self.messages.iter().map(|m| m.content.len()).sum()
     }
@@ -146,13 +147,13 @@ impl Transcript {
 /// Export format for transcripts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptFormat {
- /// JSON with full metadata.
+    /// JSON with full metadata.
     Json,
- /// Markdown with headers and code blocks.
+    /// Markdown with headers and code blocks.
     Markdown,
- /// Plain text.
+    /// Plain text.
     Text,
- /// HTML page.
+    /// HTML page.
     Html,
 }
 
@@ -168,7 +169,7 @@ impl std::fmt::Display for TranscriptFormat {
 }
 
 impl TranscriptFormat {
- /// File extension for this format.
+    /// File extension for this format.
     pub fn extension(&self) -> &'static str {
         match self {
             TranscriptFormat::Json => "json",
@@ -178,7 +179,7 @@ impl TranscriptFormat {
         }
     }
 
- /// MIME type for this format.
+    /// MIME type for this format.
     pub fn mime_type(&self) -> &'static str {
         match self {
             TranscriptFormat::Json => "application/json",
@@ -379,14 +380,14 @@ fn html_escape(text: &str) -> String {
 
 /// File-based transcript store.
 pub struct TranscriptStore {
- /// Root directory for transcript storage.
+    /// Root directory for transcript storage.
     root_dir: PathBuf,
- /// In-memory buffer of active transcripts (session_id -> Transcript).
+    /// In-memory buffer of active transcripts (session_id -> Transcript).
     active: std::sync::Mutex<HashMap<String, Transcript>>,
 }
 
 impl TranscriptStore {
- /// Create a new transcript store.
+    /// Create a new transcript store.
     pub fn new(root_dir: impl Into<PathBuf>) -> Self {
         let root_dir = root_dir.into();
         Self {
@@ -395,14 +396,14 @@ impl TranscriptStore {
         }
     }
 
- /// Initialize the store (create directories).
+    /// Initialize the store (create directories).
     pub async fn init(&self) -> std::io::Result<()> {
         tokio::fs::create_dir_all(&self.root_dir).await?;
         debug!("Transcript store initialized at {:?}", self.root_dir);
         Ok(())
     }
 
- /// Get or create a transcript for a session.
+    /// Get or create a transcript for a session.
     pub fn get_or_create(
         &self,
         session_id: impl Into<String>,
@@ -418,7 +419,7 @@ impl TranscriptStore {
         active
     }
 
- /// Append a message to a session's transcript.
+    /// Append a message to a session's transcript.
     pub fn append(
         &self,
         session_id: &str,
@@ -433,13 +434,13 @@ impl TranscriptStore {
         }
     }
 
- /// Get a transcript by session ID.
+    /// Get a transcript by session ID.
     pub fn get(&self, session_id: &str) -> Option<Transcript> {
         let active = self.active.lock().expect("lock poisoned");
         active.get(session_id).cloned()
     }
 
- /// Export a transcript to a file.
+    /// Export a transcript to a file.
     pub async fn export(
         &self,
         session_id: &str,
@@ -463,7 +464,7 @@ impl TranscriptStore {
         Ok(path)
     }
 
- /// Export all active transcripts.
+    /// Export all active transcripts.
     pub async fn export_all(&self, format: TranscriptFormat) -> Vec<Result<PathBuf, String>> {
         let session_ids = {
             let active = self.active.lock().expect("lock poisoned");
@@ -477,17 +478,17 @@ impl TranscriptStore {
         results
     }
 
- /// Flush a transcript to disk (persist the active buffer).
+    /// Flush a transcript to disk (persist the active buffer).
     pub async fn flush(&self, session_id: &str) -> Result<PathBuf, String> {
         self.export(session_id, TranscriptFormat::Json).await
     }
 
- /// Flush all active transcripts.
+    /// Flush all active transcripts.
     pub async fn flush_all(&self) -> Vec<Result<PathBuf, String>> {
         self.export_all(TranscriptFormat::Json).await
     }
 
- /// Load a transcript from a JSON file.
+    /// Load a transcript from a JSON file.
     pub async fn load(&self, filename: &str) -> Result<Transcript, String> {
         let path = self.root_dir.join(filename);
         let content = tokio::fs::read_to_string(&path)
@@ -497,7 +498,7 @@ impl TranscriptStore {
             .map_err(|e| format!("Failed to parse transcript JSON: {}", e))
     }
 
- /// List all transcript files in the store.
+    /// List all transcript files in the store.
     pub async fn list_files(&self) -> Vec<PathBuf> {
         let mut files = Vec::new();
         if let Ok(mut entries) = tokio::fs::read_dir(&self.root_dir).await {
@@ -512,7 +513,7 @@ impl TranscriptStore {
         files
     }
 
- /// Get store stats.
+    /// Get store stats.
     pub async fn stats(&self) -> TranscriptStoreStats {
         let (active_sessions, total_messages) = {
             let active = self.active.lock().expect("lock poisoned");
@@ -526,13 +527,13 @@ impl TranscriptStore {
         }
     }
 
- /// Remove a transcript from active memory.
+    /// Remove a transcript from active memory.
     pub fn remove(&self, session_id: &str) -> Option<Transcript> {
         let mut active = self.active.lock().expect("lock poisoned");
         active.remove(session_id)
     }
 
- /// Clear all active transcripts (files are preserved).
+    /// Clear all active transcripts (files are preserved).
     pub fn clear_active(&self) {
         let mut active = self.active.lock().expect("lock poisoned");
         active.clear();
@@ -560,8 +561,9 @@ fn sanitize_filename(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn test_transcript_append() {

@@ -4,6 +4,7 @@
 //! and session manager that make up the agent runtime.
 
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -36,8 +37,8 @@ pub async fn init_acp(
     } else {
         if config.storage.storage_type == "sqlite" {
             warn!(
-                "Storage type is 'database' but no SessionStore is available; \
-                 ACP subagent sessions will not persist. Check the SQLite pool configuration."
+                "Storage type is 'database' but no SessionStore is available; ACP subagent \
+                 sessions will not persist. Check the SQLite pool configuration."
             );
         } else {
             info!("ACP control plane running without SessionStore (ephemeral subagent sessions)");
@@ -113,7 +114,8 @@ pub async fn configure_acp_agent_builder(
         .await;
     } else {
         warn!(
-            "No default LLM provider available — ACP subagent spawning will fail until a provider is configured"
+            "No default LLM provider available — ACP subagent spawning will fail until a provider \
+             is configured"
         );
     }
 }
@@ -130,7 +132,8 @@ pub async fn init_agent_state() -> crate::Result<(
     Ok((skills_manager, agent_registry, session_manager))
 }
 
-/// Convenience helper that wires the ACP builder and returns the agent subsystem bundle.
+/// Convenience helper that wires the ACP builder and returns the agent
+/// subsystem bundle.
 #[allow(clippy::too_many_arguments)]
 pub async fn init_agents(
     config: &GatewayConfig,

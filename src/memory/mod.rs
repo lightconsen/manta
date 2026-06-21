@@ -3,9 +3,10 @@
 //! Provides persistent storage for conversations, messages, and memories
 //! with support for semantic search using embeddings.
 
+use std::time::SystemTime;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
 
 pub mod compressed_store;
 pub mod db;

@@ -1,4 +1,5 @@
-//! Headless computer adapter — virtual display for CI/CD and server environments.
+//! Headless computer adapter — virtual display for CI/CD and server
+//! environments.
 //!
 //! When no physical display is available, this adapter spins up a virtual
 //! framebuffer (Xvfb on Linux) so that desktop automation can still run.
@@ -10,16 +11,17 @@
 //!                                     └── click/type (xdotool via DISPLAY)
 //! ```
 
-use crate::computer::screenshot_encoder::maybe_encode_screenshot;
-use crate::computer::{
-    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton,
-    Rect, Result, ScrollDirection, Screenshot, UiElement, WaitCondition,
-};
-use crate::tools::ToolRegistry;
 use std::io::Write;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
+
+use crate::computer::screenshot_encoder::maybe_encode_screenshot;
+use crate::computer::{
+    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton, Rect,
+    Result, Screenshot, ScrollDirection, UiElement, WaitCondition,
+};
+use crate::tools::ToolRegistry;
 
 // ── Virtual Display abstraction ────────────────────────────────────────────
 
@@ -70,18 +72,12 @@ impl XvfbDisplay {
                     });
                 }
                 Err(e) => {
-                    tracing::debug!(
-                        "Xvfb on display {} failed to start: {}",
-                        display_num,
-                        e
-                    );
+                    tracing::debug!("Xvfb on display {} failed to start: {}", display_num, e);
                     continue;
                 }
             }
         }
-        Err(ComputerError::Other(
-            "Could not start Xvfb on any display 99-199".to_string(),
-        ))
+        Err(ComputerError::Other("Could not start Xvfb on any display 99-199".to_string()))
     }
 
     async fn try_start(
@@ -144,8 +140,8 @@ impl VirtualDisplay for XvfbDisplay {
             Ok(output) if output.status.success() => {
                 let bytes = output.stdout;
                 // Write to temp file and apply ScreenshotEncoder
-                let temp_path = std::env::temp_dir()
-                    .join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
+                let temp_path =
+                    std::env::temp_dir().join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
                 let _ = tokio::fs::write(&temp_path, &bytes).await;
                 let encoded = maybe_encode_screenshot(&temp_path).await;
                 let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(bytes);
@@ -183,9 +179,7 @@ impl VirtualDisplay for XvfbDisplay {
             .map_err(|e| ComputerError::ScreenshotFailed(format!("xwd failed: {}", e)))?;
 
         if !xwd_output.status.success() {
-            return Err(ComputerError::ScreenshotFailed(
-                "xwd capture failed".to_string(),
-            ));
+            return Err(ComputerError::ScreenshotFailed("xwd capture failed".to_string()));
         }
 
         let mut child = tokio::process::Command::new("convert")
@@ -200,10 +194,9 @@ impl VirtualDisplay for XvfbDisplay {
         {
             use tokio::io::AsyncWriteExt;
             if let Some(mut stdin) = child.stdin.take() {
-                stdin
-                    .write_all(&xwd_output.stdout)
-                    .await
-                    .map_err(|e| ComputerError::ScreenshotFailed(format!("convert stdin: {}", e)))?;
+                stdin.write_all(&xwd_output.stdout).await.map_err(|e| {
+                    ComputerError::ScreenshotFailed(format!("convert stdin: {}", e))
+                })?;
             }
         }
 
@@ -213,15 +206,13 @@ impl VirtualDisplay for XvfbDisplay {
             .map_err(|e| ComputerError::ScreenshotFailed(format!("convert failed: {}", e)))?;
 
         if !convert_output.status.success() {
-            return Err(ComputerError::ScreenshotFailed(
-                "xwd→png conversion failed".to_string(),
-            ));
+            return Err(ComputerError::ScreenshotFailed("xwd→png conversion failed".to_string()));
         }
 
         let bytes = convert_output.stdout;
         // Write to temp file and apply ScreenshotEncoder
-        let temp_path = std::env::temp_dir()
-            .join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
+        let temp_path =
+            std::env::temp_dir().join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
         let _ = tokio::fs::write(&temp_path, &bytes).await;
         let encoded = maybe_encode_screenshot(&temp_path).await;
         let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(bytes);
@@ -231,10 +222,8 @@ impl VirtualDisplay for XvfbDisplay {
             let _ = tokio::fs::remove_file(&encoded).await;
         }
 
-        let base64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &final_bytes,
-        );
+        let base64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &final_bytes);
 
         Ok(Screenshot {
             base64,
@@ -292,10 +281,7 @@ impl HeadlessComputerAdapter {
         {
             match XvfbDisplay::start(1920, 1080).await {
                 Ok(display) => {
-                    tracing::info!(
-                        "Xvfb virtual display started on {}",
-                        display.display()
-                    );
+                    tracing::info!("Xvfb virtual display started on {}", display.display());
                     return Self {
                         registry,
                         virtual_display: Some(Box::new(display)),
@@ -333,14 +319,11 @@ impl ComputerAdapter for HeadlessComputerAdapter {
         match action {
             DesktopAction::Screenshot { region } => {
                 let ss = self.screenshot(region).await?;
-                Ok(ActionResult::success("screenshot captured").with_data(
-                    serde_json::to_value(&ss).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success("screenshot captured")
+                    .with_data(serde_json::to_value(&ss).unwrap_or_default()))
             }
             DesktopAction::Click { target, button } => {
-                let display = self
-                    .display()
-                    .ok_or_else(|| ComputerError::NoDisplay)?;
+                let display = self.display().ok_or_else(|| ComputerError::NoDisplay)?;
                 let (x, y) = match target {
                     ClickTarget::Coordinate(p) => (p.x, p.y),
                     _ => {
@@ -379,9 +362,7 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 Ok(ActionResult::success(format!("Clicked at {}, {}", x, y)))
             }
             DesktopAction::Type { text } => {
-                let display = self
-                    .display()
-                    .ok_or_else(|| ComputerError::NoDisplay)?;
+                let display = self.display().ok_or_else(|| ComputerError::NoDisplay)?;
                 let output = tokio::process::Command::new("xdotool")
                     .env("DISPLAY", display)
                     .args(["type", &text])
@@ -396,9 +377,7 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 Ok(ActionResult::success(format!("Typed: {}", text)))
             }
             DesktopAction::KeyPress { keys } => {
-                let display = self
-                    .display()
-                    .ok_or_else(|| ComputerError::NoDisplay)?;
+                let display = self.display().ok_or_else(|| ComputerError::NoDisplay)?;
                 let key_str = keys.join("+");
                 let output = tokio::process::Command::new("xdotool")
                     .env("DISPLAY", display)
@@ -423,18 +402,14 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 if let Some(d) = self.display() {
                     cmd.env("DISPLAY", d);
                 }
-                let child = cmd
-                    .spawn()
-                    .map_err(|e| {
-                        ComputerError::ToolFailed(format!("Failed to launch {}: {}", name, e))
-                    })?;
+                let child = cmd.spawn().map_err(|e| {
+                    ComputerError::ToolFailed(format!("Failed to launch {}: {}", name, e))
+                })?;
                 drop(child);
                 if wait_for_ready {
                     let ready = self
                         .wait_for(
-                            WaitCondition::ProcessRunning {
-                                name: name.clone(),
-                            },
+                            WaitCondition::ProcessRunning { name: name.clone() },
                             Duration::from_secs(10),
                         )
                         .await?;
@@ -554,10 +529,7 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                         String::from_utf8_lossy(&output.stderr).to_string(),
                     ));
                 }
-                Ok(ActionResult::success(format!(
-                    "Dragged from {},{} to {},{}",
-                    x1, y1, x2, y2
-                )))
+                Ok(ActionResult::success(format!("Dragged from {},{} to {},{}", x1, y1, x2, y2)))
             }
             DesktopAction::KeySequence { keys, delays_ms } => {
                 let display = self.display().ok_or_else(|| ComputerError::NoDisplay)?;
@@ -584,11 +556,9 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 }
                 Ok(ActionResult::success(format!("Key sequence executed: {:?}", keys)))
             }
-            DesktopAction::ActivateWindow { .. } => {
-                Err(ComputerError::Other(
-                    "Window activation not available in headless mode".to_string(),
-                ))
-            }
+            DesktopAction::ActivateWindow { .. } => Err(ComputerError::Other(
+                "Window activation not available in headless mode".to_string(),
+            )),
             DesktopAction::Wait { milliseconds } => {
                 tokio::time::sleep(Duration::from_millis(milliseconds)).await;
                 Ok(ActionResult::success(format!("Waited {}ms", milliseconds)))
@@ -600,9 +570,8 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 })
                 .await
                 .map_err(|e| ComputerError::Other(format!("System monitor failed: {}", e)))?;
-                Ok(ActionResult::success("System status retrieved").with_data(
-                    serde_json::to_value(&status).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success("System status retrieved")
+                    .with_data(serde_json::to_value(&status).unwrap_or_default()))
             }
             DesktopAction::ListProcesses { filter, limit } => {
                 let procs = tokio::task::spawn_blocking(move || {
@@ -611,9 +580,8 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 })
                 .await
                 .map_err(|e| ComputerError::Other(format!("Process list failed: {}", e)))?;
-                Ok(ActionResult::success(format!("Found {} processes", procs.len())).with_data(
-                    serde_json::to_value(&procs).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(format!("Found {} processes", procs.len()))
+                    .with_data(serde_json::to_value(&procs).unwrap_or_default()))
             }
             DesktopAction::KillProcess { pid, name, force } => {
                 let killed_pid = tokio::task::spawn_blocking(move || {
@@ -624,43 +592,33 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 .map_err(|e| ComputerError::Other(format!("Kill failed: {}", e)))??;
                 Ok(ActionResult::success(format!("Killed process {}", killed_pid)))
             }
-            DesktopAction::WatchDirectory { path } => {
-                Ok(ActionResult::success(format!(
-                    "Watch directory request accepted for {} (headless adapter does not persist watchers)",
-                    path
-                )))
-            }
-            DesktopAction::UnwatchDirectory { path } => {
-                Ok(ActionResult::success(format!(
-                    "Unwatch directory request accepted for {} (headless adapter does not persist watchers)",
-                    path
-                )))
-            }
-            DesktopAction::WatchFile { path } => {
-                Ok(ActionResult::success(format!(
-                    "Watch file request accepted for {} (headless adapter does not persist watchers)",
-                    path
-                )))
-            }
-            DesktopAction::UnwatchFile { path } => {
-                Ok(ActionResult::success(format!(
-                    "Unwatch file request accepted for {} (headless adapter does not persist watchers)",
-                    path
-                )))
-            }
-            DesktopAction::ListPorts {
-                filter_protocol,
-                filter_state,
-            } => {
+            DesktopAction::WatchDirectory { path } => Ok(ActionResult::success(format!(
+                "Watch directory request accepted for {} (headless adapter does not persist \
+                 watchers)",
+                path
+            ))),
+            DesktopAction::UnwatchDirectory { path } => Ok(ActionResult::success(format!(
+                "Unwatch directory request accepted for {} (headless adapter does not persist \
+                 watchers)",
+                path
+            ))),
+            DesktopAction::WatchFile { path } => Ok(ActionResult::success(format!(
+                "Watch file request accepted for {} (headless adapter does not persist watchers)",
+                path
+            ))),
+            DesktopAction::UnwatchFile { path } => Ok(ActionResult::success(format!(
+                "Unwatch file request accepted for {} (headless adapter does not persist watchers)",
+                path
+            ))),
+            DesktopAction::ListPorts { filter_protocol, filter_state } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let protocol_ref = filter_protocol.as_deref();
                 let state_ref = filter_state.as_deref();
                 match inspector.list_ports(protocol_ref, state_ref) {
-                    Ok(entries) => Ok(ActionResult::success(format!(
-                        "Found {} socket entries",
-                        entries.len()
-                    ))
-                    .with_data(serde_json::to_value(&entries).unwrap_or_default())),
+                    Ok(entries) => {
+                        Ok(ActionResult::success(format!("Found {} socket entries", entries.len()))
+                            .with_data(serde_json::to_value(&entries).unwrap_or_default()))
+                    }
                     Err(e) => Err(ComputerError::Other(e.to_string())),
                 }
             }
@@ -680,11 +638,7 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 }
                 Ok(ar)
             }
-            DesktopAction::TestTcpConnect {
-                target,
-                port,
-                timeout_ms,
-            } => {
+            DesktopAction::TestTcpConnect { target, port, timeout_ms } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let timeout = timeout_ms.map(std::time::Duration::from_millis);
                 let result = inspector.test_tcp_connect(&target, port, timeout).await;
@@ -704,11 +658,10 @@ impl ComputerAdapter for HeadlessComputerAdapter {
             DesktopAction::ListFirewallRules => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 match inspector.list_firewall_rules().await {
-                    Ok(rules) => Ok(ActionResult::success(format!(
-                        "Found {} firewall rules",
-                        rules.len()
-                    ))
-                    .with_data(serde_json::to_value(&rules).unwrap_or_default())),
+                    Ok(rules) => {
+                        Ok(ActionResult::success(format!("Found {} firewall rules", rules.len()))
+                            .with_data(serde_json::to_value(&rules).unwrap_or_default()))
+                    }
                     Err(e) => Err(ComputerError::Other(e.to_string())),
                 }
             }
@@ -719,30 +672,22 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 })
                 .await
                 .map_err(|e| ComputerError::Other(format!("Restart failed: {}", e)))??;
-                Ok(ActionResult::success(format!(
-                    "Process restarted, new PID: {}",
-                    new_pid
-                )))
+                Ok(ActionResult::success(format!("Process restarted, new PID: {}", new_pid)))
             }
-            DesktopAction::SetProcessPriority {
-                pid,
-                name,
-                priority,
-            } => {
+            DesktopAction::SetProcessPriority { pid, name, priority } => {
                 let updated_pid = tokio::task::spawn_blocking(move || {
                     let mut monitor = crate::computer::system::SystemMonitor::new();
                     monitor.set_process_priority(pid, name.as_deref(), priority)
                 })
                 .await
-                .map_err(|e| {
-                    ComputerError::Other(format!("Priority change failed: {}", e))
-                })??;
-                Ok(ActionResult::success(format!(
-                    "Priority set for PID {}",
-                    updated_pid
-                )))
+                .map_err(|e| ComputerError::Other(format!("Priority change failed: {}", e)))??;
+                Ok(ActionResult::success(format!("Priority set for PID {}", updated_pid)))
             }
-            DesktopAction::InstallPackage { manager, packages, timeout_secs } => {
+            DesktopAction::InstallPackage {
+                manager,
+                packages,
+                timeout_secs,
+            } => {
                 let count = packages.len();
                 let (cmd, args) = match manager {
                     crate::computer::PackageManager::Brew => {
@@ -771,7 +716,11 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                         ("apk", a)
                     }
                     crate::computer::PackageManager::Winget => {
-                        let mut a = vec!["install".to_string(), "--accept-source-agreements".to_string(), "--accept-package-agreements".to_string()];
+                        let mut a = vec![
+                            "install".to_string(),
+                            "--accept-source-agreements".to_string(),
+                            "--accept-package-agreements".to_string(),
+                        ];
                         a.extend(packages);
                         ("winget", a)
                     }
@@ -792,14 +741,23 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(timeout_secs),
                         cmd.output(),
-                    ).await {
-                        Ok(r) => r.map_err(|e| ComputerError::ToolFailed(format!("Package install failed: {}", e)))?,
-                        Err(_) => return Err(ComputerError::ToolFailed(
-                            format!("Package install timed out after {}s", timeout_secs)
-                        )),
+                    )
+                    .await
+                    {
+                        Ok(r) => r.map_err(|e| {
+                            ComputerError::ToolFailed(format!("Package install failed: {}", e))
+                        })?,
+                        Err(_) => {
+                            return Err(ComputerError::ToolFailed(format!(
+                                "Package install timed out after {}s",
+                                timeout_secs
+                            )))
+                        }
                     }
                 } else {
-                    cmd.output().await.map_err(|e| ComputerError::ToolFailed(format!("Package install failed: {}", e)))?
+                    cmd.output().await.map_err(|e| {
+                        ComputerError::ToolFailed(format!("Package install failed: {}", e))
+                    })?
                 };
                 if output.status.success() {
                     Ok(ActionResult::success(format!(
@@ -813,12 +771,19 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                     )))
                 }
             }
-            DesktopAction::BrowseFiles { path, filter_description, max_results } => {
+            DesktopAction::BrowseFiles {
+                path,
+                filter_description,
+                max_results,
+            } => {
                 let max = max_results.unwrap_or(50);
                 let mut entries = Vec::new();
-                let mut read_dir = tokio::fs::read_dir(&path).await
-                    .map_err(|e| ComputerError::ToolFailed(format!("Cannot read directory: {}", e)))?;
-                while let Some(entry) = read_dir.next_entry().await
+                let mut read_dir = tokio::fs::read_dir(&path).await.map_err(|e| {
+                    ComputerError::ToolFailed(format!("Cannot read directory: {}", e))
+                })?;
+                while let Some(entry) = read_dir
+                    .next_entry()
+                    .await
                     .map_err(|e| ComputerError::ToolFailed(format!("Read dir error: {}", e)))?
                 {
                     let meta = entry.metadata().await.ok();
@@ -828,7 +793,8 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                         path: full_path,
                         name,
                         size_bytes: meta.as_ref().map(|m| m.len()).unwrap_or(0),
-                        modified_secs: meta.as_ref()
+                        modified_secs: meta
+                            .as_ref()
                             .and_then(|m| m.modified().ok())
                             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                             .map(|d| d.as_secs())
@@ -857,19 +823,24 @@ impl ComputerAdapter for HeadlessComputerAdapter {
             }
             DesktopAction::ReadFileChunked { path, offset, limit_bytes } => {
                 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-                let mut file = tokio::fs::File::open(&path).await
+                let mut file = tokio::fs::File::open(&path)
+                    .await
                     .map_err(|e| ComputerError::ToolFailed(format!("Cannot open file: {}", e)))?;
-                file.seek(std::io::SeekFrom::Start(offset)).await
+                file.seek(std::io::SeekFrom::Start(offset))
+                    .await
                     .map_err(|e| ComputerError::ToolFailed(format!("Seek failed: {}", e)))?;
                 let mut buf = vec![0u8; limit_bytes as usize];
-                let n = file.read(&mut buf).await
+                let n = file
+                    .read(&mut buf)
+                    .await
                     .map_err(|e| ComputerError::ToolFailed(format!("Read failed: {}", e)))?;
                 buf.truncate(n);
                 let text = String::from_utf8_lossy(&buf).to_string();
                 Ok(ActionResult::success(format!(
                     "Read {} bytes from {} at offset {}",
                     n, path, offset
-                )).with_data(serde_json::json!({
+                ))
+                .with_data(serde_json::json!({
                     "path": path,
                     "offset": offset,
                     "bytes_read": n,
@@ -877,7 +848,8 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 })))
             }
             DesktopAction::EditFile { path, search, replace } => {
-                let content = tokio::fs::read_to_string(&path).await
+                let content = tokio::fs::read_to_string(&path)
+                    .await
                     .map_err(|e| ComputerError::ToolFailed(format!("Cannot read file: {}", e)))?;
                 let new_content = content.replace(&search, &replace);
                 if new_content == content {
@@ -886,52 +858,52 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                         path
                     )));
                 }
-                tokio::fs::write(&path, new_content).await
+                tokio::fs::write(&path, new_content)
+                    .await
                     .map_err(|e| ComputerError::ToolFailed(format!("Write failed: {}", e)))?;
-                Ok(ActionResult::success(format!(
-                    "Replaced occurrences in {}",
-                    path
-                )))
+                Ok(ActionResult::success(format!("Replaced occurrences in {}", path)))
             }
             DesktopAction::Compress { sources, destination, format } => {
-                let result = tokio::task::spawn_blocking(move || {
-                    match format {
-                        crate::computer::CompressionFormat::Zip => {
-                            let file = std::fs::File::create(&destination)?;
-                            let mut zip = zip::ZipWriter::new(file);
-                            let options = zip::write::SimpleFileOptions::default()
-                                .compression_method(zip::CompressionMethod::Deflated);
-                            for src in &sources {
-                                if std::fs::metadata(src)?.is_dir() {
-                                    return Err("Zip directories not supported in headless adapter; use Tar instead".into());
-                                } else {
-                                    let name = std::path::Path::new(src).file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or(src);
-                                    zip.start_file(name, options)?;
-                                    let data = std::fs::read(src)?;
-                                    zip.write_all(&data)?;
-                                }
+                let result = tokio::task::spawn_blocking(move || match format {
+                    crate::computer::CompressionFormat::Zip => {
+                        let file = std::fs::File::create(&destination)?;
+                        let mut zip = zip::ZipWriter::new(file);
+                        let options = zip::write::SimpleFileOptions::default()
+                            .compression_method(zip::CompressionMethod::Deflated);
+                        for src in &sources {
+                            if std::fs::metadata(src)?.is_dir() {
+                                return Err("Zip directories not supported in headless adapter; \
+                                            use Tar instead"
+                                    .into());
+                            } else {
+                                let name = std::path::Path::new(src)
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or(src);
+                                zip.start_file(name, options)?;
+                                let data = std::fs::read(src)?;
+                                zip.write_all(&data)?;
                             }
-                            zip.finish()?;
-                            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(destination.clone())
                         }
-                        crate::computer::CompressionFormat::Tar => {
-                            let file = std::fs::File::create(&destination)?;
-                            let mut builder = tar::Builder::new(file);
-                            for src in &sources {
-                                if std::fs::metadata(src)?.is_dir() {
-                                    builder.append_dir_all(src, src)?;
-                                } else {
-                                    builder.append_path(src)?;
-                                }
-                            }
-                            builder.finish()?;
-                            Ok(destination.clone())
-                        }
-                        _ => Err(format!("Compression format {:?} not yet supported", format).into()),
+                        zip.finish()?;
+                        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(destination.clone())
                     }
-                }).await
+                    crate::computer::CompressionFormat::Tar => {
+                        let file = std::fs::File::create(&destination)?;
+                        let mut builder = tar::Builder::new(file);
+                        for src in &sources {
+                            if std::fs::metadata(src)?.is_dir() {
+                                builder.append_dir_all(src, src)?;
+                            } else {
+                                builder.append_path(src)?;
+                            }
+                        }
+                        builder.finish()?;
+                        Ok(destination.clone())
+                    }
+                    _ => Err(format!("Compression format {:?} not yet supported", format).into()),
+                })
+                .await
                 .map_err(|e| ComputerError::Other(format!("Compression task failed: {}", e)))?
                 .map_err(|e| ComputerError::ToolFailed(format!("Compression failed: {}", e)))?;
                 Ok(ActionResult::success(format!("Compressed to {}", result)))
@@ -944,7 +916,10 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                         std::fs::create_dir_all(&destination)?;
                         archive.extract(&destination)?;
                         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(destination.clone())
-                    } else if archive.ends_with(".tar") || archive.ends_with(".tar.gz") || archive.ends_with(".tgz") {
+                    } else if archive.ends_with(".tar")
+                        || archive.ends_with(".tar.gz")
+                        || archive.ends_with(".tgz")
+                    {
                         let file = std::fs::File::open(&archive)?;
                         let mut archive = tar::Archive::new(file);
                         std::fs::create_dir_all(&destination)?;
@@ -953,7 +928,8 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                     } else {
                         Err(format!("Unknown archive format: {}", archive).into())
                     }
-                }).await
+                })
+                .await
                 .map_err(|e| ComputerError::Other(format!("Decompression task failed: {}", e)))?
                 .map_err(|e| ComputerError::ToolFailed(format!("Decompression failed: {}", e)))?;
                 Ok(ActionResult::success(format!("Decompressed to {}", result)))
@@ -961,11 +937,16 @@ impl ComputerAdapter for HeadlessComputerAdapter {
             DesktopAction::TransferFile { source, destination, method } => {
                 let result = tokio::task::spawn_blocking(move || {
                     let output = match method {
-                        crate::computer::TransferMethod::Scp => {
-                            std::process::Command::new("scp")
-                                .args(["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", &source, &destination])
-                                .output()
-                        }
+                        crate::computer::TransferMethod::Scp => std::process::Command::new("scp")
+                            .args([
+                                "-o",
+                                "StrictHostKeyChecking=no",
+                                "-o",
+                                "UserKnownHostsFile=/dev/null",
+                                &source,
+                                &destination,
+                            ])
+                            .output(),
                         crate::computer::TransferMethod::Rsync => {
                             std::process::Command::new("rsync")
                                 .args(["-avz", "--progress", &source, &destination])
@@ -973,33 +954,30 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                         }
                         crate::computer::TransferMethod::Smb => {
                             return Err(ComputerError::Other(
-                                "SMB transfer not implemented in headless adapter".to_string()
+                                "SMB transfer not implemented in headless adapter".to_string(),
                             ));
                         }
                     };
-                    let output = output.map_err(|e| ComputerError::ToolFailed(format!("Transfer command failed: {}", e)))?;
+                    let output = output.map_err(|e| {
+                        ComputerError::ToolFailed(format!("Transfer command failed: {}", e))
+                    })?;
                     if output.status.success() {
                         Ok(destination)
                     } else {
                         Err(ComputerError::ToolFailed(
-                            String::from_utf8_lossy(&output.stderr).to_string()
+                            String::from_utf8_lossy(&output.stderr).to_string(),
                         ))
                     }
-                }).await
+                })
+                .await
                 .map_err(|e| ComputerError::Other(format!("Transfer task failed: {}", e)))??;
                 Ok(ActionResult::success(format!("Transferred to {}", result)))
             }
-            _ => Err(ComputerError::Other(
-                "Action not available in headless mode".to_string(),
-            )),
+            _ => Err(ComputerError::Other("Action not available in headless mode".to_string())),
         }
     }
 
-    async fn wait_for(
-        &self,
-        condition: WaitCondition,
-        timeout: Duration,
-    ) -> Result<bool> {
+    async fn wait_for(&self, condition: WaitCondition, timeout: Duration) -> Result<bool> {
         let deadline = std::time::Instant::now() + timeout;
         let poll_interval = Duration::from_millis(500);
 

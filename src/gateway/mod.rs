@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
+
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt};
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::task::JoinHandle;
@@ -22,14 +23,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::agent::AgentConfig;
+#[cfg(test)]
+use crate::canvas::CanvasManager;
 use crate::inbound::*;
-
 #[cfg(test)]
 use crate::model_router::ModelRouter;
 #[cfg(test)]
 use crate::plugins::PluginManager;
-#[cfg(test)]
-use crate::canvas::CanvasManager;
 
 pub mod auth;
 pub mod command_provider;
@@ -86,7 +86,8 @@ impl GatewayState {
             // 1. Blocklist check
             if ch_cfg.is_blocked(user_id) {
                 let reason = format!("User {} is blocked on channel {}", user_id, channel);
-                self.auth.audit_log
+                self.auth
+                    .audit_log
                     .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
                     .await;
                 return Err(reason);
@@ -97,16 +98,24 @@ impl GatewayState {
             match ch_cfg.dm_policy {
                 DmPolicy::Open => {}
                 DmPolicy::Pairing => {
-                    if !self.auth.pairing_store.is_authorized(channel, user_id).await {
+                    if !self
+                        .auth
+                        .pairing_store
+                        .is_authorized(channel, user_id)
+                        .await
+                    {
                         // Create pairing request silently and drop message
-                        let _ = self.auth.pairing_store
+                        let _ = self
+                            .auth
+                            .pairing_store
                             .request_access(channel, user_id, None)
                             .await;
                         let reason = format!(
                             "User {} not authorized on channel {} (pairing required)",
                             user_id, channel
                         );
-                        self.auth.audit_log
+                        self.auth
+                            .audit_log
                             .log(
                                 AuditEventType::PairingRequest,
                                 user_id,
@@ -121,11 +130,16 @@ impl GatewayState {
                 }
                 DmPolicy::Allowlist => {
                     if !ch_cfg.is_in_allowlist(user_id)
-                        && !self.auth.pairing_store.is_authorized(channel, user_id).await
+                        && !self
+                            .auth
+                            .pairing_store
+                            .is_authorized(channel, user_id)
+                            .await
                     {
                         let reason =
                             format!("User {} not in allowlist for channel {}", user_id, channel);
-                        self.auth.audit_log
+                        self.auth
+                            .audit_log
                             .log(
                                 AuditEventType::AccessCheck,
                                 user_id,
@@ -146,7 +160,8 @@ impl GatewayState {
                     "Message from {} on channel {} ignored (mention required in groups)",
                     user_id, channel
                 );
-                self.auth.audit_log
+                self.auth
+                    .audit_log
                     .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
                     .await;
                 return Err(reason);
@@ -161,7 +176,8 @@ impl GatewayState {
                         channel,
                         self.auth.mention_gate.policy().await
                     );
-                    self.auth.audit_log
+                    self.auth
+                        .audit_log
                         .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
                         .await;
                     return Err(reason);
@@ -177,7 +193,8 @@ impl GatewayState {
                 _ => "Unknown denial reason".to_string(),
             };
             let msg = format!("Command gate denied for user {}: {}", user_id, reason);
-            self.auth.audit_log
+            self.auth
+                .audit_log
                 .log(
                     AuditEventType::CommandGate,
                     user_id,
@@ -191,7 +208,8 @@ impl GatewayState {
         }
 
         // Log successful access
-        self.auth.audit_log
+        self.auth
+            .audit_log
             .log(AuditEventType::AccessCheck, user_id, channel, true, "Access allowed", None)
             .await;
 
@@ -199,9 +217,9 @@ impl GatewayState {
     }
 }
 
-// Runtime types (`BufferedMessage`, `AgentHandle`, `AgentCommand`, `AgentQuery`,
-// `GatewayEvent`, `AgentStatus`) live in `gateway::runtime` and are re-exported
-// via `pub use runtime::*;` above.
+// Runtime types (`BufferedMessage`, `AgentHandle`, `AgentCommand`,
+// `AgentQuery`, `GatewayEvent`, `AgentStatus`) live in `gateway::runtime` and
+// are re-exported via `pub use runtime::*;` above.
 
 // Repair tracking (`RepairRecord`, `RepairState`) and the watchdog/repair
 // loops moved to `gateway::watchdog`. WS/REST request DTOs (`WsQuery`,
@@ -229,7 +247,8 @@ pub struct Gateway {
 
 /// Initialize the perception fusion layer.
 ///
-/// 1. Creates the [`PerceptionRegistry`] with the configured aggregation strategy.
+/// 1. Creates the [`PerceptionRegistry`] with the configured aggregation
+///    strategy.
 /// 2. Registers computer adapter sources (screenshot, system monitor).
 /// 3. Registers device capability sources (from the device subsystem).
 /// 4. Registers the microphone source (if enabled).
@@ -250,28 +269,32 @@ async fn init_perception(
     }
 
     // Build the persistence backend (defaults to NullObservationStore).
-    let store: Arc<dyn crate::perception::ObservationStore> = match config.persistence_backend.as_str() {
-        "jsonl" => {
-            let dir = config.persistence_dir.clone().map(std::path::PathBuf::from);
-            match crate::perception::build_store("jsonl", dir).await {
-                Ok(s) => {
-                    tracing::info!(
-                        "perception persistence: jsonl backend at {}",
-                        config
-                            .persistence_dir
-                            .clone()
-                            .unwrap_or_else(|| "<default temp dir>".into()),
-                    );
-                    s
-                }
-                Err(e) => {
-                    tracing::warn!("failed to open jsonl perception store: {}; falling back to none", e);
-                    Arc::new(crate::perception::NullObservationStore)
+    let store: Arc<dyn crate::perception::ObservationStore> =
+        match config.persistence_backend.as_str() {
+            "jsonl" => {
+                let dir = config.persistence_dir.clone().map(std::path::PathBuf::from);
+                match crate::perception::build_store("jsonl", dir).await {
+                    Ok(s) => {
+                        tracing::info!(
+                            "perception persistence: jsonl backend at {}",
+                            config
+                                .persistence_dir
+                                .clone()
+                                .unwrap_or_else(|| "<default temp dir>".into()),
+                        );
+                        s
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to open jsonl perception store: {}; falling back to none",
+                            e
+                        );
+                        Arc::new(crate::perception::NullObservationStore)
+                    }
                 }
             }
-        }
-        _ => Arc::new(crate::perception::NullObservationStore),
-    };
+            _ => Arc::new(crate::perception::NullObservationStore),
+        };
 
     let reg = Arc::new(
         crate::perception::PerceptionRegistry::new(
@@ -284,18 +307,13 @@ async fn init_perception(
     // Register computer adapter sources
     let computer_adapter = state.tools.computer_adapter.read().await.clone();
     if let Some(ref adapter) = computer_adapter {
-        reg.register_source(Arc::new(
-            crate::perception::ScreenshotAdapter::new(adapter.clone()),
-        ))
-        .await;
+        reg.register_source(Arc::new(crate::perception::ScreenshotAdapter::new(adapter.clone())))
+            .await;
 
-        let monitor = Arc::new(tokio::sync::Mutex::new(
-            crate::computer::system::SystemMonitor::new(),
-        ));
-        reg.register_source(Arc::new(
-            crate::perception::SystemMonitorAdapter::new(monitor),
-        ))
-        .await;
+        let monitor =
+            Arc::new(tokio::sync::Mutex::new(crate::computer::system::SystemMonitor::new()));
+        reg.register_source(Arc::new(crate::perception::SystemMonitorAdapter::new(monitor)))
+            .await;
     }
 
     // Register device capabilities as perception sources
@@ -303,12 +321,10 @@ async fn init_perception(
         for device_id in device_registry.list().await {
             if let Some(device) = device_registry.get(&device_id).await {
                 for cap in &device.capabilities {
-                    reg.register_source(Arc::new(
-                        crate::perception::DeviceSourceAdapter::new(
-                            device.id().to_string(),
-                            cap.clone(),
-                        ),
-                    ))
+                    reg.register_source(Arc::new(crate::perception::DeviceSourceAdapter::new(
+                        device.id().to_string(),
+                        cap.clone(),
+                    )))
                     .await;
                 }
             }
@@ -328,10 +344,8 @@ async fn init_perception(
             channel_capacity: 256,
             reprobe_interval_secs: 0,
         };
-        reg.register_source(Arc::new(
-            crate::perception::MicrophoneAdapter::new(adapter_config),
-        ))
-        .await;
+        reg.register_source(Arc::new(crate::perception::MicrophoneAdapter::new(adapter_config)))
+            .await;
         tracing::info!(
             "Microphone perception source registered (source={}, rate={}Hz)",
             config.audio_source,
@@ -361,9 +375,7 @@ async fn init_perception(
     }
 
     // Spawn periodic prune task for the persistent store.
-    if config.persistence_retention_days > 0
-        && config.persistence_backend != "none"
-    {
+    if config.persistence_retention_days > 0 && config.persistence_backend != "none" {
         let store_clone = store.clone();
         let retention_days = config.persistence_retention_days;
         let handle = tokio::spawn(async move {
@@ -428,10 +440,7 @@ async fn init_perception(
 /// 3. Spawns the control loop on the current runtime (or a dedicated
 ///    single-threaded runtime if configured).
 /// 4. Stores a [`ControlInit`] on `state.control_init`.
-async fn init_control(
-    device_config: &crate::gateway::DeviceConfig,
-    state: &GatewayState,
-) {
+async fn init_control(device_config: &crate::gateway::DeviceConfig, state: &GatewayState) {
     if !device_config.control.enabled {
         return;
     }
@@ -491,9 +500,8 @@ fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
 
     if has_token && has_oauth && mode_unset {
         return Err(crate::error::SyscityError::Validation(
-            "Auth mode ambiguity: both shared_token and OAuth are configured but \
-             auth_mode is not set. Please set auth_mode to 'token' or 'device' \
-             in your security configuration."
+            "Auth mode ambiguity: both shared_token and OAuth are configured but auth_mode is not \
+             set. Please set auth_mode to 'token' or 'device' in your security configuration."
                 .into(),
         ));
     }
@@ -501,8 +509,8 @@ fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
     // Warn when token is configured but auth_mode is not Token
     if has_token && mode_unset && config.security.shared_token.as_deref() != Some("") {
         tracing::warn!(
-            "shared_token is configured but auth_mode is 'none'. \
-             Set auth_mode to 'token' for consistent authentication."
+            "shared_token is configured but auth_mode is 'none'. Set auth_mode to 'token' for \
+             consistent authentication."
         );
     }
 
@@ -518,8 +526,8 @@ impl Gateway {
     /// Create a new gateway instance with optional device drivers.
     ///
     /// Device drivers are discovered, probed, and connected at startup.  Each
-    /// capability is registered in `ToolRegistry` so the LLM can discover and call device operations through standard
-    /// function calling.
+    /// capability is registered in `ToolRegistry` so the LLM can discover and
+    /// call device operations through standard function calling.
     ///
     /// Pass an empty vec (or use [`Gateway::new`]) when no physical devices
     /// are needed.
@@ -555,7 +563,8 @@ impl Gateway {
         let (skills_manager, agent_registry, session_manager) =
             init::agents::init_agent_state().await?;
 
-        // Initialize tool subsystem (registry, MCP, plugins, channels, computer adapter)
+        // Initialize tool subsystem (registry, MCP, plugins, channels, computer
+        // adapter)
         let tools_init = init::tools::init_tools(
             &config,
             acp.clone(),
@@ -666,7 +675,9 @@ impl Gateway {
                 approval_queue: tools_init.approval_queue.clone(),
                 skills_manager: skills_manager.clone(),
                 canvas_manager: tools_init.canvas_manager.clone(),
-                computer_adapter: Arc::new(tokio::sync::RwLock::new(tools_init.computer_adapter.clone())),
+                computer_adapter: Arc::new(tokio::sync::RwLock::new(
+                    tools_init.computer_adapter.clone(),
+                )),
             },
             pipelines: PipelineState {
                 inbound: pipelines_init.inbound_pipeline.clone(),
@@ -776,15 +787,23 @@ impl Gateway {
         }
 
         // Dynamically register tools that need GatewayState
-        state.tools.registry
+        state
+            .tools
+            .registry
             .register_dynamic(Arc::new(crate::tools::AgentsListTool::new(
                 state.agents.registry.clone(),
             )));
-        state.tools.registry
+        state
+            .tools
+            .registry
             .register_dynamic(Arc::new(crate::tools::GatewayTool::new(state.clone())));
-        state.tools.registry
+        state
+            .tools
+            .registry
             .register_dynamic(Arc::new(crate::tools::MessageTool::new(state.clone())));
-        state.tools.registry
+        state
+            .tools
+            .registry
             .register_dynamic(Arc::new(crate::tools::CanvasTool::new(
                 state.tools.canvas_manager.clone(),
             )));
@@ -801,7 +820,8 @@ impl Gateway {
             tool_sdk.sync_from_tool_registry(&state.tools.registry);
         }
 
-        // Initialize late services: vector memory, session search, cron, task scheduler, etc.
+        // Initialize late services: vector memory, session search, cron, task
+        // scheduler, etc.
         init::services::init_late_services(
             &config,
             &state,
@@ -864,8 +884,12 @@ impl Gateway {
         // so it can be aborted during hot-reload without ownership conflicts.
         *state.device_init.write().await = device_init;
 
-        let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> =
-            state.device_init.read().await.as_ref().map(|di| di.registry.clone());
+        let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> = state
+            .device_init
+            .read()
+            .await
+            .as_ref()
+            .map(|di| di.registry.clone());
 
         // Initialize perception fusion layer (delegated to helper)
         let perception_registry: Option<Arc<crate::perception::PerceptionRegistry>> =
@@ -940,7 +964,6 @@ impl Gateway {
     async fn spawn_agent_task(&self, handle: JoinHandle<()>) {
         self.agent_tasks.lock().await.push(handle);
     }
-
 
     /// Start the gateway
     pub async fn start(&self) -> crate::Result<()> {
@@ -1044,9 +1067,7 @@ impl Gateway {
     /// Extensions are wired into the inbound/outbound pipelines and replace
     /// the ad-hoc per-channel initialisation code.
     /// Get or spawn agent by ID (on-demand)
-    pub async fn get_or_spawn_agent(&self,
-        agent_id: &str,
-    ) -> crate::Result<Option<AgentHandle>> {
+    pub async fn get_or_spawn_agent(&self, agent_id: &str) -> crate::Result<Option<AgentHandle>> {
         // First check if already spawned
         {
             let agents = self.state.agents.agents.read().await;
@@ -1068,11 +1089,9 @@ impl Gateway {
             }
         }
     }
-
 }
 
 #[cfg(test)]
 mod api_tests;
 #[cfg(test)]
 pub(crate) mod state_tests;
-

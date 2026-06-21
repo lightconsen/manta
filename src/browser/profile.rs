@@ -3,8 +3,9 @@
 //! Defines browser profiles with varying headless mode, viewport, user agent,
 //! and driver type (managed launch vs Chrome MCP connection).
 
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 /// Browser driver type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

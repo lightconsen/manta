@@ -43,14 +43,12 @@ impl PlatformToolSet for WindowsToolset {
     }
 
     fn description(&self) -> &str {
-        "Windows desktop automation: screenshots (PowerShell/.NET), \
-         desktop control (click, type, key, window management), \
-         clipboard access, and PowerShell script execution."
+        "Windows desktop automation: screenshots (PowerShell/.NET), desktop control (click, type, \
+         key, window management), clipboard access, and PowerShell script execution."
     }
 
     fn constraints(&self) -> &PlatformConstraints {
-        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> =
-            std::sync::OnceLock::new();
+        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> = std::sync::OnceLock::new();
         CONSTRAINTS.get_or_init(|| PlatformConstraints {
             target_os: vec!["windows".to_string()],
             requires_gui: true,

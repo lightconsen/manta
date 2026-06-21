@@ -1,12 +1,13 @@
 //! macOS Desktop control tool — orchestrate accessibility + screenshot hybrid.
 
-use super::accessibility::AccessibilityTool;
-use super::screenshot::ScreenshotTool;
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{info, warn};
+
+use super::accessibility::AccessibilityTool;
+use super::screenshot::ScreenshotTool;
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Perception mode for desktop control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,11 +28,22 @@ pub enum DesktopAction {
     /// Inspect current UI state.
     Inspect,
     /// Click a UI element by role + name.
-    Click { app: Option<String>, role: String, name: String },
+    Click {
+        app: Option<String>,
+        role: String,
+        name: String,
+    },
     /// Type text into a text field.
-    Type { app: String, field: String, text: String },
+    Type {
+        app: String,
+        field: String,
+        text: String,
+    },
     /// Press a keyboard shortcut.
-    KeyShortcut { app: Option<String>, keys: Vec<String> },
+    KeyShortcut {
+        app: Option<String>,
+        keys: Vec<String>,
+    },
 }
 
 /// Result of a desktop control operation.
@@ -89,16 +101,16 @@ tell application "System Events"
         set value of _field to "{}"
     end tell
 end tell"#,
-            app, app, field, text.replace('"', "\\\"")
+            app,
+            app,
+            field,
+            text.replace('"', "\\\"")
         )
     }
 
     fn build_keystroke_script(app: Option<&str>, keys: &[String]) -> String {
         let app_block = if let Some(name) = app {
-            format!(
-                "tell application \"{}\" to activate\ndelay 0.2\n",
-                name
-            )
+            format!("tell application \"{}\" to activate\ndelay 0.2\n", name)
         } else {
             String::new()
         };
@@ -144,11 +156,10 @@ impl Tool for DesktopControlTool {
     }
 
     fn description(&self) -> &str {
-        "Control macOS desktop applications using a hybrid model: \
-         query the accessibility UI tree first, then screenshot if needed, \
-         and execute actions via AppleScript. \
-         Use for opening apps, clicking buttons, filling forms, \
-         pressing shortcuts, or inspecting the current GUI state."
+        "Control macOS desktop applications using a hybrid model: query the accessibility UI tree \
+         first, then screenshot if needed, and execute actions via AppleScript. Use for opening \
+         apps, clicking buttons, filling forms, pressing shortcuts, or inspecting the current GUI \
+         state."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -201,9 +212,9 @@ impl Tool for DesktopControlTool {
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action_str = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::SyscityError::Validation("Missing 'action' argument".to_string()))?;
+        let action_str = args["action"].as_str().ok_or_else(|| {
+            crate::error::SyscityError::Validation("Missing 'action' argument".to_string())
+        })?;
 
         let mode = match args["mode"].as_str().unwrap_or("hybrid") {
             "accessibility_only" => PerceptionMode::AccessibilityOnly,
@@ -238,7 +249,9 @@ impl Tool for DesktopControlTool {
                             result.accessibility = Some(data);
                         }
                         if !exec_result.success {
-                            let err = exec_result.error.unwrap_or_else(|| "Accessibility query failed".to_string());
+                            let err = exec_result
+                                .error
+                                .unwrap_or_else(|| "Accessibility query failed".to_string());
                             warn!("Accessibility query failed: {}", err);
                             result.error = Some(err);
                         }
@@ -272,42 +285,54 @@ impl Tool for DesktopControlTool {
             "click" => {
                 let app = args["app"].as_str().unwrap_or("System Events");
                 let role = args["role"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation("Missing 'role' for click action".to_string())
+                    crate::error::SyscityError::Validation(
+                        "Missing 'role' for click action".to_string(),
+                    )
                 })?;
                 let name = args["name"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation("Missing 'name' for click action".to_string())
+                    crate::error::SyscityError::Validation(
+                        "Missing 'name' for click action".to_string(),
+                    )
                 })?;
 
                 let script = Self::build_click_script(app, role, name);
-                let as_result = super::applescript::AppleScriptTool::execute_script(&script, 15
-                ).await;
+                let as_result =
+                    super::applescript::AppleScriptTool::execute_script(&script, 15).await;
                 if as_result.success {
                     Ok(())
                 } else {
                     Err(crate::error::SyscityError::Validation(
-                        as_result.error.unwrap_or_else(|| "Click failed".to_string())
+                        as_result
+                            .error
+                            .unwrap_or_else(|| "Click failed".to_string()),
                     ))
                 }
             }
             "type" => {
                 let app = args["app"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation("Missing 'app' for type action".to_string())
+                    crate::error::SyscityError::Validation(
+                        "Missing 'app' for type action".to_string(),
+                    )
                 })?;
                 let field = args["field"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation("Missing 'field' for type action".to_string())
+                    crate::error::SyscityError::Validation(
+                        "Missing 'field' for type action".to_string(),
+                    )
                 })?;
                 let text = args["text"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation("Missing 'text' for type action".to_string())
+                    crate::error::SyscityError::Validation(
+                        "Missing 'text' for type action".to_string(),
+                    )
                 })?;
 
                 let script = Self::build_type_script(app, field, text);
-                let as_result = super::applescript::AppleScriptTool::execute_script(&script, 15
-                ).await;
+                let as_result =
+                    super::applescript::AppleScriptTool::execute_script(&script, 15).await;
                 if as_result.success {
                     Ok(())
                 } else {
                     Err(crate::error::SyscityError::Validation(
-                        as_result.error.unwrap_or_else(|| "Type failed".to_string())
+                        as_result.error.unwrap_or_else(|| "Type failed".to_string()),
                     ))
                 }
             }
@@ -315,24 +340,29 @@ impl Tool for DesktopControlTool {
                 let app = args["app"].as_str();
                 let keys: Vec<String> = args["keys"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 if keys.is_empty() {
                     return Ok(ToolExecutionResult::error(
-                        "Missing 'keys' for key_shortcut action".to_string()
+                        "Missing 'keys' for key_shortcut action".to_string(),
                     ));
                 }
 
                 let script = Self::build_keystroke_script(app, &keys);
-                let as_result = super::applescript::AppleScriptTool::execute_script(
-                    &script, 15
-                ).await;
+                let as_result =
+                    super::applescript::AppleScriptTool::execute_script(&script, 15).await;
                 if as_result.success {
                     Ok(())
                 } else {
                     Err(crate::error::SyscityError::Validation(
-                        as_result.error.unwrap_or_else(|| "Keystroke failed".to_string())
+                        as_result
+                            .error
+                            .unwrap_or_else(|| "Keystroke failed".to_string()),
                     ))
                 }
             }
@@ -346,12 +376,15 @@ tell application "System Events"
 end tell"#,
                     app
                 );
-                let as_result = super::applescript::AppleScriptTool::execute_script(&script, 15).await;
+                let as_result =
+                    super::applescript::AppleScriptTool::execute_script(&script, 15).await;
                 if as_result.success {
                     Ok(())
                 } else {
                     Err(crate::error::SyscityError::Validation(
-                        as_result.error.unwrap_or_else(|| "Close window failed".to_string())
+                        as_result
+                            .error
+                            .unwrap_or_else(|| "Close window failed".to_string()),
                     ))
                 }
             }
@@ -372,7 +405,8 @@ end tell"#,
         if result.success {
             Ok(ToolExecutionResult::success(json).with_data(serde_json::to_value(result)?))
         } else {
-            Ok(ToolExecutionResult::error(result.error.clone().unwrap_or_default()).with_data(serde_json::to_value(result)?))
+            Ok(ToolExecutionResult::error(result.error.clone().unwrap_or_default())
+                .with_data(serde_json::to_value(result)?))
         }
     }
 

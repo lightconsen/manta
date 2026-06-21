@@ -13,17 +13,21 @@
 //! # Example
 //!
 //! ```rust
-//! use syscity::security::pairing::{PairingStore, DmPolicy};
 //! use std::time::Duration;
+//!
+//! use syscity::security::pairing::{DmPolicy, PairingStore};
 //!
 //! # async fn example() {
 //! let store = PairingStore::new();
 //!
 //! // User initiates pairing (called by channel handler)
-//! let result = store.request_access("telegram", "123456", Some("@alice")).await.unwrap();
+//! let result = store
+//!     .request_access("telegram", "123456", Some("@alice"))
+//!     .await
+//!     .unwrap();
 //! let code = match result {
-//! syscity::security::pairing::RequestAccessResult::NewRequest { code } => code,
-//! _ => panic!("Expected new request"),
+//!     syscity::security::pairing::RequestAccessResult::NewRequest { code } => code,
+//!     _ => panic!("Expected new request"),
 //! };
 //!
 //! // Admin approves the request
@@ -43,7 +47,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-// ── DM Policy ─────────────────────────────────────────────────────────────────
+// ── DM Policy
+// ─────────────────────────────────────────────────────────────────
 
 /// DM access policy for channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,7 +87,8 @@ impl std::str::FromStr for DmPolicy {
     }
 }
 
-// ── Stored entries ────────────────────────────────────────────────────────────
+// ── Stored entries
+// ────────────────────────────────────────────────────────────
 
 /// A pending pairing request (user-initiated).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,7 +172,8 @@ pub enum RequestAccessResult {
 pub struct PairingStore {
     /// Pending requests keyed by code for O(1) lookup.
     pending: Arc<RwLock<HashMap<String, PendingRequest>>>,
-    /// Reverse index: (channel, user_id) -> code for checking existing requests.
+    /// Reverse index: (channel, user_id) -> code for checking existing
+    /// requests.
     pending_index: Arc<RwLock<HashMap<(String, String), String>>>,
     /// Authorized users keyed by (channel, user_id).
     authorized: Arc<RwLock<HashMap<(String, String), AuthorizedUser>>>,
@@ -389,7 +396,8 @@ impl PairingStore {
     // ── Access checks ─────────────────────────────────────────────────────────
 
     /// Return `true` if `user_id` is currently authorized on `channel`.
-    /// Checks both the direct authorized list and the multi-dimensional allowlist.
+    /// Checks both the direct authorized list and the multi-dimensional
+    /// allowlist.
     pub async fn is_authorized(&self, channel: &str, user_id: &str) -> bool {
         // First check direct authorized list (pairing flow)
         let key = (channel.to_string(), user_id.to_string());
@@ -547,7 +555,8 @@ impl PairingStore {
     }
 }
 
-// ── Error type ────────────────────────────────────────────────────────────────
+// ── Error type
+// ────────────────────────────────────────────────────────────────
 
 /// Errors that can occur during pairing operations.
 #[derive(Debug, Clone)]
@@ -572,7 +581,8 @@ impl std::fmt::Display for PairingError {
 
 impl std::error::Error for PairingError {}
 
-// ── Code generation ───────────────────────────────────────────────────────────
+// ── Code generation
+// ───────────────────────────────────────────────────────────
 
 /// Generate a 6-character alphanumeric pairing code (unambiguous).
 /// Uses characters that are easy to distinguish: no 0/O, 1/I/l.

@@ -4,22 +4,23 @@
 //! This replaces the ad-hoc `channel.send_message()` calls scattered
 //! through the agent loop with a unified dispatch layer.
 //!
-//!
 
-use crate::channels::{Channel, OutgoingMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
+
+use crate::channels::{Channel, OutgoingMessage};
 
 /// Configuration for reply dispatch.
 #[derive(Debug, Clone)]
 pub struct ReplyDispatchConfig {
- /// Whether to split long messages into chunks.
+    /// Whether to split long messages into chunks.
     pub chunk_long_messages: bool,
- /// Maximum message length before chunking.
+    /// Maximum message length before chunking.
     pub max_chunk_length: usize,
- /// Whether to suppress empty replies.
+    /// Whether to suppress empty replies.
     pub suppress_empty: bool,
 }
 
@@ -36,7 +37,7 @@ impl Default for ReplyDispatchConfig {
 /// Reply dispatcher routes outbound messages to channels.
 pub struct ReplyDispatcher {
     config: ReplyDispatchConfig,
- /// channel_name -> Channel handle
+    /// channel_name -> Channel handle
     channels: RwLock<HashMap<String, Arc<dyn Channel>>>,
 }
 
@@ -48,14 +49,14 @@ impl ReplyDispatcher {
         }
     }
 
- /// Register a channel for dispatch.
+    /// Register a channel for dispatch.
     pub async fn register_channel(&self, name: &str, channel: Arc<dyn Channel>) {
         let mut channels = self.channels.write().await;
         channels.insert(name.to_string(), channel);
         info!("Registered channel '{}' for reply dispatch", name);
     }
 
- /// Dispatch an outgoing message to its target channel.
+    /// Dispatch an outgoing message to its target channel.
     pub async fn dispatch(
         &self,
         channel_name: &str,
@@ -74,7 +75,7 @@ impl ReplyDispatcher {
         let content = if self.config.chunk_long_messages
             && message.content.len() > self.config.max_chunk_length
         {
- // For now, just send the full message. Future: chunk it.
+            // For now, just send the full message. Future: chunk it.
             message.content.clone()
         } else {
             message.content.clone()
@@ -96,7 +97,7 @@ impl ReplyDispatcher {
         }
     }
 
- /// List registered channels.
+    /// List registered channels.
     pub async fn list_channels(&self) -> Vec<String> {
         let channels = self.channels.read().await;
         channels.keys().cloned().collect()
@@ -139,7 +140,7 @@ mod tests {
     async fn test_dispatch_empty_suppressed() {
         let dispatcher = ReplyDispatcher::new(ReplyDispatchConfig::default());
         let msg = dummy_msg("   ");
- // No channel registered, but empty should be suppressed first.
+        // No channel registered, but empty should be suppressed first.
         let result = dispatcher.dispatch("test", msg).await;
         assert!(result.is_ok());
     }

@@ -2,9 +2,10 @@
 //!
 //! List all available agent personalities/types.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::{Tool, ToolContext, ToolExecutionResult};

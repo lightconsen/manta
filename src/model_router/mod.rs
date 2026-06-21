@@ -20,23 +20,16 @@ pub mod usage_fetcher;
 pub mod usage_formatter;
 pub mod usage_tracker;
 
-use async_trait::async_trait;
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
 
-use crate::providers::{
-    CompletionRequest, CompletionResponse, CompletionStream, Message, Provider, ToolDefinition,
-};
-
+use async_trait::async_trait;
 pub use auth_profile::{
     AuthProfile, AuthProfileConfig, AuthProfileManager, KeyStatus, ProfileStatus,
 };
 pub use auth_profile_store::AuthProfileStore;
+use chrono::Utc;
 pub use failure_class::FailureClass;
 pub use gateway_client::{GatewayClient, HttpGatewayClient};
 pub use model_catalog::{ModelCatalog, ModelCatalogEntry, ModelDiscoverySource, ModelPricing};
@@ -44,6 +37,9 @@ pub use oauth_callback::wait_for_callback;
 pub use oauth_credential::Credential;
 pub use oauth_flow::OAuthFlow;
 pub use pkce::{challenge_from_verifier, generate_verifier};
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 pub use usage_fetcher::{
     LocalBudgetFetcher, OpenAiUsageFetcher, UsageFetcher, UsageFetcherRegistry,
 };
@@ -53,6 +49,10 @@ pub use usage_formatter::{
 };
 pub use usage_tracker::{
     ProviderUsageSnapshot, ProviderUsageTracker, QuotaSource, UsageQuota, UsageTrackerConfig,
+};
+
+use crate::providers::{
+    CompletionRequest, CompletionResponse, CompletionStream, Message, Provider, ToolDefinition,
 };
 
 /// Model alias configuration
@@ -148,7 +148,8 @@ impl ProviderConfig {
         self.api_key.clone()
     }
 
-    /// Build an AuthProfileConfig from this config if one is not explicitly set.
+    /// Build an AuthProfileConfig from this config if one is not explicitly
+    /// set.
     pub fn derived_auth_profile_config(&self) -> AuthProfileConfig {
         if let Some(ref profile) = self.auth_profile {
             return profile.clone();
@@ -778,7 +779,8 @@ impl ModelRouter {
         for (name, provider_config) in &config.providers {
             info!("Initializing provider: {}", name);
 
-            // Register auth profile for this provider (loads persisted state if store is set)
+            // Register auth profile for this provider (loads persisted state if store is
+            // set)
             let auth_config = provider_config.derived_auth_profile_config();
             self.auth_profiles
                 .register_from_config(name, &auth_config)
@@ -1293,7 +1295,8 @@ impl ModelRouter {
                                             Err(e2) => {
                                                 let class2 = FailureClass::from_error(&e2, None);
                                                 error!(
-                                                    "Provider {} stream failed after key rotation: {}",
+                                                    "Provider {} stream failed after key \
+                                                     rotation: {}",
                                                     entry.provider, e2
                                                 );
                                                 self.record_failure(&entry.provider, Some(class2))
@@ -1481,7 +1484,8 @@ impl ModelRouter {
     // Usage snapshot enrichment with remote quota
     // ------------------------------------------------------------------
 
-    /// Get a usage snapshot enriched with remote quota (if a fetcher is registered).
+    /// Get a usage snapshot enriched with remote quota (if a fetcher is
+    /// registered).
     pub async fn snapshot_with_quota(&self, provider: &str) -> Option<ProviderUsageSnapshot> {
         let mut snapshot = self.usage_tracker.snapshot(provider).await?;
 
@@ -1615,7 +1619,8 @@ impl ModelRouter {
 
         if let Some((entry, _)) = best {
             info!(
-                "Capability routing: upgraded '{}' (provider={}, model={}) to '{}' (provider={}, model={}) for vision={} tools={} reasoning={}",
+                "Capability routing: upgraded '{}' (provider={}, model={}) to '{}' (provider={}, \
+                 model={}) for vision={} tools={} reasoning={}",
                 alias.name,
                 alias.provider,
                 alias.model,
@@ -2062,7 +2067,8 @@ impl ModelRouter {
         }
     }
 
-    /// Complete a request with a specific provider override (per-request override)
+    /// Complete a request with a specific provider override (per-request
+    /// override)
     pub async fn complete_with_provider(
         &self,
         provider_name: &str,

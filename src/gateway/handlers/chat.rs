@@ -1,10 +1,10 @@
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 use tracing::error;
 
 use crate::gateway::GatewayState;
@@ -112,8 +112,9 @@ pub async fn chat_handler(
 #[allow(dead_code)]
 /// `POST /api/chat` — Send a message from the web terminal.
 ///
-/// The message is queued for processing and a 202 Accepted is returned immediately.
-/// The actual response(s) will be streamed via SSE on `GET /api/events`.
+/// The message is queued for processing and a 202 Accepted is returned
+/// immediately. The actual response(s) will be streamed via SSE on `GET
+/// /api/events`.
 pub async fn web_terminal_chat_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<WebTerminalChatRequest>,
@@ -193,7 +194,9 @@ pub async fn send_message_handler(
 
     // If provider override is specified, we route through that provider
     if let Some(provider_name) = provider_override {
-        match state.infra.model_router
+        match state
+            .infra
+            .model_router
             .complete_with_provider(
                 &provider_name,
                 body.model_id,

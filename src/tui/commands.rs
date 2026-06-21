@@ -1,12 +1,14 @@
 //! Slash command parser and executor.
 
+use std::sync::Arc;
+
+use tokio::sync::RwLock;
+
 use crate::tui::actions::TuiAction;
 use crate::tui::error::TuiError;
 use crate::tui::event_loop::{fetch_commands, fetch_config};
 use crate::tui::state::{AppState, InputMode, MessageStatus, Popup};
 use crate::tui::ws_client::WsClient;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Commands handled locally by the TUI.
 const LOCAL_COMMANDS: &[&str] = &[
@@ -266,10 +268,7 @@ pub fn action_for_input(action: TuiAction, buffer: &str) -> TuiAction {
 pub fn update_palette(state: &mut AppState) {
     let query = state.input_buffer.trim_start_matches('/');
     let all = state.command_list.clone();
-    let filtered: Vec<_> = all
-        .into_iter()
-        .filter(|c| c.matches(query))
-        .collect();
+    let filtered: Vec<_> = all.into_iter().filter(|c| c.matches(query)).collect();
     state.palette_commands = filtered;
     state.palette_index = 0;
 }
@@ -300,13 +299,53 @@ pub fn fallback_commands() -> Vec<crate::tui::state::CommandInfo> {
         cmd("clear", "clear", "Clear chat history", "", "session", "essential", true),
         cmd("help", "help", "Show command help", "[page]", "status", "essential", false),
         cmd("status", "status", "Gateway status", "", "status", "essential", false),
-        cmd("tools", "tools", "List available tools", "[compact|verbose]", "status", "standard", false),
-        cmd("model", "model", "Set default model", "<id|status>", "model", "essential", false),
-        cmd("usage", "usage", "Show usage statistics", "[off|tokens|full|cost]", "status", "standard", false),
-        cmd("subagents", "subagents", "Manage sub-agents", "<subcommand>", "agents", "power", false),
+        cmd(
+            "tools",
+            "tools",
+            "List available tools",
+            "[compact|verbose]",
+            "status",
+            "standard",
+            false,
+        ),
+        cmd(
+            "model",
+            "model",
+            "Set default model",
+            "<id|status>",
+            "model",
+            "essential",
+            false,
+        ),
+        cmd(
+            "usage",
+            "usage",
+            "Show usage statistics",
+            "[off|tokens|full|cost]",
+            "status",
+            "standard",
+            false,
+        ),
+        cmd(
+            "subagents",
+            "subagents",
+            "Manage sub-agents",
+            "<subcommand>",
+            "agents",
+            "power",
+            false,
+        ),
         cmd("acp", "acp", "Manage ACP sessions", "<subcommand>", "agents", "power", false),
         cmd("mcp", "mcp", "Manage MCP servers", "<subcommand>", "admin", "power", false),
-        cmd("config", "config", "Manage runtime config", "<subcommand>", "admin", "power", false),
+        cmd(
+            "config",
+            "config",
+            "Manage runtime config",
+            "<subcommand>",
+            "admin",
+            "power",
+            false,
+        ),
         cmd("restart", "restart", "Restart the gateway", "", "admin", "power", false),
         cmd("bash", "bash", "Run a shell command", "<command>", "admin", "power", false),
     ]

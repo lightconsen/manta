@@ -1,16 +1,17 @@
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
 
-// ── Session / Thread / Turn API ───────────────────────────────────────────────
+// ── Session / Thread / Turn API
+// ───────────────────────────────────────────────
 
 #[allow(dead_code)]
 /// `GET /api/sessions` — list all active sessions and their routing info.
@@ -193,7 +194,8 @@ pub async fn list_turns_handler(
 }
 
 #[allow(dead_code)]
-/// `POST /api/sessions/:id/threads/:thread_id/undo` — undo the last turn of a thread.
+/// `POST /api/sessions/:id/threads/:thread_id/undo` — undo the last turn of a
+/// thread.
 pub async fn undo_turn_handler(
     Path((session_id, thread_id)): Path<(String, String)>,
     State(state): State<Arc<GatewayState>>,
@@ -250,7 +252,8 @@ pub async fn undo_turn_handler(
 }
 
 #[allow(dead_code)]
-/// `POST /api/sessions/:id/threads/:thread_id/redo` — redo the most recently undone turn.
+/// `POST /api/sessions/:id/threads/:thread_id/redo` — redo the most recently
+/// undone turn.
 pub async fn redo_turn_handler(
     Path((session_id, thread_id)): Path<(String, String)>,
     State(state): State<Arc<GatewayState>>,

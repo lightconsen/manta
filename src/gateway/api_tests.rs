@@ -2,13 +2,15 @@
 //!
 //! Tests for the admin-tier HTTP API endpoints.
 
-use super::*;
+use std::sync::Arc;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use axum::Router;
-use std::sync::Arc;
 use tower::ServiceExt;
+
+use super::*;
 
 // ── GET /api/v1/agents ──
 

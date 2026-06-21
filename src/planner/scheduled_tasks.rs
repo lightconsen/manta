@@ -11,7 +11,7 @@
 //! use std::sync::Arc;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let scheduler = TaskScheduler::new();
+//! let mut scheduler = TaskScheduler::new();
 //! scheduler.add(ScheduledTask::new(
 //!     "morning-summary",
 //!     "Check email and summarize",
@@ -26,17 +26,19 @@
 //! # }
 //! ```
 
-use crate::computer::DesktopAction;
-use chrono::{DateTime, Datelike, Timelike, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+use chrono::{DateTime, Datelike, Timelike, Utc};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+
+use crate::computer::DesktopAction;
 
 /// A task that has been scheduled for future execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,9 +161,7 @@ impl Schedule {
 
     /// Convenience: standard 5-field cron expression.
     pub fn cron(expr: impl Into<String>) -> Self {
-        Self::Cron {
-            expression: expr.into(),
-        }
+        Self::Cron { expression: expr.into() }
     }
 
     /// Compute the next occurrence after the given time.
@@ -177,17 +177,19 @@ impl Schedule {
                     None // Already passed.
                 }
             }
-            Schedule::Interval { seconds } => Some(after + chrono::Duration::seconds(*seconds as i64)),
-            Schedule::Cron { expression } => parse_cron(expression)
-                .and_then(|fields| next_cron_occurrence(&fields, after)),
+            Schedule::Interval { seconds } => {
+                Some(after + chrono::Duration::seconds(*seconds as i64))
+            }
+            Schedule::Cron { expression } => {
+                parse_cron(expression).and_then(|fields| next_cron_occurrence(&fields, after))
+            }
         }
     }
 }
 
 /// Type alias for a task handler function.
-pub type TaskHandler = Arc<
-    dyn Fn(ScheduledTask) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
->;
+pub type TaskHandler =
+    Arc<dyn Fn(ScheduledTask) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// In-memory task scheduler with cron support.
 pub struct TaskScheduler {
@@ -299,9 +301,14 @@ impl TaskScheduler {
                             }
                         }
                         Schedule::Interval { seconds } => {
-                            match task.last_run.as_ref().and_then(|s| DateTime::parse_from_rfc3339(s).ok()) {
+                            match task
+                                .last_run
+                                .as_ref()
+                                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                            {
                                 Some(last) => {
-                                    let elapsed = now.signed_duration_since(last.with_timezone(&Utc));
+                                    let elapsed =
+                                        now.signed_duration_since(last.with_timezone(&Utc));
                                     elapsed.num_seconds() >= *seconds as i64
                                 }
                                 None => true, // Never run before.
@@ -311,7 +318,12 @@ impl TaskScheduler {
                             match parse_cron(expression) {
                                 Some(fields) => {
                                     let next = next_cron_occurrence(&fields, now);
-                                    match (next, task.last_run.as_ref().and_then(|s| DateTime::parse_from_rfc3339(s).ok())) {
+                                    match (
+                                        next,
+                                        task.last_run
+                                            .as_ref()
+                                            .and_then(|s| DateTime::parse_from_rfc3339(s).ok()),
+                                    ) {
                                         (Some(next_time), Some(last)) => {
                                             // Run if we've crossed the scheduled boundary.
                                             let last_utc = last.with_timezone(&Utc);
@@ -335,7 +347,8 @@ impl TaskScheduler {
                             let mut lock = tasks.write().await;
                             if let Some(t) = lock.get_mut(&task.id) {
                                 if t.is_running {
-                                    continue; // Another check already started it.
+                                    continue; // Another check already started
+                                              // it.
                                 }
                                 t.is_running = true;
                             }
@@ -387,8 +400,8 @@ impl TaskScheduler {
 
     /// Load tasks from JSON.
     pub async fn import_json(&self, json: &str) -> crate::Result<()> {
-        let tasks: Vec<ScheduledTask> = serde_json::from_str(json)
-            .map_err(crate::error::SyscityError::Serialization)?;
+        let tasks: Vec<ScheduledTask> =
+            serde_json::from_str(json).map_err(crate::error::SyscityError::Serialization)?;
         for task in tasks {
             self.add(task).await?;
         }
@@ -472,7 +485,11 @@ fn parse_field(field: &str, min: u8, max: u8) -> Option<Vec<u8>> {
 /// Find the next cron occurrence strictly after `after`.
 fn next_cron_occurrence(fields: &CronFields, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let mut candidate = after + chrono::Duration::minutes(1);
-    candidate = candidate.with_second(0).unwrap_or(candidate).with_nanosecond(0).unwrap_or(candidate);
+    candidate = candidate
+        .with_second(0)
+        .unwrap_or(candidate)
+        .with_nanosecond(0)
+        .unwrap_or(candidate);
 
     // Brute-force scan up to 4 years to avoid infinite loops.
     let limit = after + chrono::Duration::days(366 * 4);
@@ -482,7 +499,9 @@ fn next_cron_occurrence(fields: &CronFields, after: DateTime<Utc>) -> Option<Dat
             && fields.days.contains(&(candidate.day() as u8))
             && fields.hours.contains(&(candidate.hour() as u8))
             && fields.minutes.contains(&(candidate.minute() as u8))
-            && fields.weekdays.contains(&(candidate.weekday().num_days_from_sunday() as u8))
+            && fields
+                .weekdays
+                .contains(&(candidate.weekday().num_days_from_sunday() as u8))
         {
             return Some(candidate);
         }
@@ -551,8 +570,8 @@ mod tests {
 
     #[test]
     fn test_scheduled_task_max_runs() {
-        let mut task = ScheduledTask::new("t", "test", Schedule::interval(60), vec![])
-            .with_max_runs(2);
+        let mut task =
+            ScheduledTask::new("t", "test", Schedule::interval(60), vec![]).with_max_runs(2);
         assert!(task.compute_next_run().is_some());
         task.mark_run();
         task.mark_run();

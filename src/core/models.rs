@@ -4,9 +4,10 @@
 //! the application. These models are framework-agnostic and
 //! represent the business domain.
 
+use std::fmt;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use uuid::Uuid;
 
 /// Unique identifier for entities

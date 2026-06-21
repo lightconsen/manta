@@ -184,8 +184,8 @@ impl PersistedObservation {
     }
 
     fn into_obs(self) -> Observation {
-        let created_at = UNIX_EPOCH
-            + Duration::new(self.created_at_unix_secs, self.created_at_nanos);
+        let created_at =
+            UNIX_EPOCH + Duration::new(self.created_at_unix_secs, self.created_at_nanos);
         // Synthesize a fresh Instant — we have no reference point across restarts.
         // The Instant is only used inside the in-process aggregator; for queries
         // routed back into the store, ordering is via created_at.
@@ -225,12 +225,14 @@ fn parse_observation_id(s: &str) -> ObservationId {
 /// Each line is a [`PersistedObservation`] serialized as JSON.
 pub struct JsonlObservationStore {
     root: PathBuf,
-    /// Serializes appends so concurrent pollers don't interleave partial writes.
+    /// Serializes appends so concurrent pollers don't interleave partial
+    /// writes.
     writer_lock: AsyncMutex<()>,
 }
 
 impl JsonlObservationStore {
-    /// Create or open a JSONL store at `root`. The directory is created if missing.
+    /// Create or open a JSONL store at `root`. The directory is created if
+    /// missing.
     pub async fn open(root: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let root = root.into();
         tokio::fs::create_dir_all(&root).await?;
@@ -379,16 +381,16 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 
 /// Build an [`ObservationStore`] from configuration.
 ///
-/// `backend` accepts `"none"` / `"jsonl"`. Unknown values fall back to `"none"`.
+/// `backend` accepts `"none"` / `"jsonl"`. Unknown values fall back to
+/// `"none"`.
 pub async fn build_store(
     backend: &str,
     root_dir: Option<PathBuf>,
 ) -> Result<Arc<dyn ObservationStore>, StoreError> {
     match backend {
         "jsonl" => {
-            let dir = root_dir.unwrap_or_else(|| {
-                std::env::temp_dir().join("syscity-perception-jsonl")
-            });
+            let dir =
+                root_dir.unwrap_or_else(|| std::env::temp_dir().join("syscity-perception-jsonl"));
             let store = JsonlObservationStore::open(dir).await?;
             Ok(Arc::new(store))
         }
@@ -426,10 +428,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_jsonl_append_and_query() {
-        let dir = std::env::temp_dir().join(format!(
-            "syscity-jsonl-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("syscity-jsonl-test-{}", std::process::id()));
         let _ = tokio::fs::remove_dir_all(&dir).await;
         let store = JsonlObservationStore::open(&dir).await.unwrap();
 
@@ -448,10 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_jsonl_query_filters_by_modality() {
-        let dir = std::env::temp_dir().join(format!(
-            "syscity-jsonl-mod-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("syscity-jsonl-mod-{}", std::process::id()));
         let _ = tokio::fs::remove_dir_all(&dir).await;
         let store = JsonlObservationStore::open(&dir).await.unwrap();
 
@@ -474,10 +470,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_jsonl_query_since_filter() {
-        let dir = std::env::temp_dir().join(format!(
-            "syscity-jsonl-since-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("syscity-jsonl-since-{}", std::process::id()));
         let _ = tokio::fs::remove_dir_all(&dir).await;
         let store = JsonlObservationStore::open(&dir).await.unwrap();
 
@@ -501,10 +494,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_jsonl_prune_older_than() {
-        let dir = std::env::temp_dir().join(format!(
-            "syscity-jsonl-prune-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("syscity-jsonl-prune-{}", std::process::id()));
         let _ = tokio::fs::remove_dir_all(&dir).await;
         let store = JsonlObservationStore::open(&dir).await.unwrap();
 

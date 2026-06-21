@@ -12,12 +12,14 @@
 //! 3. API key list from config
 //! 4. Single API key from config
 
-use crate::model_router::Credential;
-use serde::{de::DeserializeOwned, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
+
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
+
+use crate::model_router::Credential;
 
 /// Trait abstracting an HTTP client for a single LLM backend.
 ///
@@ -25,27 +27,27 @@ use tracing::{debug, warn};
 /// request/response serialization, and retry/backoff.
 #[async_trait::async_trait]
 pub trait GatewayClient: Send + Sync {
- /// POST a JSON body and deserialize the response.
+    /// POST a JSON body and deserialize the response.
     async fn post_json<T: Serialize + Send + Sync, R: DeserializeOwned + Send>(
         &self,
         path: &str,
         body: &T,
     ) -> crate::Result<R>;
 
- /// POST a JSON body and return the raw text (for streaming endpoints).
+    /// POST a JSON body and return the raw text (for streaming endpoints).
     async fn post_json_text<T: Serialize + Send + Sync>(
         &self,
         path: &str,
         body: &T,
     ) -> crate::Result<String>;
 
- /// Update the active credential (e.g. after token refresh or key rotation).
+    /// Update the active credential (e.g. after token refresh or key rotation).
     async fn set_credential(&self, credential: Credential);
 
- /// Change the request timeout.
+    /// Change the request timeout.
     async fn set_timeout(&self, duration: Duration);
 
- /// Return the configured base URL.
+    /// Return the configured base URL.
     fn base_url(&self) -> &str;
 }
 
@@ -64,11 +66,11 @@ pub struct HttpGatewayClient {
     timeout: RwLock<Duration>,
     max_retries: u32,
     retry_delay: Duration,
- /// Expected SHA-256 fingerprint of the remote TLS certificate.
- /// If `Some`, the client logs the observed fingerprint on first
- /// use for operator comparison.
+    /// Expected SHA-256 fingerprint of the remote TLS certificate.
+    /// If `Some`, the client logs the observed fingerprint on first
+    /// use for operator comparison.
     tls_fingerprint: Option<String>,
- /// Optional per-client token-bucket rate limiter.
+    /// Optional per-client token-bucket rate limiter.
     rate_limiter: Option<std::sync::Arc<crate::security::RateLimiter>>,
 }
 
@@ -84,7 +86,7 @@ impl std::fmt::Debug for HttpGatewayClient {
 }
 
 impl HttpGatewayClient {
- /// Create a new client.
+    /// Create a new client.
     pub fn new(
         base_url: impl Into<String>,
         credential: Credential,
@@ -110,25 +112,25 @@ impl HttpGatewayClient {
         })
     }
 
- /// Builder: set max retries.
+    /// Builder: set max retries.
     pub fn with_max_retries(mut self, n: u32) -> Self {
         self.max_retries = n;
         self
     }
 
- /// Builder: set retry delay.
+    /// Builder: set retry delay.
     pub fn with_retry_delay(mut self, d: Duration) -> Self {
         self.retry_delay = d;
         self
     }
 
- /// Builder: set TLS fingerprint for verification.
+    /// Builder: set TLS fingerprint for verification.
     pub fn with_tls_fingerprint(mut self, fp: impl Into<String>) -> Self {
         self.tls_fingerprint = Some(fp.into());
         self
     }
 
- /// Builder: attach a token-bucket rate limiter to this client.
+    /// Builder: attach a token-bucket rate limiter to this client.
     pub fn with_rate_limiter(
         mut self,
         limiter: std::sync::Arc<crate::security::RateLimiter>,
@@ -137,7 +139,7 @@ impl HttpGatewayClient {
         self
     }
 
- /// Build the full URL for a path.
+    /// Build the full URL for a path.
     fn url(&self, path: &str) -> String {
         if path.starts_with("http://") || path.starts_with("https://") {
             path.to_string()
@@ -146,13 +148,14 @@ impl HttpGatewayClient {
         }
     }
 
- /// Execute a request with auth, retry, and optional TLS-fingerprint logging.
+    /// Execute a request with auth, retry, and optional TLS-fingerprint
+    /// logging.
     async fn execute_with_retry<F, Fut>(&self, operation: F) -> crate::Result<reqwest::Response>
     where
         F: Fn() -> Fut + Send,
         Fut: std::future::Future<Output = crate::Result<reqwest::Response>> + Send,
     {
- // Token-bucket rate limit check
+        // Token-bucket rate limit check
         if let Some(ref limiter) = self.rate_limiter {
             let user_id = crate::security::UserId::new(&self.base_url);
             match limiter.check(&user_id).await {
@@ -171,12 +174,12 @@ impl HttpGatewayClient {
         for attempt in 0..=self.max_retries {
             match operation().await {
                 Ok(resp) => {
- // Log TLS fingerprint on first successful connection
+                    // Log TLS fingerprint on first successful connection
                     if attempt == 0 {
                         if let Some(ref fp) = self.tls_fingerprint {
- // Note: reqwest doesn't expose peer certificate
- // digest without a custom connector. This is a
- // placeholder that logs the configured expectation.
+                            // Note: reqwest doesn't expose peer certificate
+                            // digest without a custom connector. This is a
+                            // placeholder that logs the configured expectation.
                             debug!(
                                 "TLS fingerprint configured for {}: expected={}",
                                 self.base_url, fp

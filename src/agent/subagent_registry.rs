@@ -71,7 +71,8 @@ pub struct SubagentMetrics {
     pub total_killed: u64,
 }
 
-// ── Persistence types ─────────────────────────────────────────────────────────
+// ── Persistence types
+// ─────────────────────────────────────────────────────────
 
 /// Terminal outcome for a persisted run record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,7 +83,8 @@ pub enum RunOutcome {
     Failed(String),
 }
 
-/// A serializable snapshot of a completed subagent run, used for crash recovery.
+/// A serializable snapshot of a completed subagent run, used for crash
+/// recovery.
 ///
 /// Uses `SystemTime` (wall clock) instead of `Instant` so it can be stored
 /// to disk and loaded on restart.
@@ -149,8 +151,10 @@ pub struct SubagentRegistry {
 impl SubagentRegistry {
     /// Create a new registry.
     ///
-    /// * `max_depth` — maximum nesting depth (e.g. 3 means root, child, grandchild).
-    /// * `max_concurrent` — maximum number of simultaneously *running* subagents.
+    /// * `max_depth` — maximum nesting depth (e.g. 3 means root, child,
+    ///   grandchild).
+    /// * `max_concurrent` — maximum number of simultaneously *running*
+    ///   subagents.
     pub fn new(max_depth: u32, max_concurrent: usize) -> Self {
         Self {
             runs: RwLock::new(HashMap::new()),
@@ -478,8 +482,9 @@ impl SubagentRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_spawn_and_complete() {

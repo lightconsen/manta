@@ -4,10 +4,11 @@
 //! security-relevant events: access decisions, pairing operations,
 //! command gate evaluations, config changes, and tool invocations.
 
-use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 /// Category of audit event.
@@ -248,8 +249,8 @@ mod tests {
     #[test]
     fn test_default_capacity() {
         let _log: RuntimeAuditLog = Default::default();
-        // Capacity is 10_000 but we can't inspect it directly; test eviction indirectly
-        // by verifying it works with many entries
+        // Capacity is 10_000 but we can't inspect it directly; test eviction
+        // indirectly by verifying it works with many entries
     }
 
     #[tokio::test]

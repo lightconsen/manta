@@ -377,9 +377,11 @@ mod sensitive_ui_tests {
 
 #[cfg(test)]
 mod screenshot_encoder_tests {
+    use serial_test::serial;
     use syscity::computer::screenshot_encoder::NetworkCondition;
 
     #[test]
+    #[serial]
     fn test_network_condition_env_local() {
         // SYSCITY_LOCAL_MODE should force Local
         unsafe { std::env::set_var("SYSCITY_LOCAL_MODE", "1") };
@@ -389,6 +391,7 @@ mod screenshot_encoder_tests {
     }
 
     #[test]
+    #[serial]
     fn test_network_condition_env_remote() {
         // SYSCITY_REMOTE_ENDPOINT should force Remote
         unsafe { std::env::set_var("SYSCITY_REMOTE_ENDPOINT", "https://example.com") };
@@ -398,6 +401,7 @@ mod screenshot_encoder_tests {
     }
 
     #[test]
+    #[serial]
     fn test_auto_detect_env_takes_priority_over_host() {
         // SYSCITY_LOCAL_MODE should win even when a host is provided
         unsafe { std::env::set_var("SYSCITY_LOCAL_MODE", "1") };
@@ -414,6 +418,7 @@ mod screenshot_encoder_tests {
     }
 
     #[test]
+    #[serial]
     fn test_auto_detect_no_host_fallsback_normal() {
         // With no env vars and no host, must return Normal
         assert_eq!(NetworkCondition::auto_detect(None), NetworkCondition::Normal);

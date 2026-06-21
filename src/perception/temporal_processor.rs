@@ -16,9 +16,9 @@
 //!
 //! - `count` / `first_at` / `last_at` — observation cadence
 //! - `last_payload` — most recent raw `data` payload
-//! - Optional numeric series stats — `min`, `max`, `mean` — populated
-//!   when [`extract_scalar`] succeeds (numeric leaf or top-level scalar
-//!   field like `"value"` / `"pct"` / `"rms"`)
+//! - Optional numeric series stats — `min`, `max`, `mean` — populated when
+//!   [`extract_scalar`] succeeds (numeric leaf or top-level scalar field like
+//!   `"value"` / `"pct"` / `"rms"`)
 //!
 //! The window is a wall-clock duration. Old samples are evicted
 //! lazily on each push.
@@ -105,10 +105,9 @@ impl DefaultTemporalProcessor {
             last_at: obs.created_at,
             last_payload: obs.data.clone(),
         });
-        series.samples.push_back(Sample {
-            at: obs.created_at,
-            scalar,
-        });
+        series
+            .samples
+            .push_back(Sample { at: obs.created_at, scalar });
         series.last_at = obs.created_at;
         series.last_payload = obs.data.clone();
 
@@ -156,10 +155,7 @@ impl TemporalProcessor for DefaultTemporalProcessor {
             }
             let mut stats = serde_json::Map::new();
             stats.insert("count".into(), serde_json::json!(count));
-            stats.insert(
-                "last".into(),
-                series.last_payload.clone(),
-            );
+            stats.insert("last".into(), series.last_payload.clone());
             if numeric_count > 0 {
                 stats.insert("numeric_count".into(), serde_json::json!(numeric_count));
                 stats.insert("min".into(), serde_json::json!(min));
@@ -198,10 +194,7 @@ pub fn spawn_temporal_processor(
             match rx.recv().await {
                 Ok(obs) => processor.push_inner(&obs),
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    tracing::warn!(
-                        "temporal processor lagged, skipped {} observations",
-                        skipped
-                    );
+                    tracing::warn!("temporal processor lagged, skipped {} observations", skipped);
                     continue;
                 }
                 Err(broadcast::error::RecvError::Closed) => {
@@ -217,8 +210,8 @@ pub fn spawn_temporal_processor(
 ///
 /// Recognises:
 /// - top-level number,
-/// - common scalar keys: `"value"`, `"pct"`, `"rms"`, `"level"`,
-///   `"cpu_pct"`, `"mem_pct"`, `"temperature"`, `"celsius"`.
+/// - common scalar keys: `"value"`, `"pct"`, `"rms"`, `"level"`, `"cpu_pct"`,
+///   `"mem_pct"`, `"temperature"`, `"celsius"`.
 ///
 /// Returns `None` if no scalar can be unambiguously identified — a
 /// multi-field object is recorded only as a count, not an aggregate.
@@ -278,10 +271,7 @@ mod tests {
 
     #[test]
     fn test_extract_scalar_unknown_object() {
-        assert_eq!(
-            extract_scalar(&serde_json::json!({"foo": 1, "bar": 2})),
-            None
-        );
+        assert_eq!(extract_scalar(&serde_json::json!({"foo": 1, "bar": 2})), None);
     }
 
     #[tokio::test]
@@ -301,12 +291,8 @@ mod tests {
     async fn test_aggregate_min_max_mean_for_numeric_series() {
         let p = DefaultTemporalProcessor::new(Duration::from_secs(60));
         for v in [10.0, 20.0, 30.0_f64] {
-            p.ingest(&obs_with(
-                "cpu",
-                Modality::System,
-                serde_json::json!({"cpu_pct": v}),
-            ))
-            .await;
+            p.ingest(&obs_with("cpu", Modality::System, serde_json::json!({"cpu_pct": v})))
+                .await;
         }
         let snap = p.snapshot_aggregates();
         let agg = snap.get(&("cpu".to_string(), Modality::System)).unwrap();
@@ -320,12 +306,8 @@ mod tests {
     #[tokio::test]
     async fn test_aggregate_count_only_for_non_numeric() {
         let p = DefaultTemporalProcessor::new(Duration::from_secs(60));
-        p.ingest(&obs_with(
-            "fs",
-            Modality::FileSystem,
-            serde_json::json!({"path": "/x/y"}),
-        ))
-        .await;
+        p.ingest(&obs_with("fs", Modality::FileSystem, serde_json::json!({"path": "/x/y"})))
+            .await;
         let snap = p.snapshot_aggregates();
         let agg = snap.get(&("fs".to_string(), Modality::FileSystem)).unwrap();
         let stats = &agg.stats;
@@ -362,8 +344,11 @@ mod tests {
         // Use a streaming MockPerceptionSource to push observations through hub.
         use crate::perception::mock::MockPerceptionSource;
         let (mock, tx) = MockPerceptionSource::new("streamer").with_streaming(64);
-        hub.attach_source("streamer", Arc::new(mock) as Arc<dyn crate::perception::PerceptionSource>)
-            .await;
+        hub.attach_source(
+            "streamer",
+            Arc::new(mock) as Arc<dyn crate::perception::PerceptionSource>,
+        )
+        .await;
 
         let obs = obs_with("streamer", Modality::System, serde_json::json!({"value": 7.0}));
         tx.send(obs).unwrap();
@@ -373,7 +358,9 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
             let snap = proc.snapshot_aggregates();
             if !snap.is_empty() {
-                let agg = snap.get(&("streamer".to_string(), Modality::System)).unwrap();
+                let agg = snap
+                    .get(&("streamer".to_string(), Modality::System))
+                    .unwrap();
                 assert_eq!(agg.stats["count"], 1);
                 assert_eq!(agg.stats["mean"], 7.0);
                 return;

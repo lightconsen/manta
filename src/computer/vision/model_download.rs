@@ -40,15 +40,13 @@ pub async fn resolve_or_download_vision_models() -> crate::computer::Result<Visi
     let dir = model_data_dir();
 
     // Ensure data directory exists
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|e| {
-            crate::computer::ComputerError::Other(format!(
-                "Cannot create model data dir {}: {}",
-                dir.display(),
-                e
-            ))
-        })?;
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
+        crate::computer::ComputerError::Other(format!(
+            "Cannot create model data dir {}: {}",
+            dir.display(),
+            e
+        ))
+    })?;
 
     // Resolve OmniParser
     let omniparser = resolve_single_model(
@@ -82,12 +80,7 @@ pub async fn resolve_or_download_vision_models() -> crate::computer::Result<Visi
     )
     .await;
 
-    Ok(VisionModelPaths {
-        omniparser,
-        det,
-        rec,
-        cls,
-    })
+    Ok(VisionModelPaths { omniparser, det, rec, cls })
 }
 
 /// Resolve a single required model: already on disk → return, or download.
@@ -113,41 +106,26 @@ async fn resolve_single_model(
     );
     let data = download_bytes(url).await?;
 
-    tokio::fs::write(&path, &data)
-        .await
-        .map_err(|e| {
-            crate::computer::ComputerError::Other(format!(
-                "Failed to write model '{}' to {}: {}",
-                filename,
-                path.display(),
-                e
-            ))
-        })?;
+    tokio::fs::write(&path, &data).await.map_err(|e| {
+        crate::computer::ComputerError::Other(format!(
+            "Failed to write model '{}' to {}: {}",
+            filename,
+            path.display(),
+            e
+        ))
+    })?;
 
-    tracing::info!(
-        "ONNX model '{}' saved to {} ({} bytes)",
-        filename,
-        path.display(),
-        data.len()
-    );
+    tracing::info!("ONNX model '{}' saved to {} ({} bytes)", filename, path.display(), data.len());
 
     Ok(path)
 }
 
 /// Resolve an optional model — returns `None` on failure instead of error.
-async fn resolve_optional_model(
-    model_dir: &Path,
-    filename: &str,
-    url: &str,
-) -> Option<PathBuf> {
+async fn resolve_optional_model(model_dir: &Path, filename: &str, url: &str) -> Option<PathBuf> {
     match resolve_single_model(model_dir, filename, url).await {
         Ok(path) => Some(path),
         Err(e) => {
-            tracing::warn!(
-                "Optional ONNX model '{}' not available: {}",
-                filename,
-                e
-            );
+            tracing::warn!("Optional ONNX model '{}' not available: {}", filename, e);
             None
         }
     }
@@ -159,17 +137,12 @@ async fn download_bytes(url: &str) -> crate::computer::Result<Vec<u8>> {
         .timeout(std::time::Duration::from_secs(120))
         .user_agent("syscity/0.1")
         .build()
-        .map_err(|e| {
-            crate::computer::ComputerError::Other(format!("HTTP client: {}", e))
-        })?
+        .map_err(|e| crate::computer::ComputerError::Other(format!("HTTP client: {}", e)))?
         .get(url)
         .send()
         .await
         .map_err(|e| {
-            crate::computer::ComputerError::Other(format!(
-                "Download failed ({}): {}",
-                url, e
-            ))
+            crate::computer::ComputerError::Other(format!("Download failed ({}): {}", url, e))
         })?;
     if !response.status().is_success() {
         return Err(crate::computer::ComputerError::Other(format!(
@@ -178,9 +151,11 @@ async fn download_bytes(url: &str) -> crate::computer::Result<Vec<u8>> {
             url
         )));
     }
-    response.bytes().await.map(|b| b.to_vec()).map_err(|e| {
-        crate::computer::ComputerError::Other(format!("Download body: {}", e))
-    })
+    response
+        .bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| crate::computer::ComputerError::Other(format!("Download body: {}", e)))
 }
 
 /// Rough size estimate for display purposes.
@@ -206,7 +181,11 @@ mod tests {
     fn test_model_data_dir_is_absolute() {
         let dir = model_data_dir();
         assert!(dir.is_absolute(), "data dir should be absolute: {:?}", dir);
-        assert!(dir.ends_with(".syscity/models/vision"), "should end with .syscity/models/vision: {:?}", dir);
+        assert!(
+            dir.ends_with(".syscity/models/vision"),
+            "should end with .syscity/models/vision: {:?}",
+            dir
+        );
     }
 
     #[test]

@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::SystemTime;
+
+use sqlx::Row;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, info};
@@ -18,7 +20,6 @@ use crate::export::formats::{
 use crate::memory::{
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStore, UnifiedStore,
 };
-use sqlx::Row;
 
 /// Export options for controlling export behavior
 #[derive(Debug, Clone)]
@@ -521,8 +522,9 @@ impl ExportService {
 
     /// Import everything from an export directory
     ///
-    /// Looks for `memories.{json,jsonl}` and `conversations.{json,jsonl}` in the
-    /// provided directory, plus an optional `export.json` metadata file.
+    /// Looks for `memories.{json,jsonl}` and `conversations.{json,jsonl}` in
+    /// the provided directory, plus an optional `export.json` metadata
+    /// file.
     pub async fn import_all(
         &self,
         input_dir: impl AsRef<Path>,
@@ -1193,8 +1195,8 @@ impl ExportService {
             .map(|m| serde_json::to_string(m).unwrap_or_default());
 
         sqlx::query(
-            "UPDATE chat_messages SET conversation_id = ?, user_id = ?, role = ?, \
-             content = ?, created_at = ?, metadata = ? WHERE id = ?",
+            "UPDATE chat_messages SET conversation_id = ?, user_id = ?, role = ?, content = ?, \
+             created_at = ?, metadata = ? WHERE id = ?",
         )
         .bind(&msg.conversation_id)
         .bind(&msg.user_id)
@@ -1279,8 +1281,9 @@ impl ExportService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     async fn in_memory_store() -> UnifiedStore {
         UnifiedStore::new_in_memory()

@@ -39,15 +39,13 @@ impl PlatformToolSet for LinuxDesktopWaylandToolset {
     }
 
     fn description(&self) -> &str {
-        "Linux Wayland desktop automation: screenshots (grim/spectacle/gnome-screenshot) \
-         and input simulation (ydotool/wtype for click, type, key), \
-         and clipboard (wl-copy/wl-paste). \
-         Note: Wayland restricts window introspection compared to X11."
+        "Linux Wayland desktop automation: screenshots (grim/spectacle/gnome-screenshot) and input \
+         simulation (ydotool/wtype for click, type, key), and clipboard (wl-copy/wl-paste). Note: \
+         Wayland restricts window introspection compared to X11."
     }
 
     fn constraints(&self) -> &PlatformConstraints {
-        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> =
-            std::sync::OnceLock::new();
+        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> = std::sync::OnceLock::new();
         CONSTRAINTS.get_or_init(|| PlatformConstraints {
             target_os: vec!["linux".to_string()],
             requires_gui: true,

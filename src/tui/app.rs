@@ -1,22 +1,24 @@
 //! Terminal setup, panic recovery, and TUI orchestration.
 
-use crate::tui::auth::AuthConfig;
-use crate::tui::error::TuiError;
-use crate::tui::event_loop;
-use crate::tui::input::spawn_input_reader;
-use crate::tui::state::AppState;
-use crate::tui::ws_client::WsClient;
+use std::io::{stdout, Stdout};
+use std::panic;
+use std::sync::Arc;
+
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use std::io::{stdout, Stdout};
-use std::panic;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
+
+use crate::tui::auth::AuthConfig;
+use crate::tui::error::TuiError;
+use crate::tui::event_loop;
+use crate::tui::input::spawn_input_reader;
+use crate::tui::state::AppState;
+use crate::tui::ws_client::WsClient;
 
 /// Run the TUI.
 pub async fn run(

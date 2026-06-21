@@ -6,14 +6,10 @@
 //! - Per-IP: IP-based limits for anonymous requests
 //! - Per-endpoint: specific endpoint restrictions
 //!
-//!
 
-use crate::gateway::auth::extract_session_cookie;
-use crate::gateway::auth::SessionCookieConfig;
-use crate::security::sliding_window::{
-    LockoutConfig, RateLimitKey, SlidingWindowRateLimiter,
-};
-use crate::security::{RateLimitResult, RateLimiter, UserId};
+use std::sync::Arc;
+use std::time::Duration;
+
 use axum::{
     body::Body,
     extract::{Request, State},
@@ -22,11 +18,13 @@ use axum::{
     response::Response,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::Duration;
 use tracing::warn;
 
+use crate::gateway::auth::extract_session_cookie;
+use crate::gateway::auth::SessionCookieConfig;
 use crate::gateway::GatewayState;
+use crate::security::sliding_window::{LockoutConfig, RateLimitKey, SlidingWindowRateLimiter};
+use crate::security::{RateLimitResult, RateLimiter, UserId};
 
 /// Multi-tier rate limit configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -669,7 +667,9 @@ pub async fn multi_tier_rate_limit_middleware(
     let endpoint = req.uri().path().to_string();
 
     // Check multi-tier rate limit using the shared instance from GatewayState
-    let result = state.auth.multi_tier_rate_limiter
+    let result = state
+        .auth
+        .multi_tier_rate_limiter
         .check_scoped(&user_id, ip, &endpoint, &scope)
         .await;
 

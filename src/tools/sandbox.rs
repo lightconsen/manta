@@ -99,10 +99,7 @@ impl SandboxConfig {
 /// # use syscity::tools::shell::ShellTool;
 /// # fn make_shell_tool() -> ShellTool { ShellTool::new() }
 /// let config = SandboxConfig {
-///     allowed_paths: vec![
-///         PathBuf::from("/home/user/projects"),
-///         PathBuf::from("/tmp"),
-///     ],
+///     allowed_paths: vec![PathBuf::from("/home/user/projects"), PathBuf::from("/tmp")],
 ///     blocked_paths: vec![PathBuf::from("/etc")],
 ///     timeout: Duration::from_secs(30),
 ///     ..Default::default()
@@ -216,9 +213,10 @@ impl Tool for SandboxedTool {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::tools::ToolExecutionResult;
-    use serde_json::json;
 
     // ── minimal stub tool ────────────────────────────────────────────────
     struct EchoTool;

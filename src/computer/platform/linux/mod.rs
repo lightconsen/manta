@@ -50,13 +50,12 @@ impl PlatformToolSet for LinuxToolset {
     }
 
     fn description(&self) -> &str {
-        "Linux system management: system inspection, \
-         systemd services, logs, network, packages, and users."
+        "Linux system management: system inspection, systemd services, logs, network, packages, \
+         and users."
     }
 
     fn constraints(&self) -> &PlatformConstraints {
-        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> =
-            std::sync::OnceLock::new();
+        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> = std::sync::OnceLock::new();
         CONSTRAINTS.get_or_init(|| PlatformConstraints {
             target_os: vec!["linux".to_string()],
             requires_gui: false,

@@ -10,13 +10,14 @@
 //! For production Wayland automation, consider running inside a
 //! nested X11 session (`weston --xwayland`) or using the X11 path.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Description of a UI element.
 #[derive(Debug, Clone, Serialize)]
@@ -91,11 +92,10 @@ impl Tool for WaylandAccessibilityTool {
     }
 
     fn description(&self) -> &str {
-        "Query the Wayland accessibility tree (best-effort). \
-         Wayland restricts cross-app introspection; this tool attempts \
-         xdg-desktop-portal a11y bus or returns an empty tree with guidance. \
-         For full desktop automation on Wayland, consider using X11 (DISPLAY) \
-         or a nested X11 session."
+        "Query the Wayland accessibility tree (best-effort). Wayland restricts cross-app \
+         introspection; this tool attempts xdg-desktop-portal a11y bus or returns an empty tree \
+         with guidance. For full desktop automation on Wayland, consider using X11 (DISPLAY) or a \
+         nested X11 session."
     }
 
     fn parameters_schema(&self) -> Value {

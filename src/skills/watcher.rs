@@ -3,10 +3,11 @@
 //! Watches skill directories for changes and triggers reloads.
 //! Uses the `notify` crate for cross-platform file system events.
 
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 

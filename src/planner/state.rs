@@ -3,11 +3,13 @@
 //! Saves plan and task execution state to SQLite so that long-running goals
 //! survive process restarts and can be resumed.
 
-use crate::planner::{Plan, Task, TaskStatus};
+use std::time::Duration;
+
 use serde_json;
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
-use std::time::Duration;
 use tracing::{info, instrument};
+
+use crate::planner::{Plan, Task, TaskStatus};
 
 /// SQLite-backed persistent store for planner state.
 #[derive(Debug, Clone)]
@@ -100,15 +102,13 @@ impl TaskStateStore {
             details: e.to_string(),
         })?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_planner_tasks_plan ON planner_tasks(plan_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::Storage {
-            context: "Failed to create planner_tasks index".to_string(),
-            details: e.to_string(),
-        })?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_planner_tasks_plan ON planner_tasks(plan_id)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to create planner_tasks index".to_string(),
+                details: e.to_string(),
+            })?;
 
         Ok(())
     }
@@ -241,11 +241,7 @@ impl TaskStateStore {
 
     /// Mark a plan as completed.
     #[instrument(skip(self))]
-    pub async fn complete_plan(
-        &self,
-        plan_id: &str,
-        success: bool,
-    ) -> crate::Result<()> {
+    pub async fn complete_plan(&self, plan_id: &str, success: bool) -> crate::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
 
         sqlx::query(
@@ -281,12 +277,12 @@ impl TaskStateStore {
             })?;
 
         let goal: String = match row {
-            Some(r) => r.try_get("goal").map_err(|e| {
-                crate::error::SyscityError::Storage {
+            Some(r) => r
+                .try_get("goal")
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: format!("Failed to read plan '{}' goal", plan_id),
                     details: e.to_string(),
-                }
-            })?,
+                })?,
             None => return Ok(None),
         };
 
@@ -310,19 +306,21 @@ impl TaskStateStore {
         })?;
 
         for row in task_rows {
-            let id: String = row.try_get("id").map_err(|e| {
-                crate::error::SyscityError::Storage {
-                    context: "Failed to read task id".to_string(),
-                    details: e.to_string(),
-                }
-            })?;
-            let description: String = row.try_get("description").map_err(|e| {
-                crate::error::SyscityError::Storage {
-                    context: format!("Failed to read task '{}' description", id),
-                    details: e.to_string(),
-                }
-            })?;
-            let deps_json: String = row.try_get("dependencies").unwrap_or_else(|_| "[]".to_string());
+            let id: String =
+                row.try_get("id")
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: "Failed to read task id".to_string(),
+                        details: e.to_string(),
+                    })?;
+            let description: String =
+                row.try_get("description")
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: format!("Failed to read task '{}' description", id),
+                        details: e.to_string(),
+                    })?;
+            let deps_json: String = row
+                .try_get("dependencies")
+                .unwrap_or_else(|_| "[]".to_string());
             let deps: Vec<String> = serde_json::from_str(&deps_json).unwrap_or_default();
             let action = row
                 .try_get::<Option<String>, _>("action_json")
@@ -335,7 +333,9 @@ impl TaskStateStore {
                 .ok()
                 .flatten()
                 .and_then(|j| serde_json::from_str(&j).ok());
-            let status_str: String = row.try_get("status").unwrap_or_else(|_| "Pending".to_string());
+            let status_str: String = row
+                .try_get("status")
+                .unwrap_or_else(|_| "Pending".to_string());
             let status = parse_task_status(&status_str);
             let result: Option<String> = row.try_get("result").ok();
             let error: Option<String> = row.try_get("error").ok();

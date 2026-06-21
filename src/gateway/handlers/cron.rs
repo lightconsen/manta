@@ -1,16 +1,17 @@
+use std::sync::Arc;
 
+use ::cron::Schedule;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
-use ::cron::Schedule;
 
-// ── Cron job management ───────────────────────────────────────────────────────
+// ── Cron job management
+// ───────────────────────────────────────────────────────
 
 #[allow(dead_code)]
 /// `GET /api/v1/cron` — list all scheduled jobs.
@@ -30,8 +31,9 @@ pub async fn add_cron_job_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<AddCronJobRequest>,
 ) -> impl IntoResponse {
-    use crate::cron::cron::{CronJob, ExecutionTarget, Schedule as CronSchedule};
     use std::str::FromStr;
+
+    use crate::cron::cron::{CronJob, ExecutionTarget, Schedule as CronSchedule};
 
     let schedule = match cron::Schedule::from_str(&req.schedule) {
         Ok(_) => CronSchedule::Cron {

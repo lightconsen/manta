@@ -8,9 +8,10 @@
 //! and plan loading, this module is intentionally thin — it adds queue-style
 //! ergonomics and batch operations.
 
-use crate::planner::{Plan, Task, TaskStateStore, TaskStatus};
-use crate::planner::state::PlanSummary;
 use tracing::info;
+
+use crate::planner::state::PlanSummary;
+use crate::planner::{Plan, Task, TaskStateStore, TaskStatus};
 
 /// High-level manager for persistent goals and tasks.
 pub struct PersistentTaskManager {
@@ -24,11 +25,7 @@ impl PersistentTaskManager {
     }
 
     /// Queue a new goal (save plan + tasks atomically).
-    pub async fn queue_goal(
-        &self,
-        plan_id: impl Into<String>,
-        plan: &Plan,
-    ) -> crate::Result<()> {
+    pub async fn queue_goal(&self, plan_id: impl Into<String>, plan: &Plan) -> crate::Result<()> {
         let id = plan_id.into();
         self.store.save_plan(&id, plan).await?;
         info!("Queued goal '{}' with {} tasks", id, plan.tasks.len());
@@ -36,11 +33,7 @@ impl PersistentTaskManager {
     }
 
     /// Queue a single task under a plan.
-    pub async fn queue_task(
-        &self,
-        plan_id: &str,
-        task: &Task,
-    ) -> crate::Result<()> {
+    pub async fn queue_task(&self, plan_id: &str, task: &Task) -> crate::Result<()> {
         self.store.save_task(plan_id, task).await?;
         Ok(())
     }
@@ -59,12 +52,7 @@ impl PersistentTaskManager {
     }
 
     /// Mark a task as failed with an error message.
-    pub async fn fail_task(
-        &self,
-        plan_id: &str,
-        task_id: &str,
-        error: &str,
-    ) -> crate::Result<()> {
+    pub async fn fail_task(&self, plan_id: &str, task_id: &str, error: &str) -> crate::Result<()> {
         self.store
             .update_task_status(plan_id, task_id, TaskStatus::Failed, None, Some(error))
             .await?;
@@ -72,11 +60,7 @@ impl PersistentTaskManager {
     }
 
     /// Mark a plan as completed.
-    pub async fn complete_plan(
-        &self,
-        plan_id: &str,
-        success: bool,
-    ) -> crate::Result<()> {
+    pub async fn complete_plan(&self, plan_id: &str, success: bool) -> crate::Result<()> {
         self.store.complete_plan(plan_id, success).await?;
         info!("Completed plan '{}' (success={})", plan_id, success);
         Ok(())
@@ -161,9 +145,7 @@ impl PersistentTaskManager {
 
 impl Clone for PersistentTaskManager {
     fn clone(&self) -> Self {
-        Self {
-            store: self.store.clone(),
-        }
+        Self { store: self.store.clone() }
     }
 }
 

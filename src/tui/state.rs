@@ -1,8 +1,9 @@
 //! Central application state for the TUI.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Local};
 use serde_json::Value;
-use std::collections::HashMap;
 
 /// Connection state of the TUI to the gateway.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -188,7 +189,8 @@ pub struct AppState {
     pub should_quit: bool,
 }
 
-/// Information about a gateway command shown in the help popup and command palette.
+/// Information about a gateway command shown in the help popup and command
+/// palette.
 #[derive(Debug, Clone, Default)]
 pub struct CommandInfo {
     /// Canonical key (e.g. "new").
@@ -213,8 +215,7 @@ impl CommandInfo {
     /// Match against a query string (name prefix or description contains).
     pub fn matches(&self, query: &str) -> bool {
         let q = query.to_lowercase();
-        self.name.to_lowercase().starts_with(&q)
-            || self.description.to_lowercase().contains(&q)
+        self.name.to_lowercase().starts_with(&q) || self.description.to_lowercase().contains(&q)
     }
 }
 
@@ -418,7 +419,8 @@ impl AppState {
         });
     }
 
-    /// Return true if the current session is in the list, creating a placeholder if needed.
+    /// Return true if the current session is in the list, creating a
+    /// placeholder if needed.
     pub fn ensure_session(&mut self, session_id: &str) {
         if !self.sessions.iter().any(|s| s.id == session_id) {
             self.sessions.push(SessionSummary {

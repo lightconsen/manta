@@ -1,14 +1,16 @@
 //! Syscity - Personal AI Assistant
 //!
-//! Syscity is a lightweight, fast, and secure Personal AI Assistant written in Rust.
-//! It combines the simplicity philosophy of NanoClaw with the performance
+//! Syscity is a lightweight, fast, and secure Personal AI Assistant written in
+//! Rust. It combines the simplicity philosophy of NanoClaw with the performance
 //! characteristics of ZeroClaw.
 //!
 //! # Architecture
 //!
 //! - **Core** (`core`): Domain models and business logic
-//! - **Providers** (`providers`): LLM provider abstractions (OpenAI, Anthropic, etc.)
-//! - **Channels** (`channels`): Communication interfaces (CLI, Telegram, Discord, etc.)
+//! - **Providers** (`providers`): LLM provider abstractions (OpenAI, Anthropic,
+//!   etc.)
+//! - **Channels** (`channels`): Communication interfaces (CLI, Telegram,
+//!   Discord, etc.)
 //! - **Tools** (`tools`): Capabilities for the AI to interact with the world
 //! - **Adapters** (`adapters`): External service integrations
 //! - **Config** (`config`): Configuration management
@@ -19,7 +21,7 @@
 //!
 //! ```rust
 //! use syscity::config::Config;
-//! use syscity::providers::{Message, Role, CompletionRequest};
+//! use syscity::providers::{CompletionRequest, Message, Role};
 //!
 //! # async fn example() -> syscity::error::Result<()> {
 //! let config = Config::load()?;
@@ -42,6 +44,7 @@ pub mod canvas;
 pub mod channels;
 pub mod cli;
 pub mod client;
+pub mod computer;
 pub mod config;
 pub mod core;
 pub mod cron;
@@ -59,33 +62,31 @@ pub mod memory;
 pub mod model_router;
 pub mod outbound;
 pub mod perception;
-pub mod computer;
 pub mod planner;
 pub mod plugins;
 pub mod providers;
 pub mod secrets;
 pub mod security;
-pub mod standing_orders;
 pub mod skills;
+pub mod standing_orders;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
-pub mod tui;
 pub mod tools;
+pub mod tui;
 pub mod utils;
 
 // Re-export commonly used types
-pub use crate::core::Engine;
-pub use config::{Config, ConfigWatcher, ReloadableConfig};
-pub use error::{Result, SyscityError};
-
+// Backward-compat: capabilities moved under computer/ (now platform/)
+pub use computer::platform;
 // Re-export hot reload types
 pub use config::hot_reload::{
     ConfigChangeEvent, ConfigChangeType, ConfigFileType, HotReloadBuilder, HotReloadManager,
     WatchedConfig,
 };
+pub use config::{Config, ConfigWatcher, ReloadableConfig};
+pub use error::{Result, SyscityError};
 
-// Backward-compat: capabilities moved under computer/ (now platform/)
-pub use computer::platform;
+pub use crate::core::Engine;
 
 /// Application version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

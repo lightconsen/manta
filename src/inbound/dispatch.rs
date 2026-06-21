@@ -6,11 +6,10 @@
 //!
 //! This replaces the direct "enqueue then route" logic in Gateway.
 
+use super::media::MediaUnderstandingResult;
 use crate::channels::command_gate::{AuthContext, CommandGate as ChannelCommandGate};
 use crate::channels::IncomingMessage;
 use crate::gateway::send_policy::{PolicyDecision, SendPolicy};
-
-use super::media::MediaUnderstandingResult;
 
 /// Result of the dispatch stage.
 #[derive(Debug, Clone)]

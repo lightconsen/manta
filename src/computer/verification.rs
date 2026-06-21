@@ -4,22 +4,26 @@
 //! validation so the Agent can be sure an action had the intended
 //! effect before moving on.
 
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use crate::computer::reflection::{FailureAnalysis, ReflectionEngine};
 use crate::computer::{
     ActionResult, ComputerAdapter, ComputerError, DesktopAction, Result, Screenshot,
 };
-use crate::computer::reflection::{FailureAnalysis, ReflectionEngine};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::Duration;
 
 /// Criteria used to verify that an action produced the expected outcome.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationCriteria {
-    /// UI tree must contain an element with the given role (and optionally label).
+    /// UI tree must contain an element with the given role (and optionally
+    /// label).
     UiTreeContains { role: String, label: Option<String> },
-    /// Screenshot must differ from the baseline by no more than `max_pixel_diff`.
-    /// A baseline is captured automatically before the action.
+    /// Screenshot must differ from the baseline by no more than
+    /// `max_pixel_diff`. A baseline is captured automatically before the
+    /// action.
     ScreenshotChanged { max_pixel_diff: u32 },
     /// Screenshot must be stable (two consecutive screenshots differ by no more
     /// than `max_pixel_diff`). Useful after waiting for animations to finish.
@@ -43,7 +47,8 @@ pub enum VerificationCriteria {
 pub struct VerificationConfig {
     /// Maximum number of retry attempts (0 = no retries).
     pub max_retries: u32,
-    /// Delay between retries (also used as settle time before first verification).
+    /// Delay between retries (also used as settle time before first
+    /// verification).
     pub retry_delay_ms: u64,
     /// Delay before capturing the "before" baseline screenshot.
     pub baseline_delay_ms: u64,
@@ -145,21 +150,16 @@ impl VerificationEngine {
                 Ok(false) => {
                     if attempt < current_config.max_retries {
                         if let Some(ref reflection) = self.reflection {
-                            let analysis = reflection.analyze_failure(
-                                &criteria,
-                                &action,
-                                &result,
-                                attempt,
-                            );
+                            let analysis =
+                                reflection.analyze_failure(&criteria, &action, &result, attempt);
                             tracing::warn!(
                                 "Verification failed (attempt {}/{}): {} — adapting retry strategy",
                                 attempt + 1,
                                 current_config.max_retries + 1,
                                 analysis.details
                             );
-                            let experiences = reflection
-                                .query_past_experience(&analysis, &action)
-                                .await;
+                            let experiences =
+                                reflection.query_past_experience(&analysis, &action).await;
                             current_config = reflection.adapt_retry_config(
                                 current_config,
                                 &analysis,
@@ -173,7 +173,8 @@ impl VerificationEngine {
                                 current_config.max_retries + 1
                             );
                         }
-                        tokio::time::sleep(Duration::from_millis(current_config.retry_delay_ms)).await;
+                        tokio::time::sleep(Duration::from_millis(current_config.retry_delay_ms))
+                            .await;
                     } else {
                         // Final attempt failed — record failure experience.
                         if let Some(ref reflection) = self.reflection {
@@ -209,9 +210,8 @@ impl VerificationEngine {
                                 e,
                                 analysis.details
                             );
-                            let experiences = reflection
-                                .query_past_experience(&analysis, &action)
-                                .await;
+                            let experiences =
+                                reflection.query_past_experience(&analysis, &action).await;
                             current_config = reflection.adapt_retry_config(
                                 current_config,
                                 &analysis,
@@ -226,7 +226,8 @@ impl VerificationEngine {
                                 e
                             );
                         }
-                        tokio::time::sleep(Duration::from_millis(current_config.retry_delay_ms)).await;
+                        tokio::time::sleep(Duration::from_millis(current_config.retry_delay_ms))
+                            .await;
                     } else {
                         return Err(e);
                     }
@@ -266,10 +267,7 @@ impl VerificationEngine {
                 let diff = compute_screenshot_diff(before, &after);
                 Ok(diff <= *max_pixel_diff)
             }
-            VerificationCriteria::ScreenshotStable {
-                max_pixel_diff,
-                poll_ms,
-            } => {
+            VerificationCriteria::ScreenshotStable { max_pixel_diff, poll_ms } => {
                 let first = self.adapter.screenshot(None).await?;
                 tokio::time::sleep(Duration::from_millis(*poll_ms)).await;
                 let second = self.adapter.screenshot(None).await?;
@@ -279,9 +277,7 @@ impl VerificationEngine {
             VerificationCriteria::ProcessRunning { name } => {
                 self.adapter
                     .wait_for(
-                        crate::computer::WaitCondition::ProcessRunning {
-                            name: name.clone(),
-                        },
+                        crate::computer::WaitCondition::ProcessRunning { name: name.clone() },
                         Duration::from_secs(1),
                     )
                     .await
@@ -289,9 +285,7 @@ impl VerificationEngine {
             VerificationCriteria::ProcessExited { name } => {
                 self.adapter
                     .wait_for(
-                        crate::computer::WaitCondition::ProcessExited {
-                            name: name.clone(),
-                        },
+                        crate::computer::WaitCondition::ProcessExited { name: name.clone() },
                         Duration::from_secs(1),
                     )
                     .await
@@ -309,9 +303,7 @@ impl VerificationEngine {
             VerificationCriteria::FileExists { path } => {
                 self.adapter
                     .wait_for(
-                        crate::computer::WaitCondition::FileExists {
-                            path: path.clone(),
-                        },
+                        crate::computer::WaitCondition::FileExists { path: path.clone() },
                         Duration::from_secs(1),
                     )
                     .await

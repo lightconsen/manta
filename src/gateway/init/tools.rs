@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 
@@ -79,7 +80,8 @@ pub async fn init_computer_adapter(
             }
             Err(e) => {
                 warn!(
-                    "Failed to connect remote control adapter to {}: {}. Falling back to local adapter.",
+                    "Failed to connect remote control adapter to {}: {}. Falling back to local \
+                     adapter.",
                     host, e
                 );
             }
@@ -99,7 +101,8 @@ pub async fn init_computer_adapter(
         }
     } else {
         warn!(
-            "No display server detected and no remote_control host configured; desktop automation disabled"
+            "No display server detected and no remote_control host configured; desktop automation \
+             disabled"
         );
         None
     }

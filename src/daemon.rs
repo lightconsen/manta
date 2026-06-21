@@ -1,8 +1,10 @@
 //! Daemon management for Syscity
 //!
-//! Provides start/stop/status functionality for running Syscity as a background service.
+//! Provides start/stop/status functionality for running Syscity as a background
+//! service.
 
 use std::path::PathBuf;
+
 use tokio::process::Command;
 use tracing::warn;
 
@@ -762,8 +764,9 @@ async fn run_startup_recovery(gateway: &crate::gateway::Gateway) -> crate::Resul
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serial_test::serial;
+
+    use super::*;
 
     #[test]
     fn test_daemon_config_creation() {

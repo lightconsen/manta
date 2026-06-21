@@ -2,9 +2,10 @@
 //!
 //! Allows plugins to hook into various events and extend behavior.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 

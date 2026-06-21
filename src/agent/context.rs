@@ -3,9 +3,10 @@
 //! Context handles message history, token counting, and pruning
 //! to keep conversations within the context window.
 
-use crate::providers::Message;
 use std::collections::HashSet;
 use std::time::SystemTime;
+
+use crate::providers::Message;
 
 /// Conversation context
 #[derive(Debug, Clone)]
@@ -71,9 +72,10 @@ impl Context {
         self
     }
 
-    /// Enforce the turn limit by dropping oldest messages until the user-message
-    /// count is within `max_turns`.  Tool (result) messages paired with an
-    /// assistant message are removed together to keep the conversation coherent.
+    /// Enforce the turn limit by dropping oldest messages until the
+    /// user-message count is within `max_turns`.  Tool (result) messages
+    /// paired with an assistant message are removed together to keep the
+    /// conversation coherent.
     pub fn limit_turns(&mut self) {
         let Some(max) = self.max_turns else { return };
 
@@ -260,7 +262,8 @@ impl Context {
     }
 
     /// Prune messages to fit within token limit
-    /// Note: This preserves tool call pairs (assistant message with tool_use + tool result)
+    /// Note: This preserves tool call pairs (assistant message with tool_use +
+    /// tool result)
     fn prune_if_needed(&mut self) {
         // Collect tool call IDs that have corresponding tool results
         // These must not be pruned or the API will error
@@ -398,7 +401,8 @@ impl Context {
         None
     }
 
-    /// Replace the message history with a compacted set (e.g. after LLM-assisted compaction).
+    /// Replace the message history with a compacted set (e.g. after
+    /// LLM-assisted compaction).
     ///
     /// The system prompt is stored separately and is unaffected.  Token count
     /// is recalculated from the new message list.

@@ -9,12 +9,14 @@
 //! 3. ACP executes the message in a new or existing subagent session
 //! 4. ACP response is routed back through the channel's outbound path
 
-use crate::acp::{AcpCommand, AcpSessionId, AcpSessionStatus, ExecutionMode};
-use crate::channels::{ConversationId, IncomingMessage, OutgoingMessage, UserId};
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, info};
+
+use crate::acp::{AcpCommand, AcpSessionId, AcpSessionStatus, ExecutionMode};
+use crate::channels::{ConversationId, IncomingMessage, OutgoingMessage, UserId};
 
 /// A binding between a channel conversation and an ACP session.
 #[derive(Debug, Clone)]
@@ -57,7 +59,7 @@ impl ChannelAcpBinding {
 #[derive(Debug, Clone)]
 pub enum AcpForwardResult {
     /// Message was forwarded and a response is available.
-    Completed(OutgoingMessage),
+    Completed(Box<OutgoingMessage>),
     /// Message was forwarded but is being processed (no response yet).
     Pending,
     /// Forwarding failed.
@@ -88,7 +90,8 @@ impl ChannelAcpBridge {
     /// Forward an incoming channel message to ACP for execution.
     ///
     /// If the conversation already has an active binding, the message is
-    /// forwarded to the existing ACP session. Otherwise, a new session is created.
+    /// forwarded to the existing ACP session. Otherwise, a new session is
+    /// created.
     pub async fn forward_message(
         &self,
         message: IncomingMessage,
@@ -165,12 +168,8 @@ impl ChannelAcpBridge {
 
         // Wait for response (with timeout)
         match tokio::time::timeout(std::time::Duration::from_secs(30), respond_rx).await {
-            Ok(Ok(Some(_status))) => {
-                AcpForwardResult::Pending
-            }
-            Ok(Ok(None)) => {
-                AcpForwardResult::Failed("ACP session not found".to_string())
-            }
+            Ok(Ok(Some(_status))) => AcpForwardResult::Pending,
+            Ok(Ok(None)) => AcpForwardResult::Failed("ACP session not found".to_string()),
             Ok(Err(_)) => AcpForwardResult::Failed("ACP response channel closed".to_string()),
             Err(_) => AcpForwardResult::Pending,
         }
@@ -196,15 +195,10 @@ impl ChannelAcpBridge {
 
         match tokio::time::timeout(std::time::Duration::from_secs(10), respond_rx).await {
             Ok(Ok(Some(status))) => {
-                debug!(
-                    "ACP session {} is in state {:?}",
-                    acp_session_id.0, status.runtime_state
-                );
+                debug!("ACP session {} is in state {:?}", acp_session_id.0, status.runtime_state);
                 AcpForwardResult::Pending
             }
-            Ok(Ok(None)) => {
-                AcpForwardResult::Failed("ACP session not found".to_string())
-            }
+            Ok(Ok(None)) => AcpForwardResult::Failed("ACP session not found".to_string()),
             Ok(Err(_)) => AcpForwardResult::Failed("ACP response channel closed".to_string()),
             Err(_) => AcpForwardResult::Pending,
         }
@@ -217,10 +211,7 @@ impl ChannelAcpBridge {
     }
 
     /// Find the channel conversation for an ACP session.
-    pub async fn get_channel_conversation(
-        &self,
-        acp_session_id: &str,
-    ) -> Option<String> {
+    pub async fn get_channel_conversation(&self, acp_session_id: &str) -> Option<String> {
         let session_map = self.session_to_channel.read().await;
         session_map.get(acp_session_id).cloned()
     }
@@ -411,7 +402,8 @@ pub enum AcpCommandRequest {
 }
 
 impl AcpCommandRequest {
-    /// Returns true if this is a lifecycle command (pause/resume/cancel/status).
+    /// Returns true if this is a lifecycle command
+    /// (pause/resume/cancel/status).
     pub fn is_lifecycle(&self) -> bool {
         matches!(
             self,
@@ -522,9 +514,7 @@ mod tests {
         let bridge = ChannelAcpBridge::new(tx);
 
         let msg = IncomingMessage::new("user1", "conv1", "hello");
-        let result = bridge
-            .send_to_session(&AcpSessionId::new(), msg)
-            .await;
+        let result = bridge.send_to_session(&AcpSessionId::new(), msg).await;
 
         // Without a receiver consuming commands, the GetStatus message
         // will be buffered in the channel and the respond oneshot will
@@ -611,30 +601,15 @@ mod tests {
 
     #[test]
     fn test_parse_lifecycle_commands() {
-        assert!(matches!(
-            parse_acp_command("/acp pause"),
-            Some(AcpCommandRequest::Pause)
-        ));
-        assert!(matches!(
-            parse_acp_command("/acp resume"),
-            Some(AcpCommandRequest::Resume)
-        ));
-        assert!(matches!(
-            parse_acp_command("/acp cancel"),
-            Some(AcpCommandRequest::Cancel)
-        ));
-        assert!(matches!(
-            parse_acp_command("/acp status"),
-            Some(AcpCommandRequest::Status)
-        ));
+        assert!(matches!(parse_acp_command("/acp pause"), Some(AcpCommandRequest::Pause)));
+        assert!(matches!(parse_acp_command("/acp resume"), Some(AcpCommandRequest::Resume)));
+        assert!(matches!(parse_acp_command("/acp cancel"), Some(AcpCommandRequest::Cancel)));
+        assert!(matches!(parse_acp_command("/acp status"), Some(AcpCommandRequest::Status)));
     }
 
     #[test]
     fn test_parse_acp_pause_alt() {
-        assert!(matches!(
-            parse_acp_command("/acp_pause"),
-            Some(AcpCommandRequest::Pause)
-        ));
+        assert!(matches!(parse_acp_command("/acp_pause"), Some(AcpCommandRequest::Pause)));
     }
 
     #[test]

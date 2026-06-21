@@ -8,10 +8,10 @@
 //! # Pass rules
 //!
 //! 1. [`Event::Anomaly`] always passes (bypass channel).
-//! 2. If `focus.modalities` is `Some(set)` and the event carries a
-//!    modality, that modality must be in `set`.
-//! 3. If `focus.sources` is `Some(set)` and the event carries a source,
-//!    that source must be in `set`.
+//! 2. If `focus.modalities` is `Some(set)` and the event carries a modality,
+//!    that modality must be in `set`.
+//! 3. If `focus.sources` is `Some(set)` and the event carries a source, that
+//!    source must be in `set`.
 //! 4. `focus.freq_budget[modality]` enforces a minimum spacing between
 //!    consecutive admits of that modality (1/Hz seconds).
 //!
@@ -103,9 +103,10 @@ impl AttentionGate {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
     use crate::perception::{AnomalyKind, Modality};
-    use std::time::SystemTime;
 
     fn change(source: &str, modality: Modality) -> Event {
         Event::Change {
@@ -199,8 +200,9 @@ mod tests {
 
     #[test]
     fn test_entity_event_bypasses_source_whitelist() {
-        use crate::perception::FusedEntity;
         use std::collections::HashMap;
+
+        use crate::perception::FusedEntity;
         let focus = Focus::default().with_sources(["cpu"]);
         let mut gate = AttentionGate::new(focus);
         let now_inst = Instant::now();
@@ -240,8 +242,9 @@ mod tests {
         // Even with a strict modality whitelist, Entity events have no
         // `modality()` so the modality guard is skipped (entities span
         // sources by design — see module doc).
-        use crate::perception::FusedEntity;
         use std::collections::HashMap;
+
+        use crate::perception::FusedEntity;
         let focus = Focus::default().with_modalities([Modality::Audio]);
         let mut gate = AttentionGate::new(focus);
         let now_inst = Instant::now();

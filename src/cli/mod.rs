@@ -3,10 +3,12 @@
 //! This module handles argument parsing and command execution
 //! using the `clap` crate.
 
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand, ValueEnum};
+
 use crate::config::Config;
 use crate::error::Result;
-use clap::{Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
 
 // Subcommand modules
 mod admin;
@@ -416,8 +418,9 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     #[test]
     fn parse_health_command() {

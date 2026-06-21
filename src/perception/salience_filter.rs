@@ -91,7 +91,8 @@ impl SalienceFilter {
     /// 2. payload differs from the dedup signature (or dedup window expired),
     /// 3. a baseline exists *and* is fresher than `baseline_max_age`,
     /// 4. the modality has an entry in `delta_threshold`,
-    /// 5. the relative scalar change (or payload inequality) exceeds the threshold.
+    /// 5. the relative scalar change (or payload inequality) exceeds the
+    ///    threshold.
     ///
     /// All of (1–5) failing returns `None`. When (3) is the failing
     /// reason, the new observation is installed as the fresh baseline
@@ -108,9 +109,7 @@ impl SalienceFilter {
 
         // (2) dedup.
         if let Some(rec) = self.recent.get(&key) {
-            if rec.signature == signature
-                && now.duration_since(rec.at) < self.config.dedup_window
-            {
+            if rec.signature == signature && now.duration_since(rec.at) < self.config.dedup_window {
                 return None;
             }
         }
@@ -133,13 +132,7 @@ impl SalienceFilter {
                     at: now,
                 },
             );
-            self.recent.insert(
-                key,
-                DedupRecord {
-                    signature,
-                    at: now,
-                },
-            );
+            self.recent.insert(key, DedupRecord { signature, at: now });
             return None;
         }
 
@@ -173,13 +166,7 @@ impl SalienceFilter {
                 at: now,
             },
         );
-        self.recent.insert(
-            key,
-            DedupRecord {
-                signature,
-                at: now,
-            },
-        );
+        self.recent.insert(key, DedupRecord { signature, at: now });
 
         Some(Event::Change {
             source: obs.source.clone(),
@@ -193,9 +180,10 @@ impl SalienceFilter {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, SystemTime};
+
     use super::*;
     use crate::perception::{Modality, Observation, ObservationId};
-    use std::time::{Duration, SystemTime};
 
     fn obs(source: &str, modality: Modality, data: serde_json::Value, conf: f32) -> Observation {
         Observation {
@@ -218,51 +206,28 @@ mod tests {
     #[test]
     fn test_first_observation_installs_baseline_no_event() {
         let mut f = SalienceFilter::new(cfg_with_threshold(Modality::System, 5.0));
-        let ev = f.evaluate(&obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": 10.0}),
-            1.0,
-        ));
+        let ev =
+            f.evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 10.0}), 1.0));
         assert!(ev.is_none(), "first sample is baseline-only");
     }
 
     #[test]
     fn test_below_threshold_suppressed() {
         let mut f = SalienceFilter::new(cfg_with_threshold(Modality::System, 50.0));
-        f.evaluate(&obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": 10.0}),
-            1.0,
-        ));
+        f.evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 10.0}), 1.0));
         // 10 → 11 = 10% relative change, below threshold (50).
-        let ev = f.evaluate(&obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": 11.0}),
-            1.0,
-        ));
+        let ev =
+            f.evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 11.0}), 1.0));
         assert!(ev.is_none());
     }
 
     #[test]
     fn test_above_threshold_emits_change() {
         let mut f = SalienceFilter::new(cfg_with_threshold(Modality::System, 5.0));
-        f.evaluate(&obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": 10.0}),
-            1.0,
-        ));
+        f.evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 10.0}), 1.0));
         // 10 → 20 = 100% change, well above 5%.
         let ev = f
-            .evaluate(&obs(
-                "cpu",
-                Modality::System,
-                serde_json::json!({"cpu_pct": 20.0}),
-                1.0,
-            ))
+            .evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 20.0}), 1.0))
             .expect("should emit Change");
         match ev {
             Event::Change { source, modality, from, to, .. } => {
@@ -288,12 +253,8 @@ mod tests {
         ));
         assert!(ev.is_none());
         // Even higher conf should now establish baseline (no event yet).
-        let ev = f.evaluate(&obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": 100.0}),
-            0.9,
-        ));
+        let ev =
+            f.evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 100.0}), 0.9));
         assert!(ev.is_none());
     }
 
@@ -303,19 +264,9 @@ mod tests {
         let f_default = SalienceConfig::default();
         let mut f = SalienceFilter::new(f_default);
         // Establish baseline.
-        f.evaluate(&obs(
-            "mic",
-            Modality::Audio,
-            serde_json::json!({"rms": 0.1}),
-            1.0,
-        ));
+        f.evaluate(&obs("mic", Modality::Audio, serde_json::json!({"rms": 0.1}), 1.0));
         // Big change but no opt-in → still None.
-        let ev = f.evaluate(&obs(
-            "mic",
-            Modality::Audio,
-            serde_json::json!({"rms": 100.0}),
-            1.0,
-        ));
+        let ev = f.evaluate(&obs("mic", Modality::Audio, serde_json::json!({"rms": 100.0}), 1.0));
         assert!(ev.is_none());
     }
 
@@ -335,12 +286,7 @@ mod tests {
     #[test]
     fn test_set_config_clears_dedup_keeps_baseline() {
         let mut f = SalienceFilter::new(cfg_with_threshold(Modality::System, 5.0));
-        f.evaluate(&obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": 10.0}),
-            1.0,
-        ));
+        f.evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 10.0}), 1.0));
         assert!(!f.baselines.is_empty());
 
         // Re-config: dedup cleared, baselines retained.
@@ -352,12 +298,7 @@ mod tests {
     #[test]
     fn test_reset_clears_everything() {
         let mut f = SalienceFilter::new(cfg_with_threshold(Modality::System, 5.0));
-        f.evaluate(&obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": 10.0}),
-            1.0,
-        ));
+        f.evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 10.0}), 1.0));
         f.reset();
         assert!(f.baselines.is_empty());
         assert!(f.recent.is_empty());
@@ -373,22 +314,13 @@ mod tests {
         c.baseline_max_age = Duration::from_millis(50);
         let mut f = SalienceFilter::new(c);
         // Install baseline.
-        f.evaluate(&obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": 10.0}),
-            1.0,
-        ));
+        f.evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 10.0}), 1.0));
         std::thread::sleep(Duration::from_millis(80));
         // 10 → 90 = 800% delta, well above the 5% threshold — but the
         // baseline is now stale, so the filter installs a new baseline
         // and emits no event.
-        let ev = f.evaluate(&obs(
-            "cpu",
-            Modality::System,
-            serde_json::json!({"cpu_pct": 90.0}),
-            1.0,
-        ));
+        let ev =
+            f.evaluate(&obs("cpu", Modality::System, serde_json::json!({"cpu_pct": 90.0}), 1.0));
         assert!(ev.is_none(), "stale-baseline path should suppress event");
     }
 
@@ -400,20 +332,10 @@ mod tests {
         let c = cfg_with_threshold(Modality::Other, 0.1);
         let mut f = SalienceFilter::new(c);
         // Baseline with non-numeric payload.
-        f.evaluate(&obs(
-            "plug",
-            Modality::Other,
-            serde_json::json!({"state": "on"}),
-            1.0,
-        ));
+        f.evaluate(&obs("plug", Modality::Other, serde_json::json!({"state": "on"}), 1.0));
         // Different non-numeric payload — inequality path emits Change.
         let ev = f
-            .evaluate(&obs(
-                "plug",
-                Modality::Other,
-                serde_json::json!({"state": "off"}),
-                1.0,
-            ))
+            .evaluate(&obs("plug", Modality::Other, serde_json::json!({"state": "off"}), 1.0))
             .expect("inequality path should emit Change");
         match ev {
             Event::Change { source, modality, from, to, .. } => {

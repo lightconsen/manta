@@ -1,6 +1,7 @@
 //! Shared image preprocessing utilities for vision models.
 
 use base64::Engine;
+
 use crate::computer::types::Screenshot;
 use crate::error::SyscityError;
 
@@ -14,7 +15,8 @@ pub fn decode_screenshot(screenshot: &Screenshot) -> crate::Result<image::Dynami
         .map_err(|e| SyscityError::Internal(format!("Image decode failed: {}", e)))
 }
 
-/// Resize an image to a target size, maintaining aspect ratio with letterboxing.
+/// Resize an image to a target size, maintaining aspect ratio with
+/// letterboxing.
 ///
 /// Returns the resized image and the padding offsets (pad_x, pad_y) needed to
 /// map model output coordinates back to the original image.
@@ -45,11 +47,7 @@ pub fn resize_with_pad(
 /// * `std`  — per-channel standard deviations (RGB order)
 ///
 /// Output: `(pixel / 255.0 - mean) / std`
-pub fn normalize_image(
-    img: &image::DynamicImage,
-    mean: [f32; 3],
-    std: [f32; 3],
-) -> Vec<f32> {
+pub fn normalize_image(img: &image::DynamicImage, mean: [f32; 3], std: [f32; 3]) -> Vec<f32> {
     let rgb = img.to_rgb8();
     let mut data = Vec::with_capacity((rgb.width() * rgb.height() * 3) as usize);
 
@@ -110,7 +108,9 @@ mod tests {
 
     #[test]
     fn test_image_to_nchw_tensor() {
-        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        let data = vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
         let tensor = image_to_nchw_tensor(data, 2, 2).unwrap();
         assert_eq!(tensor.shape(), &[1, 3, 2, 2]);
         assert_eq!(tensor[[0, 0, 0, 0]], 1.0);

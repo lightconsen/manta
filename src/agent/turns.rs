@@ -13,9 +13,11 @@
 //! - `undo_last_turn()` — removes the last pending/complete turn
 //! - Named thread identity for multi-task sessions
 
-use crate::providers::Message;
-use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
+
+use crate::providers::Message;
 
 /// Lifecycle state of a single turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -345,7 +347,8 @@ impl ThreadManager {
             .unwrap_or(false)
     }
 
-    /// Redo the most recently undone turn in the named thread.  Returns `true` if successful.
+    /// Redo the most recently undone turn in the named thread.  Returns `true`
+    /// if successful.
     pub fn redo(&mut self, thread_id: &str) -> bool {
         self.get_mut(thread_id)
             .map(|t| t.redo_last_turn())

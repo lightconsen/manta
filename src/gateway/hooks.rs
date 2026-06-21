@@ -3,13 +3,14 @@
 //! Provides a hook registry that allows plugins and internal modules to
 //! intercept, transform, or suppress GatewayEvents before/after broadcast.
 //!
-//!
 
-use crate::gateway::GatewayEvent;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::debug;
+
+use crate::gateway::GatewayEvent;
 
 /// Hook execution result
 #[derive(Debug, Clone)]
@@ -52,7 +53,8 @@ pub struct EventHook {
     pub name: String,
     /// Priority (lower = earlier execution)
     pub priority: i32,
-    /// Optional filter: only apply to events matching this substring in their JSON
+    /// Optional filter: only apply to events matching this substring in their
+    /// JSON
     pub event_filter: Option<String>,
     /// Before hook (can modify/drop event)
     pub before: Option<BeforeHook>,

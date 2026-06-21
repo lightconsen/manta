@@ -23,6 +23,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
@@ -209,10 +210,9 @@ fn run_cpal_capture(
             }
             #[cfg(not(target_os = "linux"))]
             {
-                return Err(
-                    "SystemOutput loopback not supported on this platform without virtual audio driver"
-                        .into(),
-                );
+                return Err("SystemOutput loopback not supported on this platform without \
+                            virtual audio driver"
+                    .into());
             }
         }
     };
@@ -221,10 +221,7 @@ fn run_cpal_capture(
     let sample_rate = config.sample_rate().0;
     let channels = config.channels() as usize;
 
-    info!(
-        "Audio capture started: {} @ {} Hz, {} channels",
-        source, sample_rate, channels
-    );
+    info!("Audio capture started: {} @ {} Hz, {} channels", source, sample_rate, channels);
 
     // Channel from cpal callback → accumulator thread.
     let (raw_tx, raw_rx) = std::sync::mpsc::channel::<Vec<f32>>();
@@ -262,9 +259,7 @@ fn run_cpal_capture(
                     }
                     let mono: Vec<f32> = data
                         .chunks(channels)
-                        .map(|ch| {
-                            ch.iter().map(|s| *s as f32 / max).sum::<f32>() / channels as f32
-                        })
+                        .map(|ch| ch.iter().map(|s| *s as f32 / max).sum::<f32>() / channels as f32)
                         .collect();
                     let _ = raw_tx.send(mono);
                 },
@@ -284,9 +279,7 @@ fn run_cpal_capture(
                     let mono: Vec<f32> = data
                         .chunks(channels)
                         .map(|ch| {
-                            ch.iter()
-                                .map(|s| (*s as f32 - offset) / scale)
-                                .sum::<f32>()
+                            ch.iter().map(|s| (*s as f32 - offset) / scale).sum::<f32>()
                                 / channels as f32
                         })
                         .collect();
@@ -366,7 +359,10 @@ fn zero_crossing_rate(samples: &[f32]) -> f32 {
     if samples.len() < 2 {
         return 0.0;
     }
-    let crossings = samples.windows(2).filter(|w| w[0].signum() != w[1].signum()).count();
+    let crossings = samples
+        .windows(2)
+        .filter(|w| w[0].signum() != w[1].signum())
+        .count();
     crossings as f32 / (samples.len() - 1) as f32
 }
 

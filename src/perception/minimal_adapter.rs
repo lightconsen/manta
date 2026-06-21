@@ -19,9 +19,9 @@
 //!
 //! 1. A *derived-event* forwarder that pulls already-cooked events
 //!    (Entity/Discrete/Anomaly) and runs them through the gate.
-//! 2. A *raw-observation* forwarder that runs each observation through
-//!    the salience filter, producing `Event::Change` when the value
-//!    drifts above threshold, then through the gate.
+//! 2. A *raw-observation* forwarder that runs each observation through the
+//!    salience filter, producing `Event::Change` when the value drifts above
+//!    threshold, then through the gate.
 //!
 //! Both tasks halt when [`shutdown`] is called.
 //!
@@ -37,9 +37,9 @@ use tokio::sync::{broadcast, Notify};
 use tokio::task::JoinHandle;
 
 use crate::perception::{
-    AdapterError, AgentPerceptionAdapter, AttentionGate, DerivedStreamHub,
-    DefaultTemporalProcessor, Event, Focus, PerceptionStreamHub, PerceptionSummarizer,
-    SalienceFilter, Snapshot, TemporalProcessor,
+    AdapterError, AgentPerceptionAdapter, AttentionGate, DefaultTemporalProcessor,
+    DerivedStreamHub, Event, Focus, PerceptionStreamHub, PerceptionSummarizer, SalienceFilter,
+    Snapshot, TemporalProcessor,
 };
 
 /// Construction-time tuning for [`MinimalAdapter`].
@@ -290,8 +290,7 @@ fn spawn_summary_refresh_task(inner: Arc<Inner>, interval: Duration) -> JoinHand
                 Ok(summary) => {
                     let trimmed = summary.trim().to_string();
                     if !trimmed.is_empty() {
-                        *inner.last_summary.lock().expect("last_summary poisoned") =
-                            Some(trimmed);
+                        *inner.last_summary.lock().expect("last_summary poisoned") = Some(trimmed);
                     }
                 }
                 Err(e) => {
@@ -332,10 +331,9 @@ async fn summarize_with_inner(inner: &Inner, dur: Duration) -> Result<String, Ad
         "aggregates": aggregates_vec,
     })
     .to_string();
-    let system =
-        "You are a perception summariser. Given recent events and sliding-window \
-         aggregates from an agent's sensors, write ONE concise sentence describing \
-         what is happening in the agent's environment.";
+    let system = "You are a perception summariser. Given recent events and sliding-window \
+                  aggregates from an agent's sensors, write ONE concise sentence describing what \
+                  is happening in the agent's environment.";
 
     summarizer.summarize(system, &user_msg).await
 }
@@ -431,13 +429,14 @@ impl AgentPerceptionAdapter for MinimalAdapter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::perception::{
-        AnomalyKind, FusedEntity, Modality, MockPerceptionSource, Observation, ObservationId,
-        PerceptionSource,
-    };
     use std::collections::HashMap;
     use std::time::Instant;
+
+    use super::*;
+    use crate::perception::{
+        AnomalyKind, FusedEntity, MockPerceptionSource, Modality, Observation, ObservationId,
+        PerceptionSource,
+    };
 
     fn obs(source: &str, modality: Modality, data: serde_json::Value) -> Observation {
         Observation {
@@ -611,11 +610,7 @@ mod tests {
         struct StubSum;
         #[async_trait]
         impl PerceptionSummarizer for StubSum {
-            async fn summarize(
-                &self,
-                _system: &str,
-                user: &str,
-            ) -> Result<String, AdapterError> {
+            async fn summarize(&self, _system: &str, user: &str) -> Result<String, AdapterError> {
                 Ok(format!("got-{}-bytes", user.len()))
             }
         }
@@ -666,11 +661,7 @@ mod tests {
         }
         #[async_trait]
         impl PerceptionSummarizer for CountingSum {
-            async fn summarize(
-                &self,
-                _system: &str,
-                _user: &str,
-            ) -> Result<String, AdapterError> {
+            async fn summarize(&self, _system: &str, _user: &str) -> Result<String, AdapterError> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok("the cpu is on fire".into())
             }
@@ -680,9 +671,8 @@ mod tests {
         let derived_hub = Arc::new(DerivedStreamHub::new(64));
         let temporal = Arc::new(DefaultTemporalProcessor::with_default_window());
         let calls = Arc::new(AtomicUsize::new(0));
-        let summarizer: Arc<dyn PerceptionSummarizer> = Arc::new(CountingSum {
-            calls: calls.clone(),
-        });
+        let summarizer: Arc<dyn PerceptionSummarizer> =
+            Arc::new(CountingSum { calls: calls.clone() });
 
         // Tight refresh interval so the test doesn't take 60s.
         let cfg = AdapterConfig {
@@ -730,11 +720,7 @@ mod tests {
         }
         #[async_trait]
         impl PerceptionSummarizer for CountingSum {
-            async fn summarize(
-                &self,
-                _system: &str,
-                _user: &str,
-            ) -> Result<String, AdapterError> {
+            async fn summarize(&self, _system: &str, _user: &str) -> Result<String, AdapterError> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok("idle".into())
             }
@@ -744,9 +730,8 @@ mod tests {
         let derived_hub = Arc::new(DerivedStreamHub::new(64));
         let temporal = Arc::new(DefaultTemporalProcessor::with_default_window());
         let calls = Arc::new(AtomicUsize::new(0));
-        let summarizer: Arc<dyn PerceptionSummarizer> = Arc::new(CountingSum {
-            calls: calls.clone(),
-        });
+        let summarizer: Arc<dyn PerceptionSummarizer> =
+            Arc::new(CountingSum { calls: calls.clone() });
 
         let cfg = AdapterConfig {
             enable_summary: true,
@@ -781,11 +766,7 @@ mod tests {
         }
         #[async_trait]
         impl PerceptionSummarizer for CountingSum {
-            async fn summarize(
-                &self,
-                _system: &str,
-                _user: &str,
-            ) -> Result<String, AdapterError> {
+            async fn summarize(&self, _system: &str, _user: &str) -> Result<String, AdapterError> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok("nope".into())
             }
@@ -795,9 +776,8 @@ mod tests {
         let derived_hub = Arc::new(DerivedStreamHub::new(64));
         let temporal = Arc::new(DefaultTemporalProcessor::with_default_window());
         let calls = Arc::new(AtomicUsize::new(0));
-        let summarizer: Arc<dyn PerceptionSummarizer> = Arc::new(CountingSum {
-            calls: calls.clone(),
-        });
+        let summarizer: Arc<dyn PerceptionSummarizer> =
+            Arc::new(CountingSum { calls: calls.clone() });
 
         // enable_summary explicitly OFF — even with summarizer + tight
         // refresh interval + lots of derived events, the refresh task

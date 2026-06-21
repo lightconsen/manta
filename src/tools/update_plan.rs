@@ -3,11 +3,12 @@
 //! tool for creating and updating execution plans.
 //! Each plan has ordered steps with status: pending, in_progress, or completed.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -140,9 +141,8 @@ impl Tool for UpdatePlanTool {
     }
 
     fn description(&self) -> &str {
-        "Create, update, and manage execution plans with ordered steps. \
-         Supports creating plans, updating step statuses (pending/in_progress/completed/failed), \
-         and retrieving plan state."
+        "Create, update, and manage execution plans with ordered steps. Supports creating plans, \
+         updating step statuses (pending/in_progress/completed/failed), and retrieving plan state."
     }
 
     fn parameters_schema(&self) -> Value {

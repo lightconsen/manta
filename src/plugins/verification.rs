@@ -4,10 +4,11 @@
 //! A signed manifest contains `signature` and `signer_public_key` fields,
 //! both base64-encoded.
 
-use crate::plugins::manifest::PluginManifest;
 use base64::Engine;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey, PUBLIC_KEY_LENGTH};
 use tracing::{debug, info, warn};
+
+use crate::plugins::manifest::PluginManifest;
 
 /// Outcome of verifying a plugin manifest signature.
 #[derive(Debug, Clone, PartialEq)]
@@ -98,23 +99,18 @@ pub fn verify_manifest(manifest: &PluginManifest) -> VerificationResult {
 /// The key bytes should be base64-encoded.  Both `signature` and
 /// `signer_public_key` fields are populated on the manifest.
 /// Returns an error if the key bytes are invalid.
-pub fn sign_manifest(
-    manifest: &mut PluginManifest,
-    secret_key_b64: &str,
-) -> crate::Result<()> {
+pub fn sign_manifest(manifest: &mut PluginManifest, secret_key_b64: &str) -> crate::Result<()> {
     let engine = base64::engine::general_purpose::STANDARD;
-    let key_bytes = engine
-        .decode(secret_key_b64)
-        .map_err(|e| crate::error::SyscityError::Internal(format!("invalid key encoding: {}", e)))?;
+    let key_bytes = engine.decode(secret_key_b64).map_err(|e| {
+        crate::error::SyscityError::Internal(format!("invalid key encoding: {}", e))
+    })?;
     let key_len = key_bytes.len();
-    let key_arr: [u8; 32] = key_bytes
-        .try_into()
-        .map_err(|_| {
-            crate::error::SyscityError::Internal(format!(
-                "ed25519 secret key must be 32 bytes, got {}",
-                key_len
-            ))
-        })?;
+    let key_arr: [u8; 32] = key_bytes.try_into().map_err(|_| {
+        crate::error::SyscityError::Internal(format!(
+            "ed25519 secret key must be 32 bytes, got {}",
+            key_len
+        ))
+    })?;
     let signing_key = SigningKey::from_bytes(&key_arr);
     let verifying_key = signing_key.verifying_key();
 
@@ -157,8 +153,8 @@ mod tests {
     #[test]
     fn test_sign_then_verify() {
         // Generate an ephemeral signing key for testing
-        use rand::Rng;
         use ed25519_dalek::SigningKey;
+        use rand::Rng;
         let mut secret_bytes = [0u8; 32];
         rand::thread_rng().fill(&mut secret_bytes);
         let signing_key = SigningKey::from_bytes(&secret_bytes);
@@ -180,8 +176,8 @@ mod tests {
 
     #[test]
     fn test_tampered_manifest_fails_verification() {
-        use rand::Rng;
         use ed25519_dalek::SigningKey;
+        use rand::Rng;
         let mut secret_bytes = [0u8; 32];
         rand::thread_rng().fill(&mut secret_bytes);
         let signing_key = SigningKey::from_bytes(&secret_bytes);

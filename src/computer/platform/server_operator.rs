@@ -1,7 +1,8 @@
 //! ServerOperator — high-level server management abstraction.
 //!
-//! Orchestrates system inspection, snapshot generation, and LLM-based diagnosis.
-//! Use `LinuxSystemInspector` on Linux or provide your own `SystemInspector` impl.
+//! Orchestrates system inspection, snapshot generation, and LLM-based
+//! diagnosis. Use `LinuxSystemInspector` on Linux or provide your own
+//! `SystemInspector` impl.
 
 use std::sync::Arc;
 
@@ -51,9 +52,9 @@ impl ServerOperator {
     /// The returned string can be sent directly to an LLM for analysis.
     pub fn diagnose_prompt(snapshot: &SystemSnapshot) -> String {
         format!(
-            "You are a senior Linux SRE. Analyze the following system snapshot \
-             and identify anomalies, performance bottlenecks, security concerns, \
-             and potential issues. Provide actionable recommendations.\n\n{}",
+            "You are a senior Linux SRE. Analyze the following system snapshot and identify \
+             anomalies, performance bottlenecks, security concerns, and potential issues. Provide \
+             actionable recommendations.\n\n{}",
             serde_json::to_string_pretty(snapshot).unwrap_or_default()
         )
     }

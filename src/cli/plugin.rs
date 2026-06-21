@@ -1,8 +1,10 @@
 //! Plugin management commands for Syscity
 
-use crate::error::{Result, SyscityError};
-use clap::Subcommand;
 use std::path::PathBuf;
+
+use clap::Subcommand;
+
+use crate::error::{Result, SyscityError};
 
 /// Default daemon base URL.
 const DAEMON_URL: &str = "http://127.0.0.1:18080";
@@ -49,7 +51,8 @@ pub enum PluginCommands {
         /// Plugin ID
         name: String,
     },
-    /// Reload plugins (lists current state; full reload requires daemon restart)
+    /// Reload plugins (lists current state; full reload requires daemon
+    /// restart)
     Reload,
     /// Install a plugin from a remote registry
     RegistryInstall {

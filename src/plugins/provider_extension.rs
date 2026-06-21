@@ -5,8 +5,9 @@
 //! PluginManager creates a `PluginProvider` that delegates complete/stream
 //! calls to the plugin runtime.
 
-use async_trait::async_trait;
 use std::sync::Arc;
+
+use async_trait::async_trait;
 
 use crate::providers::stream_wrappers::ProviderStreamFamily;
 use crate::providers::{

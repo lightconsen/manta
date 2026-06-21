@@ -1,14 +1,17 @@
 //! Shell tool for executing commands
 //!
-//! This tool allows the AI to execute shell commands in a sandboxed environment.
+//! This tool allows the AI to execute shell commands in a sandboxed
+//! environment.
 
-use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use std::process::Stdio;
+
 use async_trait::async_trait;
 use serde_json::Value;
-use std::process::Stdio;
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
+
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Shell tool for executing commands
 #[derive(Debug)]
@@ -88,8 +91,8 @@ impl Tool for ShellTool {
 
     fn description(&self) -> &str {
         "Execute a shell command for file operations, running scripts, or system commands. \
-         Commands are executed with safety restrictions. \
-         Note: For scheduling or recurring tasks, use the 'cron' tool instead — do NOT use shell commands with 'at', 'cron', or 'schedule'."
+         Commands are executed with safety restrictions. Note: For scheduling or recurring tasks, \
+         use the 'cron' tool instead — do NOT use shell commands with 'at', 'cron', or 'schedule'."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -281,8 +284,9 @@ impl Tool for ShellTool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::{Duration, Instant};
+
+    use super::*;
 
     #[test]
     fn test_shell_tool_creation() {

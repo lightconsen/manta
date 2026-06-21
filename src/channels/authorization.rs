@@ -3,10 +3,12 @@
 //! Provides owner state tracking, sender candidate matching, and provider
 //! inference helpers used by the channel command gate.
 
-use crate::channels::identity::SenderIdentity;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+
+use serde::{Deserialize, Serialize};
+
+use crate::channels::identity::SenderIdentity;
 
 /// Verified owner lifecycle states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -73,10 +75,7 @@ impl OwnerStore {
         };
 
         if !allowed {
-            return Err(OwnerTransitionError {
-                current,
-                requested: new_state,
-            });
+            return Err(OwnerTransitionError { current, requested: new_state });
         }
 
         states.insert(user_id, new_state);
@@ -119,10 +118,7 @@ pub struct SenderCandidate {
 impl SenderCandidate {
     /// Create a candidate from a known identity with perfect confidence.
     pub fn exact(identity: SenderIdentity) -> Self {
-        Self {
-            identity,
-            confidence: 1.0,
-        }
+        Self { identity, confidence: 1.0 }
     }
 
     /// Create a candidate with a confidence score clamped to [0, 1].
@@ -147,17 +143,17 @@ impl CandidateMatcher {
     }
 
     /// Find the best matching candidate for `incoming`.
-    pub fn match_candidates(
-        &self,
-        incoming: &SenderIdentity,
-    ) -> Option<SenderCandidate> {
+    pub fn match_candidates(&self, incoming: &SenderIdentity) -> Option<SenderCandidate> {
         let mut best: Option<SenderCandidate> = None;
 
         for known in &self.known {
             let confidence = Self::score(incoming, known);
             if confidence > 0.0 {
                 let candidate = SenderCandidate::with_confidence(known.clone(), confidence);
-                if best.as_ref().map_or(true, |b| candidate.confidence > b.confidence) {
+                if best
+                    .as_ref()
+                    .map_or(true, |b| candidate.confidence > b.confidence)
+                {
                     best = Some(candidate);
                 }
             }

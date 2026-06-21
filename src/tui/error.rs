@@ -1,6 +1,7 @@
 //! TUI-specific error types.
 
 use std::fmt;
+
 use thiserror::Error;
 
 /// Errors that can occur inside the TUI client.

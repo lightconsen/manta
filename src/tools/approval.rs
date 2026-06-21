@@ -12,10 +12,11 @@
 //! 4. Human reviews via REST API and submits approve/deny
 //! 5. ApprovalQueue resolves the oneshot, ToolRegistry resumes execution
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, oneshot, RwLock};
 use tracing::{debug, info, warn};
 
@@ -94,6 +95,7 @@ pub struct PendingApproval {
 
 impl PendingApproval {
     /// Create a new pending approval
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: impl Into<String>,
         tool_name: impl Into<String>,

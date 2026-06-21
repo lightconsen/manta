@@ -1,20 +1,22 @@
 //! Browser automation tool for Syscity
 //!
 //! Provides web browser automation capabilities using headless Chrome/Chromium.
-//! Supports navigation, clicking, form input, screenshots, and content extraction.
+//! Supports navigation, clicking, form input, screenshots, and content
+//! extraction.
 
-use super::{Tool, ToolContext, ToolExecutionResult};
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use std::time::Duration;
 
+use async_trait::async_trait;
 #[cfg(feature = "browser")]
 use base64::Engine;
 #[cfg(feature = "browser")]
 use chromiumoxide::page::ScreenshotParamsBuilder;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 #[cfg(feature = "browser")]
 use tracing::{debug, info, warn};
+
+use super::{Tool, ToolContext, ToolExecutionResult};
 
 /// Browser action types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -631,11 +633,49 @@ impl BrowserTool {
 
             BrowserAction::EmulateMobile { device_name } => {
                 let (width, height, dpr, mobile, ua) = match device_name.to_lowercase().as_str() {
-                    "iphone_x" | "iphonex" => (375, 812, 3.0, true, "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"),
-                    "iphone_12" | "iphone12" => (390, 844, 3.0, true, "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"),
-                    "pixel_5" | "pixel5" => (393, 851, 2.75, true, "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"),
-                    "ipad" => (810, 1080, 2.0, true, "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"),
-                    _ => (375, 667, 2.0, true, "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"),
+                    "iphone_x" | "iphonex" => (
+                        375,
+                        812,
+                        3.0,
+                        true,
+                        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) \
+                         AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 \
+                         Safari/604.1",
+                    ),
+                    "iphone_12" | "iphone12" => (
+                        390,
+                        844,
+                        3.0,
+                        true,
+                        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) \
+                         AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 \
+                         Safari/604.1",
+                    ),
+                    "pixel_5" | "pixel5" => (
+                        393,
+                        851,
+                        2.75,
+                        true,
+                        "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like \
+                         Gecko) Chrome/112.0.0.0 Mobile Safari/537.36",
+                    ),
+                    "ipad" => (
+                        810,
+                        1080,
+                        2.0,
+                        true,
+                        "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 \
+                         (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+                    ),
+                    _ => (
+                        375,
+                        667,
+                        2.0,
+                        true,
+                        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) \
+                         AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 \
+                         Safari/604.1",
+                    ),
                 };
 
                 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
@@ -1064,9 +1104,10 @@ impl BrowserTool {
         &self,
         actions: Vec<BrowserAction>,
     ) -> crate::Result<ToolExecutionResult> {
+        use std::sync::Arc;
+
         use chromiumoxide::browser::{Browser, BrowserConfig};
         use futures::StreamExt;
-        use std::sync::Arc;
 
         let mut builder = BrowserConfig::builder()
             .viewport(chromiumoxide::handler::viewport::Viewport {
@@ -1172,9 +1213,9 @@ impl Tool for BrowserTool {
     }
 
     fn description(&self) -> &str {
-        "Automate web browser interactions. Navigate to URLs, click elements, fill forms, \
-         take screenshots, extract content, and execute JavaScript. \
-         Requires Chrome/Chromium to be installed."
+        "Automate web browser interactions. Navigate to URLs, click elements, fill forms, take \
+         screenshots, extract content, and execute JavaScript. Requires Chrome/Chromium to be \
+         installed."
     }
 
     fn parameters_schema(&self) -> Value {

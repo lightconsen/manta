@@ -3,10 +3,11 @@
 //! Each physical device type (motor, camera, sensor, etc.) implements
 //! [`DeviceDriver`] to provide probe, connect, and lifecycle management.
 
+use serde_json::Value;
+
 use crate::device::control::ControlHandler;
 use crate::device::Device;
 use crate::error::Result;
-use serde_json::Value;
 
 /// Optional lifecycle operations for advanced device management.
 ///

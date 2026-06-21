@@ -1,3 +1,4 @@
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
@@ -5,7 +6,6 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use serde::Deserialize;
-use std::sync::Arc;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
@@ -226,7 +226,8 @@ pub async fn run_skill_handler(
         format!("{}\n\nUser input: {}", skill.prompt, body.input)
     };
 
-    // Capture trust level before dropping the lock (skill is owned so this is just being explicit)
+    // Capture trust level before dropping the lock (skill is owned so this is just
+    // being explicit)
     let skill_trust = skill.metadata.trust;
 
     // Drop read lock before acquiring agents lock

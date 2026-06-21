@@ -3,13 +3,14 @@
 //! Uses the .NET `System.Windows.Automation` namespace to traverse the
 //! foreground window's control hierarchy and output it as JSON.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Description of a UI element on Windows.
 #[derive(Debug, Clone, Serialize)]
@@ -151,7 +152,13 @@ if ($target) {
         let output = timeout(
             Duration::from_secs(15),
             Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+                .args([
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    script,
+                ])
                 .output(),
         )
         .await;
@@ -174,9 +181,9 @@ impl Tool for WindowsAccessibilityTool {
     }
 
     fn description(&self) -> &str {
-        "Query the Windows accessibility/UIAutomation tree for the active window. \
-         Returns a structured list of buttons, text fields, menus, and other UI elements. \
-         Use this before taking screenshots whenever possible for structured desktop perception."
+        "Query the Windows accessibility/UIAutomation tree for the active window. Returns a \
+         structured list of buttons, text fields, menus, and other UI elements. Use this before \
+         taking screenshots whenever possible for structured desktop perception."
     }
 
     fn parameters_schema(&self) -> Value {

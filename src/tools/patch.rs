@@ -2,10 +2,11 @@
 //!
 //! Apply unified diff patches to files using git apply.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use std::time::Duration;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 
@@ -40,7 +41,8 @@ impl Tool for ApplyPatchTool {
     }
 
     fn description(&self) -> &str {
-        "Apply a unified diff patch to files. The patch should be in standard unified diff format (as produced by git diff or diff -u)."
+        "Apply a unified diff patch to files. The patch should be in standard unified diff format \
+         (as produced by git diff or diff -u)."
     }
 
     fn parameters_schema(&self) -> Value {

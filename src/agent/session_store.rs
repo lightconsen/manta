@@ -1,50 +1,53 @@
 //! SQLite Session Storage
 //!
-//! Provides persistent session storage using SQLite instead of in-memory HashMaps.
-//! This gives us ACID guarantees, automatic crash recovery, and simpler querying.
+//! Provides persistent session storage using SQLite instead of in-memory
+//! HashMaps. This gives us ACID guarantees, automatic crash recovery, and
+//! simpler querying.
 
-use crate::error::{Result, SyscityError};
+use std::sync::Arc;
+use std::time::Duration;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, info, instrument, warn};
+
+use crate::error::{Result, SyscityError};
 
 /// Session metadata for querying
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMetadata {
- /// Session ID (UUID)
+    /// Session ID (UUID)
     pub session_id: String,
- /// Agent ID ("main", "coder", etc.)
+    /// Agent ID ("main", "coder", etc.)
     pub agent_id: String,
- /// Channel ("discord", "telegram", etc.)
+    /// Channel ("discord", "telegram", etc.)
     pub channel: String,
- /// Channel-specific ID (user ID, channel ID)
+    /// Channel-specific ID (user ID, channel ID)
     pub channel_id: String,
- /// Session creation time
+    /// Session creation time
     pub created_at: DateTime<Utc>,
- /// Last activity time
+    /// Last activity time
     pub last_activity: DateTime<Utc>,
- /// Whether session is active
+    /// Whether session is active
     pub is_active: bool,
- /// Message count
+    /// Message count
     #[serde(default)]
     pub message_count: usize,
- /// Display name (auto-generated or user-set)
+    /// Display name (auto-generated or user-set)
     #[serde(default)]
     pub name: Option<String>,
- /// Bound agent ID for unified session model (agent binding)
+    /// Bound agent ID for unified session model (agent binding)
     #[serde(default)]
     pub bound_agent_id: Option<String>,
- /// Transcript ID for conversation grouping (transcript tracking)
+    /// Transcript ID for conversation grouping (transcript tracking)
     #[serde(default)]
     pub transcript_id: Option<String>,
 }
 
 impl SessionMetadata {
- /// Create new session metadata
+    /// Create new session metadata
     pub fn new(
         session_id: impl Into<String>,
         agent_id: impl Into<String>,
@@ -67,7 +70,7 @@ impl SessionMetadata {
         }
     }
 
- /// Update last activity
+    /// Update last activity
     pub fn touch(&mut self) {
         self.last_activity = Utc::now();
     }
@@ -76,13 +79,13 @@ impl SessionMetadata {
 /// Persisted session data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedSession {
- /// Session ID
+    /// Session ID
     pub id: String,
- /// Session metadata
+    /// Session metadata
     pub metadata: SessionMetadata,
- /// Serialized session state (JSON)
+    /// Serialized session state (JSON)
     pub state_json: String,
- /// Message count
+    /// Message count
     pub message_count: i64,
 }
 
@@ -90,7 +93,7 @@ pub struct PersistedSession {
 #[derive(Debug, Clone)]
 pub struct SessionStore {
     pool: Pool<Sqlite>,
- /// In-memory cache of active sessions (session_id -> last_accessed)
+    /// In-memory cache of active sessions (session_id -> last_accessed)
     cache: Arc<RwLock<lru::LruCache<String, DateTime<Utc>>>>,
 }
 
@@ -121,7 +124,7 @@ pub struct SaveSubagentRunParams<'a> {
 }
 
 impl SessionStore {
- /// Create a new session store from a database URL.
+    /// Create a new session store from a database URL.
     #[instrument(skip(database_url))]
     pub async fn new(database_url: &str) -> Result<Self> {
         info!("Initializing SQLite session store");
@@ -142,7 +145,7 @@ impl SessionStore {
         Self::from_pool(pool).await
     }
 
- /// Create a session store from an existing connection pool.
+    /// Create a session store from an existing connection pool.
     pub async fn from_pool(pool: Pool<Sqlite>) -> Result<Self> {
         let store = Self {
             pool,
@@ -158,11 +161,11 @@ impl SessionStore {
         Ok(store)
     }
 
- /// Apply SQLite optimizations
+    /// Apply SQLite optimizations
     async fn optimize(&self) -> Result<()> {
         debug!("Applying database optimizations");
 
- // Enable WAL mode for better concurrency
+        // Enable WAL mode for better concurrency
         sqlx::query("PRAGMA journal_mode = WAL")
             .execute(&self.pool)
             .await
@@ -171,7 +174,7 @@ impl SessionStore {
                 details: e.to_string(),
             })?;
 
- // Enable foreign keys
+        // Enable foreign keys
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&self.pool)
             .await
@@ -180,7 +183,7 @@ impl SessionStore {
                 details: e.to_string(),
             })?;
 
- // Set synchronous mode to NORMAL for better performance
+        // Set synchronous mode to NORMAL for better performance
         sqlx::query("PRAGMA synchronous = NORMAL")
             .execute(&self.pool)
             .await
@@ -192,11 +195,11 @@ impl SessionStore {
         Ok(())
     }
 
- /// Initialize database schema
+    /// Initialize database schema
     async fn init_schema(&self) -> Result<()> {
         debug!("Creating session storage schema");
 
- // Sessions table - stores session metadata and state
+        // Sessions table - stores session metadata and state
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS sessions (
@@ -222,22 +225,22 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
- // Migrate: add name column if it doesn't exist (for existing databases)
+        // Migrate: add name column if it doesn't exist (for existing databases)
         let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN name TEXT")
             .execute(&self.pool)
             .await;
 
- // Migrate: add bound_agent_id column if it doesn't exist
+        // Migrate: add bound_agent_id column if it doesn't exist
         let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN bound_agent_id TEXT")
             .execute(&self.pool)
             .await;
 
- // Migrate: add transcript_id column if it doesn't exist
+        // Migrate: add transcript_id column if it doesn't exist
         let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN transcript_id TEXT")
             .execute(&self.pool)
             .await;
 
- // Session messages table - stores conversation history
+        // Session messages table - stores conversation history
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS session_messages (
@@ -262,22 +265,22 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
- // ── Migration: add missing columns to existing session_messages tables
- // CREATE TABLE IF NOT EXISTS won't add columns to existing tables
+        // ── Migration: add missing columns to existing session_messages tables
+        // CREATE TABLE IF NOT EXISTS won't add columns to existing tables
         for col in &["transcript_id", "run_id"] {
             let result =
                 sqlx::query(&format!("ALTER TABLE session_messages ADD COLUMN {} TEXT", col))
                     .execute(&self.pool)
                     .await;
             if let Err(ref e) = result {
- // "duplicate column name" is expected — ignore it
+                // "duplicate column name" is expected — ignore it
                 if !e.to_string().contains("duplicate column name") {
                     warn!("Failed to add column '{}' to session_messages: {}", col, e);
                 }
             }
         }
 
- // Indexes for common queries
+        // Indexes for common queries
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)")
             .execute(&self.pool)
             .await
@@ -299,16 +302,17 @@ impl SessionStore {
             .ok();
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_messages_session ON session_messages(session_id, created_at)"
+            "CREATE INDEX IF NOT EXISTS idx_messages_session ON session_messages(session_id, \
+             created_at)",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| warn!("Failed to create session store index idx_messages_session: {}", e))
         .ok();
 
- // ── Thread / Turn additions ───────────────────────────────────────────
+        // ── Thread / Turn additions ───────────────────────────────────────────
 
- // Threads table: one row per named conversation branch.
+        // Threads table: one row per named conversation branch.
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS threads (
@@ -333,10 +337,10 @@ impl SessionStore {
             .map_err(|e| warn!("Failed to create session store index idx_threads_session: {}", e))
             .ok();
 
- // Migrate existing session_messages rows: add thread_id, turn_index,
- // turn_state columns if they are not already present.
- // SQLite does not support ADD COLUMN IF NOT EXISTS, so we check
- // pragma_table_info first.
+        // Migrate existing session_messages rows: add thread_id, turn_index,
+        // turn_state columns if they are not already present.
+        // SQLite does not support ADD COLUMN IF NOT EXISTS, so we check
+        // pragma_table_info first.
         let has_thread_id: bool = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM pragma_table_info('session_messages') WHERE name='thread_id'",
         )
@@ -370,9 +374,10 @@ impl SessionStore {
             debug!("Migrated session_messages: added thread_id, turn_index, turn_state columns");
         }
 
- // Migrate: add reasoning_content and tool_calls_json columns if missing
+        // Migrate: add reasoning_content and tool_calls_json columns if missing
         let has_reasoning: bool = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM pragma_table_info('session_messages') WHERE name='reasoning_content'",
+            "SELECT COUNT(*) FROM pragma_table_info('session_messages') WHERE \
+             name='reasoning_content'",
         )
         .fetch_one(&self.pool)
         .await
@@ -398,13 +403,14 @@ impl SessionStore {
         }
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_messages_thread ON session_messages(session_id, thread_id, turn_index)"
+            "CREATE INDEX IF NOT EXISTS idx_messages_thread ON session_messages(session_id, \
+             thread_id, turn_index)",
         )
         .execute(&self.pool)
         .await
         .ok();
 
- // ── Subagent run records ──────────────────────────────────────────────
+        // ── Subagent run records ──────────────────────────────────────────────
 
         sqlx::query(
             r#"
@@ -435,7 +441,8 @@ impl SessionStore {
         })?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_subagent_runs_session ON subagent_runs(session_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_subagent_runs_session ON subagent_runs(session_id, \
+             created_at)",
         )
         .execute(&self.pool)
         .await
@@ -448,7 +455,7 @@ impl SessionStore {
         .await
         .ok();
 
- // ── ACP session records ───────────────────────────────────────────────
+        // ── ACP session records ───────────────────────────────────────────────
 
         sqlx::query(
             r#"
@@ -478,7 +485,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Save or update a session
+    /// Save or update a session
     #[instrument(skip(self, metadata, state_json))]
     pub async fn save_session(
         &self,
@@ -522,7 +529,7 @@ impl SessionStore {
         .await
         .map_err(|e| SyscityError::Storage { context: "Failed to save session".to_string(), details: e.to_string() })?;
 
- // Update cache
+        // Update cache
         let mut cache = self.cache.write().await;
         cache.put(session_id.to_string(), Utc::now());
 
@@ -530,7 +537,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Load a session by ID
+    /// Load a session by ID
     #[instrument(skip(self))]
     pub async fn load_session(&self, session_id: &str) -> Result<Option<PersistedSession>> {
         let row = sqlx::query(
@@ -572,7 +579,7 @@ impl SessionStore {
                     message_count: row.get::<i64, _>("message_count"),
                 };
 
- // Update cache
+                // Update cache
                 let mut cache = self.cache.write().await;
                 cache.put(session_id.to_string(), Utc::now());
 
@@ -586,7 +593,7 @@ impl SessionStore {
         }
     }
 
- /// Find sessions by metadata
+    /// Find sessions by metadata
     #[instrument(skip(self))]
     pub async fn find_sessions(
         &self,
@@ -596,7 +603,8 @@ impl SessionStore {
         active_only: bool,
     ) -> Result<Vec<SessionMetadata>> {
         let mut query = String::from(
-            "SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, message_count, name, bound_agent_id, transcript_id FROM sessions WHERE 1=1"
+            "SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, \
+             message_count, name, bound_agent_id, transcript_id FROM sessions WHERE 1=1",
         );
 
         if agent_id.is_some() {
@@ -688,12 +696,12 @@ impl SessionStore {
         Ok(sessions)
     }
 
- /// Append a message to session history. Returns the inserted row id.
+    /// Append a message to session history. Returns the inserted row id.
     #[instrument(skip(self, params))]
     pub async fn append_message(&self, params: &AppendMessageParams<'_>) -> Result<i64> {
         let now = Utc::now().timestamp_millis();
 
- // Auto-create session row if it doesn't exist (foreign key requirement)
+        // Auto-create session row if it doesn't exist (foreign key requirement)
         sqlx::query(
             r#"
             INSERT OR IGNORE INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count)
@@ -729,7 +737,7 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
- // Update message count
+        // Update message count
         sqlx::query(
             "UPDATE sessions SET message_count = message_count + 1, last_activity = ? WHERE id = ?",
         )
@@ -742,8 +750,9 @@ impl SessionStore {
         Ok(result.last_insert_rowid())
     }
 
- /// Get messages for a session, ordered oldest first.
- /// Returns `(id, role, content, reasoning_content, tool_calls_json, created_at, transcript_id, run_id)`.
+    /// Get messages for a session, ordered oldest first.
+    /// Returns `(id, role, content, reasoning_content, tool_calls_json,
+    /// created_at, transcript_id, run_id)`.
     #[allow(clippy::type_complexity)]
     #[instrument(skip(self))]
     pub async fn get_messages(
@@ -803,7 +812,7 @@ impl SessionStore {
         Ok(messages)
     }
 
- /// Set session active status
+    /// Set session active status
     pub async fn set_session_active(&self, session_id: &str, active: bool) -> Result<()> {
         sqlx::query("UPDATE sessions SET is_active = ?, last_activity = ? WHERE id = ?")
             .bind(if active { 1 } else { 0 })
@@ -819,7 +828,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Set session display name
+    /// Set session display name
     pub async fn set_session_name(&self, session_id: &str, name: &str) -> Result<()> {
         sqlx::query("UPDATE sessions SET name = ?, last_activity = ? WHERE id = ?")
             .bind(name)
@@ -835,7 +844,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Get session display name
+    /// Get session display name
     pub async fn get_session_name(&self, session_id: &str) -> Result<Option<String>> {
         let row = sqlx::query("SELECT name FROM sessions WHERE id = ?")
             .bind(session_id)
@@ -849,10 +858,10 @@ impl SessionStore {
         Ok(row.and_then(|r| r.get::<Option<String>, _>("name")))
     }
 
- /// Delete a session and all its messages
+    /// Delete a session and all its messages
     #[instrument(skip(self))]
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
- // Delete messages first (SQLite FK cascade requires pragma)
+        // Delete messages first (SQLite FK cascade requires pragma)
         sqlx::query("DELETE FROM session_messages WHERE session_id = ?")
             .bind(session_id)
             .execute(&self.pool)
@@ -871,7 +880,7 @@ impl SessionStore {
                 details: e.to_string(),
             })?;
 
- // Cache cleanup
+        // Cache cleanup
         let mut cache = self.cache.write().await;
         cache.pop(session_id);
 
@@ -879,7 +888,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Cleanup old inactive sessions
+    /// Cleanup old inactive sessions
     #[instrument(skip(self))]
     pub async fn cleanup_old_sessions(&self, older_than: Duration) -> Result<usize> {
         let cutoff = Utc::now()
@@ -899,9 +908,10 @@ impl SessionStore {
         Ok(deleted)
     }
 
- // ── Thread / Turn methods ─────────────────────────────────────────────────
+    // ── Thread / Turn methods ─────────────────────────────────────────────────
 
- /// Upsert a thread record. Call when a Thread is first created for a session.
+    /// Upsert a thread record. Call when a Thread is first created for a
+    /// session.
     pub async fn save_thread(
         &self,
         session_id: &str,
@@ -931,8 +941,8 @@ impl SessionStore {
         Ok(())
     }
 
- /// Append a completed turn as two rows (user + assistant) tagged with
- /// thread and turn metadata.
+    /// Append a completed turn as two rows (user + assistant) tagged with
+    /// thread and turn metadata.
     pub async fn append_turn(
         &self,
         session_id: &str,
@@ -944,7 +954,7 @@ impl SessionStore {
     ) -> Result<()> {
         let now = Utc::now().timestamp_millis();
 
- // Insert user message row.
+        // Insert user message row.
         sqlx::query(
             r#"
             INSERT INTO session_messages (session_id, role, content, created_at, thread_id, turn_index, turn_state)
@@ -964,7 +974,7 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
- // Insert assistant message row.
+        // Insert assistant message row.
         sqlx::query(
             r#"
             INSERT INTO session_messages (session_id, role, content, created_at, thread_id, turn_index, turn_state)
@@ -984,7 +994,7 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
- // Keep session message_count in sync.
+        // Keep session message_count in sync.
         sqlx::query(
             "UPDATE sessions SET message_count = message_count + 2, last_activity = ? WHERE id = ?",
         )
@@ -998,14 +1008,15 @@ impl SessionStore {
         Ok(())
     }
 
- /// Load all threads for a session together with their turns.
- ///
- /// Returns `Vec<(thread_id, label, created_at_ms, Vec<(turn_index, user_msg, asst_msg, state)>)>`.
+    /// Load all threads for a session together with their turns.
+    ///
+    /// Returns `Vec<(thread_id, label, created_at_ms, Vec<(turn_index,
+    /// user_msg, asst_msg, state)>)>`.
     pub async fn load_threads_for_session(
         &self,
         session_id: &str,
     ) -> Result<Vec<(String, String, i64, Vec<(i64, String, String, String)>)>> {
- // Load thread rows.
+        // Load thread rows.
         let thread_rows = sqlx::query(
             "SELECT id, label, created_at FROM threads WHERE session_id = ? ORDER BY created_at",
         )
@@ -1024,8 +1035,9 @@ impl SessionStore {
             let label: String = trow.get("label");
             let created_at: i64 = trow.get("created_at");
 
- // Load user-half of each turn (role='user') ordered by turn_index.
- // We join with the assistant row by matching (session_id, thread_id, turn_index).
+            // Load user-half of each turn (role='user') ordered by turn_index.
+            // We join with the assistant row by matching (session_id, thread_id,
+            // turn_index).
             let turn_rows = sqlx::query(
                 r#"
                 SELECT u.turn_index,
@@ -1071,7 +1083,7 @@ impl SessionStore {
         Ok(result)
     }
 
- /// Hard-delete all rows for a specific turn (used by undo persistence).
+    /// Hard-delete all rows for a specific turn (used by undo persistence).
     pub async fn delete_turn(
         &self,
         session_id: &str,
@@ -1079,7 +1091,8 @@ impl SessionStore {
         turn_index: i64,
     ) -> Result<()> {
         let affected = sqlx::query(
-            "DELETE FROM session_messages WHERE session_id = ? AND thread_id = ? AND turn_index = ?",
+            "DELETE FROM session_messages WHERE session_id = ? AND thread_id = ? AND turn_index = \
+             ?",
         )
         .bind(session_id)
         .bind(thread_id)
@@ -1092,7 +1105,7 @@ impl SessionStore {
         })?
         .rows_affected();
 
- // Adjust session message_count (deleted rows are usually 2).
+        // Adjust session message_count (deleted rows are usually 2).
         sqlx::query("UPDATE sessions SET message_count = MAX(0, message_count - ?) WHERE id = ?")
             .bind(affected as i64)
             .bind(session_id)
@@ -1104,7 +1117,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Get session statistics
+    /// Get session statistics
     pub async fn get_stats(&self) -> Result<SessionStats> {
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
             .fetch_one(&self.pool)
@@ -1165,12 +1178,9 @@ pub struct SubagentRunRecord {
 }
 
 impl SessionStore {
- /// Save a subagent run record when it is spawned.
+    /// Save a subagent run record when it is spawned.
     #[instrument(skip(self))]
-    pub async fn save_subagent_run(
-        &self,
-        params: &SaveSubagentRunParams<'_>,
-    ) -> Result<()> {
+    pub async fn save_subagent_run(&self, params: &SaveSubagentRunParams<'_>) -> Result<()> {
         let now = Utc::now().timestamp_millis();
         let steer_json: Option<String> = Some("[]".to_string());
 
@@ -1201,7 +1211,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Update subagent run status (e.g. ready, busy, terminated, crashed).
+    /// Update subagent run status (e.g. ready, busy, terminated, crashed).
     #[instrument(skip(self))]
     pub async fn update_subagent_run_status(&self, run_id: &str, status: &str) -> Result<()> {
         sqlx::query("UPDATE subagent_runs SET status = ? WHERE run_id = ?")
@@ -1218,7 +1228,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Mark a subagent run as completed with result or error.
+    /// Mark a subagent run as completed with result or error.
     #[instrument(skip(self))]
     pub async fn complete_subagent_run(
         &self,
@@ -1229,7 +1239,8 @@ impl SessionStore {
         let now = Utc::now().timestamp_millis();
 
         sqlx::query(
-            "UPDATE subagent_runs SET status = 'terminated', completed_at = ?, result = ?, error = ? WHERE run_id = ?",
+            "UPDATE subagent_runs SET status = 'terminated', completed_at = ?, result = ?, error \
+             = ? WHERE run_id = ?",
         )
         .bind(now)
         .bind(result)
@@ -1246,13 +1257,14 @@ impl SessionStore {
         Ok(())
     }
 
- /// Record a kill event on a subagent run.
+    /// Record a kill event on a subagent run.
     #[instrument(skip(self))]
     pub async fn kill_subagent_run(&self, run_id: &str, killed_by: &str) -> Result<()> {
         let now = Utc::now().timestamp_millis();
 
         sqlx::query(
-            "UPDATE subagent_runs SET status = 'terminated', completed_at = ?, killed_by = ? WHERE run_id = ?",
+            "UPDATE subagent_runs SET status = 'terminated', completed_at = ?, killed_by = ? \
+             WHERE run_id = ?",
         )
         .bind(now)
         .bind(killed_by)
@@ -1268,7 +1280,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Append a steer event to a subagent run.
+    /// Append a steer event to a subagent run.
     #[instrument(skip(self))]
     pub async fn append_steer_to_run(&self, run_id: &str, steer_message: &str) -> Result<()> {
         let row = sqlx::query("SELECT steer_history FROM subagent_runs WHERE run_id = ?")
@@ -1305,7 +1317,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Get a single subagent run by run_id.
+    /// Get a single subagent run by run_id.
     #[instrument(skip(self))]
     pub async fn get_subagent_run(&self, run_id: &str) -> Result<Option<SubagentRunRecord>> {
         let row = sqlx::query(
@@ -1327,7 +1339,7 @@ impl SessionStore {
         Ok(row.map(|r| Self::row_to_subagent_run_record(&r)))
     }
 
- /// List subagent runs for a session, ordered newest first.
+    /// List subagent runs for a session, ordered newest first.
     #[instrument(skip(self))]
     pub async fn list_subagent_runs(
         &self,
@@ -1392,9 +1404,9 @@ impl SessionStore {
         }
     }
 
- // ── ACP session persistence ───────────────────────────────────────────────
+    // ── ACP session persistence ───────────────────────────────────────────────
 
- /// Persist an ACP session.
+    /// Persist an ACP session.
     pub async fn save_acp_session(
         &self,
         session_id: &str,
@@ -1428,7 +1440,7 @@ impl SessionStore {
         Ok(())
     }
 
- /// Load a single ACP session.
+    /// Load a single ACP session.
     pub async fn load_acp_session(
         &self,
         session_id: &str,
@@ -1454,12 +1466,13 @@ impl SessionStore {
         }))
     }
 
- /// List all persisted ACP sessions.
+    /// List all persisted ACP sessions.
     pub async fn list_acp_sessions(
         &self,
     ) -> Result<Vec<(String, String, Vec<String>, DateTime<Utc>)>> {
         let rows = sqlx::query(
-            "SELECT session_id, parent_id, subagent_ids, created_at FROM acp_sessions ORDER BY created_at DESC",
+            "SELECT session_id, parent_id, subagent_ids, created_at FROM acp_sessions ORDER BY \
+             created_at DESC",
         )
         .fetch_all(&self.pool)
         .await
@@ -1482,7 +1495,7 @@ impl SessionStore {
             .collect())
     }
 
- /// Delete a persisted ACP session.
+    /// Delete a persisted ACP session.
     pub async fn delete_acp_session(&self, session_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM acp_sessions WHERE session_id = ?")
             .bind(session_id)
@@ -1500,11 +1513,12 @@ impl SessionStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use futures::future::join_all;
 
+    use super::*;
+
     async fn create_test_store() -> SessionStore {
- // Use in-memory SQLite for tests
+        // Use in-memory SQLite for tests
         SessionStore::new(":memory:")
             .await
             .expect("Failed to create test store")
@@ -1516,13 +1530,13 @@ mod tests {
 
         let metadata = SessionMetadata::new("test-session", "main", "discord", "user123");
 
- // Save session
+        // Save session
         store
             .save_session("test-session", &metadata, r#"{"key": "value"}"#)
             .await
             .expect("Failed to save session");
 
- // Load session
+        // Load session
         let loaded = store
             .load_session("test-session")
             .await
@@ -1538,7 +1552,7 @@ mod tests {
     async fn test_find_sessions() {
         let store = create_test_store().await;
 
- // Create multiple sessions
+        // Create multiple sessions
         for i in 0..3 {
             let metadata = SessionMetadata::new(
                 format!("session-{}", i),
@@ -1552,7 +1566,7 @@ mod tests {
                 .expect("Failed to save session");
         }
 
- // Find by agent
+        // Find by agent
         let main_sessions = store
             .find_sessions(Some("main"), None, None, false)
             .await
@@ -1560,7 +1574,7 @@ mod tests {
         assert_eq!(main_sessions.len(), 1);
         assert_eq!(main_sessions[0].agent_id, "main");
 
- // Find by channel
+        // Find by channel
         let discord_sessions = store
             .find_sessions(None, Some("discord"), None, false)
             .await
@@ -1572,29 +1586,35 @@ mod tests {
     async fn test_messages() {
         let store = create_test_store().await;
 
- // Create session
+        // Create session
         let metadata = SessionMetadata::new("msg-test", "main", "cli", "local");
         store
             .save_session("msg-test", &metadata, "{}")
             .await
             .expect("Failed to save session");
 
- // Append messages
+        // Append messages
         store
             .append_message(&AppendMessageParams {
-            session_id: "msg-test", role: "user", content: "Hello", ..Default::default()
-        })
-            .await
-            .expect("Failed to append message");
-
-        store
-            .append_message(&AppendMessageParams {
-                session_id: "msg-test", role: "assistant", content: "Hi there!", ..Default::default()
+                session_id: "msg-test",
+                role: "user",
+                content: "Hello",
+                ..Default::default()
             })
             .await
             .expect("Failed to append message");
 
- // Get messages
+        store
+            .append_message(&AppendMessageParams {
+                session_id: "msg-test",
+                role: "assistant",
+                content: "Hi there!",
+                ..Default::default()
+            })
+            .await
+            .expect("Failed to append message");
+
+        // Get messages
         let messages = store
             .get_messages("msg-test", 10, None)
             .await
@@ -1669,7 +1689,10 @@ mod tests {
         store.save_session("stats-test", &meta, "{}").await.unwrap();
         store
             .append_message(&AppendMessageParams {
-                session_id: "stats-test", role: "user", content: "hi", ..Default::default()
+                session_id: "stats-test",
+                role: "user",
+                content: "hi",
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -1774,19 +1797,20 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_old_sessions() {
         let store = create_test_store().await;
- // save_session always sets last_activity to now, so recent sessions won't be cleaned up
+        // save_session always sets last_activity to now, so recent sessions won't be
+        // cleaned up
         let mut meta = SessionMetadata::new("old", "main", "cli", "local");
         meta.is_active = false;
         store.save_session("old", &meta, "{}").await.unwrap();
 
- // Cleanup with 30 days should not affect a session that was just saved
+        // Cleanup with 30 days should not affect a session that was just saved
         let deleted = store
             .cleanup_old_sessions(Duration::from_secs(86400 * 30))
             .await
             .unwrap();
         assert_eq!(deleted, 0);
 
- // Session should still exist
+        // Session should still exist
         let remaining = store.load_session("old").await.unwrap();
         assert!(remaining.is_some());
     }
@@ -1800,7 +1824,9 @@ mod tests {
         for i in 0..5 {
             store
                 .append_message(&AppendMessageParams {
-                    session_id: "limit-test", role: "user", content: &format!("msg{}", i),
+                    session_id: "limit-test",
+                    role: "user",
+                    content: &format!("msg{}", i),
                     ..Default::default()
                 })
                 .await
@@ -1830,7 +1856,7 @@ mod tests {
     async fn test_subagent_run_lifecycle() {
         let store = create_test_store().await;
 
- // Save a run
+        // Save a run
         store
             .save_subagent_run(&SaveSubagentRunParams {
                 run_id: "run-1",
@@ -1845,7 +1871,7 @@ mod tests {
             .await
             .unwrap();
 
- // Load it back
+        // Load it back
         let run = store.get_subagent_run("run-1").await.unwrap().unwrap();
         assert_eq!(run.run_id, "run-1");
         assert_eq!(run.subagent_id, "subagent-1");
@@ -1858,7 +1884,7 @@ mod tests {
         assert_eq!(run.thread_id.as_deref(), Some("thread-1"));
         assert!(run.steer_history.as_ref().unwrap().is_empty());
 
- // Update status
+        // Update status
         store
             .update_subagent_run_status("run-1", "busy")
             .await
@@ -1866,7 +1892,7 @@ mod tests {
         let run2 = store.get_subagent_run("run-1").await.unwrap().unwrap();
         assert_eq!(run2.status, "busy");
 
- // Append steer
+        // Append steer
         store
             .append_steer_to_run("run-1", "change direction")
             .await
@@ -1875,7 +1901,7 @@ mod tests {
         assert_eq!(run3.steer_history.as_ref().unwrap().len(), 1);
         assert_eq!(run3.steer_history.as_ref().unwrap()[0], "change direction");
 
- // Kill
+        // Kill
         store.kill_subagent_run("run-1", "user").await.unwrap();
         let run4 = store.get_subagent_run("run-1").await.unwrap().unwrap();
         assert_eq!(run4.status, "terminated");
@@ -1965,7 +1991,9 @@ mod tests {
             tasks.push(tokio::spawn(async move {
                 store
                     .append_message(&AppendMessageParams {
-                        session_id: &sid, role: "user", content: &format!("msg-{}", i),
+                        session_id: &sid,
+                        role: "user",
+                        content: &format!("msg-{}", i),
                         ..Default::default()
                     })
                     .await
@@ -2000,7 +2028,7 @@ mod tests {
         assert_eq!(final_session.message_count, 10, "all 10 concurrent appends should be recorded");
     }
 
- /// Simulate N concurrent sessions to measure throughput (RPS and memory).
+    /// Simulate N concurrent sessions to measure throughput (RPS and memory).
     #[tokio::test]
     async fn test_throughput_n_concurrent_sessions() {
         let store = create_test_store().await;
@@ -2016,18 +2044,20 @@ mod tests {
                 let meta = SessionMetadata::new(&sid, "main", "cli", "local");
                 store.save_session(&sid, &meta, "{}").await.unwrap();
 
- // Append a few messages
+                // Append a few messages
                 for j in 0..5usize {
                     store
                         .append_message(&AppendMessageParams {
-                            session_id: &sid, role: "user", content: &format!("msg-{}", j),
+                            session_id: &sid,
+                            role: "user",
+                            content: &format!("msg-{}", j),
                             ..Default::default()
                         })
                         .await
                         .unwrap();
                 }
 
- // Load back
+                // Load back
                 let loaded = store.load_session(&sid).await.unwrap();
                 assert!(loaded.is_some());
                 loaded.unwrap().message_count
@@ -2037,21 +2067,18 @@ mod tests {
         let results = futures::future::join_all(tasks).await;
         let elapsed = start.elapsed();
 
-        let total_messages: usize = results
-            .into_iter()
-            .map(|r| r.unwrap() as usize)
-            .sum();
+        let total_messages: usize = results.into_iter().map(|r| r.unwrap() as usize).sum();
         assert_eq!(total_messages, n_sessions * 5);
 
- // Rough throughput assertion: 50 sessions with 5 messages each should
- // complete in under 10 seconds even on slow CI runners.
+        // Rough throughput assertion: 50 sessions with 5 messages each should
+        // complete in under 10 seconds even on slow CI runners.
         assert!(
             elapsed < std::time::Duration::from_secs(10),
             "Throughput test too slow: {:?}",
             elapsed
         );
 
- // Calculate RPS (requests per second) for informational purposes
+        // Calculate RPS (requests per second) for informational purposes
         let total_ops = n_sessions * 7; // save + 5 appends + load
         let rps = total_ops as f64 / elapsed.as_secs_f64();
         println!(

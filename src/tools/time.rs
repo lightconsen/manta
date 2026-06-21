@@ -3,11 +3,12 @@
 //! This tool provides time-related utilities like getting current time,
 //! formatting dates, calculating time differences, and scheduling reminders.
 
-use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Local, Utc};
 use serde_json::Value;
 use tracing::{debug, info};
+
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Time tool for time-related operations
 #[derive(Debug, Default)]

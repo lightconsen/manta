@@ -51,13 +51,21 @@ impl PerceptionSummarizer for TemplateSummarizer {
                 .filter_map(|e| {
                     let sev = e.get("severity").and_then(|s| s.as_u64()).unwrap_or(0);
                     let src = e.get("source").and_then(|s| s.as_str()).unwrap_or("?");
-                    if sev >= 128 { Some((src, sev)) } else { None }
+                    if sev >= 128 {
+                        Some((src, sev))
+                    } else {
+                        None
+                    }
                 })
                 .collect();
             high_sev.sort_by(|a, b| b.1.cmp(&a.1));
             high_sev.dedup_by(|a, b| a.0 == b.0);
             for (src, sev) in high_sev.into_iter().take(3) {
-                let label = if sev >= 220 { "quarantined" } else { "degraded" };
+                let label = if sev >= 220 {
+                    "quarantined"
+                } else {
+                    "degraded"
+                };
                 parts.push(format!("{src} {label} (sev={sev})"));
             }
         }
@@ -75,7 +83,10 @@ impl PerceptionSummarizer for TemplateSummarizer {
                 })
                 .collect();
             changes.sort_by(|a, b| {
-                (b.2 - b.1).abs().partial_cmp(&(a.2 - a.1).abs()).unwrap_or(std::cmp::Ordering::Equal)
+                (b.2 - b.1)
+                    .abs()
+                    .partial_cmp(&(a.2 - a.1).abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
             for (src, from, to) in changes.into_iter().take(3) {
                 parts.push(format!("{src} {}\u{2192}{}", fmt_num(from), fmt_num(to)));

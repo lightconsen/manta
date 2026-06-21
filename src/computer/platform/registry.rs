@@ -1,8 +1,9 @@
 //! Platform tool set registry — manages platform-specific tool collections.
 
+use std::collections::{HashMap, HashSet};
+
 use super::{OsControlScope, PlatformToolSet, ToolConflictStrategy};
 use crate::tools::ToolRegistry;
-use std::collections::{HashMap, HashSet};
 
 /// Registry of all platform tool sets, with runtime environment detection.
 pub struct PlatformCapabilityRegistry {
@@ -77,10 +78,7 @@ impl PlatformCapabilityRegistry {
                 if seen.contains(&name) {
                     match strategy {
                         ToolConflictStrategy::Reject => {
-                            panic!(
-                                "Tool '{}' conflicts between platform tool sets",
-                                name
-                            );
+                            panic!("Tool '{}' conflicts between platform tool sets", name);
                         }
                         ToolConflictStrategy::Override => {
                             registry.register(tool);
@@ -112,10 +110,7 @@ impl PlatformCapabilityRegistry {
                 if seen.contains(&name) {
                     match strategy {
                         ToolConflictStrategy::Reject => {
-                            panic!(
-                                "Tool '{}' conflicts between platform tool sets",
-                                name
-                            );
+                            panic!("Tool '{}' conflicts between platform tool sets", name);
                         }
                         ToolConflictStrategy::Override => {
                             registry.register(tool);

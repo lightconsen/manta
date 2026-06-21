@@ -138,16 +138,15 @@ impl DpiScale {
         if let Ok(output) = std::process::Command::new("powershell")
             .args([
                 "-Command",
-                "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.DeviceDpi",
+                "Add-Type -AssemblyName System.Windows.Forms; \
+                 [System.Windows.Forms.Screen]::PrimaryScreen.DeviceDpi",
             ])
             .output()
         {
             let text = String::from_utf8_lossy(&output.stdout);
             if let Ok(dpi) = text.trim().parse::<f32>() {
                 if dpi > 0.0 {
-                    return Self {
-                        scale: dpi / 96.0,
-                    };
+                    return Self { scale: dpi / 96.0 };
                 }
             }
         }
@@ -167,7 +166,13 @@ impl DpiScale {
                     // "  dimensions:    3840x2160 pixels (1016x572 millimeters)"
                     if let Some(px_part) = line.split("pixels").next() {
                         if let Some(x) = px_part.split('x').next() {
-                            if let Ok(w) = x.trim().split_whitespace().last().unwrap_or("0").parse::<f32>() {
+                            if let Ok(w) = x
+                                .trim()
+                                .split_whitespace()
+                                .last()
+                                .unwrap_or("0")
+                                .parse::<f32>()
+                            {
                                 screen_w_px = w;
                             }
                         }
@@ -221,12 +226,7 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
-        Self {
-            x,
-            y,
-            width,
-            height,
-        }
+        Self { x, y, width, height }
     }
 
     /// Scale this rect by the given DPI factor (logical → physical).
@@ -288,7 +288,11 @@ pub fn ui_element_from_accessibility_json(value: &serde_json::Value) -> Option<U
     let children = obj
         .get("children")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(ui_element_from_accessibility_json).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(ui_element_from_accessibility_json)
+                .collect()
+        })
         .unwrap_or_default();
 
     Some(UiElement {
@@ -307,7 +311,11 @@ pub fn ui_element_from_accessibility_json(value: &serde_json::Value) -> Option<U
 pub fn parse_accessibility_elements(data: Option<&serde_json::Value>) -> Vec<UiElement> {
     data.and_then(|d| d.get("elements"))
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(ui_element_from_accessibility_json).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(ui_element_from_accessibility_json)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -361,8 +369,8 @@ pub struct Screenshot {
     pub width: u32,
     /// Height in pixels.
     pub height: u32,
-    /// Wall-clock capture timestamp. Skipped in serialization since Instant is not
-    /// natively supported by serde.
+    /// Wall-clock capture timestamp. Skipped in serialization since Instant is
+    /// not natively supported by serde.
     #[serde(skip, default = "instant_now")]
     pub timestamp: std::time::Instant,
 }
@@ -410,9 +418,7 @@ pub enum ClickTarget {
 #[serde(rename_all = "snake_case")]
 pub enum DesktopAction {
     /// Capture a screenshot (optionally of a sub-region).
-    Screenshot {
-        region: Option<Rect>,
-    },
+    Screenshot { region: Option<Rect> },
     /// Click somewhere on screen.
     Click {
         target: ClickTarget,
@@ -424,13 +430,9 @@ pub enum DesktopAction {
         button: MouseButton,
     },
     /// Type text (as if typed by keyboard).
-    Type {
-        text: String,
-    },
+    Type { text: String },
     /// Press key combination (e.g. ["ctrl", "c"]).
-    KeyPress {
-        keys: Vec<String>,
-    },
+    KeyPress { keys: Vec<String> },
     /// Scroll at a location.
     Scroll {
         target: ClickTarget,
@@ -438,14 +440,9 @@ pub enum DesktopAction {
         amount: i32,
     },
     /// Drag from one point to another.
-    Drag {
-        from: ClickTarget,
-        to: ClickTarget,
-    },
+    Drag { from: ClickTarget, to: ClickTarget },
     /// Read the accessibility UI tree of the active (or named) app.
-    ReadUiTree {
-        app: Option<String>,
-    },
+    ReadUiTree { app: Option<String> },
     /// Launch an application.
     LaunchApp {
         name: String,
@@ -454,23 +451,15 @@ pub enum DesktopAction {
         wait_for_ready: bool,
     },
     /// Activate / focus a window by title pattern.
-    ActivateWindow {
-        title_pattern: String,
-    },
+    ActivateWindow { title_pattern: String },
     /// Close a window by title pattern.
-    CloseWindow {
-        title_pattern: String,
-    },
+    CloseWindow { title_pattern: String },
     /// Wait for a duration.
-    Wait {
-        milliseconds: u64,
-    },
+    Wait { milliseconds: u64 },
     /// Read clipboard.
     ClipboardGet,
     /// Write to clipboard.
-    ClipboardSet {
-        text: String,
-    },
+    ClipboardSet { text: String },
     /// Query system resource status (CPU, memory, disk, network, uptime).
     GetSystemStatus,
     /// List running processes, optionally filtered by name.
@@ -485,31 +474,20 @@ pub enum DesktopAction {
         force: bool,
     },
     /// Watch a directory for changes.
-    WatchDirectory {
-        path: String,
-    },
+    WatchDirectory { path: String },
     /// Stop watching a directory.
-    UnwatchDirectory {
-        path: String,
-    },
+    UnwatchDirectory { path: String },
     /// Watch a single file for changes.
-    WatchFile {
-        path: String,
-    },
+    WatchFile { path: String },
     /// Stop watching a single file.
-    UnwatchFile {
-        path: String,
-    },
+    UnwatchFile { path: String },
     /// List network sockets (ports) with optional filters.
     ListPorts {
         filter_protocol: Option<String>,
         filter_state: Option<String>,
     },
     /// Test ICMP connectivity to a host.
-    TestPing {
-        target: String,
-        count: Option<u32>,
-    },
+    TestPing { target: String, count: Option<u32> },
     /// Test TCP connectivity to a host:port.
     TestTcpConnect {
         target: String,
@@ -529,7 +507,8 @@ pub enum DesktopAction {
         pid: Option<u32>,
         name: Option<String>,
         /// Unix nice value: -20 (highest) to 19 (lowest).
-        /// Windows priority class: 0=Idle, 1=BelowNormal, 2=Normal, 3=AboveNormal, 4=High, 5=Realtime.
+        /// Windows priority class: 0=Idle, 1=BelowNormal, 2=Normal,
+        /// 3=AboveNormal, 4=High, 5=Realtime.
         priority: i32,
     },
     /// Press a sequence of keys with configurable delays between them.
@@ -537,8 +516,9 @@ pub enum DesktopAction {
     /// Useful for IDE multi-step shortcuts or timed interactions.
     KeySequence {
         keys: Vec<String>,
-        /// Delay in milliseconds before each key (first element = delay before first key).
-        /// If shorter than keys, the last delay is repeated.
+        /// Delay in milliseconds before each key (first element = delay before
+        /// first key). If shorter than keys, the last delay is
+        /// repeated.
         delays_ms: Vec<u64>,
     },
     /// Install software packages using the platform's package manager.
@@ -550,7 +530,8 @@ pub enum DesktopAction {
     /// Browse files in a directory with optional natural-language filtering.
     BrowseFiles {
         path: String,
-        /// Optional filter description (e.g. "recently modified logs", "largest files").
+        /// Optional filter description (e.g. "recently modified logs", "largest
+        /// files").
         filter_description: Option<String>,
         max_results: Option<usize>,
     },
@@ -701,8 +682,12 @@ pub enum WaitCondition {
     ProcessRunning { name: String },
     /// Wait for a process with the given name to exit.
     ProcessExited { name: String },
-    /// Wait for the screenshot to differ from the baseline by less than a threshold.
-    ScreenshotStable { max_pixel_diff: u32, timeout_ms: u64 },
+    /// Wait for the screenshot to differ from the baseline by less than a
+    /// threshold.
+    ScreenshotStable {
+        max_pixel_diff: u32,
+        timeout_ms: u64,
+    },
     /// Wait for a file to appear.
     FileExists { path: String },
 }
@@ -724,8 +709,8 @@ pub struct SystemStatus {
     pub swap_used_mb: u64,
     pub disks: Vec<DiskStatus>,
     pub networks: Vec<NetworkStatus>,
-    /// Wall-clock snapshot timestamp. Skipped in serialization since Instant is not
-    /// natively supported by serde.
+    /// Wall-clock snapshot timestamp. Skipped in serialization since Instant is
+    /// not natively supported by serde.
     #[serde(skip, default = "instant_now")]
     pub timestamp: std::time::Instant,
 }

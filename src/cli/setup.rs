@@ -2,8 +2,9 @@
 //!
 //! Interactive CLI wizard to configure ~/.syscity/syscity.toml.
 
-use crate::error::Result;
 use dialoguer::{Input, Password, Select};
+
+use crate::error::Result;
 
 /// Run the interactive setup wizard.
 /// Reads existing ~/.syscity/syscity.toml if present and allows editing.

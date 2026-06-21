@@ -4,13 +4,14 @@
 //! best-effort listening.  Works on both X11 and Wayland because the
 //! freedesktop Notifications D-Bus service is display-server agnostic.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Action types for notification management.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,11 +48,8 @@ impl NotificationTool {
     }
 
     async fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<(bool, String)> {
-        let result = timeout(
-            Duration::from_secs(timeout_secs),
-            Command::new(cmd).args(args).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(timeout_secs), Command::new(cmd).args(args).output()).await;
 
         match result {
             Ok(Ok(output)) => {
@@ -107,9 +105,8 @@ impl NotificationTool {
     async fn do_listen(duration_secs: u64, max_count: usize) -> Vec<NotificationEntry> {
         // Best-effort: use dbus-monitor to watch the Notifications interface.
         // notify-send itself does not support listening.
-        let dbus_cmd = format!(
-            "dbus-monitor \"interface='org.freedesktop.Notifications'\" 2>/dev/null"
-        );
+        let dbus_cmd =
+            "dbus-monitor \"interface='org.freedesktop.Notifications'\" 2>/dev/null".to_string();
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let child_result = timeout(
@@ -199,9 +196,8 @@ impl Tool for NotificationTool {
     }
 
     fn description(&self) -> &str {
-        "Send desktop notifications or monitor incoming notifications on Linux. \
-         Uses notify-send for sending and dbus-monitor for listening. \
-         Works on both X11 and Wayland."
+        "Send desktop notifications or monitor incoming notifications on Linux. Uses notify-send \
+         for sending and dbus-monitor for listening. Works on both X11 and Wayland."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -251,7 +247,10 @@ impl Tool for NotificationTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action_str = args.get("action").and_then(|v| v.as_str()).unwrap_or("send");
+        let action_str = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("send");
         let action = match action_str {
             "listen" => NotificationAction::Listen,
             _ => NotificationAction::Send,
@@ -261,7 +260,10 @@ impl Tool for NotificationTool {
             NotificationAction::Send => {
                 let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("");
                 let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                let urgency = args.get("urgency").and_then(|v| v.as_str()).unwrap_or("normal");
+                let urgency = args
+                    .get("urgency")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("normal");
                 let icon = args.get("icon").and_then(|v| v.as_str());
 
                 if title.is_empty() || message.is_empty() {
@@ -279,8 +281,12 @@ impl Tool for NotificationTool {
                 })
             }
             NotificationAction::Listen => {
-                let duration = args.get("duration_secs").and_then(|v| v.as_u64()).unwrap_or(10);
-                let max_count = args.get("max_count").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                let duration = args
+                    .get("duration_secs")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10);
+                let max_count =
+                    args.get("max_count").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
                 info!("Listening for notifications for {}s", duration);
                 let entries = Self::do_listen(duration, max_count).await;
@@ -321,14 +327,8 @@ mod tests {
 
     #[test]
     fn test_extract_quoted_string() {
-        assert_eq!(
-            extract_quoted_string(r#"  string "my-app" "#),
-            Some("my-app".to_string())
-        );
-        assert_eq!(
-            extract_quoted_string(r#"string """#),
-            Some("".to_string())
-        );
+        assert_eq!(extract_quoted_string(r#"  string "my-app" "#), Some("my-app".to_string()));
+        assert_eq!(extract_quoted_string(r#"string """#), Some("".to_string()));
         assert_eq!(extract_quoted_string("no quotes"), None);
     }
 }

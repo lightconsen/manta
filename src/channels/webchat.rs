@@ -11,18 +11,20 @@
 //! - Typing indicators
 //! - Message history per session
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use tokio::sync::{mpsc, RwLock};
+use tracing::{info, warn};
+
 use crate::channels::{
     Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage,
     OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{info, warn};
 
 /// Default WebSocket port for WebChat
 const DEFAULT_WEBCHAT_PORT: u16 = 8081;

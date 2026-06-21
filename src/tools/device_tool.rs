@@ -4,11 +4,13 @@
 //! the `ToolRegistry` and dispatched through the Agent's existing tool-calling
 //! pipeline — no Agent changes needed.
 
-use crate::device::Capability;
-use crate::tools::{Tool, ToolCapabilities, ToolContext, ToolExecutionResult};
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
-use std::sync::Arc;
+
+use crate::device::Capability;
+use crate::tools::{Tool, ToolCapabilities, ToolContext, ToolExecutionResult};
 
 /// A [`Tool`] that delegates to a [`Capability`].
 ///
@@ -110,10 +112,11 @@ impl Tool for DeviceToolWrapper {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::device::{CapabilityResult, Capability};
     use async_trait::async_trait;
     use serde_json::json;
+
+    use super::*;
+    use crate::device::{Capability, CapabilityResult};
 
     struct DummyMotor;
 
@@ -131,7 +134,10 @@ mod tests {
             })
         }
         async fn execute(&self, params: Value) -> CapabilityResult {
-            let pos = params.get("position").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let pos = params
+                .get("position")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
             CapabilityResult {
                 success: true,
                 output: Some(json!({ "position": pos, "status": "moved" })),
@@ -167,7 +173,10 @@ mod tests {
         let cap = Arc::new(DummyMotor);
         let wrapper = DeviceToolWrapper::new("stepper_01", cap);
         let schema = wrapper.parameters_schema();
-        assert!(schema.get("properties").and_then(|p| p.get("position")).is_some());
+        assert!(schema
+            .get("properties")
+            .and_then(|p| p.get("position"))
+            .is_some());
     }
 
     #[test]

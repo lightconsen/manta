@@ -1,9 +1,10 @@
 //! Async crossterm input reader.
 
-use crate::tui::actions::TuiAction;
 use crossterm::event::{Event, EventStream};
 use futures::StreamExt;
 use tokio::sync::mpsc;
+
+use crate::tui::actions::TuiAction;
 
 /// Spawn a task that reads crossterm events and sends `TuiAction`s to `tx`.
 pub fn spawn_input_reader(tx: mpsc::UnboundedSender<TuiAction>) {

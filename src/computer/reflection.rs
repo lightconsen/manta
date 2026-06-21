@@ -1,4 +1,5 @@
-//! Reflection engine — root-cause analysis and adaptive retry for desktop actions.
+//! Reflection engine — root-cause analysis and adaptive retry for desktop
+//! actions.
 //!
 //! When a verification or action fails, `ReflectionEngine` analyses *why* it
 //! failed (timing, missing target, wrong action, resource exhaustion, etc.),
@@ -9,11 +10,13 @@
 //! The analysis is currently rule-based (fast, deterministic, testable).  A
 //! future enhancement can delegate to an LLM for ambiguous cases.
 
-use crate::computer::{ActionResult, DesktopAction, VerificationCriteria};
-use crate::memory::{Memory, MemoryId, MemoryQuery, MemoryStore};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
+
+use crate::computer::{ActionResult, DesktopAction, VerificationCriteria};
+use crate::memory::{Memory, MemoryId, MemoryQuery, MemoryStore};
 
 /// Categorisation of why a desktop action or verification failed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,9 +68,7 @@ pub struct ReflectionEngine {
 impl ReflectionEngine {
     /// Create a reflection engine without memory (analysis only).
     pub fn new() -> Self {
-        Self {
-            memory_store: None,
-        }
+        Self { memory_store: None }
     }
 
     /// Attach a memory store for experience recording and retrieval.
@@ -118,7 +119,9 @@ impl ReflectionEngine {
                 confidence: 0.90,
                 details: format!("Target not found for {:?}: {}", action, result.message),
                 suggested_delay_ms: Some(2000),
-                suggested_fix: Some("Wait longer for target to appear or verify path/name.".to_string()),
+                suggested_fix: Some(
+                    "Wait longer for target to appear or verify path/name.".to_string(),
+                ),
             };
         }
 
@@ -173,10 +176,7 @@ impl ReflectionEngine {
                 FailureAnalysis {
                     root_cause: FailureRootCause::TargetNotFound,
                     confidence: 0.75,
-                    details: format!(
-                        "UI tree does not contain element with role '{}'.",
-                        role
-                    ),
+                    details: format!("UI tree does not contain element with role '{}'.", role),
                     suggested_delay_ms: Some(1500),
                     suggested_fix: Some(format!(
                         "Verify the element with role '{}' exists in the current UI.",
@@ -198,72 +198,50 @@ impl ReflectionEngine {
                     ),
                 }
             }
-            VerificationCriteria::ProcessRunning { name } => {
-                FailureAnalysis {
-                    root_cause: FailureRootCause::TargetNotFound,
-                    confidence: 0.80,
-                    details: format!("Process '{}' is not running.", name),
-                    suggested_delay_ms: Some(2000),
-                    suggested_fix: Some(format!(
-                        "Verify '{}' was launched successfully.",
-                        name
-                    )),
-                }
-            }
-            VerificationCriteria::ProcessExited { name } => {
-                FailureAnalysis {
-                    root_cause: FailureRootCause::TimingIssue,
-                    confidence: 0.70,
-                    details: format!("Process '{}' is still running.", name),
-                    suggested_delay_ms: Some(1000),
-                    suggested_fix: Some(format!(
-                        "Wait longer for '{}' to exit.",
-                        name
-                    )),
-                }
-            }
-            VerificationCriteria::WindowTitleContains { pattern } => {
-                FailureAnalysis {
-                    root_cause: FailureRootCause::TimingIssue,
-                    confidence: 0.80,
-                    details: format!(
-                        "Window title does not contain '{}' yet.",
-                        pattern
-                    ),
-                    suggested_delay_ms: Some((500 * (attempt + 2)) as u64),
-                    suggested_fix: Some(format!(
-                        "Wait longer for window with '{}' in title to appear.",
-                        pattern
-                    )),
-                }
-            }
-            VerificationCriteria::FileExists { path } => {
-                FailureAnalysis {
-                    root_cause: FailureRootCause::TargetNotFound,
-                    confidence: 0.85,
-                    details: format!("File '{}' does not exist.", path),
-                    suggested_delay_ms: Some(1500),
-                    suggested_fix: Some(format!(
-                        "Verify the path '{}' is correct and the file was created.",
-                        path
-                    )),
-                }
-            }
-            VerificationCriteria::OutputContains { text } => {
-                FailureAnalysis {
-                    root_cause: FailureRootCause::StateMismatch,
-                    confidence: 0.70,
-                    details: format!(
-                        "Output does not contain expected text '{}'.",
-                        text
-                    ),
-                    suggested_delay_ms: Some(1000),
-                    suggested_fix: Some(format!(
-                        "Check if the operation produced the expected output containing '{}'.",
-                        text
-                    )),
-                }
-            }
+            VerificationCriteria::ProcessRunning { name } => FailureAnalysis {
+                root_cause: FailureRootCause::TargetNotFound,
+                confidence: 0.80,
+                details: format!("Process '{}' is not running.", name),
+                suggested_delay_ms: Some(2000),
+                suggested_fix: Some(format!("Verify '{}' was launched successfully.", name)),
+            },
+            VerificationCriteria::ProcessExited { name } => FailureAnalysis {
+                root_cause: FailureRootCause::TimingIssue,
+                confidence: 0.70,
+                details: format!("Process '{}' is still running.", name),
+                suggested_delay_ms: Some(1000),
+                suggested_fix: Some(format!("Wait longer for '{}' to exit.", name)),
+            },
+            VerificationCriteria::WindowTitleContains { pattern } => FailureAnalysis {
+                root_cause: FailureRootCause::TimingIssue,
+                confidence: 0.80,
+                details: format!("Window title does not contain '{}' yet.", pattern),
+                suggested_delay_ms: Some((500 * (attempt + 2)) as u64),
+                suggested_fix: Some(format!(
+                    "Wait longer for window with '{}' in title to appear.",
+                    pattern
+                )),
+            },
+            VerificationCriteria::FileExists { path } => FailureAnalysis {
+                root_cause: FailureRootCause::TargetNotFound,
+                confidence: 0.85,
+                details: format!("File '{}' does not exist.", path),
+                suggested_delay_ms: Some(1500),
+                suggested_fix: Some(format!(
+                    "Verify the path '{}' is correct and the file was created.",
+                    path
+                )),
+            },
+            VerificationCriteria::OutputContains { text } => FailureAnalysis {
+                root_cause: FailureRootCause::StateMismatch,
+                confidence: 0.70,
+                details: format!("Output does not contain expected text '{}'.", text),
+                suggested_delay_ms: Some(1000),
+                suggested_fix: Some(format!(
+                    "Check if the operation produced the expected output containing '{}'.",
+                    text
+                )),
+            },
             VerificationCriteria::Success => {
                 if result.success {
                     // Should not reach here if success, but handle defensively.
@@ -284,8 +262,7 @@ impl ReflectionEngine {
                                 .to_string(),
                             suggested_delay_ms: Some((500 * (attempt + 2)) as u64),
                             suggested_fix: Some(
-                                "Wait for target to be fully rendered before clicking."
-                                    .to_string(),
+                                "Wait for target to be fully rendered before clicking.".to_string(),
                             ),
                         },
                         DesktopAction::Type { .. } => FailureAnalysis {
@@ -363,10 +340,7 @@ impl ReflectionEngine {
                     return None;
                 }
                 Some(PastExperience {
-                    root_cause: serde_json::from_value(
-                        meta.get("root_cause")?.clone(),
-                    )
-                    .ok()?,
+                    root_cause: serde_json::from_value(meta.get("root_cause")?.clone()).ok()?,
                     action_type: stored_action.to_string(),
                     original_delay_ms: meta.get("original_delay_ms")?.as_u64()?,
                     adjusted_delay_ms: meta.get("adjusted_delay_ms")?.as_u64()?,
@@ -387,10 +361,7 @@ impl ReflectionEngine {
         let best_experience = experiences
             .iter()
             .filter(|e| e.success)
-            .max_by(|a, b| {
-                a.adjusted_delay_ms
-                    .cmp(&b.adjusted_delay_ms)
-            });
+            .max_by(|a, b| a.adjusted_delay_ms.cmp(&b.adjusted_delay_ms));
 
         if let Some(exp) = best_experience {
             tracing::info!(
@@ -464,10 +435,7 @@ impl ReflectionEngine {
         } else {
             format!(
                 "{} with {} failed after {}ms. Root cause: {:?}.",
-                action_type,
-                analysis.details,
-                adjusted_delay_ms,
-                analysis.root_cause
+                action_type, analysis.details, adjusted_delay_ms, analysis.root_cause
             )
         };
 
@@ -545,9 +513,7 @@ mod tests {
     fn test_analyze_target_not_found() {
         let engine = ReflectionEngine::new();
         let analysis = engine.analyze_failure(
-            &VerificationCriteria::ProcessRunning {
-                name: "chrome".to_string(),
-            },
+            &VerificationCriteria::ProcessRunning { name: "chrome".to_string() },
             &DesktopAction::LaunchApp {
                 name: "chrome".to_string(),
                 args: vec![],

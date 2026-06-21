@@ -264,7 +264,8 @@ impl PiiDetector {
         (result, findings)
     }
 
-    /// Filter a response: classify findings and decide Clean / Redacted / Blocked.
+    /// Filter a response: classify findings and decide Clean / Redacted /
+    /// Blocked.
     pub fn filter_response(&self, text: &str) -> FilterResult {
         let findings = self.scan(text);
         if findings.is_empty() {

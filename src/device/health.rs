@@ -50,12 +50,24 @@ pub struct HealthCheckConfig {
     pub reconnect_delay_ms: u64,
 }
 
-const fn default_interval() -> u64 { 30 }
-const fn default_timeout() -> u64 { 5 }
-const fn default_max_failures() -> u32 { 3 }
-const fn default_auto_reconnect() -> bool { true }
-const fn default_max_reconnect() -> u32 { 3 }
-const fn default_reconnect_delay() -> u64 { 1000 }
+const fn default_interval() -> u64 {
+    30
+}
+const fn default_timeout() -> u64 {
+    5
+}
+const fn default_max_failures() -> u32 {
+    3
+}
+const fn default_auto_reconnect() -> bool {
+    true
+}
+const fn default_max_reconnect() -> u32 {
+    3
+}
+const fn default_reconnect_delay() -> u64 {
+    1000
+}
 
 impl Default for HealthCheckConfig {
     fn default() -> Self {
@@ -84,15 +96,14 @@ impl Default for HealthCheckConfig {
 /// 5. When the counter reaches `config.max_failures_before_error`:
 ///    - Emit a `DeviceStatusEvent` by calling `registry.set_device_status()`
 ///      with `DeviceStatus::Error`.
-///    - If `auto_reconnect` is enabled, attempt `max_reconnect_attempts`
-///      rounds of `registry.reconnect()`.
+///    - If `auto_reconnect` is enabled, attempt `max_reconnect_attempts` rounds
+///      of `registry.reconnect()`.
 pub fn spawn_health_check_loop(
     registry: Arc<DeviceRegistry>,
     config: HealthCheckConfig,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut ticker =
-            tokio::time::interval(Duration::from_secs(config.interval_secs));
+        let mut ticker = tokio::time::interval(Duration::from_secs(config.interval_secs));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         // Per-device consecutive failure count.
@@ -109,10 +120,7 @@ pub fn spawn_health_check_loop(
                 )
                 .await;
 
-                let healthy = match result {
-                    Ok(Ok(true)) => true,
-                    _ => false,
-                };
+                let healthy = matches!(result, Ok(Ok(true)));
 
                 if healthy {
                     failures.remove(id);
@@ -165,10 +173,7 @@ pub fn spawn_health_check_loop(
 
                                 if registry.reconnect(id).await.is_ok() {
                                     failures.remove(id);
-                                    tracing::info!(
-                                        "Reconnected device '{}'",
-                                        id
-                                    );
+                                    tracing::info!("Reconnected device '{}'", id);
                                     break;
                                 }
                             }
@@ -190,16 +195,17 @@ pub fn spawn_health_check_loop(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+
     use async_trait::async_trait;
     use tokio::sync::broadcast::error::TryRecvError;
 
-    use crate::device::safety::{SafetyRule, SafetyRuleKind};
+    use super::*;
     use crate::device::registry::DeviceRegistry;
-    use crate::device::{Device, DeviceInfo, DeviceDriver, DeviceStatus, SafetyZone};
+    use crate::device::safety::{SafetyRule, SafetyRuleKind};
+    use crate::device::{Device, DeviceDriver, DeviceInfo, DeviceStatus, SafetyZone};
 
     // ── Test utility: toggleable health driver ──────────────────────────────
 
@@ -212,7 +218,14 @@ mod tests {
     impl ToggleHealthDriver {
         fn new(name: &str, present: bool, healthy: bool) -> (Self, Arc<AtomicBool>) {
             let h = Arc::new(AtomicBool::new(healthy));
-            (Self { name: name.into(), present, healthy: h.clone() }, h)
+            (
+                Self {
+                    name: name.into(),
+                    present,
+                    healthy: h.clone(),
+                },
+                h,
+            )
         }
     }
 
@@ -390,7 +403,8 @@ mod tests {
         let status = device.status.read().await;
         assert!(
             matches!(*status, DeviceStatus::Connected { .. }),
-            "Device should have been restored to Connected after reconnect + healthy check, got: {:?}",
+            "Device should have been restored to Connected after reconnect + healthy check, got: \
+             {:?}",
             *status,
         );
         drop(status);

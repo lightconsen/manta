@@ -12,10 +12,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
+use super::{spawn_agent_inner, GatewayEvent, GatewayState};
 use crate::agent::AgentConfig;
 use crate::channels::Channel;
-
-use super::{spawn_agent_inner, GatewayEvent, GatewayState};
 
 /// Per-target restart tracking record (agent or channel)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,7 +66,10 @@ pub(crate) async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
     const COOLDOWN_SECS: i64 = 30;
 
     let dead: Vec<(String, AgentConfig)> = {
-        state.agents.agents.read()
+        state
+            .agents
+            .agents
+            .read()
             .await
             .iter()
             .filter(|(_, h)| h.tx.is_closed())
@@ -137,12 +139,16 @@ pub(crate) async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
     }
 }
 
-/// One watchdog cycle: check each channel's health and call `start()` if unhealthy.
+/// One watchdog cycle: check each channel's health and call `start()` if
+/// unhealthy.
 pub(crate) async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
     const MAX_RESTARTS: u32 = 5;
     const COOLDOWN_SECS: i64 = 30;
 
-    let channels: Vec<(String, Arc<dyn Channel>)> = state.channels.channels.read()
+    let channels: Vec<(String, Arc<dyn Channel>)> = state
+        .channels
+        .channels
+        .read()
         .await
         .iter()
         .map(|(n, c)| (n.clone(), c.clone()))
@@ -215,10 +221,13 @@ pub(crate) async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
     }
 }
 
-/// Gateway-level self-repair loop — runs every 60 seconds, checks agents and channels.
+/// Gateway-level self-repair loop — runs every 60 seconds, checks agents and
+/// channels.
 pub(crate) async fn run_repair_loop(state: Arc<GatewayState>) {
     use std::sync::atomic::Ordering;
-    state.agents.repair_state
+    state
+        .agents
+        .repair_state
         .loop_running
         .store(true, Ordering::Relaxed);
 

@@ -1,13 +1,15 @@
 //! Derived perception events — the post-pipeline output formats.
 //!
-//! Once observations leave the [`PerceptionStreamHub`](super::stream::PerceptionStreamHub)
-//! and pass through the temporal/fusion stages, they are no longer raw
-//! samples but rather **events**: discrete things that happened in the
-//! world. Events are the unit of consumption for downstream agents.
+//! Once observations leave the
+//! [`PerceptionStreamHub`](super::stream::PerceptionStreamHub) and pass through
+//! the temporal/fusion stages, they are no longer raw samples but rather
+//! **events**: discrete things that happened in the world. Events are the unit
+//! of consumption for downstream agents.
 //!
 //! Three flavours coexist:
 //!
-//! - [`Event::Change`]   — a tracked numeric/state value moved enough to matter.
+//! - [`Event::Change`]   — a tracked numeric/state value moved enough to
+//!   matter.
 //! - [`Event::Discrete`] — a one-shot occurrence (file write, key press, …).
 //! - [`Event::Anomaly`]  — a high-priority signal that bypasses normal gating.
 //! - [`Event::Entity`]   — output of cross-modal fusion (a [`FusedEntity`]).

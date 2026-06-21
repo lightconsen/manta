@@ -4,10 +4,12 @@
 //! network, and process information without shelling out to `ps`, `df`,
 //! `free`, or `tasklist`.
 
+use std::time::Duration;
+
+use sysinfo::{Disks, Networks, ProcessRefreshKind, RefreshKind, Signal, System};
+
 use crate::computer::types::{DiskStatus, NetworkStatus, ProcessEntry, SystemStatus};
 use crate::computer::{ComputerError, Result};
-use std::time::Duration;
-use sysinfo::{Disks, Networks, ProcessRefreshKind, RefreshKind, Signal, System};
 
 /// Lightweight system monitor backed by `sysinfo::System`.
 ///
@@ -25,11 +27,7 @@ impl SystemMonitor {
         let system = System::new_with_specifics(RefreshKind::everything());
         let networks = Networks::new_with_refreshed_list();
         let disks = Disks::new_with_refreshed_list();
-        Self {
-            system,
-            networks,
-            disks,
-        }
+        Self { system, networks, disks }
     }
 
     /// Refresh and return a full system status snapshot.
@@ -185,10 +183,9 @@ impl SystemMonitor {
         if let Some(cmd) = original_cmd {
             match std::process::Command::new(&cmd).spawn() {
                 Ok(child) => Ok(child.id()),
-                Err(e) => Err(ComputerError::ToolFailed(format!(
-                    "Failed to restart '{}': {}",
-                    cmd, e
-                ))),
+                Err(e) => {
+                    Err(ComputerError::ToolFailed(format!("Failed to restart '{}': {}", cmd, e)))
+                }
             }
         } else {
             Err(ComputerError::Other(
@@ -204,7 +201,8 @@ impl SystemMonitor {
     ///
     /// `priority` interpretation:
     /// - Unix: nice value (-20 highest to 19 lowest).
-    /// - Windows: 0=Idle, 1=BelowNormal, 2=Normal, 3=AboveNormal, 4=High, 5=Realtime.
+    /// - Windows: 0=Idle, 1=BelowNormal, 2=Normal, 3=AboveNormal, 4=High,
+    ///   5=Realtime.
     pub fn set_process_priority(
         &mut self,
         pid: Option<u32>,
@@ -237,10 +235,7 @@ impl SystemMonitor {
                     "wmic setpriority failed: {}",
                     String::from_utf8_lossy(&o.stderr)
                 ))),
-                Err(e) => Err(ComputerError::ToolFailed(format!(
-                    "Failed to run wmic: {}",
-                    e
-                ))),
+                Err(e) => Err(ComputerError::ToolFailed(format!("Failed to run wmic: {}", e))),
             }
         }
 
@@ -256,10 +251,7 @@ impl SystemMonitor {
                     "renice failed: {}",
                     String::from_utf8_lossy(&o.stderr)
                 ))),
-                Err(e) => Err(ComputerError::ToolFailed(format!(
-                    "Failed to run renice: {}",
-                    e
-                ))),
+                Err(e) => Err(ComputerError::ToolFailed(format!("Failed to run renice: {}", e))),
             }
         }
     }
@@ -281,10 +273,7 @@ impl SystemMonitor {
                 .find(|p| p.name().to_lowercase().contains(&n.to_lowercase()))
                 .map(|p| p.pid().as_u32())
                 .ok_or_else(|| {
-                    ComputerError::ProcessNotFound(format!(
-                        "No process matching '{}' found",
-                        n
-                    ))
+                    ComputerError::ProcessNotFound(format!("No process matching '{}' found", n))
                 });
         }
 
@@ -309,21 +298,17 @@ impl SystemMonitor {
         let target_pid = self.resolve_pid(pid, name)?;
 
         let sys_pid = sysinfo::Pid::from(target_pid as usize);
-        let process = self
-            .system
-            .process(sys_pid)
-            .ok_or_else(|| {
-                ComputerError::ProcessNotFound(format!("Process {} not found", target_pid))
-            })?;
+        let process = self.system.process(sys_pid).ok_or_else(|| {
+            ComputerError::ProcessNotFound(format!("Process {} not found", target_pid))
+        })?;
 
         let signal = if force { Signal::Kill } else { Signal::Term };
 
         match process.kill_with(signal) {
             Some(true) => Ok(target_pid),
-            Some(false) => Err(ComputerError::KillFailed(format!(
-                "Failed to kill process {}",
-                target_pid
-            ))),
+            Some(false) => {
+                Err(ComputerError::KillFailed(format!("Failed to kill process {}", target_pid)))
+            }
             None => Err(ComputerError::KillFailed(format!(
                 "Signal {:?} not supported on this platform",
                 signal
@@ -384,8 +369,7 @@ impl ProcessMonitor {
     }
 
     /// Poll once and return any alerts for processes exceeding thresholds.
-    pub fn poll(&mut self,
-    ) -> Vec<ProcessAlert> {
+    pub fn poll(&mut self) -> Vec<ProcessAlert> {
         let mut monitor = SystemMonitor::new();
         let procs = monitor.list_processes(None, None);
         let mut alerts = Vec::new();
@@ -407,15 +391,12 @@ impl ProcessMonitor {
             let mut triggered = false;
             let mut reasons = Vec::new();
 
-            if self.config.cpu_threshold > 0.0
-                && p.cpu_percent >= self.config.cpu_threshold
-            {
+            if self.config.cpu_threshold > 0.0 && p.cpu_percent >= self.config.cpu_threshold {
                 triggered = true;
                 reasons.push(format!("CPU {:.1}%", p.cpu_percent));
             }
 
-            if self.config.memory_threshold_mb > 0
-                && p.memory_mb >= self.config.memory_threshold_mb
+            if self.config.memory_threshold_mb > 0 && p.memory_mb >= self.config.memory_threshold_mb
             {
                 triggered = true;
                 reasons.push(format!("memory {} MB", p.memory_mb));
@@ -449,8 +430,7 @@ impl ProcessMonitor {
     }
 
     /// Run a single monitoring cycle and log alerts via `tracing`.
-    pub fn check_and_log(&mut self,
-    ) {
+    pub fn check_and_log(&mut self) {
         for alert in self.poll() {
             tracing::warn!(
                 "Process alert: {} (CPU {:.1}%, Memory {} MB)",
@@ -551,11 +531,7 @@ mod tests {
         assert_eq!(result.unwrap(), pid);
 
         // Wait for the child to actually exit
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            child.wait(),
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
     }
 
     #[test]
@@ -586,7 +562,7 @@ mod tests {
     fn test_process_monitor_filter_by_name() {
         let cfg = ProcessMonitorConfig {
             poll_interval: Duration::from_secs(1),
-            cpu_threshold: 0.0, // disabled
+            cpu_threshold: 0.0,     // disabled
             memory_threshold_mb: 0, // disabled
             filter_names: vec!["xyzzy_nonexistent_99999".to_string()],
             alert_cooldown: Duration::from_secs(0),

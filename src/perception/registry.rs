@@ -43,10 +43,7 @@ pub struct PerceptionRegistry {
 
 impl PerceptionRegistry {
     /// Create a new empty registry with default aggregation and health config.
-    pub fn new(
-        aggregation_strategy: AggregationStrategy,
-        window_secs: u64,
-    ) -> Self {
+    pub fn new(aggregation_strategy: AggregationStrategy, window_secs: u64) -> Self {
         Self::with_health_config(aggregation_strategy, window_secs, HealthConfig::default())
     }
 
@@ -69,8 +66,9 @@ impl PerceptionRegistry {
         }
     }
 
-    /// Replace the durable observation store. By default a [`NullObservationStore`]
-    /// is used; call this once at construction to enable persistence.
+    /// Replace the durable observation store. By default a
+    /// [`NullObservationStore`] is used; call this once at construction to
+    /// enable persistence.
     pub fn with_store(mut self, store: Arc<dyn ObservationStore>) -> Self {
         self.store = store;
         self
@@ -120,9 +118,9 @@ impl PerceptionRegistry {
     /// = more disruptive.
     fn severity_for(state: HealthState) -> u8 {
         match state {
-            HealthState::Healthy => 32,        // recovery — informational
-            HealthState::Degraded => 128,      // blocking floor
-            HealthState::Quarantined => 220,   // strongly blocking
+            HealthState::Healthy => 32,      // recovery — informational
+            HealthState::Degraded => 128,    // blocking floor
+            HealthState::Quarantined => 220, // strongly blocking
         }
     }
 
@@ -148,7 +146,10 @@ impl PerceptionRegistry {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect()
         };
-        let (timeouts, quarantined): (HashMap<String, std::time::Duration>, std::collections::HashSet<String>) = {
+        let (timeouts, quarantined): (
+            HashMap<String, std::time::Duration>,
+            std::collections::HashSet<String>,
+        ) = {
             let h = self.health.read().await;
             let timeouts = sources_snapshot
                 .iter()
@@ -354,7 +355,8 @@ impl PerceptionRegistry {
         sources.keys().cloned().collect()
     }
 
-    /// Return the status of each registered source as a map of source name → status.
+    /// Return the status of each registered source as a map of source name →
+    /// status.
     pub async fn list_source_statuses(&self) -> std::collections::HashMap<String, SourceStatus> {
         let sources = self.sources.read().await;
         sources
@@ -365,7 +367,13 @@ impl PerceptionRegistry {
 
     /// Return all observations currently in the aggregation window.
     pub async fn all_observations(&self) -> Vec<Observation> {
-        self.aggregator.read().await.observations().into_iter().cloned().collect()
+        self.aggregator
+            .read()
+            .await
+            .observations()
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// Return a clone of the registered source list (name → source).
@@ -447,8 +455,10 @@ mod tests {
     #[tokio::test]
     async fn test_deregister_source_removes_single() {
         let reg = PerceptionRegistry::new(AggregationStrategy::Latest, 10);
-        reg.register_source(Arc::new(MockPerceptionSource::new("alpha"))).await;
-        reg.register_source(Arc::new(MockPerceptionSource::new("beta"))).await;
+        reg.register_source(Arc::new(MockPerceptionSource::new("alpha")))
+            .await;
+        reg.register_source(Arc::new(MockPerceptionSource::new("beta")))
+            .await;
         assert_eq!(reg.list_sources().await.len(), 2);
 
         reg.deregister_source("alpha").await;
@@ -462,9 +472,12 @@ mod tests {
     #[tokio::test]
     async fn test_deregister_prefix_removes_matching() {
         let reg = PerceptionRegistry::new(AggregationStrategy::Latest, 10);
-        reg.register_source(Arc::new(MockPerceptionSource::new("device:temp:1"))).await;
-        reg.register_source(Arc::new(MockPerceptionSource::new("device:pressure:2"))).await;
-        reg.register_source(Arc::new(MockPerceptionSource::new("screenshot"))).await;
+        reg.register_source(Arc::new(MockPerceptionSource::new("device:temp:1")))
+            .await;
+        reg.register_source(Arc::new(MockPerceptionSource::new("device:pressure:2")))
+            .await;
+        reg.register_source(Arc::new(MockPerceptionSource::new("screenshot")))
+            .await;
 
         reg.deregister_prefix("device:").await;
         let names = reg.list_sources().await;
@@ -477,7 +490,8 @@ mod tests {
     #[tokio::test]
     async fn test_deregister_nonexistent_is_noop() {
         let reg = PerceptionRegistry::new(AggregationStrategy::Latest, 10);
-        reg.register_source(Arc::new(MockPerceptionSource::new("only_source"))).await;
+        reg.register_source(Arc::new(MockPerceptionSource::new("only_source")))
+            .await;
         reg.deregister_source("does_not_exist").await;
         assert_eq!(reg.list_sources().await.len(), 1);
     }
@@ -506,7 +520,8 @@ mod tests {
     #[tokio::test]
     async fn test_poll_records_success_in_health() {
         let reg = PerceptionRegistry::new(AggregationStrategy::Latest, 10);
-        reg.register_source(Arc::new(MockPerceptionSource::new("alive"))).await;
+        reg.register_source(Arc::new(MockPerceptionSource::new("alive")))
+            .await;
         reg.poll_all().await;
         let snap = reg.health_snapshot().await;
         assert_eq!(snap["alive"].success_count, 1);
@@ -569,15 +584,13 @@ mod tests {
     async fn test_poll_all_appends_to_observation_store() {
         use crate::perception::persistence::JsonlObservationStore;
 
-        let dir = std::env::temp_dir().join(format!(
-            "syscity-registry-store-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("syscity-registry-store-{}", std::process::id()));
         let _ = tokio::fs::remove_dir_all(&dir).await;
         let store = Arc::new(JsonlObservationStore::open(&dir).await.unwrap());
 
-        let reg = PerceptionRegistry::new(AggregationStrategy::Latest, 10)
-            .with_store(store.clone());
+        let reg =
+            PerceptionRegistry::new(AggregationStrategy::Latest, 10).with_store(store.clone());
         reg.register_source(Arc::new(
             MockPerceptionSource::new("persisted")
                 .with_modality(Modality::System)
@@ -589,10 +602,7 @@ mod tests {
         // Read back through the store directly.
         let q = PerceptionQuery::default();
         let persisted = store.query(&q, None).await.unwrap();
-        assert!(
-            !persisted.is_empty(),
-            "expected at least one observation to be persisted"
-        );
+        assert!(!persisted.is_empty(), "expected at least one observation to be persisted");
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 
@@ -657,14 +667,12 @@ mod tests {
         let mut rx = derived.subscribe();
         reg.set_derived_hub_sender(Some(derived.sender())).await;
 
-        reg.register_source(Arc::new(MockPerceptionSource::new("ok"))).await;
+        reg.register_source(Arc::new(MockPerceptionSource::new("ok")))
+            .await;
         // Healthy poll → no transition (stays Healthy from start).
         reg.poll_all().await;
 
         let res = tokio::time::timeout(std::time::Duration::from_millis(150), rx.recv()).await;
-        assert!(
-            res.is_err(),
-            "expected no anomaly when state didn't change, got {res:?}"
-        );
+        assert!(res.is_err(), "expected no anomaly when state didn't change, got {res:?}");
     }
 }

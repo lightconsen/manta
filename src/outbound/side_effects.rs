@@ -3,35 +3,35 @@
 //! Executes post-response side effects: memory storage, cron scheduling,
 //! webhook triggers, analytics logging, etc.
 //!
-//!
 
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
 /// A declarative side effect.
 #[derive(Debug, Clone)]
 pub enum SideEffect {
- /// Store a memory entry.
+    /// Store a memory entry.
     MemoryStore {
         session_id: String,
         content: String,
         tags: Vec<String>,
     },
- /// Schedule a cron job.
+    /// Schedule a cron job.
     CronSchedule { expression: String, payload: String },
- /// Trigger a webhook.
+    /// Trigger a webhook.
     Webhook {
         url: String,
         payload: serde_json::Value,
     },
- /// Log an analytics event.
+    /// Log an analytics event.
     Analytics {
         event: String,
         properties: HashMap<String, serde_json::Value>,
     },
- /// Custom side effect (for plugins).
+    /// Custom side effect (for plugins).
     Custom {
         name: String,
         params: serde_json::Value,
@@ -41,9 +41,9 @@ pub enum SideEffect {
 /// Side effect handler trait.
 #[async_trait::async_trait]
 pub trait SideEffectHandler: Send + Sync {
- /// Unique name for this handler.
+    /// Unique name for this handler.
     fn name(&self) -> &str;
- /// Execute the side effect.
+    /// Execute the side effect.
     async fn execute(&self, effect: &SideEffect) -> Result<(), SideEffectError>;
 }
 
@@ -81,11 +81,11 @@ impl Default for SideEffectRegistry {
 /// Populated by the gateway after state initialization.
 #[derive(Debug, Clone, Default)]
 pub struct SideEffectContext {
- /// Memory manager for MemoryStore effects.
+    /// Memory manager for MemoryStore effects.
     pub memory_manager: Option<Arc<crate::memory::MemoryManager>>,
- /// Cron scheduler for CronSchedule effects.
+    /// Cron scheduler for CronSchedule effects.
     pub cron_scheduler: Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>,
- /// Webhook client for Webhook effects.
+    /// Webhook client for Webhook effects.
     pub webhook_client: Option<Arc<reqwest::Client>>,
 }
 
@@ -93,9 +93,9 @@ pub struct SideEffectContext {
 #[allow(dead_code)]
 pub struct SideEffectExecutor {
     registry: Arc<SideEffectRegistry>,
- /// Shared context populated at runtime by the gateway.
+    /// Shared context populated at runtime by the gateway.
     ctx: RwLock<SideEffectContext>,
- /// Sender for offloading effect execution to a background task.
+    /// Sender for offloading effect execution to a background task.
     effect_tx: mpsc::Sender<SideEffect>,
 }
 
@@ -109,15 +109,15 @@ impl SideEffectExecutor {
         }
     }
 
- /// Set the runtime context (called by Gateway after state init).
+    /// Set the runtime context (called by Gateway after state init).
     pub async fn set_context(&self, ctx: SideEffectContext) {
         let mut guard = self.ctx.write().await;
         *guard = ctx;
     }
 
- /// Execute a batch of side effects.
- ///
- /// Errors are logged but do not fail the whole batch.
+    /// Execute a batch of side effects.
+    ///
+    /// Errors are logged but do not fail the whole batch.
     pub async fn execute_batch(&self, effects: &[SideEffect]) {
         for effect in effects {
             self.execute_one(effect).await;

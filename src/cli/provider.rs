@@ -1,9 +1,11 @@
 //! Provider management commands for Syscity
 //!
-//! Top-level CLI for listing, enabling, disabling, and switching model providers.
+//! Top-level CLI for listing, enabling, disabling, and switching model
+//! providers.
+
+use clap::Subcommand;
 
 use crate::error::{Result, SyscityError};
-use clap::Subcommand;
 
 /// Default daemon base URL.
 const DAEMON_URL: &str = "http://127.0.0.1:18080";

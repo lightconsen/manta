@@ -1,12 +1,13 @@
 //! Windows Computer adapter — wraps Windows CapabilitySet tools.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::computer::{
-    ActionResult, ClickTarget, ComputerAdapter, ComputerError, CompressionFormat, DesktopAction,
+    ActionResult, ClickTarget, CompressionFormat, ComputerAdapter, ComputerError, DesktopAction,
     FileEntry, MouseButton, PackageManager, Rect, Result, Screenshot, UiElement, WaitCondition,
 };
 use crate::tools::ToolRegistry;
-use std::sync::Arc;
-use std::time::Duration;
 
 /// Windows adapter backed by `windows_screenshot`, `windows_desktop_control`,
 /// `windows_clipboard`, and `windows_powershell` tools.
@@ -43,9 +44,7 @@ impl ComputerAdapter for WindowsComputerAdapter {
             .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
 
         if !result.success {
-            return Err(ComputerError::ScreenshotFailed(
-                result.error.unwrap_or_default(),
-            ));
+            return Err(ComputerError::ScreenshotFailed(result.error.unwrap_or_default()));
         }
 
         let data = result.data.as_ref();
@@ -96,9 +95,8 @@ impl ComputerAdapter for WindowsComputerAdapter {
         match action {
             DesktopAction::Screenshot { region } => {
                 let ss = self.screenshot(region).await?;
-                Ok(ActionResult::success("screenshot captured").with_data(
-                    serde_json::to_value(&ss).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success("screenshot captured")
+                    .with_data(serde_json::to_value(&ss).unwrap_or_default()))
             }
             DesktopAction::Click { target, button } => {
                 let (x, y) = self.resolve_click_target(target).await?;
@@ -114,7 +112,9 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -132,7 +132,9 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -151,7 +153,9 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -165,7 +169,9 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -177,7 +183,9 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -187,7 +195,9 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -197,7 +207,9 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -207,7 +219,9 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_clipboard", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("clipboard tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("clipboard tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -217,28 +231,27 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_clipboard", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("clipboard tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("clipboard tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::LaunchApp { name, wait_for_ready, .. } => {
-                let script = format!(
-                    r#"Start-Process "{}""#,
-                    name.replace('"', "\\\")
-                );
+                let script = format!(r#"Start-Process "{}""#, name.replace('"', r#"\""#),);
                 let args = serde_json::json!({ "script": script });
                 self.registry
                     .execute("windows_powershell", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("powershell tool not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("powershell tool not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
 
                 if wait_for_ready {
                     let ready = self
                         .wait_for(
-                            WaitCondition::ProcessRunning {
-                                name: name.clone(),
-                            },
+                            WaitCondition::ProcessRunning { name: name.clone() },
                             Duration::from_secs(10),
                         )
                         .await?;
@@ -260,7 +273,9 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
                     .await
-                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
@@ -275,9 +290,8 @@ impl ComputerAdapter for WindowsComputerAdapter {
                 })
                 .await
                 .map_err(|e| ComputerError::Other(format!("System monitor failed: {}", e)))?;
-                Ok(ActionResult::success("System status retrieved").with_data(
-                    serde_json::to_value(&status).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success("System status retrieved")
+                    .with_data(serde_json::to_value(&status).unwrap_or_default()))
             }
             DesktopAction::ListProcesses { filter, limit } => {
                 let procs = tokio::task::spawn_blocking(move || {
@@ -286,9 +300,8 @@ impl ComputerAdapter for WindowsComputerAdapter {
                 })
                 .await
                 .map_err(|e| ComputerError::Other(format!("Process list failed: {}", e)))?;
-                Ok(ActionResult::success(format!("Found {} processes", procs.len())).with_data(
-                    serde_json::to_value(&procs).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(format!("Found {} processes", procs.len()))
+                    .with_data(serde_json::to_value(&procs).unwrap_or_default()))
             }
             DesktopAction::KillProcess { pid, name, force } => {
                 let killed_pid = tokio::task::spawn_blocking(move || {
@@ -306,28 +319,16 @@ impl ComputerAdapter for WindowsComputerAdapter {
                 })
                 .await
                 .map_err(|e| ComputerError::Other(format!("Restart failed: {}", e)))??;
-                Ok(ActionResult::success(format!(
-                    "Process restarted, new PID: {}",
-                    new_pid
-                )))
+                Ok(ActionResult::success(format!("Process restarted, new PID: {}", new_pid)))
             }
-            DesktopAction::SetProcessPriority {
-                pid,
-                name,
-                priority,
-            } => {
+            DesktopAction::SetProcessPriority { pid, name, priority } => {
                 let updated_pid = tokio::task::spawn_blocking(move || {
                     let mut monitor = crate::computer::system::SystemMonitor::new();
                     monitor.set_process_priority(pid, name.as_deref(), priority)
                 })
                 .await
-                .map_err(|e| {
-                    ComputerError::Other(format!("Priority change failed: {}", e))
-                })??;
-                Ok(ActionResult::success(format!(
-                    "Priority set for PID {}",
-                    updated_pid
-                )))
+                .map_err(|e| ComputerError::Other(format!("Priority change failed: {}", e)))??;
+                Ok(ActionResult::success(format!("Priority set for PID {}", updated_pid)))
             }
             DesktopAction::KeySequence { keys, delays_ms } => {
                 for (i, key) in keys.iter().enumerate() {
@@ -337,17 +338,20 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     }
                     let args = serde_json::json!({ "action": "key", "keys": [key] });
                     self.registry
-                        .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
+                        .execute(
+                            "windows_desktop_control",
+                            args,
+                            &crate::tools::ToolContext::default(),
+                        )
                         .await
-                        .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                        .ok_or_else(|| {
+                            ComputerError::ToolFailed("desktop control not found".to_string())
+                        })?
                         .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 }
                 Ok(ActionResult::success("Key sequence executed"))
             }
-            DesktopAction::ListPorts {
-                filter_protocol,
-                filter_state,
-            } => {
+            DesktopAction::ListPorts { filter_protocol, filter_state } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let filter_protocol = filter_protocol.clone();
                 let filter_state = filter_state.clone();
@@ -357,28 +361,21 @@ impl ComputerAdapter for WindowsComputerAdapter {
                 .await
                 .map_err(|e| ComputerError::Other(format!("list ports failed: {}", e)))?
                 .map_err(|e| ComputerError::Other(format!("list ports failed: {}", e)))?;
-                Ok(ActionResult::success(format!("Found {} ports", ports.len())).with_data(
-                    serde_json::to_value(&ports).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(format!("Found {} ports", ports.len()))
+                    .with_data(serde_json::to_value(&ports).unwrap_or_default()))
             }
             DesktopAction::TestPing { target, count } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let result = inspector.test_ping(&target, count).await;
-                Ok(ActionResult::success(result.message.clone()).with_data(
-                    serde_json::to_value(&result).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(result.message.clone())
+                    .with_data(serde_json::to_value(&result).unwrap_or_default()))
             }
-            DesktopAction::TestTcpConnect {
-                target,
-                port,
-                timeout_ms,
-            } => {
+            DesktopAction::TestTcpConnect { target, port, timeout_ms } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let timeout = timeout_ms.map(Duration::from_millis);
                 let result = inspector.test_tcp_connect(&target, port, timeout).await;
-                Ok(ActionResult::success(result.message.clone()).with_data(
-                    serde_json::to_value(&result).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(result.message.clone())
+                    .with_data(serde_json::to_value(&result).unwrap_or_default()))
             }
             DesktopAction::ListFirewallRules => {
                 let inspector = crate::computer::network::NetworkInspector::new();
@@ -386,79 +383,67 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     .list_firewall_rules()
                     .await
                     .map_err(|e| ComputerError::Other(e.to_string()))?;
-                Ok(ActionResult::success(format!("Found {} firewall rules", rules.len())).with_data(
-                    serde_json::to_value(&rules).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(format!("Found {} firewall rules", rules.len()))
+                    .with_data(serde_json::to_value(&rules).unwrap_or_default()))
             }
             DesktopAction::BrowseFiles {
                 path,
                 filter_description,
                 max_results,
             } => {
-                let entries = browse_files(&path, filter_description.as_deref(), max_results)
-                    .await?;
-                Ok(ActionResult::success(format!("Found {} entries", entries.len())).with_data(
-                    serde_json::to_value(&entries).unwrap_or_default(),
-                ))
+                let entries =
+                    browse_files(&path, filter_description.as_deref(), max_results).await?;
+                Ok(ActionResult::success(format!("Found {} entries", entries.len()))
+                    .with_data(serde_json::to_value(&entries).unwrap_or_default()))
             }
-            DesktopAction::ReadFileChunked {
-                path,
-                offset,
-                limit_bytes,
-            } => {
+            DesktopAction::ReadFileChunked { path, offset, limit_bytes } => {
                 let content = read_file_chunked(&path, offset, limit_bytes).await?;
-                Ok(ActionResult::success(format!("Read {} bytes", content.len())).with_data(
-                    serde_json::json!({ "content": content }),
-                ))
+                Ok(ActionResult::success(format!("Read {} bytes", content.len()))
+                    .with_data(serde_json::json!({ "content": content })))
             }
             DesktopAction::InstallPackage {
                 manager,
                 packages,
                 timeout_secs,
-            } => {
-                install_package_windows(manager, &packages, timeout_secs).await
-            }
-            DesktopAction::Compress {
-                sources,
-                destination,
-                format,
-            } => {
+            } => install_package_windows(manager, &packages, timeout_secs).await,
+            DesktopAction::Compress { sources, destination, format } => {
                 compress_files_windows(&sources, &destination, format).await
             }
-            DesktopAction::Decompress {
-                archive,
-                destination,
-            } => {
+            DesktopAction::Decompress { archive, destination } => {
                 decompress_archive_windows(&archive, &destination).await
             }
             DesktopAction::WatchDirectory { path } => {
                 let mut guard = self.file_watcher.lock().await;
                 if guard.is_none() {
-                    let watcher = crate::computer::FileWatcher::new()
-                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    let watcher = crate::computer::FileWatcher::new().map_err(|e| {
+                        ComputerError::Other(format!("Failed to create file watcher: {}", e))
+                    })?;
                     *guard = Some(watcher);
                 }
                 guard
                     .as_mut()
                     .unwrap()
                     .watch_directory(&path)
-                    .map_err(|e| ComputerError::Other(format!("Failed to watch directory: {}", e)))?;
+                    .map_err(|e| {
+                        ComputerError::Other(format!("Failed to watch directory: {}", e))
+                    })?;
                 Ok(ActionResult::success(format!("Watching directory: {}", path)))
             }
             DesktopAction::UnwatchDirectory { path } => {
                 let mut guard = self.file_watcher.lock().await;
                 if let Some(ref mut watcher) = *guard {
-                    watcher
-                        .unwatch_directory(&path)
-                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch directory: {}", e)))?;
+                    watcher.unwatch_directory(&path).map_err(|e| {
+                        ComputerError::Other(format!("Failed to unwatch directory: {}", e))
+                    })?;
                 }
                 Ok(ActionResult::success(format!("Stopped watching directory: {}", path)))
             }
             DesktopAction::WatchFile { path } => {
                 let mut guard = self.file_watcher.lock().await;
                 if guard.is_none() {
-                    let watcher = crate::computer::FileWatcher::new()
-                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    let watcher = crate::computer::FileWatcher::new().map_err(|e| {
+                        ComputerError::Other(format!("Failed to create file watcher: {}", e))
+                    })?;
                     *guard = Some(watcher);
                 }
                 guard
@@ -471,33 +456,23 @@ impl ComputerAdapter for WindowsComputerAdapter {
             DesktopAction::UnwatchFile { path } => {
                 let mut guard = self.file_watcher.lock().await;
                 if let Some(ref mut watcher) = *guard {
-                    watcher
-                        .unwatch_file(&path)
-                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch file: {}", e)))?;
+                    watcher.unwatch_file(&path).map_err(|e| {
+                        ComputerError::Other(format!("Failed to unwatch file: {}", e))
+                    })?;
                 }
                 Ok(ActionResult::success(format!("Stopped watching file: {}", path)))
             }
             DesktopAction::EditFile { path, search, replace } => {
                 edit_file(&path, &search, &replace).await
             }
-            DesktopAction::TransferFile {
-                source,
-                destination,
-                method,
-            } => {
+            DesktopAction::TransferFile { source, destination, method } => {
                 transfer_file_windows(&source, &destination, method).await
             }
-            _ => Err(ComputerError::Other(
-                "Action not yet implemented on Windows".to_string(),
-            )),
+            _ => Err(ComputerError::Other("Action not yet implemented on Windows".to_string())),
         }
     }
 
-    async fn wait_for(
-        &self,
-        condition: WaitCondition,
-        timeout: Duration,
-    ) -> Result<bool> {
+    async fn wait_for(&self, condition: WaitCondition, timeout: Duration) -> Result<bool> {
         let deadline = std::time::Instant::now() + timeout;
         let poll_interval = Duration::from_millis(500);
 
@@ -517,7 +492,11 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     let args = serde_json::json!({ "action": "list_windows" });
                     if let Some(Ok(result)) = self
                         .registry
-                        .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
+                        .execute(
+                            "windows_desktop_control",
+                            args,
+                            &crate::tools::ToolContext::default(),
+                        )
                         .await
                     {
                         result.output.contains(pattern)
@@ -573,7 +552,12 @@ impl WindowsComputerAdapter {
                 let tree = self.read_ui_tree(None).await?;
                 let el = tree
                     .iter()
-                    .find(|e| e.label.as_ref().map(|l| l.contains(&label)).unwrap_or(false))
+                    .find(|e| {
+                        e.label
+                            .as_ref()
+                            .map(|l| l.contains(&label))
+                            .unwrap_or(false)
+                    })
                     .ok_or_else(|| ComputerError::ElementNotFound(label.clone()))?;
                 let center = el.center();
                 Ok((center.x, center.y))
@@ -584,7 +568,10 @@ impl WindowsComputerAdapter {
                     .iter()
                     .find(|e| {
                         e.role == role
-                            && e.label.as_ref().map(|l| l.contains(&label)).unwrap_or(false)
+                            && e.label
+                                .as_ref()
+                                .map(|l| l.contains(&label))
+                                .unwrap_or(false)
                     })
                     .ok_or_else(|| ComputerError::ElementNotFound(format!("{}:{}", role, label)))?;
                 let center = el.center();
@@ -665,9 +652,8 @@ async fn read_file_chunked(path: &str, offset: u64, limit_bytes: u64) -> Result<
         .map_err(|e| ComputerError::Other(format!("Failed to read {}: {}", path, e)))?;
     buf.truncate(n);
 
-    String::from_utf8(buf).map_err(|e| {
-        ComputerError::Other(format!("File {} contains non-UTF-8 bytes: {}", path, e))
-    })
+    String::from_utf8(buf)
+        .map_err(|e| ComputerError::Other(format!("File {} contains non-UTF-8 bytes: {}", path, e)))
 }
 
 async fn install_package_windows(
@@ -692,9 +678,10 @@ async fn install_package_windows(
             ("choco", v)
         }
         _ => {
-            return Err(ComputerError::UnsupportedPlatform(
-                format!("Package manager {:?} not supported on Windows", manager),
-            ))
+            return Err(ComputerError::UnsupportedPlatform(format!(
+                "Package manager {:?} not supported on Windows",
+                manager
+            )))
         }
     };
 
@@ -711,11 +698,7 @@ async fn install_package_windows(
         return Ok(ActionResult::error(format!("{} install failed: {}", cmd, stderr)));
     }
 
-    Ok(ActionResult::success(format!(
-        "Installed {} with {}",
-        packages.join(", "),
-        cmd
-    )))
+    Ok(ActionResult::success(format!("Installed {} with {}", packages.join(", "), cmd)))
 }
 
 async fn compress_files_windows(
@@ -765,9 +748,10 @@ async fn compress_files_windows(
             args.extend(sources.iter().cloned());
             run_tar_windows(&args).await
         }
-        _ => Err(ComputerError::UnsupportedPlatform(
-            format!("Compression format {:?} not supported on Windows", format),
-        )),
+        _ => Err(ComputerError::UnsupportedPlatform(format!(
+            "Compression format {:?} not supported on Windows",
+            format
+        ))),
     }
 }
 
@@ -808,17 +792,38 @@ async fn decompress_archive_windows(archive: &str, destination: &str) -> Result<
         }
     } else {
         let args: Vec<String> = if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-            vec!["-xzvf".to_string(), archive.to_string(), "-C".to_string(), destination.to_string()]
+            vec![
+                "-xzvf".to_string(),
+                archive.to_string(),
+                "-C".to_string(),
+                destination.to_string(),
+            ]
         } else if lower.ends_with(".tar.bz2") {
-            vec!["-xjvf".to_string(), archive.to_string(), "-C".to_string(), destination.to_string()]
+            vec![
+                "-xjvf".to_string(),
+                archive.to_string(),
+                "-C".to_string(),
+                destination.to_string(),
+            ]
         } else if lower.ends_with(".tar.xz") {
-            vec!["-xJvf".to_string(), archive.to_string(), "-C".to_string(), destination.to_string()]
+            vec![
+                "-xJvf".to_string(),
+                archive.to_string(),
+                "-C".to_string(),
+                destination.to_string(),
+            ]
         } else if lower.ends_with(".tar") {
-            vec!["-xvf".to_string(), archive.to_string(), "-C".to_string(), destination.to_string()]
+            vec![
+                "-xvf".to_string(),
+                archive.to_string(),
+                "-C".to_string(),
+                destination.to_string(),
+            ]
         } else {
-            return Err(ComputerError::UnsupportedPlatform(
-                format!("Cannot determine archive format for {}", archive),
-            ));
+            return Err(ComputerError::UnsupportedPlatform(format!(
+                "Cannot determine archive format for {}",
+                archive
+            )));
         };
         let output = tokio::process::Command::new("tar")
             .args(&args)
@@ -833,10 +838,7 @@ async fn decompress_archive_windows(archive: &str, destination: &str) -> Result<
         }
     }
 
-    Ok(ActionResult::success(format!(
-        "Extracted {} to {}",
-        archive, destination
-    )))
+    Ok(ActionResult::success(format!("Extracted {} to {}", archive, destination)))
 }
 
 /// Invoke the windows_powershell tool via the adapter's registry.
@@ -848,10 +850,7 @@ async fn self_registry_execute_powershell(
 ) -> std::io::Result<std::process::Output> {
     // The tool registry requires `&self`, which we don't have in free functions.
     // Fallback to invoking `powershell` directly for compress/decompress scripts.
-    let script = args
-        .get("script")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let script = args.get("script").and_then(|v| v.as_str()).unwrap_or("");
     tokio::process::Command::new("powershell")
         .args(["-NoProfile", "-Command", script])
         .output()

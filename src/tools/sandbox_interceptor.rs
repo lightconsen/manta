@@ -18,13 +18,15 @@
 //! # }
 //! ```
 
-use super::hooks::ToolPolicyDecision;
-use regex::Regex;
-use serde_json::Value;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use regex::Regex;
+use serde_json::Value;
+
+use super::hooks::ToolPolicyDecision;
 
 /// Violation detected by the sandbox interceptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -632,8 +634,9 @@ fn detect_sensitive_content(_name: &str, args: &Value) -> Option<SandboxError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn test_command_blacklist_blocks_rm() {
@@ -805,7 +808,8 @@ mod tests {
 
     #[test]
     fn test_ip_blocklist_wins_over_allowlist() {
-        // Blocklist is checked first, so a blocked IP in the allowlist range is still denied
+        // Blocklist is checked first, so a blocked IP in the allowlist range is still
+        // denied
         let interceptor = SandboxInterceptor::with_defaults()
             .allow_ip_ranges(vec!["10.0.0.0/8".to_string()])
             .block_ip_ranges(vec!["10.1.0.0/16".to_string()]);

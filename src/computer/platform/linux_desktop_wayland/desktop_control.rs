@@ -1,11 +1,12 @@
 //! Linux Wayland desktop control tool using `ydotool` or `wtype`.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::info;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Desktop control tool for Linux Wayland via `ydotool` / `wtype`.
 ///
@@ -43,11 +44,7 @@ impl DesktopControlTool {
     }
 
     async fn run_cmd(cmd: &str, args: &[&str]) -> crate::Result<(bool, String, String)> {
-        let output = timeout(
-            Duration::from_secs(10),
-            Command::new(cmd).args(args).output(),
-        )
-        .await;
+        let output = timeout(Duration::from_secs(10), Command::new(cmd).args(args).output()).await;
         match output {
             Ok(Ok(out)) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -67,10 +64,9 @@ impl Tool for DesktopControlTool {
     }
 
     fn description(&self) -> &str {
-        "Control the Linux Wayland desktop using ydotool or wtype. \
-         Supports mouse click, type text, and key presses. \
-         Note: Wayland restricts window introspection; window management \
-         is limited compared to X11."
+        "Control the Linux Wayland desktop using ydotool or wtype. Supports mouse click, type \
+         text, and key presses. Note: Wayland restricts window introspection; window management is \
+         limited compared to X11."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -153,7 +149,10 @@ impl Tool for DesktopControlTool {
             }
         };
 
-        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("click");
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("click");
         info!("Wayland desktop control action: {} (via {})", action, tool);
 
         match action {
@@ -164,7 +163,9 @@ impl Tool for DesktopControlTool {
 
                 if tool == "ydotool" {
                     if let (Some(xv), Some(yv)) = (x, y) {
-                        let _ = Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", xv, yv)]).await?;
+                        let _ =
+                            Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", xv, yv)])
+                                .await?;
                     }
                     let btn_str = match button {
                         2 => "--middle",
@@ -191,34 +192,55 @@ impl Tool for DesktopControlTool {
 
                 if tool == "ydotool" {
                     if let (Some(xv), Some(yv)) = (x, y) {
-                        let _ = Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", xv, yv)]).await?;
+                        let _ =
+                            Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", xv, yv)])
+                                .await?;
                     }
-                    let (ok, _, _) = Self::run_cmd("ydotool", &["click", "--repeat", "2", &format!("{}", button)]).await?;
+                    let (ok, _, _) = Self::run_cmd(
+                        "ydotool",
+                        &["click", "--repeat", "2", &format!("{}", button)],
+                    )
+                    .await?;
                     if ok {
-                        return Ok(ToolExecutionResult::success(format!("Double-clicked button {}", button)));
+                        return Ok(ToolExecutionResult::success(format!(
+                            "Double-clicked button {}",
+                            button
+                        )));
                     }
                     // Fallback: two separate clicks
-                    let (ok1, _, _) = Self::run_cmd("ydotool", &["click", &format!("{}", button)]).await?;
+                    let (ok1, _, _) =
+                        Self::run_cmd("ydotool", &["click", &format!("{}", button)]).await?;
                     tokio::time::sleep(Duration::from_millis(50)).await;
-                    let (ok2, _, err2) = Self::run_cmd("ydotool", &["click", &format!("{}", button)]).await?;
+                    let (ok2, _, err2) =
+                        Self::run_cmd("ydotool", &["click", &format!("{}", button)]).await?;
                     if ok1 && ok2 {
-                        Ok(ToolExecutionResult::success(format!("Double-clicked button {}", button)))
+                        Ok(ToolExecutionResult::success(format!(
+                            "Double-clicked button {}",
+                            button
+                        )))
                     } else {
                         Ok(ToolExecutionResult::error(format!("Double-click failed: {}", err2)))
                     }
                 } else {
-                    Ok(ToolExecutionResult::error("wtype does not support mouse clicks".to_string()))
+                    Ok(ToolExecutionResult::error(
+                        "wtype does not support mouse clicks".to_string(),
+                    ))
                 }
             }
             "scroll" => {
                 let x = args.get("x").and_then(|v| v.as_i64());
                 let y = args.get("y").and_then(|v| v.as_i64());
-                let direction = args.get("direction").and_then(|v| v.as_str()).unwrap_or("down");
+                let direction = args
+                    .get("direction")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("down");
                 let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(3);
 
                 if tool == "ydotool" {
                     if let (Some(xv), Some(yv)) = (x, y) {
-                        let _ = Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", xv, yv)]).await?;
+                        let _ =
+                            Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", xv, yv)])
+                                .await?;
                     }
                     let key = match direction {
                         "up" => "PageUp",
@@ -252,9 +274,15 @@ impl Tool for DesktopControlTool {
                 let to_y = args.get("to_y").and_then(|v| v.as_i64()).unwrap_or(0);
 
                 if tool == "ydotool" {
-                    let _ = Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", from_x, from_y)]).await?;
+                    let _ = Self::run_cmd(
+                        "ydotool",
+                        &["mousemove", &format!("{}, {}", from_x, from_y)],
+                    )
+                    .await?;
                     tokio::time::sleep(Duration::from_millis(50)).await;
-                    let _ = Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", to_x, to_y)]).await?;
+                    let _ =
+                        Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", to_x, to_y)])
+                            .await?;
                     Ok(ToolExecutionResult::success(format!(
                         "Dragged from ({}, {}) to ({}, {}). Wayland drag is best-effort.",
                         from_x, from_y, to_x, to_y
@@ -287,14 +315,19 @@ impl Tool for DesktopControlTool {
                     // Try wlrctl first (generic Wayland compositor controller)
                     let (ok, _, _) = Self::run_cmd("wlrctl", &["window", "focus", n]).await?;
                     if ok {
-                        return Ok(ToolExecutionResult::success(format!("Activated window '{}' via wlrctl", n)));
+                        return Ok(ToolExecutionResult::success(format!(
+                            "Activated window '{}' via wlrctl",
+                            n
+                        )));
                     }
                     // Fallback: use ydotool key combo Alt+Tab repeatedly to cycle windows
-                    // This is best-effort; real window activation is compositor-dependent on Wayland.
+                    // This is best-effort; real window activation is compositor-dependent on
+                    // Wayland.
                     let (ok2, _, err2) = Self::run_cmd("ydotool", &["key", "Alt+Tab"]).await?;
                     if ok2 {
                         Ok(ToolExecutionResult::success(format!(
-                            "Best-effort window activation for '{}'. Wayland compositors may restrict window management.",
+                            "Best-effort window activation for '{}'. Wayland compositors may \
+                             restrict window management.",
                             n
                         )))
                     } else {

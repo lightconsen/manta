@@ -2,16 +2,18 @@
 //!
 //! Supports Claude 3/3.5 models with native Anthropic API format.
 
-use super::{
-    stream_wrappers::ProviderStreamFamily, CompletionChunk, CompletionRequest,
-    CompletionResponse, CompletionStream, FunctionDefinition, Message, Provider,
-    ProviderInstanceConfig, Role, ToolCall, Usage,
-};
+use std::time::Duration;
+
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
+
+use super::{
+    stream_wrappers::ProviderStreamFamily, CompletionChunk, CompletionRequest, CompletionResponse,
+    CompletionStream, FunctionDefinition, Message, Provider, ProviderInstanceConfig, Role,
+    ToolCall, Usage,
+};
 
 /// Anthropic API client
 #[derive(Debug, Clone)]
@@ -163,12 +165,14 @@ struct StreamUsage {
 }
 
 impl AnthropicProvider {
-    /// Create a new Anthropic provider from an API key string (backward-compatible).
+    /// Create a new Anthropic provider from an API key string
+    /// (backward-compatible).
     pub fn new(api_key: impl Into<String>) -> crate::Result<Self> {
         Self::with_credential(crate::model_router::Credential::api_key(api_key))
     }
 
-    /// Create with custom base URL from an API key string (backward-compatible).
+    /// Create with custom base URL from an API key string
+    /// (backward-compatible).
     pub fn with_base_url(
         api_key: impl Into<String>,
         base_url: impl Into<String>,
@@ -178,7 +182,8 @@ impl AnthropicProvider {
         Ok(this)
     }
 
-    /// Create with a full `Credential` (supports OAuth2, Bearer token, API key).
+    /// Create with a full `Credential` (supports OAuth2, Bearer token, API
+    /// key).
     pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
@@ -200,7 +205,8 @@ impl AnthropicProvider {
     /// Create from a fully-resolved `ProviderInstanceConfig`.
     ///
     /// This is the primary constructor used by the resolver; it sets all fields
-    /// including protocol-variant-specific stream families (e.g., Kimi Anthropic).
+    /// including protocol-variant-specific stream families (e.g., Kimi
+    /// Anthropic).
     pub fn from_config(config: ProviderInstanceConfig) -> crate::Result<Self> {
         let credential =
             crate::model_router::Credential::api_key(config.api_key.unwrap_or_default());
@@ -450,7 +456,8 @@ impl AnthropicProvider {
                                 });
                             }
                             _ => {
-                                // Ignore other event types (message_start, content_block_start, etc.)
+                                // Ignore other event types (message_start,
+                                // content_block_start, etc.)
                             }
                         }
                     }
@@ -762,11 +769,10 @@ mod tests {
 
     #[test]
     fn test_to_anthropic_messages_with_image() {
-        let messages = vec![Message::user("")
-            .with_content_blocks(vec![
-                crate::providers::ContentBlock::text("What is this?"),
-                crate::providers::ContentBlock::image_base64("abc123", "image/png"),
-            ])];
+        let messages = vec![Message::user("").with_content_blocks(vec![
+            crate::providers::ContentBlock::text("What is this?"),
+            crate::providers::ContentBlock::image_base64("abc123", "image/png"),
+        ])];
 
         let (system, anthropic_msgs) = AnthropicProvider::to_anthropic_messages(&messages);
 

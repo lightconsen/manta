@@ -3,8 +3,9 @@
 //! Provides built-in Tailscale Serve/Funnel support for secure remote access
 //! to the Syscity Gateway without complex network configuration.
 
-use serde::{Deserialize, Serialize};
 use std::process::Stdio;
+
+use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 use tokio::process::Command;
 use tracing::{error, info, warn};
 
@@ -142,7 +143,7 @@ pub async fn stop() -> crate::Result<()> {
 }
 
 /// Structured Tailscale status — parsed from `tailscale status --json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TailscaleStatus {
     /// Tailscale version string (e.g. "1.72.0").
     pub version: Option<String>,
@@ -151,28 +152,112 @@ pub struct TailscaleStatus {
     /// The current machine's peer info.
     pub self_peer: Option<PeerInfo>,
     /// All peers in the tailnet.
-    #[serde(default)]
     pub peers: Vec<PeerInfo>,
     /// Whether the current machine is online.
-    #[serde(default)]
     pub online: bool,
+}
+
+impl<'de> Deserialize<'de> for TailscaleStatus {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct Raw {
+            version: Option<String>,
+            #[serde(
+                rename = "CurrentTailnet",
+                default,
+                deserialize_with = "deserialize_tailnet"
+            )]
+            current_tailnet: Option<String>,
+            #[serde(rename = "Self", default)]
+            self_peer: Option<PeerInfo>,
+            #[serde(rename = "Peer", default, deserialize_with = "deserialize_peers")]
+            peers: Vec<PeerInfo>,
+            #[serde(default)]
+            online: Option<bool>,
+        }
+
+        let raw = Raw::deserialize(deserializer)?;
+        let online = raw
+            .online
+            .unwrap_or_else(|| raw.self_peer.as_ref().map(|p| p.online).unwrap_or(false));
+
+        Ok(Self {
+            version: raw.version,
+            current_tailnet: raw.current_tailnet,
+            self_peer: raw.self_peer,
+            peers: raw.peers,
+            online,
+        })
+    }
+}
+
+fn deserialize_tailnet<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde_json::Value;
+
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::Null => Ok(None),
+        Value::String(s) => Ok(Some(s)),
+        value => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "PascalCase")]
+            struct Tailnet {
+                name: String,
+            }
+            let tailnet = Tailnet::deserialize(value).map_err(D::Error::custom)?;
+            Ok(Some(tailnet.name))
+        }
+    }
+}
+
+fn deserialize_peers<'de, D>(deserializer: D) -> std::result::Result<Vec<PeerInfo>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde_json::Value;
+
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::Null => Ok(Vec::new()),
+        Value::Array(arr) => arr
+            .into_iter()
+            .map(|v| PeerInfo::deserialize(v).map_err(D::Error::custom))
+            .collect(),
+        Value::Object(map) => map
+            .into_values()
+            .map(|v| PeerInfo::deserialize(v).map_err(D::Error::custom))
+            .collect(),
+        _ => Err(D::Error::custom("Peer field must be an array or object")),
+    }
 }
 
 /// Info about a single Tailscale peer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct PeerInfo {
     /// Stable node identifier.
+    #[serde(rename = "ID")]
     pub id: String,
     /// Short hostname.
+    #[serde(rename = "HostName")]
     pub hostname: String,
     /// Fully-qualified DNS name (e.g. "host.tailnet.ts.net").
+    #[serde(rename = "DNSName")]
     pub dns_name: Option<String>,
     /// Operating system (e.g. "linux", "darwin").
+    #[serde(rename = "OS")]
     pub os: Option<String>,
     /// Whether this peer is currently online.
     pub online: bool,
     /// Tailscale IP addresses (e.g. ["100.x.x.x"]).
-    #[serde(default)]
+    #[serde(rename = "TailscaleIPs", default)]
     pub ip_addresses: Vec<String>,
 }
 
@@ -194,11 +279,12 @@ pub async fn status() -> crate::Result<TailscaleStatus> {
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: TailscaleStatus = serde_json::from_str(&stdout)
-            .map_err(|e| crate::error::SyscityError::ExternalService {
+        let parsed: TailscaleStatus = serde_json::from_str(&stdout).map_err(|e| {
+            crate::error::SyscityError::ExternalService {
                 source: format!("Failed to parse Tailscale status JSON: {}", e),
                 cause: None,
-            })?;
+            }
+        })?;
         Ok(parsed)
     } else {
         Err(crate::error::SyscityError::ExternalService {
@@ -264,7 +350,8 @@ mod tests {
             "ExtraField": "ignored"
         }"#;
 
-        let status: TailscaleStatus = serde_json::from_str(json).expect("should ignore extra fields");
+        let status: TailscaleStatus =
+            serde_json::from_str(json).expect("should ignore extra fields");
         assert_eq!(status.version, Some("1.72.0".to_string()));
     }
 }

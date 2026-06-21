@@ -4,13 +4,13 @@
 /// retry < interval < default < action
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WakePriority {
- /// Lowest priority — retry for busy agents
+    /// Lowest priority — retry for busy agents
     Retry,
- /// Normal interval-based heartbeat
+    /// Normal interval-based heartbeat
     Interval,
- /// Default manual wake
+    /// Default manual wake
     Default,
- /// Action-triggered wake (from cron, user request, etc.)
+    /// Action-triggered wake (from cron, user request, etc.)
     Action,
 }
 
@@ -28,7 +28,7 @@ mod tests {
 
     #[test]
     fn test_wake_priority_ordering() {
- // Retry < Interval < Default < Action
+        // Retry < Interval < Default < Action
         assert!(WakePriority::Retry < WakePriority::Interval);
         assert!(WakePriority::Interval < WakePriority::Default);
         assert!(WakePriority::Default < WakePriority::Action);

@@ -47,27 +47,29 @@ impl RapidOcr {
     /// * `det_path` — path to the detection ONNX model
     /// * `rec_path` — path to the recognition ONNX model
     /// * `cls_path` — optional path to the classification ONNX model
-    pub fn new(
-        det_path: &str,
-        rec_path: &str,
-        cls_path: Option<&str>,
-    ) -> crate::Result<Self> {
+    pub fn new(det_path: &str, rec_path: &str, cls_path: Option<&str>) -> crate::Result<Self> {
         let det_model = ort::session::Session::builder()
             .map_err(|e| SyscityError::Internal(format!("ORT builder error: {}", e)))?
             .commit_from_file(det_path)
-            .map_err(|e| SyscityError::Internal(format!("Failed to load detection model: {}", e)))?;
+            .map_err(|e| {
+                SyscityError::Internal(format!("Failed to load detection model: {}", e))
+            })?;
 
         let rec_model = ort::session::Session::builder()
             .map_err(|e| SyscityError::Internal(format!("ORT builder error: {}", e)))?
             .commit_from_file(rec_path)
-            .map_err(|e| SyscityError::Internal(format!("Failed to load recognition model: {}", e)))?;
+            .map_err(|e| {
+                SyscityError::Internal(format!("Failed to load recognition model: {}", e))
+            })?;
 
         let cls_model = match cls_path {
             Some(p) => Some(
                 ort::session::Session::builder()
                     .map_err(|e| SyscityError::Internal(format!("ORT builder error: {}", e)))?
                     .commit_from_file(p)
-                    .map_err(|e| SyscityError::Internal(format!("Failed to load cls model: {}", e)))?,
+                    .map_err(|e| {
+                        SyscityError::Internal(format!("Failed to load cls model: {}", e))
+                    })?,
             ),
             None => None,
         };
@@ -116,10 +118,7 @@ impl RapidOcr {
     }
 
     /// Detect all text blocks in a screenshot.
-    pub async fn detect_text(
-        &mut self,
-        screenshot: &Screenshot,
-    ) -> crate::Result<Vec<TextBlock>> {
+    pub async fn detect_text(&mut self, screenshot: &Screenshot) -> crate::Result<Vec<TextBlock>> {
         let img = decode_screenshot(screenshot)?;
 
         // 1. Run detection to find text regions
@@ -131,22 +130,14 @@ impl RapidOcr {
         // 2. Recognize text in each region
         let mut blocks = Vec::new();
         for (bounds, det_score) in regions {
-            let cropped = img.crop_imm(
-                bounds.x as u32,
-                bounds.y as u32,
-                bounds.width,
-                bounds.height,
-            );
+            let cropped =
+                img.crop_imm(bounds.x as u32, bounds.y as u32, bounds.width, bounds.height);
 
             let (text, rec_score) = self.recognize_text(&cropped).await?;
 
             let confidence = det_score * rec_score;
             if confidence >= self.min_confidence {
-                blocks.push(TextBlock {
-                    text,
-                    confidence,
-                    bounds,
-                });
+                blocks.push(TextBlock { text, confidence, bounds });
             }
         }
 
@@ -170,11 +161,7 @@ impl RapidOcr {
         let resized = img.resize_exact(target_w, target_h, image::imageops::FilterType::Triangle);
 
         // ImageNet normalization (standard for DBNet)
-        let normalized = normalize_image(
-            &resized,
-            [0.485, 0.456, 0.406],
-            [0.229, 0.224, 0.225],
-        );
+        let normalized = normalize_image(&resized, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]);
 
         let input_tensor = image_to_nchw_tensor(normalized, target_w as usize, target_h as usize)?;
         let input = ort::value::Tensor::from_array(input_tensor)
@@ -184,15 +171,19 @@ impl RapidOcr {
             let outputs = self
                 .det_model
                 .run(ort::inputs!["x" => input])
-                .map_err(|e| SyscityError::Internal(format!("Detection inference failed: {}", e)))?;
+                .map_err(|e| {
+                    SyscityError::Internal(format!("Detection inference failed: {}", e))
+                })?;
 
-            // DBNet outputs a probability map. The exact output name depends on the ONNX export;
-            // common names are "output" or "sigmoid_0.tmp_0".
+            // DBNet outputs a probability map. The exact output name depends on the ONNX
+            // export; common names are "output" or "sigmoid_0.tmp_0".
             let output_name = outputs
                 .iter()
                 .next()
                 .map(|(name, _)| name.to_string())
-                .ok_or_else(|| SyscityError::Internal("Detection model produced no outputs".to_string()))?;
+                .ok_or_else(|| {
+                    SyscityError::Internal("Detection model produced no outputs".to_string())
+                })?;
 
             outputs[output_name.as_str()]
                 .try_extract_array::<f32>()
@@ -233,8 +224,15 @@ impl RapidOcr {
                 }
 
                 // Flood-fill to find connected component
-                let (min_x, min_y, max_x, max_y, sum_prob, count) =
-                    self.flood_fill(&prob_map.view(), shape.len(), &mut visited, x, y, map_w, map_h);
+                let (min_x, min_y, max_x, max_y, sum_prob, count) = self.flood_fill(
+                    &prob_map.view(),
+                    shape.len(),
+                    &mut visited,
+                    x,
+                    y,
+                    map_w,
+                    map_h,
+                );
 
                 if count < 10 {
                     // Too small, likely noise
@@ -269,6 +267,7 @@ impl RapidOcr {
     }
 
     /// Flood-fill on the probability map to find a connected component.
+    #[allow(clippy::too_many_arguments)]
     fn flood_fill(
         &self,
         prob_map: &ndarray::ArrayViewD<f32>,
@@ -333,10 +332,7 @@ impl RapidOcr {
     }
 
     /// Run the CRNN recognition model on a cropped text region.
-    async fn recognize_text(
-        &mut self,
-        crop: &image::DynamicImage,
-    ) -> crate::Result<(String, f32)> {
+    async fn recognize_text(&mut self, crop: &image::DynamicImage) -> crate::Result<(String, f32)> {
         let (crop_w, crop_h) = (crop.width(), crop.height());
 
         // Maintain aspect ratio, resize to fixed height
@@ -362,7 +358,9 @@ impl RapidOcr {
             .iter()
             .next()
             .map(|(name, _)| name.to_string())
-            .ok_or_else(|| SyscityError::Internal("Recognition model produced no outputs".to_string()))?;
+            .ok_or_else(|| {
+                SyscityError::Internal("Recognition model produced no outputs".to_string())
+            })?;
 
         let output = outputs[output_name.as_str()]
             .try_extract_array::<f32>()
@@ -432,7 +430,8 @@ impl RapidOcr {
     /// Map a CRNN class index to a character.
     ///
     /// This uses a basic alphanumeric + punctuation alphabet.
-    /// For production use, load the exact dictionary file that matches the model.
+    /// For production use, load the exact dictionary file that matches the
+    /// model.
     fn class_to_char(idx: usize) -> Option<char> {
         // Standard RapidOCR/PP-OCR dictionary mapping:
         // 0 = blank (CTC)

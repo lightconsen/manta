@@ -2,12 +2,14 @@
 //!
 //! Persists channel state (offsets, session mappings) to SQLite for recovery.
 
-use crate::error::{Result, SyscityError};
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
-use std::collections::HashMap;
 use tracing::info;
+
+use crate::error::{Result, SyscityError};
 
 /// Persisted channel state
 #[derive(Debug, Clone, Serialize, Deserialize)]

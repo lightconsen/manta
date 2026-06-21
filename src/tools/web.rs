@@ -2,10 +2,11 @@
 //!
 //! Tools for fetching web content and searching the web.
 
-use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use tracing::{debug, error, info};
+
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Maximum content size to fetch (100KB)
 const MAX_CONTENT_SIZE: usize = 100 * 1024;
@@ -214,8 +215,8 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch content from a URL. Supports HTML to markdown conversion. \
-         Maximum content size: 100KB."
+        "Fetch content from a URL. Supports HTML to markdown conversion. Maximum content size: \
+         100KB."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -735,7 +736,8 @@ impl WebSearchTool {
         let results = if let Some(parser_fn) = parser {
             parser_fn(&body, limit)
         } else {
-            // Default JSON parsing - assumes format similar to { "results": [{ "title": "...", "url": "...", "snippet": "..." }] }
+            // Default JSON parsing - assumes format similar to { "results": [{ "title":
+            // "...", "url": "...", "snippet": "..." }] }
             Self::parse_generic_json_results(&body, limit)
         };
 

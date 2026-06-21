@@ -3,17 +3,17 @@
 //! tool for controlling dynamic UI canvases.
 //! Wraps the existing CanvasManager to expose canvas operations to the agent.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use crate::canvas::{CanvasComponent, CanvasManager, CanvasUpdate};
-
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::canvas::{CanvasComponent, CanvasManager, CanvasUpdate};
 
 /// Canvas control tool
 pub struct CanvasTool {
@@ -130,8 +130,8 @@ enum CanvasComponentArg {
 /// Resolve an image src to a displayable URL/data-URI.
 ///
 /// - External URLs (`http://`, `https://`, `data:`) are returned as-is.
-/// - Local file paths are read and encoded as base64 data URIs so the
-/// frontend can display them without an extra HTTP request.
+/// - Local file paths are read and encoded as base64 data URIs so the frontend
+///   can display them without an extra HTTP request.
 async fn resolve_image_src(src: &str, working_dir: &std::path::Path) -> String {
     if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") {
         return src.to_string();
@@ -260,8 +260,8 @@ impl Tool for CanvasTool {
     }
 
     fn description(&self) -> &str {
-        "Control dynamic UI canvases (A2UI). Present content, update components, \
-         show notifications, and take snapshots of agent-generated UIs."
+        "Control dynamic UI canvases (A2UI). Present content, update components, show \
+         notifications, and take snapshots of agent-generated UIs."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -351,7 +351,7 @@ impl Tool for CanvasTool {
                         markdown.push_str(&format!("**{}**\n\n", t));
                     }
                     for (id, src) in &images {
-                        let resolved = resolve_image_src(src, &_context.working_directory()).await;
+                        let resolved = resolve_image_src(src, _context.working_directory()).await;
                         markdown.push_str(&format!("![{}]({})\n\n", id, resolved));
                     }
 

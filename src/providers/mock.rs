@@ -21,7 +21,7 @@
 //!
 //! ```
 //! use syscity::providers::mock::MockProvider;
-//! use syscity::providers::{Message, Role, ToolCall, FunctionCall};
+//! use syscity::providers::{FunctionCall, Message, Role, ToolCall};
 //!
 //! let mock = MockProvider::new().with_callback(|messages| {
 //!     // Look at the conversation so far and decide what to return
@@ -29,23 +29,23 @@
 //!     if has_tool_result {
 //!         Message::assistant("Based on the file content, here's my answer.")
 //!     } else {
-//!         Message::assistant("Let me read the file.")
-//!             .with_tool_calls(vec![ToolCall {
-//!                 id: "call_1".to_string(),
-//!                 call_type: "function".to_string(),
-//!                 function: FunctionCall {
-//!                     name: "file_read".to_string(),
-//!                     arguments: r#"{"path": "/tmp/test.txt"}"#.to_string(),
-//!                 },
-//!                 index: None,
-//!                 result: None,
-//!             }])
+//!         Message::assistant("Let me read the file.").with_tool_calls(vec![ToolCall {
+//!             id: "call_1".to_string(),
+//!             call_type: "function".to_string(),
+//!             function: FunctionCall {
+//!                 name: "file_read".to_string(),
+//!                 arguments: r#"{"path": "/tmp/test.txt"}"#.to_string(),
+//!             },
+//!             index: None,
+//!             result: None,
+//!         }])
 //!     }
 //! });
 //! ```
 
-use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
 
 use super::{
     CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, Message, Provider,

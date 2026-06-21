@@ -40,7 +40,7 @@ pub const DEFAULT_BASELINE_MAX_AGE: Duration = Duration::from_secs(10);
 /// `None` for `modalities`/`sources` means "everything"; explicit sets
 /// restrict admission. `freq_budget` is per-(source, modality) — empty
 /// map means no rate limiting.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct Focus {
     /// Modality whitelist; `None` = admit all modalities.
     pub modalities: Option<HashSet<Modality>>,
@@ -50,17 +50,6 @@ pub struct Focus {
     pub freq_budget: HashMap<Modality, f32>,
     /// Salience filter parameters.
     pub salience: SalienceConfig,
-}
-
-impl Default for Focus {
-    fn default() -> Self {
-        Self {
-            modalities: None,
-            sources: None,
-            freq_budget: HashMap::new(),
-            salience: SalienceConfig::default(),
-        }
-    }
 }
 
 impl Focus {
@@ -117,8 +106,8 @@ pub struct SalienceConfig {
     /// interpretation depends on modality:
     ///
     /// - Numeric scalars: relative change in percent (e.g. `5.0` = 5%).
-    /// - Compound payloads: implementation-defined; default is a JSON
-    ///   diff distance.
+    /// - Compound payloads: implementation-defined; default is a JSON diff
+    ///   distance.
     pub delta_threshold: HashMap<Modality, f32>,
     /// Window inside which identical observations are deduplicated.
     pub dedup_window: Duration,

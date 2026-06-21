@@ -1,14 +1,17 @@
 //! Browser pool for persistent browser instance caching
 //!
-//! Replaces per-call browser launch with a pool of long-lived browser instances.
-//! Instances are lazily created per profile and evicted after idle timeout.
+//! Replaces per-call browser launch with a pool of long-lived browser
+//! instances. Instances are lazily created per profile and evicted after idle
+//! timeout.
 
-use super::profile::{BrowserDriver, BrowserPoolConfig, BrowserProfile};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
 use tokio::sync::RwLock;
 use tracing::{debug, info};
+
+use super::profile::{BrowserDriver, BrowserPoolConfig, BrowserProfile};
 
 /// Handle to a page within a browser instance
 #[derive(Debug, Clone)]

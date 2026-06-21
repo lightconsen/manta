@@ -11,10 +11,11 @@
 //! `TierEvaluator::entry_tier()`.  Search results are merged and re-sorted by
 //! importance.
 
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+
+use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
 use super::{

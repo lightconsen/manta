@@ -2,17 +2,9 @@
 //!
 //! This module implements the Channel trait for Discord using serenity.
 
-use crate::channels::{
-    Channel, ChannelCapabilities, ConversationId, DiscordEmbed, FormattedContent, IncomingMessage,
-    MessageMetadata, OutgoingMessage,
-};
-use crate::core::models::Id;
-use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
-use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
 
+use async_trait::async_trait;
 #[cfg(feature = "discord")]
 use serenity::{
     async_trait as serenity_async_trait,
@@ -26,6 +18,15 @@ use serenity::{
     prelude::GatewayIntents,
     Client,
 };
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, error, info, warn};
+
+use crate::channels::{
+    Channel, ChannelCapabilities, ConversationId, DiscordEmbed, FormattedContent, IncomingMessage,
+    MessageMetadata, OutgoingMessage,
+};
+use crate::core::models::Id;
+use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 
 /// Discord channel configuration
 #[derive(Debug, Clone)]
@@ -193,7 +194,8 @@ impl DiscordChannel {
         self.config.allowed_user_ids.contains(&user_id)
     }
 
-    /// Convert markdown to Discord markdown (Discord uses standard markdown mostly)
+    /// Convert markdown to Discord markdown (Discord uses standard markdown
+    /// mostly)
     fn format_for_discord(text: &str) -> String {
         // Discord supports standard markdown well, but we need to handle some specifics
 
@@ -791,7 +793,8 @@ impl EventHandler for DiscordHandler {
                                 .await
                             {
                                 Ok(RequestAccessResult::AlreadyAuthorized) => {
-                                    // Shouldn't happen since we just checked, but allow through
+                                    // Shouldn't happen since we just checked,
+                                    // but allow through
                                 }
                                 Ok(RequestAccessResult::NewRequest { code }) => {
                                     info!(
@@ -803,11 +806,10 @@ impl EventHandler for DiscordHandler {
                                         .say(
                                             &ctx.http,
                                             format!(
-                                                "🔒 This bot requires pairing.\n\n\
-                                            Your pairing code: **{}**\n\n\
-                                            Please share this code with an admin to get access.\n\
-                                            Or ask an admin to run:\n\
-                                            `syscity pairing approve discord {}`",
+                                                "🔒 This bot requires pairing.\n\nYour pairing \
+                                                 code: **{}**\n\nPlease share this code with an \
+                                                 admin to get access.\nOr ask an admin to \
+                                                 run:\n`syscity pairing approve discord {}`",
                                                 code, code
                                             ),
                                         )
@@ -820,9 +822,9 @@ impl EventHandler for DiscordHandler {
                                         .say(
                                             &ctx.http,
                                             format!(
-                                                "⏳ Your pairing request is still pending.\n\n\
-                                            Code: **{}**\n\n\
-                                            Please wait for an admin to approve your request.",
+                                                "⏳ Your pairing request is still \
+                                                 pending.\n\nCode: **{}**\n\nPlease wait for an \
+                                                 admin to approve your request.",
                                                 code
                                             ),
                                         )
@@ -840,10 +842,14 @@ impl EventHandler for DiscordHandler {
                                     return;
                                 }
                                 Err(_) => {
-                                    let _ = msg.channel_id.say(
-                                        &ctx.http,
-                                        "❌ Error processing pairing request. Please try again later."
-                                    ).await;
+                                    let _ = msg
+                                        .channel_id
+                                        .say(
+                                            &ctx.http,
+                                            "❌ Error processing pairing request. Please try \
+                                             again later.",
+                                        )
+                                        .await;
                                     return;
                                 }
                             }
@@ -896,7 +902,8 @@ impl EventHandler for DiscordHandler {
                     .say(
                         &ctx.http,
                         format!(
-                            "🆕 Started new session:\n`{}`\n\nYour conversation history is now fresh.",
+                            "🆕 Started new session:\n`{}`\n\nYour conversation history is now \
+                             fresh.",
                             new_session
                         ),
                     )

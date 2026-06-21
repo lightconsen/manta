@@ -1,11 +1,13 @@
-//! Windows desktop control tool using PowerShell + .NET SendKeys / UIAutomation.
+//! Windows desktop control tool using PowerShell + .NET SendKeys /
+//! UIAutomation.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::info;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Desktop control tool for Windows via PowerShell.
 ///
@@ -29,7 +31,13 @@ impl DesktopControlTool {
         let output = timeout(
             Duration::from_secs(15),
             Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+                .args([
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    script,
+                ])
                 .output(),
         )
         .await;
@@ -52,9 +60,8 @@ impl Tool for DesktopControlTool {
     }
 
     fn description(&self) -> &str {
-        "Control the Windows desktop using PowerShell. \
-         Supports click, type, key presses, window inspection, \
-         and window activation."
+        "Control the Windows desktop using PowerShell. Supports click, type, key presses, window \
+         inspection, and window activation."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -123,7 +130,10 @@ impl Tool for DesktopControlTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("inspect");
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("inspect");
         info!("Windows desktop control action: {}", action);
 
         match action {
@@ -211,7 +221,10 @@ Start-Sleep -Milliseconds 50
             "scroll" => {
                 let x = args.get("x").and_then(|v| v.as_i64()).unwrap_or(0);
                 let y = args.get("y").and_then(|v| v.as_i64()).unwrap_or(0);
-                let direction = args.get("direction").and_then(|v| v.as_str()).unwrap_or("down");
+                let direction = args
+                    .get("direction")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("down");
                 let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(3);
                 let delta = if direction == "up" {
                     120i64 * amount as i64
@@ -234,7 +247,10 @@ public class Click {{ [DllImport("user32.dll")] public static extern void mouse_
                 );
                 let (ok, _, err) = Self::run_ps(&script).await?;
                 if ok {
-                    Ok(ToolExecutionResult::success(format!("Scrolled {} at {}, {}", direction, x, y)))
+                    Ok(ToolExecutionResult::success(format!(
+                        "Scrolled {} at {}, {}",
+                        direction, x, y
+                    )))
                 } else {
                     Ok(ToolExecutionResult::error(format!("Scroll failed: {}", err)))
                 }
@@ -261,7 +277,10 @@ Start-Sleep -Milliseconds 100
                 );
                 let (ok, _, err) = Self::run_ps(&script).await?;
                 if ok {
-                    Ok(ToolExecutionResult::success(format!("Dragged from ({}, {}) to ({}, {})", from_x, from_y, to_x, to_y)))
+                    Ok(ToolExecutionResult::success(format!(
+                        "Dragged from ({}, {}) to ({}, {})",
+                        from_x, from_y, to_x, to_y
+                    )))
                 } else {
                     Ok(ToolExecutionResult::error(format!("Drag failed: {}", err)))
                 }
@@ -401,9 +420,7 @@ if ($proc -ne $null) {{
                         Ok(ToolExecutionResult::error(format!("Close failed: {}", err)))
                     }
                 } else {
-                    Ok(ToolExecutionResult::error(
-                        "Provide 'name' to close a window".to_string(),
-                    ))
+                    Ok(ToolExecutionResult::error("Provide 'name' to close a window".to_string()))
                 }
             }
             _ => Ok(ToolExecutionResult::error(format!("Unknown action: {}", action))),

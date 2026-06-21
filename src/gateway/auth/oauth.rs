@@ -3,6 +3,8 @@
 //! Implements OAuth2 authorization code flow for GitHub and Google.
 //! ts` functionality.
 
+use std::sync::Arc;
+
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -13,7 +15,6 @@ use oauth2::{
     EndpointNotSet, EndpointSet, RedirectUrl, Scope, TokenResponse, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::gateway::auth::{
@@ -217,7 +218,9 @@ pub async fn github_callback_handler(
     }
 
     // Create session
-    let session = match state.auth.manager
+    let session = match state
+        .auth
+        .manager
         .create_session(user_id, 24 * 7, None)
         .await
     {
@@ -418,7 +421,9 @@ pub async fn google_callback_handler(
         }
     }
 
-    let session = match state.auth.manager
+    let session = match state
+        .auth
+        .manager
         .create_session(user_id, 24 * 7, None)
         .await
     {

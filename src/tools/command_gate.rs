@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```rust
-//! use syscity::tools::command_gate::{CommandGate, UserLevel, AccessDecision};
+//! use syscity::tools::command_gate::{AccessDecision, CommandGate, UserLevel};
 //!
 //! let gate = CommandGate::new();
 //! gate.set_user_level("alice", UserLevel::User);
@@ -38,7 +38,8 @@ use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-// ── Permission levels ─────────────────────────────────────────────────────────
+// ── Permission levels
+// ─────────────────────────────────────────────────────────
 
 /// The access level granted to a user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
@@ -62,7 +63,8 @@ impl std::fmt::Display for UserLevel {
     }
 }
 
-// ── Command classification ────────────────────────────────────────────────────
+// ── Command classification
+// ────────────────────────────────────────────────────
 
 /// The class of a request determined by its content.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +79,8 @@ pub enum RequestClass {
     ControlCommand(ControlCommand),
 }
 
-/// System-level control commands that are intercepted before normal command handling.
+/// System-level control commands that are intercepted before normal command
+/// handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlCommand {
     /// Start / initialize interaction.
@@ -99,7 +102,7 @@ pub enum ControlCommand {
 impl ControlCommand {
     /// Detect a control command from the start of a message.
     pub fn detect(content: &str) -> Option<Self> {
-        let trimmed = content.trim().split_whitespace().next()?;
+        let trimmed = content.split_whitespace().next()?;
         match trimmed.to_lowercase().as_str() {
             "/start" | "/begin" => Some(ControlCommand::Start),
             "/stop" | "/end" => Some(ControlCommand::Stop),
@@ -171,7 +174,8 @@ impl RequestClass {
     }
 }
 
-// ── Access decision ───────────────────────────────────────────────────────────
+// ── Access decision
+// ───────────────────────────────────────────────────────────
 
 /// The result of a gate check.
 #[derive(Debug, Clone, PartialEq, Eq)]

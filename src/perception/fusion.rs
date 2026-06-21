@@ -7,11 +7,12 @@
 //! # Fusion pipeline
 //!
 //! 1. **Filter** — Remove observations below confidence threshold.
-//! 2. **Temporal clustering** — Cluster observations within a configurable
-//!    time window.
+//! 2. **Temporal clustering** — Cluster observations within a configurable time
+//!    window.
 //! 3. **Conflict resolution** — Within each cluster, per modality: pick the
 //!    observation with the highest confidence (tiebreak by recency).
-//! 4. **Entity building** — Merge properties and metadata into a [`FusedEntity`].
+//! 4. **Entity building** — Merge properties and metadata into a
+//!    [`FusedEntity`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -143,8 +144,9 @@ impl FusionEngine {
     }
 
     /// Synchronous fuse — uses the last-known config without awaiting.
-    /// Available because [`FusionEngine::config`] is held in an [`Arc<RwLock>`].
-    /// Useful from synchronous contexts (e.g. existing test code).
+    /// Available because [`FusionEngine::config`] is held in an
+    /// [`Arc<RwLock>`]. Useful from synchronous contexts (e.g. existing
+    /// test code).
     pub fn fuse_blocking(&self, observations: &[Observation]) -> Vec<FusedEntity> {
         let cfg = self.config.blocking_read().clone();
         self.fuse_with_config(&cfg, observations)
@@ -155,8 +157,8 @@ impl FusionEngine {
     /// Uses a greedy single-pass algorithm:
     /// - Sort observations by timestamp.
     /// - Start a new cluster at the first observation.
-    /// - Add subsequent observations to the current cluster if they fall
-    ///   within `temporal_window_ms` of the cluster start.
+    /// - Add subsequent observations to the current cluster if they fall within
+    ///   `temporal_window_ms` of the cluster start.
     /// - Otherwise, start a new cluster.
     fn cluster_by_time<'a>(
         temporal_window_ms: u64,
@@ -228,10 +230,7 @@ impl FusionEngine {
 
     /// Build a [`FusedEntity`] from a cluster of observations after
     /// conflict resolution.
-    fn build_fused_entity(
-        &self,
-        cluster: Vec<&Observation>,
-    ) -> Option<FusedEntity> {
+    fn build_fused_entity(&self, cluster: Vec<&Observation>) -> Option<FusedEntity> {
         if cluster.is_empty() {
             return None;
         }
@@ -243,15 +242,11 @@ impl FusionEngine {
         let mut modalities: Vec<Modality> = winners.keys().copied().collect();
         modalities.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
 
-        let observation_ids: Vec<String> =
-            winners.values().map(|obs| obs.id.to_string()).collect();
+        let observation_ids: Vec<String> = winners.values().map(|obs| obs.id.to_string()).collect();
 
         // Aggregate confidence: weighted average by count (simple approach)
-        let confidence = winners
-            .values()
-            .map(|obs| obs.confidence)
-            .sum::<f32>()
-            / winners.len().max(1) as f32;
+        let confidence =
+            winners.values().map(|obs| obs.confidence).sum::<f32>() / winners.len().max(1) as f32;
 
         // Merge properties keyed by modality name
         let mut properties: HashMap<String, serde_json::Value> = HashMap::new();
@@ -261,8 +256,7 @@ impl FusionEngine {
         }
 
         // Label from modality combination
-        let mod_strs: Vec<String> =
-            modalities.iter().map(|m| format!("{m:?}")).collect();
+        let mod_strs: Vec<String> = modalities.iter().map(|m| format!("{m:?}")).collect();
         let label = format!("Fused({})", mod_strs.join("+"));
 
         // Correlation key always "temporal" (no spatial alignment)
@@ -290,12 +284,7 @@ mod tests {
     use super::*;
     use crate::perception::ObservationId;
 
-    fn make_obs(
-        source: &str,
-        modality: Modality,
-        ts: Instant,
-        conf: f32,
-    ) -> Observation {
+    fn make_obs(source: &str, modality: Modality, ts: Instant, conf: f32) -> Observation {
         Observation {
             id: ObservationId::new(),
             source: source.to_string(),
@@ -330,8 +319,10 @@ mod tests {
         ];
         let fused = engine.fuse(&obs).await;
         assert!(!fused.is_empty());
-        assert!((fused[0].confidence - 0.9).abs() < 0.01,
-            "confidence should be ~0.9 (the higher of the two)");
+        assert!(
+            (fused[0].confidence - 0.9).abs() < 0.01,
+            "confidence should be ~0.9 (the higher of the two)"
+        );
     }
 
     #[tokio::test]
@@ -420,9 +411,7 @@ mod tests {
         // Initially passes
         assert_eq!(engine.fuse(&obs).await.len(), 1);
         // Tighten threshold and re-fuse
-        engine
-            .update_config(|c| c.min_confidence = 0.9)
-            .await;
+        engine.update_config(|c| c.min_confidence = 0.9).await;
         assert!(engine.fuse(&obs).await.is_empty());
     }
 }

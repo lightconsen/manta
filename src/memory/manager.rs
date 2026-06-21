@@ -12,10 +12,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
-
-use crate::providers::{CompletionRequest, Message, Provider};
 
 use super::{
     effectiveness::{EffectivenessConfig, EffectivenessTracker},
@@ -31,6 +30,7 @@ use super::{
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
     TieredStore, UnifiedStore,
 };
+use crate::providers::{CompletionRequest, Message, Provider};
 
 /// Configuration for the MemoryManager.
 #[derive(Debug, Clone)]
@@ -66,7 +66,8 @@ impl Default for MemoryManagerConfig {
 /// Maximum number of recent recalls to track per session before LRU eviction.
 const MAX_RECENT_RECALLS_PER_SESSION: usize = 100;
 
-/// Tracks a recent recall so it can be evaluated for a hit after the LLM responds.
+/// Tracks a recent recall so it can be evaluated for a hit after the LLM
+/// responds.
 #[derive(Debug, Clone)]
 struct RecentRecall {
     recall_id: String,
@@ -86,7 +87,8 @@ pub struct MemoryManager {
     vector_service: Option<Arc<VectorMemoryService>>,
     /// FTS5 session search (hybrid path)
     session_search: Option<Arc<SessionSearch>>,
-    /// In-memory cache of the last retrieved context (to avoid repeated DB hits)
+    /// In-memory cache of the last retrieved context (to avoid repeated DB
+    /// hits)
     context_cache: RwLock<Option<ContextCache>>,
     /// Event log for memory operations.
     event_log: Option<MemoryEventLog>,
@@ -643,7 +645,8 @@ impl MemoryManager {
         self.store.delete(id).await
     }
 
-    /// Compact a session: extract key facts from old messages into semantic memories.
+    /// Compact a session: extract key facts from old messages into semantic
+    /// memories.
     ///
     /// This is called when a session is closed or exceeds thresholds
     /// (>50 turns or >7 days old).
@@ -749,23 +752,21 @@ impl MemoryManager {
             .join("\n\n");
 
         let prompt = format!(
-            "You are an expert memory extraction assistant. \
-            Analyze the following conversation and extract key facts, preferences, decisions, \
-            and important context that should be remembered for future interactions.\n\n\
-            Return your findings as a JSON array of objects, each with:\n\
-            - \"content\": the fact/preference/decision as a concise statement\n\
-            - \"type\": one of \"fact\", \"preference\", \"decision\", \"context\"\n\
-            - \"importance\": a score from 0.0 to 1.0\n\n\
-            Only extract information that is clearly stated or strongly implied. \
-            Do not invent information. Return ONLY the JSON array, no other text.\n\n\
-            Conversation:\n{transcript}"
+            "You are an expert memory extraction assistant. Analyze the following conversation \
+             and extract key facts, preferences, decisions, and important context that should be \
+             remembered for future interactions.\n\nReturn your findings as a JSON array of \
+             objects, each with:\n- \"content\": the fact/preference/decision as a concise \
+             statement\n- \"type\": one of \"fact\", \"preference\", \"decision\", \"context\"\n- \
+             \"importance\": a score from 0.0 to 1.0\n\nOnly extract information that is clearly \
+             stated or strongly implied. Do not invent information. Return ONLY the JSON array, \
+             no other text.\n\nConversation:\n{transcript}"
         );
 
         let request = CompletionRequest {
             messages: vec![
                 Message::system(
-                    "You are a helpful assistant that extracts and structures \
-                    information from conversations. Return only valid JSON.",
+                    "You are a helpful assistant that extracts and structures information from \
+                     conversations. Return only valid JSON.",
                 ),
                 Message::user(prompt),
             ],
@@ -868,11 +869,12 @@ impl MemoryManager {
         self.store.stats().await
     }
 
-    /// Evaluate whether recently-recalled memories were "hit" by the LLM response.
+    /// Evaluate whether recently-recalled memories were "hit" by the LLM
+    /// response.
     ///
-    /// For each recent recall in `session_key`, checks if `response_text` contains
-    /// a significant substring of the recalled memory content. If so, marks it as a hit
-    /// in the effectiveness tracker.
+    /// For each recent recall in `session_key`, checks if `response_text`
+    /// contains a significant substring of the recalled memory content. If
+    /// so, marks it as a hit in the effectiveness tracker.
     ///
     /// This should be called immediately after `get_completion()` returns.
     pub async fn evaluate_response_hits(&self, session_key: &str, response_text: &str) {
@@ -909,13 +911,15 @@ impl MemoryManager {
         }
     }
 
-    /// Evaluate recalled memories for effectiveness and adjust importance scores.
+    /// Evaluate recalled memories for effectiveness and adjust importance
+    /// scores.
     ///
     /// Closes the feedback loop: uses the effectiveness tracker to evaluate
     /// memories that have been recalled recently, and adjusts their importance
     /// scores based on hit rates.
     ///
-    /// Rate-limited: skips if adjustments were applied within the last 5 minutes.
+    /// Rate-limited: skips if adjustments were applied within the last 5
+    /// minutes.
     pub async fn apply_effectiveness_adjustments(&self) {
         let effectiveness = match &self.effectiveness {
             Some(e) => e.clone(),
@@ -1642,12 +1646,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Register in the store's tier index (observe does this via manager's own index,
-        // but the TieredStore also tracks it on store). Verify initial tier.
+        // Register in the store's tier index (observe does this via manager's own
+        // index, but the TieredStore also tracks it on store). Verify initial
+        // tier.
         let tiered_store = store.as_tiered_store().unwrap();
         assert_eq!(tiered_store.tier_index().get_tier(&id.0), Some(MemoryTier::Working));
 
-        // Simulate 3 recalls, all hit, so hit_rate is 1.0 >= promote_directly_threshold.
+        // Simulate 3 recalls, all hit, so hit_rate is 1.0 >=
+        // promote_directly_threshold.
         for i in 0..3 {
             let recall_id = format!("recall-tier-{}", i);
             {

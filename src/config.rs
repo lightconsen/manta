@@ -3,12 +3,14 @@
 //! This module handles loading and validating configuration from
 //! multiple sources: defaults, config files, and environment variables.
 
-use crate::error::{ConfigError, Result};
-use crate::secrets::SecretRef;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+
+use crate::error::{ConfigError, Result};
+use crate::secrets::SecretRef;
 
 /// Default configuration file name
 pub const DEFAULT_CONFIG_FILE: &str = "syscity.toml";
@@ -437,7 +439,8 @@ fn default_effectiveness_demotion_threshold() -> f32 {
 pub struct ServiceConfig {
     /// Service endpoint URL
     pub endpoint: String,
-    /// API key (can be raw string, env var reference like "$ENV_VAR", or SecretRef object)
+    /// API key (can be raw string, env var reference like "$ENV_VAR", or
+    /// SecretRef object)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<SecretRef>,
     /// Request timeout in seconds
@@ -751,7 +754,8 @@ impl Default for Config {
 impl Config {
     /// Load configuration from default sources
     ///
-    /// The configuration is loaded in the following order (later sources override earlier ones):
+    /// The configuration is loaded in the following order (later sources
+    /// override earlier ones):
     /// 1. Default values
     /// 2. Config file (syscity.toml or specified path)
     /// 3. Environment variables (SYSCITY_*)
@@ -1358,13 +1362,13 @@ pub mod hot_reload {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::{mpsc, RwLock};
-    use tracing::{debug, error, info, warn};
 
     #[cfg(feature = "hot-reload")]
     use notify::{RecommendedWatcher, RecursiveMode};
     #[cfg(feature = "hot-reload")]
     use notify_debouncer_full::{new_debouncer, DebouncedEvent, Debouncer, FileIdMap};
+    use tokio::sync::{mpsc, RwLock};
+    use tracing::{debug, error, info, warn};
 
     /// Configuration file types that can be hot-reloaded
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

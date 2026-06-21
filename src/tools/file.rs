@@ -2,14 +2,16 @@
 //!
 //! Tools for reading, writing, and editing files.
 
-use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
-use async_trait::async_trait;
-use serde_json::Value;
 #[cfg(test)]
 use std::path::PathBuf;
+
+use async_trait::async_trait;
+use serde_json::Value;
 use tokio::fs as tokio_fs;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
+
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Maximum file size to read (1MB)
 const MAX_FILE_SIZE: u64 = 1024 * 1024;
@@ -55,8 +57,8 @@ impl Tool for FileReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read the contents of a file. Can read text files and detect binary files. \
-         Maximum file size: 1MB."
+        "Read the contents of a file. Can read text files and detect binary files. Maximum file \
+         size: 1MB."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -185,8 +187,8 @@ impl Tool for FileWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file. Creates parent directories if needed. \
-         Optionally backs up existing files."
+        "Write content to a file. Creates parent directories if needed. Optionally backs up \
+         existing files."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -479,8 +481,9 @@ impl Tool for GlobTool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::Path;
+
+    use super::*;
 
     #[test]
     fn test_file_read_tool() {

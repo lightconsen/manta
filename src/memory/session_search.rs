@@ -553,10 +553,11 @@ pub struct SessionStats {
 
 /// Tool for session search
 pub mod tool {
-    use super::*;
-    use crate::tools::{Tool, ToolContext, ToolExecutionResult};
     use async_trait::async_trait;
     use serde_json::json;
+
+    use super::*;
+    use crate::tools::{Tool, ToolContext, ToolExecutionResult};
 
     /// Tool for searching conversation history
     #[derive(Debug, Clone)]

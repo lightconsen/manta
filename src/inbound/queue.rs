@@ -11,11 +11,13 @@
 //!
 //! All five modes are now wired into the resolver heuristic.
 
-use crate::channels::IncomingMessage;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
 use tokio::sync::RwLock;
+
+use crate::channels::IncomingMessage;
 
 /// Queue mode for message handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -45,7 +47,8 @@ struct SessionTiming {
 pub struct QueueModeResolver {
     /// session_id -> last message timing
     sessions: Arc<RwLock<HashMap<String, SessionTiming>>>,
-    /// Time window for FollowUp detection (messages within this window are batched).
+    /// Time window for FollowUp detection (messages within this window are
+    /// batched).
     follow_up_window: Duration,
 }
 

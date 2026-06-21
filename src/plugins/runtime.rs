@@ -2,14 +2,16 @@
 //!
 //! Loads and executes plugins using Wasmtime for sandboxing.
 
-use super::manifest::{PluginManifest, PluginPermission};
-use super::metrics::PluginMetricsRegistry;
-use crate::dirs;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
+
 use tokio::sync::RwLock;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
+
+use super::manifest::{PluginManifest, PluginPermission};
+use super::metrics::PluginMetricsRegistry;
+use crate::dirs;
 
 /// Shared state accessible by all plugin instances.
 ///
@@ -29,6 +31,13 @@ pub struct PluginSharedState {
     pub context: Arc<RwLock<HashMap<String, String>>>,
     /// Per-plugin metrics registry
     pub metrics: Arc<PluginMetricsRegistry>,
+}
+
+#[cfg(feature = "plugins")]
+impl Default for PluginSharedState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(feature = "plugins")]
@@ -234,9 +243,9 @@ pub struct PluginRuntime {
     /// Event subscribers: plugin_id/wildcard → senders
     #[cfg(feature = "plugins")]
     event_subscribers: Arc<RwLock<HashMap<String, Vec<mpsc::UnboundedSender<PluginEvent>>>>>,
-    /// Receiver side of the plugin event channel (kept so the channel stays open
-    /// while the runtime is alive; the actual receiver is moved into the dispatch
-    /// task spawned in `new()`).
+    /// Receiver side of the plugin event channel (kept so the channel stays
+    /// open while the runtime is alive; the actual receiver is moved into
+    /// the dispatch task spawned in `new()`).
     #[cfg(feature = "plugins")]
     #[allow(dead_code)]
     event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<PluginEvent>>>>,
@@ -306,10 +315,9 @@ impl PluginRuntime {
         use wasmtime::Memory;
 
         // Register WASI in the linker so plugins can use WASI APIs
-        wasmtime_wasi::p1::add_to_linker_sync(
-            linker,
-            |state: &mut PluginState| state.wasi_ctx.get_mut().unwrap(),
-        )
+        wasmtime_wasi::p1::add_to_linker_sync(linker, |state: &mut PluginState| {
+            state.wasi_ctx.get_mut().unwrap()
+        })
         .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // Helper: read a UTF-8 string from WASM memory
@@ -733,7 +741,7 @@ impl PluginRuntime {
                         .and_then(|r| r.text())
                         .unwrap_or_else(|e| {
                             let rt = tokio::runtime::Handle::current();
-                            let _ = rt.block_on(async {
+                            rt.block_on(async {
                                 if let Some(m) = metrics_registry.get(&plugin_id).await {
                                     m.record_http_error();
                                 }
@@ -749,7 +757,8 @@ impl PluginRuntime {
             )
             .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
-        // http_post(url_ptr, url_len, body_ptr, body_len, content_type_ptr, content_type_len, out_ptr, out_len) -> bytes_written
+        // http_post(url_ptr, url_len, body_ptr, body_len, content_type_ptr,
+        // content_type_len, out_ptr, out_len) -> bytes_written
         linker
             .func_wrap(
                 "env",
@@ -810,7 +819,7 @@ impl PluginRuntime {
                         .and_then(|r| r.text())
                         .unwrap_or_else(|e| {
                             let rt = tokio::runtime::Handle::current();
-                            let _ = rt.block_on(async {
+                            rt.block_on(async {
                                 if let Some(m) = metrics_registry.get(&plugin_id).await {
                                     m.record_http_error();
                                 }
@@ -828,7 +837,8 @@ impl PluginRuntime {
 
         // --- Events ---
 
-        // emit_event(type_ptr, type_len, payload_ptr, payload_len) -> 1 | 0 (no channel)
+        // emit_event(type_ptr, type_len, payload_ptr, payload_len) -> 1 | 0 (no
+        // channel)
         linker
             .func_wrap(
                 "env",
@@ -977,10 +987,7 @@ impl PluginRuntime {
 
     /// Subscribe to events from a specific plugin (or `"*"` for all).
     #[cfg(feature = "plugins")]
-    pub async fn subscribe_events(
-        &self,
-        pattern: &str,
-    ) -> mpsc::UnboundedReceiver<PluginEvent> {
+    pub async fn subscribe_events(&self, pattern: &str) -> mpsc::UnboundedReceiver<PluginEvent> {
         let (tx, rx) = mpsc::unbounded_channel();
         self.event_subscribers
             .write()
@@ -1086,7 +1093,8 @@ impl PluginRuntime {
                     let current_ver = persistent.schema_version;
                     if current_ver > CURRENT_SCHEMA_VERSION {
                         warn!(
-                            "Plugin state for '{}' has schema v{} which is newer than supported v{}. Ignoring.",
+                            "Plugin state for '{}' has schema v{} which is newer than supported \
+                             v{}. Ignoring.",
                             plugin_id, current_ver, CURRENT_SCHEMA_VERSION
                         );
                         return (None, None);
@@ -1134,7 +1142,8 @@ impl PluginRuntime {
         }
     }
 
-    /// Validate manifest version fields, logging warnings on issues (non-fatal).
+    /// Validate manifest version fields, logging warnings on issues
+    /// (non-fatal).
     #[cfg(feature = "plugins")]
     fn validate_manifest_version(manifest: &PluginManifest) {
         // Validate plugin's own version string
@@ -1308,7 +1317,8 @@ impl PluginRuntime {
         let mut store = wasmtime::Store::new(&self.engine, state);
 
         // Set initial fuel for WASM execution
-        store.set_fuel(100_000_000)
+        store
+            .set_fuel(100_000_000)
             .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // Set up WASI context with inherited stdio
@@ -1340,8 +1350,8 @@ impl PluginRuntime {
         _config: serde_json::Value,
     ) -> crate::Result<(Option<()>, Option<()>)> {
         Err(crate::error::SyscityError::Internal(
-            "Plugin execution requires the `plugins` feature. \
-             Recompile Syscity with `--features plugins` to enable WASM plugin support."
+            "Plugin execution requires the `plugins` feature. Recompile Syscity with `--features \
+             plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }
@@ -1371,9 +1381,9 @@ impl PluginRuntime {
 
     /// Reload a plugin while preserving its runtime state (memory).
     ///
-    /// Re-reads the manifest from disk so changes to `plugin.json` are picked up,
-    /// then re-compiles and re-instantiates the WASM module, injecting the
-    /// previously stored `PluginState::memory` into the new instance.
+    /// Re-reads the manifest from disk so changes to `plugin.json` are picked
+    /// up, then re-compiles and re-instantiates the WASM module, injecting
+    /// the previously stored `PluginState::memory` into the new instance.
     pub async fn reload_plugin(&self, plugin_id: &str) -> crate::Result<String> {
         let mut plugins = self.plugins.write().await;
         let existing =
@@ -1509,14 +1519,15 @@ impl PluginRuntime {
     /// Call a tool provided by a plugin.
     ///
     /// The guest module is expected to export either:
-    ///  - `call_tool(name_ptr: i32, name_len: i32, params_ptr: i32, params_len: i32,
-    ///               out_ptr: i32, out_max: i32) -> i32`  (generic dispatcher), or
-    ///  - `{tool_name}(params_ptr: i32, params_len: i32, out_ptr: i32, out_max: i32) -> i32`
-    ///    (tool-specific function).
+    ///  - `call_tool(name_ptr: i32, name_len: i32, params_ptr: i32, params_len:
+    ///    i32, out_ptr: i32, out_max: i32) -> i32`  (generic dispatcher), or
+    ///  - `{tool_name}(params_ptr: i32, params_len: i32, out_ptr: i32, out_max:
+    ///    i32) -> i32` (tool-specific function).
     ///
-    /// The return value is the number of bytes written to `out_ptr`, or a negative
-    /// value on error.  Both the input params and the output buffer are managed via
-    /// the guest's `alloc(size: i32) -> i32` export when present.
+    /// The return value is the number of bytes written to `out_ptr`, or a
+    /// negative value on error.  Both the input params and the output
+    /// buffer are managed via the guest's `alloc(size: i32) -> i32` export
+    /// when present.
     ///
     /// Params and results are JSON-encoded strings.
     pub async fn call_tool(
@@ -1560,8 +1571,8 @@ impl PluginRuntime {
 
         #[cfg(not(feature = "plugins"))]
         Err(crate::error::SyscityError::Internal(
-            "Plugin execution requires the `plugins` feature. \
-             Recompile Syscity with `--features plugins` to enable WASM plugin support."
+            "Plugin execution requires the `plugins` feature. Recompile Syscity with `--features \
+             plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }
@@ -1690,7 +1701,8 @@ impl PluginRuntime {
 
     /// Call a plugin's provider `complete` implementation.
     ///
-    /// The plugin must export `provider_complete(request_ptr, request_len, out_ptr, out_max) -> i32`.
+    /// The plugin must export `provider_complete(request_ptr, request_len,
+    /// out_ptr, out_max) -> i32`.
     pub async fn call_provider_complete(
         &self,
         plugin_id: &str,
@@ -1728,16 +1740,17 @@ impl PluginRuntime {
 
         #[cfg(not(feature = "plugins"))]
         Err(crate::error::SyscityError::Internal(
-            "Plugin execution requires the `plugins` feature. \
-             Recompile Syscity with `--features plugins` to enable WASM plugin support."
+            "Plugin execution requires the `plugins` feature. Recompile Syscity with `--features \
+             plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }
 
     /// Call a plugin's provider `stream` implementation.
     ///
-    /// The plugin must export `provider_stream(request_ptr, request_len, out_ptr, out_max) -> i32`.
-    /// Returns a JSON array of CompletionChunk objects.
+    /// The plugin must export `provider_stream(request_ptr, request_len,
+    /// out_ptr, out_max) -> i32`. Returns a JSON array of CompletionChunk
+    /// objects.
     pub async fn call_provider_stream(
         &self,
         plugin_id: &str,
@@ -1775,8 +1788,8 @@ impl PluginRuntime {
 
         #[cfg(not(feature = "plugins"))]
         Err(crate::error::SyscityError::Internal(
-            "Plugin execution requires the `plugins` feature. \
-             Recompile Syscity with `--features plugins` to enable WASM plugin support."
+            "Plugin execution requires the `plugins` feature. Recompile Syscity with `--features \
+             plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }
@@ -1825,8 +1838,8 @@ impl PluginRuntime {
 
         #[cfg(not(feature = "plugins"))]
         Err(crate::error::SyscityError::Internal(
-            "Plugin execution requires the `plugins` feature. \
-             Recompile Syscity with `--features plugins` to enable WASM plugin support."
+            "Plugin execution requires the `plugins` feature. Recompile Syscity with `--features \
+             plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }

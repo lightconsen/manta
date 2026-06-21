@@ -48,7 +48,8 @@ type CreateFn = unsafe extern "C" fn(*const c_char) -> *mut std::ffi::c_void;
 /// C ABI: `syscity_driver_free(ptr: *mut c_void)`
 type FreeFn = unsafe extern "C" fn(*mut std::ffi::c_void);
 
-// ── NativeDriverLoader ────────────────────────────────────────────────────────
+// ── NativeDriverLoader
+// ────────────────────────────────────────────────────────
 
 /// Loads device drivers from native shared libraries.
 ///
@@ -163,9 +164,7 @@ impl NativeDriverLoader {
             // by `syscity_driver_create` is cast from `Box<dyn DeviceDriver>`.
             let params_str = params.to_string();
             let c_params = CString::new(params_str).map_err(|_| {
-                crate::error::SyscityError::Plugin(
-                    "Params contain null byte".into(),
-                )
+                crate::error::SyscityError::Plugin("Params contain null byte".into())
             })?;
 
             let ptr = unsafe { create_fn(c_params.as_ptr()) };
@@ -195,7 +194,8 @@ impl Drop for NativeDriverLoader {
     }
 }
 
-// ── Directory scanning ────────────────────────────────────────────────────────
+// ── Directory scanning
+// ────────────────────────────────────────────────────────
 
 /// Scan a directory for native plugin shared libraries and load them.
 ///
@@ -229,11 +229,7 @@ pub fn scan_native_plugins(dir: &Path) -> Vec<(String, DriverConstructor)> {
             Ok(loader) => {
                 let kind = loader.kind().to_string();
                 let ctor = loader.into_constructor();
-                tracing::info!(
-                    "Loaded native plugin: {} (kind: {})",
-                    path.display(),
-                    kind,
-                );
+                tracing::info!("Loaded native plugin: {} (kind: {})", path.display(), kind,);
                 plugins.push((kind, ctor));
             }
             Err(e) => {
@@ -247,8 +243,9 @@ pub fn scan_native_plugins(dir: &Path) -> Vec<(String, DriverConstructor)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::ffi::CString;
+
+    use super::*;
 
     // ── Test plugin helper ──────────────────────────────────────────────
 
@@ -267,9 +264,8 @@ mod tests {
         ) -> *mut std::ffi::c_void {
             // Double-Box: outer Box is thin, inner is the fat trait object.
             // This lets the pointer travel through C ABI as *mut c_void.
-            let driver: Box<dyn DeviceDriver> = Box::new(
-                crate::device::mock::MockDeviceDriver::new("native-device", true),
-            );
+            let driver: Box<dyn DeviceDriver> =
+                Box::new(crate::device::mock::MockDeviceDriver::new("native-device", true));
             let double_box: Box<Box<dyn DeviceDriver>> = Box::new(driver);
             Box::into_raw(double_box) as *mut std::ffi::c_void
         }

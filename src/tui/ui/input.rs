@@ -1,9 +1,5 @@
 //! Input bar rendering.
 
-use crate::tui::state::{AppState, InputMode};
-use crate::tui::ui::{
-    dim_style, highlight_style, titled_block, user_style,
-};
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -11,6 +7,9 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
     Frame,
 };
+
+use crate::tui::state::{AppState, InputMode};
+use crate::tui::ui::{dim_style, highlight_style, titled_block, user_style};
 
 /// Render the input bar.
 pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
@@ -41,9 +40,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         Style::default()
     };
 
-    let paragraph = Paragraph::new(text)
-        .style(style)
-        .wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(text).style(style).wrap(Wrap { trim: false });
     f.render_widget(paragraph, inner);
 
     // Command palette overlay for slash-command input.
@@ -51,7 +48,8 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         && state.input_buffer.starts_with('/')
         && !state.palette_commands.is_empty()
     {
-        let palette_height = (state.palette_commands.len() as u16 + 2).min(inner.height.saturating_sub(1));
+        let palette_height =
+            (state.palette_commands.len() as u16 + 2).min(inner.height.saturating_sub(1));
         let palette_area = Rect {
             x: inner.x,
             y: inner.y.saturating_sub(palette_height),
@@ -60,10 +58,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         };
         let palette_block = ratatui::widgets::Block::default()
             .borders(ratatui::widgets::Borders::ALL)
-            .title(Span::styled(
-                " Commands ",
-                Style::default().add_modifier(Modifier::BOLD),
-            ));
+            .title(Span::styled(" Commands ", Style::default().add_modifier(Modifier::BOLD)));
         let palette_inner = palette_block.inner(palette_area);
         f.render_widget(ratatui::widgets::Clear, palette_area);
         f.render_widget(palette_block, palette_area);
@@ -84,10 +79,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
                 ))
             })
             .collect();
-        f.render_widget(
-            Paragraph::new(items).wrap(Wrap { trim: false }),
-            palette_inner,
-        );
+        f.render_widget(Paragraph::new(items).wrap(Wrap { trim: false }), palette_inner);
     }
 
     // Running / abort indicator.

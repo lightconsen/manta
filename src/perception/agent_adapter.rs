@@ -100,9 +100,10 @@ pub trait AgentPerceptionAdapter: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use crate::perception::Snapshot;
-    use std::sync::Mutex;
 
     /// Minimal stub adapter purely for trait-shape testing.
     struct StubAdapter {
@@ -145,7 +146,8 @@ mod tests {
     async fn test_stub_round_trips_focus() {
         use crate::perception::Modality;
         let a: Arc<dyn AgentPerceptionAdapter> = StubAdapter::new();
-        a.focus(Focus::default().with_modalities([Modality::System])).await;
+        a.focus(Focus::default().with_modalities([Modality::System]))
+            .await;
         let f = a.current_focus().await;
         assert!(f.admits_modality(Modality::System));
         assert!(!f.admits_modality(Modality::Audio));

@@ -4,10 +4,11 @@
 //! every invocation.  If a rule is violated the execution is rejected
 //! without calling the underlying implementation.
 
-use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
+
+use serde_json::Value;
 
 /// A single safety rule attached to a capability.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -104,10 +105,7 @@ impl SafetyZone {
     /// rejected until [`reset`](Self::reset) is called.
     pub fn check(&self, capability: &str, _params: &Value) -> Result<(), String> {
         if self.engaged.load(Ordering::Acquire) {
-            return Err(format!(
-                "Safety zone is tripped — cannot execute '{}'",
-                capability
-            ));
+            return Err(format!("Safety zone is tripped — cannot execute '{}'", capability));
         }
         // Rules are evaluated by the provider at execution time;
         // the zone itself only tracks the engaged state.
@@ -205,7 +203,8 @@ mod tests {
         let zone = SafetyZone::new(vec![]);
         zone.fast_trip();
         assert!(zone.is_engaged());
-        assert!(zone.last_triggered.is_none()); // fast_trip doesn't set timestamp
+        assert!(zone.last_triggered.is_none()); // fast_trip doesn't set
+                                                // timestamp
     }
 
     #[test]

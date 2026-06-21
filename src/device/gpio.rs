@@ -24,7 +24,8 @@ use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
 use crate::device::{Device, DeviceInfo};
 use crate::error::Result;
 
-// ── GpioDriver ────────────────────────────────────────────────────────────────
+// ── GpioDriver
+// ────────────────────────────────────────────────────────────────
 
 /// Driver for Linux sysfs GPIO devices.
 ///
@@ -41,9 +42,12 @@ impl GpioDriver {
     /// Required: `pins` (array of pin numbers).
     /// Optional: `name`.
     pub fn from_config(params: Value) -> crate::Result<Arc<dyn DeviceDriver>> {
-        let pins_array = params.get("pins").and_then(Value::as_array).ok_or_else(|| {
-            crate::error::SyscityError::Validation("gpio.pins is required".into())
-        })?;
+        let pins_array = params
+            .get("pins")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                crate::error::SyscityError::Validation("gpio.pins is required".into())
+            })?;
 
         if pins_array.is_empty() {
             return Err(crate::error::SyscityError::Validation(
@@ -95,15 +99,13 @@ impl GpioDriver {
 
     /// Set the direction of a GPIO pin.
     fn set_pin_direction(pin: u32, direction: &str) -> std::io::Result<()> {
-        std::fs::write(
-            Self::gpio_class_path().join(format!("gpio{}/direction", pin)),
-            direction,
-        )
+        std::fs::write(Self::gpio_class_path().join(format!("gpio{}/direction", pin)), direction)
     }
 
     /// Read the value of a GPIO pin.
     fn read_pin(pin: u32) -> std::io::Result<bool> {
-        let val = std::fs::read_to_string(Self::gpio_class_path().join(format!("gpio{}/value", pin)))?;
+        let val =
+            std::fs::read_to_string(Self::gpio_class_path().join(format!("gpio{}/value", pin)))?;
         Ok(val.trim() == "1")
     }
 
@@ -168,7 +170,8 @@ impl DeviceDriver for GpioDriver {
     }
 }
 
-// ── Capabilities ──────────────────────────────────────────────────────────────
+// ── Capabilities
+// ──────────────────────────────────────────────────────────────
 
 struct GpioReadCapability {
     pins: Vec<u32>,
@@ -195,9 +198,7 @@ impl Capability for GpioReadCapability {
     async fn execute(&self, params: Value) -> CapabilityResult {
         let specific_pin = params.get("pin").and_then(Value::as_u64);
 
-        let read_pin_fn = |pin: u32| -> Option<bool> {
-            GpioDriver::read_pin(pin).ok()
-        };
+        let read_pin_fn = |pin: u32| -> Option<bool> { GpioDriver::read_pin(pin).ok() };
 
         match specific_pin {
             Some(pin_num) => {
@@ -217,10 +218,8 @@ impl Capability for GpioReadCapability {
                         "pin": pin,
                         "value": value,
                     })),
-                    error: value.map_or_else(
-                        || Some(format!("Failed to read pin {}", pin)),
-                        |_| None,
-                    ),
+                    error: value
+                        .map_or_else(|| Some(format!("Failed to read pin {}", pin)), |_| None),
                     duration_ms: 0,
                 }
             }
@@ -291,7 +290,10 @@ impl Capability for GpioWriteCapability {
             };
         }
 
-        let value = params.get("value").and_then(Value::as_bool).unwrap_or(false);
+        let value = params
+            .get("value")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         // Ensure pin direction is set to "out" before writing
         let _ = GpioDriver::set_pin_direction(pin, "out");
@@ -402,8 +404,9 @@ impl Capability for GpioSetModeCapability {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn test_from_config_minimal() {

@@ -1,12 +1,13 @@
 //! Linux Wayland screenshot tool using external capture utilities.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use base64::Engine;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Take screenshots on Linux Wayland using available capture tools.
 ///
@@ -49,8 +50,8 @@ impl Tool for ScreenshotTool {
     }
 
     fn description(&self) -> &str {
-        "Take a screenshot on Linux Wayland. Returns a base64-encoded PNG image. \
-         Tries grim, spectacle, or gnome-screenshot."
+        "Take a screenshot on Linux Wayland. Returns a base64-encoded PNG image. Tries grim, \
+         spectacle, or gnome-screenshot."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -81,16 +82,10 @@ impl Tool for ScreenshotTool {
             }
         };
 
-        let temp_path = std::env::temp_dir().join(format!(
-            "syscity_screenshot_{}.png",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_path =
+            std::env::temp_dir().join(format!("syscity_screenshot_{}.png", uuid::Uuid::new_v4()));
 
-        info!(
-            "Taking Wayland screenshot with {}: {}",
-            tool,
-            temp_path.display()
-        );
+        info!("Taking Wayland screenshot with {}: {}", tool, temp_path.display());
 
         let region = args.get("region").and_then(|v| v.as_str());
 
@@ -118,10 +113,7 @@ impl Tool for ScreenshotTool {
         let output = match timeout(Duration::from_secs(15), async { result }).await {
             Ok(Ok(o)) => o,
             Ok(Err(e)) => {
-                return Ok(ToolExecutionResult::error(format!(
-                    "Failed to run {}: {}",
-                    tool, e
-                )));
+                return Ok(ToolExecutionResult::error(format!("Failed to run {}: {}", tool, e)));
             }
             Err(_) => {
                 return Ok(ToolExecutionResult::error(format!("{} timed out", tool)));
@@ -131,14 +123,16 @@ impl Tool for ScreenshotTool {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             warn!("{} failed: {}", tool, stderr);
-            return Ok(ToolExecutionResult::error(format!(
-                "{} failed: {}",
-                tool, stderr
-            )));
+            return Ok(ToolExecutionResult::error(format!("{} failed: {}", tool, stderr)));
         }
 
-        let encoded_path = crate::computer::screenshot_encoder::maybe_encode_screenshot(&temp_path).await;
-        let format = if encoded_path.extension().map(|e| e == "jpg").unwrap_or(false) {
+        let encoded_path =
+            crate::computer::screenshot_encoder::maybe_encode_screenshot(&temp_path).await;
+        let format = if encoded_path
+            .extension()
+            .map(|e| e == "jpg")
+            .unwrap_or(false)
+        {
             "jpeg"
         } else {
             "png"

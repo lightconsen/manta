@@ -2,7 +2,8 @@
 //!
 //! tools for:
 //! - `image`: View image file info (dimensions, format, size)
-//! - `image_generate`: Generate images via external AI APIs (DALL-E, Stable Diffusion)
+//! - `image_generate`: Generate images via external AI APIs (DALL-E, Stable
+//!   Diffusion)
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -43,8 +44,8 @@ impl Tool for ImageTool {
     }
 
     fn description(&self) -> &str {
-        "View image file information (dimensions, format, file size). \
-         Supports common formats: PNG, JPG, GIF, WebP, SVG."
+        "View image file information (dimensions, format, file size). Supports common formats: \
+         PNG, JPG, GIF, WebP, SVG."
     }
 
     fn parameters_schema(&self) -> Value {

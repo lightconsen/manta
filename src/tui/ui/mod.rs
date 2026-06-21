@@ -1,6 +1,5 @@
 //! TUI rendering coordinator.
 
-use crate::tui::state::{AppState, Popup};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -8,6 +7,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear},
     Frame,
 };
+
+use crate::tui::state::{AppState, Popup};
 
 mod chat;
 mod config_editor;
@@ -78,10 +79,9 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 /// Helper: block with a title.
 pub fn titled_block(title: &str) -> Block<'_> {
-    Block::default().borders(Borders::ALL).title(Span::styled(
-        title,
-        Style::default().add_modifier(Modifier::BOLD),
-    ))
+    Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(title, Style::default().add_modifier(Modifier::BOLD)))
 }
 
 /// Helper: dim style for secondary text.

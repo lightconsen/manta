@@ -13,8 +13,9 @@
 //! }
 //! ```
 
-use crate::device::DeviceStatus;
 use serde::Serialize;
+
+use crate::device::DeviceStatus;
 
 /// A status change event for a single device.
 ///

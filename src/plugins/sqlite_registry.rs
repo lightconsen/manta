@@ -84,7 +84,7 @@ impl PluginSqliteRegistry {
     ) -> crate::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         let manifest_json =
-            serde_json::to_string(manifest).map_err(|e| crate::SyscityError::Serialization(e))?;
+            serde_json::to_string(manifest).map_err(crate::SyscityError::Serialization)?;
         let install_path_str = install_path.to_string_lossy().to_string();
 
         sqlx::query(
@@ -193,8 +193,9 @@ impl PluginSqliteRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::*;
 
     async fn create_test_registry() -> PluginSqliteRegistry {
         let pool = SqlitePoolOptions::new()

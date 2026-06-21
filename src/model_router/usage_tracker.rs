@@ -7,9 +7,10 @@
 //!   tracker.record("openai", usage, "gpt-4o").await;
 //!   let snapshot = tracker.snapshot("openai").await;
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
@@ -18,7 +19,8 @@ use crate::providers::Usage;
 /// Remote usage quota fetched from a provider's API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageQuota {
-    /// Estimated remaining budget / quota (in USD or tokens, provider-dependent).
+    /// Estimated remaining budget / quota (in USD or tokens,
+    /// provider-dependent).
     pub remaining: f64,
     /// Total quota limit.
     pub limit: f64,

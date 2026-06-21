@@ -1,12 +1,13 @@
 //! User manager tool — list, add, remove, and modify system users and groups.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::warn;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Action types for user management.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,17 +47,18 @@ impl UserManagerTool {
     }
 
     async fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<(bool, String)> {
-        let result = timeout(
-            Duration::from_secs(timeout_secs),
-            Command::new(cmd).args(args).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(timeout_secs), Command::new(cmd).args(args).output()).await;
 
         match result {
             Ok(Ok(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let combined = if stderr.is_empty() { stdout } else { format!("{stdout}\n{stderr}") };
+                let combined = if stderr.is_empty() {
+                    stdout
+                } else {
+                    format!("{stdout}\n{stderr}")
+                };
                 Some((output.status.success(), combined))
             }
             Ok(Err(e)) => {
@@ -96,7 +98,9 @@ impl UserManagerTool {
 
     async fn do_add(username: &str, options: Option<&str>) -> (bool, String) {
         let args = vec!["-m", username];
-        let opts: Vec<&str> = options.map(|s| s.split_whitespace().collect()).unwrap_or_default();
+        let opts: Vec<&str> = options
+            .map(|s| s.split_whitespace().collect())
+            .unwrap_or_default();
         let all_args: Vec<&str> = opts.iter().copied().chain(args.into_iter()).collect();
         match Self::run_cmd("useradd", &all_args, 30).await {
             Some((success, output)) => (success, output),
@@ -141,9 +145,9 @@ impl Tool for UserManagerTool {
     }
 
     fn description(&self) -> &str {
-        "Manage system users and groups on Linux. \
-         Supports listing users, adding/removing accounts, modifying attributes, \
-         and checking group membership. Requires root privileges for write operations."
+        "Manage system users and groups on Linux. Supports listing users, adding/removing \
+         accounts, modifying attributes, and checking group membership. Requires root privileges \
+         for write operations."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -178,7 +182,10 @@ impl Tool for UserManagerTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action_str = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+        let action_str = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
         let action = match action_str {
             "add" => UserAction::Add,
             "remove" => UserAction::Remove,
@@ -219,7 +226,10 @@ impl Tool for UserManagerTool {
                         "'username' is required for remove action".to_string(),
                     ));
                 }
-                let remove_home = args.get("remove_home").and_then(|v| v.as_bool()).unwrap_or(false);
+                let remove_home = args
+                    .get("remove_home")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let (success, output) = Self::do_remove(username, remove_home).await;
                 serde_json::json!({
                     "action": "remove",

@@ -1,12 +1,13 @@
 //! Cron manager tool — list, add, and remove cron jobs and systemd timers.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::warn;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Action types for cron management.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,17 +56,18 @@ impl CronManagerTool {
     }
 
     async fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<(bool, String)> {
-        let result = timeout(
-            Duration::from_secs(timeout_secs),
-            Command::new(cmd).args(args).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(timeout_secs), Command::new(cmd).args(args).output()).await;
 
         match result {
             Ok(Ok(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let combined = if stderr.is_empty() { stdout } else { format!("{stdout}\n{stderr}") };
+                let combined = if stderr.is_empty() {
+                    stdout
+                } else {
+                    format!("{stdout}\n{stderr}")
+                };
                 Some((output.status.success(), combined))
             }
             Ok(Err(e)) => {
@@ -214,8 +216,8 @@ impl Tool for CronManagerTool {
     }
 
     fn description(&self) -> &str {
-        "Manage cron jobs and systemd timers on Linux. \
-         Supports listing cron entries, adding/removing jobs, and listing systemd timers."
+        "Manage cron jobs and systemd timers on Linux. Supports listing cron entries, \
+         adding/removing jobs, and listing systemd timers."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -253,7 +255,10 @@ impl Tool for CronManagerTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action_str = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+        let action_str = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
         let action = match action_str {
             "add" => CronAction::Add,
             "remove" => CronAction::Remove,
@@ -274,7 +279,10 @@ impl Tool for CronManagerTool {
                 })
             }
             CronAction::Add => {
-                let expression = args.get("expression").and_then(|v| v.as_str()).unwrap_or("");
+                let expression = args
+                    .get("expression")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
                 if expression.is_empty() || command.is_empty() {
                     return Ok(ToolExecutionResult::error(

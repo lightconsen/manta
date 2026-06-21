@@ -5,9 +5,10 @@
 //! provider APIs, or plugin extensions. Suppressed models are excluded
 //! from routing and API responses.
 
+use std::collections::{HashMap, HashSet};
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;
 
 /// Pricing information for a model.

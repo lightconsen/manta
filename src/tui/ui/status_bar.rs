@@ -1,7 +1,5 @@
 //! Status bar rendering.
 
-use crate::tui::state::{AppState, ConnectionState};
-use crate::tui::ui::{dim_style, error_style};
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
@@ -9,6 +7,9 @@ use ratatui::{
     widgets::Paragraph,
     Frame,
 };
+
+use crate::tui::state::{AppState, ConnectionState};
+use crate::tui::ui::{dim_style, error_style};
 
 /// Render the status bar.
 pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
@@ -20,9 +21,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
 
     let conn = match &state.connection {
         ConnectionState::Connected {
-            scopes_granted,
-            server_version,
-            ..
+            scopes_granted, server_version, ..
         } => {
             let scopes = if scopes_granted.is_empty() {
                 "none".to_string()

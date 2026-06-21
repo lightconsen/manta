@@ -39,7 +39,8 @@ pub enum FailureClass {
 }
 
 impl FailureClass {
-    /// Classify an error from an optional HTTP status code and the error itself.
+    /// Classify an error from an optional HTTP status code and the error
+    /// itself.
     ///
     /// When the status code is known (e.g. from an HTTP response), it is used
     /// as the primary signal.  Otherwise the error message is parsed.
@@ -159,7 +160,8 @@ impl FailureClass {
     fn from_error_string(error: &SyscityError) -> Self {
         let msg = error.to_string().to_lowercase();
 
-        // Extract status code from message if present (e.g. "OpenAI API error 429: ...")
+        // Extract status code from message if present (e.g. "OpenAI API error 429:
+        // ...")
         if let Some(code) = Self::extract_status_code(&msg) {
             return Self::from_status_code(code, error);
         }

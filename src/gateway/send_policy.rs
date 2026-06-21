@@ -7,24 +7,28 @@
 //! # Example
 //!
 //! ```rust
-//! use syscity::gateway::send_policy::{SendPolicy, PolicyRule, PolicyDecision, RuleCondition};
+//! use syscity::gateway::send_policy::{PolicyDecision, PolicyRule, RuleCondition, SendPolicy};
 //!
 //! let mut policy = SendPolicy::default();
 //!
 //! // Block a specific user
-//! policy.add_rule(PolicyRule::deny("block-spammer")
-//!     .condition(RuleCondition::UserId("spammer123".into()))
-//!     .priority(100));
+//! policy.add_rule(
+//!     PolicyRule::deny("block-spammer")
+//!         .condition(RuleCondition::UserId("spammer123".into()))
+//!         .priority(100),
+//! );
 //!
 //! let decision = policy.evaluate("spammer123", "telegram", "hello");
 //! assert_eq!(decision, PolicyDecision::Deny { reason: "block-spammer".into() });
 //! ```
 
-use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
+
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-// ── Decision ──────────────────────────────────────────────────────────────────
+// ── Decision
+// ──────────────────────────────────────────────────────────────────
 
 /// The result of evaluating a `SendPolicy` for a given message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,7 +51,8 @@ impl PolicyDecision {
     }
 }
 
-// ── Conditions ────────────────────────────────────────────────────────────────
+// ── Conditions
+// ────────────────────────────────────────────────────────────────
 
 /// A condition that must match for a rule to apply.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,7 +287,8 @@ impl SendPolicy {
     }
 }
 
-// ── Glob matching ─────────────────────────────────────────────────────────────
+// ── Glob matching
+// ─────────────────────────────────────────────────────────────
 
 /// Minimal glob matching: `*` matches any substring, `?` matches one char.
 fn glob_match(pattern: &str, text: &str) -> bool {

@@ -12,10 +12,10 @@ pub use applescript::AppleScriptTool;
 pub use desktop_control::DesktopControlTool;
 pub use notification::NotificationTool;
 pub use screenshot::ScreenshotTool;
+use tracing::{info, warn};
 
 use super::{OsControlScope, PlatformConstraints, PlatformToolSet};
 use crate::tools::Tool;
-use tracing::{info, warn};
 
 /// macOS platform tool set — provides GUI automation, accessibility
 /// querying, screenshots, and AppleScript execution for macOS environments.
@@ -43,14 +43,12 @@ impl PlatformToolSet for MacosToolset {
     }
 
     fn description(&self) -> &str {
-        "macOS desktop automation: accessibility UI tree queries, \
-         screenshots, AppleScript execution, and hybrid desktop control \
-         (inspect, click, type, keyboard shortcuts)."
+        "macOS desktop automation: accessibility UI tree queries, screenshots, AppleScript \
+         execution, and hybrid desktop control (inspect, click, type, keyboard shortcuts)."
     }
 
     fn constraints(&self) -> &PlatformConstraints {
-        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> =
-            std::sync::OnceLock::new();
+        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> = std::sync::OnceLock::new();
         CONSTRAINTS.get_or_init(|| PlatformConstraints {
             target_os: vec!["macos".to_string()],
             requires_gui: true,
@@ -81,13 +79,10 @@ impl PlatformToolSet for MacosToolset {
         // Check accessibility permissions on first call.
         if !permissions::has_accessibility_permission() {
             warn!(
-                "macOS Accessibility permission not granted. \
-                 Desktop control tools (accessibility, click, type) will not work."
+                "macOS Accessibility permission not granted. Desktop control tools \
+                 (accessibility, click, type) will not work."
             );
-            info!(
-                "{}",
-                permissions::accessibility_permission_guide()
-            );
+            info!("{}", permissions::accessibility_permission_guide());
             // Trigger the system permission dialog once.
             permissions::trigger_accessibility_prompt();
             // Still return true because screenshot and basic AppleScript

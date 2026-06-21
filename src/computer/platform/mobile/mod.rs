@@ -7,7 +7,6 @@
 //! Both sets are platform-agnostic — they can run on any host OS as long as
 //! the corresponding CLI tools are installed.
 
-
 pub mod android;
 pub mod ios;
 
@@ -40,7 +39,10 @@ pub async fn run_cmd(
     cmd: &str,
     args: &[&str],
 ) -> std::io::Result<(std::process::ExitStatus, String, String)> {
-    let output = tokio::process::Command::new(cmd).args(args).output().await?;
+    let output = tokio::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .await?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     Ok((output.status, stdout, stderr))

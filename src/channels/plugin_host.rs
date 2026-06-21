@@ -3,17 +3,19 @@
 //! This module provides the runtime for loading and executing WASM-based
 //! channel plugins, enabling third-party channels without recompiling Syscity.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tracing::{debug, info, warn};
+use wasmtime::{Engine, Linker, Module, Store, TypedFunc};
+
 use crate::channels::{
     Channel, ChannelCapabilities, ConversationId, Id, IncomingMessage, MessageMetadata,
     OutgoingMessage, UserId,
 };
-use async_trait::async_trait;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
-use tracing::{debug, info, warn};
-use wasmtime::{Engine, Linker, Module, Store, TypedFunc};
 
 /// Host state passed to WASM plugins
 pub struct HostState {
@@ -145,7 +147,8 @@ fn read_string_from_memory(
         .map_err(|e| crate::error::SyscityError::Plugin(format!("Invalid UTF-8: {}", e)))
 }
 
-/// Encode a Result<String, String> as i64: high 32 bits = error ptr (0 = ok), low 32 bits = value/error ptr
+/// Encode a Result<String, String> as i64: high 32 bits = error ptr (0 = ok),
+/// low 32 bits = value/error ptr
 #[allow(dead_code)]
 fn encode_result(ok: &str, err: Option<&str>) -> i64 {
     match err {

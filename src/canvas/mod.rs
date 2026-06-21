@@ -4,11 +4,12 @@
 //! dynamic user interfaces through WebSocket updates. Supports forms, buttons,
 //! progress indicators, and real-time content streaming.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use axum::extract::ws::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -23,26 +24,25 @@ impl CanvasId {
     }
 }
 
-
 /// A2UI Component types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum CanvasComponent {
- /// Container for other components
+    /// Container for other components
     Container {
         id: String,
         children: Vec<CanvasComponent>,
         layout: Option<ContainerLayout>,
     },
- /// Text display
+    /// Text display
     Text {
         id: String,
         content: String,
         style: Option<TextStyle>,
     },
- /// Markdown content
+    /// Markdown content
     Markdown { id: String, content: String },
- /// Input field
+    /// Input field
     Input {
         id: String,
         label: Option<String>,
@@ -51,7 +51,7 @@ pub enum CanvasComponent {
         input_type: Option<String>,
         required: Option<bool>,
     },
- /// Textarea for multi-line input
+    /// Textarea for multi-line input
     Textarea {
         id: String,
         label: Option<String>,
@@ -59,63 +59,63 @@ pub enum CanvasComponent {
         value: Option<String>,
         rows: Option<u32>,
     },
- /// Button
+    /// Button
     Button {
         id: String,
         label: String,
         variant: Option<String>,
         disabled: Option<bool>,
     },
- /// Select dropdown
+    /// Select dropdown
     Select {
         id: String,
         label: Option<String>,
         options: Vec<SelectOption>,
         value: Option<String>,
     },
- /// Checkbox
+    /// Checkbox
     Checkbox {
         id: String,
         label: String,
         checked: Option<bool>,
     },
- /// Radio button group
+    /// Radio button group
     RadioGroup {
         id: String,
         label: Option<String>,
         options: Vec<SelectOption>,
         value: Option<String>,
     },
- /// Progress bar
+    /// Progress bar
     Progress {
         id: String,
         value: f64,
         max: Option<f64>,
         label: Option<String>,
     },
- /// Spinner/loading indicator
+    /// Spinner/loading indicator
     Spinner { id: String, label: Option<String> },
- /// Image display
+    /// Image display
     Image {
         id: String,
         src: String,
         alt: Option<String>,
     },
- /// Code block with syntax highlighting
+    /// Code block with syntax highlighting
     Code {
         id: String,
         content: String,
         language: Option<String>,
     },
- /// Table display
+    /// Table display
     Table {
         id: String,
         headers: Vec<String>,
         rows: Vec<Vec<String>>,
     },
- /// Divider line
+    /// Divider line
     Divider { id: String },
- /// Alert/notification
+    /// Alert/notification
     Alert {
         id: String,
         level: String,
@@ -151,22 +151,22 @@ pub struct SelectOption {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "event")]
 pub enum CanvasEvent {
- /// Button clicked
+    /// Button clicked
     ButtonClick { component_id: String },
- /// Input value changed
+    /// Input value changed
     InputChange { component_id: String, value: String },
- /// Select option changed
+    /// Select option changed
     SelectChange { component_id: String, value: String },
- /// Checkbox toggled
+    /// Checkbox toggled
     CheckboxChange { component_id: String, checked: bool },
- /// Radio selection changed
+    /// Radio selection changed
     RadioChange { component_id: String, value: String },
- /// Form submitted
+    /// Form submitted
     FormSubmit {
         component_id: String,
         values: HashMap<String, Value>,
     },
- /// Canvas closed by user
+    /// Canvas closed by user
     Close,
 }
 
@@ -174,26 +174,26 @@ pub enum CanvasEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "action")]
 pub enum CanvasUpdate {
- /// Initialize/replace entire canvas
+    /// Initialize/replace entire canvas
     Init {
         canvas_id: String,
         root: CanvasComponent,
     },
- /// Update specific component
+    /// Update specific component
     Update {
         component_id: String,
         component: CanvasComponent,
     },
- /// Remove component
+    /// Remove component
     Remove { component_id: String },
- /// Append child to container
+    /// Append child to container
     Append {
         parent_id: String,
         component: CanvasComponent,
     },
- /// Show alert/notification
+    /// Show alert/notification
     Notify { level: String, message: String },
- /// Close canvas
+    /// Close canvas
     Close,
 }
 
@@ -222,7 +222,7 @@ impl CanvasSession {
         }
     }
 
- /// Initialize canvas with root component
+    /// Initialize canvas with root component
     pub async fn init(&self, root: CanvasComponent) {
         let mut guard = self.root.write().await;
         *guard = root.clone();
@@ -233,26 +233,26 @@ impl CanvasSession {
         });
     }
 
- /// Update a specific component
+    /// Update a specific component
     pub async fn update(&self, component_id: String, component: CanvasComponent) {
         let _ = self
             .update_tx
             .send(CanvasUpdate::Update { component_id, component });
     }
 
- /// Append component to container
+    /// Append component to container
     pub async fn append(&self, parent_id: String, component: CanvasComponent) {
         let _ = self
             .update_tx
             .send(CanvasUpdate::Append { parent_id, component });
     }
 
- /// Show notification
+    /// Show notification
     pub async fn notify(&self, level: String, message: String) {
         let _ = self.update_tx.send(CanvasUpdate::Notify { level, message });
     }
 
- /// Close canvas
+    /// Close canvas
     pub async fn close(&self) {
         let _ = self.update_tx.send(CanvasUpdate::Close);
     }
@@ -261,7 +261,7 @@ impl CanvasSession {
 /// Canvas manager handles multiple UI sessions
 pub struct CanvasManager {
     sessions: RwLock<HashMap<CanvasId, Arc<CanvasSession>>>,
- /// Maps external session IDs (e.g. conversation IDs) to canvas sessions.
+    /// Maps external session IDs (e.g. conversation IDs) to canvas sessions.
     session_map: RwLock<HashMap<String, CanvasId>>,
 }
 
@@ -273,7 +273,7 @@ impl CanvasManager {
         }
     }
 
- /// Create new canvas session
+    /// Create new canvas session
     pub async fn create_session(&self, event_tx: mpsc::Sender<CanvasEvent>) -> Arc<CanvasSession> {
         let session = Arc::new(CanvasSession::new(event_tx));
         let mut sessions = self.sessions.write().await;
@@ -281,9 +281,9 @@ impl CanvasManager {
         session
     }
 
- /// Get or create a canvas session tied to an external session_id.
- ///
- /// Used by the outbound pipeline to render UI for a specific conversation.
+    /// Get or create a canvas session tied to an external session_id.
+    ///
+    /// Used by the outbound pipeline to render UI for a specific conversation.
     pub async fn get_or_create_for_session(&self, session_id: &str) -> Arc<CanvasSession> {
         {
             let map = self.session_map.read().await;
@@ -295,7 +295,8 @@ impl CanvasManager {
             }
         }
 
- // Create new session with a dummy event channel (events are consumed via broadcast)
+        // Create new session with a dummy event channel (events are consumed via
+        // broadcast)
         let (_event_tx, _event_rx) = mpsc::channel(1);
         let session = Arc::new(CanvasSession::new(_event_tx));
         let mut sessions = self.sessions.write().await;
@@ -305,7 +306,7 @@ impl CanvasManager {
         session
     }
 
- /// Apply a [`CanvasUpdate`] to the session associated with `session_id`.
+    /// Apply a [`CanvasUpdate`] to the session associated with `session_id`.
     pub async fn apply_update(&self, session_id: &str, update: CanvasUpdate) {
         let session = self.get_or_create_for_session(session_id).await;
         match update {
@@ -314,7 +315,8 @@ impl CanvasManager {
                 session.update(component_id, component).await;
             }
             CanvasUpdate::Remove { component_id } => {
- // CanvasSession doesn't have a remove method; use update with empty container as stub
+                // CanvasSession doesn't have a remove method; use update with empty container
+                // as stub
                 let _ = component_id;
             }
             CanvasUpdate::Append { parent_id, component } => {
@@ -327,19 +329,19 @@ impl CanvasManager {
         }
     }
 
- /// Get session by ID
+    /// Get session by ID
     pub async fn get_session(&self, id: &CanvasId) -> Option<Arc<CanvasSession>> {
         let sessions = self.sessions.read().await;
         sessions.get(id).cloned()
     }
 
- /// Remove session
+    /// Remove session
     pub async fn remove_session(&self, id: &CanvasId) {
         let mut sessions = self.sessions.write().await;
         sessions.remove(id);
     }
 
- /// List active sessions
+    /// List active sessions
     pub async fn list_sessions(&self) -> Vec<CanvasId> {
         let sessions = self.sessions.read().await;
         sessions.keys().cloned().collect()
@@ -368,7 +370,7 @@ impl CanvasWebSocketHandler {
         Self { canvas_id, event_tx, update_rx }
     }
 
- /// Handle incoming WebSocket message
+    /// Handle incoming WebSocket message
     pub async fn handle_message(&self, msg: Message) -> Option<CanvasEvent> {
         match msg {
             Message::Text(text) => {
@@ -389,12 +391,12 @@ impl CanvasWebSocketHandler {
         }
     }
 
- /// Get next update to send to client
+    /// Get next update to send to client
     pub async fn next_update(&mut self) -> Option<CanvasUpdate> {
         self.update_rx.recv().await.ok()
     }
 
- /// Get canvas ID
+    /// Get canvas ID
     pub fn canvas_id(&self) -> &CanvasId {
         &self.canvas_id
     }
@@ -404,7 +406,7 @@ impl CanvasWebSocketHandler {
 pub mod helpers {
     use super::*;
 
- /// Create a simple form with inputs and submit button
+    /// Create a simple form with inputs and submit button
     pub fn create_form(id: impl Into<String>, inputs: Vec<(String, String)>) -> CanvasComponent {
         let id = id.into();
         let mut children = vec![];
@@ -434,7 +436,7 @@ pub mod helpers {
         }
     }
 
- /// Create a progress indicator
+    /// Create a progress indicator
     pub fn create_progress(
         id: impl Into<String>,
         value: f64,
@@ -448,7 +450,7 @@ pub mod helpers {
         }
     }
 
- /// Create an alert
+    /// Create an alert
     pub fn create_alert(
         id: impl Into<String>,
         level: impl Into<String>,
@@ -461,7 +463,7 @@ pub mod helpers {
         }
     }
 
- /// Create a button group
+    /// Create a button group
     pub fn create_button_group(id: impl Into<String>, labels: Vec<String>) -> CanvasComponent {
         let id = id.into();
         let children = labels
@@ -482,7 +484,7 @@ pub mod helpers {
         }
     }
 
- /// Create a code display with copy button
+    /// Create a code display with copy button
     pub fn create_code_block(
         id: impl Into<String>,
         content: impl Into<String>,
@@ -725,7 +727,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
         let session = CanvasSession::new(tx);
 
- // Subscribe before sending
+        // Subscribe before sending
         let mut rx = session.update_tx.subscribe();
 
         let root = CanvasComponent::Text {
@@ -751,7 +753,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
         let session = CanvasSession::new(tx);
 
- // Subscribe before sending
+        // Subscribe before sending
         let mut rx = session.update_tx.subscribe();
 
         session
@@ -774,7 +776,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
         let session = CanvasSession::new(tx);
 
- // Subscribe before sending
+        // Subscribe before sending
         let mut rx = session.update_tx.subscribe();
 
         session.close().await;
@@ -798,7 +800,7 @@ mod tests {
         assert!(result.is_some());
         assert!(matches!(result.unwrap(), CanvasEvent::ButtonClick { .. }));
 
- // Verify event was forwarded
+        // Verify event was forwarded
         let forwarded = event_rx.try_recv();
         assert!(forwarded.is_ok());
     }

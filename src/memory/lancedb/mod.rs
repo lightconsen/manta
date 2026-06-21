@@ -6,9 +6,10 @@
 // When lancedb feature is enabled, use the real lancedb crate
 #[cfg(feature = "vector-db")]
 mod inner {
-    use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    use async_trait::async_trait;
     use tokio::sync::RwLock;
     use tracing::{debug, info};
 
@@ -121,8 +122,9 @@ mod inner {
 // Stub when vector-db feature is disabled
 #[cfg(not(feature = "vector-db"))]
 mod inner {
-    use async_trait::async_trait;
     use std::path::PathBuf;
+
+    use async_trait::async_trait;
 
     use crate::error::Result;
     use crate::memory::vector::{EmbeddedChunk, VectorStore, VectorStoreStats};

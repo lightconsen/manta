@@ -2,9 +2,10 @@
 //!
 //! Provides CLI access to vector memory: search and add documents.
 
+use clap::Subcommand;
+
 use crate::cli::OutputFormat;
 use crate::error::{Result, SyscityError};
-use clap::Subcommand;
 
 /// Default daemon base URL.
 const DAEMON_URL: &str = "http://127.0.0.1:18080";

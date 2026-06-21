@@ -123,7 +123,8 @@ pub fn parse_heartbeat_tasks(content: &str) -> Vec<HeartbeatTask> {
     tasks
 }
 
-/// Check if HEARTBEAT.md content is effectively empty (only comments, whitespace, or markdown)
+/// Check if HEARTBEAT.md content is effectively empty (only comments,
+/// whitespace, or markdown)
 pub fn is_heartbeat_content_empty(content: &str) -> bool {
     content
         .lines()

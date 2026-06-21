@@ -5,11 +5,12 @@
 //! WebDriverAgent (WDA) which is more complex; this module provides
 //! the foundational tools.
 
+use async_trait::async_trait;
+use serde_json::Value;
+
 use super::{has_idevice, run_cmd};
 use crate::computer::platform::{OsControlScope, PlatformConstraints, PlatformToolSet};
 use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
-use async_trait::async_trait;
-use serde_json::Value;
 
 /// iOS device platform tool set (requires `libimobiledevice` on PATH).
 pub struct IosToolset;
@@ -40,8 +41,7 @@ impl PlatformToolSet for IosToolset {
     }
 
     fn constraints(&self) -> &PlatformConstraints {
-        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> =
-            std::sync::OnceLock::new();
+        static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> = std::sync::OnceLock::new();
         CONSTRAINTS.get_or_init(|| PlatformConstraints {
             target_os: Vec::<String>::new(), // any OS
             requires_gui: false,
@@ -102,19 +102,15 @@ impl Tool for IdeviceIdTool {
         _args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let (status, stdout, stderr) =
-            run_cmd("idevice_id", &["--list"])
-                .await
-                .map_err(|e| crate::error::SyscityError::ExternalService {
-                    source: "idevice_id failed".to_string(),
-                    cause: Some(Box::new(e)),
-                })?;
+        let (status, stdout, stderr) = run_cmd("idevice_id", &["--list"]).await.map_err(|e| {
+            crate::error::SyscityError::ExternalService {
+                source: "idevice_id failed".to_string(),
+                cause: Some(Box::new(e)),
+            }
+        })?;
 
         if !status.success() {
-            return Ok(ToolExecutionResult::error(format!(
-                "idevice_id failed: {}",
-                stderr
-            )));
+            return Ok(ToolExecutionResult::error(format!("idevice_id failed: {}", stderr)));
         }
 
         let devices: Vec<String> = stdout
@@ -177,10 +173,7 @@ impl Tool for IdeviceScreenshotTool {
         _args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let tmp_file = format!(
-            "/tmp/syscity_ios_screenshot_{}.tiff",
-            uuid::Uuid::new_v4()
-        );
+        let tmp_file = format!("/tmp/syscity_ios_screenshot_{}.tiff", uuid::Uuid::new_v4());
 
         let mut cmd_args = vec!["--output", &tmp_file];
         if let Some(u) = &self.udid {
@@ -188,18 +181,15 @@ impl Tool for IdeviceScreenshotTool {
             cmd_args.push(u);
         }
 
-        let (status, _, stderr) = run_cmd("idevicescreenshot", &cmd_args)
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
+        let (status, _, stderr) = run_cmd("idevicescreenshot", &cmd_args).await.map_err(|e| {
+            crate::error::SyscityError::ExternalService {
                 source: "idevicescreenshot failed".to_string(),
                 cause: Some(Box::new(e)),
-            })?;
+            }
+        })?;
 
         if !status.success() {
-            return Ok(ToolExecutionResult::error(format!(
-                "idevicescreenshot failed: {}",
-                stderr
-            )));
+            return Ok(ToolExecutionResult::error(format!("idevicescreenshot failed: {}", stderr)));
         }
 
         // Convert TIFF to PNG via sips (macOS) or ImageMagick convert
@@ -210,9 +200,7 @@ impl Tool for IdeviceScreenshotTool {
             .await;
 
         let png_data = match convert_result {
-            Ok(out) if out.status.success() => {
-                tokio::fs::read(&png_file).await.ok()
-            }
+            Ok(out) if out.status.success() => tokio::fs::read(&png_file).await.ok(),
             _ => {
                 // Fallback: try ImageMagick
                 let out = tokio::process::Command::new("convert")
@@ -231,10 +219,7 @@ impl Tool for IdeviceScreenshotTool {
         let _ = tokio::fs::remove_file(&png_file).await;
 
         let base64 = match png_data {
-            Some(data) => base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &data,
-            ),
+            Some(data) => base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data),
             None => {
                 return Ok(ToolExecutionResult::error(
                     "Screenshot captured but TIFF→PNG conversion failed".to_string(),
@@ -242,10 +227,12 @@ impl Tool for IdeviceScreenshotTool {
             }
         };
 
-        Ok(ToolExecutionResult::success("Screenshot captured").with_data(serde_json::json!({
-            "base64": base64,
-            "format": "png",
-        })))
+        Ok(
+            ToolExecutionResult::success("Screenshot captured").with_data(serde_json::json!({
+                "base64": base64,
+                "format": "png",
+            })),
+        )
     }
 }
 
@@ -305,10 +292,7 @@ impl Tool for IdeviceInstallerTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
 
         let mut cmd_args: Vec<String> = Vec::new();
         if let Some(u) = &self.udid {
@@ -323,39 +307,26 @@ impl Tool for IdeviceInstallerTool {
                 cmd_args.push(path.to_string());
             }
             "uninstall" => {
-                let bundle = args
-                    .get("bundle_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let bundle = args.get("bundle_id").and_then(|v| v.as_str()).unwrap_or("");
                 cmd_args.push("--uninstall".to_string());
                 cmd_args.push(bundle.to_string());
             }
             "list" => {
                 cmd_args.push("--list-apps".to_string());
             }
-            _ => {
-                return Ok(ToolExecutionResult::error(format!(
-                    "Unknown action: {}",
-                    action
-                )))
-            }
+            _ => return Ok(ToolExecutionResult::error(format!("Unknown action: {}", action))),
         }
 
-        let (status, stdout, stderr) = run_cmd(
-            "ideviceinstaller",
-            &cmd_args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-        )
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "ideviceinstaller failed".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
+        let (status, stdout, stderr) =
+            run_cmd("ideviceinstaller", &cmd_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                .await
+                .map_err(|e| crate::error::SyscityError::ExternalService {
+                    source: "ideviceinstaller failed".to_string(),
+                    cause: Some(Box::new(e)),
+                })?;
 
         if !status.success() {
-            return Ok(ToolExecutionResult::error(format!(
-                "ideviceinstaller failed: {}",
-                stderr
-            )));
+            return Ok(ToolExecutionResult::error(format!("ideviceinstaller failed: {}", stderr)));
         }
 
         Ok(ToolExecutionResult::success(format!("Action '{}' completed", action))

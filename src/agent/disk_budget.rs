@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
+
 use tracing::{debug, info, warn};
 
 /// Default storage budget per session (10 MB).
@@ -19,27 +20,27 @@ pub const DEFAULT_SESSION_BUDGET_BYTES: usize = 10 * 1024 * 1024;
 /// Strategy for evicting data when the budget is exceeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EvictionStrategy {
- /// Remove oldest items first (by creation time).
+    /// Remove oldest items first (by creation time).
     OldestFirst,
- /// Remove least recently accessed items first.
+    /// Remove least recently accessed items first.
     #[default]
     Lru,
- /// Remove largest items first.
+    /// Remove largest items first.
     LargestFirst,
- /// Reject new writes without evicting.
+    /// Reject new writes without evicting.
     Reject,
 }
 
 /// A budget tracker entry for a single session.
 #[derive(Debug, Clone)]
 pub struct SessionBudget {
- /// Maximum allowed bytes for this session.
+    /// Maximum allowed bytes for this session.
     pub limit_bytes: usize,
- /// Currently used bytes.
+    /// Currently used bytes.
     pub used_bytes: usize,
- /// Eviction strategy when budget is exceeded.
+    /// Eviction strategy when budget is exceeded.
     pub eviction: EvictionStrategy,
- /// Tracked items: (id, size_bytes, created_at, last_accessed).
+    /// Tracked items: (id, size_bytes, created_at, last_accessed).
     items: Vec<BudgetItem>,
 }
 
@@ -73,7 +74,7 @@ impl std::fmt::Display for BudgetCategory {
 }
 
 impl SessionBudget {
- /// Create a new session budget with the given limit.
+    /// Create a new session budget with the given limit.
     pub fn new(limit_bytes: usize) -> Self {
         Self {
             limit_bytes,
@@ -83,14 +84,15 @@ impl SessionBudget {
         }
     }
 
- /// Set the eviction strategy.
+    /// Set the eviction strategy.
     pub fn with_eviction(mut self, strategy: EvictionStrategy) -> Self {
         self.eviction = strategy;
         self
     }
 
- /// Record a new item. Returns a list of item IDs that should be evicted
- /// to stay within budget, or an error if the item itself exceeds the budget.
+    /// Record a new item. Returns a list of item IDs that should be evicted
+    /// to stay within budget, or an error if the item itself exceeds the
+    /// budget.
     pub fn add_item(
         &mut self,
         id: impl Into<String>,
@@ -119,7 +121,7 @@ impl SessionBudget {
             size_bytes, category, self.used_bytes, self.limit_bytes
         );
 
- // Compute evictions if over budget
+        // Compute evictions if over budget
         let mut to_evict = Vec::new();
         while self.used_bytes > self.limit_bytes && !self.items.is_empty() {
             let victim = self.select_victim();
@@ -144,14 +146,14 @@ impl SessionBudget {
         Ok(to_evict)
     }
 
- /// Record access to an item, updating its last_accessed time.
+    /// Record access to an item, updating its last_accessed time.
     pub fn touch(&mut self, id: &str) {
         if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
             item.last_accessed = std::time::Instant::now();
         }
     }
 
- /// Remove an item by ID.
+    /// Remove an item by ID.
     pub fn remove_item(&mut self, id: &str) -> bool {
         if let Some(pos) = self.items.iter().position(|i| i.id == id) {
             let item = self.items.remove(pos);
@@ -166,7 +168,7 @@ impl SessionBudget {
         }
     }
 
- /// Get usage stats by category.
+    /// Get usage stats by category.
     pub fn stats_by_category(&self) -> HashMap<BudgetCategory, usize> {
         let mut stats = HashMap::new();
         for item in &self.items {
@@ -175,7 +177,7 @@ impl SessionBudget {
         stats
     }
 
- /// Select the index of the victim item to evict based on the strategy.
+    /// Select the index of the victim item to evict based on the strategy.
     fn select_victim(&self) -> Option<usize> {
         match self.eviction {
             EvictionStrategy::OldestFirst => self
@@ -218,7 +220,7 @@ pub struct DiskBudgetManager {
 }
 
 impl DiskBudgetManager {
- /// Create a new disk budget manager.
+    /// Create a new disk budget manager.
     pub fn new(storage_dir: impl Into<PathBuf>) -> Self {
         Self {
             budgets: Mutex::new(HashMap::new()),
@@ -227,13 +229,13 @@ impl DiskBudgetManager {
         }
     }
 
- /// Set the default limit for new sessions.
+    /// Set the default limit for new sessions.
     pub fn with_default_limit(mut self, limit_bytes: usize) -> Self {
         self.default_limit = limit_bytes;
         self
     }
 
- /// Get or create a budget for a session.
+    /// Get or create a budget for a session.
     pub fn get_or_create(
         &self,
         session_id: &str,
@@ -245,14 +247,14 @@ impl DiskBudgetManager {
         budgets
     }
 
- /// Set a custom budget limit for a session.
+    /// Set a custom budget limit for a session.
     pub fn set_budget(&self, session_id: &str, limit_bytes: usize) {
         let mut budgets = self.budgets.lock().expect("lock poisoned");
         budgets.insert(session_id.to_string(), SessionBudget::new(limit_bytes));
         info!("Set budget for session {} to {} bytes", session_id, limit_bytes);
     }
 
- /// Track a new item for a session.
+    /// Track a new item for a session.
     pub fn track_item(
         &self,
         session_id: &str,
@@ -268,7 +270,7 @@ impl DiskBudgetManager {
         }
     }
 
- /// Remove a tracked item.
+    /// Remove a tracked item.
     pub fn remove_item(&self, session_id: &str, item_id: &str) -> bool {
         let mut budgets = self.budgets.lock().expect("lock poisoned");
         budgets
@@ -277,7 +279,7 @@ impl DiskBudgetManager {
             .unwrap_or(false)
     }
 
- /// Touch an item (mark as accessed).
+    /// Touch an item (mark as accessed).
     pub fn touch(&self, session_id: &str, item_id: &str) {
         let mut budgets = self.budgets.lock().expect("lock poisoned");
         if let Some(budget) = budgets.get_mut(session_id) {
@@ -285,7 +287,7 @@ impl DiskBudgetManager {
         }
     }
 
- /// Clear all tracked items for a session.
+    /// Clear all tracked items for a session.
     pub fn clear_session(&self, session_id: &str) {
         let mut budgets = self.budgets.lock().expect("lock poisoned");
         if budgets.remove(session_id).is_some() {
@@ -293,7 +295,7 @@ impl DiskBudgetManager {
         }
     }
 
- /// Get budget stats for a session.
+    /// Get budget stats for a session.
     pub fn session_stats(&self, session_id: &str) -> Option<SessionBudgetStats> {
         let budgets = self.budgets.lock().expect("lock poisoned");
         budgets.get(session_id).map(|b| SessionBudgetStats {
@@ -309,7 +311,7 @@ impl DiskBudgetManager {
         })
     }
 
- /// Get global stats across all sessions.
+    /// Get global stats across all sessions.
     pub fn global_stats(&self) -> GlobalBudgetStats {
         let budgets = self.budgets.lock().expect("lock poisoned");
         let session_count = budgets.len();
@@ -323,7 +325,7 @@ impl DiskBudgetManager {
         }
     }
 
- /// Check if a session is over budget.
+    /// Check if a session is over budget.
     pub fn is_over_budget(&self, session_id: &str) -> bool {
         let budgets = self.budgets.lock().expect("lock poisoned");
         budgets
@@ -332,7 +334,7 @@ impl DiskBudgetManager {
             .unwrap_or(false)
     }
 
- /// Initialize storage directory.
+    /// Initialize storage directory.
     pub fn init(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.storage_dir)?;
         debug!("Disk budget manager initialized at {:?}", self.storage_dir);
@@ -376,9 +378,9 @@ mod tests {
         let mut budget = SessionBudget::new(100);
         budget.add_item("a1", BudgetCategory::Artifact, 60).unwrap();
         budget.add_item("a2", BudgetCategory::Artifact, 60).unwrap();
- // Total 120 > 100, should evict LRU item (a1, never touched)
+        // Total 120 > 100, should evict LRU item (a1, never touched)
         assert_eq!(budget.used_bytes, 60);
- // a1 should be evicted
+        // a1 should be evicted
     }
 
     #[test]
@@ -386,8 +388,9 @@ mod tests {
         let mut budget = SessionBudget::new(100).with_eviction(EvictionStrategy::Reject);
         budget.add_item("a1", BudgetCategory::Artifact, 60).unwrap();
         let result = budget.add_item("a2", BudgetCategory::Artifact, 60);
- // Reject strategy returns None from select_victim, so while loop won't evict
- // used_bytes stays at 120 > 100 but no panic. In practice Reject is handled differently.
+        // Reject strategy returns None from select_victim, so while loop won't evict
+        // used_bytes stays at 120 > 100 but no panic. In practice Reject is handled
+        // differently.
         assert!(result.is_ok()); // doesn't reject on add, just doesn't evict
         assert!(budget.used_bytes > budget.limit_bytes);
     }

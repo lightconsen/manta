@@ -1,4 +1,5 @@
-//! Linux OS device monitor — listens to udev events via `NETLINK_KOBJECT_UEVENT`.
+//! Linux OS device monitor — listens to udev events via
+//! `NETLINK_KOBJECT_UEVENT`.
 //!
 //! Uses a raw netlink socket (no external dependencies beyond `libc`) to
 //! subscribe to kernel uevent messages.  The wire format is a sequence of
@@ -98,10 +99,7 @@ impl LinuxUdevMonitor {
             }
         });
 
-        Ok(Self {
-            tx,
-            _reader: reader,
-        })
+        Ok(Self { tx, _reader: reader })
     }
 }
 
@@ -127,7 +125,8 @@ fn open_uevent_socket() -> std::io::Result<RawFd> {
             return Err(std::io::Error::last_os_error());
         }
 
-        // Allow non-root processes to receive uevents (requires net.ipv4.ping_group_range)
+        // Allow non-root processes to receive uevents (requires
+        // net.ipv4.ping_group_range)
         let one: i32 = 1;
         let ret = libc::setsockopt(
             fd,
@@ -190,10 +189,7 @@ fn parse_uevent(buf: &[u8]) -> Option<OsDeviceEvent> {
         _ => return None,
     };
 
-    let subsystem = pairs
-        .get("SUBSYSTEM")
-        .cloned()
-        .unwrap_or_default();
+    let subsystem = pairs.get("SUBSYSTEM").cloned().unwrap_or_default();
 
     let devname = pairs.get("DEVNAME").or_else(|| pairs.get("DEVICE_NAME"));
     let devnode = devname.map(|n| format!("/dev/{}", n));
@@ -256,7 +252,11 @@ fn parse_key_value_pairs(data: &[u8]) -> Option<HashMap<String, String>> {
         }
     }
 
-    if map.is_empty() { None } else { Some(map) }
+    if map.is_empty() {
+        None
+    } else {
+        Some(map)
+    }
 }
 
 /// Factory function.
@@ -291,8 +291,8 @@ mod tests {
         buf.extend_from_slice(b"libudev\0");
         buf.extend_from_slice(&UDEV_MONITOR_MAGIC.to_ne_bytes());
         buf.extend_from_slice(&16u32.to_ne_bytes()); // header_size
-        // Padding (UDEV_HDR_SIZE = 16, already there)
-        // Payload
+                                                     // Padding (UDEV_HDR_SIZE = 16, already there)
+                                                     // Payload
         buf.extend_from_slice(b"ACTION=add\0");
         buf.extend_from_slice(b"SUBSYSTEM=tty\0");
         buf.extend_from_slice(b"DEVNAME=ttyUSB0\0");

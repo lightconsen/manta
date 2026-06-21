@@ -192,7 +192,8 @@ pub struct McpReadResourceRequest {
     pub uri: String,
 }
 
-// ── OpenAI-compatible API ─────────────────────────────────────────────────────
+// ── OpenAI-compatible API
+// ─────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct OpenAiMessage {

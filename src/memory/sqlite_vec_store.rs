@@ -2,10 +2,11 @@
 
 #![allow(unsafe_code)]
 
-use async_trait::async_trait;
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
+
+use async_trait::async_trait;
+use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tracing::info;
 
 use super::vector::{EmbeddedChunk, VectorStore, VectorStoreStats};

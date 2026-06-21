@@ -4,14 +4,15 @@
 //! executor optionally verifies the result and, on failure, retries or
 //! triggers a rollback.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use super::{DagScheduler, Plan, PlanResult, TaskStatus};
 use crate::computer::{
     ActionResult, ComputerAdapter, RollbackManager, VerificationConfig, VerificationEngine,
 };
 use crate::planner::{ErrorDiagnosisEngine, ExperienceContext, ToolLearningEngine};
 use crate::tools::ToolRegistry;
-use std::collections::HashSet;
-use std::sync::Arc;
 
 /// Configuration for the task executor.
 #[derive(Debug, Clone)]
@@ -50,10 +51,7 @@ pub struct TaskExecutor {
 }
 
 impl TaskExecutor {
-    pub fn new(
-        adapter: Arc<dyn ComputerAdapter>,
-        verifier: VerificationEngine,
-    ) -> Self {
+    pub fn new(adapter: Arc<dyn ComputerAdapter>, verifier: VerificationEngine) -> Self {
         Self {
             adapter,
             tool_registry: None,
@@ -65,7 +63,8 @@ impl TaskExecutor {
         }
     }
 
-    /// Attach a ToolRegistry for executing [`ToolCall`](crate::computer::DesktopAction::ToolCall) actions.
+    /// Attach a ToolRegistry for executing
+    /// [`ToolCall`](crate::computer::DesktopAction::ToolCall) actions.
     pub fn with_tool_registry(mut self, registry: Arc<ToolRegistry>) -> Self {
         self.tool_registry = Some(registry);
         self
@@ -91,7 +90,8 @@ impl TaskExecutor {
         self
     }
 
-    /// Attach a learning engine that records experience and suggests alternatives.
+    /// Attach a learning engine that records experience and suggests
+    /// alternatives.
     pub fn with_learning_engine(mut self, engine: Arc<ToolLearningEngine>) -> Self {
         self.learning_engine = Some(engine);
         self
@@ -114,10 +114,7 @@ impl TaskExecutor {
         }
 
         let scheduler = DagScheduler::from_plan(plan).map_err(|e| {
-            crate::error::SyscityError::Validation(format!(
-                "Plan scheduling failed: {:?}",
-                e
-            ))
+            crate::error::SyscityError::Validation(format!("Plan scheduling failed: {:?}", e))
         })?;
 
         let mut rollback_mgr = if self.config.enable_rollback {
@@ -169,7 +166,9 @@ impl TaskExecutor {
             // but we avoid concurrent mutable borrows of plan/rollback_mgr.
             let mut any_failure = false;
             for id in batch {
-                let result = self.run_single_task(id.clone(), plan, rollback_mgr.as_mut()).await;
+                let result = self
+                    .run_single_task(id.clone(), plan, rollback_mgr.as_mut())
+                    .await;
                 match result {
                     Ok(()) => {
                         completed.insert(id.clone());
@@ -235,10 +234,7 @@ impl TaskExecutor {
         let task = plan
             .get_task(&id)
             .ok_or_else(|| {
-                crate::error::SyscityError::Validation(format!(
-                    "Task '{}' not found in plan",
-                    id
-                ))
+                crate::error::SyscityError::Validation(format!("Task '{}' not found in plan", id))
             })?
             .clone();
 
@@ -258,10 +254,7 @@ impl TaskExecutor {
             // Check execution controller before each attempt.
             if let Some(ref ctrl) = self.execution_controller {
                 if let Err(reason) = ctrl.check_and_wait().await {
-                    plan.fail_task(
-                        &id,
-                        format!("Execution cancelled: {}", reason),
-                    );
+                    plan.fail_task(&id, format!("Execution cancelled: {}", reason));
                     return Err(crate::error::SyscityError::Internal(reason.to_string()));
                 }
             }
@@ -270,17 +263,16 @@ impl TaskExecutor {
                 Ok(result) => {
                     // Verify if criteria are set.
                     let verified = if let Some(ref criteria) = task.verification {
-                        match self
-                            .verifier
-                            .verify(criteria, &result, None)
-                            .await
-                        {
+                        match self.verifier.verify(criteria, &result, None).await {
                             Ok(true) => true,
                             Ok(false) => {
                                 if attempt < task.max_retries {
                                     tracing::warn!(
-                                        "Task '{}' verification failed (attempt {}/{}), retrying...",
-                                        id, attempt + 1, task.max_retries + 1
+                                        "Task '{}' verification failed (attempt {}/{}), \
+                                         retrying...",
+                                        id,
+                                        attempt + 1,
+                                        task.max_retries + 1
                                     );
                                     tokio::time::sleep(task.retry_delay).await;
                                     continue;
@@ -290,16 +282,17 @@ impl TaskExecutor {
                             Err(e) => {
                                 if attempt < task.max_retries {
                                     tracing::warn!(
-                                        "Task '{}' verification error (attempt {}/{}): {}, retrying...",
-                                        id, attempt + 1, task.max_retries + 1, e
+                                        "Task '{}' verification error (attempt {}/{}): {}, \
+                                         retrying...",
+                                        id,
+                                        attempt + 1,
+                                        task.max_retries + 1,
+                                        e
                                     );
                                     tokio::time::sleep(task.retry_delay).await;
                                     continue;
                                 }
-                                plan.fail_task(
-                                    &id,
-                                    format!("Verification failed: {}", e),
-                                );
+                                plan.fail_task(&id, format!("Verification failed: {}", e));
                                 return Err(crate::error::SyscityError::ExternalService {
                                     source: format!("Task verification failed: {}", e),
                                     cause: None,
@@ -330,10 +323,7 @@ impl TaskExecutor {
 
                         return Ok(());
                     } else {
-                        plan.fail_task(
-                            &id,
-                            "Verification failed after all retries".to_string(),
-                        );
+                        plan.fail_task(&id, "Verification failed after all retries".to_string());
                         return Err(crate::error::SyscityError::Validation(
                             "Verification failed".to_string(),
                         ));
@@ -343,7 +333,10 @@ impl TaskExecutor {
                     if attempt < task.max_retries {
                         tracing::warn!(
                             "Task '{}' execution failed (attempt {}/{}): {}, retrying...",
-                            id, attempt + 1, task.max_retries + 1, e
+                            id,
+                            attempt + 1,
+                            task.max_retries + 1,
+                            e
                         );
                         tokio::time::sleep(task.retry_delay).await;
                     } else {
@@ -357,8 +350,13 @@ impl TaskExecutor {
                         if let Ok(ref d) = diagnosis {
                             tracing::info!(
                                 "Diagnosis for task '{}': {} (severity: {:?}, confidence: {:.2})",
-                                id, d.root_causes.first().map(|r| r.description.as_str()).unwrap_or("unknown"),
-                                d.severity, d.confidence
+                                id,
+                                d.root_causes
+                                    .first()
+                                    .map(|r| r.description.as_str())
+                                    .unwrap_or("unknown"),
+                                d.severity,
+                                d.confidence
                             );
                         }
 
@@ -366,7 +364,7 @@ impl TaskExecutor {
                         let mut alternative_suggestion = None;
                         if let Some(ref learning) = self.learning_engine {
                             let ctx = ExperienceContext::current(&plan.goal);
-                            match learning
+                            if let Ok(Some(suggestion)) = learning
                                 .suggest_alternative(
                                     &desktop_action_name(&task.action),
                                     &error_str,
@@ -374,14 +372,12 @@ impl TaskExecutor {
                                 )
                                 .await
                             {
-                                Ok(Some(suggestion)) => {
-                                    tracing::info!(
-                                        "ToolLearningEngine suggests alternative for task '{}': {}",
-                                        id, suggestion.alternative
-                                    );
-                                    alternative_suggestion = Some(suggestion.alternative.clone());
-                                }
-                                _ => {}
+                                tracing::info!(
+                                    "ToolLearningEngine suggests alternative for task '{}': {}",
+                                    id,
+                                    suggestion.alternative
+                                );
+                                alternative_suggestion = Some(suggestion.alternative.clone());
                             }
                         }
 
@@ -389,9 +385,7 @@ impl TaskExecutor {
                         if let Some(ref alt) = alternative_suggestion {
                             error_msg.push_str(&format!("\nSuggested alternative: {}", alt));
                         }
-                        plan.fail_task(&id,
-                            error_msg.clone(),
-                        );
+                        plan.fail_task(&id, error_msg.clone());
 
                         // ── Record experience ─────────────────────────────────────────
                         if let Some(ref learning) = self.learning_engine {
@@ -419,9 +413,7 @@ impl TaskExecutor {
 
         // Should not reach here, but handle defensively.
         plan.fail_task(&id, "Exhausted all retries".to_string());
-        Err(crate::error::SyscityError::Validation(
-            "Exhausted all retries".to_string(),
-        ))
+        Err(crate::error::SyscityError::Validation("Exhausted all retries".to_string()))
     }
 
     /// Resolve a [`DesktopAction`] into an [`ActionResult`].
@@ -429,18 +421,20 @@ impl TaskExecutor {
     /// For [`ToolCall`](crate::computer::DesktopAction::ToolCall) actions the
     /// tool is looked up and executed via [`ToolRegistry`].  All other actions
     /// are forwarded to the [`ComputerAdapter`].
-    async fn resolve_action(&self, action: &crate::computer::DesktopAction) -> crate::Result<ActionResult> {
+    async fn resolve_action(
+        &self,
+        action: &crate::computer::DesktopAction,
+    ) -> crate::Result<ActionResult> {
         match action {
             crate::computer::DesktopAction::ToolCall { tool_name, args } => {
                 self.execute_tool_call(tool_name, args).await
             }
-            other => {
-                self.adapter.execute(other.clone()).await
-                    .map_err(|e| crate::error::SyscityError::ExternalService {
-                        source: e.to_string(),
-                        cause: None,
-                    })
-            }
+            other => self.adapter.execute(other.clone()).await.map_err(|e| {
+                crate::error::SyscityError::ExternalService {
+                    source: e.to_string(),
+                    cause: None,
+                }
+            }),
         }
     }
 
@@ -521,12 +515,14 @@ fn desktop_action_name(action: &crate::computer::DesktopAction) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use serde_json::json;
+
     use super::*;
     use crate::planner::{Plan, Task, TaskStatus};
     use crate::tools::{Tool, ToolContext, ToolExecutionResult, ToolRegistry};
-    use async_trait::async_trait;
-    use serde_json::json;
-    use std::sync::Arc;
 
     // ── Mock tool for ToolCall tests ──────────────────────────────────────
 
@@ -574,15 +570,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_with_cancelled_controller() {
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(
-            Arc::new(crate::tools::ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        )));
         let verifier = VerificationEngine::new(adapter.clone());
         let ctrl = crate::acp::ExecutionController::new();
         ctrl.cancel().await;
 
-        let executor = TaskExecutor::new(adapter, verifier)
-            .with_execution_controller(ctrl);
+        let executor = TaskExecutor::new(adapter, verifier).with_execution_controller(ctrl);
 
         let mut plan = Plan::new("test plan".to_string());
         plan.add_task(Task {
@@ -611,12 +606,11 @@ mod tests {
         let tool_registry = Arc::new(ToolRegistry::new());
         tool_registry.register_dynamic(Arc::new(MockDeviceReadTool));
 
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(
-            Arc::new(ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
+            ToolRegistry::new(),
+        )));
         let verifier = VerificationEngine::new(adapter.clone());
-        let executor = TaskExecutor::new(adapter, verifier)
-            .with_tool_registry(tool_registry);
+        let executor = TaskExecutor::new(adapter, verifier).with_tool_registry(tool_registry);
 
         let mut plan = Plan::new("tool call test".to_string());
         plan.add_task(Task {
@@ -644,9 +638,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_tool_call_no_registry() {
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(
-            Arc::new(ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
+            ToolRegistry::new(),
+        )));
         let verifier = VerificationEngine::new(adapter.clone());
         // No with_tool_registry() — ToolRegistry not configured
         let executor = TaskExecutor::new(adapter, verifier);
@@ -680,12 +674,11 @@ mod tests {
         // Register a tool but call a different one
         tool_registry.register_dynamic(Arc::new(MockDeviceReadTool));
 
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(
-            Arc::new(ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
+            ToolRegistry::new(),
+        )));
         let verifier = VerificationEngine::new(adapter.clone());
-        let executor = TaskExecutor::new(adapter, verifier)
-            .with_tool_registry(tool_registry);
+        let executor = TaskExecutor::new(adapter, verifier).with_tool_registry(tool_registry);
 
         let mut plan = Plan::new("tool call not found".to_string());
         plan.add_task(Task {

@@ -1,10 +1,10 @@
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
@@ -48,7 +48,12 @@ pub async fn switch_model_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<SwitchModelRequest>,
 ) -> impl IntoResponse {
-    match state.infra.model_router.switch_default_model(&body.model).await {
+    match state
+        .infra
+        .model_router
+        .switch_default_model(&body.model)
+        .await
+    {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
@@ -182,7 +187,9 @@ pub async fn set_fallback_chain_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<SetFallbackChainRequest>,
 ) -> impl IntoResponse {
-    match state.infra.model_router
+    match state
+        .infra
+        .model_router
         .set_fallback_chain(&alias, body.providers)
         .await
     {

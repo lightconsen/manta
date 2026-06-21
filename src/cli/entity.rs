@@ -1,8 +1,9 @@
 //! Entity management commands for Syscity
 
+use clap::Subcommand;
+
 use crate::core::models::Status;
 use crate::error::{Result, SyscityError};
-use clap::Subcommand;
 
 /// Default daemon base URL.
 const DAEMON_URL: &str = "http://127.0.0.1:18080";

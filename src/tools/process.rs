@@ -4,12 +4,13 @@
 //! Unlike ShellTool (one-shot execution), ProcessTool starts processes
 //! that can run in the background and be queried/stopped later.
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -131,8 +132,8 @@ impl Tool for ProcessTool {
     }
 
     fn description(&self) -> &str {
-        "Manage background processes. Start long-running commands, check status, \
-         and stop them gracefully or forcefully. Unlike shell, this tracks processes over time."
+        "Manage background processes. Start long-running commands, check status, and stop them \
+         gracefully or forcefully. Unlike shell, this tracks processes over time."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -220,7 +221,7 @@ impl Tool for ProcessTool {
                 if let Some(dir) = working_dir {
                     cmd.current_dir(dir);
                 } else {
-                    cmd.current_dir(&context.working_directory());
+                    cmd.current_dir(context.working_directory());
                 }
 
                 if let Some(vars) = env {

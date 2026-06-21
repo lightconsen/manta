@@ -52,7 +52,8 @@ impl AuthProfileStore {
         })?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_auth_profile_provider ON auth_profile_states(provider_name)",
+            "CREATE INDEX IF NOT EXISTS idx_auth_profile_provider ON \
+             auth_profile_states(provider_name)",
         )
         .execute(&self.pool)
         .await

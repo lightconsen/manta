@@ -3,18 +3,22 @@
 //! The Agent is the central orchestrator that handles conversations,
 //! manages context, calls tools, and interacts with LLM providers.
 
-use crate::channels::{IncomingMessage, OutgoingMessage};
-use crate::channels::thread_binding::ThreadBindingManager;
-use crate::providers::{CompletionRequest, ContentBlock, Message, Provider, Role, ToolCall, ToolResult};
-use crate::tools::{ToolContext, ToolExecutionChunk, ToolRegistry};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, instrument, warn};
+
+use crate::channels::thread_binding::ThreadBindingManager;
+use crate::channels::{IncomingMessage, OutgoingMessage};
+use crate::providers::{
+    CompletionRequest, ContentBlock, Message, Provider, Role, ToolCall, ToolResult,
+};
+use crate::tools::{ToolContext, ToolExecutionChunk, ToolRegistry};
 
 /// Progress events during message processing
 #[derive(Debug, Clone)]
@@ -24,9 +28,17 @@ pub enum ProgressEvent {
     /// Executing a tool
     ToolCalling { name: String, arguments: String },
     /// Tool execution completed
-    ToolResult { name: String, result: String, data: Option<serde_json::Value> },
+    ToolResult {
+        name: String,
+        result: String,
+        data: Option<serde_json::Value>,
+    },
     /// Incremental chunk from a streaming tool
-    ToolResultDelta { name: String, chunk: String, is_error: bool },
+    ToolResultDelta {
+        name: String,
+        chunk: String,
+        is_error: bool,
+    },
     /// LLM is generating reasoning/thinking content
     Generating { content: Option<String> },
     /// LLM is streaming text content delta
@@ -109,8 +121,8 @@ pub use transcript::{
 };
 pub use turns::{Thread, ThreadManager, Turn, TurnState};
 
-use self::session_store::SessionStore;
 use self::heuristics::{is_complex_task, is_desktop_task};
+use self::session_store::SessionStore;
 
 /// Fast check for desktop-operation tasks that should use ComputerUseLoop.
 fn parse_loop_decision(text: &str) -> crate::Result<crate::computer::LoopDecision> {
@@ -136,14 +148,10 @@ fn parse_loop_decision(text: &str) -> crate::Result<crate::computer::LoopDecisio
 
     // Fallback: try to infer from the text
     if trimmed.to_lowercase().starts_with("done") {
-        return Ok(crate::computer::LoopDecision::Done {
-            message: trimmed.to_string(),
-        });
+        return Ok(crate::computer::LoopDecision::Done { message: trimmed.to_string() });
     }
     if trimmed.to_lowercase().starts_with("help") {
-        return Ok(crate::computer::LoopDecision::NeedHelp {
-            reason: trimmed.to_string(),
-        });
+        return Ok(crate::computer::LoopDecision::NeedHelp { reason: trimmed.to_string() });
     }
 
     // Default: try to parse as an action
@@ -201,9 +209,7 @@ fn parse_desktop_action(text: &str) -> crate::Result<crate::computer::DesktopAct
         if let Some(start) = text.find('"') {
             if let Some(end) = text[start + 1..].find('"') {
                 let typed = &text[start + 1..start + 1 + end];
-                return Ok(DesktopAction::Type {
-                    text: typed.to_string(),
-                });
+                return Ok(DesktopAction::Type { text: typed.to_string() });
             }
         }
         // Fallback: everything after "type" is the text
@@ -223,13 +229,77 @@ fn parse_desktop_action(text: &str) -> crate::Result<crate::computer::DesktopAct
             .filter(|s| {
                 !s.is_empty()
                     && [
-                        "cmd", "command", "ctrl", "control", "alt", "option", "shift", "tab",
-                        "enter", "return", "esc", "escape", "space", "delete", "backspace",
-                        "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
-                        "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11",
-                        "f12", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l",
-                        "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-                        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+                        "cmd",
+                        "command",
+                        "ctrl",
+                        "control",
+                        "alt",
+                        "option",
+                        "shift",
+                        "tab",
+                        "enter",
+                        "return",
+                        "esc",
+                        "escape",
+                        "space",
+                        "delete",
+                        "backspace",
+                        "up",
+                        "down",
+                        "left",
+                        "right",
+                        "home",
+                        "end",
+                        "pageup",
+                        "pagedown",
+                        "f1",
+                        "f2",
+                        "f3",
+                        "f4",
+                        "f5",
+                        "f6",
+                        "f7",
+                        "f8",
+                        "f9",
+                        "f10",
+                        "f11",
+                        "f12",
+                        "a",
+                        "b",
+                        "c",
+                        "d",
+                        "e",
+                        "f",
+                        "g",
+                        "h",
+                        "i",
+                        "j",
+                        "k",
+                        "l",
+                        "m",
+                        "n",
+                        "o",
+                        "p",
+                        "q",
+                        "r",
+                        "s",
+                        "t",
+                        "u",
+                        "v",
+                        "w",
+                        "x",
+                        "y",
+                        "z",
+                        "0",
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8",
+                        "9",
                     ]
                     .contains(&s.as_str())
             })
@@ -500,7 +570,8 @@ pub struct AgentConfig {
     pub max_turns: Option<usize>,
     /// Workspace directory for file operations.
     /// When set, all relative paths are resolved against this directory.
-    /// When `workspace_only` is true, file operations are restricted to this directory.
+    /// When `workspace_only` is true, file operations are restricted to this
+    /// directory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_dir: Option<std::path::PathBuf>,
     /// When true, restrict file operations to `workspace_dir`.
@@ -689,7 +760,8 @@ pub struct Agent {
     /// Tool registry
     tools: Arc<ToolRegistry>,
     /// Per-conversation Thread (replaces flat `contexts` map).
-    /// Thread owns the Context AND the turn log — conversation continuity lives here.
+    /// Thread owns the Context AND the turn log — conversation continuity lives
+    /// here.
     thread_map: Arc<Mutex<HashMap<String, Thread>>>,
     /// Session store for turn persistence (optional).
     session_store: Option<Arc<SessionStore>>,
@@ -697,11 +769,13 @@ pub struct Agent {
     session_id: Option<String>,
     /// Shutdown signal
     shutdown_tx: Arc<RwLock<Option<mpsc::Sender<()>>>>,
-    /// Memory manager for unified memory operations (retrieval, storage, compaction)
+    /// Memory manager for unified memory operations (retrieval, storage,
+    /// compaction)
     memory_manager: Option<Arc<crate::memory::MemoryManager>>,
     /// Memory store for persistence (legacy, prefer memory_manager)
     memory_store: Option<Arc<dyn crate::memory::MemoryStore>>,
-    /// Chat history store for conversation persistence (legacy, prefer memory_manager)
+    /// Chat history store for conversation persistence (legacy, prefer
+    /// memory_manager)
     chat_history: Option<Arc<dyn crate::memory::ChatHistoryStore>>,
     /// Session search for conversation history indexing
     session_search: Option<Arc<crate::memory::SessionSearch>>,
@@ -715,7 +789,8 @@ pub struct Agent {
     cost_guard: Option<Arc<CostGuard>>,
     /// Active skill trust level for the current invocation.
     /// 0 = Community, 1 = Trusted (default).
-    /// Set by the gateway before RunSkill invocations; reset to Trusted afterward.
+    /// Set by the gateway before RunSkill invocations; reset to Trusted
+    /// afterward.
     active_skill_trust: std::sync::Arc<std::sync::atomic::AtomicU8>,
     /// Skill manager for deterministic skill prefiltering.
     /// When set, skills are dynamically filtered based on user message triggers
@@ -735,14 +810,15 @@ pub struct Agent {
     disk_budget: Option<Arc<crate::agent::DiskBudgetManager>>,
     /// Session file manager for isolated per-session file operations.
     session_file_manager: Option<Arc<crate::agent::SessionFileManager>>,
-    /// Provider-specific extra parameters (e.g. thinking config) injected into completion requests.
+    /// Provider-specific extra parameters (e.g. thinking config) injected into
+    /// completion requests.
     extra_params: Arc<RwLock<Option<serde_json::Value>>>,
     /// Optional model router for advanced routing, key rotation, and fallback.
     model_router: Option<Arc<crate::model_router::ModelRouter>>,
     /// Model alias used when routing through the model router.
     model_alias: Option<String>,
-    /// Temporary model override set per-request (e.g. from OpenAI-compatible API).
-    /// Takes precedence over `model_alias` and `model`.
+    /// Temporary model override set per-request (e.g. from OpenAI-compatible
+    /// API). Takes precedence over `model_alias` and `model`.
     model_override: Arc<RwLock<Option<String>>>,
     /// Directory for persisting active plans (JSON files).
     plans_dir: Option<std::path::PathBuf>,
@@ -823,9 +899,10 @@ impl Agent {
         *guard = model;
     }
 
-    /// Patch a [`CompletionRequest`] with provider-specific reasoning parameters
-    /// when the target model is a known reasoning / thinking model and no
-    /// explicit reasoning config has already been supplied via `extra`.
+    /// Patch a [`CompletionRequest`] with provider-specific reasoning
+    /// parameters when the target model is a known reasoning / thinking
+    /// model and no explicit reasoning config has already been supplied via
+    /// `extra`.
     fn patch_request_for_reasoning(&self, request: &mut CompletionRequest) {
         let family = self.provider.stream_family();
         let model = request
@@ -881,9 +958,10 @@ impl Agent {
 
     /// Set the skill trust level for the next process_message invocation.
     ///
-    /// Call this before invoking `process_message` or `process_message_with_progress`
-    /// to constrain which tools the agent may call. The gateway resets this to
-    /// `Trusted` after the invocation completes.
+    /// Call this before invoking `process_message` or
+    /// `process_message_with_progress` to constrain which tools the agent
+    /// may call. The gateway resets this to `Trusted` after the invocation
+    /// completes.
     pub fn set_skill_trust(&self, trust: crate::tools::SkillTrust) {
         use std::sync::atomic::Ordering;
         self.active_skill_trust
@@ -913,7 +991,8 @@ impl Agent {
             .unwrap_or(false)
     }
 
-    /// Build a ToolContext pre-configured with workspace settings from agent config.
+    /// Build a ToolContext pre-configured with workspace settings from agent
+    /// config.
     fn build_tool_context(
         &self,
         user_id: impl Into<String>,
@@ -1001,10 +1080,10 @@ impl Agent {
 
     /// Set the skill manager for deterministic skill prefiltering.
     ///
-    /// When set, the agent will dynamically filter skills based on trigger patterns
-    /// (regex, keywords, commands) before including them in the system prompt.
-    /// This reduces token usage and improves relevance by only including skills
-    /// that match the user's message.
+    /// When set, the agent will dynamically filter skills based on trigger
+    /// patterns (regex, keywords, commands) before including them in the
+    /// system prompt. This reduces token usage and improves relevance by
+    /// only including skills that match the user's message.
     pub fn with_skill_manager(mut self, manager: Arc<RwLock<crate::skills::SkillManager>>) -> Self {
         self.skill_manager = Some(manager);
         self
@@ -1027,10 +1106,8 @@ impl Agent {
     ) -> Self {
         self.computer_adapter = Some(adapter.clone());
         // Auto-create GoalPlanner when adapter + provider are both available.
-        let mut planner = crate::planner::GoalPlanner::with_provider(
-            adapter,
-            self.provider.clone(),
-        );
+        let mut planner =
+            crate::planner::GoalPlanner::with_provider(adapter, self.provider.clone());
         if let Some(ref memory) = self.memory_store {
             planner = planner.with_memory(memory.clone());
         }
@@ -1048,10 +1125,7 @@ impl Agent {
     }
 
     /// Attach a persistent state store to the goal planner for crash recovery.
-    pub fn with_planner_state_store(
-        mut self,
-        store: crate::planner::TaskStateStore,
-    ) -> Self {
+    pub fn with_planner_state_store(mut self, store: crate::planner::TaskStateStore) -> Self {
         if let Some(ref mut planner) = self.goal_planner {
             *planner = planner.clone().with_state_store(store);
         }
@@ -1209,9 +1283,9 @@ impl Agent {
 
     /// Run the Computer Use Loop for a desktop automation task.
     ///
-    /// This method launches the canonical screenshot → decide → execute → verify
-    /// cycle. The `decide` closure calls the agent's LLM provider to make
-    /// decisions based on the current screenshot and history.
+    /// This method launches the canonical screenshot → decide → execute →
+    /// verify cycle. The `decide` closure calls the agent's LLM provider to
+    /// make decisions based on the current screenshot and history.
     async fn run_computer_use_loop(
         &self,
         _conversation_id: &str,
@@ -1240,7 +1314,11 @@ impl Agent {
                             "Step {}: {:?} -> {} (verified={})\n",
                             i + 1,
                             step.action,
-                            if step.result.success { "success" } else { "failed" },
+                            if step.result.success {
+                                "success"
+                            } else {
+                                "failed"
+                            },
                             step.verified
                         ));
                     }
@@ -1289,14 +1367,10 @@ Your response:"#,
                         }
                     );
 
-                    let msg = Message::user("")
-                        .with_content_blocks(vec![
-                            ContentBlock::text(prompt),
-                            ContentBlock::image_base64(
-                                state.screenshot.base64.clone(),
-                                "image/png",
-                            ),
-                        ]);
+                    let msg = Message::user("").with_content_blocks(vec![
+                        ContentBlock::text(prompt),
+                        ContentBlock::image_base64(state.screenshot.base64.clone(), "image/png"),
+                    ]);
 
                     let request = CompletionRequest {
                         model: model.clone(),
@@ -1324,10 +1398,15 @@ Your response:"#,
                 }
             })
             .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Computer use loop: {}", e)))?;
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Computer use loop: {}", e))
+            })?;
 
         let summary = if result.success {
-            format!("✅ Desktop task completed in {} steps.\n\n{}", result.steps_taken, result.message)
+            format!(
+                "✅ Desktop task completed in {} steps.\n\n{}",
+                result.steps_taken, result.message
+            )
         } else {
             format!(
                 "⚠️ Desktop task stopped after {} steps.\n\n{}",
@@ -1341,10 +1420,10 @@ Your response:"#,
     /// Build a fresh `Context` for a new conversation thread.
     ///
     /// This is called only when no existing [`Thread`] is found for a
-    /// `conversation_id`.  It constructs the system prompt, applies token limits
-    /// and dynamic tool iteration caps, but does NOT store anything — callers
-    /// are responsible for wrapping the returned `Context` in a `Thread` and
-    /// inserting it into `thread_map`.
+    /// `conversation_id`.  It constructs the system prompt, applies token
+    /// limits and dynamic tool iteration caps, but does NOT store anything
+    /// — callers are responsible for wrapping the returned `Context` in a
+    /// `Thread` and inserting it into `thread_map`.
     async fn build_fresh_context(
         &self,
         conversation_id: &str,
@@ -1498,14 +1577,11 @@ Your response:"#,
         // ── Prompt-injection guard ────────────────────────────────────────────
         let input_scan = crate::skills::guard::scan_input(&content);
         if !input_scan.passed {
-            warn!(
-                "Blocked suspicious input from user {}: {:?}",
-                user_id, input_scan.issues
-            );
+            warn!("Blocked suspicious input from user {}: {:?}", user_id, input_scan.issues);
             return Ok(OutgoingMessage::new(
                 crate::channels::ConversationId(conversation_id),
-                "I'm unable to process this request as it contains potentially unsafe content. \
-                 If you believe this is a mistake, please rephrase your message."
+                "I'm unable to process this request as it contains potentially unsafe content. If \
+                 you believe this is a mistake, please rephrase your message."
                     .to_string(),
             ));
         }
@@ -1528,8 +1604,9 @@ Your response:"#,
             let _ = manager.reap().await;
         }
 
-        // Check cache for identical prompt (only for non-follow-up, non-time-sensitive messages)
-        // Skip cache if this looks like a follow-up (short message referring to previous context)
+        // Check cache for identical prompt (only for non-follow-up, non-time-sensitive
+        // messages) Skip cache if this looks like a follow-up (short message
+        // referring to previous context)
         let is_follow_up = content.len() < 50
             && (content.contains("it")
                 || content.contains("that")
@@ -1598,10 +1675,7 @@ Your response:"#,
                         ));
                     }
                     Err(e) => {
-                        warn!(
-                            "GoalPlanner failed: {}, falling back to ComputerUseLoop",
-                            e
-                        );
+                        warn!("GoalPlanner failed: {}, falling back to ComputerUseLoop", e);
                     }
                 }
             }
@@ -1609,8 +1683,14 @@ Your response:"#,
 
         // ── Computer Use Loop (desktop automation) ────────────────────────────
         if self.computer_adapter.is_some() && is_desktop_task(&content) {
-            info!("Desktop task detected for conversation {}, launching ComputerUseLoop", conversation_id);
-            match self.run_computer_use_loop(&conversation_id, &user_id, &content).await {
+            info!(
+                "Desktop task detected for conversation {}, launching ComputerUseLoop",
+                conversation_id
+            );
+            match self
+                .run_computer_use_loop(&conversation_id, &user_id, &content)
+                .await
+            {
                 Ok(result) => {
                     return Ok(OutgoingMessage::new(
                         crate::channels::ConversationId(conversation_id),
@@ -1966,8 +2046,7 @@ Your response:"#,
                     let restricted_count = findings
                         .iter()
                         .filter(|f| {
-                            f.classification
-                                == crate::security::DataClassification::Restricted
+                            f.classification == crate::security::DataClassification::Restricted
                         })
                         .count();
                     tracing::warn!(
@@ -1975,8 +2054,8 @@ Your response:"#,
                         restricted_count,
                         conversation_id
                     );
-                    "⚠️ This response contains sensitive personal information and has been blocked. \
-                     Please review the content before sharing."
+                    "⚠️ This response contains sensitive personal information and has been \
+                     blocked. Please review the content before sharing."
                         .to_string()
                 }
             }
@@ -2015,24 +2094,20 @@ Your response:"#,
         // ── Prompt-injection guard ────────────────────────────────────────────
         let input_scan = crate::skills::guard::scan_input(&content);
         if !input_scan.passed {
-            warn!(
-                "Blocked suspicious input from user {}: {:?}",
-                user_id, input_scan.issues
-            );
-            let rejection = "I'm unable to process this request as it contains potentially unsafe content. \
-                 If you believe this is a mistake, please rephrase your message."
+            warn!("Blocked suspicious input from user {}: {:?}", user_id, input_scan.issues);
+            let rejection = "I'm unable to process this request as it contains potentially unsafe \
+                             content. If you believe this is a mistake, please rephrase your \
+                             message."
                 .to_string();
-            (progress_cb)(ProgressEvent::Completed {
-                response: rejection.clone(),
-            })
-            .await;
+            (progress_cb)(ProgressEvent::Completed { response: rejection.clone() }).await;
             return Ok(OutgoingMessage::new(
                 crate::channels::ConversationId(conversation_id),
                 rejection,
             ));
         }
 
-        // Check cache for identical prompt (only for non-follow-up, non-time-sensitive messages)
+        // Check cache for identical prompt (only for non-follow-up, non-time-sensitive
+        // messages)
         let is_follow_up = content.len() < 50
             && (content.contains("it")
                 || content.contains("that")
@@ -2108,20 +2183,14 @@ Your response:"#,
                             result.tasks_rolled_back,
                             result.message
                         );
-                        (progress_cb)(ProgressEvent::Completed {
-                            response: msg.clone(),
-                        })
-                        .await;
+                        (progress_cb)(ProgressEvent::Completed { response: msg.clone() }).await;
                         return Ok(OutgoingMessage::new(
                             crate::channels::ConversationId(conversation_id),
                             msg,
                         ));
                     }
                     Err(e) => {
-                        warn!(
-                            "GoalPlanner failed: {}, falling back to normal processing",
-                            e
-                        );
+                        warn!("GoalPlanner failed: {}, falling back to normal processing", e);
                     }
                 }
             }
@@ -2366,7 +2435,8 @@ Your response:"#,
         Ok(outgoing)
     }
 
-    /// Process a message in persistent session mode with an execution controller.
+    /// Process a message in persistent session mode with an execution
+    /// controller.
     ///
     /// The controller is attached before processing and detached afterward,
     /// enabling pause/resume/step/cancel during the tool-call loop.
@@ -2426,7 +2496,11 @@ Your response:"#,
     ) -> ToolResult {
         let tool_name = tool_call.function.name.clone();
 
-        match self.tools.execute_call(&tool_call.function, tool_context).await {
+        match self
+            .tools
+            .execute_call(&tool_call.function, tool_context)
+            .await
+        {
             Ok(exec_result) => {
                 // Reset circuit-breaker on success
                 self.tools.reset_failure(&tool_name);
@@ -2480,27 +2554,23 @@ Your response:"#,
 
         let result = self
             .tools
-            .execute_call_streaming(
-                &tool_call.function,
-                tool_context,
-                |chunk| {
-                    let progress_cb = progress_cb.clone();
-                    let tool_name = tool_name.clone();
-                    async move {
-                        let (chunk_text, is_error) = match chunk {
-                            ToolExecutionChunk::Output(text) => (text, false),
-                            ToolExecutionChunk::Error(text) => (text, true),
-                            ToolExecutionChunk::Data(_) | ToolExecutionChunk::Done => return,
-                        };
-                        (progress_cb)(ProgressEvent::ToolResultDelta {
-                            name: tool_name,
-                            chunk: chunk_text,
-                            is_error,
-                        })
-                        .await;
-                    }
-                },
-            )
+            .execute_call_streaming(&tool_call.function, tool_context, |chunk| {
+                let progress_cb = progress_cb.clone();
+                let tool_name = tool_name.clone();
+                async move {
+                    let (chunk_text, is_error) = match chunk {
+                        ToolExecutionChunk::Output(text) => (text, false),
+                        ToolExecutionChunk::Error(text) => (text, true),
+                        ToolExecutionChunk::Data(_) | ToolExecutionChunk::Done => return,
+                    };
+                    (progress_cb)(ProgressEvent::ToolResultDelta {
+                        name: tool_name,
+                        chunk: chunk_text,
+                        is_error,
+                    })
+                    .await;
+                }
+            })
             .await;
 
         match result {
@@ -2566,7 +2636,8 @@ Your response:"#,
         result
     }
 
-    /// Run a message in one-shot mode (no persistence) with an execution controller.
+    /// Run a message in one-shot mode (no persistence) with an execution
+    /// controller.
     ///
     /// The thread context is discarded after execution completes.
     pub async fn run_message_with_controller(
@@ -2667,8 +2738,8 @@ Your response:"#,
         if let Some(ref guard) = self.cost_guard {
             if guard.is_exceeded() {
                 return Err(crate::error::SyscityError::Validation(
-                    "Budget limit exceeded — refusing provider call. \
-                     Adjust daily_limit_cents or hourly_action_limit in config."
+                    "Budget limit exceeded — refusing provider call. Adjust daily_limit_cents or \
+                     hourly_action_limit in config."
                         .to_string(),
                 ));
             }
@@ -2731,7 +2802,13 @@ Your response:"#,
             return Ok(crate::providers::CompletionResponse {
                 message: Message {
                     role: Role::Assistant,
-                    content: format!("I've reached the maximum number of tool calls ({}) for this request. The task may be too complex or the tools may not be providing the expected results. Please try a more specific request or break the task into smaller steps.", Context::DEFAULT_MAX_TOOL_ITERATIONS),
+                    content: format!(
+                        "I've reached the maximum number of tool calls ({}) for this request. The \
+                         task may be too complex or the tools may not be providing the expected \
+                         results. Please try a more specific request or break the task into \
+                         smaller steps.",
+                        Context::DEFAULT_MAX_TOOL_ITERATIONS
+                    ),
                     content_blocks: None,
                     reasoning_content: None,
                     name: None,
@@ -2764,7 +2841,9 @@ Your response:"#,
                 warn!("Duplicate tool call detected: {} with same args, skipping", tool_name);
                 results.push(ToolResult::error(
                     &tool_call.id,
-                    "Error: This exact tool call was already executed. The previous result did not provide the expected data. Please try a different approach or acknowledge that the tool cannot fulfill this request."
+                    "Error: This exact tool call was already executed. The previous result did \
+                     not provide the expected data. Please try a different approach or \
+                     acknowledge that the tool cannot fulfill this request.",
                 ));
                 continue;
             }
@@ -2885,8 +2964,8 @@ Your response:"#,
         if let Some(ref guard) = self.cost_guard {
             if guard.is_exceeded() {
                 return Err(crate::error::SyscityError::Validation(
-                    "Budget limit exceeded — refusing provider call. \
-                     Adjust daily_limit_cents or hourly_action_limit in config."
+                    "Budget limit exceeded — refusing provider call. Adjust daily_limit_cents or \
+                     hourly_action_limit in config."
                         .to_string(),
                 ));
             }
@@ -3006,7 +3085,8 @@ Your response:"#,
             finish_reason,
         };
 
-        // Record token usage in cost guard (approximate from accumulated text if no usage provided)
+        // Record token usage in cost guard (approximate from accumulated text if no
+        // usage provided)
         if let Some(ref guard) = self.cost_guard {
             let prompt_tokens = context
                 .to_messages()
@@ -3048,14 +3128,25 @@ Your response:"#,
 
             // Notify user about the limit
             (progress_cb)(ProgressEvent::Error {
-                message: format!("Tool iteration limit reached ({}) - the agent was taking too many steps. Please try a more specific request.", Context::DEFAULT_MAX_TOOL_ITERATIONS),
-            }).await;
+                message: format!(
+                    "Tool iteration limit reached ({}) - the agent was taking too many steps. \
+                     Please try a more specific request.",
+                    Context::DEFAULT_MAX_TOOL_ITERATIONS
+                ),
+            })
+            .await;
 
             // Return a response indicating the limit was reached
             return Ok(crate::providers::CompletionResponse {
                 message: Message {
                     role: Role::Assistant,
-                    content: format!("I've reached the maximum number of tool calls ({}) for this request. The task may be too complex or the tools may not be providing the expected results. Please try a more specific request or break the task into smaller steps.", Context::DEFAULT_MAX_TOOL_ITERATIONS),
+                    content: format!(
+                        "I've reached the maximum number of tool calls ({}) for this request. The \
+                         task may be too complex or the tools may not be providing the expected \
+                         results. Please try a more specific request or break the task into \
+                         smaller steps.",
+                        Context::DEFAULT_MAX_TOOL_ITERATIONS
+                    ),
                     content_blocks: None,
                     reasoning_content: None,
                     name: None,
@@ -3099,7 +3190,9 @@ Your response:"#,
                 // Add error result so LLM knows this failed
                 results.push(ToolResult::error(
                     &tool_call.id,
-                    "Error: This exact tool call was already executed. The previous result did not provide the expected data. Please try a different approach or acknowledge that the tool cannot fulfill this request."
+                    "Error: This exact tool call was already executed. The previous result did \
+                     not provide the expected data. Please try a different approach or \
+                     acknowledge that the tool cannot fulfill this request.",
                 ));
                 continue;
             }
@@ -3215,7 +3308,8 @@ Your response:"#,
     /// Spawn a background self-repair task.
     ///
     /// Every `check_interval` the task:
-    /// 1. Evicts contexts that have been inactive longer than `stale_threshold`.
+    /// 1. Evicts contexts that have been inactive longer than
+    ///    `stale_threshold`.
     /// 2. Logs and reports any tools that are currently circuit-broken.
     ///
     /// The task runs until the `Agent` is dropped.
@@ -3302,8 +3396,8 @@ Your response:"#,
 
     /// Return context assembly info for a conversation.
     ///
-    /// Returns `(message_count, token_count, max_tokens, system_prompt_len, tool_iterations)`
-    /// or `None` if the thread is not found.
+    /// Returns `(message_count, token_count, max_tokens, system_prompt_len,
+    /// tool_iterations)` or `None` if the thread is not found.
     pub async fn context_info(&self, conv_id: &str) -> Option<(usize, usize, usize, usize, usize)> {
         let map = self.thread_map.lock().await;
         map.get(conv_id).map(|t| {
@@ -3846,8 +3940,9 @@ impl AgentBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     // ── is_obviously_time_sensitive ───────────────────────────────────────────
 
@@ -3874,19 +3969,28 @@ mod tests {
     #[test]
     fn test_parse_loop_decision_done() {
         let d = parse_loop_decision("DONE: Task completed").unwrap();
-        assert!(matches!(d, crate::computer::LoopDecision::Done { message } if message == "Task completed"));
+        assert!(
+            matches!(d, crate::computer::LoopDecision::Done { message } if message == "Task completed")
+        );
     }
 
     #[test]
     fn test_parse_loop_decision_help() {
         let d = parse_loop_decision("HELP: Cannot find the button").unwrap();
-        assert!(matches!(d, crate::computer::LoopDecision::NeedHelp { reason } if reason == "Cannot find the button"));
+        assert!(
+            matches!(d, crate::computer::LoopDecision::NeedHelp { reason } if reason == "Cannot find the button")
+        );
     }
 
     #[test]
     fn test_parse_loop_decision_screenshot() {
         let d = parse_loop_decision("ACTION: screenshot").unwrap();
-        assert!(matches!(d, crate::computer::LoopDecision::Action(crate::computer::DesktopAction::Screenshot { .. })));
+        assert!(matches!(
+            d,
+            crate::computer::LoopDecision::Action(
+                crate::computer::DesktopAction::Screenshot { .. }
+            )
+        ));
     }
 
     // ── parse_desktop_action ──────────────────────────────────────────────────
@@ -3895,7 +3999,9 @@ mod tests {
     fn test_parse_action_click() {
         let a = parse_desktop_action("click at coordinate (100, 200)").unwrap();
         if let crate::computer::DesktopAction::Click { target, button } = a {
-            assert!(matches!(target, crate::computer::ClickTarget::Coordinate(p) if p.x == 100 && p.y == 200));
+            assert!(
+                matches!(target, crate::computer::ClickTarget::Coordinate(p) if p.x == 100 && p.y == 200)
+            );
             assert_eq!(button, crate::computer::MouseButton::Left);
         } else {
             panic!("Expected Click action, got {:?}", a);
@@ -3905,19 +4011,25 @@ mod tests {
     #[test]
     fn test_parse_action_type() {
         let a = parse_desktop_action("type \"hello world\"").unwrap();
-        assert!(matches!(a, crate::computer::DesktopAction::Type { text } if text == "hello world"));
+        assert!(
+            matches!(a, crate::computer::DesktopAction::Type { text } if text == "hello world")
+        );
     }
 
     #[test]
     fn test_parse_action_keypress() {
         let a = parse_desktop_action("press keys [\"cmd\", \"space\"]").unwrap();
-        assert!(matches!(a, crate::computer::DesktopAction::KeyPress { keys } if keys == vec!["cmd", "space"]));
+        assert!(
+            matches!(a, crate::computer::DesktopAction::KeyPress { keys } if keys == vec!["cmd", "space"])
+        );
     }
 
     #[test]
     fn test_parse_action_launch() {
         let a = parse_desktop_action("launch app \"Calculator\"").unwrap();
-        assert!(matches!(a, crate::computer::DesktopAction::LaunchApp { name, .. } if name == "Calculator"));
+        assert!(
+            matches!(a, crate::computer::DesktopAction::LaunchApp { name, .. } if name == "Calculator")
+        );
     }
 
     #[test]

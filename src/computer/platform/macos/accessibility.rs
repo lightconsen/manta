@@ -1,11 +1,12 @@
 //! macOS Accessibility tool — query UI trees via AppleScript/System Events.
 
-use super::applescript::AppleScriptTool;
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 use tracing::{info, warn};
+
+use super::applescript::AppleScriptTool;
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Description of a UI element on macOS.
 #[derive(Debug, Clone, Serialize)]
@@ -47,7 +48,8 @@ impl AccessibilityTool {
         Self
     }
 
-    /// Build an AppleScript that enumerates UI elements of a target application.
+    /// Build an AppleScript that enumerates UI elements of a target
+    /// application.
     fn build_ui_tree_script(app_name: &str) -> String {
         format!(
             r#"tell application "System Events"
@@ -206,14 +208,23 @@ end describe_elements"#
             elements.push(UiElement {
                 role,
                 name: parts[1].to_string(),
-                value: parts.get(2).map(|s| s.to_string()).filter(|s| !s.is_empty()),
+                value: parts
+                    .get(2)
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty()),
                 enabled: parts.get(3).and_then(|s| match *s {
                     "true" => Some(true),
                     "false" => Some(false),
                     _ => None,
                 }),
-                position: parts.get(4).map(|s| s.to_string()).filter(|s| !s.is_empty()),
-                size: parts.get(5).map(|s| s.to_string()).filter(|s| !s.is_empty()),
+                position: parts
+                    .get(4)
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty()),
+                size: parts
+                    .get(5)
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty()),
                 children: Vec::new(),
             });
         }
@@ -229,11 +240,10 @@ impl Tool for AccessibilityTool {
     }
 
     fn description(&self) -> &str {
-        "Query the macOS accessibility/UI tree for a specific application \
-         or the frontmost application. Returns a structured tree of windows, \
-         buttons, text fields, and other UI elements. \
-         This is the primary perception mechanism for desktop control — \
-         use it before taking screenshots whenever possible."
+        "Query the macOS accessibility/UI tree for a specific application or the frontmost \
+         application. Returns a structured tree of windows, buttons, text fields, and other UI \
+         elements. This is the primary perception mechanism for desktop control — use it before \
+         taking screenshots whenever possible."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -263,17 +273,16 @@ impl Tool for AccessibilityTool {
         if !super::permissions::has_accessibility_permission() {
             let guide = super::permissions::accessibility_permission_guide();
             let err_msg = format!(
-                "macOS Accessibility permission not granted. \
-                 Please grant it in System Settings → Privacy & Security → Accessibility.\n\n{}",
+                "macOS Accessibility permission not granted. Please grant it in System Settings → \
+                 Privacy & Security → Accessibility.\n\n{}",
                 guide
             );
             warn!("Accessibility tool blocked: {}", err_msg);
-            return Ok(ToolExecutionResult::error(err_msg.clone())
-                .with_data(serde_json::json!({
-                    "success": false,
-                    "error": err_msg,
-                    "needs_permission": true,
-                })));
+            return Ok(ToolExecutionResult::error(err_msg.clone()).with_data(serde_json::json!({
+                "success": false,
+                "error": err_msg,
+                "needs_permission": true,
+            })));
         }
 
         let script = if let Some(app) = args["app"].as_str() {
@@ -284,9 +293,8 @@ impl Tool for AccessibilityTool {
             Self::build_frontmost_script()
         };
 
-        let as_result = AppleScriptTool::execute_script(&script,
-            args["timeout"].as_u64().unwrap_or(15)
-        ).await;
+        let as_result =
+            AppleScriptTool::execute_script(&script, args["timeout"].as_u64().unwrap_or(15)).await;
 
         let mut result = AccessibilityResult {
             success: as_result.success,
@@ -297,9 +305,11 @@ impl Tool for AccessibilityTool {
         };
 
         if as_result.success {
-            result.app = as_result.output.lines().next().and_then(|line| {
-                line.strip_prefix("app|").map(|s| s.to_string())
-            });
+            result.app = as_result
+                .output
+                .lines()
+                .next()
+                .and_then(|line| line.strip_prefix("app|").map(|s| s.to_string()));
             result.elements = Self::parse_tree_output(&as_result.output);
         } else {
             warn!(
@@ -314,7 +324,8 @@ impl Tool for AccessibilityTool {
         if result.success {
             Ok(ToolExecutionResult::success(json).with_data(serde_json::to_value(result)?))
         } else {
-            Ok(ToolExecutionResult::error(result.error.clone().unwrap_or_default()).with_data(serde_json::to_value(result)?))
+            Ok(ToolExecutionResult::error(result.error.clone().unwrap_or_default())
+                .with_data(serde_json::to_value(result)?))
         }
     }
 

@@ -9,8 +9,9 @@
 //! - Compact: when session compaction occurs
 //! - Dream: when a dreaming cycle completes
 
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -291,8 +292,9 @@ impl MemoryEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_event_log_roundtrip() {

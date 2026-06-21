@@ -6,10 +6,11 @@
 //! - Placement hint (current/child) — new thread or reuse existing
 //! - Spawn support (subagent/acp) — what to spawn when new thread needed
 
-use chrono::{DateTime, Duration, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 /// Where to place the next message in a thread.
@@ -110,11 +111,7 @@ impl ThreadBindingPolicy {
     }
 
     /// Check if a thread binding with the given timestamps is still valid.
-    pub fn is_valid(
-        &self,
-        last_activity: &DateTime<Utc>,
-        created_at: &DateTime<Utc>,
-    ) -> bool {
+    pub fn is_valid(&self, last_activity: &DateTime<Utc>, created_at: &DateTime<Utc>) -> bool {
         let now = Utc::now();
         now - *last_activity <= self.idle_timeout && now - *created_at <= self.max_age
     }
@@ -282,10 +279,9 @@ impl ThreadBindingManager {
     pub async fn is_valid(&self, session_id: &str) -> bool {
         let bindings = self.bindings.read().await;
         match bindings.get(session_id) {
-            Some(binding) => {
-                self.policy
-                    .is_valid(&binding.last_activity, &binding.created_at)
-            }
+            Some(binding) => self
+                .policy
+                .is_valid(&binding.last_activity, &binding.created_at),
             None => false,
         }
     }
@@ -299,10 +295,7 @@ impl ThreadBindingManager {
     /// Count children of a parent session.
     pub async fn child_count(&self, parent_id: &str) -> u32 {
         let children = self.children.read().await;
-        children
-            .get(parent_id)
-            .map(|c| c.len() as u32)
-            .unwrap_or(0)
+        children.get(parent_id).map(|c| c.len() as u32).unwrap_or(0)
     }
 
     /// Check if a parent can spawn another child based on max_children policy.
@@ -316,10 +309,7 @@ impl ThreadBindingManager {
     /// Determine the placement for a new message on an existing session.
     ///
     /// Returns whether to use the current thread or spawn a child.
-    pub async fn determine_placement(
-        &self,
-        session_id: &str,
-    ) -> PlacementDecision {
+    pub async fn determine_placement(&self, session_id: &str) -> PlacementDecision {
         let bindings = self.bindings.read().await;
         let binding = match bindings.get(session_id) {
             Some(b) => b,
@@ -327,7 +317,10 @@ impl ThreadBindingManager {
         };
 
         // Check validity
-        if !self.policy.is_valid(&binding.last_activity, &binding.created_at) {
+        if !self
+            .policy
+            .is_valid(&binding.last_activity, &binding.created_at)
+        {
             return PlacementDecision::CreateNew;
         }
 
@@ -421,7 +414,8 @@ impl PlacementDecision {
     }
 }
 
-// ── Convenience presets ────────────────────────────────────────────────────────
+// ── Convenience presets
+// ────────────────────────────────────────────────────────
 
 /// Strict policy: short idle timeout, no auto-creation.
 pub fn strict_policy() -> ThreadBindingPolicy {

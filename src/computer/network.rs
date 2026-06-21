@@ -15,18 +15,19 @@
 //! }
 //! ```
 
-use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
 
 /// A single listening or established socket.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortEntry {
-    pub protocol: String,      // "tcp", "udp", "tcp6", "udp6"
-    pub local_addr: String,    // e.g. "0.0.0.0" or "::"
+    pub protocol: String,   // "tcp", "udp", "tcp6", "udp6"
+    pub local_addr: String, // e.g. "0.0.0.0" or "::"
     pub local_port: u16,
-    pub remote_addr: String,   // e.g. "0.0.0.0" for listeners
+    pub remote_addr: String, // e.g. "0.0.0.0" for listeners
     pub remote_port: u16,
-    pub state: String,         // "LISTEN", "ESTABLISHED", "TIME_WAIT", ...
+    pub state: String, // "LISTEN", "ESTABLISHED", "TIME_WAIT", ...
     pub process_name: String,
     pub pid: Option<u32>,
 }
@@ -58,8 +59,8 @@ pub struct TcpConnectResult {
 /// A single firewall rule (best-effort parsing).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FirewallRule {
-    pub chain: String,       // e.g. "INPUT", "OUTPUT"
-    pub action: String,      // e.g. "ACCEPT", "DROP", "REJECT"
+    pub chain: String,  // e.g. "INPUT", "OUTPUT"
+    pub action: String, // e.g. "ACCEPT", "DROP", "REJECT"
     pub protocol: String,
     pub source: String,
     pub destination: String,
@@ -215,9 +216,7 @@ impl NetworkInspector {
         filter_state: Option<&str>,
     ) -> crate::Result<Vec<PortEntry>> {
         // Try `ss` first (modern), fall back to `netstat`.
-        let output = std::process::Command::new("ss")
-            .args(["-tunap"])
-            .output();
+        let output = std::process::Command::new("ss").args(["-tunap"]).output();
 
         let text = match output {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
@@ -226,9 +225,7 @@ impl NetworkInspector {
                     .args(["-tunap"])
                     .output();
                 match fallback {
-                    Ok(o) if o.status.success() => {
-                        String::from_utf8_lossy(&o.stdout).to_string()
-                    }
+                    Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
                     _ => {
                         return Err(crate::error::SyscityError::Internal(
                             "Neither `ss` nor `netstat` is available".to_string(),
@@ -240,32 +237,32 @@ impl NetworkInspector {
 
         let mut entries = Vec::new();
         for line in text.lines().skip(1) {
-            // ss format:  Netid  State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port  Process
-            // netstat:    proto  recv-q  send-q  local address       foreign address    state   pid/program
+            // ss format:  Netid  State   Recv-Q  Send-Q  Local Address:Port  Peer
+            // Address:Port  Process netstat:    proto  recv-q  send-q  local
+            // address       foreign address    state   pid/program
             let cols: Vec<&str> = line.split_whitespace().collect();
             if cols.len() < 5 {
                 continue;
             }
 
-            let (protocol, state, local, remote, process_col) = if cols[0].starts_with("tcp")
-                || cols[0].starts_with("udp")
-            {
-                // ss format
-                let proto = cols[0].to_lowercase();
-                let state_str = cols.get(1).unwrap_or(&"").to_string();
-                let local = cols.get(4).unwrap_or(&"").to_string();
-                let remote = cols.get(5).unwrap_or(&"").to_string();
-                let proc_col = cols.get(6).map(|s| s.to_string()).unwrap_or_default();
-                (proto, state_str, local, remote, proc_col)
-            } else {
-                // netstat format (rough)
-                let proto = cols[0].to_lowercase();
-                let local = cols[3].to_string();
-                let remote = cols[4].to_string();
-                let state_str = cols.get(5).unwrap_or(&"").to_string();
-                let proc_col = cols.get(6).map(|s| s.to_string()).unwrap_or_default();
-                (proto, state_str, local, remote, proc_col)
-            };
+            let (protocol, state, local, remote, process_col) =
+                if cols[0].starts_with("tcp") || cols[0].starts_with("udp") {
+                    // ss format
+                    let proto = cols[0].to_lowercase();
+                    let state_str = cols.get(1).unwrap_or(&"").to_string();
+                    let local = cols.get(4).unwrap_or(&"").to_string();
+                    let remote = cols.get(5).unwrap_or(&"").to_string();
+                    let proc_col = cols.get(6).map(|s| s.to_string()).unwrap_or_default();
+                    (proto, state_str, local, remote, proc_col)
+                } else {
+                    // netstat format (rough)
+                    let proto = cols[0].to_lowercase();
+                    let local = cols[3].to_string();
+                    let remote = cols[4].to_string();
+                    let state_str = cols.get(5).unwrap_or(&"").to_string();
+                    let proc_col = cols.get(6).map(|s| s.to_string()).unwrap_or_default();
+                    (proto, state_str, local, remote, proc_col)
+                };
 
             if let Some(f) = filter_protocol {
                 if !protocol.contains(f) {
@@ -356,11 +353,7 @@ impl NetworkInspector {
                 let mut current_chain = String::new();
                 for line in text.lines() {
                     if line.starts_with("Chain ") {
-                        current_chain = line
-                            .split_whitespace()
-                            .nth(1)
-                            .unwrap_or("")
-                            .to_string();
+                        current_chain = line.split_whitespace().nth(1).unwrap_or("").to_string();
                         continue;
                     }
                     let cols: Vec<&str> = line.split_whitespace().collect();
@@ -530,7 +523,8 @@ impl NetworkInspector {
 
         let mut entries = Vec::new();
         for line in text.lines().skip(3) {
-            // Format:  Proto  Local Address          Foreign Address        State           PID
+            // Format:  Proto  Local Address          Foreign Address        State
+            // PID
             let cols: Vec<&str> = line.split_whitespace().collect();
             if cols.len() < 4 {
                 continue;
@@ -580,7 +574,8 @@ impl NetworkInspector {
         let output = tokio::process::Command::new("powershell")
             .args([
                 "-Command",
-                "Get-NetFirewallRule | Select-Object DisplayName, Direction, Action, Enabled | ConvertTo-Json -Compress",
+                "Get-NetFirewallRule | Select-Object DisplayName, Direction, Action, Enabled | \
+                 ConvertTo-Json -Compress",
             ])
             .output()
             .await;
@@ -613,13 +608,7 @@ impl NetworkInspector {
             _ => {
                 // Fallback to netsh
                 let fallback = tokio::process::Command::new("netsh")
-                    .args([
-                        "advfirewall",
-                        "firewall",
-                        "show",
-                        "rule",
-                        "name=all",
-                    ])
+                    .args(["advfirewall", "firewall", "show", "rule", "name=all"])
                     .output()
                     .await;
                 if let Ok(o) = fallback {
@@ -627,19 +616,11 @@ impl NetworkInspector {
                     let mut current_name = String::new();
                     for line in text.lines() {
                         if line.starts_with("Rule Name:") {
-                            current_name = line
-                                .splitn(2, ':')
-                                .nth(1)
-                                .unwrap_or("")
-                                .trim()
-                                .to_string();
+                            current_name =
+                                line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
                         } else if line.starts_with("Action:") {
-                            let action = line
-                                .splitn(2, ':')
-                                .nth(1)
-                                .unwrap_or("")
-                                .trim()
-                                .to_string();
+                            let action =
+                                line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
                             rules.push(FirewallRule {
                                 chain: "advfirewall".to_string(),
                                 action,
@@ -745,7 +726,11 @@ impl NetworkInspector {
             }
         };
 
-        let avg = if valid > 0 { sum_ms / valid as f64 } else { 0.0 };
+        let avg = if valid > 0 {
+            sum_ms / valid as f64
+        } else {
+            0.0
+        };
         let min_val = if min_ms != f64::MAX { min_ms } else { 0.0 };
 
         let success = received > 0;
@@ -787,20 +772,13 @@ mod tests {
 
     #[test]
     fn test_parse_addr_port_ipv6() {
-        assert_eq!(
-            NetworkInspector::parse_addr_port("[::]:22"),
-            ("[::]".to_string(), 22)
-        );
-        assert_eq!(
-            NetworkInspector::parse_addr_port("[::1]:5432"),
-            ("[::1]".to_string(), 5432)
-        );
+        assert_eq!(NetworkInspector::parse_addr_port("[::]:22"), ("[::]".to_string(), 22));
+        assert_eq!(NetworkInspector::parse_addr_port("[::1]:5432"), ("[::1]".to_string(), 5432));
     }
 
     #[test]
     fn test_parse_process_ss_format() {
-        let (pid, name) =
-            NetworkInspector::parse_process("users:((\"nginx\",pid=1234,fd=3))");
+        let (pid, name) = NetworkInspector::parse_process("users:((\"nginx\",pid=1234,fd=3))");
         assert_eq!(pid, Some(1234));
         assert_eq!(name, "nginx");
     }
@@ -824,7 +802,8 @@ mod tests {
 4 packets transmitted, 4 received, 0% packet loss, time 3004ms
 rtt min/avg/max/mdev = 11.800/12.300/13.100/0.450 ms"#;
 
-        let result = NetworkInspector::parse_ping_output("1.1.1.1", 4, text, Duration::from_secs(3));
+        let result =
+            NetworkInspector::parse_ping_output("1.1.1.1", 4, text, Duration::from_secs(3));
         assert!(result.success);
         assert_eq!(result.packets_received, 4);
         assert_eq!(result.packet_loss_percent, 0.0);
@@ -838,7 +817,8 @@ rtt min/avg/max/mdev = 11.800/12.300/13.100/0.450 ms"#;
 --- 192.0.2.1 ping statistics ---
 4 packets transmitted, 0 received, 100% packet loss, time 3000ms"#;
 
-        let result = NetworkInspector::parse_ping_output("192.0.2.1", 4, text, Duration::from_secs(3));
+        let result =
+            NetworkInspector::parse_ping_output("192.0.2.1", 4, text, Duration::from_secs(3));
         assert!(!result.success);
         assert_eq!(result.packets_received, 0);
         assert_eq!(result.packet_loss_percent, 100.0);

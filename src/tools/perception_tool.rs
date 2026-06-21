@@ -16,7 +16,8 @@ use crate::tools::{Tool, ToolCapabilities, ToolContext, ToolExecutionResult};
 ///
 /// Calling this tool triggers a poll of all registered perception sources,
 /// ingests observations into the scene graph, and returns matching entities.
-/// When [`FusionEngine`] is configured, results include cross-modal fused entities.
+/// When [`FusionEngine`] is configured, results include cross-modal fused
+/// entities.
 pub struct PerceptionQueryTool {
     registry: Arc<PerceptionRegistry>,
     fusion_engine: Option<FusionEngine>,
@@ -25,10 +26,7 @@ pub struct PerceptionQueryTool {
 impl PerceptionQueryTool {
     /// Create a new perception query tool.
     pub fn new(registry: Arc<PerceptionRegistry>) -> Self {
-        Self {
-            registry,
-            fusion_engine: None,
-        }
+        Self { registry, fusion_engine: None }
     }
 
     /// Enable cross-modal fusion with the given configuration.
@@ -48,11 +46,10 @@ impl Tool for PerceptionQueryTool {
     }
 
     fn description(&self) -> &str {
-        "Query the current perceptual state of the world. Polls all sensors \
-         (screenshots, system monitors, device sensors) and returns structured \
-         observations and entities matching your query. Use this to answer \
-         questions like \"what's the current system state?\" or \
-         \"what sensors are available?\""
+        "Query the current perceptual state of the world. Polls all sensors (screenshots, system \
+         monitors, device sensors) and returns structured observations and entities matching your \
+         query. Use this to answer questions like \"what's the current system state?\" or \"what \
+         sensors are available?\""
     }
 
     fn parameters_schema(&self) -> Value {

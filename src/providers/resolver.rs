@@ -7,17 +7,19 @@ use std::sync::Arc;
 
 use super::preset::builtin_providers;
 use super::stream_wrappers::ProviderStreamFamily;
-use super::{AuthMethod, Protocol, ProviderInstanceConfig};
 use super::{AnthropicProvider, GeminiProvider, OpenAiProvider, Provider};
+use super::{AuthMethod, Protocol, ProviderInstanceConfig};
 
 /// Resolve a provider configuration into a concrete provider instance.
 ///
 /// # Arguments
-/// * `provider_type` — Preset name (e.g. `"openai"`, `"kimi"`, `"anthropic"`) or `"custom"`
+/// * `provider_type` — Preset name (e.g. `"openai"`, `"kimi"`, `"anthropic"`)
+///   or `"custom"`
 /// * `api_key` — API key for the provider (if applicable)
 /// * `base_url` — Override base URL
 /// * `model` — Override model name
-/// * `protocol` — Protocol override (required for `"custom"`, optional for presets)
+/// * `protocol` — Protocol override (required for `"custom"`, optional for
+///   presets)
 ///
 /// For full control, use `resolve_from_config()`.
 pub fn resolve_provider(
@@ -31,11 +33,9 @@ pub fn resolve_provider(
 
     if provider_type == "custom" || !presets.contains_key(provider_type) {
         // Custom provider: protocol is required
-        let proto = protocol.ok_or_else(|| {
-            crate::error::ConfigError::InvalidValue {
-                key: "protocol".to_string(),
-                message: "Custom providers require an explicit protocol".to_string(),
-            }
+        let proto = protocol.ok_or_else(|| crate::error::ConfigError::InvalidValue {
+            key: "protocol".to_string(),
+            message: "Custom providers require an explicit protocol".to_string(),
         })?;
         let instance = resolve_custom_instance(proto, api_key, base_url, model)?;
         return create_protocol_provider(&instance);
@@ -51,8 +51,11 @@ pub fn resolve_provider(
             .iter()
             .find(|v| v.protocol == p)
             .ok_or_else(|| {
-                let available: Vec<String> =
-                    preset.variants.iter().map(|v| format!("{:?}", v.protocol)).collect();
+                let available: Vec<String> = preset
+                    .variants
+                    .iter()
+                    .map(|v| format!("{:?}", v.protocol))
+                    .collect();
                 crate::error::ConfigError::InvalidValue {
                     key: "protocol".to_string(),
                     message: format!(
@@ -96,6 +99,7 @@ pub fn resolve_provider(
 /// * `supports_tools` — Tools support override
 /// * `stream_family` — Stream family override
 /// * `auth_method` — Auth method override
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_from_config(
     provider_type: &str,
     api_key: Option<String>,
@@ -111,11 +115,9 @@ pub fn resolve_from_config(
     let presets = builtin_providers();
 
     let instance = if provider_type == "custom" || !presets.contains_key(provider_type) {
-        let proto = protocol.ok_or_else(|| {
-            crate::error::ConfigError::InvalidValue {
-                key: "protocol".to_string(),
-                message: "Custom providers require an explicit protocol".to_string(),
-            }
+        let proto = protocol.ok_or_else(|| crate::error::ConfigError::InvalidValue {
+            key: "protocol".to_string(),
+            message: "Custom providers require an explicit protocol".to_string(),
         })?;
         ProviderInstanceConfig {
             protocol: proto,
@@ -136,13 +138,18 @@ pub fn resolve_from_config(
                 .iter()
                 .find(|v| v.protocol == p)
                 .ok_or_else(|| {
-                    let available: Vec<String> =
-                        preset.variants.iter().map(|v| format!("{:?}", v.protocol)).collect();
+                    let available: Vec<String> = preset
+                        .variants
+                        .iter()
+                        .map(|v| format!("{:?}", v.protocol))
+                        .collect();
                     crate::error::ConfigError::InvalidValue {
                         key: "protocol".to_string(),
                         message: format!(
                             "Provider '{}' does not support protocol '{:?}'. Available: {}",
-                            provider_type, p, available.join(", "),
+                            provider_type,
+                            p,
+                            available.join(", "),
                         ),
                     }
                 })?,
@@ -172,11 +179,9 @@ fn resolve_custom_instance(
     base_url: Option<String>,
     model: Option<String>,
 ) -> crate::Result<ProviderInstanceConfig> {
-    let base_url = base_url.ok_or_else(|| {
-        crate::error::ConfigError::InvalidValue {
-            key: "base_url".to_string(),
-            message: "Custom providers require a base_url".to_string(),
-        }
+    let base_url = base_url.ok_or_else(|| crate::error::ConfigError::InvalidValue {
+        key: "base_url".to_string(),
+        message: "Custom providers require a base_url".to_string(),
     })?;
 
     Ok(ProviderInstanceConfig {
@@ -236,27 +241,15 @@ mod tests {
     #[test]
     fn test_resolve_kimi_anthropic_variant() {
         // Explicitly choose Kimi's Anthropic variant
-        let provider = resolve_provider(
-            "kimi",
-            Some("sk-test".into()),
-            None,
-            None,
-            Some(Protocol::Anthropic),
-        )
-        .unwrap();
+        let provider =
+            resolve_provider("kimi", Some("sk-test".into()), None, None, Some(Protocol::Anthropic))
+                .unwrap();
         assert_eq!(provider.default_model(), "kimi-k2");
     }
 
     #[test]
     fn test_resolve_with_model_override() {
-        let provider = resolve_provider(
-            "openai",
-            None,
-            None,
-            Some("gpt-4".into()),
-            None,
-        )
-        .unwrap();
+        let provider = resolve_provider("openai", None, None, Some("gpt-4".into()), None).unwrap();
         assert_eq!(provider.default_model(), "gpt-4");
     }
 
@@ -306,13 +299,7 @@ mod tests {
 
     #[test]
     fn test_resolve_invalid_protocol_for_preset_fails() {
-        let result = resolve_provider(
-            "ollama",
-            None,
-            None,
-            None,
-            Some(Protocol::Anthropic),
-        );
+        let result = resolve_provider("ollama", None, None, None, Some(Protocol::Anthropic));
         assert!(result.is_err());
     }
 }

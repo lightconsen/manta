@@ -6,8 +6,9 @@
 //! - Multi-field identity (user_id, username, phone, email, display_name)
 //! - Per-platform identity types (Telegram, Discord, Slack, etc.)
 
-use serde::{Deserialize, Serialize};
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 
 /// A validated sender identity with multiple possible identity fields.
 ///
@@ -104,7 +105,8 @@ impl fmt::Display for SenderIdentity {
     }
 }
 
-// ── Validation ─────────────────────────────────────────────────────────────────
+// ── Validation
+// ─────────────────────────────────────────────────────────────────
 
 /// Errors that can occur during identity validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,7 +166,8 @@ pub type IdentityValidationResult<T = ()> = Result<T, IdentityValidationError>;
 pub struct IdentityValidatorConfig {
     /// Maximum length for user IDs (default: 128).
     pub max_user_id_length: usize,
-    /// Allowed characters pattern for user IDs (default: alphanumeric + `_-./@:`).
+    /// Allowed characters pattern for user IDs (default: alphanumeric +
+    /// `_-./@:`).
     pub user_id_allowed_chars: AllowedCharSet,
     /// Minimum username length (default: 2).
     pub min_username_length: usize,
@@ -226,11 +229,9 @@ impl AllowedCharSet {
     /// Check if the entire string matches this character set.
     pub fn contains_match(&self, s: &str) -> bool {
         match self {
-            Self::Custom(pattern) => {
-                regex::Regex::new(pattern)
-                    .map(|re| re.is_match(s))
-                    .unwrap_or(false)
-            }
+            Self::Custom(pattern) => regex::Regex::new(pattern)
+                .map(|re| re.is_match(s))
+                .unwrap_or(false),
             _ => s.chars().all(|c| self.allows(c)),
         }
     }
@@ -408,7 +409,8 @@ impl Default for IdentityValidator {
     }
 }
 
-// ── Platform-specific helpers ──────────────────────────────────────────────────
+// ── Platform-specific helpers
+// ──────────────────────────────────────────────────
 
 /// Build a `SenderIdentity` from a Telegram user.
 pub fn telegram_identity(
@@ -492,10 +494,7 @@ mod tests {
     #[test]
     fn test_validate_empty_user_id() {
         let validator = IdentityValidator::new();
-        assert_eq!(
-            validator.validate_user_id(""),
-            Err(IdentityValidationError::EmptyUserId)
-        );
+        assert_eq!(validator.validate_user_id(""), Err(IdentityValidationError::EmptyUserId));
     }
 
     #[test]

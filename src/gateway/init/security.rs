@@ -4,6 +4,7 @@
 //! used by the gateway request path.
 
 use std::sync::Arc;
+
 use tracing::info;
 
 use crate::gateway::rate_limit::{MultiTierRateLimitConfig, MultiTierRateLimiter, TierConfig};
@@ -55,15 +56,10 @@ pub async fn init_security(
     let command_gate = {
         // When no authentication is required, default to an open gate that
         // allows all commands including admin-level commands.
-        let gate = if matches!(
-            config.security.auth_mode,
-            crate::gateway::protocol::AuthMode::None
-        ) {
+        let gate = if matches!(config.security.auth_mode, crate::gateway::protocol::AuthMode::None)
+        {
             let gate = crate::tools::command_gate::CommandGate::open();
-            gate.set_user_level(
-                "anonymous",
-                crate::tools::command_gate::UserLevel::Admin,
-            );
+            gate.set_user_level("anonymous", crate::tools::command_gate::UserLevel::Admin);
             gate
         } else {
             let gate = crate::tools::command_gate::CommandGate::new();

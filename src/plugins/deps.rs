@@ -6,9 +6,10 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::plugins::manifest::PluginManifest;
 use sha2::Digest;
 use tracing::{info, warn};
+
+use crate::plugins::manifest::PluginManifest;
 
 /// A resolved dependency entry.
 #[derive(Debug, Clone)]
@@ -35,8 +36,8 @@ impl DependencyResolver {
         }
     }
 
-    /// Resolve all dependencies of a plugin, returning them in topological order
-    /// (dependencies before dependents).
+    /// Resolve all dependencies of a plugin, returning them in topological
+    /// order (dependencies before dependents).
     ///
     /// Uses iterative DFS with explicit stack to avoid lifetime issues with
     /// recursive boxed futures.
@@ -126,20 +127,14 @@ impl DependencyResolver {
                                 target_path
                             )));
                         }
-                        warn!(
-                            "Checksum mismatch for {:?}, but resource not required",
-                            target_path
-                        );
+                        warn!("Checksum mismatch for {:?}, but resource not required", target_path);
                     }
                 }
                 continue;
             }
 
             if resource.required {
-                info!(
-                    "Downloading external resource {} -> {:?}",
-                    resource.url, target_path
-                );
+                info!("Downloading external resource {} -> {:?}", resource.url, target_path);
                 if let Some(parent) = target_path.parent() {
                     tokio::fs::create_dir_all(parent).await?;
                 }
@@ -166,22 +161,19 @@ impl DependencyResolver {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_resolve_no_deps() {
         let tmp = tempdir().unwrap();
         let plugins_dir = tmp.path().join("plugins");
-        tokio::fs::create_dir_all(&plugins_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&plugins_dir).await.unwrap();
 
         let manifest = PluginManifest::minimal("com.test.standalone", "Standalone");
         let plugin_dir = plugins_dir.join("com.test.standalone");
-        tokio::fs::create_dir_all(&plugin_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&plugin_dir).await.unwrap();
         tokio::fs::write(
             plugin_dir.join("plugin.json"),
             serde_json::to_string_pretty(&manifest).unwrap(),

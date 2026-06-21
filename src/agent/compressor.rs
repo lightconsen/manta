@@ -8,9 +8,11 @@
 //! LLM provider to write a concise summary of the mid-section of the history
 //! so recent context is preserved while tokens are freed.
 
-use crate::providers::{Message, Provider, Role};
 use std::sync::Arc;
+
 use tracing::{debug, info, warn};
+
+use crate::providers::{Message, Provider, Role};
 
 /// Estimated tokens per character (approximation)
 const TOKENS_PER_CHAR: f32 = 0.25;
@@ -274,8 +276,8 @@ impl ContextCompressor {
     /// Create a heuristic summary message from a set of messages.
     ///
     /// Groups turns into user-request / assistant-response pairs and produces a
-    /// compact digest that preserves the key intent of each exchange.  This is a
-    /// best-effort sync fallback; for LLM-quality summarization use
+    /// compact digest that preserves the key intent of each exchange.  This is
+    /// a best-effort sync fallback; for LLM-quality summarization use
     /// [`compact_with_llm`].
     fn create_summary(&self, messages: &[Message]) -> Message {
         let mut lines: Vec<String> = Vec::new();
@@ -377,8 +379,8 @@ impl ContextCompressor {
             .join("\n");
 
         let prompt = format!(
-            "Summarise the following conversation excerpt in ≤150 words, preserving key \
-             facts, decisions, and named entities. Output only the summary text.\n\n{}",
+            "Summarise the following conversation excerpt in ≤150 words, preserving key facts, \
+             decisions, and named entities. Output only the summary text.\n\n{}",
             transcript
         );
 

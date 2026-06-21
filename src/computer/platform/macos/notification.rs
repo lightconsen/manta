@@ -4,13 +4,14 @@
 //! Listening to notifications is not supported via AppleScript; this tool
 //! focuses on the send action only.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Action types for notification management.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,11 +39,8 @@ impl NotificationTool {
     }
 
     async fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<(bool, String)> {
-        let result = timeout(
-            Duration::from_secs(timeout_secs),
-            Command::new(cmd).args(args).output(),
-        )
-        .await;
+        let result =
+            timeout(Duration::from_secs(timeout_secs), Command::new(cmd).args(args).output()).await;
 
         match result {
             Ok(Ok(output)) => {
@@ -92,9 +90,8 @@ impl Tool for NotificationTool {
     }
 
     fn description(&self) -> &str {
-        "Send desktop notifications on macOS using AppleScript. \
-         Supports title, message, and optional alert sound. \
-         Listening to notifications is not available on macOS."
+        "Send desktop notifications on macOS using AppleScript. Supports title, message, and \
+         optional alert sound. Listening to notifications is not available on macOS."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -128,12 +125,15 @@ impl Tool for NotificationTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action_str = args.get("action").and_then(|v| v.as_str()).unwrap_or("send");
+        let action_str = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("send");
 
         if action_str == "listen" {
             return Ok(ToolExecutionResult::error(
-                "Listening to notifications is not supported on macOS via AppleScript. \
-                 Use 'send' to display a notification instead."
+                "Listening to notifications is not supported on macOS via AppleScript. Use 'send' \
+                 to display a notification instead."
                     .to_string(),
             ));
         }

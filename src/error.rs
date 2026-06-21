@@ -5,6 +5,7 @@
 //! easily converted to user-facing messages.
 
 use std::path::PathBuf;
+
 use thiserror::Error;
 
 /// The main error type for Syscity operations
@@ -145,10 +146,7 @@ impl<T> ResultExt<T, std::io::Error> for std::result::Result<T, std::io::Error> 
         F: FnOnce() -> C,
         C: Into<String>,
     {
-        self.map_err(|e| SyscityError::IoContext {
-            context: f().into(),
-            source: e,
-        })
+        self.map_err(|e| SyscityError::IoContext { context: f().into(), source: e })
     }
 }
 

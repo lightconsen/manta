@@ -2,13 +2,15 @@
 //!
 //! Provides automatic restart with exponential backoff for channel failures.
 
-use crate::channels::Channel;
-use crate::error::Result;
 use std::sync::Arc;
 use std::time::Duration;
+
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
+
+use crate::channels::Channel;
+use crate::error::Result;
 
 /// Channel lifecycle status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,10 +404,11 @@ impl Default for LifecycleManager {
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+
     use super::*;
     use crate::core::models::Id;
     use crate::error::SyscityError;
-    use async_trait::async_trait;
 
     struct MockChannel {
         name: String,

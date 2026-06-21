@@ -12,11 +12,13 @@
 //! 1. **LLM-based** — asks the configured provider to reason about the chain.
 //! 2. **Heuristic** — uses a built-in rule base for common patterns.
 
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
 use crate::computer::DesktopAction;
 use crate::planner::{Task, TaskId};
 use crate::providers::{CompletionRequest, Message, Provider};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// A single link in the inferred prerequisite chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,9 +56,7 @@ impl ToolChainReasoner {
 
     /// Create a reasoner backed by an LLM for more complex inference.
     pub fn with_provider(provider: Arc<dyn Provider>) -> Self {
-        Self {
-            provider: Some(provider),
-        }
+        Self { provider: Some(provider) }
     }
 
     /// Analyse a goal and return prerequisite chain links.
@@ -139,20 +139,14 @@ impl ToolChainReasoner {
             links.push(ChainLink {
                 id: "check-build-tool".to_string(),
                 description: "Verify build toolchain is installed".to_string(),
-                action: DesktopAction::ListProcesses {
-                    filter: None,
-                    limit: Some(5),
-                },
+                action: DesktopAction::ListProcesses { filter: None, limit: Some(5) },
                 dependencies: vec![],
             });
             confidence = confidence.max(0.7);
         }
 
         // Rule: git operations → check git installed + repo exists
-        if lower.contains("git clone")
-            || lower.contains("git pull")
-            || lower.contains("git push")
-        {
+        if lower.contains("git clone") || lower.contains("git pull") || lower.contains("git push") {
             links.push(ChainLink {
                 id: "check-git-installed".to_string(),
                 description: "Verify git is installed".to_string(),
@@ -167,10 +161,7 @@ impl ToolChainReasoner {
         }
 
         // Rule: docker operations → check docker daemon
-        if lower.contains("docker")
-            || lower.contains("container")
-            || lower.contains("dockerfile")
-        {
+        if lower.contains("docker") || lower.contains("container") || lower.contains("dockerfile") {
             links.push(ChainLink {
                 id: "check-docker-running".to_string(),
                 description: "Verify Docker daemon is running".to_string(),
@@ -324,12 +315,19 @@ fn parse_llm_action(action_type: &str, params: &serde_json::Value) -> DesktopAct
             let args: Vec<String> = params
                 .get("args")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             DesktopAction::LaunchApp {
                 name,
                 args,
-                wait_for_ready: params.get("wait_for_ready").and_then(|v| v.as_bool()).unwrap_or(true),
+                wait_for_ready: params
+                    .get("wait_for_ready")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
             }
         }
         "browse_files" => {
@@ -340,13 +338,26 @@ fn parse_llm_action(action_type: &str, params: &serde_json::Value) -> DesktopAct
                 .to_string();
             DesktopAction::BrowseFiles {
                 path,
-                filter_description: params.get("filter").and_then(|v| v.as_str()).map(String::from),
-                max_results: params.get("max_results").and_then(|v| v.as_u64()).map(|n| n as usize).or(Some(10)),
+                filter_description: params
+                    .get("filter")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                max_results: params
+                    .get("max_results")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize)
+                    .or(Some(10)),
             }
         }
         "list_processes" => {
-            let filter = params.get("filter").and_then(|v| v.as_str()).map(String::from);
-            let limit = params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
+            let filter = params
+                .get("filter")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize);
             DesktopAction::ListProcesses { filter, limit }
         }
         "tcp_connect" => {
@@ -356,8 +367,15 @@ fn parse_llm_action(action_type: &str, params: &serde_json::Value) -> DesktopAct
                 .unwrap_or("localhost")
                 .to_string();
             let port = params.get("port").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
-            let timeout = params.get("timeout_ms").and_then(|v| v.as_u64()).or(Some(5000));
-            DesktopAction::TestTcpConnect { target, port, timeout_ms: timeout }
+            let timeout = params
+                .get("timeout_ms")
+                .and_then(|v| v.as_u64())
+                .or(Some(5000));
+            DesktopAction::TestTcpConnect {
+                target,
+                port,
+                timeout_ms: timeout,
+            }
         }
         _ => DesktopAction::Wait { milliseconds: 0 },
     }
@@ -375,10 +393,7 @@ mod tests {
     fn test_heuristic_deploy_ssh() {
         let reasoner = ToolChainReasoner::new();
         let analysis = reasoner.heuristic_analyse("Deploy this project to the server");
-        assert!(
-            analysis.confidence >= 0.8,
-            "deploy goal should have high confidence"
-        );
+        assert!(analysis.confidence >= 0.8, "deploy goal should have high confidence");
         let ids: Vec<_> = analysis.prerequisites.iter().map(|l| &l.id).collect();
         assert!(ids.contains(&&"check-ssh-key".to_string()));
         assert!(ids.contains(&&"test-ssh-connect".to_string()));

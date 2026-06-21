@@ -1,10 +1,11 @@
 //! Late service initialization.
 //!
 //! Initializes services that depend on storage or other early subsystems:
-//! vector memory, session search (FTS5), hot reload, cron scheduler, task scheduler,
-//! and side-effect context wiring.
+//! vector memory, session search (FTS5), hot reload, cron scheduler, task
+//! scheduler, and side-effect context wiring.
 
 use std::sync::Arc;
+
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
@@ -62,7 +63,10 @@ pub async fn init_memory_services(
                                 if let Some(reason) = provider.fts_reason() {
                                     warn!("Local GGUF provider in FTS-only mode: {}", reason);
                                 } else {
-                                    info!("Local GGUF provider initialized, will load model on first use");
+                                    info!(
+                                        "Local GGUF provider initialized, will load model on \
+                                         first use"
+                                    );
                                 }
                             } else {
                                 info!("GGUF model configured from {}", model_path);
@@ -75,7 +79,10 @@ pub async fn init_memory_services(
                     }
                     #[cfg(not(feature = "local-embeddings"))]
                     {
-                        warn!("Local GGUF provider requires 'local-embeddings' feature. Build with: cargo build --features local-embeddings");
+                        warn!(
+                            "Local GGUF provider requires 'local-embeddings' feature. Build with: \
+                             cargo build --features local-embeddings"
+                        );
                         None
                     }
                 }
@@ -88,7 +95,10 @@ pub async fn init_memory_services(
                     store
                 }
                 None => {
-                    info!("Using in-memory vector store (unified storage requires 'sqlite' storage type)");
+                    info!(
+                        "Using in-memory vector store (unified storage requires 'sqlite' storage \
+                         type)"
+                    );
                     Arc::new(MemoryVectorStore::new(config.vector_memory.embedding_dimension))
                 }
             };
@@ -126,7 +136,11 @@ pub async fn init_memory_services(
         } else {
             info!("Session search (FTS5) initialized");
             let session_search_for_mm = session_search.clone();
-            state.memory.session_search.init(session_search.clone()).await;
+            state
+                .memory
+                .session_search
+                .init(session_search.clone())
+                .await;
 
             if let Some(vector_svc) = state.memory.vector.get_opt().await {
                 info!("Initializing MemoryManager with hybrid search...");
@@ -232,7 +246,11 @@ pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) {
                 warn!("Advanced cron scheduler failed: {}", e);
             }
         });
-        state.scheduler.cron_scheduler.init(cron_scheduler.clone()).await;
+        state
+            .scheduler
+            .cron_scheduler
+            .init(cron_scheduler.clone())
+            .await;
         info!("Advanced cron scheduler initialized");
 
         crate::tools::CronTool::set_scheduler(cron_scheduler);
@@ -270,7 +288,9 @@ pub async fn init_task_scheduler(state: &Arc<GatewayState>) {
     if let Err(e) = task_scheduler.start(handler).await {
         warn!("TaskScheduler failed to start: {}", e);
     } else {
-        state.scheduler.task_scheduler
+        state
+            .scheduler
+            .task_scheduler
             .init(Arc::new(Mutex::new(task_scheduler)))
             .await;
         info!("TaskScheduler started");
@@ -289,7 +309,9 @@ pub async fn init_side_effect_context(state: &Arc<GatewayState>) {
                 .unwrap_or_default(),
         )),
     };
-    state.pipelines.side_effect_executor
+    state
+        .pipelines
+        .side_effect_executor
         .set_context(side_effect_ctx)
         .await;
     info!("SideEffectExecutor context wired");

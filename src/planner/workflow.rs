@@ -6,9 +6,10 @@
 //! Agent/Planner ← WorkflowPlayer ←─ replay with retries
 //! ```
 
-use crate::computer::{ComputerAdapter, DesktopAction};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+
+use crate::computer::{ComputerAdapter, DesktopAction};
 
 /// A single recorded action with the delay before it.
 #[derive(Debug, Clone, PartialEq)]
@@ -58,9 +59,7 @@ impl Workflow {
     }
 
     /// Replace parameter placeholders with actual values.
-    pub fn bind_parameters(&self,
-        values: HashMap<String, String>,
-    ) -> Vec<RecordedStep> {
+    pub fn bind_parameters(&self, values: HashMap<String, String>) -> Vec<RecordedStep> {
         self.steps
             .iter()
             .cloned()
@@ -144,10 +143,7 @@ impl WorkflowRecorder {
     }
 
     /// Record a desktop action.
-    pub fn record_desktop(&mut self,
-        action: DesktopAction,
-        description: impl Into<String>,
-    ) {
+    pub fn record_desktop(&mut self, action: DesktopAction, description: impl Into<String>) {
         if !self.recording {
             return;
         }
@@ -160,29 +156,20 @@ impl WorkflowRecorder {
     }
 
     /// Record a shell command.
-    pub fn record_shell(
-        &mut self,
-        command: impl Into<String>,
-        description: impl Into<String>,
-    ) {
+    pub fn record_shell(&mut self, command: impl Into<String>, description: impl Into<String>) {
         if !self.recording {
             return;
         }
         let delay = self.delay_since_last();
         self.steps.push(RecordedStep {
             delay_before: delay,
-            action: WorkflowAction::Shell {
-                command: command.into(),
-            },
+            action: WorkflowAction::Shell { command: command.into() },
             description: description.into(),
         });
     }
 
     /// Record a wait step.
-    pub fn record_wait(&mut self,
-        milliseconds: u64,
-        description: impl Into<String>,
-    ) {
+    pub fn record_wait(&mut self, milliseconds: u64, description: impl Into<String>) {
         if !self.recording {
             return;
         }
@@ -276,10 +263,7 @@ impl Default for WorkflowPlayer {
 impl WorkflowPlayer {
     pub fn new() -> Self {
         Self {
-            failure_strategy: FailureStrategy::Retry {
-                max_retries: 2,
-                delay_ms: 500,
-            },
+            failure_strategy: FailureStrategy::Retry { max_retries: 2, delay_ms: 500 },
         }
     }
 
@@ -323,11 +307,7 @@ impl WorkflowPlayer {
         Ok(results)
     }
 
-    async fn execute_step(
-        &self,
-        step: &RecordedStep,
-        adapter: &dyn ComputerAdapter,
-    ) -> StepResult {
+    async fn execute_step(&self, step: &RecordedStep, adapter: &dyn ComputerAdapter) -> StepResult {
         let mut last_error = String::new();
         let max_retries = match self.failure_strategy {
             FailureStrategy::Retry { max_retries, .. } => max_retries,
@@ -354,9 +334,7 @@ impl WorkflowPlayer {
             FailureStrategy::Skip => StepResult::Skipped {
                 reason: format!("Failed but skipped: {}", last_error),
             },
-            _ => StepResult::Failed {
-                error: last_error,
-            },
+            _ => StepResult::Failed { error: last_error },
         }
     }
 
@@ -366,13 +344,11 @@ impl WorkflowPlayer {
         adapter: &dyn ComputerAdapter,
     ) -> Result<String, String> {
         match &step.action {
-            WorkflowAction::Desktop(action) => {
-                adapter
-                    .execute(action.clone())
-                    .await
-                    .map(|r| r.message)
-                    .map_err(|e| e.to_string())
-            }
+            WorkflowAction::Desktop(action) => adapter
+                .execute(action.clone())
+                .await
+                .map(|r| r.message)
+                .map_err(|e| e.to_string()),
             WorkflowAction::Shell { command } => {
                 let output = tokio::process::Command::new("sh")
                     .arg("-c")
@@ -438,10 +414,7 @@ mod tests {
         let bound = workflow.bind_parameters(values);
         match &bound[0].action {
             WorkflowAction::Shell { command } => {
-                assert_eq!(
-                    command,
-                    "git clone https://github.com/foo/bar /tmp/myproject"
-                );
+                assert_eq!(command, "git clone https://github.com/foo/bar /tmp/myproject");
             }
             _ => panic!("Expected shell action"),
         }
@@ -451,28 +424,20 @@ mod tests {
     fn test_workflow_recorder_no_record_when_stopped() {
         let mut recorder = WorkflowRecorder::new();
         // Not started
-        recorder.record_desktop(
-            DesktopAction::Wait { milliseconds: 10 },
-            "should not appear",
-        );
+        recorder.record_desktop(DesktopAction::Wait { milliseconds: 10 }, "should not appear");
         let workflow = recorder.stop_recording("empty");
         assert!(workflow.steps.is_empty());
     }
 
     #[test]
     fn test_step_result_display() {
-        let r = StepResult::Success {
-            message: "done".to_string(),
-        };
+        let r = StepResult::Success { message: "done".to_string() };
         assert!(matches!(r, StepResult::Success { .. }));
     }
 
     #[test]
     fn test_failure_strategy_clone_eq() {
-        let s1 = FailureStrategy::Retry {
-            max_retries: 3,
-            delay_ms: 100,
-        };
+        let s1 = FailureStrategy::Retry { max_retries: 3, delay_ms: 100 };
         let s2 = s1.clone();
         assert_eq!(s1, s2);
     }

@@ -1,7 +1,7 @@
 //! Linux implementation of SystemInspector for ServerOperator.
 
-use crate::computer::platform::server_operator::{SystemInspector, SystemSnapshot};
 use crate::computer::platform::linux::system_inspect::SystemInspectTool;
+use crate::computer::platform::server_operator::{SystemInspector, SystemSnapshot};
 
 /// Linux-specific system inspector.
 #[derive(Debug, Default)]

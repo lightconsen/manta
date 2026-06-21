@@ -5,15 +5,17 @@
 //!
 //! Tasks are persisted to disk in ~/.syscity/todos/{conversation_id}.json
 
-use super::{Tool, ToolContext, ToolExecutionResult};
-use crate::agent::todo::{TaskStatus, TodoStore};
-use async_trait::async_trait;
-use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde_json::json;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
+
+use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::agent::todo::{TaskStatus, TodoStore};
 
 /// Tool for managing tasks/todos
 #[derive(Debug)]

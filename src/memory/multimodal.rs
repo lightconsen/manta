@@ -10,9 +10,10 @@
 //! - SQLite metadata tracking
 //! - Glob-based file scanning
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::info;
 
@@ -367,8 +368,9 @@ impl MultimodalStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[test]
     fn test_classify_image() {

@@ -1,14 +1,15 @@
 //! Sliding Window Rate Limiter for Syscity
 //!
-//! Provides per-user, per-endpoint rate limiting using a sliding window algorithm.
-//! Unlike token bucket (which allows bursts), sliding window tracks actual
-//! request timestamps and enforces strict rate limits over time.
+//! Provides per-user, per-endpoint rate limiting using a sliding window
+//! algorithm. Unlike token bucket (which allows bursts), sliding window tracks
+//! actual request timestamps and enforces strict rate limits over time.
 
-use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 /// Unique key for rate limiting: (user_id, endpoint)
@@ -722,7 +723,8 @@ pub struct LockoutStateSnapshot {
 #[allow(unexpected_cfgs)]
 #[cfg(feature = "web")]
 pub mod middleware {
-    use super::*;
+    use std::net::SocketAddr;
+
     use axum::{
         extract::{ConnectInfo, Request, State},
         http::StatusCode,
@@ -731,7 +733,8 @@ pub mod middleware {
         Json,
     };
     use serde_json::json;
-    use std::net::SocketAddr;
+
+    use super::*;
 
     /// Extract user ID from request (customize based on your auth)
     pub fn extract_user_id(req: &Request) -> String {

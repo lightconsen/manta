@@ -74,11 +74,7 @@ impl PerceptionStreamHub {
     /// Attach a streaming source by name. Returns `true` if a forwarder task
     /// was spawned, `false` if the source does not implement `subscribe()`
     /// (poll-only) or is already attached.
-    pub async fn attach_source(
-        &self,
-        name: &str,
-        source: Arc<dyn PerceptionSource>,
-    ) -> bool {
+    pub async fn attach_source(&self, name: &str, source: Arc<dyn PerceptionSource>) -> bool {
         let mut rx = match source.subscribe() {
             Some(r) => r,
             None => return false,
@@ -106,10 +102,7 @@ impl PerceptionStreamHub {
                         continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        tracing::debug!(
-                            "perception stream hub: source '{}' closed",
-                            name_owned
-                        );
+                        tracing::debug!("perception stream hub: source '{}' closed", name_owned);
                         break;
                     }
                 }
@@ -216,12 +209,15 @@ pub fn spawn_stream_hub_sync(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::perception::mock::MockPerceptionSource;
     use crate::perception::{AggregationStrategy, Modality};
-    use std::time::Duration;
 
-    fn make_streaming_mock(name: &str) -> (Arc<MockPerceptionSource>, broadcast::Sender<Observation>) {
+    fn make_streaming_mock(
+        name: &str,
+    ) -> (Arc<MockPerceptionSource>, broadcast::Sender<Observation>) {
         let (mock, tx) = MockPerceptionSource::new(name).with_streaming(64);
         (Arc::new(mock), tx)
     }
@@ -230,7 +226,10 @@ mod tests {
     async fn test_hub_fans_in_streaming_source() {
         let hub = Arc::new(PerceptionStreamHub::new(64));
         let (mock, tx) = make_streaming_mock("cam");
-        assert!(hub.attach_source("cam", mock as Arc<dyn PerceptionSource>).await);
+        assert!(
+            hub.attach_source("cam", mock as Arc<dyn PerceptionSource>)
+                .await
+        );
         assert_eq!(hub.forwarder_count().await, 1);
 
         let mut rx = hub.subscribe();
@@ -262,7 +261,8 @@ mod tests {
     async fn test_hub_detach_aborts_forwarder() {
         let hub = PerceptionStreamHub::new(16);
         let (mock, _tx) = make_streaming_mock("cam");
-        hub.attach_source("cam", mock as Arc<dyn PerceptionSource>).await;
+        hub.attach_source("cam", mock as Arc<dyn PerceptionSource>)
+            .await;
         assert!(hub.detach("cam").await);
         assert_eq!(hub.forwarder_count().await, 0);
     }
@@ -284,9 +284,12 @@ mod tests {
         let (m1, _) = make_streaming_mock("device:temp:1");
         let (m2, _) = make_streaming_mock("device:pressure:2");
         let (m3, _) = make_streaming_mock("camera");
-        hub.attach_source("device:temp:1", m1 as Arc<dyn PerceptionSource>).await;
-        hub.attach_source("device:pressure:2", m2 as Arc<dyn PerceptionSource>).await;
-        hub.attach_source("camera", m3 as Arc<dyn PerceptionSource>).await;
+        hub.attach_source("device:temp:1", m1 as Arc<dyn PerceptionSource>)
+            .await;
+        hub.attach_source("device:pressure:2", m2 as Arc<dyn PerceptionSource>)
+            .await;
+        hub.attach_source("camera", m3 as Arc<dyn PerceptionSource>)
+            .await;
 
         let removed = hub.detach_prefix("device:").await;
         assert_eq!(removed, 2);
@@ -297,7 +300,9 @@ mod tests {
     async fn test_hub_sync_with_registry_attaches_new_sources() {
         let registry = Arc::new(PerceptionRegistry::new(AggregationStrategy::Latest, 10));
         let (mock, _tx) = make_streaming_mock("streamer");
-        registry.register_source(mock as Arc<dyn PerceptionSource>).await;
+        registry
+            .register_source(mock as Arc<dyn PerceptionSource>)
+            .await;
 
         let hub = PerceptionStreamHub::new(16);
         hub.sync_with_registry(&registry).await;
@@ -308,7 +313,9 @@ mod tests {
     async fn test_hub_sync_with_registry_detaches_removed_sources() {
         let registry = Arc::new(PerceptionRegistry::new(AggregationStrategy::Latest, 10));
         let (mock, _tx) = make_streaming_mock("streamer");
-        registry.register_source(mock as Arc<dyn PerceptionSource>).await;
+        registry
+            .register_source(mock as Arc<dyn PerceptionSource>)
+            .await;
 
         let hub = PerceptionStreamHub::new(16);
         hub.sync_with_registry(&registry).await;
@@ -323,7 +330,8 @@ mod tests {
     async fn test_hub_multiple_subscribers_each_receive() {
         let hub = Arc::new(PerceptionStreamHub::new(64));
         let (mock, tx) = make_streaming_mock("multi");
-        hub.attach_source("multi", mock as Arc<dyn PerceptionSource>).await;
+        hub.attach_source("multi", mock as Arc<dyn PerceptionSource>)
+            .await;
 
         let mut rx1 = hub.subscribe();
         let mut rx2 = hub.subscribe();

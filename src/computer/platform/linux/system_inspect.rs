@@ -1,12 +1,13 @@
 //! System inspect tool — collect a structured system snapshot.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Sections that can be inspected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -141,8 +142,14 @@ impl SystemInspectTool {
         let (hostname, uptime, load, mem, cpu) =
             tokio::join!(hostname_fut, uptime_fut, load_fut, mem_fut, cpu_fut);
 
-        let hostname = hostname.unwrap_or_else(|| "unknown".to_string()).trim().to_string();
-        let uptime = uptime.unwrap_or_else(|| "unknown".to_string()).trim().to_string();
+        let hostname = hostname
+            .unwrap_or_else(|| "unknown".to_string())
+            .trim()
+            .to_string();
+        let uptime = uptime
+            .unwrap_or_else(|| "unknown".to_string())
+            .trim()
+            .to_string();
 
         let load_avg = load
             .as_deref()
@@ -180,10 +187,7 @@ impl SystemInspectTool {
 
     pub async fn collect_storage() -> Vec<DiskInfo> {
         let output = Self::run_cmd("df -hP", 10).await;
-        output
-            .as_deref()
-            .map(parse_df_output)
-            .unwrap_or_default()
+        output.as_deref().map(parse_df_output).unwrap_or_default()
     }
 
     pub async fn collect_processes(limit: usize) -> Vec<ProcessInfo> {
@@ -197,7 +201,8 @@ impl SystemInspectTool {
 
     pub async fn collect_services(limit: usize) -> Vec<ServiceInfo> {
         let cmd = format!(
-            "systemctl list-units --type=service --state=running --no-pager --no-legend | head -n {}",
+            "systemctl list-units --type=service --state=running --no-pager --no-legend | head -n \
+             {}",
             limit
         );
         let output = Self::run_cmd(&cmd, 10).await;
@@ -208,11 +213,10 @@ impl SystemInspectTool {
     }
 
     pub async fn collect_network() -> Vec<PortInfo> {
-        let output = Self::run_cmd("ss -tulnp --no-header 2>/dev/null || netstat -tulnp 2>/dev/null", 10).await;
-        output
-            .as_deref()
-            .map(parse_ss_output)
-            .unwrap_or_default()
+        let output =
+            Self::run_cmd("ss -tulnp --no-header 2>/dev/null || netstat -tulnp 2>/dev/null", 10)
+                .await;
+        output.as_deref().map(parse_ss_output).unwrap_or_default()
     }
 
     pub async fn collect_logs(lines: usize, since: &str) -> Vec<LogEntry> {
@@ -236,11 +240,9 @@ impl Tool for SystemInspectTool {
     }
 
     fn description(&self) -> &str {
-        "Collect a structured snapshot of the system state. \
-         Returns JSON with hostname, uptime, load, memory, CPU, disks, \
-         processes, services, network ports, and recent logs. \
-         Use when the user asks about system status, performance, \
-         or to diagnose server issues."
+        "Collect a structured snapshot of the system state. Returns JSON with hostname, uptime, \
+         load, memory, CPU, disks, processes, services, network ports, and recent logs. Use when \
+         the user asks about system status, performance, or to diagnose server issues."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -287,7 +289,11 @@ impl Tool for SystemInspectTool {
     ) -> crate::Result<ToolExecutionResult> {
         let sections: Vec<String> = args["sections"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_else(|| vec!["overview".to_string()]);
 
         let all = sections.is_empty() || sections.iter().any(|s| s == "all");
@@ -330,18 +336,37 @@ impl Tool for SystemInspectTool {
             None
         };
 
-        let (
-            disks,
-            processes,
-            services,
-            listening_ports,
-            recent_logs,
-        ) = tokio::join!(
-            async { match storage_fut { Some(f) => f.await, None => Vec::new() } },
-            async { match processes_fut { Some(f) => f.await, None => Vec::new() } },
-            async { match services_fut { Some(f) => f.await, None => Vec::new() } },
-            async { match network_fut { Some(f) => f.await, None => Vec::new() } },
-            async { match logs_fut { Some(f) => f.await, None => Vec::new() } },
+        let (disks, processes, services, listening_ports, recent_logs) = tokio::join!(
+            async {
+                match storage_fut {
+                    Some(f) => f.await,
+                    None => Vec::new(),
+                }
+            },
+            async {
+                match processes_fut {
+                    Some(f) => f.await,
+                    None => Vec::new(),
+                }
+            },
+            async {
+                match services_fut {
+                    Some(f) => f.await,
+                    None => Vec::new(),
+                }
+            },
+            async {
+                match network_fut {
+                    Some(f) => f.await,
+                    None => Vec::new(),
+                }
+            },
+            async {
+                match logs_fut {
+                    Some(f) => f.await,
+                    None => Vec::new(),
+                }
+            },
         );
 
         let snapshot = SystemSnapshot {
@@ -457,13 +482,15 @@ fn parse_ss_output(output: &str) -> Vec<PortInfo> {
         if trimmed.is_empty() {
             continue;
         }
-        // ss -tulnp output: tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=123,fd=3))
+        // ss -tulnp output: tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:*
+        // users:(("sshd",pid=123,fd=3))
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
         if parts.len() >= 5 {
             let protocol = parts[0].to_string();
             let state = parts.get(1).unwrap_or(&"").to_string();
             let local = parts.get(4).unwrap_or(&"").to_string();
-            let process = if let Some(proc_idx) = parts.iter().position(|p| p.starts_with("users:")) {
+            let process = if let Some(proc_idx) = parts.iter().position(|p| p.starts_with("users:"))
+            {
                 parts[proc_idx..].join(" ")
             } else {
                 String::new()
@@ -482,8 +509,8 @@ fn parse_ss_output(output: &str) -> Vec<PortInfo> {
 fn parse_journalctl_output(output: &str) -> Vec<LogEntry> {
     let mut logs = Vec::new();
     for line in output.lines() {
-        // journalctl default format: Mon Jan 15 10:23:00 UTC 2024 hostname unit[pid]: message
-        // Simplified: try to find timestamp + unit + message
+        // journalctl default format: Mon Jan 15 10:23:00 UTC 2024 hostname unit[pid]:
+        // message Simplified: try to find timestamp + unit + message
         if line.len() > 30 {
             let ts = &line[..24]; // Rough timestamp extraction
             let rest = &line[24..];
@@ -520,9 +547,9 @@ mod tests {
 
     #[test]
     fn test_parse_free_output() {
-        let output = "              total        used        free      shared  buff/cache   available\n\
-                      Mem:          15984        8234        1234         456        6516        6789\n\
-                      Swap:          2048           0        2048";
+        let output = "              total        used        free      shared  buff/cache   \
+                      available\nMem:          15984        8234        1234         456        \
+                      6516        6789\nSwap:          2048           0        2048";
         let mem = parse_free_output(output).unwrap();
         assert_eq!(mem.total_mb, 15984);
         assert_eq!(mem.used_mb, 8234);
@@ -531,9 +558,8 @@ mod tests {
 
     #[test]
     fn test_parse_df_output() {
-        let output = "Filesystem      Size  Used Avail Use% Mounted on\n\
-                      /dev/sda1        98G   45G   48G  49% /\n\
-                      tmpfs           7.9G  1.2M  7.9G   1% /run";
+        let output = "Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1        98G   \
+                      45G   48G  49% /\ntmpfs           7.9G  1.2M  7.9G   1% /run";
         let disks = parse_df_output(output);
         assert_eq!(disks.len(), 2);
         assert_eq!(disks[0].mount, "/");

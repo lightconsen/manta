@@ -27,47 +27,47 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
 
     info!("Waiting for OAuth callback on http://{}/callback", addr);
 
-    let accept_future = async {
-        let (mut stream, peer) =
-            listener
-                .accept()
-                .await
-                .map_err(|e| crate::error::SyscityError::ExternalService {
+    let accept_future =
+        async {
+            let (mut stream, peer) = listener.accept().await.map_err(|e| {
+                crate::error::SyscityError::ExternalService {
                     source: format!("Failed to accept callback connection: {}", e),
                     cause: Some(Box::new(e)),
-                })?;
+                }
+            })?;
 
-        debug!("OAuth callback connection from {:?}", peer);
+            debug!("OAuth callback connection from {:?}", peer);
 
-        // Read the first HTTP request line
-        let mut buf = [0u8; 4096];
-        let n = stream.peek(&mut buf).await.map_err(|e| {
-            crate::error::SyscityError::ExternalService {
-                source: format!("Failed to read callback request: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+            // Read the first HTTP request line
+            let mut buf = [0u8; 4096];
+            let n = stream.peek(&mut buf).await.map_err(|e| {
+                crate::error::SyscityError::ExternalService {
+                    source: format!("Failed to read callback request: {}", e),
+                    cause: Some(Box::new(e)),
+                }
+            })?;
 
-        let request = String::from_utf8_lossy(&buf[..n]);
-        debug!("Callback request: {}", request.lines().next().unwrap_or("(empty)"));
+            let request = String::from_utf8_lossy(&buf[..n]);
+            debug!("Callback request: {}", request.lines().next().unwrap_or("(empty)"));
 
-        // Extract code and state from the request line
-        let (code, state) = parse_callback_request(&request)?;
+            // Extract code and state from the request line
+            let (code, state) = parse_callback_request(&request)?;
 
-        // Send a simple success response and close
-        let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
-            <html><body><h2>Authorization successful</h2><p>You can close this window.</p></body></html>";
-        stream
-            .write_all(response.as_bytes())
-            .await
-            .unwrap_or_else(|e| warn!("Failed to send OAuth response: {}", e));
-        stream
-            .shutdown()
-            .await
-            .unwrap_or_else(|e| warn!("Failed to shutdown OAuth stream: {}", e));
+            // Send a simple success response and close
+            let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: \
+                            close\r\n\r\n<html><body><h2>Authorization successful</h2><p>You can \
+                            close this window.</p></body></html>";
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .unwrap_or_else(|e| warn!("Failed to send OAuth response: {}", e));
+            stream
+                .shutdown()
+                .await
+                .unwrap_or_else(|e| warn!("Failed to shutdown OAuth stream: {}", e));
 
-        Ok::<_, crate::error::SyscityError>((code, state))
-    };
+            Ok::<_, crate::error::SyscityError>((code, state))
+        };
 
     match timeout(Duration::from_secs(timeout_secs), accept_future).await {
         Ok(Ok(result)) => {

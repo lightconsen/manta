@@ -26,7 +26,8 @@ use crate::device::safety::{SafetyRule, SafetyRuleKind, SafetyZone};
 use crate::device::{Device, DeviceInfo};
 use crate::error::Result;
 
-// ── HidDriver ─────────────────────────────────────────────────────────────────
+// ── HidDriver
+// ─────────────────────────────────────────────────────────────────
 
 /// Driver for USB HID devices.
 pub struct HidDriver {
@@ -44,15 +45,11 @@ impl HidDriver {
     /// Optional: `serial`, `usage_page`, `name`.
     pub fn from_config(params: Value) -> crate::Result<Arc<dyn DeviceDriver>> {
         let vid_str = params.get("vid").and_then(Value::as_str).ok_or_else(|| {
-            crate::error::SyscityError::Validation(
-                "hid.vid is required (e.g. \"0x1234\")".into(),
-            )
+            crate::error::SyscityError::Validation("hid.vid is required (e.g. \"0x1234\")".into())
         })?;
 
         let pid_str = params.get("pid").and_then(Value::as_str).ok_or_else(|| {
-            crate::error::SyscityError::Validation(
-                "hid.pid is required (e.g. \"0x5678\")".into(),
-            )
+            crate::error::SyscityError::Validation("hid.pid is required (e.g. \"0x5678\")".into())
         })?;
 
         let vid = u16::from_str_radix(vid_str.trim_start_matches("0x"), 16).map_err(|_| {
@@ -73,8 +70,14 @@ impl HidDriver {
             name,
             vid,
             pid,
-            serial: params.get("serial").and_then(Value::as_str).map(String::from),
-            usage_page: params.get("usage_page").and_then(Value::as_u64).map(|v| v as u16),
+            serial: params
+                .get("serial")
+                .and_then(Value::as_str)
+                .map(String::from),
+            usage_page: params
+                .get("usage_page")
+                .and_then(Value::as_u64)
+                .map(|v| v as u16),
         }))
     }
 }
@@ -132,9 +135,7 @@ impl DeviceDriver for HidDriver {
         };
 
         let capabilities: Vec<Arc<dyn Capability>> = vec![
-            Arc::new(HidReadCapability {
-                handle: handle.clone(),
-            }),
+            Arc::new(HidReadCapability { handle: handle.clone() }),
             Arc::new(HidWriteCapability { handle }),
         ];
 
@@ -149,7 +150,8 @@ impl DeviceDriver for HidDriver {
     }
 }
 
-// ── Capabilities ──────────────────────────────────────────────────────────────
+// ── Capabilities
+// ──────────────────────────────────────────────────────────────
 
 struct HidReadCapability {
     handle: Arc<tokio::sync::Mutex<hidapi::HidDevice>>,
@@ -275,8 +277,9 @@ impl Capability for HidWriteCapability {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn test_from_config_minimal() {

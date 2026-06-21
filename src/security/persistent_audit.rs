@@ -8,11 +8,13 @@
 //! - Compliance reporting
 //! - Long-term retention
 
-use crate::security::runtime_audit::{AuditEntry, AuditEventType, AuditLogger};
-use sqlx::Row;
 use std::sync::Arc;
+
+use sqlx::Row;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+
+use crate::security::runtime_audit::{AuditEntry, AuditEventType, AuditLogger};
 
 /// Persistent audit log backed by SQLite
 #[derive(Debug, Clone)]

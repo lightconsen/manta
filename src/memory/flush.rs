@@ -1,10 +1,10 @@
 //! Pre-compaction Memory Flush
 //!
 //! Triggers a silent agent turn before compaction to store durable memories.
-//!
+
+use chrono::Local;
 
 use crate::agent::compaction::{compute_context_hash, MemoryFlushConfig, SessionCompactionState};
-use chrono::Local;
 
 /// Result of a memory flush check
 #[derive(Debug)]
@@ -141,8 +141,8 @@ mod tests {
         ];
 
         // Low tokens - should not flush
-        // Threshold = 8000 - 20000 - 4000 = 0 (saturating_sub), so 1000 >= 0 triggers flush
-        // To NOT trigger, we need a larger context window
+        // Threshold = 8000 - 20000 - 4000 = 0 (saturating_sub), so 1000 >= 0 triggers
+        // flush To NOT trigger, we need a larger context window
         let decision = check_memory_flush(
             1000,  // total_tokens
             10000, // transcript_bytes
@@ -227,7 +227,8 @@ mod tests {
         );
 
         // Should not flush if context hash matches (context unchanged)
-        // Note: This test depends on what hash compute_context_hash returns for empty messages
+        // Note: This test depends on what hash compute_context_hash returns for
+        // empty messages
     }
 
     #[test]

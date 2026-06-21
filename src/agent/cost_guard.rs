@@ -309,7 +309,8 @@ mod tests {
         assert!(!guard.is_exceeded());
         guard.record_usage(100, 100, "claude-3-haiku");
         assert!(guard.is_exceeded());
-        // Daily spend should still be tiny (haiku is 25 cpm → 100 tokens = 0 cents due to integer division)
+        // Daily spend should still be tiny (haiku is 25 cpm → 100 tokens = 0 cents due
+        // to integer division)
         assert_eq!(guard.daily_spend_cents(), 0);
     }
 

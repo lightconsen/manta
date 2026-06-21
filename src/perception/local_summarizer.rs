@@ -15,6 +15,10 @@
 //!
 //! < 250 ms per call on Apple Silicon (M-series).
 
+use std::num::NonZeroU32;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
 use async_trait::async_trait;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
@@ -23,9 +27,6 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::AddBos;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::sampling::LlamaSampler;
-use std::num::NonZeroU32;
-use std::path::PathBuf;
-use std::sync::OnceLock;
 use tracing::info;
 
 use crate::perception::{AdapterError, PerceptionSummarizer};
@@ -53,9 +54,7 @@ fn get_backend() -> Result<&'static LlamaBackend, AdapterError> {
     });
     match result {
         Ok(ref backend) => Ok(backend),
-        Err(ref e) => Err(AdapterError::Summarizer(format!(
-            "backend init failed: {e}"
-        ))),
+        Err(ref e) => Err(AdapterError::Summarizer(format!("backend init failed: {e}"))),
     }
 }
 
@@ -63,9 +62,8 @@ fn get_backend() -> Result<&'static LlamaBackend, AdapterError> {
 
 /// Download (or retrieve from cache) a HuggingFace model file.
 async fn resolve_model(repo_id: &str, filename: &str) -> Result<PathBuf, AdapterError> {
-    let api = hf_hub::api::tokio::Api::new().map_err(|e| {
-        AdapterError::Summarizer(format!("failed to create HF API: {e}"))
-    })?;
+    let api = hf_hub::api::tokio::Api::new()
+        .map_err(|e| AdapterError::Summarizer(format!("failed to create HF API: {e}")))?;
     let repo = api.model(repo_id.to_string());
     let local_path = repo.get(filename).await.map_err(|e| {
         AdapterError::Summarizer(format!("failed to download model {repo_id}/{filename}: {e}"))
@@ -99,7 +97,8 @@ pub struct LocalLlamaSummarizer {
 
 impl std::fmt::Debug for LocalLlamaSummarizer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LocalLlamaSummarizer").finish_non_exhaustive()
+        f.debug_struct("LocalLlamaSummarizer")
+            .finish_non_exhaustive()
     }
 }
 
@@ -129,9 +128,8 @@ impl PerceptionSummarizer for LocalLlamaSummarizer {
     async fn summarize(&self, system: &str, user: &str) -> Result<String, AdapterError> {
         // Build a ChatML prompt compatible with Qwen2.5 instruct models.
         let prompt = format!(
-            "<|im_start|>system\n{}<|im_end|>\n\
-             <|im_start|>user\n{}<|im_end|>\n\
-             <|im_start|>assistant\n",
+            "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\\
+             n<|im_start|>assistant\n",
             system, user
         );
 
@@ -141,9 +139,7 @@ impl PerceptionSummarizer for LocalLlamaSummarizer {
             .map_err(|e| AdapterError::Summarizer(format!("tokenization failed: {e}")))?;
 
         if tokens.is_empty() {
-            return Err(AdapterError::Summarizer(
-                "empty tokenization result".into(),
-            ));
+            return Err(AdapterError::Summarizer("empty tokenization result".into()));
         }
 
         // Create a fresh context for this call (avoids LlamaContext lifetime
@@ -151,9 +147,12 @@ impl PerceptionSummarizer for LocalLlamaSummarizer {
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(N_CTX))
             .with_n_batch(N_BATCH as u32);
-        let mut ctx = self.model.new_context(self.backend, ctx_params).map_err(|e| {
-            AdapterError::Summarizer(format!("failed to create llama context: {e}"))
-        })?;
+        let mut ctx = self
+            .model
+            .new_context(self.backend, ctx_params)
+            .map_err(|e| {
+                AdapterError::Summarizer(format!("failed to create llama context: {e}"))
+            })?;
 
         // ── Prompt evaluation ──────────────────────────────────────────────
         {
@@ -164,9 +163,8 @@ impl PerceptionSummarizer for LocalLlamaSummarizer {
                     AdapterError::Summarizer(format!("failed to add prompt token: {e}"))
                 })?;
             }
-            ctx.decode(&mut batch).map_err(|e| {
-                AdapterError::Summarizer(format!("prompt decode failed: {e}"))
-            })?;
+            ctx.decode(&mut batch)
+                .map_err(|e| AdapterError::Summarizer(format!("prompt decode failed: {e}")))?;
         }
 
         // ── Greedy generation loop ────────────────────────────────────────
@@ -180,9 +178,7 @@ impl PerceptionSummarizer for LocalLlamaSummarizer {
             let pos = n_prompt
                 .checked_add(gen_idx as usize)
                 .and_then(|p| p.checked_sub(1))
-                .ok_or_else(|| {
-                    AdapterError::Summarizer("position arithmetic overflow".into())
-                })?;
+                .ok_or_else(|| AdapterError::Summarizer("position arithmetic overflow".into()))?;
             let next = sampler.sample(&ctx, pos as i32);
 
             if next == eos_token {
@@ -199,9 +195,8 @@ impl PerceptionSummarizer for LocalLlamaSummarizer {
             batch
                 .add(next, insert_pos as i32, &[0], true)
                 .map_err(|e| AdapterError::Summarizer(format!("failed to add gen token: {e}")))?;
-            ctx.decode(&mut batch).map_err(|e| {
-                AdapterError::Summarizer(format!("gen decode failed: {e}"))
-            })?;
+            ctx.decode(&mut batch)
+                .map_err(|e| AdapterError::Summarizer(format!("gen decode failed: {e}")))?;
         }
 
         let raw = tokens_to_string(&self.model, &output_tokens);
@@ -227,10 +222,7 @@ mod tests {
         assert!(result.is_err(), "expected Err for invalid file");
         match result {
             Err(AdapterError::Summarizer(msg)) => {
-                assert!(
-                    msg.contains("failed to load model"),
-                    "unexpected error message: {msg}"
-                );
+                assert!(msg.contains("failed to load model"), "unexpected error message: {msg}");
             }
             other => panic!("expected Summarizer error, got {other:?}"),
         }

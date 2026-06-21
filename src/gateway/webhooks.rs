@@ -4,6 +4,8 @@
 //! external channel providers (WhatsApp, Telegram, Feishu, etc.).
 //! Security is handled via HMAC signature verification per-channel.
 
+use std::sync::Arc;
+
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
@@ -13,7 +15,6 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use super::GatewayState;
@@ -40,6 +41,7 @@ pub struct WebhookResponse {
 /// Session mapping for webhook-based channels (platform_id -> session_uuid)
 /// This provides UUID-based sessions with /new command support
 use std::collections::HashMap;
+
 use tokio::sync::RwLock;
 
 /// Get or create a session UUID for a platform user
@@ -193,8 +195,11 @@ async fn whatsapp_webhook_handler(
                                 // Handle /new command to reset session
                                 let platform_key = format!("whatsapp:{}", from);
                                 let session_id = if text_body.trim() == "/new" {
-                                    let new_session =
-                                        reset_session(&state.channels.webhook_sessions, &platform_key).await;
+                                    let new_session = reset_session(
+                                        &state.channels.webhook_sessions,
+                                        &platform_key,
+                                    )
+                                    .await;
                                     info!(
                                         "🆕 New WhatsApp session started for {}: {}",
                                         from, new_session
@@ -216,13 +221,17 @@ async fn whatsapp_webhook_handler(
                                     new_session
                                 } else {
                                     // Get or create session UUID
-                                    get_or_create_session(&state.channels.webhook_sessions, &platform_key)
-                                        .await
+                                    get_or_create_session(
+                                        &state.channels.webhook_sessions,
+                                        &platform_key,
+                                    )
+                                    .await
                                 };
 
                                 // Store session mapping for response routing
                                 {
-                                    let mut sessions = state.channels.session_channels.write().await;
+                                    let mut sessions =
+                                        state.channels.session_channels.write().await;
                                     sessions.insert(
                                         session_id.clone(),
                                         ("whatsapp".to_string(), from.to_string()),
@@ -305,7 +314,8 @@ async fn telegram_webhook_handler(
     State(state): State<Arc<GatewayState>>,
     Json(update): Json<TelegramUpdate>,
 ) -> impl IntoResponse {
-    // Verify webhook token from URL path - required for all Telegram webhook channels
+    // Verify webhook token from URL path - required for all Telegram webhook
+    // channels
     let expected_token = {
         let config = state.config.read().await;
         config
@@ -475,7 +485,8 @@ async fn feishu_webhook_handler(
                 // Handle /new command to reset session
                 let platform_key = format!("feishu:{}", user_id);
                 let session_id = if text.trim() == "/new" {
-                    let new_session = reset_session(&state.channels.webhook_sessions, &platform_key).await;
+                    let new_session =
+                        reset_session(&state.channels.webhook_sessions, &platform_key).await;
                     info!("🆕 New Feishu session started for {}: {}", user_id, new_session);
                     new_session
                 } else {
@@ -952,7 +963,10 @@ mod tests {
         let app = create_webhook_router(state);
 
         let req = Request::builder()
-            .uri("/webhooks/whatsapp/verify?hub_mode=subscribe&hub_verify_token=secret123&hub_challenge=123456")
+            .uri(
+                "/webhooks/whatsapp/verify?hub_mode=subscribe&hub_verify_token=secret123&\
+                 hub_challenge=123456",
+            )
             .body(Body::empty())
             .unwrap();
 
@@ -971,7 +985,10 @@ mod tests {
         let app = create_webhook_router(state);
 
         let req = Request::builder()
-            .uri("/webhooks/whatsapp/verify?hub_mode=subscribe&hub_verify_token=wrong&hub_challenge=123")
+            .uri(
+                "/webhooks/whatsapp/verify?hub_mode=subscribe&hub_verify_token=wrong&\
+                 hub_challenge=123",
+            )
             .body(Body::empty())
             .unwrap();
 

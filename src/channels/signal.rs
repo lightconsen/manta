@@ -9,18 +9,20 @@
 //! The daemon exposes a JSON-RPC endpoint at /api/v1/rpc where messages
 //! can be sent and received.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, info, warn};
+
 use crate::channels::{
     Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage,
     MessageMetadata, OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, warn};
 
 /// Default signal-cli JSON-RPC endpoint
 const DEFAULT_SIGNAL_RPC_URL: &str = "http://localhost:8080/api/v1/rpc";
@@ -198,18 +200,17 @@ impl SignalChannel {
                         Ok(RequestAccessResult::NewRequest { code }) => (
                             false,
                             Some(format!(
-                                "Access requested. An admin will approve your request.\nPairing code: `{}`",
+                                "Access requested. An admin will approve your request.\nPairing \
+                                 code: `{}`",
                                 code
                             )),
                         ),
-                        Ok(RequestAccessResult::RateLimited { .. }) => (
-                            false,
-                            Some("Too many requests. Please try again later.".to_string()),
-                        ),
-                        Err(_) => (
-                            false,
-                            Some("An error occurred processing your request.".to_string()),
-                        ),
+                        Ok(RequestAccessResult::RateLimited { .. }) => {
+                            (false, Some("Too many requests. Please try again later.".to_string()))
+                        }
+                        Err(_) => {
+                            (false, Some("An error occurred processing your request.".to_string()))
+                        }
                     }
                 } else {
                     (false, Some("Access control is not configured.".to_string()))

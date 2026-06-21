@@ -1,7 +1,8 @@
 //! Temporal observation aggregation.
 //!
 //! The [`TemporalAggregator`] maintains a sliding window of recent observations
-//! and applies a configurable [`AggregationStrategy`] to produce stable entities.
+//! and applies a configurable [`AggregationStrategy`] to produce stable
+//! entities.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -47,9 +48,10 @@ pub struct Entity {
 }
 
 /// Strategy for converting a window of observations into stable entities.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum AggregationStrategy {
     /// Latest observation wins (simple passthrough).
+    #[default]
     Latest,
     /// Entity exists if it appears in more than half the observations.
     Majority,
@@ -57,12 +59,6 @@ pub enum AggregationStrategy {
     CountThreshold(usize),
     /// Entity exists if its confidence-weighted sum exceeds the threshold.
     ConfidenceWeighted(f32),
-}
-
-impl Default for AggregationStrategy {
-    fn default() -> Self {
-        Self::Latest
-    }
 }
 
 /// Sliding-window temporal aggregator.
@@ -162,8 +158,7 @@ impl TemporalAggregator {
     }
 
     fn aggregate_majority(&self) -> Vec<Entity> {
-        let mut counts: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
         let total = self.observations.len();
         for obs in &self.observations {
             *counts.entry(obs.source.as_str()).or_insert(0) += 1;
@@ -201,8 +196,7 @@ impl TemporalAggregator {
     }
 
     fn aggregate_count_threshold(&self, threshold: usize) -> Vec<Entity> {
-        let mut counts: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
         for obs in &self.observations {
             *counts.entry(obs.source.as_str()).or_insert(0) += 1;
         }
@@ -238,8 +232,7 @@ impl TemporalAggregator {
     }
 
     fn aggregate_confidence_weighted(&self, threshold: f32) -> Vec<Entity> {
-        let mut scores: std::collections::HashMap<&str, f32> =
-            std::collections::HashMap::new();
+        let mut scores: std::collections::HashMap<&str, f32> = std::collections::HashMap::new();
         for obs in &self.observations {
             *scores.entry(obs.source.as_str()).or_insert(0.0) += obs.confidence;
         }
@@ -312,8 +305,10 @@ mod tests {
 
     #[test]
     fn test_count_threshold() {
-        let mut agg =
-            TemporalAggregator::new(AggregationStrategy::CountThreshold(3), Duration::from_secs(10));
+        let mut agg = TemporalAggregator::new(
+            AggregationStrategy::CountThreshold(3),
+            Duration::from_secs(10),
+        );
         for _ in 0..5 {
             agg.push(make_obs("frequent"));
         }

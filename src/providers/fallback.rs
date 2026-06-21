@@ -1,11 +1,14 @@
 //! Fallback provider implementation for Syscity
 //!
-//! This provider wraps multiple providers and tries them in order until one succeeds.
+//! This provider wraps multiple providers and tries them in order until one
+//! succeeds.
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use tracing::{debug, error, info, warn};
 
 use super::{CompletionRequest, CompletionResponse, CompletionStream, Provider};
-use async_trait::async_trait;
-use std::sync::Arc;
-use tracing::{debug, error, info, warn};
 
 /// A provider that falls back to other providers on failure
 pub struct FallbackProvider {

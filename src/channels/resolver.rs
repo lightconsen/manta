@@ -10,12 +10,14 @@
 //! 5. `inbound-bundled-plugin` — Plugin-based binding
 //! 6. `inbound-fallback` — Default fallback
 
-use crate::channels::IncomingMessage;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+
+use crate::channels::IncomingMessage;
 
 /// Shared map from session id to the bound `(agent_id, workspace_id)` pair.
 pub type BindingMap = Arc<RwLock<HashMap<String, (String, Option<String>)>>>;
@@ -74,7 +76,8 @@ impl fmt::Display for ResolutionSource {
 pub struct ConversationResolution {
     /// The resolved agent ID.
     pub agent_id: String,
-    /// The resolved session ID (may be the same as or different from the incoming conversation_id).
+    /// The resolved session ID (may be the same as or different from the
+    /// incoming conversation_id).
     pub session_id: String,
     /// Optional workspace ID.
     pub workspace_id: Option<String>,
@@ -118,10 +121,7 @@ impl ConversationResolution {
 pub trait ResolutionProvider: Send + Sync {
     /// Try to resolve an agent and session for this message.
     /// Returns `None` if this provider cannot resolve.
-    async fn resolve(
-        &self,
-        message: &IncomingMessage,
-    ) -> Option<ConversationResolution>;
+    async fn resolve(&self, message: &IncomingMessage) -> Option<ConversationResolution>;
 }
 
 /// Uses explicit `@agent_name` mentions or commands to resolve.
@@ -140,10 +140,7 @@ impl CommandProvider {
 
 #[async_trait::async_trait]
 impl ResolutionProvider for CommandProvider {
-    async fn resolve(
-        &self,
-        message: &IncomingMessage,
-    ) -> Option<ConversationResolution> {
+    async fn resolve(&self, message: &IncomingMessage) -> Option<ConversationResolution> {
         let content = message.content.trim();
 
         // Check for @agent mention
@@ -181,12 +178,7 @@ impl FocusedBindingProvider {
     }
 
     /// Store a binding.
-    pub async fn bind(
-        &self,
-        session_id: &str,
-        agent_id: &str,
-        workspace_id: Option<String>,
-    ) {
+    pub async fn bind(&self, session_id: &str, agent_id: &str, workspace_id: Option<String>) {
         let mut b = self.bindings.write().await;
         b.insert(session_id.to_string(), (agent_id.to_string(), workspace_id));
     }
@@ -200,20 +192,13 @@ impl FocusedBindingProvider {
 
 #[async_trait::async_trait]
 impl ResolutionProvider for FocusedBindingProvider {
-    async fn resolve(
-        &self,
-        message: &IncomingMessage,
-    ) -> Option<ConversationResolution> {
+    async fn resolve(&self, message: &IncomingMessage) -> Option<ConversationResolution> {
         let bindings = self.bindings.read().await;
         let session_id = &message.conversation_id.0;
         if let Some((agent_id, workspace_id)) = bindings.get(session_id) {
             Some(
-                ConversationResolution::new(
-                    agent_id,
-                    session_id,
-                    ResolutionSource::FocusedBinding,
-                )
-                .with_workspace(workspace_id.clone().unwrap_or_default()),
+                ConversationResolution::new(agent_id, session_id, ResolutionSource::FocusedBinding)
+                    .with_workspace(workspace_id.clone().unwrap_or_default()),
             )
         } else {
             None
@@ -248,14 +233,9 @@ impl InboundProvider {
 
 #[async_trait::async_trait]
 impl ResolutionProvider for InboundProvider {
-    async fn resolve(
-        &self,
-        message: &IncomingMessage,
-    ) -> Option<ConversationResolution> {
+    async fn resolve(&self, message: &IncomingMessage) -> Option<ConversationResolution> {
         let channel_name = match &message.provenance {
-            crate::channels::InputProvenance::ExternalUser { channel, .. } => {
-                channel.clone()
-            }
+            crate::channels::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
             _ => return None,
         };
 
@@ -286,10 +266,7 @@ pub struct ArtifactBindingProvider;
 
 #[async_trait::async_trait]
 impl ResolutionProvider for ArtifactBindingProvider {
-    async fn resolve(
-        &self,
-        _message: &IncomingMessage,
-    ) -> Option<ConversationResolution> {
+    async fn resolve(&self, _message: &IncomingMessage) -> Option<ConversationResolution> {
         // Placeholder: artifact-based resolution is not yet implemented.
         // In the future, this could parse artifact references in the message
         // content and route to the artifact's owning agent/session.
@@ -302,10 +279,7 @@ pub struct PluginBindingProvider;
 
 #[async_trait::async_trait]
 impl ResolutionProvider for PluginBindingProvider {
-    async fn resolve(
-        &self,
-        _message: &IncomingMessage,
-    ) -> Option<ConversationResolution> {
+    async fn resolve(&self, _message: &IncomingMessage) -> Option<ConversationResolution> {
         // Placeholder: plugin-based resolution is not yet implemented.
         // In the future, registered plugins could claim ownership of
         // specific message patterns or conversation IDs.
@@ -320,10 +294,7 @@ pub struct FallbackProvider {
 }
 
 impl FallbackProvider {
-    pub fn new(
-        default_agent_id: impl Into<String>,
-        default_workspace_id: Option<String>,
-    ) -> Self {
+    pub fn new(default_agent_id: impl Into<String>, default_workspace_id: Option<String>) -> Self {
         Self {
             default_agent_id: default_agent_id.into(),
             default_workspace_id,
@@ -333,10 +304,7 @@ impl FallbackProvider {
 
 #[async_trait::async_trait]
 impl ResolutionProvider for FallbackProvider {
-    async fn resolve(
-        &self,
-        message: &IncomingMessage,
-    ) -> Option<ConversationResolution> {
+    async fn resolve(&self, message: &IncomingMessage) -> Option<ConversationResolution> {
         Some(
             ConversationResolution::new(
                 &self.default_agent_id,
@@ -381,10 +349,7 @@ impl ConversationResolver {
         resolver.add_provider(Box::new(PluginBindingProvider));
 
         // 6. Fallback provider (lowest priority)
-        resolver.add_provider(Box::new(FallbackProvider::new(
-            agent_id,
-            default_workspace_id,
-        )));
+        resolver.add_provider(Box::new(FallbackProvider::new(agent_id, default_workspace_id)));
 
         resolver
     }
@@ -409,10 +374,7 @@ impl ConversationResolver {
     }
 
     /// Resolve with logging of which source was used.
-    pub async fn resolve_with_log(
-        &self,
-        message: &IncomingMessage,
-    ) -> ConversationResolution {
+    pub async fn resolve_with_log(&self, message: &IncomingMessage) -> ConversationResolution {
         for provider in &self.providers {
             if let Some(resolution) = provider.resolve(message).await {
                 tracing::debug!(
@@ -434,23 +396,18 @@ pub async fn resolve_conversation(
     default_agent: &str,
     bindings: BindingMap,
 ) -> ConversationResolution {
-    let resolver =
-        ConversationResolver::with_default_chain(default_agent, None, bindings);
+    let resolver = ConversationResolver::with_default_chain(default_agent, None, bindings);
     resolver.resolve(message).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::channels::{InputProvenance, MentionState};
     use std::sync::Arc;
 
-    fn make_message(
-        user_id: &str,
-        conv_id: &str,
-        content: &str,
-        channel: &str,
-    ) -> IncomingMessage {
+    use super::*;
+    use crate::channels::{InputProvenance, MentionState};
+
+    fn make_message(user_id: &str, conv_id: &str, content: &str, channel: &str) -> IncomingMessage {
         IncomingMessage {
             id: crate::core::models::Id::new(),
             user_id: crate::channels::UserId::new(user_id),
@@ -484,9 +441,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_focused_binding_provider() {
-        let bindings = Arc::new(tokio::sync::RwLock::new(
-            std::collections::HashMap::new(),
-        ));
+        let bindings = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
         let provider = FocusedBindingProvider::new(bindings.clone());
 
         // No binding yet
@@ -530,11 +485,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_full_resolver_chain() {
-        let bindings = Arc::new(tokio::sync::RwLock::new(
-            std::collections::HashMap::new(),
-        ));
-        let resolver =
-            ConversationResolver::with_default_chain("default", None, bindings);
+        let bindings = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let resolver = ConversationResolver::with_default_chain("default", None, bindings);
 
         // Should resolve via command provider
         let msg = make_message("u1", "c1", "@coder do thing", "telegram");
@@ -545,11 +497,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolver_fallback() {
-        let bindings = Arc::new(tokio::sync::RwLock::new(
-            std::collections::HashMap::new(),
-        ));
-        let resolver =
-            ConversationResolver::with_default_chain("default", None, bindings);
+        let bindings = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let resolver = ConversationResolver::with_default_chain("default", None, bindings);
 
         // No bindings, no command, unknown channel — should fallback
         let msg = make_message("u1", "c1", "hello", "signal");
@@ -560,14 +509,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolver_prefers_binding_over_fallback() {
-        let bindings = Arc::new(tokio::sync::RwLock::new(
-            std::collections::HashMap::new(),
-        ));
+        let bindings = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
         let binding_provider = FocusedBindingProvider::new(bindings.clone());
         binding_provider.bind("c1", "specialist", None).await;
 
-        let resolver =
-            ConversationResolver::with_default_chain("default", None, bindings);
+        let resolver = ConversationResolver::with_default_chain("default", None, bindings);
 
         let msg = make_message("u1", "c1", "hello", "signal");
         let result = resolver.resolve(&msg).await;
@@ -577,9 +523,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_convenience_function() {
-        let bindings = Arc::new(tokio::sync::RwLock::new(
-            std::collections::HashMap::new(),
-        ));
+        let bindings = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
         let msg = make_message("u1", "c1", "hello", "telegram");
         let result = resolve_conversation(&msg, "default", bindings).await;
         assert_eq!(result.agent_id, "default");

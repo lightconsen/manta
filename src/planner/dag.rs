@@ -3,8 +3,9 @@
 //! Ensures tasks are executed only after all their dependencies have
 //! completed successfully.  Independent tasks can run in parallel.
 
-use super::{Plan, TaskId};
 use std::collections::{HashMap, HashSet, VecDeque};
+
+use super::{Plan, TaskId};
 
 /// Detects cycles and computes topological order for a plan.
 #[derive(Debug)]
@@ -43,9 +44,7 @@ impl DagScheduler {
         for (id, task) in &plan.tasks {
             for dep in &task.dependencies {
                 if dep == id {
-                    return Err(DagValidation::SelfDependency {
-                        task: id.clone(),
-                    });
+                    return Err(DagValidation::SelfDependency { task: id.clone() });
                 }
                 if !plan.tasks.contains_key(dep) {
                     return Err(DagValidation::MissingDependency {
@@ -182,9 +181,19 @@ mod tests {
     #[test]
     fn test_valid_dag() {
         let mut plan = Plan::new("deploy");
-        plan.add_task(Task::new("build", "Build project", DesktopAction::Wait { milliseconds: 10 }));
-        plan.add_task(Task::new("test", "Run tests", DesktopAction::Wait { milliseconds: 10 }).depends_on("build"));
-        plan.add_task(Task::new("deploy", "Deploy", DesktopAction::Wait { milliseconds: 10 }).depends_on("test"));
+        plan.add_task(Task::new(
+            "build",
+            "Build project",
+            DesktopAction::Wait { milliseconds: 10 },
+        ));
+        plan.add_task(
+            Task::new("test", "Run tests", DesktopAction::Wait { milliseconds: 10 })
+                .depends_on("build"),
+        );
+        plan.add_task(
+            Task::new("deploy", "Deploy", DesktopAction::Wait { milliseconds: 10 })
+                .depends_on("test"),
+        );
 
         let scheduler = DagScheduler::from_plan(&plan).unwrap();
         assert_eq!(scheduler.order(), vec!["build", "test", "deploy"]);
@@ -194,10 +203,21 @@ mod tests {
     fn test_parallel_tasks() {
         let mut plan = Plan::new("parallel");
         plan.add_task(Task::new("setup", "Setup", DesktopAction::Wait { milliseconds: 10 }));
-        plan.add_task(Task::new("a", "Task A", DesktopAction::Wait { milliseconds: 10 }).depends_on("setup"));
-        plan.add_task(Task::new("b", "Task B", DesktopAction::Wait { milliseconds: 10 }).depends_on("setup"));
-        plan.add_task(Task::new("c", "Task C", DesktopAction::Wait { milliseconds: 10 }).depends_on("setup"));
-        plan.add_task(Task::new("finish", "Finish", DesktopAction::Wait { milliseconds: 10 }).depends_on("a").depends_on("b").depends_on("c"));
+        plan.add_task(
+            Task::new("a", "Task A", DesktopAction::Wait { milliseconds: 10 }).depends_on("setup"),
+        );
+        plan.add_task(
+            Task::new("b", "Task B", DesktopAction::Wait { milliseconds: 10 }).depends_on("setup"),
+        );
+        plan.add_task(
+            Task::new("c", "Task C", DesktopAction::Wait { milliseconds: 10 }).depends_on("setup"),
+        );
+        plan.add_task(
+            Task::new("finish", "Finish", DesktopAction::Wait { milliseconds: 10 })
+                .depends_on("a")
+                .depends_on("b")
+                .depends_on("c"),
+        );
 
         let scheduler = DagScheduler::from_plan(&plan).unwrap();
         assert_eq!(scheduler.order[0], "setup");
@@ -212,7 +232,9 @@ mod tests {
     #[test]
     fn test_self_dependency_detected() {
         let mut plan = Plan::new("bad");
-        plan.add_task(Task::new("a", "Task A", DesktopAction::Wait { milliseconds: 10 }).depends_on("a"));
+        plan.add_task(
+            Task::new("a", "Task A", DesktopAction::Wait { milliseconds: 10 }).depends_on("a"),
+        );
 
         let err = DagScheduler::from_plan(&plan).unwrap_err();
         assert!(matches!(err, DagValidation::SelfDependency { task } if task == "a"));
@@ -221,18 +243,29 @@ mod tests {
     #[test]
     fn test_missing_dependency_detected() {
         let mut plan = Plan::new("bad");
-        plan.add_task(Task::new("a", "Task A", DesktopAction::Wait { milliseconds: 10 }).depends_on("missing"));
+        plan.add_task(
+            Task::new("a", "Task A", DesktopAction::Wait { milliseconds: 10 })
+                .depends_on("missing"),
+        );
 
         let err = DagScheduler::from_plan(&plan).unwrap_err();
-        assert!(matches!(err, DagValidation::MissingDependency { task, missing } if task == "a" && missing == "missing"));
+        assert!(
+            matches!(err, DagValidation::MissingDependency { task, missing } if task == "a" && missing == "missing")
+        );
     }
 
     #[test]
     fn test_cycle_detected() {
         let mut plan = Plan::new("bad");
-        plan.add_task(Task::new("a", "Task A", DesktopAction::Wait { milliseconds: 10 }).depends_on("c"));
-        plan.add_task(Task::new("b", "Task B", DesktopAction::Wait { milliseconds: 10 }).depends_on("a"));
-        plan.add_task(Task::new("c", "Task C", DesktopAction::Wait { milliseconds: 10 }).depends_on("b"));
+        plan.add_task(
+            Task::new("a", "Task A", DesktopAction::Wait { milliseconds: 10 }).depends_on("c"),
+        );
+        plan.add_task(
+            Task::new("b", "Task B", DesktopAction::Wait { milliseconds: 10 }).depends_on("a"),
+        );
+        plan.add_task(
+            Task::new("c", "Task C", DesktopAction::Wait { milliseconds: 10 }).depends_on("b"),
+        );
 
         let err = DagScheduler::from_plan(&plan).unwrap_err();
         assert!(matches!(err, DagValidation::Cycle { .. }));
@@ -242,9 +275,17 @@ mod tests {
     fn test_next_ready() {
         let mut plan = Plan::new("test");
         plan.add_task(Task::new("a", "A", DesktopAction::Wait { milliseconds: 10 }));
-        plan.add_task(Task::new("b", "B", DesktopAction::Wait { milliseconds: 10 }).depends_on("a"));
-        plan.add_task(Task::new("c", "C", DesktopAction::Wait { milliseconds: 10 }).depends_on("a"));
-        plan.add_task(Task::new("d", "D", DesktopAction::Wait { milliseconds: 10 }).depends_on("b").depends_on("c"));
+        plan.add_task(
+            Task::new("b", "B", DesktopAction::Wait { milliseconds: 10 }).depends_on("a"),
+        );
+        plan.add_task(
+            Task::new("c", "C", DesktopAction::Wait { milliseconds: 10 }).depends_on("a"),
+        );
+        plan.add_task(
+            Task::new("d", "D", DesktopAction::Wait { milliseconds: 10 })
+                .depends_on("b")
+                .depends_on("c"),
+        );
 
         let scheduler = DagScheduler::from_plan(&plan).unwrap();
         let mut completed = HashSet::new();

@@ -15,51 +15,54 @@
 //! ToolRegistry ──→ CapabilitySet ──→ xdotool / SendKeys / AXUIElement
 //! ```
 
-use crate::tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub mod types;
-pub mod system;
-pub mod verification;
-pub mod reflection;
-pub mod use_loop;
-pub mod rollback;
-pub mod headless;
-pub mod fs_watch;
-pub mod network;
-pub mod log_aggregator;
+use crate::tools::ToolRegistry;
+
 pub mod audio;
+pub mod fs_watch;
+pub mod headless;
+pub mod log_aggregator;
+pub mod network;
+pub mod reflection;
+pub mod remote_control;
+pub mod rollback;
 pub mod screen_recorder;
 pub mod screenshot_encoder;
 pub mod sensitive_ui;
-pub mod remote_control;
+pub mod system;
+pub mod types;
+pub mod use_loop;
+pub mod verification;
 #[cfg(feature = "vision")]
 pub mod vision;
 
 // Platform adapters
+#[cfg(target_os = "linux")]
+pub mod platform_linux;
 #[cfg(target_os = "macos")]
 pub mod platform_macos;
 #[cfg(target_os = "windows")]
 pub mod platform_windows;
-#[cfg(target_os = "linux")]
-pub mod platform_linux;
 
 pub mod platform;
 
-pub use remote_control::{RemoteControlAdapter, RemoteControlConfig, RemoteProtocol};
-pub use types::*;
-pub use verification::{VerificationConfig, VerificationCriteria, VerificationEngine};
-pub use use_loop::{ComputerUseLoop, LoopConfig, LoopDecision, LoopResult, LoopState, StepRecord};
-pub use rollback::{RollbackManager, Snapshot};
-pub use headless::{HeadlessComputerAdapter, VirtualDisplay};
-pub use fs_watch::{FileChangeEvent, FileChangeKind, FileWatchResult, FileWatcher};
-pub use network::{FirewallRule, NetworkInspector, PingResult, PortEntry, TcpConnectResult};
-pub use log_aggregator::{AlertAction, AlertEvent, LogAggregator, LogAlertRule, LogEntry, LogLevel, LogSource};
 pub use audio::{AudioCapture, AudioSegment, AudioSource, DetectedAudioEvent};
+pub use fs_watch::{FileChangeEvent, FileChangeKind, FileWatchResult, FileWatcher};
+pub use headless::{HeadlessComputerAdapter, VirtualDisplay};
+pub use log_aggregator::{
+    AlertAction, AlertEvent, LogAggregator, LogAlertRule, LogEntry, LogLevel, LogSource,
+};
+pub use network::{FirewallRule, NetworkInspector, PingResult, PortEntry, TcpConnectResult};
+pub use remote_control::{RemoteControlAdapter, RemoteControlConfig, RemoteProtocol};
+pub use rollback::{RollbackManager, Snapshot};
 pub use screen_recorder::{
     resolve_or_download_ffmpeg, RecorderConfig, Rect as RecorderRect, ScreenRecorder, VideoFrame,
 };
+pub use types::*;
+pub use use_loop::{ComputerUseLoop, LoopConfig, LoopDecision, LoopResult, LoopState, StepRecord};
+pub use verification::{VerificationConfig, VerificationCriteria, VerificationEngine};
 
 /// Unified error type for computer operations.
 #[derive(Debug, thiserror::Error)]
@@ -107,18 +110,10 @@ pub trait ComputerAdapter: Send + Sync {
     async fn execute(&self, action: DesktopAction) -> Result<ActionResult>;
 
     /// Wait until a condition becomes true or timeout expires.
-    async fn wait_for(
-        &self,
-        condition: WaitCondition,
-        timeout: Duration,
-    ) -> Result<bool>;
+    async fn wait_for(&self, condition: WaitCondition, timeout: Duration) -> Result<bool>;
 
     /// Convenience: click at a logical coordinate.
-    async fn click_at(
-        &self,
-        point: Point,
-        button: MouseButton,
-    ) -> Result<ActionResult> {
+    async fn click_at(&self, point: Point, button: MouseButton) -> Result<ActionResult> {
         self.execute(DesktopAction::Click {
             target: ClickTarget::Coordinate(point),
             button,
@@ -127,19 +122,13 @@ pub trait ComputerAdapter: Send + Sync {
     }
 
     /// Convenience: type text.
-    async fn type_text(&self,
-        text: &str,
-    ) -> Result<ActionResult> {
-        self.execute(DesktopAction::Type {
-            text: text.to_string(),
-        })
-        .await
+    async fn type_text(&self, text: &str) -> Result<ActionResult> {
+        self.execute(DesktopAction::Type { text: text.to_string() })
+            .await
     }
 
     /// Convenience: press a key combination.
-    async fn key_press(&self,
-        keys: Vec<String>,
-    ) -> Result<ActionResult> {
+    async fn key_press(&self, keys: Vec<String>) -> Result<ActionResult> {
         self.execute(DesktopAction::KeyPress { keys }).await
     }
 
@@ -154,46 +143,33 @@ pub trait ComputerAdapter: Send + Sync {
     }
 
     /// Convenience: set clipboard content.
-    async fn clipboard_set(
-        &self,
-        text: &str,
-    ) -> Result<ActionResult> {
-        self.execute(DesktopAction::ClipboardSet {
-            text: text.to_string(),
-        })
-        .await
+    async fn clipboard_set(&self, text: &str) -> Result<ActionResult> {
+        self.execute(DesktopAction::ClipboardSet { text: text.to_string() })
+            .await
     }
 
     /// Convenience: watch a directory for changes.
     async fn watch_directory(&self, path: &str) -> Result<ActionResult> {
-        self.execute(DesktopAction::WatchDirectory {
-            path: path.to_string(),
-        })
-        .await
+        self.execute(DesktopAction::WatchDirectory { path: path.to_string() })
+            .await
     }
 
     /// Convenience: stop watching a directory.
     async fn unwatch_directory(&self, path: &str) -> Result<ActionResult> {
-        self.execute(DesktopAction::UnwatchDirectory {
-            path: path.to_string(),
-        })
-        .await
+        self.execute(DesktopAction::UnwatchDirectory { path: path.to_string() })
+            .await
     }
 
     /// Convenience: watch a single file for changes.
     async fn watch_file(&self, path: &str) -> Result<ActionResult> {
-        self.execute(DesktopAction::WatchFile {
-            path: path.to_string(),
-        })
-        .await
+        self.execute(DesktopAction::WatchFile { path: path.to_string() })
+            .await
     }
 
     /// Convenience: stop watching a single file.
     async fn unwatch_file(&self, path: &str) -> Result<ActionResult> {
-        self.execute(DesktopAction::UnwatchFile {
-            path: path.to_string(),
-        })
-        .await
+        self.execute(DesktopAction::UnwatchFile { path: path.to_string() })
+            .await
     }
 
     /// Convenience: list network sockets.
@@ -277,9 +253,7 @@ pub trait ComputerAdapter: Send + Sync {
 /// - Linux + Wayland → `WaylandPhysicalAdapter`
 /// - Linux headless → `HeadlessPhysicalAdapter`
 #[allow(unreachable_code)]
-pub async fn create_adapter(
-    registry: Arc<ToolRegistry>,
-) -> Result<Box<dyn ComputerAdapter>> {
+pub async fn create_adapter(registry: Arc<ToolRegistry>) -> Result<Box<dyn ComputerAdapter>> {
     #[cfg(target_os = "macos")]
     {
         return platform_macos::create(registry).await;
@@ -295,9 +269,7 @@ pub async fn create_adapter(
         return platform_linux::create(registry).await;
     }
 
-    Err(ComputerError::UnsupportedPlatform(
-        std::env::consts::OS.to_string(),
-    ))
+    Err(ComputerError::UnsupportedPlatform(std::env::consts::OS.to_string()))
 }
 
 /// Detect whether a display server is available at runtime.

@@ -1,10 +1,8 @@
-
 use axum::{
     extract::Path,
     http::{header, StatusCode},
     response::{Html, IntoResponse},
 };
-
 
 /// HTML handler for the web chat UI
 ///
@@ -35,7 +33,8 @@ pub async fn favicon_handler() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "image/svg+xml")], svg)
 }
 
-/// Asset handler — serves JS/CSS/fonts from embedded assets (or filesystem fallback).
+/// Asset handler — serves JS/CSS/fonts from embedded assets (or filesystem
+/// fallback).
 pub async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
     // Try embedded assets first (handles both direct keys and "assets/" prefix).
     if let Some((data, mime)) = crate::embed::get_asset(&path) {
@@ -54,14 +53,18 @@ pub async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
     StatusCode::NOT_FOUND.into_response()
 }
 
-/// Service worker handler — serves the Vite PWA service worker registration script.
+/// Service worker handler — serves the Vite PWA service worker registration
+/// script.
 pub async fn register_sw_handler() -> impl IntoResponse {
     let js = match crate::embed::WebAssets::get("registerSW.js") {
         Some(file) => String::from_utf8_lossy(file.data.as_ref()).to_string(),
         None => tokio::fs::read_to_string("dist/registerSW.js")
             .await
             .unwrap_or_else(|_| {
-                "if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('./sw.js',{scope:'./'})})}".to_string()
+                "if('serviceWorker' in \
+                 navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('.\
+                 /sw.js',{scope:'./'})})}"
+                    .to_string()
             }),
     };
     ([(header::CONTENT_TYPE, "application/javascript")], js)

@@ -1,11 +1,12 @@
 //! Linux Wayland clipboard tool using `wl-copy` / `wl-paste`.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::info;
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Read from or write to the Wayland clipboard using `wl-clipboard`.
 #[derive(Debug)]
@@ -21,7 +22,6 @@ impl ClipboardTool {
     pub fn new() -> Self {
         Self
     }
-
 }
 
 #[async_trait]
@@ -31,8 +31,8 @@ impl Tool for ClipboardTool {
     }
 
     fn description(&self) -> &str {
-        "Read from or write to the Wayland clipboard using wl-clipboard. \
-         Supports text content. Use 'get' to read, 'set' to write."
+        "Read from or write to the Wayland clipboard using wl-clipboard. Supports text content. \
+         Use 'get' to read, 'set' to write."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -66,9 +66,7 @@ impl Tool for ClipboardTool {
             "get" => {
                 let output = timeout(
                     Duration::from_secs(5),
-                    Command::new("wl-paste")
-                        .args(["--no-newline"])
-                        .output(),
+                    Command::new("wl-paste").args(["--no-newline"]).output(),
                 )
                 .await;
 
@@ -91,18 +89,12 @@ impl Tool for ClipboardTool {
                     }
                     Ok(Ok(out)) => {
                         let stderr = String::from_utf8_lossy(&out.stderr);
-                        Ok(ToolExecutionResult::error(format!(
-                            "wl-paste failed: {}",
-                            stderr
-                        )))
+                        Ok(ToolExecutionResult::error(format!("wl-paste failed: {}", stderr)))
                     }
-                    Ok(Err(e)) => Ok(ToolExecutionResult::error(format!(
-                        "Failed to run wl-paste: {}",
-                        e
-                    ))),
-                    Err(_) => Ok(ToolExecutionResult::error(
-                        "wl-paste timed out".to_string()
-                    )),
+                    Ok(Err(e)) => {
+                        Ok(ToolExecutionResult::error(format!("Failed to run wl-paste: {}", e)))
+                    }
+                    Err(_) => Ok(ToolExecutionResult::error("wl-paste timed out".to_string())),
                 }
             }
             "set" => {
@@ -112,39 +104,30 @@ impl Tool for ClipboardTool {
                     .unwrap_or("")
                     .to_string();
 
-                let output = timeout(
-                    Duration::from_secs(5),
-                    async {
-                        let mut child = Command::new("wl-copy")
-                            .stdin(std::process::Stdio::piped())
-                            .spawn()?;
-                        use tokio::io::AsyncWriteExt;
-                        if let Some(mut stdin) = child.stdin.take() {
-                            let _ = stdin.write_all(text.as_bytes()).await;
-                            let _ = stdin.shutdown().await;
-                        }
-                        child.wait().await
-                    },
-                )
+                let output = timeout(Duration::from_secs(5), async {
+                    let mut child = Command::new("wl-copy")
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()?;
+                    use tokio::io::AsyncWriteExt;
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let _ = stdin.write_all(text.as_bytes()).await;
+                        let _ = stdin.shutdown().await;
+                    }
+                    child.wait().await
+                })
                 .await;
 
                 match output {
-                    Ok(Ok(status)) if status.success() => {
-                        Ok(ToolExecutionResult::success(format!(
-                            "Clipboard set ({} chars)",
-                            text.len()
-                        )))
+                    Ok(Ok(status)) if status.success() => Ok(ToolExecutionResult::success(
+                        format!("Clipboard set ({} chars)", text.len()),
+                    )),
+                    Ok(Ok(_)) => {
+                        Ok(ToolExecutionResult::error("wl-copy exited with error".to_string()))
                     }
-                    Ok(Ok(_)) => Ok(ToolExecutionResult::error(
-                        "wl-copy exited with error".to_string()
-                    )),
-                    Ok(Err(e)) => Ok(ToolExecutionResult::error(format!(
-                        "wl-copy process error: {}",
-                        e
-                    ))),
-                    Err(_) => Ok(ToolExecutionResult::error(
-                        "wl-copy timed out".to_string()
-                    )),
+                    Ok(Err(e)) => {
+                        Ok(ToolExecutionResult::error(format!("wl-copy process error: {}", e)))
+                    }
+                    Err(_) => Ok(ToolExecutionResult::error("wl-copy timed out".to_string())),
                 }
             }
             _ => Ok(ToolExecutionResult::error(format!(

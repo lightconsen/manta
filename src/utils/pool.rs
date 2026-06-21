@@ -1,11 +1,12 @@
 //! Connection pooling utilities for Syscity
 //!
-//! Provides connection pool management for HTTP clients and database connections
-//! to optimize resource usage and improve performance.
+//! Provides connection pool management for HTTP clients and database
+//! connections to optimize resource usage and improve performance.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 

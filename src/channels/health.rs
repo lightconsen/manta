@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
 use tokio::sync::RwLock;
 use tokio::time::{interval, timeout, Instant};
 use tracing::warn;
@@ -306,22 +307,17 @@ impl ChannelHealthMonitor {
                         monitor.record_heartbeat(&name).await;
                     }
                     Ok(Ok(false)) => {
-                        warn!(
-                            "Health check returned unhealthy for channel '{}'",
-                            name
-                        );
+                        warn!("Health check returned unhealthy for channel '{}'", name);
                         monitor.record_failure(&name).await;
                     }
                     Ok(Err(e)) => {
-                        warn!(
-                            "Health check error for channel '{}': {}",
-                            name, e
-                        );
+                        warn!("Health check error for channel '{}': {}", name, e);
                         monitor.record_failure(&name).await;
                     }
                     Err(_) => {
                         warn!(
-                            "Health check timed out after {:?} for channel '{}' — transport stall detected",
+                            "Health check timed out after {:?} for channel '{}' — transport stall \
+                             detected",
                             transport_timeout, name,
                         );
                         // Timeout counts as a more severe failure (double-count
@@ -344,8 +340,9 @@ impl Default for ChannelHealthMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tokio::time::sleep;
+
+    use super::*;
 
     #[test]
     fn test_health_status_display() {

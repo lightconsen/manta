@@ -1,16 +1,17 @@
 //! Chat panel rendering.
 
-use crate::tui::state::{AppState, ChatMessage, MessageStatus};
-use crate::tui::ui::{
-    assistant_style, code_style, dim_style, error_style, reasoning_style, system_style,
-    titled_block, tool_call_style, user_style,
-};
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
     Frame,
+};
+
+use crate::tui::state::{AppState, ChatMessage, MessageStatus};
+use crate::tui::ui::{
+    assistant_style, code_style, dim_style, error_style, reasoning_style, system_style,
+    titled_block, tool_call_style, user_style,
 };
 
 /// Render the chat message list.
@@ -82,10 +83,7 @@ fn message_to_lines(msg: &ChatMessage, _width: usize) -> Vec<Line<'_>> {
     };
 
     lines.push(Line::from(vec![
-        Span::styled(
-            format!("{}: ", role_label),
-            style.add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!("{}: ", role_label), style.add_modifier(Modifier::BOLD)),
         status_indicator,
     ]));
 
@@ -161,10 +159,7 @@ fn message_to_lines(msg: &ChatMessage, _width: usize) -> Vec<Line<'_>> {
             reasoning_style().add_modifier(Modifier::BOLD),
         )));
         for line in thinking.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("  {}", line),
-                reasoning_style(),
-            )));
+            lines.push(Line::from(Span::styled(format!("  {}", line), reasoning_style())));
         }
     }
 

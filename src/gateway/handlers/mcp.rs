@@ -1,9 +1,9 @@
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
@@ -21,7 +21,6 @@ pub async fn list_mcp_servers_handler(State(state): State<Arc<GatewayState>>) ->
         "count": servers.len(),
     }))
 }
-
 
 #[allow(dead_code)]
 /// Connect to an MCP server

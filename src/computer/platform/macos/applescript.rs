@@ -1,6 +1,5 @@
 //! AppleScript execution tool for macOS automation.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
@@ -8,6 +7,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Result of an AppleScript execution.
 #[derive(Debug, Clone, Serialize)]
@@ -62,13 +63,10 @@ impl AppleScriptTool {
         }
 
         let mut child_opt = Some(child);
-        let wait_result = timeout(
-            Duration::from_secs(timeout_secs),
-            async {
-                let c = child_opt.take().unwrap();
-                c.wait_with_output().await
-            },
-        )
+        let wait_result = timeout(Duration::from_secs(timeout_secs), async {
+            let c = child_opt.take().unwrap();
+            c.wait_with_output().await
+        })
         .await;
 
         match wait_result {
@@ -95,10 +93,7 @@ impl AppleScriptTool {
                 }
             }
             Err(_) => {
-                warn!(
-                    "osascript timed out after {}s, killing process",
-                    timeout_secs
-                );
+                warn!("osascript timed out after {}s, killing process", timeout_secs);
                 if let Some(mut c) = child_opt {
                     let _ = c.kill().await;
                 }
@@ -119,9 +114,8 @@ impl Tool for AppleScriptTool {
     }
 
     fn description(&self) -> &str {
-        "Execute AppleScript on macOS using `osascript`. \
-         Use to automate macOS applications, query UI state, \
-         control system settings, or interact with app-specific APIs."
+        "Execute AppleScript on macOS using `osascript`. Use to automate macOS applications, query \
+         UI state, control system settings, or interact with app-specific APIs."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -161,7 +155,8 @@ impl Tool for AppleScriptTool {
         if result.success {
             Ok(ToolExecutionResult::success(json).with_data(serde_json::to_value(result)?))
         } else {
-            Ok(ToolExecutionResult::error(result.error.clone().unwrap_or_default()).with_data(serde_json::to_value(result)?))
+            Ok(ToolExecutionResult::error(result.error.clone().unwrap_or_default())
+                .with_data(serde_json::to_value(result)?))
         }
     }
 

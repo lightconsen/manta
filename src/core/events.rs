@@ -19,13 +19,15 @@
 //! // MyHandler: impl EventHandler — pattern match on CoreEvent
 //! ```
 
-use crate::core::models::Id;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
+
+use crate::core::models::Id;
 
 // ---------------------------------------------------------------------------
 // Event enum
@@ -132,8 +134,9 @@ pub trait EventHandler: Send + Sync + std::fmt::Debug {
 
 /// A simple publish-subscribe channel for domain events.
 ///
-/// Holders subscribe a boxed [`EventHandler`]; when [`publish`](EventBus::publish)
-/// is called the event is fanned out to all registered handlers.
+/// Holders subscribe a boxed [`EventHandler`]; when
+/// [`publish`](EventBus::publish) is called the event is fanned out to all
+/// registered handlers.
 ///
 /// # Thread safety
 ///
@@ -167,7 +170,10 @@ impl EventBus {
     /// Register a handler that will receive **all** future events.
     pub async fn subscribe(&self, handler: Box<dyn EventHandler>) {
         let name = handler.handler_name();
-        self.handlers.write().await.push(HandlerEntry { name, handler });
+        self.handlers
+            .write()
+            .await
+            .push(HandlerEntry { name, handler });
     }
 
     /// Register a handler by name.
@@ -219,12 +225,12 @@ pub async fn append_core_event(
 ) -> crate::Result<()> {
     let path = workspace_dir.as_ref().join(CORE_EVENT_LOG_RELATIVE_PATH);
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
                 context: format!("Failed to create event log directory: {:?}", parent),
                 details: e.to_string(),
-            })?;
+            }
+        })?;
     }
 
     let line = serde_json::to_string(event).map_err(|e| crate::error::SyscityError::Storage {
@@ -267,13 +273,12 @@ pub async fn read_core_events(
         return Ok(Vec::new());
     }
 
-    let content =
-        tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: format!("Failed to read event log: {:?}", path),
-                details: e.to_string(),
-            })?;
+    let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
+        crate::error::SyscityError::Storage {
+            context: format!("Failed to read event log: {:?}", path),
+            details: e.to_string(),
+        }
+    })?;
 
     let mut events = Vec::new();
     for line in content.lines() {
@@ -321,7 +326,10 @@ impl EventLog {
     /// Read events filtered by variant name (e.g. `"entity.created"`).
     pub async fn read_by_type(&self, event_name: &str) -> crate::Result<Vec<CoreEvent>> {
         let all = self.read_all().await?;
-        Ok(all.into_iter().filter(|e| e.event_name() == event_name).collect())
+        Ok(all
+            .into_iter()
+            .filter(|e| e.event_name() == event_name)
+            .collect())
     }
 }
 
@@ -331,8 +339,9 @@ impl EventLog {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
 
     #[derive(Debug)]
     struct CountingHandler {
@@ -379,8 +388,7 @@ mod tests {
             .await;
         bus.publish(&CoreEvent::entity_created(Id::new(), "bar"))
             .await;
-        bus.publish(&CoreEvent::entity_deleted(Id::new()))
-            .await;
+        bus.publish(&CoreEvent::entity_deleted(Id::new())).await;
 
         // Can't access handler's counters through the box — this verifies
         // the bus didn't panic and the handler_count advanced.
@@ -439,9 +447,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let log = EventLog::new(dir.path());
 
-        log.append(&CoreEvent::entity_created(Id::new(), "a")).await.unwrap();
-        log.append(&CoreEvent::entity_created(Id::new(), "b")).await.unwrap();
-        log.append(&CoreEvent::entity_deleted(Id::new())).await.unwrap();
+        log.append(&CoreEvent::entity_created(Id::new(), "a"))
+            .await
+            .unwrap();
+        log.append(&CoreEvent::entity_created(Id::new(), "b"))
+            .await
+            .unwrap();
+        log.append(&CoreEvent::entity_deleted(Id::new()))
+            .await
+            .unwrap();
 
         let created = log.read_by_type("entity.created").await.unwrap();
         assert_eq!(created.len(), 2);

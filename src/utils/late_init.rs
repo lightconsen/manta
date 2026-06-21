@@ -1,11 +1,12 @@
 //! Lazy, single-assignment wrapper for values that are initialized after
 //! [`GatewayState`](crate::gateway::GatewayState) is constructed.
 //!
-//! Typical use cases are subsystems that depend on the shared state (e.g. vector
-//! memory, cron scheduler) and therefore cannot be created until the state
-//! struct exists.
+//! Typical use cases are subsystems that depend on the shared state (e.g.
+//! vector memory, cron scheduler) and therefore cannot be created until the
+//! state struct exists.
 
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 
 /// A value that is initialized exactly once and read many times.

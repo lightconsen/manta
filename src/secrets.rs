@@ -1,7 +1,8 @@
 //! Secret Management System
 //!
-//! Provides multi-source secret resolution for API keys, tokens, and credentials.
-//! Supports environment variables, file-based secrets, and external executables.
+//! Provides multi-source secret resolution for API keys, tokens, and
+//! credentials. Supports environment variables, file-based secrets, and
+//! external executables.
 //!
 //! # Example
 //!
@@ -16,20 +17,23 @@
 //! api_key = { source = "file", path = "/run/secrets/api_key" }
 //! ```
 
-use crate::error::{ConfigError, Result};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::error::{ConfigError, Result};
+
 /// A resolved secret value with metadata
 ///
-/// SECURITY NOTE: This struct implements custom `Debug` that redacts the secret value.
-/// The secret value is also automatically zeroized in memory when the struct is dropped.
+/// SECURITY NOTE: This struct implements custom `Debug` that redacts the secret
+/// value. The secret value is also automatically zeroized in memory when the
+/// struct is dropped.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ResolvedSecret {
     /// The secret value - automatically zeroized on drop
@@ -646,7 +650,8 @@ pub async fn resolve_secrets(config: &HashMap<String, String>) -> Result<HashMap
     let mut resolved = HashMap::new();
 
     for (key, value) in config {
-        // Create SecretRef - resolver will handle whether it's an env reference or raw value
+        // Create SecretRef - resolver will handle whether it's an env reference or raw
+        // value
         let secret_ref = SecretRef::String(value.clone());
 
         match resolver.resolve(&secret_ref).await {
@@ -665,8 +670,9 @@ pub async fn resolve_secrets(config: &HashMap<String, String>) -> Result<HashMap
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::env;
+
+    use super::*;
 
     #[test]
     fn test_secret_ref_from_env() {

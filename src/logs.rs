@@ -3,6 +3,7 @@
 //! Provides functionality to view and tail daemon logs.
 
 use std::path::PathBuf;
+
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader, SeekFrom};
 
@@ -214,7 +215,8 @@ mod tests {
         tokio::fs::write(&log_path, "").await.unwrap();
 
         // show_logs requires log_file_path() which uses default log path.
-        // We can't easily mock it, so just verify it doesn't panic on missing file.
-        // Since log_file_path() returns a fixed path, this test is limited.
+        // We can't easily mock it, so just verify it doesn't panic on missing
+        // file. Since log_file_path() returns a fixed path, this test
+        // is limited.
     }
 }

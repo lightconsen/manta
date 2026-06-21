@@ -1,10 +1,11 @@
 //! Device pairing management commands for Syscity
 //!
-//! Provides CLI access to device pairing state: list, approve, reject, revoke, qr.
-//! Calls the daemon REST API at /api/v1/device/pairing/*.
+//! Provides CLI access to device pairing state: list, approve, reject, revoke,
+//! qr. Calls the daemon REST API at /api/v1/device/pairing/*.
+
+use clap::Subcommand;
 
 use crate::error::{Result, SyscityError};
-use clap::Subcommand;
 
 /// Default daemon base URL.
 const DAEMON_URL: &str = "http://127.0.0.1:18080";

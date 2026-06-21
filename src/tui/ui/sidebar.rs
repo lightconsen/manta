@@ -1,7 +1,5 @@
 //! Session sidebar rendering.
 
-use crate::tui::state::{AppState, ConnectionState};
-use crate::tui::ui::{highlight_style, titled_block};
 use ratatui::{
     layout::Rect,
     style::Style,
@@ -9,6 +7,9 @@ use ratatui::{
     widgets::{List, ListItem, ListState},
     Frame,
 };
+
+use crate::tui::state::{AppState, ConnectionState};
+use crate::tui::ui::{highlight_style, titled_block};
 
 /// Render the session sidebar.
 pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
@@ -44,22 +45,18 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
 
     // Render connection indicator at the bottom of the sidebar area.
     let conn_text = match &state.connection {
-        ConnectionState::Connected { .. } => Span::styled(
-            " connected ",
-            Style::default().fg(ratatui::style::Color::Green),
-        ),
-        ConnectionState::Connecting => Span::styled(
-            " connecting ",
-            Style::default().fg(ratatui::style::Color::Yellow),
-        ),
-        ConnectionState::Disconnected => Span::styled(
-            " disconnected ",
-            Style::default().fg(ratatui::style::Color::Gray),
-        ),
-        ConnectionState::Error(e) => Span::styled(
-            format!(" error: {} ", e),
-            Style::default().fg(ratatui::style::Color::Red),
-        ),
+        ConnectionState::Connected { .. } => {
+            Span::styled(" connected ", Style::default().fg(ratatui::style::Color::Green))
+        }
+        ConnectionState::Connecting => {
+            Span::styled(" connecting ", Style::default().fg(ratatui::style::Color::Yellow))
+        }
+        ConnectionState::Disconnected => {
+            Span::styled(" disconnected ", Style::default().fg(ratatui::style::Color::Gray))
+        }
+        ConnectionState::Error(e) => {
+            Span::styled(format!(" error: {} ", e), Style::default().fg(ratatui::style::Color::Red))
+        }
     };
     let conn_line = Line::from(conn_text);
     let conn_para = ratatui::widgets::Paragraph::new(conn_line);

@@ -3,14 +3,16 @@
 //! The engine contains the main business logic and orchestrates
 //! operations. It is independent of external adapters.
 
-use super::events::{CoreEvent, EventBus};
-use super::models::{CreateEntityRequest, Entity, Id, Status, UpdateEntityRequest};
-use crate::error::{Result, SyscityError};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
+
 use tracing::{debug, info, instrument, warn};
+
+use super::events::{CoreEvent, EventBus};
+use super::models::{CreateEntityRequest, Entity, Id, Status, UpdateEntityRequest};
+use crate::error::{Result, SyscityError};
 
 /// Metrics counters for engine operations.
 ///
@@ -35,7 +37,8 @@ pub struct EngineMetrics {
 /// The main engine that coordinates all business logic
 #[derive(Debug, Clone)]
 pub struct Engine {
-    /// In-memory storage for entities (would be replaced with proper storage in production)
+    /// In-memory storage for entities (would be replaced with proper storage in
+    /// production)
     entities: Arc<RwLock<HashMap<Id, Entity>>>,
     /// Engine configuration
     config: EngineConfig,
@@ -161,7 +164,9 @@ impl Engine {
             entities.insert(id, entity.clone());
         }
 
-        self.metrics.entities_created.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .entities_created
+            .fetch_add(1, Ordering::Relaxed);
         self.emit_event(CoreEvent::entity_created(id, &entity.name));
         info!(entity_id = %id, "Entity created successfully");
         Ok(entity)
@@ -228,7 +233,9 @@ impl Engine {
             return Err(e);
         }
 
-        self.metrics.entities_updated.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .entities_updated
+            .fetch_add(1, Ordering::Relaxed);
         self.emit_event(CoreEvent::entity_updated(id));
         info!("Entity updated successfully");
         Ok(entity.clone())
@@ -249,7 +256,9 @@ impl Engine {
             });
         }
 
-        self.metrics.entities_deleted.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .entities_deleted
+            .fetch_add(1, Ordering::Relaxed);
         self.emit_event(CoreEvent::entity_deleted(id));
         info!("Entity deleted successfully");
         Ok(())

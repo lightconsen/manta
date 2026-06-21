@@ -20,34 +20,34 @@ pub mod sse;
 pub mod stage;
 pub mod trajectory;
 
-use crate::channels::reply_prefix::{ReplyPrefixEngine, TemplateContext};
-
 pub use reply_dispatcher::{ReplyDispatchConfig, ReplyDispatcher};
 pub use side_effects::{SideEffect, SideEffectContext, SideEffectExecutor, SideEffectRegistry};
 pub use sse::{SseEvent, SseStreamer};
 pub use trajectory::{TrajectoryEntry, TrajectoryLog, TrajectoryWriter};
 
+use crate::channels::reply_prefix::{ReplyPrefixEngine, TemplateContext};
+
 /// A fully-processed outbound result ready for delivery.
 #[derive(Debug, Clone)]
 pub struct OutboundResult {
- /// The final text to send to the user.
+    /// The final text to send to the user.
     pub text: String,
- /// Optional canvas update to push.
+    /// Optional canvas update to push.
     pub canvas_update: Option<crate::canvas::CanvasUpdate>,
- /// SSE events that should be streamed.
+    /// SSE events that should be streamed.
     pub sse_events: Vec<SseEvent>,
- /// Side effects to execute after delivery.
+    /// Side effects to execute after delivery.
     pub side_effects: Vec<SideEffect>,
- /// Target session ID.
+    /// Target session ID.
     pub session_id: String,
- /// Target channel.
+    /// Target channel.
     pub channel: String,
 }
 
 /// The outbound pipeline trait.
 #[async_trait::async_trait]
 pub trait OutboundPipeline: Send + Sync {
- /// Process an agent output through the full outbound pipeline.
+    /// Process an agent output through the full outbound pipeline.
     async fn process(&self, ctx: OutboundContext) -> OutboundResult;
 }
 
@@ -60,13 +60,14 @@ pub struct OutboundContext {
     pub raw_output: String,
     pub tool_calls: Vec<crate::providers::ToolCall>,
     pub trajectory: TrajectoryLog,
- /// Optional token usage statistics.
+    /// Optional token usage statistics.
     pub usage: Option<crate::providers::Usage>,
 }
 
 /// Default outbound pipeline implementation.
 ///
-/// Wires all stages together: trajectory -> canvas -> sse -> reply -> side effects.
+/// Wires all stages together: trajectory -> canvas -> sse -> reply -> side
+/// effects.
 pub struct DefaultOutboundPipeline {
     reply_dispatcher: Arc<ReplyDispatcher>,
     side_effects: Arc<SideEffectExecutor>,
@@ -103,13 +104,10 @@ impl DefaultOutboundPipeline {
 #[async_trait::async_trait]
 impl OutboundPipeline for DefaultOutboundPipeline {
     async fn process(&self, ctx: OutboundContext) -> OutboundResult {
- // Stage 1: Trajectory persistence (fire-and-forget style, but we await)
+        // Stage 1: Trajectory persistence (fire-and-forget style, but we await)
         if let Some(ref writer) = self.trajectory_writer {
             if !ctx.trajectory.entries.is_empty() {
-                if let Err(e) = writer
-                    .append_log(&ctx.session_id, &ctx.trajectory)
-                    .await
-                {
+                if let Err(e) = writer.append_log(&ctx.session_id, &ctx.trajectory).await {
                     tracing::warn!(
                         "Failed to persist trajectory for session {}: {}",
                         ctx.session_id,
@@ -119,7 +117,7 @@ impl OutboundPipeline for DefaultOutboundPipeline {
             }
         }
 
- // Stage 2: Canvas rendering — detect A2UI components in agent output
+        // Stage 2: Canvas rendering — detect A2UI components in agent output
         let canvas_update = if let Ok(component) =
             serde_json::from_str::<crate::canvas::CanvasComponent>(&ctx.raw_output)
         {
@@ -131,7 +129,7 @@ impl OutboundPipeline for DefaultOutboundPipeline {
             None
         };
 
- // Stage 3: SSE streaming — emit tool call and completion events
+        // Stage 3: SSE streaming — emit tool call and completion events
         let mut sse_events = Vec::new();
         if let Some(ref sse) = self.sse {
             for tc in &ctx.tool_calls {
@@ -144,7 +142,7 @@ impl OutboundPipeline for DefaultOutboundPipeline {
             sse_events.push(done_evt);
         }
 
- // Stage 4: Build the outbound result
+        // Stage 4: Build the outbound result
         let result = OutboundResult {
             text: ctx.raw_output.clone(),
             canvas_update,
@@ -154,17 +152,19 @@ impl OutboundPipeline for DefaultOutboundPipeline {
             channel: ctx.channel.clone(),
         };
 
- // Stage 5: Apply reply prefix if configured
+        // Stage 5: Apply reply prefix if configured
         let final_content = if let Some(ref engine) = self.reply_prefix_engine {
             let template_ctx = TemplateContext::new()
                 .with_session(&ctx.session_id)
                 .with_channel(&ctx.channel);
-            engine.apply_async(&ctx.raw_output, &template_ctx, Some(&ctx.channel)).await
+            engine
+                .apply_async(&ctx.raw_output, &template_ctx, Some(&ctx.channel))
+                .await
         } else {
             ctx.raw_output.clone()
         };
 
- // Stage 6: Dispatch via reply dispatcher
+        // Stage 6: Dispatch via reply dispatcher
         let outbound_msg = crate::channels::OutgoingMessage {
             conversation_id: crate::channels::ConversationId::new(&ctx.session_id),
             content: final_content,
@@ -188,7 +188,7 @@ impl OutboundPipeline for DefaultOutboundPipeline {
             tracing::warn!("Reply dispatch failed for channel {}: {}", ctx.channel, e);
         }
 
- // Stage 7: Side effects (memory storage, cron, etc.)
+        // Stage 7: Side effects (memory storage, cron, etc.)
         if !result.side_effects.is_empty() {
             self.side_effects.execute_batch(&result.side_effects).await;
         }

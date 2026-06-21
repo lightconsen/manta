@@ -259,8 +259,9 @@ impl Stream for ReasoningStream {
                 if chunk.reasoning_content.is_none() {
                     if let Some(ref content) = chunk.content {
                         if content.contains("<thinking>") || content.contains("< reasoning>") {
-                            // Some providers embed reasoning in content — split it out
-                            // (simplified: in practice this would parse tags)
+                            // Some providers embed reasoning in content — split
+                            // it out (simplified:
+                            // in practice this would parse tags)
                         }
                     }
                 }
@@ -546,8 +547,9 @@ fn repair_json_truncation(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use futures::StreamExt;
+
+    use super::*;
 
     fn test_chunks() -> Vec<CompletionChunk> {
         vec![

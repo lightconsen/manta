@@ -6,12 +6,13 @@
 //! - Session actor queue for serialized execution
 //! - Parent-child agent communication
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -19,7 +20,6 @@ use uuid::Uuid;
 use crate::agent::session_store::SaveSubagentRunParams;
 use crate::agent::{Agent, AgentConfig, ProgressCallback};
 use crate::channels::{IncomingMessage, OutgoingMessage};
-
 // AgentHandle is defined in gateway module
 pub use crate::gateway::AgentHandle;
 
@@ -73,10 +73,10 @@ impl std::fmt::Display for AcpSessionId {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum SpawnMode {
- /// One-shot execution (run and terminate)
+    /// One-shot execution (run and terminate)
     #[default]
     Run,
- /// Persistent session (long-running)
+    /// Persistent session (long-running)
     Session,
 }
 
@@ -85,13 +85,13 @@ pub enum SpawnMode {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum ThreadBinding {
- /// New isolated thread
+    /// New isolated thread
     New,
- /// Bind to parent's thread
+    /// Bind to parent's thread
     Parent,
- /// Bind to specific thread ID
+    /// Bind to specific thread ID
     Thread(String),
- /// Automatic based on context
+    /// Automatic based on context
     #[default]
     Auto,
 }
@@ -99,24 +99,24 @@ pub enum ThreadBinding {
 /// Execution mode for an ACP command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
- /// Persistent session — context is kept across turns
+    /// Persistent session — context is kept across turns
     Session,
- /// One-shot run — context is discarded after completion
+    /// One-shot run — context is discarded after completion
     Run,
 }
 
 /// Runtime state of a session's execution
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeState {
- /// Idle, waiting for input
+    /// Idle, waiting for input
     Idle,
- /// Actively running
+    /// Actively running
     Running,
- /// Paused between iterations
+    /// Paused between iterations
     Paused,
- /// Will execute one iteration then pause
+    /// Will execute one iteration then pause
     Stepping,
- /// Cancelled, will stop at next check
+    /// Cancelled, will stop at next check
     Cancelled,
 }
 
@@ -144,7 +144,7 @@ pub struct ExecutionController {
 }
 
 impl ExecutionController {
- /// Create a new controller in the `Idle` state.
+    /// Create a new controller in the `Idle` state.
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             state: RwLock::new(RuntimeState::Idle),
@@ -153,7 +153,7 @@ impl ExecutionController {
         })
     }
 
- /// Check if execution should proceed.
+    /// Check if execution should proceed.
     pub async fn check_and_wait(&self) -> Result<(), &'static str> {
         loop {
             let state = *self.state.read().await;
@@ -178,7 +178,7 @@ impl ExecutionController {
         }
     }
 
- /// Transition to `Paused`.
+    /// Transition to `Paused`.
     pub async fn pause(&self) {
         let mut state = self.state.write().await;
         if *state == RuntimeState::Running || *state == RuntimeState::Idle {
@@ -187,7 +187,7 @@ impl ExecutionController {
         }
     }
 
- /// Transition to `Running` and wake waiters.
+    /// Transition to `Running` and wake waiters.
     pub async fn resume(&self) {
         let mut state = self.state.write().await;
         if *state == RuntimeState::Paused || *state == RuntimeState::Stepping {
@@ -198,7 +198,7 @@ impl ExecutionController {
         }
     }
 
- /// Transition to `Stepping` and wake waiters.
+    /// Transition to `Stepping` and wake waiters.
     pub async fn step(&self) {
         let mut state = self.state.write().await;
         *state = RuntimeState::Stepping;
@@ -207,7 +207,7 @@ impl ExecutionController {
         info!("Single step triggered");
     }
 
- /// Transition to `Cancelled` and wake waiters.
+    /// Transition to `Cancelled` and wake waiters.
     pub async fn cancel(&self) {
         let mut state = self.state.write().await;
         *state = RuntimeState::Cancelled;
@@ -216,20 +216,20 @@ impl ExecutionController {
         info!("Execution cancelled");
     }
 
- /// Reset to `Idle`.
+    /// Reset to `Idle`.
     pub async fn reset(&self) {
         let mut state = self.state.write().await;
         *state = RuntimeState::Idle;
         self.iteration.store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
- /// Current runtime state.
+    /// Current runtime state.
     pub async fn current_state(&self) -> RuntimeState {
         *self.state.read().await
     }
 
- /// Current iteration count (number of times check_and_wait has allowed
- /// execution to proceed).
+    /// Current iteration count (number of times check_and_wait has allowed
+    /// execution to proceed).
     pub fn current_iteration(&self) -> usize {
         self.iteration.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -249,47 +249,46 @@ pub struct AcpSessionStatus {
 
 /// Commands sent to the ACP actor
 pub enum AcpCommand {
- /// Execute in persistent session mode
+    /// Execute in persistent session mode
     ExecuteSession {
         agent: Arc<Agent>,
         message: IncomingMessage,
- /// Optional per-request max iterations override.
+        /// Optional per-request max iterations override.
         max_iterations: Option<usize>,
         respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
     },
- /// Execute in one-shot run mode
+    /// Execute in one-shot run mode
     ExecuteRun {
         agent: Arc<Agent>,
         message: IncomingMessage,
- /// Optional per-request max iterations override.
+        /// Optional per-request max iterations override.
         max_iterations: Option<usize>,
         respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
     },
- /// Execute with progress callbacks in session mode
+    /// Execute with progress callbacks in session mode
     ExecuteSessionWithProgress {
         agent: Arc<Agent>,
         message: IncomingMessage,
         progress_cb: ProgressCallback,
- /// Optional per-request max iterations override.
+        /// Optional per-request max iterations override.
         max_iterations: Option<usize>,
         respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
     },
- /// Pause a running session
+    /// Pause a running session
     Pause { session_id: String },
- /// Resume a paused session
+    /// Resume a paused session
     Resume { session_id: String },
- /// Single step a paused session
+    /// Single step a paused session
     Step { session_id: String },
- /// Cancel a running session
+    /// Cancel a running session
     Cancel { session_id: String },
- /// Get session status
+    /// Get session status
     GetStatus {
         session_id: String,
         respond_to: oneshot::Sender<Option<AcpSessionStatus>>,
     },
- /// Shutdown the ACP
+    /// Shutdown the ACP
     Shutdown,
-
 }
 
 impl std::fmt::Debug for AcpCommand {
@@ -533,8 +532,6 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, max_iteratio
                 session_meta.clear();
                 break;
             }
-
-
         }
     }
 }
@@ -650,28 +647,28 @@ async fn session_actor_loop(
 /// Subagent configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubagentConfig {
- /// Agent type/personality to use
+    /// Agent type/personality to use
     pub agent_type: String,
- /// Spawn mode
+    /// Spawn mode
     pub mode: SpawnMode,
- /// Thread binding
+    /// Thread binding
     pub thread_binding: ThreadBinding,
- /// System prompt override
+    /// System prompt override
     pub system_prompt: Option<String>,
- /// Maximum tokens
+    /// Maximum tokens
     pub max_tokens: Option<usize>,
- /// Temperature
+    /// Temperature
     pub temperature: Option<f32>,
- /// Tools to enable
+    /// Tools to enable
     pub tools: Vec<String>,
- /// Initial context/data
+    /// Initial context/data
     pub context: Option<serde_json::Value>,
- /// Timeout in seconds (for Run mode)
+    /// Timeout in seconds (for Run mode)
     pub timeout_seconds: Option<u64>,
- /// Automatically restart if the subagent crashes (default: false)
+    /// Automatically restart if the subagent crashes (default: false)
     #[serde(default)]
     pub retry_on_crash: bool,
- /// Maximum number of crash restart attempts (default: 3)
+    /// Maximum number of crash restart attempts (default: 3)
     #[serde(default = "default_max_crash_retries")]
     pub max_crash_retries: u32,
 }
@@ -701,25 +698,25 @@ impl Default for SubagentConfig {
 /// Subagent handle - reference to a spawned subagent
 #[derive(Debug, Clone)]
 pub struct SubagentHandle {
- /// Subagent ID
+    /// Subagent ID
     pub id: String,
- /// Parent agent ID
+    /// Parent agent ID
     pub parent_id: String,
- /// ACP Session ID
+    /// ACP Session ID
     pub session_id: AcpSessionId,
- /// Spawn mode
+    /// Spawn mode
     pub mode: SpawnMode,
- /// Thread ID this agent is bound to
+    /// Thread ID this agent is bound to
     pub thread_id: String,
- /// Command channel to subagent
+    /// Command channel to subagent
     pub command_tx: mpsc::Sender<SubagentCommand>,
- /// Current status
+    /// Current status
     pub status: SubagentStatus,
- /// Execution controller for runtime pause/resume/step/cancel
+    /// Execution controller for runtime pause/resume/step/cancel
     pub controller: Arc<ExecutionController>,
- /// Abort handle for force-killing the subagent task
+    /// Abort handle for force-killing the subagent task
     pub abort_handle: tokio::task::AbortHandle,
- /// Number of times this subagent has been restarted after a crash
+    /// Number of times this subagent has been restarted after a crash
     pub crash_count: u32,
 }
 
@@ -727,33 +724,33 @@ pub struct SubagentHandle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubagentStatus {
- /// Starting up
+    /// Starting up
     Starting,
- /// Ready for work
+    /// Ready for work
     Ready,
- /// Busy processing
+    /// Busy processing
     Busy,
- /// Shutting down
+    /// Shutting down
     ShuttingDown,
- /// Terminated normally
+    /// Terminated normally
     Terminated,
- /// Terminated due to a panic — detected by the watchdog task
+    /// Terminated due to a panic — detected by the watchdog task
     Crashed,
 }
 
 /// Commands that can be sent to a subagent
 #[derive(Debug)]
 pub enum SubagentCommand {
- /// Process a message
+    /// Process a message
     ProcessMessage {
         message: IncomingMessage,
         response_tx: oneshot::Sender<crate::Result<String>>,
     },
- /// Update configuration
+    /// Update configuration
     UpdateConfig(AgentConfig),
- /// Cancel current operation
+    /// Cancel current operation
     Cancel,
- /// Shutdown the subagent
+    /// Shutdown the subagent
     Shutdown,
 }
 
@@ -763,7 +760,7 @@ impl Clone for SubagentCommand {
             Self::UpdateConfig(config) => Self::UpdateConfig(config.clone()),
             Self::Cancel => Self::Cancel,
             Self::Shutdown => Self::Shutdown,
- // ProcessMessage can't be cloned due to oneshot, convert to Cancel
+            // ProcessMessage can't be cloned due to oneshot, convert to Cancel
             Self::ProcessMessage { .. } => Self::Cancel,
         }
     }
@@ -780,13 +777,13 @@ pub struct SubagentResponse {
 /// Thread context for serialized execution
 #[derive(Debug)]
 pub struct ThreadContext {
- /// Thread ID
+    /// Thread ID
     pub id: String,
- /// Active subagent on this thread (if any)
+    /// Active subagent on this thread (if any)
     pub active_subagent: Option<String>,
- /// Message queue for this thread
+    /// Message queue for this thread
     pub queue: Vec<ThreadMessage>,
- /// Created timestamp
+    /// Created timestamp
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -905,7 +902,11 @@ impl AcpBus {
             .read_offsets
             .entry((subagent_id.to_string(), topic.to_string()))
             .or_insert(0);
-        let messages = self.messages.get(topic).map(|v| v.as_slice()).unwrap_or(&[]);
+        let messages = self
+            .messages
+            .get(topic)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         let pending: Vec<BusMessage> = messages[*offset..].to_vec();
         *offset = messages.len();
         pending
@@ -947,22 +948,23 @@ impl AcpBus {
 /// ACP Control Plane - unified control plane for agents and subagents
 #[derive(Clone)]
 pub struct AcpControlPlane {
- /// Subagents by ID
+    /// Subagents by ID
     subagents: Arc<RwLock<HashMap<String, SubagentHandle>>>,
- /// Threads by ID
+    /// Threads by ID
     threads: Arc<RwLock<HashMap<String, ThreadContext>>>,
- /// ACP sessions
+    /// ACP sessions
     sessions: Arc<RwLock<HashMap<AcpSessionId, AcpSession>>>,
- /// Default agent builder (set after initialization when provider/tools are ready)
+    /// Default agent builder (set after initialization when provider/tools are
+    /// ready)
     #[allow(clippy::type_complexity)]
     default_agent_builder: Arc<RwLock<Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>>>,
- /// Command channel to the ACP actor loop
+    /// Command channel to the ACP actor loop
     command_tx: mpsc::Sender<AcpCommand>,
- /// Optional session store for persisting subagent run records
+    /// Optional session store for persisting subagent run records
     store: Option<Arc<crate::agent::session_store::SessionStore>>,
- /// Maximum iterations per ACP execution
+    /// Maximum iterations per ACP execution
     max_iterations: usize,
- /// Configuration controlling automatic crash recovery.
+    /// Configuration controlling automatic crash recovery.
     recovery: Arc<RwLock<CrashRecoveryConfig>>,
     /// Cross-session subagent communication bus.
     bus: Arc<RwLock<AcpBus>>,
@@ -980,7 +982,7 @@ pub struct AcpSession {
 }
 
 impl AcpControlPlane {
- /// Create a new ACP control plane and spawn the actor loop
+    /// Create a new ACP control plane and spawn the actor loop
     pub fn new(max_iterations: usize) -> Self {
         let (command_tx, command_rx) = mpsc::channel(256);
         tokio::spawn(acp_actor_loop(command_rx, max_iterations));
@@ -998,45 +1000,49 @@ impl AcpControlPlane {
         }
     }
 
- /// Attach a session store for persisting subagent run records.
+    /// Attach a session store for persisting subagent run records.
     pub fn with_store(mut self, store: Arc<crate::agent::session_store::SessionStore>) -> Self {
         self.store = Some(store);
         self
     }
 
- /// Set the default agent builder (consuming self).
+    /// Set the default agent builder (consuming self).
     pub fn with_agent_builder<F>(self, builder: F) -> Self
     where
         F: Fn() -> crate::Result<Agent> + Send + Sync + 'static,
     {
         {
-            let mut guard = self.default_agent_builder.try_write()
+            let mut guard = self
+                .default_agent_builder
+                .try_write()
                 .expect("agent builder lock available during construction");
             *guard = Some(Arc::new(builder));
         }
         self
     }
 
- /// Configure automatic crash recovery.
+    /// Configure automatic crash recovery.
     pub fn with_recovery(self, recovery: CrashRecoveryConfig) -> Self {
         {
-            let mut guard = self.recovery.try_write()
+            let mut guard = self
+                .recovery
+                .try_write()
                 .expect("recovery lock available during construction");
             *guard = recovery;
         }
         self
     }
 
- /// Update crash recovery configuration at runtime.
+    /// Update crash recovery configuration at runtime.
     pub async fn set_recovery_config(&self, recovery: CrashRecoveryConfig) {
         info!("ACP crash recovery config updated: enabled={}", recovery.enabled);
         let mut guard = self.recovery.write().await;
         *guard = recovery;
     }
 
- /// Set the default agent builder on an existing instance.
- ///
- /// Use this when the builder depends on resources created after the ACP.
+    /// Set the default agent builder on an existing instance.
+    ///
+    /// Use this when the builder depends on resources created after the ACP.
     pub async fn set_agent_builder<F>(&self, builder: F)
     where
         F: Fn() -> crate::Result<Agent> + Send + Sync + 'static,
@@ -1046,10 +1052,10 @@ impl AcpControlPlane {
         info!("ACP default agent builder configured");
     }
 
- /// Set the event broadcast sender on an existing instance.
- ///
- /// Use this when the ACP is created before the GatewayState that owns the
- /// event broadcast channel.
+    /// Set the event broadcast sender on an existing instance.
+    ///
+    /// Use this when the ACP is created before the GatewayState that owns the
+    /// event broadcast channel.
     pub async fn set_event_tx(
         &self,
         event_tx: tokio::sync::broadcast::Sender<crate::gateway::GatewayEvent>,
@@ -1067,12 +1073,12 @@ impl AcpControlPlane {
         }
     }
 
- /// Returns true if a session store is attached for persistence.
+    /// Returns true if a session store is attached for persistence.
     pub fn has_store(&self) -> bool {
         self.store.is_some()
     }
 
- /// Load persisted ACP sessions from the store into memory.
+    /// Load persisted ACP sessions from the store into memory.
     pub async fn load_persisted_sessions(&self) {
         let Some(ref store) = self.store else {
             info!("ACP session store not configured; skipping load_persisted_sessions");
@@ -1086,7 +1092,8 @@ impl AcpControlPlane {
                 for (session_id, parent_id, subagent_ids, created_at) in rows {
                     if session_id.is_empty() || parent_id.is_empty() {
                         warn!(
-                            "Skipping malformed persisted ACP session (session_id={}, parent_id={})",
+                            "Skipping malformed persisted ACP session (session_id={}, \
+                             parent_id={})",
                             session_id, parent_id
                         );
                         continue;
@@ -1110,11 +1117,11 @@ impl AcpControlPlane {
         }
     }
 
- // ------------------------------------------------------------------
- // Serial execution queue (inherited from legacy AcpController)
- // ------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    // Serial execution queue (inherited from legacy AcpController)
+    // ------------------------------------------------------------------
 
- /// Execute a message in persistent session mode
+    /// Execute a message in persistent session mode
     pub async fn execute_session(
         &self,
         agent: Arc<Agent>,
@@ -1124,7 +1131,8 @@ impl AcpControlPlane {
             .await
     }
 
- /// Execute a message in persistent session mode with optional max iteration override.
+    /// Execute a message in persistent session mode with optional max iteration
+    /// override.
     pub async fn execute_session_with_max_iterations(
         &self,
         agent: Arc<Agent>,
@@ -1145,7 +1153,7 @@ impl AcpControlPlane {
             .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?
     }
 
- /// Execute a message in one-shot run mode
+    /// Execute a message in one-shot run mode
     pub async fn execute_run(
         &self,
         agent: Arc<Agent>,
@@ -1155,7 +1163,8 @@ impl AcpControlPlane {
             .await
     }
 
- /// Execute a message in one-shot run mode with optional max iteration override.
+    /// Execute a message in one-shot run mode with optional max iteration
+    /// override.
     pub async fn execute_run_with_max_iterations(
         &self,
         agent: Arc<Agent>,
@@ -1176,7 +1185,7 @@ impl AcpControlPlane {
             .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?
     }
 
- /// Execute with progress callbacks in session mode
+    /// Execute with progress callbacks in session mode
     pub async fn execute_session_with_progress(
         &self,
         agent: Arc<Agent>,
@@ -1187,7 +1196,8 @@ impl AcpControlPlane {
             .await
     }
 
- /// Execute with progress callbacks in session mode with optional max iteration override.
+    /// Execute with progress callbacks in session mode with optional max
+    /// iteration override.
     pub async fn execute_session_with_progress_and_max_iterations(
         &self,
         agent: Arc<Agent>,
@@ -1210,9 +1220,12 @@ impl AcpControlPlane {
             .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?
     }
 
- /// Pause a running session
+    /// Pause a running session
     pub async fn pause(&self, session_id: String) {
-        let _ = self.command_tx.send(AcpCommand::Pause { session_id: session_id.clone() }).await;
+        let _ = self
+            .command_tx
+            .send(AcpCommand::Pause { session_id: session_id.clone() })
+            .await;
         self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
             session_id,
             runtime_state: "paused".to_string(),
@@ -1220,7 +1233,7 @@ impl AcpControlPlane {
         .await;
     }
 
- /// Resume a paused session
+    /// Resume a paused session
     pub async fn resume(&self, session_id: String) {
         let _ = self
             .command_tx
@@ -1233,9 +1246,12 @@ impl AcpControlPlane {
         .await;
     }
 
- /// Single step a paused session
+    /// Single step a paused session
     pub async fn step(&self, session_id: String) {
-        let _ = self.command_tx.send(AcpCommand::Step { session_id: session_id.clone() }).await;
+        let _ = self
+            .command_tx
+            .send(AcpCommand::Step { session_id: session_id.clone() })
+            .await;
         self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
             session_id,
             runtime_state: "stepping".to_string(),
@@ -1243,7 +1259,7 @@ impl AcpControlPlane {
         .await;
     }
 
- /// Cancel a running session
+    /// Cancel a running session
     pub async fn cancel(&self, session_id: String) {
         let _ = self
             .command_tx
@@ -1256,7 +1272,7 @@ impl AcpControlPlane {
         .await;
     }
 
- /// Get session status
+    /// Get session status
     pub async fn get_status(&self, session_id: String) -> Option<AcpSessionStatus> {
         let (tx, rx) = oneshot::channel();
         let _ = self
@@ -1266,16 +1282,16 @@ impl AcpControlPlane {
         rx.await.ok().flatten()
     }
 
- /// Shutdown the ACP actor loop
+    /// Shutdown the ACP actor loop
     pub async fn shutdown(&self) {
         let _ = self.command_tx.send(AcpCommand::Shutdown).await;
     }
 
- // ------------------------------------------------------------------
- // Subagent management
- // ------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    // Subagent management
+    // ------------------------------------------------------------------
 
- /// Create a new ACP session
+    /// Create a new ACP session
     pub async fn create_session(&self, parent_agent_id: String) -> AcpSessionId {
         let session_id = AcpSessionId::new();
         let session = AcpSession {
@@ -1289,7 +1305,7 @@ impl AcpControlPlane {
         sessions.insert(session_id.clone(), session);
         drop(sessions);
 
- // Persist session if store is available
+        // Persist session if store is available
         if let Some(ref store) = self.store {
             let _ = store
                 .save_acp_session(&session_id.0, &parent_agent_id, &[], chrono::Utc::now())
@@ -1300,7 +1316,7 @@ impl AcpControlPlane {
         session_id
     }
 
- /// Spawn a subagent
+    /// Spawn a subagent
     pub async fn spawn_subagent(
         &self,
         session_id: AcpSessionId,
@@ -1309,7 +1325,7 @@ impl AcpControlPlane {
     ) -> crate::Result<SubagentHandle> {
         let subagent_id = format!("subagent-{}", Uuid::new_v4());
 
- // Resolve thread ID (acquire guard, read, release)
+        // Resolve thread ID (acquire guard, read, release)
         let thread_id = {
             let threads = self.threads.read().await;
             match &config.thread_binding {
@@ -1335,10 +1351,10 @@ impl AcpControlPlane {
             subagent_id, config.mode, thread_id
         );
 
- // Create command channel
+        // Create command channel
         let (command_tx, mut command_rx) = mpsc::channel::<SubagentCommand>(100);
 
- // Build agent config
+        // Build agent config
         let _agent_config = AgentConfig {
             system_prompt: config.system_prompt.clone().unwrap_or_default(),
             max_tokens: config.max_tokens.map(|m| m as u32).unwrap_or(2048),
@@ -1366,17 +1382,17 @@ impl AcpControlPlane {
             result?
         };
 
- // Create execution controller for runtime pause/resume/step/cancel
+        // Create execution controller for runtime pause/resume/step/cancel
         let controller = ExecutionController::new();
         let controller_clone = controller.clone();
 
- // Spawn subagent task
+        // Spawn subagent task
         let subagent_id_clone = subagent_id.clone();
         let mode = config.mode;
         let timeout = config.timeout_seconds;
         let max_iterations = self.max_iterations;
 
- // Capture fields needed for crash recovery logging
+        // Capture fields needed for crash recovery logging
         let recovery_retry_on_crash = config.retry_on_crash;
         let recovery_max_retries = config.max_crash_retries;
         let _recovery_config = self.recovery.clone();
@@ -1394,8 +1410,8 @@ impl AcpControlPlane {
                     SubagentCommand::ProcessMessage { message, response_tx } => {
                         debug!("Subagent {} processing message", subagent_id_clone);
 
- // Build a debug-logging callback so tool activity inside
- // the subagent surfaces in logs.
+                        // Build a debug-logging callback so tool activity inside
+                        // the subagent surfaces in logs.
                         let sid_cb = subagent_id_clone.clone();
                         let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
                             let sid = sid_cb.clone();
@@ -1410,7 +1426,11 @@ impl AcpControlPlane {
                                             sid, name, arguments
                                         );
                                     }
-                                    crate::agent::ProgressEvent::ToolResult { name, result, data: _ } => {
+                                    crate::agent::ProgressEvent::ToolResult {
+                                        name,
+                                        result,
+                                        data: _,
+                                    } => {
                                         debug!(
                                             "Subagent {} tool {} result: {} chars",
                                             sid,
@@ -1465,7 +1485,7 @@ impl AcpControlPlane {
                         let _ = response_tx
                             .send(response.map_err(crate::error::SyscityError::Internal));
 
- // For Run mode, terminate after first message
+                        // For Run mode, terminate after first message
                         if mode == SpawnMode::Run {
                             info!("Subagent {} (Run mode) completing", subagent_id_clone);
                             break;
@@ -1491,7 +1511,7 @@ impl AcpControlPlane {
 
         let abort_handle = join_handle.abort_handle();
 
- // Watchdog: await the JoinHandle and update status on exit or panic.
+        // Watchdog: await the JoinHandle and update status on exit or panic.
         let watchdog_subagents_ref = Arc::clone(&self.subagents);
         let watch_id = subagent_id.clone();
         let store_ref = self.store.clone();
@@ -1542,19 +1562,21 @@ impl AcpControlPlane {
                             .complete_subagent_run(&watch_id, None, Some("panicked"))
                             .await;
                     }
- // Log crash for external recovery (call recover_crashed_subagent to restart)
+                    // Log crash for external recovery (call recover_crashed_subagent to restart)
                     if recovery_retry_on_crash && current_crash_count < recovery_max_retries {
                         warn!(
-                            "Subagent {} crashed (attempt {}/{}). Auto-recovery enabled — call acp.recover_crashed_subagent() to restart.",
+                            "Subagent {} crashed (attempt {}/{}). Auto-recovery enabled — call \
+                             acp.recover_crashed_subagent() to restart.",
                             watch_id,
                             current_crash_count + 1,
                             recovery_max_retries
                         );
                     }
 
-                    // Automatic recovery: if enabled globally or per-subagent, restart with backoff.
-                    // The recovery future is not Send, so run it entirely inside a blocking task
-                    // on the current runtime thread instead of spawning it back onto the executor.
+                    // Automatic recovery: if enabled globally or per-subagent, restart with
+                    // backoff. The recovery future is not Send, so run it
+                    // entirely inside a blocking task on the current runtime
+                    // thread instead of spawning it back onto the executor.
                     let acp = acp_for_recovery.clone();
                     let sid = recovery_session_id.clone();
                     let pid = recovery_parent_id.clone();
@@ -1598,7 +1620,7 @@ impl AcpControlPlane {
                     });
                 }
                 Err(_) => {
- // Aborted externally
+                    // Aborted externally
                     let mut map = watchdog_subagents_ref.write().await;
                     if let Some(h) = map.get_mut(&watch_id) {
                         h.status = SubagentStatus::Terminated;
@@ -1611,7 +1633,7 @@ impl AcpControlPlane {
                             status: "aborted".to_string(),
                         })
                         .await;
- // Kill/abort already updates the store, so no-op here.
+                    // Kill/abort already updates the store, so no-op here.
                 }
             }
         });
@@ -1629,15 +1651,15 @@ impl AcpControlPlane {
             crash_count: 0,
         };
 
- // Register subagent
+        // Register subagent
         let mut subagents = self.subagents.write().await;
         subagents.insert(subagent_id.clone(), handle.clone());
 
- // Register with session
+        // Register with session
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(&session_id) {
             session.subagents.push(subagent_id.clone());
- // Persist updated subagent list
+            // Persist updated subagent list
             if let Some(ref store) = self.store {
                 let ids: Vec<String> = session.subagents.clone();
                 let parent = session.parent_agent_id.clone();
@@ -1648,7 +1670,7 @@ impl AcpControlPlane {
             }
         }
 
- // Ensure thread exists
+        // Ensure thread exists
         let mut threads = self.threads.write().await;
         if !threads.contains_key(&thread_id) {
             threads.insert(
@@ -1662,7 +1684,7 @@ impl AcpControlPlane {
             );
         }
 
- // Persist subagent run record if store is attached.
+        // Persist subagent run record if store is attached.
         if let Some(ref store) = self.store {
             let _ = store
                 .save_subagent_run(&SaveSubagentRunParams {
@@ -1697,7 +1719,7 @@ impl AcpControlPlane {
         Ok(handle)
     }
 
- /// Recover a crashed subagent by spawning a new one with the same config.
+    /// Recover a crashed subagent by spawning a new one with the same config.
     ///
     /// This method may be called externally or by the automatic recovery
     /// watchdog. It applies backoff based on `crash_count`, sets the crash
@@ -1726,7 +1748,10 @@ impl AcpControlPlane {
 
         tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
 
-        match self.spawn_subagent(session_id.clone(), parent_id.clone(), config).await {
+        match self
+            .spawn_subagent(session_id.clone(), parent_id.clone(), config)
+            .await
+        {
             Ok(handle) => {
                 let new_id = handle.id.clone();
                 let old_id = {
@@ -1767,9 +1792,7 @@ impl AcpControlPlane {
                             let created = session.created_at;
                             let sid = session_id.0.clone();
                             drop(sessions);
-                            let _ = store
-                                .save_acp_session(&sid, &parent, &ids, created)
-                                .await;
+                            let _ = store.save_acp_session(&sid, &parent, &ids, created).await;
                         }
                     }
                     {
@@ -1780,23 +1803,23 @@ impl AcpControlPlane {
 
                 if let Some(ref store) = self.store {
                     let _ = store
-                        .save_subagent_run(
-                            &SaveSubagentRunParams {
-                                run_id: &new_id,
-                                subagent_id: &new_id,
-                                session_id: &session_id.to_string(),
-                                parent_id: &handle.parent_id,
-                                label: Some("recovery"),
-                                task_prompt: Some(
-                                    &format!(
-                                        "auto-recovery after crash (attempt {})",
-                                        crash_count + 1
-                                    )
-                                ),
-                                mode: if handle.mode == SpawnMode::Run { "run" } else { "session" },
-                                thread_id: Some(&handle.thread_id),
-                            }
-                        )
+                        .save_subagent_run(&SaveSubagentRunParams {
+                            run_id: &new_id,
+                            subagent_id: &new_id,
+                            session_id: &session_id.to_string(),
+                            parent_id: &handle.parent_id,
+                            label: Some("recovery"),
+                            task_prompt: Some(&format!(
+                                "auto-recovery after crash (attempt {})",
+                                crash_count + 1
+                            )),
+                            mode: if handle.mode == SpawnMode::Run {
+                                "run"
+                            } else {
+                                "session"
+                            },
+                            thread_id: Some(&handle.thread_id),
+                        })
                         .await;
                     let _ = store.update_subagent_run_status(&new_id, "recovered").await;
                 }
@@ -1880,16 +1903,20 @@ impl AcpControlPlane {
     ) -> crate::Result<()> {
         if let Some(id) = subagent_id {
             let subagents = self.subagents.read().await;
-            let handle = subagents.get(id).ok_or_else(|| crate::error::SyscityError::NotFound {
-                resource: format!("Subagent '{}'", id),
-            })?;
+            let handle = subagents
+                .get(id)
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
+                    resource: format!("Subagent '{}'", id),
+                })?;
             if handle.thread_id != thread_id {
                 return Err(crate::error::SyscityError::Internal(format!(
                     "Subagent {} is bound to thread {}, not {}",
                     id, handle.thread_id, thread_id
                 )));
             }
-            if handle.status == SubagentStatus::Terminated || handle.status == SubagentStatus::Crashed {
+            if handle.status == SubagentStatus::Terminated
+                || handle.status == SubagentStatus::Crashed
+            {
                 return Err(crate::error::SyscityError::Internal(format!(
                     "Cannot switch to {:?} subagent {}",
                     handle.status, id
@@ -1904,10 +1931,7 @@ impl AcpControlPlane {
             crate::error::SyscityError::Internal(format!("Thread {} disappeared", thread_id))
         })?;
         thread.active_subagent = subagent_id.map(|s| s.to_string());
-        info!(
-            "Switched active subagent on thread {} to {:?}",
-            thread_id, subagent_id
-        );
+        info!("Switched active subagent on thread {} to {:?}", thread_id, subagent_id);
         self.emit(crate::gateway::GatewayEvent::AcpThreadSwitched {
             thread_id: thread_id.to_string(),
             active_subagent: subagent_id.map(|s| s.to_string()),
@@ -1928,12 +1952,15 @@ impl AcpControlPlane {
     ) -> crate::Result<()> {
         let (old_thread_id, _status) = {
             let subagents = self.subagents.read().await;
-            let handle = subagents.get(subagent_id).ok_or_else(|| {
-                crate::error::SyscityError::NotFound {
-                    resource: format!("Subagent '{}'", subagent_id),
-                }
-            })?;
-            if handle.status == SubagentStatus::Terminated || handle.status == SubagentStatus::Crashed {
+            let handle =
+                subagents
+                    .get(subagent_id)
+                    .ok_or_else(|| crate::error::SyscityError::NotFound {
+                        resource: format!("Subagent '{}'", subagent_id),
+                    })?;
+            if handle.status == SubagentStatus::Terminated
+                || handle.status == SubagentStatus::Crashed
+            {
                 return Err(crate::error::SyscityError::Internal(format!(
                     "Cannot migrate {:?} subagent {}",
                     handle.status, subagent_id
@@ -2047,11 +2074,7 @@ impl AcpControlPlane {
     }
 
     /// Poll pending bus messages for a subagent on a topic.
-    pub async fn bus_poll(
-        &self,
-        subagent_id: &str,
-        topic: &str,
-    ) -> crate::Result<Vec<BusMessage>> {
+    pub async fn bus_poll(&self, subagent_id: &str, topic: &str) -> crate::Result<Vec<BusMessage>> {
         {
             let subagents = self.subagents.read().await;
             if !subagents.contains_key(subagent_id) {
@@ -2124,14 +2147,14 @@ impl AcpControlPlane {
         Ok(result)
     }
 
- /// Shutdown a subagent
+    /// Shutdown a subagent
     pub async fn shutdown_subagent(&self, subagent_id: &str) -> crate::Result<bool> {
         let mut subagents = self.subagents.write().await;
 
         if let Some(subagent) = subagents.get_mut(subagent_id) {
             subagent.status = SubagentStatus::ShuttingDown;
             let _ = subagent.command_tx.send(SubagentCommand::Shutdown).await;
- // Watchdog task will update status to Terminated once the task exits.
+            // Watchdog task will update status to Terminated once the task exits.
             drop(subagents);
             if let Some(ref store) = self.store {
                 let _ = store
@@ -2144,7 +2167,7 @@ impl AcpControlPlane {
         }
     }
 
- /// Kill a subagent immediately (force abort)
+    /// Kill a subagent immediately (force abort)
     pub async fn kill_subagent(&self, subagent_id: &str) -> crate::Result<bool> {
         let mut subagents = self.subagents.write().await;
 
@@ -2163,7 +2186,7 @@ impl AcpControlPlane {
         }
     }
 
- /// Steer a subagent — cancel current execution and send a new message
+    /// Steer a subagent — cancel current execution and send a new message
     pub async fn steer_subagent(
         &self,
         subagent_id: &str,
@@ -2177,17 +2200,17 @@ impl AcpControlPlane {
                     resource: format!("Subagent '{}'", subagent_id),
                 })?;
 
- // 1. Cancel any in-progress execution
+        // 1. Cancel any in-progress execution
         let _ = subagent.command_tx.send(SubagentCommand::Cancel).await;
 
- // 2. Build steer message
+        // 2. Build steer message
         let steer_msg = IncomingMessage::new(
             "user".to_string(),
             format!("steer-{}", subagent_id),
             message.clone(),
         );
 
- // 3. Send steer message as new ProcessMessage
+        // 3. Send steer message as new ProcessMessage
         let (response_tx, response_rx) = oneshot::channel();
         subagent
             .command_tx
@@ -2202,7 +2225,7 @@ impl AcpControlPlane {
 
         drop(subagents);
 
- // Persist steer event
+        // Persist steer event
         if let Some(ref store) = self.store {
             let _ = store.append_steer_to_run(subagent_id, &message).await;
         }
@@ -2216,7 +2239,7 @@ impl AcpControlPlane {
         }
     }
 
- /// Terminate all subagents in a session
+    /// Terminate all subagents in a session
     pub async fn terminate_session(&self, session_id: &AcpSessionId) -> crate::Result<usize> {
         let sessions = self.sessions.read().await;
         let session =
@@ -2236,12 +2259,12 @@ impl AcpControlPlane {
             }
         }
 
- // Remove session
+        // Remove session
         let mut sessions = self.sessions.write().await;
         sessions.remove(session_id);
         drop(sessions);
 
- // Delete from persistent store
+        // Delete from persistent store
         if let Some(ref store) = self.store {
             let _ = store.delete_acp_session(&session_id.0).await;
         }
@@ -2250,19 +2273,19 @@ impl AcpControlPlane {
         Ok(count)
     }
 
- /// Get subagent status
+    /// Get subagent status
     pub async fn get_subagent_status(&self, subagent_id: &str) -> Option<SubagentStatus> {
         let subagents = self.subagents.read().await;
         subagents.get(subagent_id).map(|s| s.status)
     }
 
- /// List all subagents
+    /// List all subagents
     pub async fn list_subagents(&self) -> Vec<SubagentHandle> {
         let subagents = self.subagents.read().await;
         subagents.values().cloned().collect()
     }
 
- /// List subagents in a session
+    /// List subagents in a session
     pub async fn list_session_subagents(&self, session_id: &AcpSessionId) -> Vec<SubagentHandle> {
         let sessions = self.sessions.read().await;
         let subagents = self.subagents.read().await;
@@ -2278,7 +2301,7 @@ impl AcpControlPlane {
         }
     }
 
- /// Get session info
+    /// Get session info
     pub async fn get_session_info(&self, session_id: &AcpSessionId) -> Option<AcpSessionInfo> {
         let sessions = self.sessions.read().await;
         sessions.get(session_id).map(|s| AcpSessionInfo {
@@ -2289,7 +2312,7 @@ impl AcpControlPlane {
         })
     }
 
- /// Get subagent tree for a session (recursive parent-child hierarchy)
+    /// Get subagent tree for a session (recursive parent-child hierarchy)
     pub async fn get_subagent_tree(&self, session_id: &AcpSessionId) -> Vec<SubagentTreeNode> {
         let sessions = self.sessions.read().await;
         let subagents = self.subagents.read().await;
@@ -2377,7 +2400,7 @@ pub struct SubagentTreeNode {
 /// Extension trait for Agent to support ACP
 #[async_trait]
 pub trait AcpAgentExt {
- /// Spawn a subagent from this agent
+    /// Spawn a subagent from this agent
     async fn spawn_subagent(
         &self,
         acp: &AcpControlPlane,
@@ -2402,7 +2425,8 @@ impl AcpAgentExt for AgentHandle {
 mod tests {
     use super::*;
 
-    /// Spawn a subagent whose task panics and verify it is automatically recovered.
+    /// Spawn a subagent whose task panics and verify it is automatically
+    /// recovered.
     #[tokio::test]
     async fn test_subagent_crash_auto_recovery() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -2505,7 +2529,10 @@ mod tests {
         acp.switch_thread_active_subagent("thread-a", Some(&s1.id))
             .await
             .expect("switch to s1");
-        let ctx_a = acp.get_thread_context("thread-a").await.expect("thread-a exists");
+        let ctx_a = acp
+            .get_thread_context("thread-a")
+            .await
+            .expect("thread-a exists");
         assert_eq!(ctx_a.active_subagent, Some(s1.id.clone()));
 
         // Migrate s1 to thread-b.
@@ -2522,11 +2549,17 @@ mod tests {
         assert_eq!(s1_after.thread_id, "thread-b");
 
         // thread-a should have cleared its active subagent.
-        let ctx_a = acp.get_thread_context("thread-a").await.expect("thread-a exists");
+        let ctx_a = acp
+            .get_thread_context("thread-a")
+            .await
+            .expect("thread-a exists");
         assert!(ctx_a.active_subagent.is_none());
 
         // thread-b should have s1 as active subagent.
-        let ctx_b = acp.get_thread_context("thread-b").await.expect("thread-b exists");
+        let ctx_b = acp
+            .get_thread_context("thread-b")
+            .await
+            .expect("thread-b exists");
         assert_eq!(ctx_b.active_subagent, Some(s1.id.clone()));
 
         // s2 should remain on thread-a.
@@ -2540,7 +2573,10 @@ mod tests {
         acp.switch_thread_active_subagent("thread-a", Some(&s2.id))
             .await
             .expect("switch to s2");
-        let ctx_a = acp.get_thread_context("thread-a").await.expect("thread-a exists");
+        let ctx_a = acp
+            .get_thread_context("thread-a")
+            .await
+            .expect("thread-a exists");
         assert_eq!(ctx_a.active_subagent, Some(s2.id.clone()));
 
         // Cleanup
@@ -2564,7 +2600,9 @@ mod tests {
             .expect("spawn s2");
 
         // Subscribe s2 to the shared topic; s1 will publish without subscribing.
-        acp.bus_subscribe(&s2.id, "alerts").await.expect("subscribe s2");
+        acp.bus_subscribe(&s2.id, "alerts")
+            .await
+            .expect("subscribe s2");
 
         // Publish from s1 in session A.
         let msg = acp
@@ -2595,7 +2633,10 @@ mod tests {
         acp.bus_publish(&s1.id, "alerts", "after unsubscribe")
             .await
             .expect("publish after unsubscribe");
-        let after_unsub = acp.bus_poll(&s2.id, "alerts").await.expect("poll after unsub");
+        let after_unsub = acp
+            .bus_poll(&s2.id, "alerts")
+            .await
+            .expect("poll after unsub");
         assert!(after_unsub.is_empty());
 
         // Cleanup
@@ -2605,9 +2646,10 @@ mod tests {
 
     fn mock_agent_builder() -> impl Fn() -> crate::Result<Agent> + Send + Sync + 'static {
         || {
-            let provider = Arc::new(crate::providers::mock::MockProvider::new().with_responses(vec![
-                crate::providers::Message::assistant("mock response"),
-            ]));
+            let provider = Arc::new(
+                crate::providers::mock::MockProvider::new()
+                    .with_responses(vec![crate::providers::Message::assistant("mock response")]),
+            );
             let tools = Arc::new(crate::tools::ToolRegistry::new());
             let config = AgentConfig::default();
             Ok(Agent::new(config, provider, tools))
@@ -2747,7 +2789,7 @@ mod tests {
     async fn test_execution_controller_running() {
         let ctrl = ExecutionController::new();
         ctrl.reset().await;
- // Running / Idle -> returns immediately
+        // Running / Idle -> returns immediately
         assert!(ctrl.check_and_wait().await.is_ok());
     }
 
@@ -2762,7 +2804,7 @@ mod tests {
     async fn test_execution_controller_step_then_pause() {
         let ctrl = ExecutionController::new();
         ctrl.step().await;
- // First call: Stepping -> returns, then becomes Paused
+        // First call: Stepping -> returns, then becomes Paused
         assert!(ctrl.check_and_wait().await.is_ok());
         assert_eq!(ctrl.current_state().await, RuntimeState::Paused);
     }
@@ -2771,17 +2813,17 @@ mod tests {
     async fn test_execution_controller_pause_resume() {
         let ctrl = ExecutionController::new();
 
- // Start paused
+        // Start paused
         ctrl.pause().await;
 
- // Spawn a task that waits
+        // Spawn a task that waits
         let ctrl2 = ctrl.clone();
         let handle = tokio::spawn(async move { ctrl2.check_and_wait().await });
 
- // Small delay to let the task reach the wait
+        // Small delay to let the task reach the wait
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
- // Resume
+        // Resume
         ctrl.resume().await;
 
         assert!(handle.await.unwrap().is_ok());
@@ -2811,7 +2853,9 @@ mod tests {
                 max_crash_retries: 0,
             };
             spawn_tasks.push(tokio::spawn(async move {
-                acp_clone.spawn_subagent(sid, "parent-1".to_string(), config).await
+                acp_clone
+                    .spawn_subagent(sid, "parent-1".to_string(), config)
+                    .await
             }));
         }
 
@@ -2822,13 +2866,17 @@ mod tests {
                 .expect("spawn task should not panic")
                 .expect("spawn_subagent should succeed");
             assert!(
-                handle.command_tx.send(SubagentCommand::Shutdown).await.is_ok(),
+                handle
+                    .command_tx
+                    .send(SubagentCommand::Shutdown)
+                    .await
+                    .is_ok(),
                 "subagent should accept shutdown"
             );
             handles.push(handle);
         }
 
- // All 10 subagents should have been created with unique IDs
+        // All 10 subagents should have been created with unique IDs
         assert_eq!(handles.len(), 10);
         let ids: std::collections::HashSet<_> = handles.iter().map(|h| h.id.clone()).collect();
         assert_eq!(ids.len(), 10, "all subagent IDs should be unique");
@@ -2875,16 +2923,9 @@ mod tests {
         let _ = handle.command_tx.send(SubagentCommand::Shutdown).await;
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-        let completed = event_rx
-            .recv()
-            .await
-            .expect("receive completed event");
+        let completed = event_rx.recv().await.expect("receive completed event");
         match completed {
-            crate::gateway::GatewayEvent::AcpCompleted {
-                subagent_id,
-                status,
-                ..
-            } => {
+            crate::gateway::GatewayEvent::AcpCompleted { subagent_id, status, .. } => {
                 assert_eq!(subagent_id, handle.id);
                 assert_eq!(status, "terminated");
             }

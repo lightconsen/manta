@@ -3,13 +3,15 @@
 //! This module provides an HTTP client for communicating with
 //! external APIs.
 
+use std::time::Duration;
+
+use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
+use serde::{de::DeserializeOwned, Serialize};
+use tracing::{debug, error, instrument, trace};
+
 use crate::config::ServiceConfig;
 use crate::error::{Result, SyscityError};
 use crate::secrets::SecretRef;
-use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
-use serde::{de::DeserializeOwned, Serialize};
-use std::time::Duration;
-use tracing::{debug, error, instrument, trace};
 
 /// API client for external services
 #[derive(Debug, Clone)]
@@ -297,10 +299,11 @@ fn calculate_backoff(attempt: u32, config: &crate::config::RetryConfig) -> Durat
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config::RetryConfig;
     use wiremock::matchers::{header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::config::RetryConfig;
 
     #[tokio::test]
     async fn test_api_client_get() {

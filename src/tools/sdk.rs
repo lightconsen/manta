@@ -4,15 +4,18 @@
 //! registration, and capability querying. It provides:
 //!
 //! - **Pack management**: Group related tools into versioned packs
-//! - **Discovery**: List, find, and query tools by name, capability, or category
+//! - **Discovery**: List, find, and query tools by name, capability, or
+//!   category
 //! - **Metadata**: Access tool parameter schemas, descriptions, and risk levels
 //! - **Integration**: Bidirectional sync with the core `ToolRegistry`
 
-use crate::tools::approval::RiskLevel;
-use crate::tools::ToolRegistry;
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use crate::tools::approval::RiskLevel;
+use crate::tools::ToolRegistry;
 
 /// Errors from ToolSdk operations.
 #[derive(Debug, Clone)]

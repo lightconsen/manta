@@ -6,8 +6,9 @@
 //! - Machine-parseable (JSON/JSONL)
 //! - Compatible with exports for interoperability
 
-use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
 
 /// Export format options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,8 +267,9 @@ fn humantime_timestamp(time: SystemTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::str::FromStr;
+
+    use super::*;
 
     #[test]
     fn test_export_format_from_str() {

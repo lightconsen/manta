@@ -30,10 +30,11 @@ use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
-use crate::device::Device;
 use crate::device::registry::DeviceRegistry;
+use crate::device::Device;
 
-// ── Public types ──────────────────────────────────────────────────────────────
+// ── Public types
+// ──────────────────────────────────────────────────────────────
 
 /// A callback invoked by the control loop for a specific device.
 ///
@@ -90,8 +91,8 @@ impl Default for ControlConfig {
 ///
 /// The loop ticks every `config.loop_interval_ms` and:
 /// 1. Calls [`DeviceRegistry::health_check_all`].
-/// 2. For each device in `Error` state: updates its [`SafetyZone::engaged`]
-///    to `true` (fast-trip).
+/// 2. For each device in `Error` state: updates its [`SafetyZone::engaged`] to
+///    `true` (fast-trip).
 /// 3. Invokes registered [`ControlHandler`] callbacks for each device.
 ///
 /// Returns a [`JoinHandle`] that can be aborted during shutdown / reload.
@@ -175,7 +176,8 @@ pub fn init_control_runtime(
             unsafe {
                 let mut cpu_set: libc::cpu_set_t = std::mem::zeroed();
                 libc::CPU_SET(3, &mut cpu_set);
-                let ret = libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &cpu_set);
+                let ret =
+                    libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &cpu_set);
                 if ret != 0 {
                     tracing::warn!("Control lane: failed to pin thread to CPU 3");
                 }
@@ -186,9 +188,7 @@ pub fn init_control_runtime(
     let rt = builder.build().expect("control lane runtime");
     // The async block intentionally returns the JoinHandle without awaiting it.
     #[allow(clippy::async_yields_async)]
-    let handle = rt.block_on(async move {
-        spawn_control_loop(registry, handlers, config)
-    });
+    let handle = rt.block_on(async move { spawn_control_loop(registry, handlers, config) });
 
     (rt, handle)
 }
@@ -202,11 +202,12 @@ pub fn new_handler_registry() -> ControlHandlerRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use async_trait::async_trait;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    use async_trait::async_trait;
     use tokio::time::Duration;
 
+    use super::*;
     use crate::device::safety::{SafetyRule, SafetyRuleKind};
     use crate::device::{Device, DeviceDriver, DeviceInfo, SafetyZone};
 
@@ -292,9 +293,12 @@ mod tests {
         let invoked = Arc::new(AtomicBool::new(false));
 
         let inv = invoked.clone();
-        handlers.lock().unwrap().insert("dev-sensor-01".into(), vec![Box::new(move |_device| {
-            inv.store(true, Ordering::Release);
-        })]);
+        handlers.lock().unwrap().insert(
+            "dev-sensor-01".into(),
+            vec![Box::new(move |_device| {
+                inv.store(true, Ordering::Release);
+            })],
+        );
 
         let handle = spawn_control_loop(
             registry.clone(),

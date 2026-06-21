@@ -6,11 +6,12 @@
 //! - Semantic similarity search with cosine similarity
 //! - Batch processing for efficient embedding generation
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -95,7 +96,8 @@ pub trait EmbeddingProvider: Send + Sync {
 }
 
 /// Blanket impl so `Arc<dyn EmbeddingProvider>` can be passed where a concrete
-/// `EmbeddingProvider` is expected (e.g. as the inner of `CachedEmbeddingProvider`).
+/// `EmbeddingProvider` is expected (e.g. as the inner of
+/// `CachedEmbeddingProvider`).
 #[async_trait]
 impl EmbeddingProvider for Arc<dyn EmbeddingProvider> {
     fn model_name(&self) -> &str {
@@ -153,7 +155,9 @@ impl LocalGgufEmbeddingProvider {
     /// Always returns error
     pub async fn embed_batch(&self, _texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
         Err(crate::error::SyscityError::Validation(
-            "Local GGUF embeddings require 'local-embeddings' feature. Install with: cargo build --features local-embeddings".to_string()
+            "Local GGUF embeddings require 'local-embeddings' feature. Install with: cargo build \
+             --features local-embeddings"
+                .to_string(),
         ))
     }
 
@@ -266,7 +270,8 @@ impl EmbeddingProvider for ApiEmbeddingProvider {
     }
 }
 
-// ── Embedding dedup cache ─────────────────────────────────────────────────────
+// ── Embedding dedup cache
+// ─────────────────────────────────────────────────────
 
 /// In-memory SHA-256 content-dedup cache for embedding vectors.
 ///
@@ -515,7 +520,8 @@ impl VectorStore for MemoryVectorStore {
 ///
 /// Stores embeddings as serialized JSON arrays in a SQLite table.
 /// Similarity computation runs in Rust after loading candidates from SQLite,
-/// providing persistence and SQLite-based filtering (by source_id, metadata, etc.).
+/// providing persistence and SQLite-based filtering (by source_id, metadata,
+/// etc.).
 pub struct SqliteVectorStore {
     pool: Pool<Sqlite>,
     dimension: usize,
@@ -579,7 +585,8 @@ impl SqliteVectorStore {
         threshold: f32,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
         let rows = sqlx::query(
-            "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM vector_chunks",
+            "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM \
+             vector_chunks",
         )
         .fetch_all(&self.pool)
         .await
@@ -650,7 +657,8 @@ impl VectorStore for SqliteVectorStore {
             })?;
 
         sqlx::query(
-            "INSERT OR REPLACE INTO vector_chunks (id, source_id, text, embedding, position, total_chunks, metadata)
+            "INSERT OR REPLACE INTO vector_chunks (id, source_id, text, embedding, position, \
+             total_chunks, metadata)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&chunk.id)

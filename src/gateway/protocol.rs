@@ -3,10 +3,12 @@
 //! Implements the WebSocket-native RPC protocol defined in docs/protocol.md.
 //! Uses req/res/event framing aligned with
 
+use serde::{Deserialize, Serialize};
+
 use crate::gateway::GatewayEvent;
 use crate::security::UserId;
-use serde::{Deserialize, Serialize};
-// ── Protocol Version ──────────────────────────────────────────────────────────
+// ── Protocol Version
+// ──────────────────────────────────────────────────────────
 
 /// Current protocol version
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -14,7 +16,8 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Minimum protocol version supported by this server
 pub const PROTOCOL_VERSION_MIN: u32 = 1;
 
-// ── Frame Types ───────────────────────────────────────────────────────────────
+// ── Frame Types
+// ───────────────────────────────────────────────────────────────
 
 /// A frame received from the client (always a request)
 #[derive(Debug, Clone, Deserialize)]
@@ -113,7 +116,8 @@ pub struct WsError {
     pub message: String,
 }
 
-// ── Connect Handshake ─────────────────────────────────────────────────────────
+// ── Connect Handshake
+// ─────────────────────────────────────────────────────────
 
 /// Parameters sent by client in the first `connect` request
 #[derive(Debug, Clone, Deserialize)]
@@ -192,10 +196,12 @@ pub struct ServerInfo {
     pub conn_id: String,
 }
 
-// ── Scopes (Operator Scope system) ────────────────────────────────────────────
+// ── Scopes (Operator Scope system)
+// ────────────────────────────────────────────
 //
-// Syscity uses an Operator Scope model. Each WebSocket method declares a required scope;
-// the gateway verifies the connection's granted scopes before dispatch.
+// Syscity uses an Operator Scope model. Each WebSocket method declares a
+// required scope; the gateway verifies the connection's granted scopes before
+// dispatch.
 //
 // Scope hierarchy (least to most privileged):
 // read < chat < write < acp < pairing < admin
@@ -279,7 +285,8 @@ pub fn scopes_allow(granted: &[String], method: &str) -> bool {
     granted.contains(&required.to_string())
 }
 
-// ── Auth Mode ─────────────────────────────────────────────────────────────────
+// ── Auth Mode
+// ─────────────────────────────────────────────────────────────────
 
 /// Gateway authentication mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -299,7 +306,8 @@ pub enum AuthMode {
     Tailscale,
 }
 
-// ── Connection State ──────────────────────────────────────────────────────────
+// ── Connection State
+// ──────────────────────────────────────────────────────────
 
 /// Per-connection state maintained during the WebSocket session
 #[derive(Debug)]
@@ -349,7 +357,8 @@ impl ProtocolConnection {
     }
 }
 
-// ── GatewayEvent → WsEvent Mapping ────────────────────────────────────────────
+// ── GatewayEvent → WsEvent Mapping
+// ────────────────────────────────────────────
 
 /// Convert a GatewayEvent to a WsEvent name + payload
 pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::Value)> {
@@ -610,7 +619,8 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
     }
 }
 
-// ── Error Codes ───────────────────────────────────────────────────────────────
+// ── Error Codes
+// ───────────────────────────────────────────────────────────────
 
 /// Build a standardized error response
 pub fn error_unauthorized(id: impl Into<String>) -> WsResponse {

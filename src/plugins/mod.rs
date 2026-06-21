@@ -19,6 +19,10 @@ pub mod runtime;
 pub mod sqlite_registry;
 pub mod verification;
 
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
 pub use activation::{ActivationPlan, ActivationPlanner, PluginTrigger};
 pub use deps::{DependencyResolver, ResolvedDependency};
 pub use hooks::{
@@ -35,13 +39,9 @@ pub use provider_extension::{PluginProvider, PluginProviderRegistry};
 pub use registry::{RegistryClient, RegistryIndex, RegistryPluginEntry};
 pub use runtime::{PluginInstance, PluginRuntime};
 pub use sqlite_registry::{PluginDbEntry, PluginSqliteRegistry};
-pub use verification::{verify_manifest, VerificationResult};
-
-use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+pub use verification::{verify_manifest, VerificationResult};
 
 use crate::cli::{DiagnosticHint, HintSeverity};
 use crate::tools::ToolRegistry;
@@ -78,7 +78,8 @@ pub struct PluginManager {
     channel_unregister: RwLock<Option<ChannelUnregisterFn>>,
     /// Message sender used to construct PluginChannel instances
     #[cfg(feature = "plugins")]
-    channel_message_tx: RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>>>,
+    channel_message_tx:
+        RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>>>,
     /// Optional SQLite plugin registry for persistent metadata
     sqlite_registry: RwLock<Option<PluginSqliteRegistry>>,
     /// Optional activation planner for lazy loading / dependency ordering
@@ -86,12 +87,12 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
- /// Create a new plugin manager
+    /// Create a new plugin manager
     pub async fn new(plugins_dir: PathBuf) -> crate::Result<Self> {
         let runtime = Arc::new(PluginRuntime::new()?);
         let hook_registry = Arc::new(HookRegistry::new());
 
- // Ensure plugins directory exists
+        // Ensure plugins directory exists
         tokio::fs::create_dir_all(&plugins_dir).await.ok();
 
         Ok(Self {
@@ -113,7 +114,7 @@ impl PluginManager {
         })
     }
 
- /// Set callbacks for registering / unregistering plugin-backed providers.
+    /// Set callbacks for registering / unregistering plugin-backed providers.
     pub async fn set_provider_callbacks(
         &self,
         register: ProviderRegisterFn,
@@ -138,7 +139,8 @@ impl PluginManager {
         *unreg = Some(unregister);
     }
 
-    /// Set the channel message sender used to construct PluginChannel instances.
+    /// Set the channel message sender used to construct PluginChannel
+    /// instances.
     #[cfg(feature = "plugins")]
     pub async fn set_channel_message_tx(
         &self,
@@ -148,14 +150,14 @@ impl PluginManager {
         *mt = Some(tx);
     }
 
- /// Attach a `ToolRegistry` so that plugin tools are automatically
- /// registered on load / unregistered on unload.
+    /// Attach a `ToolRegistry` so that plugin tools are automatically
+    /// registered on load / unregistered on unload.
     pub async fn set_tool_registry(&self, registry: Arc<ToolRegistry>) {
         let mut tr = self.tool_registry.write().await;
         *tr = Some(registry);
     }
 
- /// Initialize and load all plugins
+    /// Initialize and load all plugins
     pub async fn initialize(&self) -> crate::Result<usize> {
         info!("Initializing plugin manager...");
 
@@ -188,7 +190,8 @@ impl PluginManager {
         Ok(count)
     }
 
- /// Load a plugin from a directory and register its tools, providers, and channels.
+    /// Load a plugin from a directory and register its tools, providers, and
+    /// channels.
     pub async fn load_plugin(&self, path: &std::path::Path) -> crate::Result<String> {
         let plugin_id = self.runtime.load_plugin(path).await?;
 
@@ -201,10 +204,7 @@ impl PluginManager {
             // Sync to SQLite registry if available
             let registry = self.sqlite_registry.read().await;
             if let Some(ref reg) = *registry {
-                if let Err(e) = reg
-                    .register_plugin(&plugin.manifest, path, None)
-                    .await
-                {
+                if let Err(e) = reg.register_plugin(&plugin.manifest, path, None).await {
                     warn!("Failed to register plugin '{}' in SQLite registry: {}", plugin_id, e);
                 }
             }
@@ -213,7 +213,8 @@ impl PluginManager {
         Ok(plugin_id)
     }
 
- /// Unload a plugin, unregistering its tools, providers, channels, and hooks.
+    /// Unload a plugin, unregistering its tools, providers, channels, and
+    /// hooks.
     pub async fn unload_plugin(&self, plugin_id: &str) -> crate::Result<bool> {
         self.deregister_plugin_tools(plugin_id).await;
         #[cfg(feature = "plugins")]
@@ -225,20 +226,17 @@ impl PluginManager {
         let registry = self.sqlite_registry.read().await;
         if let Some(ref reg) = *registry {
             if let Err(e) = reg.unregister_plugin(plugin_id).await {
-                warn!(
-                    "Failed to unregister plugin '{}' from SQLite registry: {}",
-                    plugin_id, e
-                );
+                warn!("Failed to unregister plugin '{}' from SQLite registry: {}", plugin_id, e);
             }
         }
 
         self.runtime.unload_plugin(plugin_id).await
     }
 
- /// Reload a plugin with state preservation.
- ///
- /// Preserves `PluginState::memory`, re-reads the manifest from disk,
- /// and re-registers tools into the `ToolRegistry`.
+    /// Reload a plugin with state preservation.
+    ///
+    /// Preserves `PluginState::memory`, re-reads the manifest from disk,
+    /// and re-registers tools into the `ToolRegistry`.
     pub async fn reload_plugin(&self, plugin_id: &str) -> crate::Result<String> {
         info!("Reloading plugin '{}'...", plugin_id);
 
@@ -261,13 +259,13 @@ impl PluginManager {
         Ok(reloaded_id)
     }
 
- /// Enable or disable plugin trace logging.
+    /// Enable or disable plugin trace logging.
     pub fn set_trace_enabled(&self, enabled: bool) {
         self.trace_enabled
             .store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
- /// Register a plugin's tools into the `ToolRegistry`.
+    /// Register a plugin's tools into the `ToolRegistry`.
     async fn register_plugin_tools(&self, plugin: &PluginInstance) {
         let tool_registry = self.tool_registry.read().await;
         if let Some(ref registry) = *tool_registry {
@@ -284,7 +282,7 @@ impl PluginManager {
         }
     }
 
- /// Deregister a plugin's tools from the `ToolRegistry`.
+    /// Deregister a plugin's tools from the `ToolRegistry`.
     async fn deregister_plugin_tools(&self, plugin_id: &str) {
         let tool_registry = self.tool_registry.read().await;
         if let Some(ref registry) = *tool_registry {
@@ -297,7 +295,7 @@ impl PluginManager {
         }
     }
 
- /// Register a plugin's provider capabilities with the system.
+    /// Register a plugin's provider capabilities with the system.
     async fn register_plugin_providers(&self, plugin: &PluginInstance) {
         let register_fn = self.provider_register.read().await;
         if let Some(ref register) = *register_fn {
@@ -333,7 +331,7 @@ impl PluginManager {
         }
     }
 
- /// Deregister a plugin's providers from the system.
+    /// Deregister a plugin's providers from the system.
     async fn deregister_plugin_providers(&self, plugin_id: &str) {
         let unregister_fn = self.provider_unregister.read().await;
         if let Some(ref unregister) = *unregister_fn {
@@ -385,16 +383,11 @@ impl PluginManager {
                     };
 
                     if !wasm_path.exists() {
-                        warn!(
-                            "Plugin '{}' channel WASM not found: {:?}",
-                            plugin.id(),
-                            wasm_path
-                        );
+                        warn!("Plugin '{}' channel WASM not found: {:?}", plugin.id(), wasm_path);
                         continue;
                     }
 
-                    match PluginChannel::load(&wasm_path, plugin.config.clone(), tx.clone()).await
-                    {
+                    match PluginChannel::load(&wasm_path, plugin.config.clone(), tx.clone()).await {
                         Ok(channel) => {
                             let channel: Arc<dyn crate::channels::Channel> = Arc::new(channel);
                             register(name.clone(), channel);
@@ -405,10 +398,7 @@ impl PluginManager {
                             );
                         }
                         Err(e) => {
-                            warn!(
-                                "Failed to load PluginChannel from {:?}: {}",
-                                wasm_path, e
-                            );
+                            warn!("Failed to load PluginChannel from {:?}: {}", wasm_path, e);
                         }
                     }
                 }
@@ -437,15 +427,16 @@ impl PluginManager {
         }
     }
 
- /// Get a plugin instance
+    /// Get a plugin instance
     pub async fn get_plugin(&self, plugin_id: &str) -> Option<PluginInstance> {
         self.runtime.get_plugin(plugin_id).await
     }
 
     /// Run diagnostics on all loaded plugins.
     ///
-    /// Checks: valid semver, syscity_version compatibility, WASM file existence,
-    /// WASM compilation status. Returns a list of `DiagnosticHint` entries.
+    /// Checks: valid semver, syscity_version compatibility, WASM file
+    /// existence, WASM compilation status. Returns a list of
+    /// `DiagnosticHint` entries.
     pub async fn diagnose(&self) -> Vec<DiagnosticHint> {
         let mut hints = Vec::new();
         let plugins = self.runtime.list_plugins().await;
@@ -518,16 +509,17 @@ impl PluginManager {
             }
 
             // Check 4: plugin has no main but has Tool capabilities
-            if plugin.manifest.main.is_none()
-                && plugin.manifest.capabilities.is_some()
-            {
+            if plugin.manifest.main.is_none() {
                 let has_wasm_cap = plugin
                     .manifest
                     .capabilities
                     .as_ref()
-                    .unwrap()
-                    .iter()
-                    .any(|c| matches!(c, crate::plugins::manifest::PluginCapability::Tools { .. }));
+                    .map(|caps| {
+                        caps.iter().any(|c| {
+                            matches!(c, crate::plugins::manifest::PluginCapability::Tools { .. })
+                        })
+                    })
+                    .unwrap_or(false);
                 if has_wasm_cap {
                     hints.push(DiagnosticHint {
                         category: format!("plugin:{}", plugin.manifest.id),
@@ -544,27 +536,27 @@ impl PluginManager {
         hints
     }
 
- /// List all plugins
+    /// List all plugins
     pub async fn list_plugins(&self) -> Vec<PluginInstance> {
         self.runtime.list_plugins().await
     }
 
- /// Enable/disable a plugin
+    /// Enable/disable a plugin
     pub async fn set_enabled(&self, plugin_id: &str, enabled: bool) -> crate::Result<()> {
         self.runtime.set_enabled(plugin_id, enabled).await
     }
 
- /// Get the hook registry
+    /// Get the hook registry
     pub fn hook_registry(&self) -> &Arc<HookRegistry> {
         &self.hook_registry
     }
 
- /// Get the plugin runtime
+    /// Get the plugin runtime
     pub fn runtime(&self) -> &Arc<PluginRuntime> {
         &self.runtime
     }
 
- /// Execute a hook
+    /// Execute a hook
     pub async fn execute_hook(
         &self,
         hook_type: HookType,
@@ -573,12 +565,12 @@ impl PluginManager {
         self.hook_registry.execute(hook_type, payload).await
     }
 
- /// Register a hook handler
+    /// Register a hook handler
     pub async fn register_hook(&self, handler: HookHandler) {
         self.hook_registry.register(handler).await;
     }
 
- /// Shutdown all plugins
+    /// Shutdown all plugins
     pub async fn shutdown(&self) -> crate::Result<()> {
         info!("Shutting down plugin manager...");
         self.runtime.shutdown().await
@@ -655,7 +647,9 @@ impl PluginManager {
     /// Sync filesystem plugins into the SQLite registry.
     async fn sync_filesystem_to_registry(&self) {
         let registry = self.sqlite_registry.read().await;
-        let Some(ref registry) = *registry else { return };
+        let Some(ref registry) = *registry else {
+            return;
+        };
         let _ = registry;
 
         let mut entries = match tokio::fs::read_dir(&self.plugins_dir).await {
@@ -684,14 +678,8 @@ impl PluginManager {
 
             let registry = self.sqlite_registry.read().await;
             if let Some(ref reg) = *registry {
-                if let Err(e) = reg
-                    .register_plugin(&manifest, &path, None)
-                    .await
-                {
-                    warn!(
-                        "Failed to sync plugin '{}' to registry: {}",
-                        manifest.id, e
-                    );
+                if let Err(e) = reg.register_plugin(&manifest, &path, None).await {
+                    warn!("Failed to sync plugin '{}' to registry: {}", manifest.id, e);
                 }
             }
         }
@@ -715,12 +703,12 @@ impl PluginManager {
         }
     }
 
- /// Create a sample plugin template
+    /// Create a sample plugin template
     pub async fn create_template(&self, name: &str, description: &str) -> crate::Result<PathBuf> {
         let plugin_dir = self.plugins_dir.join(name);
         tokio::fs::create_dir_all(&plugin_dir).await?;
 
- // Create manifest
+        // Create manifest
         let manifest = PluginManifest {
             id: format!("com.example.{}", name),
             name: name.to_string(),
@@ -748,14 +736,14 @@ impl PluginManager {
         let manifest_json = serde_json::to_string_pretty(&manifest)?;
         tokio::fs::write(plugin_dir.join("plugin.json"), manifest_json).await?;
 
- // Create config.json
+        // Create config.json
         let config = serde_json::json!({
             "example_setting": "value"
         });
         tokio::fs::write(plugin_dir.join("config.json"), serde_json::to_string_pretty(&config)?)
             .await?;
 
- // Create README
+        // Create README
         let readme = format!(
             r#"# {}
 
@@ -788,7 +776,11 @@ Edit `config.json` to customize settings.
     }
 
     /// Install a plugin from a remote registry.
-    pub async fn install_plugin(&self, name: &str, registry_url: Option<&str>) -> crate::Result<()> {
+    pub async fn install_plugin(
+        &self,
+        name: &str,
+        registry_url: Option<&str>,
+    ) -> crate::Result<()> {
         let installer = PluginInstaller::new(self.plugins_dir.clone());
         installer.install(name, registry_url).await
     }
@@ -813,8 +805,9 @@ Edit `config.json` to customize settings.
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[tokio::test]
     async fn new_creates_empty_manager() {
@@ -843,7 +836,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
 
- // Create two plugin templates
+        // Create two plugin templates
         manager
             .create_template("plugin-a", "Plugin A")
             .await
@@ -945,7 +938,7 @@ mod tests {
             .unwrap();
         let id = manager.load_plugin(&path).await.unwrap();
 
- // Modify manifest on disk
+        // Modify manifest on disk
         let manifest_path = path.join("plugin.json");
         let mut manifest: PluginManifest = {
             let content = tokio::fs::read_to_string(&manifest_path).await.unwrap();
@@ -1081,10 +1074,10 @@ impl Tool for PluginToolWrapper {
             .await;
 
         // Record tool error metric on failure
-        if result.is_err() {
+        if let Err(e) = &result {
             if let Some(metrics) = self.runtime.metrics().get(&plugin_id).await {
                 metrics.record_tool_error();
-                metrics.set_last_error(result.as_ref().unwrap_err().to_string());
+                metrics.set_last_error(e.to_string());
             }
         }
 

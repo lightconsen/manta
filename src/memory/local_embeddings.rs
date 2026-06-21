@@ -3,14 +3,15 @@
 //! This module provides embedding generation using GGUF format models
 //! with HuggingFace Hub auto-download support.
 
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::token::LlamaToken;
-use std::path::PathBuf;
-use std::sync::OnceLock;
 use tracing::info;
 
 /// HuggingFace model cache directory
@@ -333,12 +334,13 @@ impl LocalEmbeddingProvider {
     pub async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
         match self {
             LocalEmbeddingProvider::Gguf(model) => model.embed_batch(texts).await,
-            LocalEmbeddingProvider::FtsOnly { reason } => Err(
-                crate::error::SyscityError::Validation(format!(
-                    "Embeddings unavailable (FTS-only mode): {}. To enable embeddings, configure a valid embedding model.",
+            LocalEmbeddingProvider::FtsOnly { reason } => {
+                Err(crate::error::SyscityError::Validation(format!(
+                    "Embeddings unavailable (FTS-only mode): {}. To enable embeddings, configure \
+                     a valid embedding model.",
                     reason
-                ))
-            ),
+                )))
+            }
         }
     }
 

@@ -4,13 +4,14 @@
 //! breaks it into a directed acyclic graph of [`Task`]s, and executes them
 //! in topological order with automatic verification and rollback.
 
-use crate::computer::{ComputerAdapter, DesktopAction, VerificationCriteria};
-use crate::computer::VerificationEngine;
-use crate::memory::MemoryStore;
-use crate::providers::Provider;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+
+use crate::computer::VerificationEngine;
+use crate::computer::{ComputerAdapter, DesktopAction, VerificationCriteria};
+use crate::memory::MemoryStore;
+use crate::providers::Provider;
 
 pub mod composite_tool;
 pub mod dag;
@@ -28,7 +29,9 @@ pub mod workflow;
 pub use composite_tool::{CompositeTool, CompositeToolRegistry, ToolStep};
 pub use dag::DagScheduler;
 pub use decomposer::{GoalDecomposer, SubTask};
-pub use error_diagnosis::{Diagnosis, ErrorCategory, ErrorDiagnosisEngine, RemediationStep, RootCause, Severity};
+pub use error_diagnosis::{
+    Diagnosis, ErrorCategory, ErrorDiagnosisEngine, RemediationStep, RootCause, Severity,
+};
 pub use executor::TaskExecutor;
 pub use persistent_queue::{PersistentTaskManager, QueueHealth, QueueStatus};
 pub use recovery::{check_startup_recovery, RecoveryOutcome};
@@ -36,7 +39,10 @@ pub use scheduled_tasks::{Schedule, ScheduledTask, TaskScheduler};
 pub use state::TaskStateStore;
 pub use tool_chain::{ChainAnalysis, ChainLink, ToolChainReasoner};
 pub use tool_learning::{ExperienceContext, ToolExperience, ToolLearningEngine, ToolSuggestion};
-pub use workflow::{FailureStrategy, RecordedStep, StepResult, Workflow, WorkflowAction, WorkflowPlayer, WorkflowRecorder};
+pub use workflow::{
+    FailureStrategy, RecordedStep, StepResult, Workflow, WorkflowAction, WorkflowPlayer,
+    WorkflowRecorder,
+};
 
 /// Unique identifier for a task.
 pub type TaskId = String;
@@ -82,7 +88,11 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(id: impl Into<String>, description: impl Into<String>, action: DesktopAction) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        description: impl Into<String>,
+        action: DesktopAction,
+    ) -> Self {
         Self {
             id: id.into(),
             description: description.into(),
@@ -149,12 +159,16 @@ impl Plan {
 
     /// Returns true if all tasks are completed.
     pub fn is_complete(&self) -> bool {
-        self.tasks.values().all(|t| matches!(t.status, TaskStatus::Completed))
+        self.tasks
+            .values()
+            .all(|t| matches!(t.status, TaskStatus::Completed))
     }
 
     /// Returns true if any task failed.
     pub fn has_failures(&self) -> bool {
-        self.tasks.values().any(|t| matches!(t.status, TaskStatus::Failed))
+        self.tasks
+            .values()
+            .any(|t| matches!(t.status, TaskStatus::Failed))
     }
 
     /// Tasks that are ready to run (all dependencies completed).
@@ -246,7 +260,8 @@ impl GoalPlanner {
         }
     }
 
-    /// Create a planner backed by an LLM provider for automatic goal decomposition.
+    /// Create a planner backed by an LLM provider for automatic goal
+    /// decomposition.
     pub fn with_provider(adapter: Arc<dyn ComputerAdapter>, provider: Arc<dyn Provider>) -> Self {
         let verifier = VerificationEngine::new(adapter.clone());
         let executor = TaskExecutor::new(adapter.clone(), verifier.clone());
@@ -396,7 +411,8 @@ impl GoalPlanner {
         // Store experience in memory for future retrieval.
         if let Some(ref memory) = self.memory {
             let experience = format!(
-                "Goal: {}\nSuccess: {}\nTasks: {} completed, {} failed, {} rolled back\nMessage: {}",
+                "Goal: {}\nSuccess: {}\nTasks: {} completed, {} failed, {} rolled back\nMessage: \
+                 {}",
                 goal,
                 result.success,
                 result.tasks_completed,
@@ -435,12 +451,9 @@ impl GoalPlanner {
 
     /// Resume an incomplete plan from the state store.
     pub async fn resume_plan(&self, plan_id: &str) -> crate::Result<Option<PlanResult>> {
-        let store = self
-            .state_store
-            .as_ref()
-            .ok_or_else(|| crate::error::SyscityError::Validation(
-                "No state store configured".to_string(),
-            ))?;
+        let store = self.state_store.as_ref().ok_or_else(|| {
+            crate::error::SyscityError::Validation("No state store configured".to_string())
+        })?;
 
         let mut plan = match store.load_plan(plan_id).await? {
             Some(p) => p,
@@ -451,14 +464,28 @@ impl GoalPlanner {
             return Ok(Some(PlanResult {
                 success: !plan.has_failures(),
                 goal: plan.goal.clone(),
-                tasks_completed: plan.tasks.values().filter(|t| matches!(t.status, TaskStatus::Completed)).count(),
-                tasks_failed: plan.tasks.values().filter(|t| matches!(t.status, TaskStatus::Failed)).count(),
-                tasks_rolled_back: plan.tasks.values().filter(|t| matches!(t.status, TaskStatus::RolledBack)).count(),
+                tasks_completed: plan
+                    .tasks
+                    .values()
+                    .filter(|t| matches!(t.status, TaskStatus::Completed))
+                    .count(),
+                tasks_failed: plan
+                    .tasks
+                    .values()
+                    .filter(|t| matches!(t.status, TaskStatus::Failed))
+                    .count(),
+                tasks_rolled_back: plan
+                    .tasks
+                    .values()
+                    .filter(|t| matches!(t.status, TaskStatus::RolledBack))
+                    .count(),
                 message: "Plan already complete".to_string(),
             }));
         }
 
-        let result = self.execute_plan_with_persistence(&mut plan, plan_id, store).await?;
+        let result = self
+            .execute_plan_with_persistence(&mut plan, plan_id, store)
+            .await?;
         store.complete_plan(plan_id, result.success).await?;
         Ok(Some(result))
     }
@@ -478,17 +505,15 @@ impl GoalPlanner {
 
         // Persist final task states.
         for task in plan.tasks.values() {
-            store
-                .save_task(plan_id, task)
-                .await?;
+            store.save_task(plan_id, task).await?;
         }
 
         Ok(result)
     }
 }
 
-/// Minimal dummy provider so that `GoalPlanner::new()` compiles without requiring
-/// a real LLM provider.  Calls to `decompose` will fail gracefully.
+/// Minimal dummy provider so that `GoalPlanner::new()` compiles without
+/// requiring a real LLM provider.  Calls to `decompose` will fail gracefully.
 #[derive(Debug)]
 struct DummyProvider;
 
@@ -506,14 +531,22 @@ impl Provider for DummyProvider {
     fn max_context(&self) -> usize {
         0
     }
-    async fn complete(&self, _request: crate::providers::CompletionRequest) -> crate::Result<crate::providers::CompletionResponse> {
+    async fn complete(
+        &self,
+        _request: crate::providers::CompletionRequest,
+    ) -> crate::Result<crate::providers::CompletionResponse> {
         Err(crate::error::SyscityError::Validation(
-            "No LLM provider configured. Use GoalPlanner::with_provider() to enable decomposition.".to_string(),
+            "No LLM provider configured. Use GoalPlanner::with_provider() to enable decomposition."
+                .to_string(),
         ))
     }
-    async fn stream(&self, _request: crate::providers::CompletionRequest) -> crate::Result<crate::providers::CompletionStream> {
+    async fn stream(
+        &self,
+        _request: crate::providers::CompletionRequest,
+    ) -> crate::Result<crate::providers::CompletionStream> {
         Err(crate::error::SyscityError::Validation(
-            "No LLM provider configured. Use GoalPlanner::with_provider() to enable decomposition.".to_string(),
+            "No LLM provider configured. Use GoalPlanner::with_provider() to enable decomposition."
+                .to_string(),
         ))
     }
     async fn health_check(&self) -> crate::Result<bool> {
@@ -589,16 +622,16 @@ mod tests {
 
     // ── GoalPlanner integration tests (MockProvider + HeadlessComputerAdapter) ──
 
-    use crate::providers::{Message, Role};
-    use crate::providers::mock::MockProvider;
     use crate::computer::headless::HeadlessComputerAdapter;
+    use crate::providers::mock::MockProvider;
+    use crate::providers::{Message, Role};
     use crate::tools::ToolRegistry;
 
     /// Return true if the message list is a GoalPlanner decomposition request.
     fn is_decompose_request(messages: &[Message]) -> bool {
-        messages.iter().any(|m| {
-            m.role == Role::System && m.content.contains("task-decomposition engine")
-        })
+        messages
+            .iter()
+            .any(|m| m.role == Role::System && m.content.contains("task-decomposition engine"))
     }
 
     #[tokio::test]
@@ -615,9 +648,7 @@ mod tests {
             Message::assistant("ok")
         });
 
-        let adapter = Arc::new(HeadlessComputerAdapter::new(
-            Arc::new(ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
         let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
 
         let tools = vec!["shell".to_string()];
@@ -643,9 +674,7 @@ mod tests {
             Message::assistant("done")
         });
 
-        let adapter = Arc::new(HeadlessComputerAdapter::new(
-            Arc::new(ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
         let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
 
         let result = planner.achieve("run a no-op", &[]).await.unwrap();
@@ -670,9 +699,7 @@ mod tests {
             Message::assistant("done")
         });
 
-        let adapter = Arc::new(HeadlessComputerAdapter::new(
-            Arc::new(ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
         let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
 
         let result = planner.achieve("chain of waits", &[]).await.unwrap();
@@ -697,9 +724,7 @@ mod tests {
             Message::assistant("ok")
         });
 
-        let adapter = Arc::new(HeadlessComputerAdapter::new(
-            Arc::new(ToolRegistry::new()),
-        ));
+        let adapter = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
         let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
 
         let err = planner.decompose("cyclic goal", &[]).await.unwrap_err();

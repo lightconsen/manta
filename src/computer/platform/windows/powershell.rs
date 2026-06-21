@@ -1,11 +1,12 @@
 //! Windows PowerShell script execution tool.
 
-use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Execute PowerShell scripts on Windows.
 ///
@@ -33,9 +34,8 @@ impl Tool for PowerShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute PowerShell scripts on Windows. \
-         Provides full access to .NET APIs, WMI, COM objects, \
-         and Windows management cmdlets."
+        "Execute PowerShell scripts on Windows. Provides full access to .NET APIs, WMI, COM \
+         objects, and Windows management cmdlets."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -68,15 +68,10 @@ impl Tool for PowerShellTool {
             .to_string();
 
         if script.trim().is_empty() {
-            return Ok(ToolExecutionResult::error(
-                "No script provided".to_string(),
-            ));
+            return Ok(ToolExecutionResult::error("No script provided".to_string()));
         }
 
-        let timeout_secs = args
-            .get("timeout")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(30);
+        let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
 
         info!("Executing PowerShell script ({} chars)", script.len());
 
@@ -104,10 +99,7 @@ impl Tool for PowerShellTool {
                 }
 
                 let mut result = if out.status.success() {
-                    ToolExecutionResult::success(format!(
-                        "Exit code: 0\n\n{}",
-                        stdout.trim()
-                    ))
+                    ToolExecutionResult::success(format!("Exit code: 0\n\n{}", stdout.trim()))
                 } else {
                     let code = out.status.code().unwrap_or(-1);
                     ToolExecutionResult::error(format!(
@@ -126,13 +118,10 @@ impl Tool for PowerShellTool {
 
                 Ok(result)
             }
-            Ok(Err(e)) => Ok(ToolExecutionResult::error(format!(
-                "Failed to run PowerShell: {}",
-                e
-            ))),
-            Err(_) => Ok(ToolExecutionResult::error(
-                "PowerShell script timed out".to_string(),
-            )),
+            Ok(Err(e)) => {
+                Ok(ToolExecutionResult::error(format!("Failed to run PowerShell: {}", e)))
+            }
+            Err(_) => Ok(ToolExecutionResult::error("PowerShell script timed out".to_string())),
         }
     }
 

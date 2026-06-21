@@ -1,10 +1,10 @@
+use std::sync::Arc;
 
 use axum::{
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 use tracing::info;
 
 use crate::gateway::GatewayState;
@@ -72,7 +72,9 @@ pub async fn put_config_handler(
 
     info!("Config updated and persisted to {:?}", config_path);
 
-    state.auth.audit_log
+    state
+        .auth
+        .audit_log
         .log(
             crate::security::runtime_audit::AuditEventType::ConfigChange,
             "admin",

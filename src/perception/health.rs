@@ -20,19 +20,15 @@ use std::time::{Duration, Instant};
 /// Health state of a single perception source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum HealthState {
     /// Source is responding normally.
+    #[default]
     Healthy,
     /// Source has had recent failures but is still being polled.
     Degraded,
     /// Source has been disabled from the active poll cycle until it recovers.
     Quarantined,
-}
-
-impl Default for HealthState {
-    fn default() -> Self {
-        Self::Healthy
-    }
 }
 
 /// Health metrics and adaptive parameters for one source.
@@ -173,7 +169,8 @@ impl HealthTracker {
             .unwrap_or(false)
     }
 
-    /// Record a successful poll. Resets failure streak and timeouts toward defaults.
+    /// Record a successful poll. Resets failure streak and timeouts toward
+    /// defaults.
     ///
     /// Returns the new `HealthState` iff this call **changed** the state
     /// (typically `Degraded`/`Quarantined` → `Healthy` after recovery).
@@ -197,7 +194,11 @@ impl HealthTracker {
         entry.current_timeout_ms = cfg.default_timeout.as_millis() as u64;
         entry.current_interval_ms = cfg.default_interval.as_millis() as u64;
 
-        if prev != entry.state { Some(entry.state) } else { None }
+        if prev != entry.state {
+            Some(entry.state)
+        } else {
+            None
+        }
     }
 
     /// Record a poll timeout (no response within current_timeout).
@@ -226,10 +227,10 @@ impl HealthTracker {
         entry.last_error = Some(msg);
 
         // Adaptive backoff: double timeout/interval on each failure, capped.
-        let new_timeout = (entry.current_timeout_ms.saturating_mul(2))
-            .min(cfg.max_timeout.as_millis() as u64);
-        let new_interval = (entry.current_interval_ms.saturating_mul(2))
-            .min(cfg.max_interval.as_millis() as u64);
+        let new_timeout =
+            (entry.current_timeout_ms.saturating_mul(2)).min(cfg.max_timeout.as_millis() as u64);
+        let new_interval =
+            (entry.current_interval_ms.saturating_mul(2)).min(cfg.max_interval.as_millis() as u64);
         entry.current_timeout_ms = new_timeout;
         entry.current_interval_ms = new_interval;
 
@@ -242,7 +243,11 @@ impl HealthTracker {
             entry.state
         };
 
-        if prev != entry.state { Some(entry.state) } else { None }
+        if prev != entry.state {
+            Some(entry.state)
+        } else {
+            None
+        }
     }
 }
 

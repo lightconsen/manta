@@ -666,16 +666,14 @@ pub async fn check_daemon() -> crate::Result<DaemonClient> {
                 Ok(client)
             } else {
                 Err(crate::error::SyscityError::Internal(
-                    "Daemon is running but AI agent is not configured.\n\
-                     Set SYSCITY_BASE_URL and SYSCITY_API_KEY, then restart daemon."
+                    "Daemon is running but AI agent is not configured.\nSet SYSCITY_BASE_URL and \
+                     SYSCITY_API_KEY, then restart daemon."
                         .to_string(),
                 ))
             }
         }
         Err(_) => Err(crate::error::SyscityError::Internal(
-            "Daemon is not running.\n\
-                 Start it with: syscity start"
-                .to_string(),
+            "Daemon is not running.\nStart it with: syscity start".to_string(),
         )),
     }
 }
