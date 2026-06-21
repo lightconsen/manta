@@ -200,7 +200,6 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
             crate::computer::ComputerError::Other(format!("write to tar stdin: {}", e))
         })?;
     }
-    drop(stdin); // close stdin → tar starts processing
 
     let status = child
         .wait()
@@ -655,7 +654,6 @@ fn build_ffmpeg_command(
                 .arg("-i")
                 .arg(format!("{}+{}, {}", display, r.x, r.y));
         } else {
-            let (w, h) = std::sync::Arc::new(std::sync::Mutex::new((1920u32, 1080u32)));
             cmd.arg("-i").arg(display);
         }
     }

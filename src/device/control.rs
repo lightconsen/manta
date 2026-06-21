@@ -173,6 +173,9 @@ pub fn init_control_runtime(
         builder.on_thread_start(|| {
             // Pin to CPU core 3 (adjust for your hardware topology).
             // Requires CAP_SYS_NICE or root.
+            // SAFETY: sched_setaffinity is a standard libc syscall; the cpu_set
+            // is fully initialised before the call and only used here.
+            #[allow(unsafe_code)]
             unsafe {
                 let mut cpu_set: libc::cpu_set_t = std::mem::zeroed();
                 libc::CPU_SET(3, &mut cpu_set);

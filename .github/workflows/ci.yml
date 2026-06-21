@@ -68,7 +68,7 @@ jobs:
         run: cargo +nightly fmt -- --check
 
       - name: Run clippy
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo +stable clippy --all-features -- -D warnings
 
       - name: Check build
         run: cargo check --all-features
@@ -86,6 +86,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler libudev-dev pkg-config libasound2-dev
+
+      - name: Ensure web assets directory exists
+        run: mkdir -p dist
 
       - name: Install Rust MSRV
         uses: dtolnay/rust-toolchain@master
@@ -171,6 +174,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake protobuf-compiler libudev-dev pkg-config libasound2-dev
+
+      - name: Ensure web assets directory exists
+        run: mkdir -p dist
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -285,7 +291,7 @@ jobs:
 
       - name: Check (default)
         if: matrix.features == 'default'
-        run: cargo check --all-features
+        run: cargo check
 
       - name: Check (all features)
         if: matrix.features == 'all-features'

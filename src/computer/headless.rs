@@ -281,7 +281,8 @@ impl HeadlessComputerAdapter {
         {
             match XvfbDisplay::start(1920, 1080).await {
                 Ok(display) => {
-                    tracing::info!("Xvfb virtual display started on {}", display.display());
+                    let display_name = display.display();
+                    tracing::info!("Xvfb virtual display started on {}", display_name);
                     return Self {
                         registry,
                         virtual_display: Some(Box::new(display)),

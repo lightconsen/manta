@@ -129,7 +129,7 @@ rust-embed = "8"
 # System resource limits and signals (Unix only)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-nix = { version = "0.27", features = ["signal", "process"] }
+nix = { version = "0.27", features = ["signal", "process", "socket"] }
 
 # Daemon functionality
 daemonize = "0.5"

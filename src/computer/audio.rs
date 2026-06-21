@@ -335,6 +335,8 @@ fn run_cpal_capture(
 fn find_pulse_monitor_device(
     host: &cpal::Host,
 ) -> Result<cpal::Device, Box<dyn std::error::Error + Send + Sync>> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+
     // cpal on Linux with PulseAudio typically names monitor sources
     // similarly to output devices.  Try to find one with "monitor" in
     // the name.
