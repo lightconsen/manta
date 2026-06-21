@@ -547,7 +547,7 @@ fn parse_journald_line(line: &str, source_name: &str) -> Option<LogEntry> {
     // journalctl -f -o short-iso format:
     // 2024-01-15T10:30:00+0800 hostname process[pid]: message
     let re = Regex::new(
-        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4})\s+\S+\s+([^\s[]+)(?:\[(\d+)\])?\s*:\s*(.*)$",
+        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4})\s+\S+\s+(\S+?)(?:\[(\d+)\])?\s*:\s*(.*)$",
     )
     .ok()?;
     let caps = re.captures(line)?;
