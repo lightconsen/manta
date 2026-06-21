@@ -20,7 +20,7 @@ jobs:
       - name: Install system build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config
+          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config libasound2-dev
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -85,12 +85,12 @@ jobs:
       - name: Install system build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config
+          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config libasound2-dev
 
       - name: Install Rust MSRV
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.75"
+          toolchain: "1.93"
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -107,7 +107,7 @@ jobs:
       - name: Install system build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config
+          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config libasound2-dev
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -170,7 +170,7 @@ jobs:
       - name: Install system build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake protobuf-compiler libudev-dev pkg-config
+          sudo apt-get install -y build-essential cmake protobuf-compiler libudev-dev pkg-config libasound2-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -242,7 +242,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config
+          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config libasound2-dev
 
       - name: Install system build dependencies (macOS)
         if: runner.os == 'macOS'
@@ -362,7 +362,7 @@ jobs:
       - name: Install system build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config
+          sudo apt-get install -y protobuf-compiler libudev-dev pkg-config libasound2-dev
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3

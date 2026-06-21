@@ -2,7 +2,7 @@
 name = "syscity"
 version = "0.1.2"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.93"
 authors = ["Syscity Contributors"]
 description = "Syscity - A Rust application"
 license = "Apache-2.0"
