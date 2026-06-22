@@ -4,6 +4,7 @@
 //! multi-agent routing system.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -153,8 +154,29 @@ impl BindingStore for SqliteBindingStore {
 
         let mut bindings = HashMap::new();
         for row in rows {
-            let session_id: String = row.try_get("session_id").unwrap_or_default();
-            let agent_id: String = row.try_get("agent_id").unwrap_or_default();
+            let session_id: String = match row.try_get("session_id") {
+                Ok(value) => value,
+                Err(e) => {
+                    warn!("Skipping session_bindings row with invalid session_id: {}", e);
+                    continue;
+                }
+            };
+            if session_id.is_empty() {
+                warn!("Skipping session_bindings row with empty session_id");
+                continue;
+            }
+
+            let agent_id: String = match row.try_get("agent_id") {
+                Ok(value) => value,
+                Err(e) => {
+                    warn!(
+                        "Skipping session_bindings row for {}: invalid agent_id: {}",
+                        session_id, e
+                    );
+                    continue;
+                }
+            };
+
             let workspace_id: Option<String> = row.try_get("workspace_id").ok();
             bindings.insert(session_id, (agent_id, workspace_id));
         }
@@ -223,10 +245,14 @@ pub struct AgentRouter {
     binding_store: Option<Arc<dyn BindingStore>>,
     /// Optional conversation resolver for supplementary routing fallback.
     conversation_resolver: Option<ConversationResolver>,
+    /// Tracks whether auto-create has been disabled via config, used for
+    /// logging/observability only; the actual gate is in `bind_session`.
+    auto_create_binding: AtomicBool,
 }
 
 impl AgentRouter {
     pub fn new(config: AgentRouterConfig) -> Self {
+        let auto_create_binding = AtomicBool::new(config.auto_create_binding);
         Self {
             config,
             session_bindings: RwLock::new(HashMap::new()),
@@ -234,6 +260,7 @@ impl AgentRouter {
             workspace_defaults: RwLock::new(HashMap::new()),
             binding_store: None,
             conversation_resolver: None,
+            auto_create_binding,
         }
     }
 
@@ -256,6 +283,7 @@ impl AgentRouter {
             workspace_defaults: RwLock::new(workspace_defaults),
             binding_store: self.binding_store.clone(),
             conversation_resolver: None,
+            auto_create_binding: AtomicBool::new(self.config.auto_create_binding),
         }
     }
 
@@ -436,6 +464,10 @@ impl AgentRouter {
 
     /// Bind a session to a specific agent.
     pub async fn bind_session(&self, session_id: &str, route: &RouteResult) {
+        if !self.auto_create_binding.load(Ordering::Relaxed) {
+            return;
+        }
+
         let mut bindings = self.session_bindings.write().await;
         bindings
             .insert(session_id.to_string(), (route.agent_id.clone(), route.workspace_id.clone()));
@@ -470,6 +502,11 @@ impl AgentRouter {
             }
             info!("Unbound session {}", session_id);
         }
+    }
+
+    /// Set whether the router should create bindings on-the-fly.
+    pub fn set_auto_create_binding(&self, enabled: bool) {
+        self.auto_create_binding.store(enabled, Ordering::Relaxed);
     }
 
     /// Set the default agent for a channel.

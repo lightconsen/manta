@@ -147,7 +147,7 @@ mod tests {
             harness
         }
 
-        async fn run_flush_loop(self: Arc<Self>, mut flush_rx: mpsc::Receiver<Vec<DebouncedItem>>) {
+        async fn run_flush_loop(&self, mut flush_rx: mpsc::Receiver<Vec<DebouncedItem>>) {
             while let Some(batch) = flush_rx.recv().await {
                 for item in batch {
                     let mut ctx = InboundContext::new(item.message);

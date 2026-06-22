@@ -10,6 +10,7 @@
 //! -> Agent
 //! ```
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -99,6 +100,8 @@ pub struct DefaultInboundPipeline {
     pre_stages: Vec<Box<dyn crate::inbound::stage::InboundStage>>,
     /// Cached post-debounce stage list to avoid rebuilding it per message.
     post_stages: Vec<Box<dyn crate::inbound::stage::InboundStage>>,
+    /// Whether the background flush loop has already been started.
+    started: AtomicBool,
 }
 
 impl DefaultInboundPipeline {
@@ -131,6 +134,7 @@ impl DefaultInboundPipeline {
             envelope_manager: None,
             pre_stages,
             post_stages,
+            started: AtomicBool::new(false),
         }
     }
 
@@ -156,7 +160,17 @@ impl DefaultInboundPipeline {
 
     /// Start a background task that consumes debounced messages and runs
     /// them through the rest of the pipeline.
+    ///
+    /// This is a no-op if the pipeline has already been started.
     pub fn start(self: Arc<Self>) {
+        if self
+            .started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            tracing::debug!("DefaultInboundPipeline already started; ignoring duplicate start()");
+            return;
+        }
         let pipeline = self.clone();
         tokio::spawn(async move {
             pipeline.run_loop().await;
