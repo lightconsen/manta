@@ -864,7 +864,7 @@ async fn handle_chat_send(
                 let route = crate::inbound::RouteResult {
                     agent_id: bound_agent.clone(),
                     workspace_id: None,
-                    created_binding: false,
+                    persisted_binding: false,
                 };
                 state.agents.router.bind_session(&session_id, &route).await;
             }
@@ -875,7 +875,7 @@ async fn handle_chat_send(
         let route = crate::inbound::RouteResult {
             agent_id,
             workspace_id: None,
-            created_binding: false,
+            persisted_binding: false,
         };
         state.agents.router.bind_session(&session_id, &route).await;
     }
@@ -898,7 +898,7 @@ async fn handle_chat_send(
                     let route = crate::inbound::RouteResult {
                         agent_id: agent_id.clone(),
                         workspace_id: None,
-                        created_binding: true,
+                        persisted_binding: true,
                     };
                     state.agents.router.bind_session(&session_id, &route).await;
                     // Strip the greeting prefix so the agent sees only the task.

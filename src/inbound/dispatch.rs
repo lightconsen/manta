@@ -114,16 +114,13 @@ impl AutoReplyDispatch {
         }
     }
 
-    /// Process a message through the dispatch layer.
+    /// Cheap suppress check that runs **before** debounce.
     ///
-    /// Returns `DispatchResult::suppress(...)` if the message should not
-    /// be routed to an agent.
-    pub async fn process(
-        &self,
-        message: &IncomingMessage,
-        // Media understanding results, reserved for future dispatch logic.
-        _media_results: Option<&MediaUnderstandingResult>,
-    ) -> DispatchResult {
+    /// This evaluates only fast, local rules (send policy and group-chat
+    /// suppression). If it returns a suppressed result, the message can be
+    /// dropped early without paying the cost of debounce, media understanding,
+    /// or routing.
+    pub async fn cheap_check(&self, message: &IncomingMessage) -> DispatchResult {
         // Stage 1: Send policy evaluation
         if let Some(ref policy) = self.config.send_policy {
             let channel = match &message.provenance {
@@ -143,15 +140,7 @@ impl AutoReplyDispatch {
             }
         }
 
-        // Stage 2: Plugin-owned binding (stub — plugin registry integration is
-        // not yet implemented; `plugin_binding` remains `None` until then).
-        // TODO: wire plugin registry once plugin-owned agent bindings exist.
-        // let plugin_binding = self.resolve_plugin_binding(message).await;
-
-        // Stage 3: Extract workspace hint from message content
-        let workspace_hint = Self::extract_workspace_mention(&message.content);
-
-        // Stage 4: Suppression check for group chats
+        // Stage 2: Suppression check for group chats
         if self.config.suppress_unless_mentioned_in_groups {
             let is_group = matches!(
                 message.provenance,
@@ -163,7 +152,34 @@ impl AutoReplyDispatch {
             }
         }
 
-        // Stage 5: Secondary command gate check (channels::CommandGate)
+        DispatchResult::allow()
+    }
+
+    /// Process a message through the dispatch layer.
+    ///
+    /// Returns `DispatchResult::suppress(...)` if the message should not
+    /// be routed to an agent.
+    pub async fn process(
+        &self,
+        message: &IncomingMessage,
+        // Media understanding results, reserved for future dispatch logic.
+        _media_results: Option<&MediaUnderstandingResult>,
+    ) -> DispatchResult {
+        // Run cheap checks first; if suppressed, skip the heavier logic.
+        let mut result = self.cheap_check(message).await;
+        if result.suppress {
+            return result;
+        }
+
+        // Stage 2: Plugin-owned binding (stub — plugin registry integration is
+        // not yet implemented; `plugin_binding` remains `None` until then).
+        // TODO: wire plugin registry once plugin-owned agent bindings exist.
+        // let plugin_binding = self.resolve_plugin_binding(message).await;
+
+        // Stage 3: Extract workspace hint from message content
+        result.workspace_hint = Self::extract_workspace_mention(&message.content);
+
+        // Stage 4: Secondary command gate check (channels::CommandGate)
         // This does NOT replace the tools::command_gate — it adds richer
         // authorizer logic (OR/AND, AccessGroup, Authorizer enum) on top.
         if let Some(ref gate) = self.channel_command_gate {
@@ -185,12 +201,7 @@ impl AutoReplyDispatch {
             }
         }
 
-        DispatchResult {
-            suppress: false,
-            workspace_hint,
-            plugin_binding: None,
-            suppress_reason: None,
-        }
+        result
     }
 
     /// Extract a `#workspace_name` mention from message content.
@@ -362,6 +373,46 @@ mod tests {
 
         let result = dispatch.process(&msg, None).await;
         assert!(!result.suppress);
+    }
+
+    #[tokio::test]
+    async fn test_cheap_check_suppresses_group_without_mention() {
+        let config = AutoReplyDispatchConfig {
+            suppress_unless_mentioned_in_groups: true,
+            ..Default::default()
+        };
+        let dispatch = AutoReplyDispatch::new(config);
+
+        let mut msg = IncomingMessage::new("u1", "s1", "hello");
+        msg.provenance = crate::channels::InputProvenance::ExternalUser {
+            channel: "telegram".to_string(),
+            is_direct: false,
+        };
+        msg.mention = crate::channels::MentionState::NotMentioned;
+
+        let result = dispatch.cheap_check(&msg).await;
+        assert!(result.suppress);
+        assert!(result.workspace_hint.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cheap_check_does_not_extract_workspace() {
+        let dispatch = AutoReplyDispatch::new(AutoReplyDispatchConfig::default());
+        let msg = IncomingMessage::new("u1", "s1", "check #dev workspace");
+
+        let result = dispatch.cheap_check(&msg).await;
+        assert!(!result.suppress);
+        assert!(result.workspace_hint.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_process_extracts_workspace_after_cheap_check() {
+        let dispatch = AutoReplyDispatch::new(AutoReplyDispatchConfig::default());
+        let msg = IncomingMessage::new("u1", "s1", "check #dev workspace");
+
+        let result = dispatch.process(&msg, None).await;
+        assert!(!result.suppress);
+        assert_eq!(result.workspace_hint, Some("dev".to_string()));
     }
 
     #[test]

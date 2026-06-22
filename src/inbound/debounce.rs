@@ -225,6 +225,21 @@ impl InboundDebouncer {
         all
     }
 
+    /// Inject a batch of already-debounced items directly into the flush
+    /// channel.
+    ///
+    /// This bypasses the debounce timer and is useful when the caller has
+    /// already collected the items (e.g. an explicit flush) and wants them to
+    /// travel the same flush path as timer-expired batches.
+    pub async fn inject(self: &Arc<Self>, items: Vec<DebouncedItem>) -> crate::Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        self.flush_tx.send(items).await.map_err(|e| {
+            crate::SyscityError::Internal(format!("failed to inject flush batch: {e}"))
+        })
+    }
+
     /// Resolve the debounce key for a message.
     ///
     /// Uses `conversation_id` as the primary key, which corresponds to
@@ -324,6 +339,33 @@ mod tests {
 
         let flushed = debouncer.flush_key("nonexistent").await;
         assert!(flushed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_inject_sends_batch_to_flush_channel() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let debouncer = InboundDebouncer::new(InboundDebouncerConfig::default(), tx);
+
+        let item = DebouncedItem {
+            message: IncomingMessage::new("u1", "s1", "injected"),
+            received_at: Instant::now(),
+        };
+        debouncer.inject(vec![item.clone()]).await.unwrap();
+
+        let batch = rx.recv().await.expect("should receive injected batch");
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].message.content, item.message.content);
+    }
+
+    #[tokio::test]
+    async fn test_inject_empty_batch_is_no_op() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let debouncer = InboundDebouncer::new(InboundDebouncerConfig::default(), tx);
+
+        debouncer.inject(Vec::new()).await.unwrap();
+
+        // Empty injection should not send anything.
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

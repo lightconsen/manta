@@ -2,9 +2,7 @@
 //!
 //! These tests exercise the default inbound pipeline end-to-end:
 //! identity (optional) → debounce → dispatch → media → envelope (optional)
-//! → queue → router. They previously compared the default pipeline against a
-//! hand-assembled stage harness, but since `DefaultInboundPipeline` is itself
-//! built on the same [`InboundStage`] primitives, the harness was redundant.
+//! → queue → router.
 
 #[cfg(test)]
 mod tests {
@@ -21,7 +19,9 @@ mod tests {
     use crate::inbound::media::MediaUnderstandingPipeline;
     use crate::inbound::queue::{QueueMode, QueueModeResolver};
     use crate::inbound::router::{AgentRouter, AgentRouterConfig};
-    use crate::inbound::{DefaultInboundPipeline, InboundPipeline, RoutedMessage};
+    use crate::inbound::{
+        DefaultInboundPipeline, InboundPipeline, InboundProcessOutcome, RoutedMessage,
+    };
 
     struct PipelineHarness {
         pipeline: Arc<DefaultInboundPipeline>,
@@ -75,6 +75,16 @@ mod tests {
         ) -> (Option<RoutedMessage>, Vec<RoutedMessage>) {
             let mut rx = self.routed_rx.lock().await;
             let result = self.pipeline.process(msg).await;
+            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
+            (result, channel_messages)
+        }
+
+        async fn process_detailed(
+            &self,
+            msg: IncomingMessage,
+        ) -> (InboundProcessOutcome, Vec<RoutedMessage>) {
+            let mut rx = self.routed_rx.lock().await;
+            let result = self.pipeline.process_detailed(msg).await;
             let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
             (result, channel_messages)
         }
@@ -357,5 +367,91 @@ mod tests {
             &Some(channel[0].clone()),
             "flush vs channel",
         );
+    }
+
+    #[tokio::test]
+    async fn process_detailed_absorbed_for_plain_message() {
+        let pipeline = build_pipeline(
+            AutoReplyDispatchConfig::default(),
+            router_config_default_agent("default"),
+            10_000,
+        )
+        .await;
+        let (outcome, channel) = pipeline.process_detailed(plain_message()).await;
+        assert!(
+            matches!(outcome, InboundProcessOutcome::Absorbed),
+            "plain messages should be absorbed"
+        );
+        assert!(channel.is_empty());
+    }
+
+    #[tokio::test]
+    async fn process_detailed_suppressed_for_group_unmentioned() {
+        let pipeline = build_pipeline(
+            dispatch_config_suppress_groups(),
+            router_config_default_agent("default"),
+            50,
+        )
+        .await;
+        let (outcome, channel) = pipeline.process_detailed(group_unmentioned_message()).await;
+        assert!(
+            matches!(outcome, InboundProcessOutcome::Suppressed { .. }),
+            "unmentioned group messages should be suppressed"
+        );
+        assert!(channel.is_empty());
+    }
+
+    #[tokio::test]
+    async fn process_detailed_routed_for_command() {
+        let pipeline = build_pipeline(
+            AutoReplyDispatchConfig::default(),
+            router_config_default_agent("default"),
+            50,
+        )
+        .await;
+        let (outcome, channel) = pipeline.process_detailed(command_message()).await;
+        assert!(
+            matches!(outcome, InboundProcessOutcome::Routed(_)),
+            "commands should be routed immediately"
+        );
+        assert_eq!(channel.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn auto_start_starts_background_loop() {
+        let (flush_tx, flush_rx) = mpsc::channel::<Vec<DebouncedItem>>(64);
+        let debouncer = InboundDebouncer::new(
+            InboundDebouncerConfig {
+                debounce_ms: 50,
+                ..Default::default()
+            },
+            flush_tx,
+        );
+        let dispatch = AutoReplyDispatch::new(AutoReplyDispatchConfig::default());
+        let router = AgentRouter::new(router_config_default_agent("default"));
+        let (routed_tx, mut routed_rx) = mpsc::channel::<RoutedMessage>(64);
+
+        let pipeline = Arc::new(
+            DefaultInboundPipeline::new(
+                debouncer,
+                MediaUnderstandingPipeline::new(),
+                dispatch,
+                QueueModeResolver::new(),
+                Arc::new(router),
+                routed_tx,
+                flush_rx,
+            )
+            .with_auto_start(true),
+        );
+        pipeline.clone().start_if_configured();
+
+        // Wait for the background loop to be running, then send a plain message.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let _ = pipeline.process(plain_message()).await;
+
+        // The debouncer should flush automatically via the started background loop.
+        let channel_messages = drain_with_timeout(&mut routed_rx, Duration::from_millis(500)).await;
+        assert_eq!(channel_messages.len(), 1);
+        assert_eq!(channel_messages[0].agent_id, "default");
     }
 }

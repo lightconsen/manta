@@ -22,8 +22,13 @@ pub struct RouteResult {
     pub agent_id: String,
     /// The workspace the agent belongs to (if any).
     pub workspace_id: Option<String>,
-    /// Whether this is a new binding created on-the-fly.
-    pub created_binding: bool,
+    /// Whether the router actually persisted a session binding for this route.
+    ///
+    /// `true` means the router wrote (or updated) a session-to-agent binding;
+    /// `false` means an existing binding, mention, or other non-binding route
+    /// was used. This is useful for callers that want to distinguish "fell back
+    /// to default because nothing was bound" from "used an established binding".
+    pub persisted_binding: bool,
 }
 
 /// Configuration for the agent router.
@@ -353,7 +358,7 @@ impl AgentRouter {
             return RouteResult {
                 agent_id: mentioned,
                 workspace_id: workspace_hint.map(String::from),
-                created_binding: false,
+                persisted_binding: false,
             };
         }
 
@@ -365,7 +370,7 @@ impl AgentRouter {
                 return RouteResult {
                     agent_id: agent_id.clone(),
                     workspace_id: workspace_id.clone(),
-                    created_binding: false,
+                    persisted_binding: false,
                 };
             }
         }
@@ -389,7 +394,7 @@ impl AgentRouter {
                     return RouteResult {
                         agent_id: agent_id.clone(),
                         workspace_id: workspace_id.clone(),
-                        created_binding: false,
+                        persisted_binding: false,
                     };
                 }
             }
@@ -403,11 +408,11 @@ impl AgentRouter {
                 let mut result = RouteResult {
                     agent_id: agent_id.clone(),
                     workspace_id: workspace_id.clone(),
-                    created_binding: true,
+                    persisted_binding: true,
                 };
                 // Store binding for future messages
                 drop(defaults);
-                result.created_binding = self.bind_session(&session_id, &result).await;
+                result.persisted_binding = self.bind_session(&session_id, &result).await;
                 return result;
             }
         }
@@ -420,10 +425,10 @@ impl AgentRouter {
                 let mut result = RouteResult {
                     agent_id: agent_id.clone(),
                     workspace_id: Some(ws.to_string()),
-                    created_binding: true,
+                    persisted_binding: true,
                 };
                 drop(defaults);
-                result.created_binding = self.bind_session(&session_id, &result).await;
+                result.persisted_binding = self.bind_session(&session_id, &result).await;
                 return result;
             }
         }
@@ -448,9 +453,9 @@ impl AgentRouter {
                 let mut result = RouteResult {
                     agent_id: resolution.agent_id,
                     workspace_id: resolution.workspace_id,
-                    created_binding: true,
+                    persisted_binding: true,
                 };
-                result.created_binding = self.bind_session(&session_id, &result).await;
+                result.persisted_binding = self.bind_session(&session_id, &result).await;
                 return result;
             }
         }
@@ -463,9 +468,9 @@ impl AgentRouter {
         let mut result = RouteResult {
             agent_id: self.config.default_agent_id.clone(),
             workspace_id: self.config.default_workspace_id.clone(),
-            created_binding: true,
+            persisted_binding: true,
         };
-        result.created_binding = self.bind_session(&session_id, &result).await;
+        result.persisted_binding = self.bind_session(&session_id, &result).await;
         result
     }
 
@@ -568,7 +573,7 @@ impl AgentRouter {
                 return RouteResult {
                     agent_id: agent_id.clone(),
                     workspace_id: workspace_id.clone(),
-                    created_binding: false,
+                    persisted_binding: false,
                 };
             }
         }
@@ -581,9 +586,9 @@ impl AgentRouter {
         let mut result = RouteResult {
             agent_id: self.config.default_agent_id.clone(),
             workspace_id: self.config.default_workspace_id.clone(),
-            created_binding: true,
+            persisted_binding: true,
         };
-        result.created_binding = self.bind_session(session_id, &result).await;
+        result.persisted_binding = self.bind_session(session_id, &result).await;
         result
     }
 
@@ -619,7 +624,7 @@ mod tests {
         let msg = IncomingMessage::new("u1", "s1", "hello");
         let route = router.route(&msg, None).await;
         assert_eq!(route.agent_id, "default");
-        assert!(route.created_binding);
+        assert!(route.persisted_binding);
     }
 
     #[tokio::test]
@@ -628,7 +633,7 @@ mod tests {
         let msg = IncomingMessage::new("u1", "s1", "@coder write some rust");
         let route = router.route(&msg, None).await;
         assert_eq!(route.agent_id, "coder");
-        assert!(!route.created_binding);
+        assert!(!route.persisted_binding);
     }
 
     #[tokio::test]
@@ -637,7 +642,7 @@ mod tests {
         let msg = IncomingMessage::new("u1", "s1", "hi @coder can you help");
         let route = router.route(&msg, None).await;
         assert_eq!(route.agent_id, "coder");
-        assert!(!route.created_binding);
+        assert!(!route.persisted_binding);
     }
 
     #[tokio::test]
@@ -646,7 +651,7 @@ mod tests {
         let msg = IncomingMessage::new("u1", "s1", "@coder, please review");
         let route = router.route(&msg, None).await;
         assert_eq!(route.agent_id, "coder");
-        assert!(!route.created_binding);
+        assert!(!route.persisted_binding);
     }
 
     #[tokio::test]
@@ -656,12 +661,12 @@ mod tests {
 
         // First message creates binding
         let route1 = router.route(&msg, None).await;
-        assert!(route1.created_binding);
+        assert!(route1.persisted_binding);
 
         // Second message uses existing binding
         let msg2 = IncomingMessage::new("u1", "s1", "again");
         let route2 = router.route(&msg2, None).await;
-        assert!(!route2.created_binding);
+        assert!(!route2.persisted_binding);
         assert_eq!(route2.agent_id, route1.agent_id);
     }
 
@@ -689,7 +694,7 @@ mod tests {
         let msg2 = IncomingMessage::new("u1", "s1", "again");
         let route2 = router.route(&msg2, None).await;
         // After unbind, a new binding is created (may be different agent)
-        assert!(route2.created_binding);
+        assert!(route2.persisted_binding);
     }
 
     #[tokio::test]
@@ -702,7 +707,7 @@ mod tests {
 
         let route = router.route(&msg, None).await;
         assert_eq!(route.agent_id, "default");
-        assert!(!route.created_binding);
+        assert!(!route.persisted_binding);
 
         let bindings = router.list_bindings().await;
         assert!(bindings.is_empty());
@@ -714,7 +719,7 @@ mod tests {
         let route_with_empty_agent = RouteResult {
             agent_id: "".to_string(),
             workspace_id: None,
-            created_binding: false,
+            persisted_binding: false,
         };
         assert!(
             !router.bind_session("s1", &route_with_empty_agent).await,
@@ -724,7 +729,7 @@ mod tests {
         let route_ok = RouteResult {
             agent_id: "default".to_string(),
             workspace_id: None,
-            created_binding: false,
+            persisted_binding: false,
         };
         assert!(!router.bind_session("", &route_ok).await, "empty session_id should not bind");
         assert!(router.list_bindings().await.is_empty());
@@ -736,7 +741,7 @@ mod tests {
         let route = RouteResult {
             agent_id: "coder".to_string(),
             workspace_id: Some("dev".to_string()),
-            created_binding: false,
+            persisted_binding: false,
         };
         assert!(router.bind_session("s1", &route).await);
         let bindings = router.list_bindings().await;
@@ -749,7 +754,7 @@ mod tests {
         let route = RouteResult {
             agent_id: "coder".to_string(),
             workspace_id: Some("".to_string()),
-            created_binding: false,
+            persisted_binding: false,
         };
         assert!(router.bind_session("s1", &route).await);
         let bindings = router.list_bindings().await;

@@ -149,11 +149,30 @@ pub trait InboundStage: Send + Sync {
 /// Identity validation stage (warn-only, never drops messages).
 pub struct IdentityStage {
     validator: IdentityValidator,
+    fail_mode: IdentityFailMode,
+}
+
+/// How the identity stage should behave when validation fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IdentityFailMode {
+    /// Log a warning and continue processing the message.
+    #[default]
+    Warn,
+    /// Drop the message.
+    Suppress,
 }
 
 impl IdentityStage {
     pub fn new(validator: IdentityValidator) -> Self {
-        Self { validator }
+        Self {
+            validator,
+            fail_mode: IdentityFailMode::Warn,
+        }
+    }
+
+    /// Create an identity stage with a custom failure mode.
+    pub fn new_with_mode(validator: IdentityValidator, fail_mode: IdentityFailMode) -> Self {
+        Self { validator, fail_mode }
     }
 }
 
@@ -192,8 +211,12 @@ impl InboundStage for IdentityStage {
                 user_id = %ctx.message.user_id,
                 conversation_id = %ctx.message.conversation_id,
                 reason = %err,
-                "Identity validation failed (message not dropped)"
+                "Identity validation failed"
             );
+            return match self.fail_mode {
+                IdentityFailMode::Warn => Ok(InboundStageAction::Continue),
+                IdentityFailMode::Suppress => Ok(InboundStageAction::Suppress),
+            };
         }
         Ok(InboundStageAction::Continue)
     }
@@ -221,6 +244,43 @@ fn build_platform_data(
         data.insert("provenance".to_string(), value);
     }
     serde_json::Value::Object(data)
+}
+
+/// Pre-dispatch cheap suppress check.
+///
+/// Runs before debounce so obvious drops (send policy denies, group chats
+/// without mention) are rejected without the cost of buffering, media
+/// understanding, or routing.
+pub struct PreDispatchStage {
+    dispatch: Arc<AutoReplyDispatch>,
+}
+
+impl PreDispatchStage {
+    pub fn new(dispatch: AutoReplyDispatch) -> Self {
+        Self { dispatch: Arc::new(dispatch) }
+    }
+
+    /// Create a pre-dispatch stage from an existing `Arc`.
+    pub fn from_arc(dispatch: Arc<AutoReplyDispatch>) -> Self {
+        Self { dispatch }
+    }
+}
+
+#[async_trait]
+impl InboundStage for PreDispatchStage {
+    fn name(&self) -> &'static str {
+        "pre_dispatch"
+    }
+
+    async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
+        let result = self.dispatch.cheap_check(&ctx.message).await;
+        if result.suppress {
+            ctx.dispatch_result = Some(result);
+            Ok(InboundStageAction::Suppress)
+        } else {
+            Ok(InboundStageAction::Continue)
+        }
+    }
 }
 
 /// Debounce stage – absorbs messages that should be batched.
@@ -466,15 +526,19 @@ pub async fn run_inbound_stages(
 
 /// Build the default list of **pre-debounce** inbound stages.
 ///
-/// Stages: Identity (if `validator` is provided) → Debounce
+/// Stages: Identity (if `validator` is provided, with the given `fail_mode`)
+/// → Pre-dispatch cheap suppress check → Debounce
 pub fn default_pre_debounce_stages(
     validator: Option<IdentityValidator>,
+    fail_mode: IdentityFailMode,
+    dispatch: AutoReplyDispatch,
     debouncer: Arc<InboundDebouncer>,
 ) -> Vec<Box<dyn InboundStage>> {
     let mut stages: Vec<Box<dyn InboundStage>> = Vec::new();
     if let Some(validator) = validator {
-        stages.push(Box::new(IdentityStage::new(validator)));
+        stages.push(Box::new(IdentityStage::new_with_mode(validator, fail_mode)));
     }
+    stages.push(Box::new(PreDispatchStage::new(dispatch)));
     stages.push(Box::new(DebounceStage::new(debouncer)));
     stages
 }
@@ -730,5 +794,63 @@ mod tests {
         let obj = data.as_object().expect("platform_data should be an object");
         assert_eq!(obj.get("username"), Some(&serde_json::json!("alice")));
         assert!(obj.contains_key("provenance"));
+    }
+
+    #[tokio::test]
+    async fn test_identity_stage_warn_mode_continues() {
+        let validator = crate::channels::identity::IdentityValidator::with_config(
+            crate::channels::identity::IdentityValidatorConfig {
+                user_id_allowed_chars: crate::channels::identity::AllowedCharSet::AlphanumericOnly,
+                ..Default::default()
+            },
+        );
+        let stage = IdentityStage::new_with_mode(validator, IdentityFailMode::Warn);
+        let mut ctx = InboundContext::new(IncomingMessage::new("user-1", "s1", "hello"));
+        let action = stage.process(&mut ctx).await.unwrap();
+        assert_eq!(action, InboundStageAction::Continue);
+    }
+
+    #[tokio::test]
+    async fn test_identity_stage_suppress_mode_drops() {
+        let validator = crate::channels::identity::IdentityValidator::with_config(
+            crate::channels::identity::IdentityValidatorConfig {
+                user_id_allowed_chars: crate::channels::identity::AllowedCharSet::AlphanumericOnly,
+                ..Default::default()
+            },
+        );
+        let stage = IdentityStage::new_with_mode(validator, IdentityFailMode::Suppress);
+        let mut ctx = InboundContext::new(IncomingMessage::new("user-1", "s1", "hello"));
+        let action = stage.process(&mut ctx).await.unwrap();
+        assert_eq!(action, InboundStageAction::Suppress);
+    }
+
+    #[tokio::test]
+    async fn test_pre_dispatch_stage_suppresses_group_message() {
+        let dispatch = AutoReplyDispatch::new(AutoReplyDispatchConfig {
+            suppress_unless_mentioned_in_groups: true,
+            ..Default::default()
+        });
+        let stage = PreDispatchStage::new(dispatch);
+        let mut msg = dummy_message();
+        msg.provenance = crate::channels::InputProvenance::ExternalUser {
+            channel: "telegram".to_string(),
+            is_direct: false,
+        };
+        msg.mention = crate::channels::MentionState::NotMentioned;
+
+        let mut ctx = InboundContext::new(msg);
+        let action = stage.process(&mut ctx).await.unwrap();
+        assert_eq!(action, InboundStageAction::Suppress);
+        assert!(ctx.dispatch_result.as_ref().unwrap().suppress);
+    }
+
+    #[tokio::test]
+    async fn test_pre_dispatch_stage_allows_direct_message() {
+        let dispatch = AutoReplyDispatch::new(AutoReplyDispatchConfig::default());
+        let stage = PreDispatchStage::new(dispatch);
+        let mut ctx = InboundContext::new(dummy_message());
+        let action = stage.process(&mut ctx).await.unwrap();
+        assert_eq!(action, InboundStageAction::Continue);
+        assert!(ctx.dispatch_result.is_none());
     }
 }

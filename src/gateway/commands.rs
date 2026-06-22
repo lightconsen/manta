@@ -2045,7 +2045,7 @@ async fn handle_focus(
         let result = crate::inbound::router::RouteResult {
             agent_id: target.to_string(),
             workspace_id: None,
-            created_binding: true,
+            persisted_binding: true,
         };
         state.agents.router.bind_session(&sid, &result).await;
         return WsResponse::ok(
