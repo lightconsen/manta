@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot, RwLock};
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::acp::{AcpCommand, AcpSessionId, AcpSessionStatus, ExecutionMode};
 use crate::channels::{ConversationId, IncomingMessage, OutgoingMessage, UserId};
@@ -129,63 +129,13 @@ impl ChannelAcpBridge {
             }
         };
 
-        // Prepare the respond_to channel
+        // Execute the message through the ACP actor, using the configured
+        // default agent builder to resolve an agent.
         let (respond_tx, respond_rx) = oneshot::channel();
-
-        let cmd = match mode {
-            ExecutionMode::Session => {
-                // We need an Arc<Agent> — but at this bridge layer we don't
-                // have direct agent access. The ACP system is responsible for
-                // resolving agents. We include session context so the ACP can
-                // route correctly.
-                let session_id_clone = session_id.0.clone();
-                let _msg = IncomingMessage {
-                    user_id: message.user_id.clone(),
-                    conversation_id: ConversationId::new(&session_id_clone),
-                    ..message
-                };
-                AcpCommand::GetStatus {
-                    session_id: session_id_clone,
-                    respond_to: respond_tx,
-                }
-            }
-            ExecutionMode::Run => {
-                // For Run mode, include the agent ID hint
-                let _run_msg = IncomingMessage {
-                    user_id: message.user_id.clone(),
-                    conversation_id: ConversationId::new(&session_id.0),
-                    ..message
-                };
-                // ExecuteRun requires Arc<Agent>, which we don't have here.
-                // Instead, we store a message and let the upper layer handle it.
-                return AcpForwardResult::Pending;
-            }
-        };
-
-        if let Err(e) = self.acp_tx.send(cmd).await {
-            return AcpForwardResult::Failed(format!("ACP send failed: {}", e));
-        }
-
-        // Wait for response (with timeout)
-        match tokio::time::timeout(std::time::Duration::from_secs(30), respond_rx).await {
-            Ok(Ok(Some(_status))) => AcpForwardResult::Pending,
-            Ok(Ok(None)) => AcpForwardResult::Failed("ACP session not found".to_string()),
-            Ok(Err(_)) => AcpForwardResult::Failed("ACP response channel closed".to_string()),
-            Err(_) => AcpForwardResult::Pending,
-        }
-    }
-
-    /// Send a message to a specific ACP session from a channel conversation.
-    pub async fn send_to_session(
-        &self,
-        acp_session_id: &AcpSessionId,
-        _message: IncomingMessage,
-    ) -> AcpForwardResult {
-        let (respond_tx, respond_rx) = oneshot::channel();
-
-        // Use GetStatus to check if session exists, then route
-        let cmd = AcpCommand::GetStatus {
-            session_id: acp_session_id.0.clone(),
+        let cmd = AcpCommand::ExecuteForBridge {
+            session_id: session_id.0.clone(),
+            message,
+            mode,
             respond_to: respond_tx,
         };
 
@@ -193,14 +143,38 @@ impl ChannelAcpBridge {
             return AcpForwardResult::Failed(format!("ACP send failed: {}", e));
         }
 
-        match tokio::time::timeout(std::time::Duration::from_secs(10), respond_rx).await {
-            Ok(Ok(Some(status))) => {
-                debug!("ACP session {} is in state {:?}", acp_session_id.0, status.runtime_state);
-                AcpForwardResult::Pending
-            }
-            Ok(Ok(None)) => AcpForwardResult::Failed("ACP session not found".to_string()),
+        match tokio::time::timeout(std::time::Duration::from_secs(30), respond_rx).await {
+            Ok(Ok(Ok(response))) => AcpForwardResult::Completed(Box::new(response)),
+            Ok(Ok(Err(e))) => AcpForwardResult::Failed(format!("ACP execution failed: {}", e)),
             Ok(Err(_)) => AcpForwardResult::Failed("ACP response channel closed".to_string()),
-            Err(_) => AcpForwardResult::Pending,
+            Err(_) => AcpForwardResult::Failed("ACP execution timed out".to_string()),
+        }
+    }
+
+    /// Send a message to a specific ACP session from a channel conversation.
+    pub async fn send_to_session(
+        &self,
+        acp_session_id: &AcpSessionId,
+        message: IncomingMessage,
+    ) -> AcpForwardResult {
+        let (respond_tx, respond_rx) = oneshot::channel();
+
+        let cmd = AcpCommand::ExecuteForBridge {
+            session_id: acp_session_id.0.clone(),
+            message,
+            mode: ExecutionMode::Session,
+            respond_to: respond_tx,
+        };
+
+        if let Err(e) = self.acp_tx.send(cmd).await {
+            return AcpForwardResult::Failed(format!("ACP send failed: {}", e));
+        }
+
+        match tokio::time::timeout(std::time::Duration::from_secs(30), respond_rx).await {
+            Ok(Ok(Ok(response))) => AcpForwardResult::Completed(Box::new(response)),
+            Ok(Ok(Err(e))) => AcpForwardResult::Failed(format!("ACP execution failed: {}", e)),
+            Ok(Err(_)) => AcpForwardResult::Failed("ACP response channel closed".to_string()),
+            Err(_) => AcpForwardResult::Failed("ACP execution timed out".to_string()),
         }
     }
 
@@ -434,8 +408,9 @@ mod tests {
             .forward_message(msg, ExecutionMode::Session, "telegram")
             .await;
 
-        // Should be Pending since we don't have a real agent
-        assert!(matches!(result, AcpForwardResult::Pending));
+        // Without a real ACP actor to consume the command, the oneshot
+        // response will time out and the bridge reports failure.
+        assert!(matches!(result, AcpForwardResult::Failed(_)));
 
         // Check binding exists
         assert!(bridge.has_binding("conv1").await);
@@ -516,10 +491,10 @@ mod tests {
         let msg = IncomingMessage::new("user1", "conv1", "hello");
         let result = bridge.send_to_session(&AcpSessionId::new(), msg).await;
 
-        // Without a receiver consuming commands, the GetStatus message
-        // will be buffered in the channel and the respond oneshot will
-        // time out, resulting in Pending
-        assert!(matches!(result, AcpForwardResult::Pending));
+        // Without a receiver consuming commands, the ExecuteForBridge message
+        // will be buffered in the channel and the respond oneshot will time
+        // out, resulting in a failure.
+        assert!(matches!(result, AcpForwardResult::Failed(_)));
     }
 
     #[tokio::test]

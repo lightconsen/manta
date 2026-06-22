@@ -1195,7 +1195,7 @@ async fn handle_subagents(
                 );
             }
 
-            let (agent_type, system_prompt) = if rest.is_empty() {
+            let (_agent_type, system_prompt) = if rest.is_empty() {
                 ("default".to_string(), None)
             } else {
                 let mut words = rest.splitn(2, ' ');
@@ -1205,7 +1205,6 @@ async fn handle_subagents(
             };
 
             let config = SubagentConfig {
-                agent_type,
                 system_prompt,
                 mode: SpawnMode::Run,
                 thread_binding: ThreadBinding::Auto,

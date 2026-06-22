@@ -1516,13 +1516,11 @@ async fn handle_acp_spawn(
         params.agent_type.clone()
     };
     let config = SubagentConfig {
-        agent_type: agent_type.clone(),
         mode,
         thread_binding: ThreadBinding::Auto,
         system_prompt: None,
         max_tokens: None,
         temperature: None,
-        tools: vec![],
         context: None,
         timeout_seconds: Some(300),
         retry_on_crash: false,

@@ -40,9 +40,6 @@ struct SpawnSubagentArgs {
     /// Thread binding: "new", "parent", "auto", or specific thread ID
     #[serde(default = "default_thread_binding")]
     pub thread_binding: String,
-    /// Agent type/personality (e.g., "coder", "researcher", "default")
-    #[serde(default)]
-    pub agent_type: String,
     /// Maximum execution time in seconds
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
@@ -90,11 +87,6 @@ impl Tool for AcpSpawnTool {
                     "type": "string",
                     "description": "Thread binding: 'new' for isolated thread, 'parent' to bind to parent, 'auto' for automatic",
                     "default": "auto"
-                },
-                "agent_type": {
-                    "type": "string",
-                    "description": "Type of agent to spawn (e.g., 'coder', 'researcher', 'default')",
-                    "default": "default"
                 },
                 "timeout_seconds": {
                     "type": "integer",
@@ -151,17 +143,11 @@ impl Tool for AcpSpawnTool {
 
         // Build subagent config
         let config = SubagentConfig {
-            agent_type: if args.agent_type.is_empty() {
-                "default".to_string()
-            } else {
-                args.agent_type
-            },
             mode,
             thread_binding,
             system_prompt: None,
             max_tokens: None,
             temperature: None,
-            tools: vec![],
             context: None,
             timeout_seconds: args.timeout_seconds.or(Some(300)),
             retry_on_crash: false,
@@ -550,7 +536,6 @@ mod tests {
         assert_eq!(args.task, "Do something");
         assert_eq!(args.mode, "run");
         assert_eq!(args.thread_binding, "auto");
-        assert_eq!(args.agent_type, "");
         assert_eq!(args.timeout_seconds, None);
     }
 
@@ -567,7 +552,6 @@ mod tests {
         assert_eq!(args.task, "Research topic");
         assert_eq!(args.mode, "session");
         assert_eq!(args.thread_binding, "new");
-        assert_eq!(args.agent_type, "researcher");
         assert_eq!(args.timeout_seconds, Some(120));
     }
 
