@@ -1529,9 +1529,6 @@ async fn handle_acp_spawn(
         mode,
         thread_binding: ThreadBinding::Auto,
         system_prompt: None,
-        max_tokens: None,
-        temperature: None,
-        context: None,
         timeout_seconds: Some(300),
     };
 

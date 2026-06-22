@@ -137,6 +137,8 @@ pub(crate) struct SessionExecutePayload {
     pub(crate) message: IncomingMessage,
     pub(crate) mode: ExecutionMode,
     pub(crate) progress_cb: Option<ProgressCallback>,
+    /// Effective max iteration limit for this specific execution.
+    pub(crate) max_iterations: usize,
     pub(crate) respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
 }
 
@@ -167,14 +169,6 @@ pub(crate) struct SessionHandle {
     pub(crate) mode: ExecutionMode,
 }
 
-/// Per-session execution tracking (held in the main ACP loop).
-///
-/// Tracks the max iteration limit for `GetStatus` without blocking the actor.
-#[derive(Debug)]
-pub(crate) struct SessionExecution {
-    pub(crate) max_iterations: usize,
-}
-
 /// Context passed to the ACP actor loop.
 ///
 /// This is a narrow facade over the parts of `AcpControlPlane` that the
@@ -192,7 +186,7 @@ pub(crate) struct ActorContext {
 /// ACP actor loop — routes commands to per-session serial queues
 pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, ctx: ActorContext) {
     let mut sessions: HashMap<String, SessionHandle> = HashMap::new();
-    let mut session_meta: HashMap<String, SessionExecution> = HashMap::new();
+    let mut session_meta: HashMap<String, usize> = HashMap::new();
 
     while let Some(cmd) = command_rx.recv().await {
         match cmd {
@@ -220,6 +214,7 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         message,
                         mode: ExecutionMode::Session,
                         progress_cb: None,
+                        max_iterations: effective_max,
                         respond_to,
                     })))
                     .await
@@ -252,6 +247,7 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         message,
                         mode: ExecutionMode::Run,
                         progress_cb: None,
+                        max_iterations: effective_max,
                         respond_to,
                     })))
                     .await
@@ -285,6 +281,7 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         message,
                         mode: ExecutionMode::Session,
                         progress_cb: Some(progress_cb),
+                        max_iterations: effective_max,
                         respond_to,
                     })))
                     .await
@@ -351,19 +348,21 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
             AcpCommand::GetStatus { session_id, respond_to } => {
                 let status = if let Some(handle) = sessions.get(&session_id) {
                     let queue_depth = 256_usize.saturating_sub(handle.tx.capacity());
-                    let meta = session_meta.get(&session_id);
+                    let max_iterations = session_meta.get(&session_id).copied().unwrap_or(ctx.max_iterations);
                     Some(AcpSessionStatus {
                         session_id: session_id.clone(),
                         runtime_state: handle.controller.current_state().await,
                         mode: handle.mode,
                         current_iteration: handle.controller.current_iteration(),
-                        max_iterations: meta.map(|m| m.max_iterations).unwrap_or(50),
+                        max_iterations,
                         queue_depth,
                     })
                 } else {
                     None
                 };
-                let _ = respond_to.send(status);
+                if let Err(e) = respond_to.send(status) {
+                    warn!("Failed to send GetStatus response for {}: {:?}", session_id, e);
+                }
             }
 
             AcpCommand::ExecuteForBridge {
@@ -378,14 +377,19 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         Some(builder) => match builder() {
                             Ok(agent) => Arc::new(agent),
                             Err(e) => {
-                                let _ = respond_to.send(Err(e));
+                                if let Err(send_err) = respond_to.send(Err(e)) {
+                                    warn!("Failed to send ExecuteForBridge builder error response: {:?}", send_err);
+                                }
                                 continue;
                             }
                         },
                         None => {
-                            let _ = respond_to.send(Err(crate::error::SyscityError::Internal(
+                            let err = crate::error::SyscityError::Internal(
                                 "No agent builder configured".to_string(),
-                            )));
+                            );
+                            if let Err(send_err) = respond_to.send(Err(err)) {
+                                warn!("Failed to send ExecuteForBridge no-builder error response: {:?}", send_err);
+                            }
                             continue;
                         }
                     }
@@ -408,6 +412,7 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         message,
                         mode,
                         progress_cb: None,
+                        max_iterations: effective_max,
                         respond_to,
                     })))
                     .await
@@ -422,9 +427,13 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                 config,
                 crash_count,
             } => {
-                ctx.control_plane
+                let result = ctx
+                    .control_plane
                     .recover_crashed_subagent(session_id, parent_id, config, crash_count)
                     .await;
+                if result.is_none() {
+                    warn!("Failed to recover crashed subagent");
+                }
             }
 
             AcpCommand::Shutdown => {
@@ -460,7 +469,7 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
 /// Get or create a session actor for the given session_id.
 pub(crate) async fn get_or_create_session<'a>(
     sessions: &'a mut HashMap<String, SessionHandle>,
-    session_meta: &'a mut HashMap<String, SessionExecution>,
+    session_meta: &'a mut HashMap<String, usize>,
     session_id: &str,
     mode: ExecutionMode,
     max_iterations: usize,
@@ -470,7 +479,7 @@ pub(crate) async fn get_or_create_session<'a>(
         let controller = ExecutionController::new();
         let ctrl_clone = controller.clone();
 
-        let meta = SessionExecution { max_iterations };
+        let meta = max_iterations;
 
         let handle = SessionHandle {
             tx,
@@ -478,7 +487,7 @@ pub(crate) async fn get_or_create_session<'a>(
             mode,
         };
 
-        tokio::spawn(session_actor_loop(rx, ctrl_clone, session_id.to_string(), max_iterations));
+        tokio::spawn(session_actor_loop(rx, ctrl_clone, session_id.to_string()));
 
         sessions.insert(session_id.to_string(), handle);
         session_meta.insert(session_id.to_string(), meta);
@@ -492,7 +501,6 @@ pub(crate) async fn session_actor_loop(
     mut rx: mpsc::Receiver<SessionCommand>,
     controller: Arc<ExecutionController>,
     session_id: String,
-    max_iterations: usize,
 ) {
     info!("Session actor started for {}", session_id);
 
@@ -512,7 +520,7 @@ pub(crate) async fn session_actor_loop(
                 );
 
                 controller.reset().await;
-                let max_iter = max_iterations;
+                let max_iter = payload.max_iterations;
 
                 let result = if let Some(cb) = payload.progress_cb {
                     payload

@@ -129,12 +129,6 @@ pub struct SubagentConfig {
     pub thread_binding: ThreadBinding,
     /// System prompt override
     pub system_prompt: Option<String>,
-    /// Maximum tokens
-    pub max_tokens: Option<usize>,
-    /// Temperature
-    pub temperature: Option<f32>,
-    /// Initial context/data
-    pub context: Option<serde_json::Value>,
     /// Timeout in seconds (for Run mode)
     pub timeout_seconds: Option<u64>,
 }
@@ -145,9 +139,19 @@ impl Default for SubagentConfig {
             mode: SpawnMode::Run,
             thread_binding: ThreadBinding::Auto,
             system_prompt: None,
-            max_tokens: None,
-            temperature: None,
-            context: None,
+            timeout_seconds: Some(300),
+        }
+    }
+}
+
+impl SubagentConfig {
+    /// Create a minimal configuration for the given spawn mode and thread
+    /// binding, suitable for tests and programmatic callers.
+    pub fn new(mode: SpawnMode, thread_binding: ThreadBinding) -> Self {
+        Self {
+            mode,
+            thread_binding,
+            system_prompt: None,
             timeout_seconds: Some(300),
         }
     }
@@ -254,9 +258,6 @@ mod tests {
         assert_eq!(config.mode, SpawnMode::Run);
         assert!(matches!(config.thread_binding, ThreadBinding::Auto));
         assert!(config.system_prompt.is_none());
-        assert!(config.max_tokens.is_none());
-        assert!(config.temperature.is_none());
-        assert!(config.context.is_none());
         assert_eq!(config.timeout_seconds, Some(300));
     }
 

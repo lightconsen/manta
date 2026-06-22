@@ -21,4 +21,4 @@ pub use config::{
 pub use control_plane::{AcpControlPlane, AcpSession, AcpSessionInfo, SubagentTreeNode};
 pub use controller::ExecutionController;
 pub use session::AcpCommand;
-pub use subagent::{SubagentCommand, SubagentHandle, SubagentResponse};
+pub use subagent::{SubagentCommand, SubagentHandle};

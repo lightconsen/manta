@@ -146,9 +146,6 @@ impl Tool for AcpSpawnTool {
             mode,
             thread_binding,
             system_prompt: None,
-            max_tokens: None,
-            temperature: None,
-            context: None,
             timeout_seconds: args.timeout_seconds.or(Some(300)),
         };
 
@@ -225,7 +222,9 @@ impl Tool for AcpSpawnTool {
                         warn!("Subagent {} failed to process task: {}", subagent_id, e);
 
                         // Try to shutdown the subagent
-                        let _ = self.acp.shutdown_subagent(&subagent_id).await;
+                        if let Err(e) = self.acp.shutdown_subagent(&subagent_id).await {
+                            warn!("Failed to shutdown failed subagent {}: {}", subagent_id, e);
+                        }
 
                         Ok(ToolExecutionResult {
                             success: false,

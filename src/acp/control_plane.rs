@@ -573,7 +573,12 @@ impl AcpControlPlane {
                             Err(_) => Err(crate::error::SyscityError::SubagentTimeout),
                         };
 
-                        let _ = response_tx.send(response);
+                        if let Err(e) = response_tx.send(response) {
+                            warn!(
+                                "Subagent {} failed to send response: {:?}",
+                                subagent_id_clone, e
+                            );
+                        }
 
                         // For Run mode, terminate after first message
                         if mode == SpawnMode::Run {
@@ -1387,7 +1392,7 @@ impl AcpControlPlane {
 
         let mut count = 0;
         for subagent_id in subagent_ids {
-            if self.shutdown_subagent(&subagent_id).await? {
+            if self.shutdown_subagent(&subagent_id).await.unwrap_or(false) {
                 count += 1;
             }
         }
@@ -1421,20 +1426,23 @@ impl AcpControlPlane {
     }
 
     /// List subagents in a session
-    pub async fn list_session_subagents(&self, session_id: &AcpSessionId) -> Vec<SubagentHandle> {
-        // Follow documented lock order: subagents -> sessions.
-        let subagents = self.subagents.read().await;
-        let sessions = self.sessions.read().await;
+    pub async fn list_session_subagents(
+        &self,
+        session_id: &AcpSessionId,
+    ) -> Vec<SubagentHandle> {
+        let subagent_ids = {
+            let sessions = self.sessions.read().await;
+            sessions
+                .get(session_id)
+                .map(|s| s.subagents.clone())
+                .unwrap_or_default()
+        };
 
-        if let Some(session) = sessions.get(session_id) {
-            session
-                .subagents
-                .iter()
-                .filter_map(|id| subagents.get(id).cloned())
-                .collect()
-        } else {
-            vec![]
-        }
+        let subagents = self.subagents.read().await;
+        subagent_ids
+            .into_iter()
+            .filter_map(|id| subagents.get(&id).cloned())
+            .collect()
     }
 
     /// Get session info
@@ -1449,20 +1457,19 @@ impl AcpControlPlane {
     }
 
     /// Get subagent tree for a session (recursive parent-child hierarchy)
-    pub async fn get_subagent_tree(&self, session_id: &AcpSessionId) -> Vec<SubagentTreeNode> {
-        // Follow documented lock order: subagents -> sessions.
-        let subagents = self.subagents.read().await;
-        let sessions = self.sessions.read().await;
-
-        let session = match sessions.get(session_id) {
-            Some(s) => s,
-            None => return vec![],
+    pub async fn get_subagent_tree(
+        &self,
+        session_id: &AcpSessionId,
+    ) -> Vec<SubagentTreeNode> {
+        let (root_parent_id, session_subagent_ids) = {
+            let sessions = self.sessions.read().await;
+            sessions
+                .get(session_id)
+                .map(|s| (s.parent_agent_id.clone(), s.subagents.clone()))
+                .unwrap_or_default()
         };
 
-        let root_parent_id = session.parent_agent_id.clone();
-        let session_subagent_ids = session.subagents.clone();
-        drop(sessions);
-
+        let subagents = self.subagents.read().await;
         let mut by_parent: HashMap<String, Vec<SubagentHandle>> = HashMap::new();
         let mut all_ids = std::collections::HashSet::new();
 
@@ -1591,7 +1598,7 @@ mod tests {
             format!("conv-{}", handle.id),
             "trigger".to_string(),
         );
-        let _ = acp.send_message(&handle.id, msg).await;
+        let _ = acp.send_message(&handle.id, msg).await.ok();
 
         // Wait long enough for the panic + recovery to complete.
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
@@ -1613,7 +1620,9 @@ mod tests {
         assert_eq!(recovered.status, SubagentStatus::Ready);
 
         // Cleanup
-        let _ = acp.shutdown_subagent(&recovered.id).await;
+        acp.shutdown_subagent(&recovered.id)
+            .await
+            .expect("shutdown recovered subagent");
     }
 
     #[tokio::test]
@@ -1700,8 +1709,12 @@ mod tests {
         assert_eq!(ctx_a.active_subagent, Some(s2.id.clone()));
 
         // Cleanup
-        let _ = acp.shutdown_subagent(&s1.id).await;
-        let _ = acp.shutdown_subagent(&s2.id).await;
+        acp.shutdown_subagent(&s1.id)
+            .await
+            .expect("shutdown s1");
+        acp.shutdown_subagent(&s2.id)
+            .await
+            .expect("shutdown s2");
     }
 
     #[tokio::test]
@@ -1760,8 +1773,12 @@ mod tests {
         assert!(after_unsub.is_empty());
 
         // Cleanup
-        let _ = acp.shutdown_subagent(&s1.id).await;
-        let _ = acp.shutdown_subagent(&s2.id).await;
+        acp.shutdown_subagent(&s1.id)
+            .await
+            .expect("shutdown s1");
+        acp.shutdown_subagent(&s2.id)
+            .await
+            .expect("shutdown s2");
     }
 
     #[tokio::test]
@@ -1831,9 +1848,6 @@ mod tests {
                 mode: SpawnMode::Run,
                 thread_binding: ThreadBinding::Auto,
                 system_prompt: Some(format!("subagent-{}", i)),
-                max_tokens: None,
-                temperature: None,
-                context: None,
                 timeout_seconds: Some(30),
             };
             spawn_tasks.push(tokio::spawn(async move {
@@ -1903,7 +1917,11 @@ mod tests {
             other => panic!("expected AcpSpawned event, got {:?}", other),
         }
 
-        let _ = handle.command_tx.send(SubagentCommand::Shutdown).await;
+        let _ = handle
+            .command_tx
+            .send(SubagentCommand::Shutdown)
+            .await
+            .expect("send shutdown to subagent");
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         let completed = event_rx.recv().await.expect("receive completed event");
@@ -1931,7 +1949,7 @@ mod tests {
         // Create a session actor by executing a message.
         let agent = mock_agent_builder()().expect("mock agent builds");
         let msg = IncomingMessage::new("user1", "conv1", "hello");
-        let _ = acp.execute_session(Arc::new(agent), msg).await;
+        let _ = acp.execute_session(Arc::new(agent), msg).await.ok();
 
         // Pause: event should report the actual state after the actor processed it.
         acp.pause("conv1".to_string())

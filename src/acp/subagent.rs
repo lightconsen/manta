@@ -45,11 +45,3 @@ pub enum SubagentCommand {
     /// Shutdown the subagent
     Shutdown,
 }
-
-/// Response from a subagent
-#[derive(Debug, Clone)]
-pub struct SubagentResponse {
-    pub subagent_id: String,
-    pub result: Result<String, std::sync::Arc<crate::SyscityError>>,
-    pub metadata: Option<serde_json::Value>,
-}
