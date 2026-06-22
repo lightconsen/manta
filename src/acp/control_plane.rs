@@ -223,15 +223,15 @@ impl AcpControlPlane {
         max_iterations: Option<usize>,
     ) -> crate::Result<crate::channels::OutgoingMessage> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let _ = self
-            .command_tx
+        self.command_tx
             .send(AcpCommand::ExecuteSession {
                 agent,
                 message,
                 max_iterations,
                 respond_to: tx,
             })
-            .await;
+            .await
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
         rx.await
             .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?
     }
@@ -255,15 +255,15 @@ impl AcpControlPlane {
         max_iterations: Option<usize>,
     ) -> crate::Result<crate::channels::OutgoingMessage> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let _ = self
-            .command_tx
+        self.command_tx
             .send(AcpCommand::ExecuteRun {
                 agent,
                 message,
                 max_iterations,
                 respond_to: tx,
             })
-            .await;
+            .await
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
         rx.await
             .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?
     }
@@ -289,8 +289,7 @@ impl AcpControlPlane {
         max_iterations: Option<usize>,
     ) -> crate::Result<crate::channels::OutgoingMessage> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let _ = self
-            .command_tx
+        self.command_tx
             .send(AcpCommand::ExecuteSessionWithProgress {
                 agent,
                 message,
@@ -298,50 +297,67 @@ impl AcpControlPlane {
                 max_iterations,
                 respond_to: tx,
             })
-            .await;
+            .await
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
         rx.await
             .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?
     }
 
     /// Pause a running session
-    pub async fn pause(&self, session_id: String) {
-        let _ = self.command_tx.send(AcpCommand::Pause { session_id }).await;
+    pub async fn pause(&self, session_id: String) -> crate::Result<()> {
+        self.command_tx
+            .send(AcpCommand::Pause { session_id })
+            .await
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
+        Ok(())
     }
 
     /// Resume a paused session
-    pub async fn resume(&self, session_id: String) {
-        let _ = self
-            .command_tx
+    pub async fn resume(&self, session_id: String) -> crate::Result<()> {
+        self.command_tx
             .send(AcpCommand::Resume { session_id })
-            .await;
+            .await
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
+        Ok(())
     }
 
     /// Single step a paused session
-    pub async fn step(&self, session_id: String) {
-        let _ = self.command_tx.send(AcpCommand::Step { session_id }).await;
+    pub async fn step(&self, session_id: String) -> crate::Result<()> {
+        self.command_tx
+            .send(AcpCommand::Step { session_id })
+            .await
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
+        Ok(())
     }
 
     /// Cancel a running session
-    pub async fn cancel(&self, session_id: String) {
-        let _ = self
-            .command_tx
+    pub async fn cancel(&self, session_id: String) -> crate::Result<()> {
+        self.command_tx
             .send(AcpCommand::Cancel { session_id })
-            .await;
+            .await
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
+        Ok(())
     }
 
     /// Get session status
-    pub async fn get_status(&self, session_id: String) -> Option<AcpSessionStatus> {
+    pub async fn get_status(&self, session_id: String) -> crate::Result<Option<AcpSessionStatus>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let _ = self
-            .command_tx
+        self.command_tx
             .send(AcpCommand::GetStatus { session_id, respond_to: tx })
-            .await;
-        rx.await.ok().flatten()
+            .await
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
+        rx.await.map_err(|_| {
+            crate::error::SyscityError::Internal("ACP response channel closed".to_string())
+        })
     }
 
     /// Shutdown the ACP actor loop
-    pub async fn shutdown(&self) {
-        let _ = self.command_tx.send(AcpCommand::Shutdown).await;
+    pub async fn shutdown(&self) -> crate::Result<()> {
+        self.command_tx
+            .send(AcpCommand::Shutdown)
+            .await
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
+        Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -364,9 +380,12 @@ impl AcpControlPlane {
 
         // Persist session if store is available
         if let Some(ref store) = self.store {
-            let _ = store
+            if let Err(e) = store
                 .save_acp_session(&session_id.0, &parent_agent_id, &[], chrono::Utc::now())
-                .await;
+                .await
+            {
+                warn!("Failed to persist new ACP session {}: {}", session_id.0, e);
+            }
         }
 
         info!("Created ACP session {}", session_id);
@@ -390,12 +409,14 @@ impl AcpControlPlane {
                 ThreadBinding::Parent => format!("thread-{}", parent_id),
                 ThreadBinding::Thread(id) => id.clone(),
                 ThreadBinding::Auto => {
-                    let candidate = format!("thread-{}", parent_id);
-                    if threads.contains_key(&candidate) || threads.contains_key(&parent_id) {
+                    // If the parent already has an associated thread, reuse it;
+                    // otherwise create a fresh thread for this subagent.
+                    let parent_thread_id = format!("thread-{}", parent_id);
+                    if threads.contains_key(&parent_id) {
                         threads
                             .get(&parent_id)
                             .map(|t| t.id.clone())
-                            .unwrap_or_else(|| candidate.clone())
+                            .unwrap_or_else(|| parent_thread_id.clone())
                     } else {
                         format!("thread-{}", Uuid::new_v4())
                     }
@@ -516,14 +537,13 @@ impl AcpControlPlane {
 
                         controller.reset().await;
 
-                        let response = match result {
+                        let response: crate::Result<String> = match result {
                             Ok(Ok(response)) => Ok(response.content),
-                            Ok(Err(e)) => Err(e.to_string()),
-                            Err(_) => Err("Timeout".to_string()),
+                            Ok(Err(e)) => Err(e),
+                            Err(_) => Err(crate::error::SyscityError::SubagentTimeout),
                         };
 
-                        let _ = response_tx
-                            .send(response.map_err(crate::error::SyscityError::Internal));
+                        let _ = response_tx.send(response);
 
                         // For Run mode, terminate after first message
                         if mode == SpawnMode::Run {
@@ -569,9 +589,12 @@ impl AcpControlPlane {
                         })
                         .await;
                     if let Some(store) = store_ref {
-                        let _ = store
+                        if let Err(e) = store
                             .complete_subagent_run(&watch_id, Some("normal exit"), None)
-                            .await;
+                            .await
+                        {
+                            warn!("Failed to persist normal completion for {}: {}", watch_id, e);
+                        }
                     }
                 }
                 Err(e) if e.is_panic() => {
@@ -594,9 +617,12 @@ impl AcpControlPlane {
                         })
                         .await;
                     if let Some(store) = store_ref {
-                        let _ = store
+                        if let Err(e) = store
                             .complete_subagent_run(&watch_id, None, Some("panicked"))
-                            .await;
+                            .await
+                        {
+                            warn!("Failed to persist crash completion for {}: {}", watch_id, e);
+                        }
                     }
                     // Log crash for external recovery (call recover_crashed_subagent to restart)
                     let recovery_enabled = {
@@ -737,7 +763,7 @@ impl AcpControlPlane {
 
         // Persist subagent run record if store is attached.
         if let Some(ref store) = self.store {
-            let _ = store
+            if let Err(e) = store
                 .save_subagent_run(&SaveSubagentRunParams {
                     run_id: &subagent_id,
                     subagent_id: &subagent_id,
@@ -752,10 +778,16 @@ impl AcpControlPlane {
                     },
                     thread_id: Some(&thread_id),
                 })
-                .await;
-            let _ = store
+                .await
+            {
+                warn!("Failed to persist subagent run record for {}: {}", subagent_id, e);
+            }
+            if let Err(e) = store
                 .update_subagent_run_status(&subagent_id, "ready")
-                .await;
+                .await
+            {
+                warn!("Failed to update subagent run status for {}: {}", subagent_id, e);
+            }
         }
 
         info!("Subagent {} spawned successfully", subagent_id);
@@ -802,11 +834,14 @@ impl AcpControlPlane {
         };
 
         let new_id = handle.id.clone();
+
+        // Follow documented lock order: subagents -> sessions.
         let old_id = {
             let subagents = self.subagents.read().await;
             // Find the predecessor that was previously registered with the same
-            // configuration and session. The simplest heuristic is the first
-            // crashed subagent in the same session with a matching parent.
+            // session and parent. We match the first crashed subagent that is
+            // still tracked for this session; it should not be the newly spawned
+            // replacement.
             subagents
                 .values()
                 .find(|h| {
@@ -828,29 +863,44 @@ impl AcpControlPlane {
         }
 
         if let Some(ref old_id) = old_id {
-            let mut sessions = self.sessions.write().await;
-            if let Some(session) = sessions.get_mut(&session_id) {
-                session.subagents.retain(|id| id != old_id);
-                if !session.subagents.contains(&new_id) {
-                    session.subagents.push(new_id.clone());
-                }
-                if let Some(ref store) = self.store {
-                    let ids = session.subagents.clone();
-                    let parent = session.parent_agent_id.clone();
-                    let created = session.created_at;
-                    let sid = session_id.0.clone();
-                    drop(sessions);
-                    let _ = store.save_acp_session(&sid, &parent, &ids, created).await;
-                }
-            }
             {
                 let mut subagents = self.subagents.write().await;
                 subagents.remove(old_id);
             }
+            {
+                let mut sessions = self.sessions.write().await;
+                if let Some(session) = sessions.get_mut(&session_id) {
+                    session.subagents.retain(|id| id != old_id);
+                    if !session.subagents.contains(&new_id) {
+                        session.subagents.push(new_id.clone());
+                    }
+                    if let Some(ref store) = self.store {
+                        let ids = session.subagents.clone();
+                        let parent = session.parent_agent_id.clone();
+                        let created = session.created_at;
+                        let sid = session_id.0.clone();
+                        drop(sessions);
+                        if let Err(e) = store.save_acp_session(&sid, &parent, &ids, created).await {
+                            warn!("Failed to persist recovered ACP session {}: {}", sid, e);
+                        }
+                    }
+                }
+            }
+        } else {
+            // No crashed predecessor found. This can happen if recovery is
+            // triggered after the crashed handle was already cleaned up, or if
+            // multiple crashed subagents share the session. Guard against
+            // adding a duplicate entry in the session list.
+            let mut sessions = self.sessions.write().await;
+            if let Some(session) = sessions.get_mut(&session_id) {
+                if !session.subagents.contains(&new_id) {
+                    session.subagents.push(new_id.clone());
+                }
+            }
         }
 
         if let Some(ref store) = self.store {
-            let _ = store
+            if let Err(e) = store
                 .save_subagent_run(&SaveSubagentRunParams {
                     run_id: &new_id,
                     subagent_id: &new_id,
@@ -868,8 +918,13 @@ impl AcpControlPlane {
                     },
                     thread_id: Some(&handle.thread_id),
                 })
-                .await;
-            let _ = store.update_subagent_run_status(&new_id, "recovered").await;
+                .await
+            {
+                warn!("Failed to persist recovery run record for {}: {}", new_id, e);
+            }
+            if let Err(e) = store.update_subagent_run_status(&new_id, "recovered").await {
+                warn!("Failed to update recovery run status for {}: {}", new_id, e);
+            }
         }
 
         info!(
@@ -1209,7 +1264,9 @@ impl AcpControlPlane {
             info!("Killed subagent {} (force abort)", subagent_id);
             drop(subagents);
             if let Some(ref store) = self.store {
-                let _ = store.kill_subagent_run(subagent_id, "user").await;
+                if let Err(e) = store.kill_subagent_run(subagent_id, "user").await {
+                    warn!("Failed to persist kill event for {}: {}", subagent_id, e);
+                }
             }
             Ok(true)
         } else {
@@ -1258,7 +1315,9 @@ impl AcpControlPlane {
 
         // Persist steer event
         if let Some(ref store) = self.store {
-            let _ = store.append_steer_to_run(subagent_id, &message).await;
+            if let Err(e) = store.append_steer_to_run(subagent_id, &message).await {
+                warn!("Failed to persist steer event for {}: {}", subagent_id, e);
+            }
         }
 
         match response_rx.await {
@@ -1297,7 +1356,9 @@ impl AcpControlPlane {
 
         // Delete from persistent store
         if let Some(ref store) = self.store {
-            let _ = store.delete_acp_session(&session_id.0).await;
+            if let Err(e) = store.delete_acp_session(&session_id.0).await {
+                warn!("Failed to delete ACP session {} from store: {}", session_id.0, e);
+            }
         }
 
         info!("Terminated {} subagents in session {}", count, session_id);
@@ -1318,8 +1379,9 @@ impl AcpControlPlane {
 
     /// List subagents in a session
     pub async fn list_session_subagents(&self, session_id: &AcpSessionId) -> Vec<SubagentHandle> {
-        let sessions = self.sessions.read().await;
+        // Follow documented lock order: subagents -> sessions.
         let subagents = self.subagents.read().await;
+        let sessions = self.sessions.read().await;
 
         if let Some(session) = sessions.get(session_id) {
             session
@@ -1828,7 +1890,9 @@ mod tests {
         let _ = acp.execute_session(Arc::new(agent), msg).await;
 
         // Pause: event should report the actual state after the actor processed it.
-        acp.pause("conv1".to_string()).await;
+        acp.pause("conv1".to_string())
+            .await
+            .expect("pause command sent");
         let event = event_rx.recv().await.expect("receive pause event");
         assert!(
             matches!(
@@ -1843,7 +1907,9 @@ mod tests {
         );
 
         // Resume.
-        acp.resume("conv1".to_string()).await;
+        acp.resume("conv1".to_string())
+            .await
+            .expect("resume command sent");
         let event = event_rx.recv().await.expect("receive resume event");
         assert!(
             matches!(
@@ -1858,7 +1924,9 @@ mod tests {
         );
 
         // Step.
-        acp.step("conv1".to_string()).await;
+        acp.step("conv1".to_string())
+            .await
+            .expect("step command sent");
         let event = event_rx.recv().await.expect("receive step event");
         assert!(
             matches!(
@@ -1873,7 +1941,9 @@ mod tests {
         );
 
         // Cancel.
-        acp.cancel("conv1".to_string()).await;
+        acp.cancel("conv1".to_string())
+            .await
+            .expect("cancel command sent");
         let event = event_rx.recv().await.expect("receive cancel event");
         assert!(
             matches!(

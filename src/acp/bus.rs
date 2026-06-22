@@ -92,8 +92,11 @@ impl AcpBus {
 
         let total_removed = ttl_removed + cap_removed;
         if total_removed > 0 {
-            for offset in self.read_offsets.values_mut() {
-                *offset = offset.saturating_sub(total_removed);
+            let topic_owned = topic.to_string();
+            for ((_, t), offset) in self.read_offsets.iter_mut() {
+                if t == &topic_owned {
+                    *offset = offset.saturating_sub(total_removed);
+                }
             }
         }
 

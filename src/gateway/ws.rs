@@ -1050,7 +1050,12 @@ async fn handle_chat_abort(
         Err(res) => return res,
     };
 
-    state.agents.acp.cancel(params.session_id.clone()).await;
+    state
+        .agents
+        .acp
+        .cancel(params.session_id.clone())
+        .await
+        .ok();
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1197,7 +1202,12 @@ async fn handle_sessions_reset(
         Err(res) => return res,
     };
 
-    state.agents.acp.cancel(params.session_id.clone()).await;
+    state
+        .agents
+        .acp
+        .cancel(params.session_id.clone())
+        .await
+        .ok();
 
     if let Some(ref store) = state.agents.store {
         let _ = store.delete_session(&params.session_id).await;
@@ -1736,7 +1746,7 @@ async fn handle_acp_status(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     };
 
     match state.agents.acp.get_status(params.session_id.clone()).await {
-        Some(status) => WsResponse::ok(
+        Ok(Some(status)) => WsResponse::ok(
             &req.id,
             serde_json::json!({
                 "session_id": status.session_id,
@@ -1746,7 +1756,8 @@ async fn handle_acp_status(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                 "max_iterations": status.max_iterations,
             }),
         ),
-        None => WsResponse::err(&req.id, "SESSION_NOT_FOUND", "Session not found"),
+        Ok(None) => WsResponse::err(&req.id, "SESSION_NOT_FOUND", "Session not found"),
+        Err(e) => WsResponse::err(&req.id, "ACP_ERROR", format!("Failed to get status: {}", e)),
     }
 }
 
@@ -1761,7 +1772,7 @@ async fn handle_acp_pause(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespo
         Err(res) => return res,
     };
 
-    state.agents.acp.pause(params.session_id.clone()).await;
+    state.agents.acp.pause(params.session_id.clone()).await.ok();
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1783,7 +1794,12 @@ async fn handle_acp_resume(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    state.agents.acp.resume(params.session_id.clone()).await;
+    state
+        .agents
+        .acp
+        .resume(params.session_id.clone())
+        .await
+        .ok();
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1805,7 +1821,7 @@ async fn handle_acp_step(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespon
         Err(res) => return res,
     };
 
-    state.agents.acp.step(params.session_id.clone()).await;
+    state.agents.acp.step(params.session_id.clone()).await.ok();
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1827,7 +1843,12 @@ async fn handle_acp_cancel(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    state.agents.acp.cancel(params.session_id.clone()).await;
+    state
+        .agents
+        .acp
+        .cancel(params.session_id.clone())
+        .await
+        .ok();
     WsResponse::ok(
         &req.id,
         serde_json::json!({

@@ -334,7 +334,7 @@ pub(crate) async fn send_to_agent(
             .map(|s| s.to_string())
     };
     if queue_mode.as_deref() == Some("interrupt") {
-        state.agents.acp.cancel(session_id.to_string()).await;
+        let _ = state.agents.acp.cancel(session_id.to_string()).await;
     }
 
     let incoming_msg = crate::channels::IncomingMessage::new(

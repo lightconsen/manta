@@ -475,8 +475,11 @@ pub(crate) async fn stop_gateway(
     }
 
     // 4. ACP shutdown.
-    state.agents.acp.shutdown().await;
-    info!("ACP control plane shut down");
+    if let Err(e) = state.agents.acp.shutdown().await {
+        warn!("Failed to shut down ACP control plane: {}", e);
+    } else {
+        info!("ACP control plane shut down");
+    }
 
     // 5. Cron scheduler.
     if let Some(cron_arc) = state.scheduler.cron_scheduler.get_opt().await {

@@ -420,6 +420,17 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                 }
                 sessions.clear();
                 session_meta.clear();
+
+                // Also shut down all subagents managed by the control plane.
+                let subagents = ctx.control_plane.subagents.read().await;
+                for handle in subagents.values() {
+                    let _ = handle
+                        .command_tx
+                        .send(super::subagent::SubagentCommand::Shutdown)
+                        .await;
+                }
+                drop(subagents);
+
                 break;
             }
         }

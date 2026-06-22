@@ -699,7 +699,7 @@ async fn handle_stop(
     let session_id = conn.read().await.subscriptions.first().cloned();
 
     if let Some(sid) = session_id {
-        state.agents.acp.cancel(sid.clone()).await;
+        state.agents.acp.cancel(sid.clone()).await.ok();
         return WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": format!("⏹️ Stop signal sent for session `{}`.", sid) }),
@@ -1278,7 +1278,7 @@ async fn handle_acp(
     if trimmed.is_empty() || trimmed == "status" {
         let session_id = conn.read().await.subscriptions.first().cloned();
         if let Some(sid) = session_id {
-            if let Some(status) = state.agents.acp.get_status(sid.clone()).await {
+            if let Ok(Some(status)) = state.agents.acp.get_status(sid.clone()).await {
                 let text = format!(
                     "🤖 **ACP Session `{}`**\n\nState: `{:?}`\nMode: `{:?}`\nIteration: \
                      {}/{}\nQueue depth: {}",
@@ -1342,7 +1342,7 @@ async fn handle_acp(
                 Some(rest.to_string())
             };
             if let Some(sid) = sid {
-                state.agents.acp.cancel(sid.clone()).await;
+                state.agents.acp.cancel(sid.clone()).await.ok();
                 return WsResponse::ok(
                     &req.id,
                     serde_json::json!({ "text": format!("🤖 ACP session `{}` cancelled.", sid) }),
@@ -1449,9 +1449,15 @@ async fn handle_acp(
                 );
             };
             match sub {
-                "pause" => state.agents.acp.pause(sid.clone()).await,
-                "resume" => state.agents.acp.resume(sid.clone()).await,
-                "step" => state.agents.acp.step(sid.clone()).await,
+                "pause" => {
+                    state.agents.acp.pause(sid.clone()).await.ok();
+                }
+                "resume" => {
+                    state.agents.acp.resume(sid.clone()).await.ok();
+                }
+                "step" => {
+                    state.agents.acp.step(sid.clone()).await.ok();
+                }
                 _ => unreachable!(),
             }
             WsResponse::ok(
@@ -1527,7 +1533,7 @@ async fn handle_kill(
     if trimmed.is_empty() || trimmed == "all" {
         let session_id = conn.read().await.subscriptions.first().cloned();
         if let Some(sid) = session_id {
-            state.agents.acp.cancel(sid.clone()).await;
+            state.agents.acp.cancel(sid.clone()).await.ok();
             return WsResponse::ok(
                 &req.id,
                 serde_json::json!({ "text": format!("💀 Kill signal sent to session `{}`.", sid) }),
