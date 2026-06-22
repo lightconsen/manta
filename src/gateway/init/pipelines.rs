@@ -64,7 +64,7 @@ pub async fn init_pipelines(
         MediaUnderstandingPipeline::new().with_model_router(Arc::clone(&model_router)),
         AutoReplyDispatch::new(AutoReplyDispatchConfig::default()),
         QueueModeResolver::new(),
-        (*agent_router).clone(),
+        Arc::clone(&agent_router),
         routed_tx.clone(),
         debounce_flush_rx,
     ));

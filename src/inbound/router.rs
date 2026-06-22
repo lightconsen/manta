@@ -226,14 +226,6 @@ pub struct AgentRouter {
     conversation_resolver: Option<ConversationResolver>,
 }
 
-impl Clone for AgentRouter {
-    fn clone(&self) -> Self {
-        // Since we can't clone RwLock contents without async, we create a new
-        // router with the same config. Bindings are repopulated on first use.
-        Self::new(self.config.clone())
-    }
-}
-
 impl AgentRouter {
     pub fn new(config: AgentRouterConfig) -> Self {
         Self {
@@ -242,6 +234,28 @@ impl AgentRouter {
             channel_defaults: RwLock::new(HashMap::new()),
             workspace_defaults: RwLock::new(HashMap::new()),
             binding_store: None,
+            conversation_resolver: None,
+        }
+    }
+
+    /// Create a deep copy of this router, including all in-memory bindings and
+    /// defaults.
+    ///
+    /// The optional [`ConversationResolver`] is **not** copied because it
+    /// contains trait objects that are not `Clone`; the cloned router will have
+    /// no conversation resolver. The persistent binding store reference is
+    /// shared (cloned `Arc`).
+    pub async fn deep_clone(&self) -> Self {
+        let session_bindings = self.session_bindings.read().await.clone();
+        let channel_defaults = self.channel_defaults.read().await.clone();
+        let workspace_defaults = self.workspace_defaults.read().await.clone();
+
+        Self {
+            config: self.config.clone(),
+            session_bindings: RwLock::new(session_bindings),
+            channel_defaults: RwLock::new(channel_defaults),
+            workspace_defaults: RwLock::new(workspace_defaults),
+            binding_store: self.binding_store.clone(),
             conversation_resolver: None,
         }
     }

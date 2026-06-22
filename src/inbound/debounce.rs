@@ -53,6 +53,8 @@ struct DebounceBuffer {
     flush_tx: mpsc::Sender<Vec<DebouncedItem>>,
     /// The in-flight timer handle.
     timer_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Last time this buffer saw activity. Used for true LRU eviction.
+    last_activity: Instant,
 }
 
 /// Keyed inbound debouncer.
@@ -104,11 +106,20 @@ impl InboundDebouncer {
 
         let mut buffers = self.buffers.write().await;
 
-        // LRU eviction: if we're at capacity, drop the oldest key.
+        // LRU eviction: if we're at capacity, drop the least-recently-active key.
         if buffers.len() >= self.config.max_tracked_keys && !buffers.contains_key(&key) {
-            if let Some(oldest) = buffers.keys().next().cloned() {
+            let mut oldest_key: Option<String> = None;
+            let mut oldest_time: Option<Instant> = None;
+            for (k, buf) in buffers.iter() {
+                let guard = buf.lock().await;
+                if oldest_time.map(|t| guard.last_activity < t).unwrap_or(true) {
+                    oldest_time = Some(guard.last_activity);
+                    oldest_key = Some(k.clone());
+                }
+            }
+            if let Some(oldest) = oldest_key {
                 warn!(
-                    "Debouncer at capacity ({}), evicting key {}",
+                    "Debouncer at capacity ({}), evicting least-recently-active key {}",
                     self.config.max_tracked_keys, oldest
                 );
                 buffers.remove(&oldest);
@@ -121,6 +132,7 @@ impl InboundDebouncer {
                 items: Vec::new(),
                 flush_tx: tx,
                 timer_handle: None,
+                last_activity: Instant::now(),
             })
         });
 
@@ -130,6 +142,7 @@ impl InboundDebouncer {
             message,
             received_at: Instant::now(),
         });
+        guard.last_activity = Instant::now();
 
         // (Re-)start the flush timer.
         if let Some(handle) = guard.timer_handle.take() {

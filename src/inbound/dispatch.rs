@@ -65,7 +65,9 @@ pub struct AutoReplyDispatchConfig {
 pub struct AutoReplyDispatch {
     config: AutoReplyDispatchConfig,
     /// Optional channel-level command gate for richer authorizer logic.
-    #[allow(dead_code)]
+    ///
+    /// Used in stage 5 of [`AutoReplyDispatch::process`]. When `None`, no
+    /// secondary command-gate check is performed.
     channel_command_gate: Option<ChannelCommandGate>,
 }
 
@@ -111,7 +113,9 @@ impl AutoReplyDispatch {
             }
         }
 
-        // Stage 2: Plugin-owned binding (stub — would check plugin registry)
+        // Stage 2: Plugin-owned binding (stub — plugin registry integration is
+        // not yet implemented; `plugin_binding` remains `None` until then).
+        // TODO: wire plugin registry once plugin-owned agent bindings exist.
         // let plugin_binding = self.resolve_plugin_binding(message).await;
 
         // Stage 3: Extract workspace hint from message content

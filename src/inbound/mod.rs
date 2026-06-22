@@ -107,11 +107,10 @@ impl DefaultInboundPipeline {
         media_pipeline: MediaUnderstandingPipeline,
         dispatch: AutoReplyDispatch,
         queue_resolver: QueueModeResolver,
-        router: AgentRouter,
+        router: Arc<AgentRouter>,
         routed_tx: mpsc::Sender<RoutedMessage>,
         flush_rx: mpsc::Receiver<Vec<crate::inbound::debounce::DebouncedItem>>,
     ) -> Self {
-        let router = Arc::new(router);
         let pre_stages = default_pre_debounce_stages(None, debouncer.clone());
         let post_stages = default_post_debounce_stages(
             media_pipeline.clone(),

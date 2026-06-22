@@ -68,7 +68,7 @@ mod tests {
                     MediaUnderstandingPipeline::new(),
                     dispatch,
                     QueueModeResolver::new(),
-                    router,
+                    Arc::new(router),
                     routed_tx,
                     flush_rx,
                 )
