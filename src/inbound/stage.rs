@@ -383,7 +383,7 @@ pub fn build_routed_message(ctx: &mut InboundContext) -> Result<RoutedMessage, S
         incoming: ctx.message.clone(),
         agent_id: route.agent_id,
         workspace_id: route.workspace_id,
-        queue_mode: ctx.queue_mode.unwrap_or(QueueMode::Interrupt),
+        queue_mode: ctx.queue_mode.unwrap_or(QueueMode::Normal),
         suppress_delivery: ctx
             .dispatch_result
             .as_ref()

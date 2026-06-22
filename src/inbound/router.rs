@@ -222,7 +222,6 @@ pub struct AgentRouter {
     /// Optional persistent binding store
     binding_store: Option<Arc<dyn BindingStore>>,
     /// Optional conversation resolver for supplementary routing fallback.
-    #[allow(dead_code)]
     conversation_resolver: Option<ConversationResolver>,
 }
 

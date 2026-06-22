@@ -85,6 +85,35 @@ impl AutoReplyDispatch {
         self
     }
 
+    /// Build an [`AuthContext`] for the secondary command gate check.
+    ///
+    /// If the incoming message was produced by a channel handler that already
+    /// computed an auth context, reuse the permission bits stored in
+    /// `message.metadata.extra["auth_context"]`. Otherwise fall back to an
+    /// empty context with all permission flags set to `false`.
+    ///
+    /// TODO: pass `ChannelPolicy` / `OwnerStore` into the dispatch layer so
+    /// admin/owner/allowlist status can be computed here instead of relying on
+    /// metadata from channel handlers.
+    fn auth_context_for_message(message: &IncomingMessage, channel: String) -> AuthContext {
+        if let Some(value) = message.metadata.extra.get("auth_context") {
+            if let Ok(ctx) = serde_json::from_value::<AuthContext>(value.clone()) {
+                return ctx;
+            }
+        }
+        AuthContext {
+            user_id: message.user_id.0.clone(),
+            channel,
+            command: message.content.clone(),
+            is_paired: false,
+            is_admin: false,
+            is_allowlisted: false,
+            is_owner: false,
+            provider_hint: None,
+            custom_flags: Default::default(),
+        }
+    }
+
     /// Process a message through the dispatch layer.
     ///
     /// Returns `DispatchResult::suppress(...)` if the message should not
@@ -92,6 +121,7 @@ impl AutoReplyDispatch {
     pub async fn process(
         &self,
         message: &IncomingMessage,
+        // Media understanding results, reserved for future dispatch logic.
         _media_results: Option<&MediaUnderstandingResult>,
     ) -> DispatchResult {
         // Stage 1: Send policy evaluation
@@ -141,17 +171,7 @@ impl AutoReplyDispatch {
                 crate::channels::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
                 _ => "unknown".to_string(),
             };
-            let ctx = AuthContext {
-                user_id: message.user_id.0.clone(),
-                channel,
-                command: message.content.clone(),
-                is_paired: false,
-                is_admin: false,
-                is_allowlisted: false,
-                is_owner: false,
-                provider_hint: None,
-                custom_flags: Default::default(),
-            };
+            let ctx = Self::auth_context_for_message(message, channel);
             let decision = gate.check(&ctx).await;
             if !decision.is_allowed() {
                 return DispatchResult::suppress(format!(
@@ -173,7 +193,7 @@ impl AutoReplyDispatch {
         }
     }
 
-    /// Extract a `@workspace_name` mention from message content.
+    /// Extract a `#workspace_name` mention from message content.
     fn extract_workspace_mention(content: &str) -> Option<String> {
         // Look for #workspace_name anywhere in the message
         for word in content.split_whitespace() {

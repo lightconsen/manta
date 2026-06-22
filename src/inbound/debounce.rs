@@ -4,7 +4,6 @@
 //! them after a configurable timeout. This prevents a flood of rapid
 //! messages from triggering multiple concurrent agent runs.
 //!
-//! ts`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -151,7 +150,6 @@ impl InboundDebouncer {
 
         let debounce_ms = self.config.debounce_ms;
         let flush_tx = guard.flush_tx.clone();
-        let _items_to_flush: Vec<DebouncedItem> = guard.items.clone();
         let key_clone = key.clone();
         let self_arc = self.clone();
 
