@@ -454,8 +454,7 @@ impl AcpControlPlane {
         let timeout = config.timeout_seconds;
         let max_iterations = self.max_iterations;
 
-        // Capture fields needed for crash recovery logging
-        let _recovery_config = self.recovery.clone();
+        // Capture fields needed for crash recovery.
         let acp_for_recovery = self.clone();
         let recovery_session_id = session_id.clone();
         let recovery_parent_id = parent_id.clone();
@@ -689,7 +688,9 @@ impl AcpControlPlane {
                             config: cfg,
                             crash_count: current_crash_count + 1,
                         };
-                        let _ = acp.command_tx.send(cmd).await;
+                        if let Err(e) = acp.command_tx.send(cmd).await {
+                            warn!("Failed to schedule recovery command for {}: {}", watch_id, e);
+                        }
                     });
                 }
                 Err(_) => {
@@ -740,7 +741,9 @@ impl AcpControlPlane {
                     let created = session.created_at;
                     let sid = session_id.0.clone();
                     drop(sessions);
-                    let _ = store.save_acp_session(&sid, &parent, &ids, created).await;
+                    if let Err(e) = store.save_acp_session(&sid, &parent, &ids, created).await {
+                        warn!("Failed to persist updated ACP session {}: {}", sid, e);
+                    }
                 }
             }
         }
@@ -1239,13 +1242,18 @@ impl AcpControlPlane {
 
         if let Some(subagent) = subagents.get_mut(subagent_id) {
             subagent.status = SubagentStatus::ShuttingDown;
-            let _ = subagent.command_tx.send(SubagentCommand::Shutdown).await;
+            if let Err(e) = subagent.command_tx.send(SubagentCommand::Shutdown).await {
+                warn!("Failed to send shutdown command to subagent {}: {}", subagent_id, e);
+            }
             // Watchdog task will update status to Terminated once the task exits.
             drop(subagents);
             if let Some(ref store) = self.store {
-                let _ = store
+                if let Err(e) = store
                     .update_subagent_run_status(subagent_id, "shutting_down")
-                    .await;
+                    .await
+                {
+                    warn!("Failed to persist shutting_down status for {}: {}", subagent_id, e);
+                }
             }
             Ok(true)
         } else {
@@ -1289,7 +1297,9 @@ impl AcpControlPlane {
                 })?;
 
         // 1. Cancel any in-progress execution
-        let _ = subagent.command_tx.send(SubagentCommand::Cancel).await;
+        if let Err(e) = subagent.command_tx.send(SubagentCommand::Cancel).await {
+            warn!("Failed to send cancel command to subagent {}: {}", subagent_id, e);
+        }
 
         // 2. Build steer message
         let steer_msg = IncomingMessage::new(
@@ -1407,8 +1417,9 @@ impl AcpControlPlane {
 
     /// Get subagent tree for a session (recursive parent-child hierarchy)
     pub async fn get_subagent_tree(&self, session_id: &AcpSessionId) -> Vec<SubagentTreeNode> {
-        let sessions = self.sessions.read().await;
+        // Follow documented lock order: subagents -> sessions.
         let subagents = self.subagents.read().await;
+        let sessions = self.sessions.read().await;
 
         let session = match sessions.get(session_id) {
             Some(s) => s,
