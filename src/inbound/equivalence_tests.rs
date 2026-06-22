@@ -64,6 +64,10 @@ mod tests {
             envelope_manager: Option<SessionEnvelopeManager>,
         ) -> Self {
             let (routed_tx, routed_rx) = mpsc::channel::<RoutedMessage>(64);
+            let envelope_manager = envelope_manager.unwrap_or_else(|| {
+                let dir = tempfile::tempdir().expect("failed to create temp envelope dir");
+                SessionEnvelopeManager::new(dir.into_path())
+            });
             let pipeline = Arc::new(
                 DefaultInboundPipeline::new(
                     debouncer,
@@ -75,9 +79,7 @@ mod tests {
                     flush_rx,
                 )
                 .with_identity_validator(IdentityValidator::new())
-                .with_envelope_manager(envelope_manager.unwrap_or_else(|| {
-                    SessionEnvelopeManager::new(crate::dirs::data_dir().join("test-envelopes"))
-                })),
+                .with_envelope_manager(envelope_manager),
             );
             // Start the background loop on a clone so the harness keeps an Arc.
             pipeline.clone().start();
@@ -129,13 +131,15 @@ mod tests {
             envelope_manager: Option<SessionEnvelopeManager>,
         ) -> Arc<Self> {
             let (routed_tx, routed_rx) = mpsc::channel::<RoutedMessage>(64);
+            let envelope_manager = envelope_manager.unwrap_or_else(|| {
+                let dir = tempfile::tempdir().expect("failed to create temp envelope dir");
+                SessionEnvelopeManager::new(dir.into_path())
+            });
             let pre_stages = default_pre_debounce_stages(Some(IdentityValidator::new()), debouncer.clone());
             let post_stages = default_post_debounce_stages(
                 MediaUnderstandingPipeline::new(),
                 dispatch,
-                Some(envelope_manager.unwrap_or_else(|| {
-                    SessionEnvelopeManager::new(crate::dirs::data_dir().join("test-envelopes"))
-                })),
+                Some(envelope_manager),
                 QueueModeResolver::new(),
                 std::sync::Arc::new(router),
             );
@@ -317,6 +321,15 @@ mod tests {
             assert_eq!(l.agent_id, r.agent_id, "{context}: msg {i} agent_id mismatch");
             assert_eq!(l.workspace_id, r.workspace_id, "{context}: msg {i} workspace_id mismatch");
             assert_eq!(l.queue_mode, r.queue_mode, "{context}: msg {i} queue_mode mismatch");
+            assert_eq!(
+                l.suppress_delivery, r.suppress_delivery,
+                "{context}: msg {i} suppress_delivery mismatch"
+            );
+            assert_eq!(
+                l.media_results.is_some(),
+                r.media_results.is_some(),
+                "{context}: msg {i} media_results presence mismatch"
+            );
             assert_eq!(
                 l.incoming.content, r.incoming.content,
                 "{context}: msg {i} content mismatch"

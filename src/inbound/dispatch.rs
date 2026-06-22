@@ -195,12 +195,19 @@ impl AutoReplyDispatch {
 
     /// Extract a `#workspace_name` mention from message content.
     fn extract_workspace_mention(content: &str) -> Option<String> {
-        // Look for #workspace_name anywhere in the message
         for word in content.split_whitespace() {
             if let Some(name) = word.strip_prefix('#') {
+                if name.is_empty() {
+                    continue;
+                }
                 let name =
                     name.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '-');
-                if !name.is_empty() {
+                let starts_valid = name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false);
+                if starts_valid && !name.is_empty() {
                     return Some(name.to_string());
                 }
             }

@@ -57,6 +57,8 @@ pub struct RoutedMessage {
     pub suppress_delivery: bool,
     /// Media understanding results (if any attachments were processed)
     pub media_results: Option<MediaUnderstandingResult>,
+    /// Session envelope context captured during pipeline processing.
+    pub envelope_context: Option<crate::channels::envelope::SessionEnvelopeContext>,
 }
 
 /// The inbound pipeline trait.

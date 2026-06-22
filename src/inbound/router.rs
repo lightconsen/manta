@@ -474,7 +474,16 @@ impl AgentRouter {
     /// [`AgentRouterConfig::auto_create_binding`] is disabled, this returns
     /// `false` and no binding is stored.
     pub async fn bind_session(&self, session_id: &str, route: &RouteResult) -> bool {
-        if !self.auto_create_binding.load(Ordering::Relaxed) {
+        if !self.auto_create_binding.load(Ordering::Acquire) {
+            return false;
+        }
+
+        if session_id.is_empty() {
+            warn!("Refusing to bind empty session_id");
+            return false;
+        }
+        if route.agent_id.is_empty() {
+            warn!("Refusing to bind empty agent_id for session {}", session_id);
             return false;
         }
 
@@ -517,7 +526,7 @@ impl AgentRouter {
 
     /// Set whether the router should create bindings on-the-fly.
     pub fn set_auto_create_binding(&self, enabled: bool) {
-        self.auto_create_binding.store(enabled, Ordering::Relaxed);
+        self.auto_create_binding.store(enabled, Ordering::Release);
     }
 
     /// Set the default agent for a channel.

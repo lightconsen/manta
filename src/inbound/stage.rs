@@ -36,7 +36,7 @@ use super::{
     queue::QueueMode, router::RouteResult, AutoReplyDispatch, MediaUnderstandingPipeline,
     QueueModeResolver, RoutedMessage,
 };
-use crate::channels::envelope::SessionEnvelopeManager;
+use crate::channels::envelope::{SessionEnvelopeContext, SessionEnvelopeManager};
 use crate::channels::identity::IdentityValidator;
 use crate::channels::IncomingMessage;
 
@@ -106,8 +106,8 @@ pub struct InboundContext {
     pub queue_mode: Option<QueueMode>,
     /// Result of agent routing.
     pub route_result: Option<RouteResult>,
-    /// Whether the session envelope was updated.
-    pub envelope_updated: bool,
+    /// Session envelope context (populated by [`EnvelopeStage`]).
+    pub envelope_context: Option<SessionEnvelopeContext>,
 }
 
 impl InboundContext {
@@ -118,7 +118,7 @@ impl InboundContext {
             dispatch_result: None,
             queue_mode: None,
             route_result: None,
-            envelope_updated: false,
+            envelope_context: None,
         }
     }
 }
@@ -302,11 +302,11 @@ impl InboundStage for EnvelopeStage {
     }
 
     async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
-        let _envelope = self
+        let envelope = self
             .envelope_manager
             .get_or_create(&ctx.message.conversation_id.0)
             .await;
-        ctx.envelope_updated = true;
+        ctx.envelope_context = Some(envelope);
         Ok(InboundStageAction::Continue)
     }
 }
@@ -397,6 +397,7 @@ pub fn build_routed_message(ctx: &mut InboundContext) -> Result<RoutedMessage, S
             .map(|d| d.suppress)
             .unwrap_or(false),
         media_results: ctx.media_result.take(),
+        envelope_context: ctx.envelope_context.take(),
     })
 }
 
