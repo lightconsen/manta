@@ -1,9 +1,11 @@
-//! Equivalence tests between the legacy `DefaultInboundPipeline` and the
-//! new stage-based pipeline.
+//! Equivalence tests between `DefaultInboundPipeline` and a hand-assembled
+//! stage runner.
 //!
-//! These tests do **not** modify production code. They construct both
-//! implementations from the same components, feed them identical inputs, and
-//! assert that the observable outputs are the same.
+//! Both harnesses use the same [`InboundStage`] wrappers; the difference is
+//! whether the stages are executed by `DefaultInboundPipeline` (which caches
+//! the default pre/post stage lists) or by the test harness directly. These
+//! tests construct both implementations from the same components, feed them
+//! identical inputs, and assert that the observable outputs are the same.
 //!
 //! Observable outputs:
 //! - `process(message)` returns the same `Option<RoutedMessage>`
@@ -44,14 +46,14 @@ mod tests {
         ) -> (Option<RoutedMessage>, Vec<RoutedMessage>);
     }
 
-    // ── Legacy harness ───────────────────────────────────────────────────────
+    // ── DefaultInboundPipeline harness ───────────────────────────────────────
 
-    struct LegacyHarness {
+    struct DefaultPipelineHarness {
         pipeline: Arc<DefaultInboundPipeline>,
         routed_rx: tokio::sync::Mutex<mpsc::Receiver<RoutedMessage>>,
     }
 
-    impl LegacyHarness {
+    impl DefaultPipelineHarness {
         async fn new(
             debouncer: Arc<InboundDebouncer>,
             flush_rx: mpsc::Receiver<Vec<DebouncedItem>>,
@@ -85,7 +87,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl PipelineHarness for LegacyHarness {
+    impl PipelineHarness for DefaultPipelineHarness {
         async fn process(
             &self,
             msg: IncomingMessage,
@@ -174,15 +176,15 @@ mod tests {
     // ── Shared assertions ────────────────────────────────────────────────────
 
     async fn assert_process_equivalent(
-        legacy: &dyn PipelineHarness,
+        default_pipeline: &dyn PipelineHarness,
         stage: &dyn PipelineHarness,
         msg: IncomingMessage,
     ) {
-        let (legacy_result, legacy_channel) = legacy.process(msg.clone()).await;
+        let (default_result, default_channel) = default_pipeline.process(msg.clone()).await;
         let (stage_result, stage_channel) = stage.process(msg).await;
 
-        assert_routed_message_eq(&legacy_result, &stage_result, "process() return value mismatch");
-        assert_channel_eq(&legacy_channel, &stage_channel, "process() routed_tx mismatch");
+        assert_routed_message_eq(&default_result, &stage_result, "process() return value mismatch");
+        assert_channel_eq(&default_channel, &stage_channel, "process() routed_tx mismatch");
     }
 
     fn assert_routed_message_eq(
@@ -207,8 +209,12 @@ mod tests {
                     "{context}: media_results presence mismatch"
                 );
             }
-            (None, Some(_)) => panic!("{context}: legacy returned None, stage returned Some"),
-            (Some(_), None) => panic!("{context}: legacy returned Some, stage returned None"),
+            (None, Some(_)) => {
+                panic!("{context}: default pipeline returned None, stage returned Some")
+            }
+            (Some(_), None) => {
+                panic!("{context}: default pipeline returned Some, stage returned None")
+            }
         }
     }
 
@@ -284,10 +290,10 @@ mod tests {
         }
     }
 
-    async fn build_legacy(
+    async fn build_default_pipeline(
         config: AutoReplyDispatchConfig,
         router_config: AgentRouterConfig,
-    ) -> LegacyHarness {
+    ) -> DefaultPipelineHarness {
         let (flush_tx, flush_rx) = mpsc::channel::<Vec<DebouncedItem>>(64);
         let debouncer = InboundDebouncer::new(
             InboundDebouncerConfig {
@@ -298,7 +304,7 @@ mod tests {
         );
         let dispatch = AutoReplyDispatch::new(config);
         let router = AgentRouter::new(router_config);
-        LegacyHarness::new(debouncer, flush_rx, dispatch, router, None).await
+        DefaultPipelineHarness::new(debouncer, flush_rx, dispatch, router, None).await
     }
 
     async fn build_stage(
@@ -323,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn equivalence_plain_message_routes_to_default() {
-        let legacy = build_legacy(
+        let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
         )
@@ -331,12 +337,12 @@ mod tests {
         let stage =
             build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
                 .await;
-        assert_process_equivalent(&legacy, &stage, plain_message()).await;
+        assert_process_equivalent(&default_pipeline, &stage, plain_message()).await;
     }
 
     #[tokio::test]
     async fn equivalence_command_bypasses_debounce() {
-        let legacy = build_legacy(
+        let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
         )
@@ -344,34 +350,38 @@ mod tests {
         let stage =
             build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
                 .await;
-        assert_process_equivalent(&legacy, &stage, command_message()).await;
+        assert_process_equivalent(&default_pipeline, &stage, command_message()).await;
     }
 
     #[tokio::test]
     async fn equivalence_group_unmentioned_suppressed() {
-        let legacy =
-            build_legacy(dispatch_config_suppress_groups(), router_config_default_agent("default"))
-                .await;
+        let default_pipeline = build_default_pipeline(
+            dispatch_config_suppress_groups(),
+            router_config_default_agent("default"),
+        )
+        .await;
         let stage =
             build_stage(dispatch_config_suppress_groups(), router_config_default_agent("default"))
                 .await;
-        assert_process_equivalent(&legacy, &stage, group_unmentioned_message()).await;
+        assert_process_equivalent(&default_pipeline, &stage, group_unmentioned_message()).await;
     }
 
     #[tokio::test]
     async fn equivalence_group_mentioned_allowed() {
-        let legacy =
-            build_legacy(dispatch_config_suppress_groups(), router_config_default_agent("default"))
-                .await;
+        let default_pipeline = build_default_pipeline(
+            dispatch_config_suppress_groups(),
+            router_config_default_agent("default"),
+        )
+        .await;
         let stage =
             build_stage(dispatch_config_suppress_groups(), router_config_default_agent("default"))
                 .await;
-        assert_process_equivalent(&legacy, &stage, mentioned_message()).await;
+        assert_process_equivalent(&default_pipeline, &stage, mentioned_message()).await;
     }
 
     #[tokio::test]
     async fn equivalence_agent_mention_overrides_default() {
-        let legacy = build_legacy(
+        let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
         )
@@ -379,12 +389,12 @@ mod tests {
         let stage =
             build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
                 .await;
-        assert_process_equivalent(&legacy, &stage, agent_mention_message()).await;
+        assert_process_equivalent(&default_pipeline, &stage, agent_mention_message()).await;
     }
 
     #[tokio::test]
     async fn equivalence_workspace_mention_sets_workspace() {
-        let legacy = build_legacy(
+        let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
         )
@@ -392,12 +402,12 @@ mod tests {
         let stage =
             build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
                 .await;
-        assert_process_equivalent(&legacy, &stage, workspace_mention_message()).await;
+        assert_process_equivalent(&default_pipeline, &stage, workspace_mention_message()).await;
     }
 
     #[tokio::test]
     async fn equivalence_interrupt_sets_queue_mode() {
-        let legacy = build_legacy(
+        let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
         )
@@ -405,12 +415,12 @@ mod tests {
         let stage =
             build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
                 .await;
-        assert_process_equivalent(&legacy, &stage, interrupt_message()).await;
+        assert_process_equivalent(&default_pipeline, &stage, interrupt_message()).await;
     }
 
     #[tokio::test]
     async fn equivalence_image_attachment_produces_media_results() {
-        let legacy = build_legacy(
+        let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
         )
@@ -418,6 +428,6 @@ mod tests {
         let stage =
             build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
                 .await;
-        assert_process_equivalent(&legacy, &stage, image_message()).await;
+        assert_process_equivalent(&default_pipeline, &stage, image_message()).await;
     }
 }

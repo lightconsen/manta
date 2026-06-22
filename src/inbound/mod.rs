@@ -5,8 +5,9 @@
 //! processing pipeline:
 //!
 //! ```text
-//! Channel Extension -> Debounce -> Media Understanding -> Dispatch
-//! -> Queue Mode Resolve -> Agent Router -> Agent
+//! Channel Extension -> Identity (optional) -> Debounce -> Media Understanding
+//! -> Dispatch -> Envelope (optional) -> Queue Mode Resolve -> Agent Router
+//! -> Agent
 //! ```
 
 use std::sync::Arc;
@@ -94,6 +95,10 @@ pub struct DefaultInboundPipeline {
     identity_validator: Option<IdentityValidator>,
     /// Optional session envelope manager for tracking session context.
     envelope_manager: Option<SessionEnvelopeManager>,
+    /// Cached pre-debounce stage list to avoid rebuilding it per message.
+    pre_stages: Vec<Box<dyn crate::inbound::stage::InboundStage>>,
+    /// Cached post-debounce stage list to avoid rebuilding it per message.
+    post_stages: Vec<Box<dyn crate::inbound::stage::InboundStage>>,
 }
 
 impl DefaultInboundPipeline {
@@ -106,28 +111,47 @@ impl DefaultInboundPipeline {
         routed_tx: mpsc::Sender<RoutedMessage>,
         flush_rx: mpsc::Receiver<Vec<crate::inbound::debounce::DebouncedItem>>,
     ) -> Self {
+        let router = Arc::new(router);
+        let pre_stages = default_pre_debounce_stages(None, debouncer.clone());
+        let post_stages = default_post_debounce_stages(
+            media_pipeline.clone(),
+            dispatch.clone(),
+            None,
+            queue_resolver.clone(),
+            router.clone(),
+        );
         Self {
             debouncer,
             media_pipeline,
             dispatch,
             queue_resolver,
-            router: Arc::new(router),
+            router,
             routed_tx,
             flush_rx: tokio::sync::Mutex::new(flush_rx),
             identity_validator: None,
             envelope_manager: None,
+            pre_stages,
+            post_stages,
         }
     }
 
     /// Attach an identity validator for pre-debounce checks.
     pub fn with_identity_validator(mut self, validator: IdentityValidator) -> Self {
-        self.identity_validator = Some(validator);
+        self.identity_validator = Some(validator.clone());
+        self.pre_stages = default_pre_debounce_stages(Some(validator), self.debouncer.clone());
         self
     }
 
     /// Attach a session envelope manager for tracking session context.
     pub fn with_envelope_manager(mut self, manager: SessionEnvelopeManager) -> Self {
-        self.envelope_manager = Some(manager);
+        self.envelope_manager = Some(manager.clone());
+        self.post_stages = default_post_debounce_stages(
+            self.media_pipeline.clone(),
+            self.dispatch.clone(),
+            Some(manager),
+            self.queue_resolver.clone(),
+            self.router.clone(),
+        );
         self
     }
 
@@ -142,11 +166,10 @@ impl DefaultInboundPipeline {
 
     async fn run_loop(self: Arc<Self>) {
         let mut rx = self.flush_rx.lock().await;
-        let post_stages = self.build_post_stages();
         while let Some(batch) = rx.recv().await {
             for item in batch {
                 let mut ctx = InboundContext::new(item.message);
-                match run_inbound_stages(&post_stages, &mut ctx).await {
+                match run_inbound_stages(&self.post_stages, &mut ctx).await {
                     Ok(InboundStageAction::Continue) => {
                         let routed = build_routed_message(&mut ctx);
                         let _ = self.routed_tx.send(routed).await;
@@ -161,20 +184,6 @@ impl DefaultInboundPipeline {
             }
         }
     }
-
-    fn build_pre_stages(&self) -> Vec<Box<dyn crate::inbound::stage::InboundStage>> {
-        default_pre_debounce_stages(self.identity_validator.clone(), self.debouncer.clone())
-    }
-
-    fn build_post_stages(&self) -> Vec<Box<dyn crate::inbound::stage::InboundStage>> {
-        default_post_debounce_stages(
-            self.media_pipeline.clone(),
-            self.dispatch.clone(),
-            self.envelope_manager.clone(),
-            self.queue_resolver.clone(),
-            self.router.clone(),
-        )
-    }
 }
 
 #[async_trait::async_trait]
@@ -182,8 +191,7 @@ impl InboundPipeline for DefaultInboundPipeline {
     async fn process(&self, message: IncomingMessage) -> Option<RoutedMessage> {
         let mut ctx = InboundContext::new(message);
 
-        let pre_stages = self.build_pre_stages();
-        match run_inbound_stages(&pre_stages, &mut ctx).await {
+        match run_inbound_stages(&self.pre_stages, &mut ctx).await {
             Ok(InboundStageAction::Continue) => {}
             Ok(action) => {
                 tracing::debug!(?action, "Pre-debounce terminal action");
@@ -195,8 +203,7 @@ impl InboundPipeline for DefaultInboundPipeline {
             }
         }
 
-        let post_stages = self.build_post_stages();
-        match run_inbound_stages(&post_stages, &mut ctx).await {
+        match run_inbound_stages(&self.post_stages, &mut ctx).await {
             Ok(InboundStageAction::Continue) => {
                 let routed = build_routed_message(&mut ctx);
                 let _ = self.routed_tx.send(routed.clone()).await;
@@ -215,12 +222,11 @@ impl InboundPipeline for DefaultInboundPipeline {
 
     async fn flush(&self, key: &str) -> Vec<RoutedMessage> {
         let messages = self.debouncer.flush_key(key).await;
-        let post_stages = self.build_post_stages();
         let mut routed = Vec::new();
         for msg in messages {
             let mut ctx = InboundContext::new(msg);
             if let Ok(InboundStageAction::Continue) =
-                run_inbound_stages(&post_stages, &mut ctx).await
+                run_inbound_stages(&self.post_stages, &mut ctx).await
             {
                 let r = build_routed_message(&mut ctx);
                 let _ = self.routed_tx.send(r.clone()).await;

@@ -25,9 +25,6 @@
 //! values because they are expected control-flow outcomes, not failures.
 //! [`StageError::Fatal`] is reserved for unexpected failures (database errors,
 //! channel send failures, etc.).
-//!
-//! Gateway wiring is *not* reworked here – the new Vec-based runner is tested
-//! in unit tests only. See `docs/modules/channels.md`.
 
 use std::sync::Arc;
 
