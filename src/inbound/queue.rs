@@ -44,6 +44,7 @@ struct SessionTiming {
 }
 
 /// Queue mode resolver with per-session timing heuristics.
+#[derive(Debug, Clone)]
 pub struct QueueModeResolver {
     /// session_id -> last message timing
     sessions: Arc<RwLock<HashMap<String, SessionTiming>>>,

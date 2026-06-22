@@ -61,6 +61,7 @@ pub struct AutoReplyDispatchConfig {
 /// 3. Workspace hint extraction (`@workspace` mention)
 /// 4. Suppression check (group chats without mention)
 /// 5. Secondary command gate check (channels::CommandGate)
+#[derive(Debug, Clone)]
 pub struct AutoReplyDispatch {
     config: AutoReplyDispatchConfig,
     /// Optional channel-level command gate for richer authorizer logic.

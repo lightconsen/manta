@@ -17,9 +17,14 @@ use tracing::warn;
 use crate::channels::envelope::SessionEnvelopeManager;
 use crate::channels::identity::IdentityValidator;
 use crate::channels::IncomingMessage;
+use crate::inbound::stage::{
+    build_routed_message, default_post_debounce_stages, default_pre_debounce_stages,
+    run_inbound_stages, InboundContext, InboundStageAction, StageError,
+};
 
 pub mod debounce;
 pub mod dispatch;
+pub mod equivalence_tests;
 pub mod media;
 pub mod queue;
 pub mod router;
@@ -72,22 +77,22 @@ pub trait InboundPipeline: Send + Sync {
 
 /// Default inbound pipeline implementation.
 ///
-/// Wires all stages together: debounce -> media -> dispatch -> queue -> router.
+/// Wires all stages together through the pluggable [`InboundStage`] runner:
+/// identity (optional) → debounce → media → dispatch → envelope (optional)
+/// → queue → router.
 pub struct DefaultInboundPipeline {
     debouncer: Arc<InboundDebouncer>,
     media_pipeline: MediaUnderstandingPipeline,
     dispatch: AutoReplyDispatch,
     queue_resolver: QueueModeResolver,
-    router: AgentRouter,
+    router: Arc<AgentRouter>,
     /// Sender to forward routed messages to the agent execution layer.
     routed_tx: mpsc::Sender<RoutedMessage>,
     /// Receiver for debounced message batches from the debouncer.
     flush_rx: tokio::sync::Mutex<mpsc::Receiver<Vec<crate::inbound::debounce::DebouncedItem>>>,
     /// Optional identity validator for pre-debounce checks.
-    #[allow(dead_code)]
     identity_validator: Option<IdentityValidator>,
     /// Optional session envelope manager for tracking session context.
-    #[allow(dead_code)]
     envelope_manager: Option<SessionEnvelopeManager>,
 }
 
@@ -106,7 +111,7 @@ impl DefaultInboundPipeline {
             media_pipeline,
             dispatch,
             queue_resolver,
-            router,
+            router: Arc::new(router),
             routed_tx,
             flush_rx: tokio::sync::Mutex::new(flush_rx),
             identity_validator: None,
@@ -137,103 +142,88 @@ impl DefaultInboundPipeline {
 
     async fn run_loop(self: Arc<Self>) {
         let mut rx = self.flush_rx.lock().await;
+        let post_stages = self.build_post_stages();
         while let Some(batch) = rx.recv().await {
             for item in batch {
-                let _ = self.process_stages(item.message).await;
+                let mut ctx = InboundContext::new(item.message);
+                match run_inbound_stages(&post_stages, &mut ctx).await {
+                    Ok(InboundStageAction::Continue) => {
+                        let routed = build_routed_message(&mut ctx);
+                        let _ = self.routed_tx.send(routed).await;
+                    }
+                    Ok(action) => {
+                        tracing::debug!(?action, "Debounce flush terminal action");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Post-debounce stage failed during flush");
+                    }
+                }
             }
         }
     }
 
-    /// Run the pipeline stages after debounce (media, dispatch, queue, router).
-    /// Called directly for messages that have already passed through the
-    /// debouncer.
-    async fn process_stages(&self, message: IncomingMessage) -> Option<RoutedMessage> {
-        // Stage 2: Media understanding
-        let media_results = if !message.attachments.is_empty() {
-            Some(self.media_pipeline.process(&message).await)
-        } else {
-            None
-        };
+    fn build_pre_stages(&self) -> Vec<Box<dyn crate::inbound::stage::InboundStage>> {
+        default_pre_debounce_stages(self.identity_validator.clone(), self.debouncer.clone())
+    }
 
-        // Stage 3: Dispatch (send policy, plugin-owned binding, etc.)
-        let dispatch_result = self
-            .dispatch
-            .process(&message, media_results.as_ref())
-            .await;
-        if dispatch_result.suppress {
-            return None;
-        }
-
-        // Envelope tracking (between dispatch and queue/routing)
-        if let Some(ref envelope_manager) = self.envelope_manager {
-            let _envelope = envelope_manager
-                .get_or_create(&message.conversation_id.0)
-                .await;
-        }
-
-        // Stage 4: Queue mode resolution
-        let queue_mode = self.queue_resolver.resolve(&message).await;
-
-        // Stage 5: Agent routing
-        let route = self
-            .router
-            .route(&message, dispatch_result.workspace_hint.as_deref())
-            .await;
-
-        let routed = RoutedMessage {
-            incoming: message,
-            agent_id: route.agent_id,
-            workspace_id: route.workspace_id,
-            queue_mode,
-            suppress_delivery: dispatch_result.suppress,
-            media_results,
-        };
-
-        // Forward to the agent execution layer
-        let _ = self.routed_tx.send(routed.clone()).await;
-
-        Some(routed)
+    fn build_post_stages(&self) -> Vec<Box<dyn crate::inbound::stage::InboundStage>> {
+        default_post_debounce_stages(
+            self.media_pipeline.clone(),
+            self.dispatch.clone(),
+            self.envelope_manager.clone(),
+            self.queue_resolver.clone(),
+            self.router.clone(),
+        )
     }
 }
 
 #[async_trait::async_trait]
 impl InboundPipeline for DefaultInboundPipeline {
     async fn process(&self, message: IncomingMessage) -> Option<RoutedMessage> {
-        // Stage 0: Identity validation (warn-only, never drops messages)
-        if let Some(ref validator) = self.identity_validator {
-            let identity = crate::channels::identity::SenderIdentity {
-                user_id: message.user_id.0.clone(),
-                display_name: None,
-                username: None,
-                phone: None,
-                email: None,
-                raw: None,
-                platform_data: None,
-            };
-            let result = validator.validate(&identity);
-            if let Err(ref err) = result {
-                warn!(
-                    message_id = %message.id,
-                    user_id = %message.user_id,
-                    conversation_id = %message.conversation_id,
-                    reason = %err,
-                    "Identity validation failed (message not dropped)"
-                );
+        let mut ctx = InboundContext::new(message);
+
+        let pre_stages = self.build_pre_stages();
+        match run_inbound_stages(&pre_stages, &mut ctx).await {
+            Ok(InboundStageAction::Continue) => {}
+            Ok(action) => {
+                tracing::debug!(?action, "Pre-debounce terminal action");
+                return None;
+            }
+            Err(StageError::Fatal { stage, source }) => {
+                warn!(stage, error = %source, "Pre-debounce stage failed");
+                return None;
             }
         }
 
-        // Stage 1: Debounce
-        // If the message should be batched, the debouncer absorbs it and
-        // will emit a flushed batch later.
-        let debounced = self.debouncer.enqueue(message).await?;
-        self.process_stages(debounced).await
+        let post_stages = self.build_post_stages();
+        match run_inbound_stages(&post_stages, &mut ctx).await {
+            Ok(InboundStageAction::Continue) => {
+                let routed = build_routed_message(&mut ctx);
+                let _ = self.routed_tx.send(routed.clone()).await;
+                Some(routed)
+            }
+            Ok(action) => {
+                tracing::debug!(?action, "Post-debounce terminal action");
+                None
+            }
+            Err(StageError::Fatal { stage, source }) => {
+                warn!(stage, error = %source, "Post-debounce stage failed");
+                None
+            }
+        }
     }
 
     async fn flush(&self, key: &str) -> Vec<RoutedMessage> {
         let messages = self.debouncer.flush_key(key).await;
+        let post_stages = self.build_post_stages();
         let mut routed = Vec::new();
         for msg in messages {
-            if let Some(r) = self.process_stages(msg).await {
+            let mut ctx = InboundContext::new(msg);
+            if let Ok(InboundStageAction::Continue) =
+                run_inbound_stages(&post_stages, &mut ctx).await
+            {
+                let r = build_routed_message(&mut ctx);
+                let _ = self.routed_tx.send(r.clone()).await;
                 routed.push(r);
             }
         }

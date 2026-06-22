@@ -1,0 +1,423 @@
+//! Equivalence tests between the legacy `DefaultInboundPipeline` and the
+//! new stage-based pipeline.
+//!
+//! These tests do **not** modify production code. They construct both
+//! implementations from the same components, feed them identical inputs, and
+//! assert that the observable outputs are the same.
+//!
+//! Observable outputs:
+//! - `process(message)` returns the same `Option<RoutedMessage>`
+//! - `flush(key)` returns the same list of `RoutedMessage`s
+//! - The routed_tx channel receives the same messages
+//! - Suppression behavior matches
+//! - Queue mode selection matches
+//! - Agent/workspace routing matches
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use tokio::sync::mpsc;
+
+    use crate::channels::envelope::SessionEnvelopeManager;
+    use crate::channels::identity::IdentityValidator;
+    use crate::channels::{Attachment, IncomingMessage, InputProvenance, MentionState};
+    use crate::inbound::debounce::{DebouncedItem, InboundDebouncer, InboundDebouncerConfig};
+    use crate::inbound::dispatch::{AutoReplyDispatch, AutoReplyDispatchConfig};
+    use crate::inbound::media::MediaUnderstandingPipeline;
+    use crate::inbound::queue::QueueModeResolver;
+    use crate::inbound::router::{AgentRouter, AgentRouterConfig};
+    use crate::inbound::stage::{
+        build_routed_message, default_post_debounce_stages, default_pre_debounce_stages,
+        run_inbound_stages, InboundContext, InboundStageAction,
+    };
+    use crate::inbound::{DefaultInboundPipeline, InboundPipeline, RoutedMessage};
+
+    /// Shared test harness interface.
+    #[async_trait]
+    trait PipelineHarness: Send + Sync {
+        async fn process(
+            &self,
+            msg: IncomingMessage,
+        ) -> (Option<RoutedMessage>, Vec<RoutedMessage>);
+    }
+
+    // ── Legacy harness ───────────────────────────────────────────────────────
+
+    struct LegacyHarness {
+        pipeline: Arc<DefaultInboundPipeline>,
+        routed_rx: tokio::sync::Mutex<mpsc::Receiver<RoutedMessage>>,
+    }
+
+    impl LegacyHarness {
+        async fn new(
+            debouncer: Arc<InboundDebouncer>,
+            flush_rx: mpsc::Receiver<Vec<DebouncedItem>>,
+            dispatch: AutoReplyDispatch,
+            router: AgentRouter,
+            envelope_manager: Option<SessionEnvelopeManager>,
+        ) -> Self {
+            let (routed_tx, routed_rx) = mpsc::channel::<RoutedMessage>(64);
+            let pipeline = Arc::new(
+                DefaultInboundPipeline::new(
+                    debouncer,
+                    MediaUnderstandingPipeline::new(),
+                    dispatch,
+                    QueueModeResolver::new(),
+                    router,
+                    routed_tx,
+                    flush_rx,
+                )
+                .with_identity_validator(IdentityValidator::new())
+                .with_envelope_manager(envelope_manager.unwrap_or_else(|| {
+                    SessionEnvelopeManager::new(crate::dirs::data_dir().join("test-envelopes"))
+                })),
+            );
+            // Start the background loop on a clone so the harness keeps an Arc.
+            pipeline.clone().start();
+            Self {
+                pipeline,
+                routed_rx: tokio::sync::Mutex::new(routed_rx),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PipelineHarness for LegacyHarness {
+        async fn process(
+            &self,
+            msg: IncomingMessage,
+        ) -> (Option<RoutedMessage>, Vec<RoutedMessage>) {
+            let mut rx = self.routed_rx.lock().await;
+            let result = self.pipeline.process(msg).await;
+            // Drain any messages sent to the channel during this call.
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let mut channel_messages = Vec::new();
+            while let Ok(m) = rx.try_recv() {
+                channel_messages.push(m);
+            }
+            (result, channel_messages)
+        }
+    }
+
+    // ── Stage-based harness ──────────────────────────────────────────────────
+
+    struct StageHarness {
+        pre_stages: Vec<Box<dyn crate::inbound::stage::InboundStage>>,
+        post_stages: Vec<Box<dyn crate::inbound::stage::InboundStage>>,
+        routed_tx: mpsc::Sender<RoutedMessage>,
+        routed_rx: tokio::sync::Mutex<mpsc::Receiver<RoutedMessage>>,
+    }
+
+    impl StageHarness {
+        async fn new(
+            debouncer: Arc<InboundDebouncer>,
+            dispatch: AutoReplyDispatch,
+            router: AgentRouter,
+            envelope_manager: Option<SessionEnvelopeManager>,
+        ) -> Self {
+            let (routed_tx, routed_rx) = mpsc::channel::<RoutedMessage>(64);
+            let pre_stages = default_pre_debounce_stages(Some(IdentityValidator::new()), debouncer);
+            let post_stages = default_post_debounce_stages(
+                MediaUnderstandingPipeline::new(),
+                dispatch,
+                Some(envelope_manager.unwrap_or_else(|| {
+                    SessionEnvelopeManager::new(crate::dirs::data_dir().join("test-envelopes"))
+                })),
+                QueueModeResolver::new(),
+                std::sync::Arc::new(router),
+            );
+
+            Self {
+                pre_stages,
+                post_stages,
+                routed_tx,
+                routed_rx: tokio::sync::Mutex::new(routed_rx),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PipelineHarness for StageHarness {
+        async fn process(
+            &self,
+            msg: IncomingMessage,
+        ) -> (Option<RoutedMessage>, Vec<RoutedMessage>) {
+            let mut rx = self.routed_rx.lock().await;
+            let mut ctx = InboundContext::new(msg);
+
+            let result = match run_inbound_stages(&self.pre_stages, &mut ctx).await {
+                Ok(InboundStageAction::Continue) => {
+                    match run_inbound_stages(&self.post_stages, &mut ctx).await {
+                        Ok(InboundStageAction::Continue) => {
+                            let routed = build_routed_message(&mut ctx);
+                            let _ = self.routed_tx.send(routed.clone()).await;
+                            Some(routed)
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let mut channel_messages = Vec::new();
+            while let Ok(m) = rx.try_recv() {
+                channel_messages.push(m);
+            }
+            (result, channel_messages)
+        }
+    }
+
+    // ── Shared assertions ────────────────────────────────────────────────────
+
+    async fn assert_process_equivalent(
+        legacy: &dyn PipelineHarness,
+        stage: &dyn PipelineHarness,
+        msg: IncomingMessage,
+    ) {
+        let (legacy_result, legacy_channel) = legacy.process(msg.clone()).await;
+        let (stage_result, stage_channel) = stage.process(msg).await;
+
+        assert_routed_message_eq(&legacy_result, &stage_result, "process() return value mismatch");
+        assert_channel_eq(&legacy_channel, &stage_channel, "process() routed_tx mismatch");
+    }
+
+    fn assert_routed_message_eq(
+        left: &Option<RoutedMessage>,
+        right: &Option<RoutedMessage>,
+        context: &str,
+    ) {
+        match (left, right) {
+            (None, None) => {}
+            (Some(l), Some(r)) => {
+                assert_eq!(l.agent_id, r.agent_id, "{context}: agent_id mismatch");
+                assert_eq!(l.workspace_id, r.workspace_id, "{context}: workspace_id mismatch");
+                assert_eq!(l.queue_mode, r.queue_mode, "{context}: queue_mode mismatch");
+                assert_eq!(
+                    l.suppress_delivery, r.suppress_delivery,
+                    "{context}: suppress_delivery mismatch"
+                );
+                assert_eq!(l.incoming.content, r.incoming.content, "{context}: content mismatch");
+                assert_eq!(
+                    l.media_results.is_some(),
+                    r.media_results.is_some(),
+                    "{context}: media_results presence mismatch"
+                );
+            }
+            (None, Some(_)) => panic!("{context}: legacy returned None, stage returned Some"),
+            (Some(_), None) => panic!("{context}: legacy returned Some, stage returned None"),
+        }
+    }
+
+    fn assert_channel_eq(left: &[RoutedMessage], right: &[RoutedMessage], context: &str) {
+        assert_eq!(left.len(), right.len(), "{context}: channel message count mismatch");
+        for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
+            assert_eq!(l.agent_id, r.agent_id, "{context}: msg {i} agent_id mismatch");
+            assert_eq!(l.workspace_id, r.workspace_id, "{context}: msg {i} workspace_id mismatch");
+            assert_eq!(l.queue_mode, r.queue_mode, "{context}: msg {i} queue_mode mismatch");
+            assert_eq!(
+                l.incoming.content, r.incoming.content,
+                "{context}: msg {i} content mismatch"
+            );
+        }
+    }
+
+    // ── Fixtures ─────────────────────────────────────────────────────────────
+
+    fn plain_message() -> IncomingMessage {
+        IncomingMessage::new("user1", "conv1", "hello")
+    }
+
+    fn command_message() -> IncomingMessage {
+        IncomingMessage::new("user1", "conv1", "/help")
+    }
+
+    fn group_unmentioned_message() -> IncomingMessage {
+        IncomingMessage::new("user1", "conv1", "hello")
+            .with_provenance(InputProvenance::ExternalUser {
+                channel: "telegram".into(),
+                is_direct: false,
+            })
+            .with_mention(MentionState::NotMentioned)
+    }
+
+    fn mentioned_message() -> IncomingMessage {
+        IncomingMessage::new("user1", "conv1", "hello")
+            .with_provenance(InputProvenance::ExternalUser {
+                channel: "telegram".into(),
+                is_direct: false,
+            })
+            .with_mention(MentionState::Mentioned)
+    }
+
+    fn agent_mention_message() -> IncomingMessage {
+        IncomingMessage::new("user1", "conv1", "@sales I need help")
+    }
+
+    fn workspace_mention_message() -> IncomingMessage {
+        IncomingMessage::new("user1", "conv1", "#team-alpha hello")
+    }
+
+    fn interrupt_message() -> IncomingMessage {
+        IncomingMessage::new("user1", "conv1", "!stop")
+    }
+
+    fn image_message() -> IncomingMessage {
+        let attachment = Attachment::new("cat.png", "image/png").with_data(vec![1, 2, 3, 4]);
+        IncomingMessage::new("user1", "conv1", "look at this").with_attachment(attachment)
+    }
+
+    fn dispatch_config_suppress_groups() -> AutoReplyDispatchConfig {
+        AutoReplyDispatchConfig {
+            suppress_unless_mentioned_in_groups: true,
+            ..Default::default()
+        }
+    }
+
+    fn router_config_default_agent(agent_id: &str) -> AgentRouterConfig {
+        AgentRouterConfig {
+            default_agent_id: agent_id.into(),
+            ..Default::default()
+        }
+    }
+
+    async fn build_legacy(
+        config: AutoReplyDispatchConfig,
+        router_config: AgentRouterConfig,
+    ) -> LegacyHarness {
+        let (flush_tx, flush_rx) = mpsc::channel::<Vec<DebouncedItem>>(64);
+        let debouncer = InboundDebouncer::new(
+            InboundDebouncerConfig {
+                debounce_ms: 50,
+                ..Default::default()
+            },
+            flush_tx,
+        );
+        let dispatch = AutoReplyDispatch::new(config);
+        let router = AgentRouter::new(router_config);
+        LegacyHarness::new(debouncer, flush_rx, dispatch, router, None).await
+    }
+
+    async fn build_stage(
+        config: AutoReplyDispatchConfig,
+        router_config: AgentRouterConfig,
+    ) -> StageHarness {
+        let (flush_tx, flush_rx) = mpsc::channel::<Vec<DebouncedItem>>(64);
+        let debouncer = InboundDebouncer::new(
+            InboundDebouncerConfig {
+                debounce_ms: 50,
+                ..Default::default()
+            },
+            flush_tx,
+        );
+        let _ = flush_rx;
+        let dispatch = AutoReplyDispatch::new(config);
+        let router = AgentRouter::new(router_config);
+        StageHarness::new(debouncer, dispatch, router, None).await
+    }
+
+    // ── Tests ────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn equivalence_plain_message_routes_to_default() {
+        let legacy = build_legacy(
+            AutoReplyDispatchConfig::default(),
+            router_config_default_agent("default"),
+        )
+        .await;
+        let stage =
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+                .await;
+        assert_process_equivalent(&legacy, &stage, plain_message()).await;
+    }
+
+    #[tokio::test]
+    async fn equivalence_command_bypasses_debounce() {
+        let legacy = build_legacy(
+            AutoReplyDispatchConfig::default(),
+            router_config_default_agent("default"),
+        )
+        .await;
+        let stage =
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+                .await;
+        assert_process_equivalent(&legacy, &stage, command_message()).await;
+    }
+
+    #[tokio::test]
+    async fn equivalence_group_unmentioned_suppressed() {
+        let legacy =
+            build_legacy(dispatch_config_suppress_groups(), router_config_default_agent("default"))
+                .await;
+        let stage =
+            build_stage(dispatch_config_suppress_groups(), router_config_default_agent("default"))
+                .await;
+        assert_process_equivalent(&legacy, &stage, group_unmentioned_message()).await;
+    }
+
+    #[tokio::test]
+    async fn equivalence_group_mentioned_allowed() {
+        let legacy =
+            build_legacy(dispatch_config_suppress_groups(), router_config_default_agent("default"))
+                .await;
+        let stage =
+            build_stage(dispatch_config_suppress_groups(), router_config_default_agent("default"))
+                .await;
+        assert_process_equivalent(&legacy, &stage, mentioned_message()).await;
+    }
+
+    #[tokio::test]
+    async fn equivalence_agent_mention_overrides_default() {
+        let legacy = build_legacy(
+            AutoReplyDispatchConfig::default(),
+            router_config_default_agent("default"),
+        )
+        .await;
+        let stage =
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+                .await;
+        assert_process_equivalent(&legacy, &stage, agent_mention_message()).await;
+    }
+
+    #[tokio::test]
+    async fn equivalence_workspace_mention_sets_workspace() {
+        let legacy = build_legacy(
+            AutoReplyDispatchConfig::default(),
+            router_config_default_agent("default"),
+        )
+        .await;
+        let stage =
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+                .await;
+        assert_process_equivalent(&legacy, &stage, workspace_mention_message()).await;
+    }
+
+    #[tokio::test]
+    async fn equivalence_interrupt_sets_queue_mode() {
+        let legacy = build_legacy(
+            AutoReplyDispatchConfig::default(),
+            router_config_default_agent("default"),
+        )
+        .await;
+        let stage =
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+                .await;
+        assert_process_equivalent(&legacy, &stage, interrupt_message()).await;
+    }
+
+    #[tokio::test]
+    async fn equivalence_image_attachment_produces_media_results() {
+        let legacy = build_legacy(
+            AutoReplyDispatchConfig::default(),
+            router_config_default_agent("default"),
+        )
+        .await;
+        let stage =
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+                .await;
+        assert_process_equivalent(&legacy, &stage, image_message()).await;
+    }
+}

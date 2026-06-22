@@ -3,8 +3,28 @@
 //! Defines the [`InboundStage`] trait and a [`InboundContext`] shared between
 //! stages, plus stage wrappers for each existing pipeline step.
 //!
-//! The default stage list mirrors the current hard-coded order:
-//! `Identity → Debounce → Media → Dispatch → Envelope → Queue → Router`
+//! # Pipeline split
+//!
+//! The debounce stage is special: it decides whether a message should be
+//! absorbed into a pending batch or released immediately. Therefore the
+//! pipeline is split into two lists:
+//!
+//! * **Pre-debounce stages** – run once when a message first enters the
+//!   pipeline. Currently: identity validation, debounce.
+//! * **Post-debounce stages** – run for every message that leaves the
+//!   debouncer (either because it bypassed debounce or because a batch was
+//!   flushed). Currently: media, dispatch, envelope, queue, router.
+//!
+//! This avoids the cycle that would occur if a flushed message ran through the
+//! debounce stage a second time.
+//!
+//! # Stage errors
+//!
+//! Each stage returns [`Result<InboundStageAction, StageError>`]. Terminal
+//! actions (`Suppress`, `Debounce`) are represented as successful `Ok(...)`
+//! values because they are expected control-flow outcomes, not failures.
+//! [`StageError::Fatal`] is reserved for unexpected failures (database errors,
+//! channel send failures, etc.).
 //!
 //! Gateway wiring is *not* reworked here – the new Vec-based runner is tested
 //! in unit tests only. See `docs/modules/channels.md`.
@@ -23,9 +43,34 @@ use crate::channels::envelope::SessionEnvelopeManager;
 use crate::channels::identity::IdentityValidator;
 use crate::channels::IncomingMessage;
 
+// ── Errors ───────────────────────────────────────────────────────────────────
+
+/// Errors that can occur while running inbound pipeline stages.
+#[derive(Debug, thiserror::Error)]
+pub enum StageError {
+    /// A stage encountered an unexpected failure. The pipeline should stop
+    /// and the error should be logged or propagated.
+    #[error("stage '{stage}' failed: {source}")]
+    Fatal {
+        stage: &'static str,
+        #[source]
+        source: crate::SyscityError,
+    },
+}
+
+impl StageError {
+    /// Convenience constructor for fatal errors.
+    pub fn fatal<S: Into<String>>(stage: &'static str, message: S) -> Self {
+        Self::Fatal {
+            stage,
+            source: crate::SyscityError::Internal(message.into()),
+        }
+    }
+}
+
 // ── Actions ──────────────────────────────────────────────────────────────────
 
-/// What the pipeline should do after this stage returns.
+/// What the pipeline should do after this stage returns successfully.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InboundStageAction {
     /// Continue to the next stage normally.
@@ -39,9 +84,15 @@ pub enum InboundStageAction {
 // ── Context ──────────────────────────────────────────────────────────────────
 
 /// Shared mutable state threaded through all inbound stages.
+///
+/// The original message is owned by the context. Stages may replace it only
+/// when they are producing a derived representation of the same message
+/// (e.g. the debounce stage collapses a batch into a single synthetic
+/// message). Stages must not mutate message identifiers such as `id`,
+/// `user_id`, or `conversation_id`.
 #[derive(Debug, Clone)]
 pub struct InboundContext {
-    /// The original incoming message (may be mutated by stages).
+    /// The incoming message currently being processed.
     pub message: IncomingMessage,
     /// Result of media understanding (populated by [`MediaStage`]).
     pub media_result: Option<MediaUnderstandingResult>,
@@ -78,12 +129,15 @@ impl InboundContext {
 #[async_trait]
 pub trait InboundStage: Send + Sync {
     /// Unique name for this stage (used for logging and ordering).
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     /// Process a message. Return [`InboundStageAction::Continue`] to proceed,
     /// [`InboundStageAction::Suppress`] to drop, or
     /// [`InboundStageAction::Debounce`] to absorb into the debouncer.
-    async fn process(&self, ctx: &mut InboundContext) -> InboundStageAction;
+    ///
+    /// Returning [`StageError::Fatal`] aborts the entire pipeline; callers
+    /// should log the error and discard the message.
+    async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError>;
 }
 
 // ── Built-in stage wrappers ──────────────────────────────────────────────────
@@ -101,11 +155,11 @@ impl IdentityStage {
 
 #[async_trait]
 impl InboundStage for IdentityStage {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "identity"
     }
 
-    async fn process(&self, ctx: &mut InboundContext) -> InboundStageAction {
+    async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
         let identity = crate::channels::identity::SenderIdentity {
             user_id: ctx.message.user_id.0.clone(),
             display_name: None,
@@ -124,11 +178,15 @@ impl InboundStage for IdentityStage {
                 "Identity validation failed (message not dropped)"
             );
         }
-        InboundStageAction::Continue
+        Ok(InboundStageAction::Continue)
     }
 }
 
 /// Debounce stage – absorbs messages that should be batched.
+///
+/// This stage belongs **only** in the pre-debounce pipeline. If it returns
+/// [`InboundStageAction::Debounce`], the caller must not run post-debounce
+/// stages until the debouncer emits the message later.
 pub struct DebounceStage {
     debouncer: Arc<InboundDebouncer>,
 }
@@ -141,20 +199,17 @@ impl DebounceStage {
 
 #[async_trait]
 impl InboundStage for DebounceStage {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "debounce"
     }
 
-    async fn process(&self, ctx: &mut InboundContext) -> InboundStageAction {
-        // Clone the message and hand it to the debouncer.
-        // If the debouncer absorbs it, we signal Debounce and the pipeline
-        // stops (the stale message in ctx is never read by subsequent stages).
-        let message = ctx.message.clone();
-        if let Some(debounced) = self.debouncer.enqueue(message).await {
-            ctx.message = debounced;
-            InboundStageAction::Continue
-        } else {
-            InboundStageAction::Debounce
+    async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
+        match self.debouncer.enqueue(ctx.message.clone()).await {
+            Some(debounced) => {
+                ctx.message = debounced;
+                Ok(InboundStageAction::Continue)
+            }
+            None => Ok(InboundStageAction::Debounce),
         }
     }
 }
@@ -172,17 +227,17 @@ impl MediaStage {
 
 #[async_trait]
 impl InboundStage for MediaStage {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "media"
     }
 
-    async fn process(&self, ctx: &mut InboundContext) -> InboundStageAction {
+    async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
         ctx.media_result = if !ctx.message.attachments.is_empty() {
             Some(self.pipeline.process(&ctx.message).await)
         } else {
             None
         };
-        InboundStageAction::Continue
+        Ok(InboundStageAction::Continue)
     }
 }
 
@@ -195,9 +250,7 @@ impl DispatchStage {
     pub fn new(dispatch: AutoReplyDispatch) -> Self {
         Self { dispatch: Arc::new(dispatch) }
     }
-}
 
-impl DispatchStage {
     /// Provide an already-created Arc to share ownership.
     pub fn from_arc(dispatch: Arc<AutoReplyDispatch>) -> Self {
         Self { dispatch }
@@ -206,11 +259,11 @@ impl DispatchStage {
 
 #[async_trait]
 impl InboundStage for DispatchStage {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "dispatch"
     }
 
-    async fn process(&self, ctx: &mut InboundContext) -> InboundStageAction {
+    async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
         let result = self
             .dispatch
             .process(&ctx.message, ctx.media_result.as_ref())
@@ -218,9 +271,9 @@ impl InboundStage for DispatchStage {
         let suppress = result.suppress;
         ctx.dispatch_result = Some(result);
         if suppress {
-            InboundStageAction::Suppress
+            Ok(InboundStageAction::Suppress)
         } else {
-            InboundStageAction::Continue
+            Ok(InboundStageAction::Continue)
         }
     }
 }
@@ -240,17 +293,17 @@ impl EnvelopeStage {
 
 #[async_trait]
 impl InboundStage for EnvelopeStage {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "envelope"
     }
 
-    async fn process(&self, ctx: &mut InboundContext) -> InboundStageAction {
+    async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
         let _envelope = self
             .envelope_manager
             .get_or_create(&ctx.message.conversation_id.0)
             .await;
         ctx.envelope_updated = true;
-        InboundStageAction::Continue
+        Ok(InboundStageAction::Continue)
     }
 }
 
@@ -267,61 +320,80 @@ impl QueueStage {
 
 #[async_trait]
 impl InboundStage for QueueStage {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "queue"
     }
 
-    async fn process(&self, ctx: &mut InboundContext) -> InboundStageAction {
+    async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
         ctx.queue_mode = Some(self.resolver.resolve(&ctx.message).await);
-        InboundStageAction::Continue
+        Ok(InboundStageAction::Continue)
     }
 }
 
 /// Agent routing stage – determines which agent handles the message.
+///
+/// This stage only populates `ctx.route_result`. The caller is responsible for
+/// constructing the final [`RoutedMessage`] and forwarding it to the agent
+/// execution layer. Keeping routing and dispatch separate makes the stage
+/// easier to test and avoids giving a stage direct access to an outbound
+/// channel.
 pub struct RouterStage {
     router: Arc<AgentRouter>,
-    routed_tx: tokio::sync::mpsc::Sender<RoutedMessage>,
 }
 
 impl RouterStage {
-    pub fn new(router: AgentRouter, routed_tx: tokio::sync::mpsc::Sender<RoutedMessage>) -> Self {
-        Self {
-            router: Arc::new(router),
-            routed_tx,
-        }
+    pub fn new(router: AgentRouter) -> Self {
+        Self { router: Arc::new(router) }
+    }
+
+    /// Create a router stage from an existing `Arc` to share ownership.
+    pub fn from_arc(router: Arc<AgentRouter>) -> Self {
+        Self { router }
     }
 }
 
 #[async_trait]
 impl InboundStage for RouterStage {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "router"
     }
 
-    async fn process(&self, ctx: &mut InboundContext) -> InboundStageAction {
+    async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
         let workspace_hint = ctx
             .dispatch_result
             .as_ref()
             .and_then(|d| d.workspace_hint.as_deref());
-        let route: RouteResult = self.router.route(&ctx.message, workspace_hint).await;
-        ctx.route_result = Some(route.clone());
+        let route = self.router.route(&ctx.message, workspace_hint).await;
+        ctx.route_result = Some(route);
+        Ok(InboundStageAction::Continue)
+    }
+}
 
-        // Build and forward the routed message
-        let routed = RoutedMessage {
-            incoming: ctx.message.clone(),
-            agent_id: route.agent_id,
-            workspace_id: route.workspace_id,
-            queue_mode: ctx.queue_mode.unwrap_or(QueueMode::Interrupt),
-            suppress_delivery: ctx
-                .dispatch_result
-                .as_ref()
-                .map(|d| d.suppress)
-                .unwrap_or(false),
-            media_results: ctx.media_result.take(),
-        };
+// ── Routed message construction ──────────────────────────────────────────────
 
-        let _ = self.routed_tx.send(routed).await;
-        InboundStageAction::Continue
+/// Build a [`RoutedMessage`] from a fully processed context.
+///
+/// # Panics
+///
+/// Panics if the router stage has not populated `ctx.route_result`. Callers
+/// must only invoke this after running the post-debounce stages.
+pub fn build_routed_message(ctx: &mut InboundContext) -> RoutedMessage {
+    let route = ctx
+        .route_result
+        .clone()
+        .expect("router stage must run before build_routed_message");
+
+    RoutedMessage {
+        incoming: ctx.message.clone(),
+        agent_id: route.agent_id,
+        workspace_id: route.workspace_id,
+        queue_mode: ctx.queue_mode.unwrap_or(QueueMode::Interrupt),
+        suppress_delivery: ctx
+            .dispatch_result
+            .as_ref()
+            .map(|d| d.suppress)
+            .unwrap_or(false),
+        media_results: ctx.media_result.take(),
     }
 }
 
@@ -329,54 +401,63 @@ impl InboundStage for RouterStage {
 
 /// Run a slice of stages sequentially.
 ///
-/// Returns `None` if any stage returned [`InboundStageAction::Suppress`] or
-/// [`InboundStageAction::Debounce`], or `Some(())` if all stages completed.
+/// Returns `Ok(())` if all stages returned [`InboundStageAction::Continue`].
+/// Returns the terminal action as `Ok(Suppress)` or `Ok(Debounce)` if a stage
+/// stopped the pipeline. Returns [`StageError::Fatal`] if a stage failed.
 pub async fn run_inbound_stages(
     stages: &[Box<dyn InboundStage>],
     ctx: &mut InboundContext,
-) -> Option<()> {
+) -> Result<InboundStageAction, StageError> {
     for stage in stages {
-        match stage.process(ctx).await {
+        match stage.process(ctx).await? {
             InboundStageAction::Continue => continue,
-            InboundStageAction::Suppress => {
-                tracing::debug!("Inbound message suppressed by stage '{}'", stage.name());
-                return None;
-            }
-            InboundStageAction::Debounce => {
-                tracing::debug!("Inbound message debounced by stage '{}'", stage.name());
-                return None;
+            action @ (InboundStageAction::Suppress | InboundStageAction::Debounce) => {
+                tracing::debug!(stage = stage.name(), ?action, "Inbound pipeline terminal action");
+                return Ok(action);
             }
         }
     }
-    Some(())
+    Ok(InboundStageAction::Continue)
 }
 
-// ── Default stage list helper ────────────────────────────────────────────────
+// ── Default stage list helpers ───────────────────────────────────────────────
 
-/// Build the default list of inbound stages matching the current pipeline
-/// order.
+/// Build the default list of **pre-debounce** inbound stages.
 ///
-/// Stages: Identity → Debounce → Media → Dispatch → Envelope → Queue → Router
-#[allow(clippy::too_many_arguments)]
-pub fn default_inbound_stages(
-    validator: IdentityValidator,
+/// Stages: Identity (if `validator` is provided) → Debounce
+pub fn default_pre_debounce_stages(
+    validator: Option<IdentityValidator>,
     debouncer: Arc<InboundDebouncer>,
+) -> Vec<Box<dyn InboundStage>> {
+    let mut stages: Vec<Box<dyn InboundStage>> = Vec::new();
+    if let Some(validator) = validator {
+        stages.push(Box::new(IdentityStage::new(validator)));
+    }
+    stages.push(Box::new(DebounceStage::new(debouncer)));
+    stages
+}
+
+/// Build the default list of **post-debounce** inbound stages.
+///
+/// Stages: Media → Dispatch → Envelope (if `envelope_manager` is provided)
+/// → Queue → Router
+pub fn default_post_debounce_stages(
     media_pipeline: MediaUnderstandingPipeline,
     dispatch: AutoReplyDispatch,
-    envelope_manager: SessionEnvelopeManager,
+    envelope_manager: Option<SessionEnvelopeManager>,
     queue_resolver: QueueModeResolver,
-    router: AgentRouter,
-    routed_tx: tokio::sync::mpsc::Sender<RoutedMessage>,
+    router: Arc<AgentRouter>,
 ) -> Vec<Box<dyn InboundStage>> {
-    vec![
-        Box::new(IdentityStage::new(validator)),
-        Box::new(DebounceStage::new(debouncer)),
+    let mut stages: Vec<Box<dyn InboundStage>> = vec![
         Box::new(MediaStage::new(media_pipeline)),
         Box::new(DispatchStage::new(dispatch)),
-        Box::new(EnvelopeStage::new(envelope_manager)),
-        Box::new(QueueStage::new(queue_resolver)),
-        Box::new(RouterStage::new(router, routed_tx)),
-    ]
+    ];
+    if let Some(envelope_manager) = envelope_manager {
+        stages.push(Box::new(EnvelopeStage::new(envelope_manager)));
+    }
+    stages.push(Box::new(QueueStage::new(queue_resolver)));
+    stages.push(Box::new(RouterStage::from_arc(router)));
+    stages
 }
 
 #[cfg(test)]
@@ -385,16 +466,22 @@ mod tests {
     use crate::channels::IncomingMessage;
     use crate::channels::MessageMetadata;
 
+    #[allow(unused_imports)]
+    use crate::inbound::dispatch::AutoReplyDispatchConfig;
+
     /// A stage that always suppresses.
     struct SuppressStage;
 
     #[async_trait]
     impl InboundStage for SuppressStage {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "suppress"
         }
-        async fn process(&self, _ctx: &mut InboundContext) -> InboundStageAction {
-            InboundStageAction::Suppress
+        async fn process(
+            &self,
+            _ctx: &mut InboundContext,
+        ) -> Result<InboundStageAction, StageError> {
+            Ok(InboundStageAction::Suppress)
         }
     }
 
@@ -403,11 +490,34 @@ mod tests {
 
     #[async_trait]
     impl InboundStage for PassStage {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "pass"
         }
-        async fn process(&self, _ctx: &mut InboundContext) -> InboundStageAction {
-            InboundStageAction::Continue
+        async fn process(
+            &self,
+            _ctx: &mut InboundContext,
+        ) -> Result<InboundStageAction, StageError> {
+            Ok(InboundStageAction::Continue)
+        }
+    }
+
+    /// A stage that records how many times it ran.
+    struct CountStage {
+        counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl InboundStage for CountStage {
+        fn name(&self) -> &'static str {
+            "count"
+        }
+        async fn process(
+            &self,
+            _ctx: &mut InboundContext,
+        ) -> Result<InboundStageAction, StageError> {
+            self.counter
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(InboundStageAction::Continue)
         }
     }
 
@@ -432,32 +542,36 @@ mod tests {
         let stages: Vec<Box<dyn InboundStage>> = vec![Box::new(PassStage), Box::new(PassStage)];
         let mut ctx = InboundContext::new(dummy_message());
         let result = run_inbound_stages(&stages, &mut ctx).await;
-        assert!(result.is_some(), "all stages continue => Some(())");
+        assert_eq!(result.unwrap(), InboundStageAction::Continue);
     }
 
     #[tokio::test]
     async fn test_suppress_early_exit() {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let stages: Vec<Box<dyn InboundStage>> = vec![
-            Box::new(PassStage),
-            Box::new(SuppressStage), // should stop here
-            Box::new(PassStage),     // should never run
+            Box::new(CountStage { counter: counter.clone() }),
+            Box::new(SuppressStage),
+            Box::new(CountStage { counter: counter.clone() }),
         ];
         let mut ctx = InboundContext::new(dummy_message());
         let result = run_inbound_stages(&stages, &mut ctx).await;
-        assert!(result.is_none(), "suppress stage => None");
+        assert_eq!(result.unwrap(), InboundStageAction::Suppress);
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn test_debounce_early_exit() {
-        // Create a stage that signals Debounce
         struct DebounceStage_;
         #[async_trait]
         impl InboundStage for DebounceStage_ {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "db"
             }
-            async fn process(&self, _: &mut InboundContext) -> InboundStageAction {
-                InboundStageAction::Debounce
+            async fn process(
+                &self,
+                _: &mut InboundContext,
+            ) -> Result<InboundStageAction, StageError> {
+                Ok(InboundStageAction::Debounce)
             }
         }
 
@@ -468,6 +582,69 @@ mod tests {
         ];
         let mut ctx = InboundContext::new(dummy_message());
         let result = run_inbound_stages(&stages, &mut ctx).await;
-        assert!(result.is_none(), "debounce stage => None");
+        assert_eq!(result.unwrap(), InboundStageAction::Debounce);
+    }
+
+    #[tokio::test]
+    async fn test_fatal_stage_error() {
+        struct ErrorStage;
+        #[async_trait]
+        impl InboundStage for ErrorStage {
+            fn name(&self) -> &'static str {
+                "error"
+            }
+            async fn process(
+                &self,
+                _: &mut InboundContext,
+            ) -> Result<InboundStageAction, StageError> {
+                Err(StageError::fatal("error", "simulated failure"))
+            }
+        }
+
+        let stages: Vec<Box<dyn InboundStage>> = vec![Box::new(PassStage), Box::new(ErrorStage)];
+        let mut ctx = InboundContext::new(dummy_message());
+        let result = run_inbound_stages(&stages, &mut ctx).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("error"));
+        assert!(err.contains("simulated failure"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_stage_suppresses() {
+        let dispatch = AutoReplyDispatch::new(AutoReplyDispatchConfig {
+            suppress_unless_mentioned_in_groups: true,
+            ..Default::default()
+        });
+        let stage = DispatchStage::new(dispatch);
+        let mut msg = dummy_message();
+        msg.provenance = crate::channels::InputProvenance::ExternalUser {
+            channel: "test".into(),
+            is_direct: false,
+        };
+        msg.mention = crate::channels::MentionState::NotMentioned;
+
+        let mut ctx = InboundContext::new(msg);
+        let action = stage.process(&mut ctx).await.unwrap();
+        assert_eq!(action, InboundStageAction::Suppress);
+        assert!(ctx.dispatch_result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_queue_stage_sets_mode() {
+        let stage = QueueStage::new(QueueModeResolver::new());
+        let mut ctx = InboundContext::new(IncomingMessage::new("u1", "s1", "!stop"));
+        let action = stage.process(&mut ctx).await.unwrap();
+        assert_eq!(action, InboundStageAction::Continue);
+        assert_eq!(ctx.queue_mode, Some(QueueMode::Interrupt));
+    }
+
+    #[tokio::test]
+    async fn test_build_routed_message_requires_route() {
+        let mut ctx = InboundContext::new(dummy_message());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            build_routed_message(&mut ctx)
+        }));
+        assert!(result.is_err(), "build_routed_message must panic without route_result");
     }
 }

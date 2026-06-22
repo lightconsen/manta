@@ -53,6 +53,7 @@ pub struct MediaAttachmentCache {
 ///
 /// Processes inbound media attachments by routing them to appropriate
 /// providers (vision models for images, STT for audio, etc.).
+#[derive(Clone)]
 pub struct MediaUnderstandingPipeline {
     /// Optional model router for vision-capable provider queries.
     model_router: Option<Arc<crate::model_router::ModelRouter>>,
