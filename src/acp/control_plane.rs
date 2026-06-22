@@ -18,35 +18,35 @@ use super::config::{
     ThreadBinding, ThreadContext, ThreadContextSummary,
 };
 use super::controller::ExecutionController;
-use super::session::{acp_actor_loop, AcpCommand};
+use super::session::{acp_actor_loop, AcpCommand, ActorContext};
 use super::subagent::{SubagentCommand, SubagentHandle};
 
 /// ACP Control Plane - unified control plane for agents and subagents
 #[derive(Clone)]
 pub struct AcpControlPlane {
     /// Subagents by ID
-    pub(crate) subagents: Arc<RwLock<HashMap<String, SubagentHandle>>>,
+    pub(super) subagents: Arc<RwLock<HashMap<String, SubagentHandle>>>,
     /// Threads by ID
-    pub(crate) threads: Arc<RwLock<HashMap<String, ThreadContext>>>,
+    pub(super) threads: Arc<RwLock<HashMap<String, ThreadContext>>>,
     /// ACP sessions
-    pub(crate) sessions: Arc<RwLock<HashMap<AcpSessionId, AcpSession>>>,
+    pub(super) sessions: Arc<RwLock<HashMap<AcpSessionId, AcpSession>>>,
     /// Default agent builder (set after initialization when provider/tools are
     /// ready)
     #[allow(clippy::type_complexity)]
-    pub(crate) default_agent_builder:
+    pub(super) default_agent_builder:
         Arc<RwLock<Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>>>,
     /// Command channel to the ACP actor loop
-    pub(crate) command_tx: mpsc::Sender<AcpCommand>,
+    pub(super) command_tx: mpsc::Sender<AcpCommand>,
     /// Optional session store for persisting subagent run records
-    pub(crate) store: Option<Arc<crate::agent::session_store::SessionStore>>,
+    pub(super) store: Option<Arc<crate::agent::session_store::SessionStore>>,
     /// Maximum iterations per ACP execution
-    pub(crate) max_iterations: usize,
+    pub(super) max_iterations: usize,
     /// Configuration controlling automatic crash recovery.
-    pub(crate) recovery: Arc<RwLock<CrashRecoveryConfig>>,
+    pub(super) recovery: Arc<RwLock<CrashRecoveryConfig>>,
     /// Cross-session subagent communication bus.
-    pub(crate) bus: Arc<RwLock<AcpBus>>,
+    pub(super) bus: Arc<RwLock<AcpBus>>,
     /// Event broadcast channel for ACP lifecycle events.
-    pub(crate) event_tx:
+    pub(super) event_tx:
         Arc<RwLock<Option<tokio::sync::broadcast::Sender<crate::gateway::GatewayEvent>>>>,
 }
 
@@ -75,7 +75,14 @@ impl AcpControlPlane {
             bus: Arc::new(RwLock::new(AcpBus::new())),
             event_tx: Arc::new(RwLock::new(None)),
         };
-        tokio::spawn(acp_actor_loop(command_rx, acp.clone()));
+        tokio::spawn(acp_actor_loop(
+            command_rx,
+            ActorContext {
+                max_iterations,
+                default_agent_builder: Arc::clone(&acp.default_agent_builder),
+                control_plane: acp.clone(),
+            },
+        ));
         acp
     }
 

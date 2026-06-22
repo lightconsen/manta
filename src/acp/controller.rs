@@ -1,3 +1,10 @@
+//! Execution controller for pausing, resuming, stepping, and cancelling
+//! iterative agent execution.
+//!
+//! The controller is shared between the ACP actor loop and the agent's
+//! tool-call loop via an [`Arc`]. Operators can pause execution between LLM
+//! iterations, single-step through iterations, or cancel the run entirely.
+
 use std::sync::Arc;
 
 use tokio::sync::RwLock;

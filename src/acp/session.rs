@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::agent::{Agent, ProgressCallback};
@@ -167,22 +167,30 @@ pub(crate) struct SessionHandle {
     pub(crate) mode: ExecutionMode,
 }
 
-/// Per-session execution tracking (held in the main ACP loop)
+/// Per-session execution tracking (held in the main ACP loop).
+///
+/// Tracks the max iteration limit for `GetStatus` without blocking the actor.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) struct SessionExecution {
-    pub(crate) controller: Arc<ExecutionController>,
-    pub(crate) mode: ExecutionMode,
-    pub(crate) current_iteration: usize,
     pub(crate) max_iterations: usize,
-    pub(crate) current_message: Option<String>,
+}
+
+/// Context passed to the ACP actor loop.
+///
+/// This is a narrow facade over the parts of `AcpControlPlane` that the
+/// session actor actually needs. It breaks the circular dependency between
+/// `session` and `control_plane` modules.
+#[derive(Clone)]
+pub(crate) struct ActorContext {
+    pub(crate) max_iterations: usize,
+    #[allow(clippy::type_complexity)]
+    pub(crate) default_agent_builder:
+        Arc<RwLock<Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>>>,
+    pub(crate) control_plane: AcpControlPlane,
 }
 
 /// ACP actor loop — routes commands to per-session serial queues
-pub(crate) async fn acp_actor_loop(
-    mut command_rx: mpsc::Receiver<AcpCommand>,
-    acp: AcpControlPlane,
-) {
+pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, ctx: ActorContext) {
     let mut sessions: HashMap<String, SessionHandle> = HashMap::new();
     let mut session_meta: HashMap<String, SessionExecution> = HashMap::new();
 
@@ -195,7 +203,7 @@ pub(crate) async fn acp_actor_loop(
                 respond_to,
             } => {
                 let session_id = message.conversation_id.0.clone();
-                let effective_max = req_max_iter.unwrap_or(acp.max_iterations);
+                let effective_max = req_max_iter.unwrap_or(ctx.max_iterations);
                 let handle = get_or_create_session(
                     &mut sessions,
                     &mut session_meta,
@@ -224,7 +232,7 @@ pub(crate) async fn acp_actor_loop(
                 respond_to,
             } => {
                 let session_id = message.conversation_id.0.clone();
-                let effective_max = req_max_iter.unwrap_or(acp.max_iterations);
+                let effective_max = req_max_iter.unwrap_or(ctx.max_iterations);
                 let handle = get_or_create_session(
                     &mut sessions,
                     &mut session_meta,
@@ -254,7 +262,7 @@ pub(crate) async fn acp_actor_loop(
                 respond_to,
             } => {
                 let session_id = message.conversation_id.0.clone();
-                let effective_max = req_max_iter.unwrap_or(acp.max_iterations);
+                let effective_max = req_max_iter.unwrap_or(ctx.max_iterations);
                 let handle = get_or_create_session(
                     &mut sessions,
                     &mut session_meta,
@@ -303,20 +311,15 @@ pub(crate) async fn acp_actor_loop(
             AcpCommand::GetStatus { session_id, respond_to } => {
                 let status = if let Some(handle) = sessions.get(&session_id) {
                     let queue_depth = 256_usize.saturating_sub(handle.tx.capacity());
-                    let current_message = session_meta
-                        .get(&session_id)
-                        .and_then(|m| m.current_message.clone());
+                    let meta = session_meta.get(&session_id);
                     Some(AcpSessionStatus {
                         session_id: session_id.clone(),
                         runtime_state: handle.controller.current_state().await,
                         mode: handle.mode,
                         current_iteration: handle.controller.current_iteration(),
-                        max_iterations: session_meta
-                            .get(&session_id)
-                            .map(|m| m.max_iterations)
-                            .unwrap_or(50),
+                        max_iterations: meta.map(|m| m.max_iterations).unwrap_or(50),
                         queue_depth,
-                        current_message,
+                        current_message: None,
                     })
                 } else {
                     None
@@ -331,7 +334,7 @@ pub(crate) async fn acp_actor_loop(
                 respond_to,
             } => {
                 let agent = {
-                    let builder_guard = acp.default_agent_builder.read().await;
+                    let builder_guard = ctx.default_agent_builder.read().await;
                     match builder_guard.as_ref() {
                         Some(builder) => match builder() {
                             Ok(agent) => Arc::new(agent),
@@ -349,7 +352,7 @@ pub(crate) async fn acp_actor_loop(
                     }
                 };
 
-                let effective_max = acp.max_iterations;
+                let effective_max = ctx.max_iterations;
                 let handle = get_or_create_session(
                     &mut sessions,
                     &mut session_meta,
@@ -377,7 +380,8 @@ pub(crate) async fn acp_actor_loop(
                 config,
                 crash_count,
             } => {
-                acp.recover_crashed_subagent(session_id, parent_id, config, crash_count)
+                ctx.control_plane
+                    .recover_crashed_subagent(session_id, parent_id, config, crash_count)
                     .await;
             }
 
@@ -408,13 +412,7 @@ pub(crate) async fn get_or_create_session<'a>(
         let controller = ExecutionController::new();
         let ctrl_clone = controller.clone();
 
-        let meta = SessionExecution {
-            controller: controller.clone(),
-            mode,
-            current_iteration: 0,
-            max_iterations,
-            current_message: None,
-        };
+        let meta = SessionExecution { max_iterations };
 
         let handle = SessionHandle {
             tx,

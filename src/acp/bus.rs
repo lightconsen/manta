@@ -20,7 +20,9 @@ pub struct BusMessage {
 /// Cross-session message bus for subagents.
 ///
 /// Allows subagents in unrelated ACP sessions to communicate via named topics.
-#[derive(Debug, Default, Clone)]
+/// The bus is intentionally not `Clone`: it owns mutable subscriber state and
+/// message history, and is shared between callers via `Arc<RwLock<AcpBus>>`.
+#[derive(Debug, Default)]
 pub struct AcpBus {
     /// Messages per topic, oldest first.
     messages: HashMap<String, Vec<BusMessage>>,
@@ -78,19 +80,23 @@ impl AcpBus {
         let now = chrono::Utc::now();
         let original_len = messages.len();
         messages.retain(|m| now.signed_duration_since(m.sent_at) <= BUS_MESSAGE_TTL);
-        let removed = original_len - messages.len();
-        if messages.len() > BUS_MAX_MESSAGES_PER_TOPIC {
+        let ttl_removed = original_len - messages.len();
+
+        let cap_removed = if messages.len() > BUS_MAX_MESSAGES_PER_TOPIC {
             let excess = messages.len() - BUS_MAX_MESSAGES_PER_TOPIC;
             messages.drain(0..excess);
-            let total_removed = removed + excess;
+            excess
+        } else {
+            0
+        };
+
+        let total_removed = ttl_removed + cap_removed;
+        if total_removed > 0 {
             for offset in self.read_offsets.values_mut() {
                 *offset = offset.saturating_sub(total_removed);
             }
-        } else if removed > 0 {
-            for offset in self.read_offsets.values_mut() {
-                *offset = offset.saturating_sub(removed);
-            }
         }
+
         if messages.is_empty() {
             self.messages.remove(topic);
         }
