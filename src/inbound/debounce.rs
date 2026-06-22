@@ -70,7 +70,7 @@ struct DebounceBuffer {
 /// ```
 pub struct InboundDebouncer {
     config: InboundDebouncerConfig,
-    buffers: RwLock<HashMap<String, Mutex<DebounceBuffer>>>,
+    buffers: RwLock<HashMap<String, Arc<Mutex<DebounceBuffer>>>>,
     /// Sender side of the flush channel. One receiver lives outside.
     flush_tx: mpsc::Sender<Vec<DebouncedItem>>,
 }
@@ -127,13 +127,18 @@ impl InboundDebouncer {
 
         let buffer = buffers.entry(key.clone()).or_insert_with(|| {
             let tx = self.flush_tx.clone();
-            Mutex::new(DebounceBuffer {
+            Arc::new(Mutex::new(DebounceBuffer {
                 items: Vec::new(),
                 flush_tx: tx,
                 timer_handle: None,
                 last_activity: Instant::now(),
-            })
+            }))
         });
+
+        // Clone the Arc so we can release the map lock before manipulating
+        // the individual buffer and spawning the timer.
+        let buffer = Arc::clone(buffer);
+        drop(buffers);
 
         let mut guard = buffer.lock().await;
 
@@ -175,17 +180,21 @@ impl InboundDebouncer {
 
     /// Flush all pending items for a given key immediately.
     pub async fn flush_key(self: &Arc<Self>, key: &str) -> Vec<IncomingMessage> {
-        let batch = {
+        // Remove the buffer while holding the map lock, then release the lock
+        // before aborting the timer and cloning items.
+        let buf = {
             let mut buffers = self.buffers.write().await;
-            if let Some(buf) = buffers.remove(key) {
-                let guard = buf.lock().await;
-                if let Some(handle) = &guard.timer_handle {
-                    handle.abort();
-                }
-                guard.items.clone()
-            } else {
-                Vec::new()
+            buffers.remove(key)
+        };
+
+        let batch = if let Some(buf) = buf {
+            let guard = buf.lock().await;
+            if let Some(handle) = &guard.timer_handle {
+                handle.abort();
             }
+            guard.items.clone()
+        } else {
+            Vec::new()
         };
 
         batch.into_iter().map(|item| item.message).collect()

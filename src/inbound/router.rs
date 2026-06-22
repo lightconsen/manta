@@ -176,6 +176,10 @@ impl BindingStore for SqliteBindingStore {
                     continue;
                 }
             };
+            if agent_id.is_empty() {
+                warn!("Skipping session_bindings row for {}: empty agent_id", session_id);
+                continue;
+            }
 
             let workspace_id: Option<String> = row.try_get("workspace_id").ok();
             bindings.insert(session_id, (agent_id, workspace_id));
@@ -283,7 +287,9 @@ impl AgentRouter {
             workspace_defaults: RwLock::new(workspace_defaults),
             binding_store: self.binding_store.clone(),
             conversation_resolver: None,
-            auto_create_binding: AtomicBool::new(self.config.auto_create_binding),
+            auto_create_binding: AtomicBool::new(
+                self.auto_create_binding.load(Ordering::Relaxed),
+            ),
         }
     }
 
@@ -393,14 +399,14 @@ impl AgentRouter {
             let defaults = self.channel_defaults.read().await;
             if let Some((agent_id, workspace_id)) = defaults.get(ch) {
                 debug!("Channel {} default agent: {}", ch, agent_id);
-                let result = RouteResult {
+                let mut result = RouteResult {
                     agent_id: agent_id.clone(),
                     workspace_id: workspace_id.clone(),
                     created_binding: true,
                 };
                 // Store binding for future messages
                 drop(defaults);
-                self.bind_session(&session_id, &result).await;
+                result.created_binding = self.bind_session(&session_id, &result).await;
                 return result;
             }
         }
@@ -410,13 +416,13 @@ impl AgentRouter {
             let defaults = self.workspace_defaults.read().await;
             if let Some(agent_id) = defaults.get(ws) {
                 debug!("Workspace {} default agent: {}", ws, agent_id);
-                let result = RouteResult {
+                let mut result = RouteResult {
                     agent_id: agent_id.clone(),
                     workspace_id: Some(ws.to_string()),
                     created_binding: true,
                 };
                 drop(defaults);
-                self.bind_session(&session_id, &result).await;
+                result.created_binding = self.bind_session(&session_id, &result).await;
                 return result;
             }
         }
@@ -438,12 +444,12 @@ impl AgentRouter {
                     workspace_id = ?resolution.workspace_id,
                     "Supplementary conversation resolver matched"
                 );
-                let result = RouteResult {
+                let mut result = RouteResult {
                     agent_id: resolution.agent_id,
                     workspace_id: resolution.workspace_id,
                     created_binding: true,
                 };
-                self.bind_session(&session_id, &result).await;
+                result.created_binding = self.bind_session(&session_id, &result).await;
                 return result;
             }
         }
@@ -453,19 +459,23 @@ impl AgentRouter {
             "No binding found for session {}, using default agent {}",
             session_id, self.config.default_agent_id
         );
-        let result = RouteResult {
+        let mut result = RouteResult {
             agent_id: self.config.default_agent_id.clone(),
             workspace_id: self.config.default_workspace_id.clone(),
             created_binding: true,
         };
-        self.bind_session(&session_id, &result).await;
+        result.created_binding = self.bind_session(&session_id, &result).await;
         result
     }
 
     /// Bind a session to a specific agent.
-    pub async fn bind_session(&self, session_id: &str, route: &RouteResult) {
+    ///
+    /// Returns `true` if a binding was actually created or updated. If
+    /// [`AgentRouterConfig::auto_create_binding`] is disabled, this returns
+    /// `false` and no binding is stored.
+    pub async fn bind_session(&self, session_id: &str, route: &RouteResult) -> bool {
         if !self.auto_create_binding.load(Ordering::Relaxed) {
-            return;
+            return false;
         }
 
         let mut bindings = self.session_bindings.write().await;
@@ -486,6 +496,7 @@ impl AgentRouter {
             "Bound session {} to agent {} (workspace: {:?})",
             session_id, route.agent_id, route.workspace_id
         );
+        true
     }
 
     /// Unbind a session (e.g., on `/new` command).
@@ -555,12 +566,12 @@ impl AgentRouter {
             "No binding found for session {}, using default agent {}",
             session_id, self.config.default_agent_id
         );
-        let result = RouteResult {
+        let mut result = RouteResult {
             agent_id: self.config.default_agent_id.clone(),
             workspace_id: self.config.default_workspace_id.clone(),
             created_binding: true,
         };
-        self.bind_session(session_id, &result).await;
+        result.created_binding = self.bind_session(session_id, &result).await;
         result
     }
 
@@ -646,5 +657,33 @@ mod tests {
         let route2 = router.route(&msg2, None).await;
         // After unbind, a new binding is created (may be different agent)
         assert!(route2.created_binding);
+    }
+
+    #[tokio::test]
+    async fn test_auto_create_binding_disabled_returns_false() {
+        let router = AgentRouter::new(AgentRouterConfig {
+            auto_create_binding: false,
+            ..Default::default()
+        });
+        let msg = IncomingMessage::new("u1", "s1", "hello");
+
+        let route = router.route(&msg, None).await;
+        assert_eq!(route.agent_id, "default");
+        assert!(!route.created_binding);
+
+        let bindings = router.list_bindings().await;
+        assert!(bindings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_set_auto_create_binding_preserved_on_clone() {
+        let router = AgentRouter::new(AgentRouterConfig::default());
+        router.set_auto_create_binding(false);
+
+        let cloned = router.deep_clone().await;
+        let msg = IncomingMessage::new("u1", "s1", "hello");
+        let route = cloned.route(&msg, None).await;
+        assert!(!route.created_binding);
+        assert!(cloned.list_bindings().await.is_empty());
     }
 }

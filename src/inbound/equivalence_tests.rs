@@ -44,6 +44,8 @@ mod tests {
             &self,
             msg: IncomingMessage,
         ) -> (Option<RoutedMessage>, Vec<RoutedMessage>);
+
+        async fn flush(&self, key: &str) -> (Vec<RoutedMessage>, Vec<RoutedMessage>);
     }
 
     // ── DefaultInboundPipeline harness ───────────────────────────────────────
@@ -99,6 +101,13 @@ mod tests {
             let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
             (result, channel_messages)
         }
+
+        async fn flush(&self, key: &str) -> (Vec<RoutedMessage>, Vec<RoutedMessage>) {
+            let mut rx = self.routed_rx.lock().await;
+            let result = self.pipeline.flush(key).await;
+            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
+            (result, channel_messages)
+        }
     }
 
     // ── Stage-based harness ──────────────────────────────────────────────────
@@ -106,6 +115,7 @@ mod tests {
     struct StageHarness {
         pre_stages: Vec<Box<dyn crate::inbound::stage::InboundStage>>,
         post_stages: Vec<Box<dyn crate::inbound::stage::InboundStage>>,
+        debouncer: Arc<InboundDebouncer>,
         routed_tx: mpsc::Sender<RoutedMessage>,
         routed_rx: tokio::sync::Mutex<mpsc::Receiver<RoutedMessage>>,
     }
@@ -119,7 +129,7 @@ mod tests {
             envelope_manager: Option<SessionEnvelopeManager>,
         ) -> Arc<Self> {
             let (routed_tx, routed_rx) = mpsc::channel::<RoutedMessage>(64);
-            let pre_stages = default_pre_debounce_stages(Some(IdentityValidator::new()), debouncer);
+            let pre_stages = default_pre_debounce_stages(Some(IdentityValidator::new()), debouncer.clone());
             let post_stages = default_post_debounce_stages(
                 MediaUnderstandingPipeline::new(),
                 dispatch,
@@ -133,6 +143,7 @@ mod tests {
             let harness = Arc::new(Self {
                 pre_stages,
                 post_stages,
+                debouncer: debouncer.clone(),
                 routed_tx,
                 routed_rx: tokio::sync::Mutex::new(routed_rx),
             });
@@ -200,6 +211,30 @@ mod tests {
             let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
             (result, channel_messages)
         }
+
+        async fn flush(&self, key: &str) -> (Vec<RoutedMessage>, Vec<RoutedMessage>) {
+            let mut rx = self.routed_rx.lock().await;
+            let messages = self.debouncer.flush_key(key).await;
+            let mut routed = Vec::new();
+            for msg in messages {
+                let mut ctx = InboundContext::new(msg);
+                if let Ok(InboundStageAction::Continue) =
+                    run_inbound_stages(&self.post_stages, &mut ctx).await
+                {
+                    match build_routed_message(&mut ctx) {
+                        Ok(r) => {
+                            let _ = self.routed_tx.send(r.clone()).await;
+                            routed.push(r);
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Stage harness flush routing failed");
+                        }
+                    }
+                }
+            }
+            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
+            (routed, channel_messages)
+        }
     }
 
     /// Drain all currently available messages from `rx`, waiting up to
@@ -231,6 +266,18 @@ mod tests {
 
         assert_routed_message_eq(&default_result, &stage_result, "process() return value mismatch");
         assert_channel_eq(&default_channel, &stage_channel, "process() routed_tx mismatch");
+    }
+
+    async fn assert_flush_equivalent(
+        default_pipeline: &dyn PipelineHarness,
+        stage: &dyn PipelineHarness,
+        key: &str,
+    ) {
+        let (default_result, default_channel) = default_pipeline.flush(key).await;
+        let (stage_result, stage_channel) = stage.flush(key).await;
+
+        assert_channel_eq(&default_result, &stage_result, "flush() return value mismatch");
+        assert_channel_eq(&default_channel, &stage_channel, "flush() routed_tx mismatch");
     }
 
     fn assert_routed_message_eq(
@@ -339,11 +386,12 @@ mod tests {
     async fn build_default_pipeline(
         config: AutoReplyDispatchConfig,
         router_config: AgentRouterConfig,
+        debounce_ms: u64,
     ) -> DefaultPipelineHarness {
         let (flush_tx, flush_rx) = mpsc::channel::<Vec<DebouncedItem>>(64);
         let debouncer = InboundDebouncer::new(
             InboundDebouncerConfig {
-                debounce_ms: 50,
+                debounce_ms,
                 ..Default::default()
             },
             flush_tx,
@@ -356,11 +404,12 @@ mod tests {
     async fn build_stage(
         config: AutoReplyDispatchConfig,
         router_config: AgentRouterConfig,
+        debounce_ms: u64,
     ) -> Arc<StageHarness> {
         let (flush_tx, flush_rx) = mpsc::channel::<Vec<DebouncedItem>>(64);
         let debouncer = InboundDebouncer::new(
             InboundDebouncerConfig {
-                debounce_ms: 50,
+                debounce_ms,
                 ..Default::default()
             },
             flush_tx,
@@ -377,10 +426,11 @@ mod tests {
         let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
+            50,
         )
         .await;
         let stage =
-            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"), 50)
                 .await;
         assert_process_equivalent(&default_pipeline, &stage, plain_message()).await;
     }
@@ -390,10 +440,11 @@ mod tests {
         let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
+            50,
         )
         .await;
         let stage =
-            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"), 50)
                 .await;
         assert_process_equivalent(&default_pipeline, &stage, command_message()).await;
     }
@@ -403,10 +454,11 @@ mod tests {
         let default_pipeline = build_default_pipeline(
             dispatch_config_suppress_groups(),
             router_config_default_agent("default"),
+            50,
         )
         .await;
         let stage =
-            build_stage(dispatch_config_suppress_groups(), router_config_default_agent("default"))
+            build_stage(dispatch_config_suppress_groups(), router_config_default_agent("default"), 50)
                 .await;
         assert_process_equivalent(&default_pipeline, &stage, group_unmentioned_message()).await;
     }
@@ -416,10 +468,11 @@ mod tests {
         let default_pipeline = build_default_pipeline(
             dispatch_config_suppress_groups(),
             router_config_default_agent("default"),
+            50,
         )
         .await;
         let stage =
-            build_stage(dispatch_config_suppress_groups(), router_config_default_agent("default"))
+            build_stage(dispatch_config_suppress_groups(), router_config_default_agent("default"), 50)
                 .await;
         assert_process_equivalent(&default_pipeline, &stage, mentioned_message()).await;
     }
@@ -429,10 +482,11 @@ mod tests {
         let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
+            50,
         )
         .await;
         let stage =
-            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"), 50)
                 .await;
         assert_process_equivalent(&default_pipeline, &stage, agent_mention_message()).await;
     }
@@ -442,10 +496,11 @@ mod tests {
         let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
+            50,
         )
         .await;
         let stage =
-            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"), 50)
                 .await;
         assert_process_equivalent(&default_pipeline, &stage, workspace_mention_message()).await;
     }
@@ -455,10 +510,11 @@ mod tests {
         let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
+            50,
         )
         .await;
         let stage =
-            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"), 50)
                 .await;
         assert_process_equivalent(&default_pipeline, &stage, interrupt_message()).await;
     }
@@ -468,11 +524,38 @@ mod tests {
         let default_pipeline = build_default_pipeline(
             AutoReplyDispatchConfig::default(),
             router_config_default_agent("default"),
+            50,
         )
         .await;
         let stage =
-            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"))
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"), 50)
                 .await;
         assert_process_equivalent(&default_pipeline, &stage, image_message()).await;
+    }
+
+    #[tokio::test]
+    async fn equivalence_flush_debounced_messages() {
+        let default_pipeline = build_default_pipeline(
+            AutoReplyDispatchConfig::default(),
+            router_config_default_agent("default"),
+            10_000,
+        )
+        .await;
+        let stage =
+            build_stage(AutoReplyDispatchConfig::default(), router_config_default_agent("default"), 10_000)
+                .await;
+
+        // Absorb a debounced message; it should not produce an immediate result.
+        let (default_result, default_channel) =
+            default_pipeline.process(plain_message()).await;
+        let (stage_result, stage_channel) = stage.process(plain_message()).await;
+        assert!(default_result.is_none());
+        assert!(stage_result.is_none());
+        assert!(default_channel.is_empty());
+        assert!(stage_channel.is_empty());
+
+        // Flushing the conversation should emit the same routed messages from
+        // both harnesses.
+        assert_flush_equivalent(&default_pipeline, &stage, "conv1").await;
     }
 }

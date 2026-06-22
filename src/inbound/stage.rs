@@ -56,12 +56,19 @@ pub enum StageError {
 }
 
 impl StageError {
-    /// Convenience constructor for fatal errors.
+    /// Convenience constructor for fatal errors that originate as a plain
+    /// message. The message is wrapped in [`SyscityError::Internal`].
     pub fn fatal<S: Into<String>>(stage: &'static str, message: S) -> Self {
         Self::Fatal {
             stage,
             source: crate::SyscityError::Internal(message.into()),
         }
+    }
+
+    /// Constructor that preserves an existing [`SyscityError`] without
+    /// wrapping it in [`SyscityError::Internal`].
+    pub fn from_error(stage: &'static str, source: crate::SyscityError) -> Self {
+        Self::Fatal { stage, source }
     }
 }
 
@@ -605,6 +612,19 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("error"));
         assert!(err.contains("simulated failure"));
+    }
+
+    #[tokio::test]
+    async fn test_stage_error_preserves_source_type() {
+        let storage_err = crate::SyscityError::Storage {
+            context: "test".to_string(),
+            details: "connection lost".to_string(),
+        };
+        let err = StageError::from_error("db", storage_err);
+        let err_string = err.to_string();
+        assert!(err_string.contains("db"));
+        assert!(err_string.contains("Storage error"));
+        assert!(err_string.contains("connection lost"));
     }
 
     #[tokio::test]

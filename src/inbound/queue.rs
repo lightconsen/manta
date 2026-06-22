@@ -93,6 +93,13 @@ impl QueueModeResolver {
         self
     }
 
+    /// Set the follow-up detection window.
+    #[must_use]
+    pub fn with_follow_up_window(mut self, window: Duration) -> Self {
+        self.follow_up_window = window;
+        self
+    }
+
     /// Resolve the queue mode for an incoming message.
     pub async fn resolve(&self, message: &IncomingMessage) -> QueueMode {
         let content = message.content.trim();
@@ -222,6 +229,23 @@ mod tests {
         // Immediate second message from same user → FollowUp
         let msg2 = IncomingMessage::new("u1", "s1", "and also");
         assert_eq!(resolver.resolve(&msg2).await, QueueMode::FollowUp);
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_window_configurable() {
+        let resolver = QueueModeResolver::new().with_follow_up_window(Duration::from_millis(200));
+
+        let msg1 = IncomingMessage::new("u1", "s1", "hello");
+        assert_eq!(resolver.resolve(&msg1).await, QueueMode::Normal);
+
+        // A second message within the custom window should be FollowUp.
+        let msg2 = IncomingMessage::new("u1", "s1", "and also");
+        assert_eq!(resolver.resolve(&msg2).await, QueueMode::FollowUp);
+
+        // After sleeping past the window, a new message should be Normal again.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let msg3 = IncomingMessage::new("u1", "s1", "later");
+        assert_eq!(resolver.resolve(&msg3).await, QueueMode::Normal);
     }
 
     #[tokio::test]

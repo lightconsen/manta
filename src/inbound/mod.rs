@@ -247,10 +247,8 @@ impl InboundPipeline for DefaultInboundPipeline {
         let mut routed = Vec::new();
         for msg in messages {
             let mut ctx = InboundContext::new(msg);
-            if let Ok(InboundStageAction::Continue) =
-                run_inbound_stages(&self.post_stages, &mut ctx).await
-            {
-                match build_routed_message(&mut ctx) {
+            match run_inbound_stages(&self.post_stages, &mut ctx).await {
+                Ok(InboundStageAction::Continue) => match build_routed_message(&mut ctx) {
                     Ok(r) => {
                         let _ = self.routed_tx.send(r.clone()).await;
                         routed.push(r);
@@ -258,6 +256,12 @@ impl InboundPipeline for DefaultInboundPipeline {
                     Err(e) => {
                         warn!(error = %e, "Flush routing failed");
                     }
+                },
+                Ok(action) => {
+                    tracing::debug!(?action, "Flush terminal action");
+                }
+                Err(StageError::Fatal { stage, source }) => {
+                    warn!(stage, error = %source, "Flush stage failed");
                 }
             }
         }
