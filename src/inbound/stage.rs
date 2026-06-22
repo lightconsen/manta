@@ -370,17 +370,16 @@ impl InboundStage for RouterStage {
 
 /// Build a [`RoutedMessage`] from a fully processed context.
 ///
-/// # Panics
-///
-/// Panics if the router stage has not populated `ctx.route_result`. Callers
-/// must only invoke this after running the post-debounce stages.
-pub fn build_routed_message(ctx: &mut InboundContext) -> RoutedMessage {
+/// Returns [`StageError::Fatal`] if the router stage has not populated
+/// `ctx.route_result`. Callers must only invoke this after running the
+/// post-debounce stages.
+pub fn build_routed_message(ctx: &mut InboundContext) -> Result<RoutedMessage, StageError> {
     let route = ctx
         .route_result
         .clone()
-        .expect("router stage must run before build_routed_message");
+        .ok_or_else(|| StageError::fatal("router", "route_result missing; router stage not run"))?;
 
-    RoutedMessage {
+    Ok(RoutedMessage {
         incoming: ctx.message.clone(),
         agent_id: route.agent_id,
         workspace_id: route.workspace_id,
@@ -391,7 +390,7 @@ pub fn build_routed_message(ctx: &mut InboundContext) -> RoutedMessage {
             .map(|d| d.suppress)
             .unwrap_or(false),
         media_results: ctx.media_result.take(),
-    }
+    })
 }
 
 // ── Stage runner ─────────────────────────────────────────────────────────────
@@ -639,9 +638,10 @@ mod tests {
     #[tokio::test]
     async fn test_build_routed_message_requires_route() {
         let mut ctx = InboundContext::new(dummy_message());
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            build_routed_message(&mut ctx)
-        }));
-        assert!(result.is_err(), "build_routed_message must panic without route_result");
+        let result = build_routed_message(&mut ctx);
+        assert!(result.is_err(), "build_routed_message must error without route_result");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("router"));
+        assert!(err.contains("route_result missing"));
     }
 }

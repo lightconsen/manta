@@ -153,11 +153,13 @@ mod tests {
             let result = match run_inbound_stages(&self.pre_stages, &mut ctx).await {
                 Ok(InboundStageAction::Continue) => {
                     match run_inbound_stages(&self.post_stages, &mut ctx).await {
-                        Ok(InboundStageAction::Continue) => {
-                            let routed = build_routed_message(&mut ctx);
-                            let _ = self.routed_tx.send(routed.clone()).await;
-                            Some(routed)
-                        }
+                        Ok(InboundStageAction::Continue) => match build_routed_message(&mut ctx) {
+                            Ok(routed) => {
+                                let _ = self.routed_tx.send(routed.clone()).await;
+                                Some(routed)
+                            }
+                            Err(_) => None,
+                        },
                         _ => None,
                     }
                 }

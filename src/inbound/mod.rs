@@ -170,10 +170,14 @@ impl DefaultInboundPipeline {
             for item in batch {
                 let mut ctx = InboundContext::new(item.message);
                 match run_inbound_stages(&self.post_stages, &mut ctx).await {
-                    Ok(InboundStageAction::Continue) => {
-                        let routed = build_routed_message(&mut ctx);
-                        let _ = self.routed_tx.send(routed).await;
-                    }
+                    Ok(InboundStageAction::Continue) => match build_routed_message(&mut ctx) {
+                        Ok(routed) => {
+                            let _ = self.routed_tx.send(routed).await;
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "Post-debounce routing failed during flush");
+                        }
+                    },
                     Ok(action) => {
                         tracing::debug!(?action, "Debounce flush terminal action");
                     }
@@ -204,11 +208,16 @@ impl InboundPipeline for DefaultInboundPipeline {
         }
 
         match run_inbound_stages(&self.post_stages, &mut ctx).await {
-            Ok(InboundStageAction::Continue) => {
-                let routed = build_routed_message(&mut ctx);
-                let _ = self.routed_tx.send(routed.clone()).await;
-                Some(routed)
-            }
+            Ok(InboundStageAction::Continue) => match build_routed_message(&mut ctx) {
+                Ok(routed) => {
+                    let _ = self.routed_tx.send(routed.clone()).await;
+                    Some(routed)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Post-debounce routing failed");
+                    None
+                }
+            },
             Ok(action) => {
                 tracing::debug!(?action, "Post-debounce terminal action");
                 None
@@ -228,9 +237,15 @@ impl InboundPipeline for DefaultInboundPipeline {
             if let Ok(InboundStageAction::Continue) =
                 run_inbound_stages(&self.post_stages, &mut ctx).await
             {
-                let r = build_routed_message(&mut ctx);
-                let _ = self.routed_tx.send(r.clone()).await;
-                routed.push(r);
+                match build_routed_message(&mut ctx) {
+                    Ok(r) => {
+                        let _ = self.routed_tx.send(r.clone()).await;
+                        routed.push(r);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Flush routing failed");
+                    }
+                }
             }
         }
         routed
