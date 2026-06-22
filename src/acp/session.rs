@@ -213,7 +213,7 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                 )
                 .await;
 
-                let _ = handle
+                if let Err(e) = handle
                     .tx
                     .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
                         agent,
@@ -222,7 +222,10 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         progress_cb: None,
                         respond_to,
                     })))
-                    .await;
+                    .await
+                {
+                    warn!("Failed to dispatch ExecuteSession for {}: {}", session_id, e);
+                }
             }
 
             AcpCommand::ExecuteRun {
@@ -242,7 +245,7 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                 )
                 .await;
 
-                let _ = handle
+                if let Err(e) = handle
                     .tx
                     .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
                         agent,
@@ -251,7 +254,10 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         progress_cb: None,
                         respond_to,
                     })))
-                    .await;
+                    .await
+                {
+                    warn!("Failed to dispatch ExecuteRun for {}: {}", session_id, e);
+                }
             }
 
             AcpCommand::ExecuteSessionWithProgress {
@@ -272,7 +278,7 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                 )
                 .await;
 
-                let _ = handle
+                if let Err(e) = handle
                     .tx
                     .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
                         agent,
@@ -281,7 +287,13 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         progress_cb: Some(progress_cb),
                         respond_to,
                     })))
-                    .await;
+                    .await
+                {
+                    warn!(
+                        "Failed to dispatch ExecuteSessionWithProgress for {}: {}",
+                        session_id, e
+                    );
+                }
             }
 
             AcpCommand::Pause { session_id } => {
@@ -389,7 +401,7 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                 )
                 .await;
 
-                let _ = handle
+                if let Err(e) = handle
                     .tx
                     .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
                         agent,
@@ -398,7 +410,10 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         progress_cb: None,
                         respond_to,
                     })))
-                    .await;
+                    .await
+                {
+                    warn!("Failed to dispatch ExecuteForBridge for {}: {}", session_id, e);
+                }
             }
 
             AcpCommand::RecoverSubagent {
@@ -416,7 +431,9 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                 info!("ACP actor shutting down");
                 for handle in sessions.values() {
                     handle.controller.cancel().await;
-                    let _ = handle.tx.send(SessionCommand::Shutdown).await;
+                    if let Err(e) = handle.tx.send(SessionCommand::Shutdown).await {
+                        warn!("Failed to send Shutdown to session actor: {}", e);
+                    }
                 }
                 sessions.clear();
                 session_meta.clear();
@@ -424,10 +441,13 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                 // Also shut down all subagents managed by the control plane.
                 let subagents = ctx.control_plane.subagents.read().await;
                 for handle in subagents.values() {
-                    let _ = handle
+                    if let Err(e) = handle
                         .command_tx
                         .send(super::subagent::SubagentCommand::Shutdown)
-                        .await;
+                        .await
+                    {
+                        warn!("Failed to send Shutdown to subagent {}: {}", handle.id, e);
+                    }
                 }
                 drop(subagents);
 
@@ -526,7 +546,9 @@ pub(crate) async fn session_actor_loop(
                     warn!("Session {} execution error: {}", session_id, e);
                 }
 
-                let _ = payload.respond_to.send(result);
+                if let Err(e) = payload.respond_to.send(result) {
+                    warn!("Session {} failed to send execution result: {:?}", session_id, e);
+                }
             }
 
             SessionCommand::Shutdown => {

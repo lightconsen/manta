@@ -60,8 +60,6 @@ impl ChannelAcpBinding {
 pub enum AcpForwardResult {
     /// Message was forwarded and a response is available.
     Completed(Box<OutgoingMessage>),
-    /// Message was forwarded but is being processed (no response yet).
-    Pending,
     /// Forwarding failed.
     Failed(String),
 }

@@ -157,12 +157,8 @@ impl Default for SubagentConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubagentStatus {
-    /// Starting up
-    Starting,
     /// Ready for work
     Ready,
-    /// Busy processing
-    Busy,
     /// Shutting down
     ShuttingDown,
     /// Terminated normally

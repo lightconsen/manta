@@ -40,12 +40,12 @@ impl ExecutionController {
             match state {
                 RuntimeState::Idle | RuntimeState::Running => {
                     self.iteration
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return Ok(());
                 }
                 RuntimeState::Stepping => {
                     self.iteration
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     *self.state.write().await = RuntimeState::Paused;
                     return Ok(());
                 }
@@ -100,7 +100,8 @@ impl ExecutionController {
     pub async fn reset(&self) {
         let mut state = self.state.write().await;
         *state = RuntimeState::Idle;
-        self.iteration.store(0, std::sync::atomic::Ordering::SeqCst);
+        self.iteration
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         drop(state);
         self.notify.notify_waiters();
     }
@@ -113,7 +114,7 @@ impl ExecutionController {
     /// Current iteration count (number of times check_and_wait has allowed
     /// execution to proceed).
     pub fn current_iteration(&self) -> usize {
-        self.iteration.load(std::sync::atomic::Ordering::SeqCst)
+        self.iteration.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 

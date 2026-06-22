@@ -25,6 +25,7 @@ use tracing::{debug, info, warn};
 use crate::agent::AgentConfig;
 #[cfg(test)]
 use crate::canvas::CanvasManager;
+use crate::channels::ChannelAcpBridge;
 use crate::inbound::*;
 #[cfg(test)]
 use crate::model_router::ModelRouter;
@@ -659,7 +660,7 @@ impl Gateway {
                 reply_dispatcher: pipelines_init.reply_dispatcher.clone(),
                 snapshot_store: None,
                 health_monitor: None,
-                acp_bridge: None,
+                acp_bridge: Some(Arc::new(ChannelAcpBridge::new(acp.command_tx()))),
                 session_channels: Arc::new(RwLock::new(HashMap::new())),
                 webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
             },

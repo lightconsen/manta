@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -45,6 +45,8 @@ pub struct AcpControlPlane {
     /// Event broadcast channel for ACP lifecycle events.
     pub(super) event_tx:
         Arc<RwLock<Option<tokio::sync::broadcast::Sender<crate::gateway::GatewayEvent>>>>,
+    /// Handle to the ACP actor task for graceful shutdown.
+    pub(super) actor_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 /// ACP Session - groups related subagents
@@ -71,8 +73,9 @@ impl AcpControlPlane {
             recovery: Arc::new(RwLock::new(CrashRecoveryConfig::default())),
             bus: Arc::new(RwLock::new(AcpBus::new())),
             event_tx: Arc::new(RwLock::new(None)),
+            actor_handle: Arc::new(Mutex::new(None)),
         };
-        tokio::spawn(acp_actor_loop(
+        let handle = tokio::spawn(acp_actor_loop(
             command_rx,
             ActorContext {
                 max_iterations,
@@ -80,6 +83,9 @@ impl AcpControlPlane {
                 control_plane: acp.clone(),
             },
         ));
+        *acp.actor_handle
+            .try_lock()
+            .expect("actor handle lock available during construction") = Some(handle);
         acp
     }
 
@@ -152,8 +158,15 @@ impl AcpControlPlane {
     pub(crate) async fn emit(&self, event: crate::gateway::GatewayEvent) {
         let guard = self.event_tx.read().await;
         if let Some(ref tx) = *guard {
-            let _ = tx.send(event);
+            if let Err(e) = tx.send(event) {
+                warn!("Failed to emit ACP event: {}", e);
+            }
         }
+    }
+
+    /// Returns a clone of the ACP command channel sender.
+    pub fn command_tx(&self) -> mpsc::Sender<AcpCommand> {
+        self.command_tx.clone()
     }
 
     /// Returns true if a session store is attached for persistence.
@@ -357,7 +370,25 @@ impl AcpControlPlane {
             .send(AcpCommand::Shutdown)
             .await
             .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?;
-        Ok(())
+
+        let handle = {
+            let mut guard = self.actor_handle.lock().await;
+            guard.take()
+        };
+        if let Some(handle) = handle {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(e)) => Err(crate::error::SyscityError::Internal(format!(
+                    "ACP actor task panicked: {}",
+                    e
+                ))),
+                Err(_) => Err(crate::error::SyscityError::Internal(
+                    "ACP actor shutdown timed out".to_string(),
+                )),
+            }
+        } else {
+            Ok(())
+        }
     }
 
     // ------------------------------------------------------------------
@@ -412,9 +443,9 @@ impl AcpControlPlane {
                     // If the parent already has an associated thread, reuse it;
                     // otherwise create a fresh thread for this subagent.
                     let parent_thread_id = format!("thread-{}", parent_id);
-                    if threads.contains_key(&parent_id) {
+                    if threads.contains_key(&parent_thread_id) {
                         threads
-                            .get(&parent_id)
+                            .get(&parent_thread_id)
                             .map(|t| t.id.clone())
                             .unwrap_or_else(|| parent_thread_id.clone())
                     } else {
@@ -1266,9 +1297,11 @@ impl AcpControlPlane {
         let mut subagents = self.subagents.write().await;
 
         if let Some(subagent) = subagents.get_mut(subagent_id) {
-            subagent.status = SubagentStatus::Terminated;
-            let _ = subagent.command_tx.send(SubagentCommand::Shutdown).await;
+            if let Err(e) = subagent.command_tx.send(SubagentCommand::Shutdown).await {
+                warn!("Failed to send shutdown command to subagent {}: {}", subagent_id, e);
+            }
             subagent.abort_handle.abort();
+            subagent.status = SubagentStatus::Terminated;
             info!("Killed subagent {} (force abort)", subagent_id);
             drop(subagents);
             if let Some(ref store) = self.store {
