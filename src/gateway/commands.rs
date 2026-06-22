@@ -2046,6 +2046,7 @@ async fn handle_focus(
             agent_id: target.to_string(),
             workspace_id: None,
             persisted_binding: true,
+            is_fallback: false,
         };
         state.agents.router.bind_session(&sid, &result).await;
         return WsResponse::ok(

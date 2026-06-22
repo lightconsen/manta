@@ -29,6 +29,13 @@ pub struct RouteResult {
     /// was used. This is useful for callers that want to distinguish "fell back
     /// to default because nothing was bound" from "used an established binding".
     pub persisted_binding: bool,
+    /// Whether this route is the global default fallback.
+    ///
+    /// `true` only when no mention, binding, channel default, workspace default,
+    /// or conversation resolver matched and the router fell back to the
+    /// configured global default agent. Callers can use this to treat the route
+    /// as "not found" when there is no established binding.
+    pub is_fallback: bool,
 }
 
 /// Configuration for the agent router.
@@ -359,6 +366,7 @@ impl AgentRouter {
                 agent_id: mentioned,
                 workspace_id: workspace_hint.map(String::from),
                 persisted_binding: false,
+                is_fallback: false,
             };
         }
 
@@ -371,6 +379,7 @@ impl AgentRouter {
                     agent_id: agent_id.clone(),
                     workspace_id: workspace_id.clone(),
                     persisted_binding: false,
+                    is_fallback: false,
                 };
             }
         }
@@ -395,6 +404,7 @@ impl AgentRouter {
                         agent_id: agent_id.clone(),
                         workspace_id: workspace_id.clone(),
                         persisted_binding: false,
+                        is_fallback: false,
                     };
                 }
             }
@@ -409,6 +419,7 @@ impl AgentRouter {
                     agent_id: agent_id.clone(),
                     workspace_id: workspace_id.clone(),
                     persisted_binding: true,
+                    is_fallback: false,
                 };
                 // Store binding for future messages
                 drop(defaults);
@@ -426,6 +437,7 @@ impl AgentRouter {
                     agent_id: agent_id.clone(),
                     workspace_id: Some(ws.to_string()),
                     persisted_binding: true,
+                    is_fallback: false,
                 };
                 drop(defaults);
                 result.persisted_binding = self.bind_session(&session_id, &result).await;
@@ -454,6 +466,7 @@ impl AgentRouter {
                     agent_id: resolution.agent_id,
                     workspace_id: resolution.workspace_id,
                     persisted_binding: true,
+                    is_fallback: false,
                 };
                 result.persisted_binding = self.bind_session(&session_id, &result).await;
                 return result;
@@ -469,6 +482,7 @@ impl AgentRouter {
             agent_id: self.config.default_agent_id.clone(),
             workspace_id: self.config.default_workspace_id.clone(),
             persisted_binding: true,
+            is_fallback: true,
         };
         result.persisted_binding = self.bind_session(&session_id, &result).await;
         result
@@ -574,6 +588,7 @@ impl AgentRouter {
                     agent_id: agent_id.clone(),
                     workspace_id: workspace_id.clone(),
                     persisted_binding: false,
+                    is_fallback: false,
                 };
             }
         }
@@ -587,6 +602,7 @@ impl AgentRouter {
             agent_id: self.config.default_agent_id.clone(),
             workspace_id: self.config.default_workspace_id.clone(),
             persisted_binding: true,
+            is_fallback: true,
         };
         result.persisted_binding = self.bind_session(session_id, &result).await;
         result
@@ -625,6 +641,7 @@ mod tests {
         let route = router.route(&msg, None).await;
         assert_eq!(route.agent_id, "default");
         assert!(route.persisted_binding);
+        assert!(route.is_fallback);
     }
 
     #[tokio::test]
@@ -667,6 +684,7 @@ mod tests {
         let msg2 = IncomingMessage::new("u1", "s1", "again");
         let route2 = router.route(&msg2, None).await;
         assert!(!route2.persisted_binding);
+        assert!(!route2.is_fallback);
         assert_eq!(route2.agent_id, route1.agent_id);
     }
 
@@ -708,6 +726,7 @@ mod tests {
         let route = router.route(&msg, None).await;
         assert_eq!(route.agent_id, "default");
         assert!(!route.persisted_binding);
+        assert!(route.is_fallback);
 
         let bindings = router.list_bindings().await;
         assert!(bindings.is_empty());
@@ -720,6 +739,7 @@ mod tests {
             agent_id: "".to_string(),
             workspace_id: None,
             persisted_binding: false,
+            is_fallback: false,
         };
         assert!(
             !router.bind_session("s1", &route_with_empty_agent).await,
@@ -730,6 +750,7 @@ mod tests {
             agent_id: "default".to_string(),
             workspace_id: None,
             persisted_binding: false,
+            is_fallback: false,
         };
         assert!(!router.bind_session("", &route_ok).await, "empty session_id should not bind");
         assert!(router.list_bindings().await.is_empty());
@@ -742,6 +763,7 @@ mod tests {
             agent_id: "coder".to_string(),
             workspace_id: Some("dev".to_string()),
             persisted_binding: false,
+            is_fallback: false,
         };
         assert!(router.bind_session("s1", &route).await);
         let bindings = router.list_bindings().await;
@@ -755,6 +777,7 @@ mod tests {
             agent_id: "coder".to_string(),
             workspace_id: Some("".to_string()),
             persisted_binding: false,
+            is_fallback: false,
         };
         assert!(router.bind_session("s1", &route).await);
         let bindings = router.list_bindings().await;

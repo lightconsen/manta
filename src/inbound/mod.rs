@@ -5,8 +5,9 @@
 //! processing pipeline:
 //!
 //! ```text
-//! Channel Extension -> Identity (optional) -> Debounce -> Dispatch -> Media Understanding
-//! -> Envelope (optional) -> Queue Mode Resolve -> Agent Router -> Agent
+//! Channel Extension -> Identity (optional) -> Pre-dispatch cheap suppress check
+//! -> Debounce -> Dispatch -> Media Understanding -> Envelope (optional)
+//! -> Queue Mode Resolve -> Agent Router -> Agent
 //! ```
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -119,8 +120,8 @@ impl InboundProcessOutcome {
 /// Default inbound pipeline implementation.
 ///
 /// Wires all stages together through the pluggable [`InboundStage`] runner:
-/// identity (optional) → debounce → media → dispatch → envelope (optional)
-/// → queue → router.
+/// identity (optional) → pre-dispatch cheap suppress check → debounce → media
+/// → dispatch → envelope (optional) → queue → router.
 pub struct DefaultInboundPipeline {
     debouncer: Arc<InboundDebouncer>,
     media_pipeline: MediaUnderstandingPipeline,
@@ -220,9 +221,8 @@ impl DefaultInboundPipeline {
     /// continues processing. [`IdentityFailMode::Suppress`] drops messages that
     /// fail validation.
     ///
-    /// This must be called **before** [`Self::with_identity_validator`] if the
-    /// validator is also configured, because the fail mode is baked into the
-    /// pre-debounce stage list when the validator is attached.
+    /// This may be called before or after [`Self::with_identity_validator`];
+    /// the pre-debounce stage list is rebuilt when either method is called.
     pub fn with_identity_fail_mode(mut self, fail_mode: IdentityFailMode) -> Self {
         self.identity_fail_mode = fail_mode;
         // If a validator is already attached, rebuild the stage list with the

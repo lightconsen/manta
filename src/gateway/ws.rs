@@ -865,6 +865,7 @@ async fn handle_chat_send(
                     agent_id: bound_agent.clone(),
                     workspace_id: None,
                     persisted_binding: false,
+                    is_fallback: false,
                 };
                 state.agents.router.bind_session(&session_id, &route).await;
             }
@@ -876,6 +877,7 @@ async fn handle_chat_send(
             agent_id,
             workspace_id: None,
             persisted_binding: false,
+            is_fallback: false,
         };
         state.agents.router.bind_session(&session_id, &route).await;
     }
@@ -899,6 +901,7 @@ async fn handle_chat_send(
                         agent_id: agent_id.clone(),
                         workspace_id: None,
                         persisted_binding: true,
+                        is_fallback: false,
                     };
                     state.agents.router.bind_session(&session_id, &route).await;
                     // Strip the greeting prefix so the agent sees only the task.

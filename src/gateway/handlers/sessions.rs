@@ -44,7 +44,7 @@ pub async fn resolve_session_query_tx(
 ) -> Result<mpsc::Sender<AgentQuery>, axum::response::Response> {
     let agent_id = {
         let route = state.agents.router.resolve_by_session(session_id).await;
-        if route.agent_id == "default" && route.persisted_binding {
+        if route.is_fallback {
             // No existing binding and fell back to default — treat as not found
             return Err((
                 StatusCode::NOT_FOUND,

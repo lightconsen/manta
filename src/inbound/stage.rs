@@ -146,7 +146,10 @@ pub trait InboundStage: Send + Sync {
 
 // ── Built-in stage wrappers ──────────────────────────────────────────────────
 
-/// Identity validation stage (warn-only, never drops messages).
+/// Identity validation stage.
+///
+/// By default validation failures are logged and processing continues, but
+/// [`IdentityFailMode::Suppress`] can be configured to drop the message instead.
 pub struct IdentityStage {
     validator: IdentityValidator,
     fail_mode: IdentityFailMode,
