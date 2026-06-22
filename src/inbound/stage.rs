@@ -132,8 +132,8 @@ pub trait InboundStage: Send + Sync {
     /// [`InboundStageAction::Suppress`] to drop, or
     /// [`InboundStageAction::Debounce`] to absorb into the debouncer.
     ///
-    /// Returning [`StageError::Fatal`] aborts the entire pipeline; callers
-    /// should log the error and discard the message.
+    /// Returning an `Err` with [`StageError::Fatal`] aborts the entire pipeline;
+    /// callers should log the error and discard the message.
     async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError>;
 }
 
@@ -397,9 +397,10 @@ pub fn build_routed_message(ctx: &mut InboundContext) -> Result<RoutedMessage, S
 
 /// Run a slice of stages sequentially.
 ///
-/// Returns `Ok(())` if all stages returned [`InboundStageAction::Continue`].
-/// Returns the terminal action as `Ok(Suppress)` or `Ok(Debounce)` if a stage
-/// stopped the pipeline. Returns [`StageError::Fatal`] if a stage failed.
+/// Returns `Ok(InboundStageAction::Continue)` if all stages returned
+/// [`InboundStageAction::Continue`]. Returns the terminal action as
+/// `Ok(Suppress)` or `Ok(Debounce)` if a stage stopped the pipeline. Returns
+/// [`StageError::Fatal`] if a stage failed.
 pub async fn run_inbound_stages(
     stages: &[Box<dyn InboundStage>],
     ctx: &mut InboundContext,

@@ -94,12 +94,9 @@ mod tests {
         ) -> (Option<RoutedMessage>, Vec<RoutedMessage>) {
             let mut rx = self.routed_rx.lock().await;
             let result = self.pipeline.process(msg).await;
-            // Drain any messages sent to the channel during this call.
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            let mut channel_messages = Vec::new();
-            while let Ok(m) = rx.try_recv() {
-                channel_messages.push(m);
-            }
+            // Drain any messages sent to the channel during this call, with a
+            // bounded wait to avoid flakiness on slow CI runners.
+            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
             (result, channel_messages)
         }
     }
@@ -116,10 +113,11 @@ mod tests {
     impl StageHarness {
         async fn new(
             debouncer: Arc<InboundDebouncer>,
+            flush_rx: mpsc::Receiver<Vec<DebouncedItem>>,
             dispatch: AutoReplyDispatch,
             router: AgentRouter,
             envelope_manager: Option<SessionEnvelopeManager>,
-        ) -> Self {
+        ) -> Arc<Self> {
             let (routed_tx, routed_rx) = mpsc::channel::<RoutedMessage>(64);
             let pre_stages = default_pre_debounce_stages(Some(IdentityValidator::new()), debouncer);
             let post_stages = default_post_debounce_stages(
@@ -132,17 +130,50 @@ mod tests {
                 std::sync::Arc::new(router),
             );
 
-            Self {
+            let harness = Arc::new(Self {
                 pre_stages,
                 post_stages,
                 routed_tx,
                 routed_rx: tokio::sync::Mutex::new(routed_rx),
+            });
+
+            // Start the same background flush loop that DefaultInboundPipeline
+            // runs so debounced messages are re-injected through post-stages.
+            let harness_clone = harness.clone();
+            tokio::spawn(async move {
+                harness_clone.run_flush_loop(flush_rx).await;
+            });
+
+            harness
+        }
+
+        async fn run_flush_loop(self: Arc<Self>, mut flush_rx: mpsc::Receiver<Vec<DebouncedItem>>) {
+            while let Some(batch) = flush_rx.recv().await {
+                for item in batch {
+                    let mut ctx = InboundContext::new(item.message);
+                    match run_inbound_stages(&self.post_stages, &mut ctx).await {
+                        Ok(InboundStageAction::Continue) => match build_routed_message(&mut ctx) {
+                            Ok(routed) => {
+                                let _ = self.routed_tx.send(routed).await;
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Stage harness flush routing failed");
+                            }
+                        },
+                        Ok(action) => {
+                            tracing::debug!(?action, "Stage harness flush terminal action");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Stage harness flush stage failed");
+                        }
+                    }
+                }
             }
         }
     }
 
     #[async_trait]
-    impl PipelineHarness for StageHarness {
+    impl PipelineHarness for Arc<StageHarness> {
         async fn process(
             &self,
             msg: IncomingMessage,
@@ -166,13 +197,26 @@ mod tests {
                 _ => None,
             };
 
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            let mut channel_messages = Vec::new();
-            while let Ok(m) = rx.try_recv() {
-                channel_messages.push(m);
-            }
+            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
             (result, channel_messages)
         }
+    }
+
+    /// Drain all currently available messages from `rx`, waiting up to
+    /// `timeout` for the first message to arrive.
+    async fn drain_with_timeout(
+        rx: &mut mpsc::Receiver<RoutedMessage>,
+        timeout: Duration,
+    ) -> Vec<RoutedMessage> {
+        let mut messages = Vec::new();
+        match tokio::time::timeout(timeout, rx.recv()).await {
+            Ok(Some(first)) => messages.push(first),
+            _ => return messages,
+        }
+        while let Ok(m) = rx.try_recv() {
+            messages.push(m);
+        }
+        messages
     }
 
     // ── Shared assertions ────────────────────────────────────────────────────
@@ -312,7 +356,7 @@ mod tests {
     async fn build_stage(
         config: AutoReplyDispatchConfig,
         router_config: AgentRouterConfig,
-    ) -> StageHarness {
+    ) -> Arc<StageHarness> {
         let (flush_tx, flush_rx) = mpsc::channel::<Vec<DebouncedItem>>(64);
         let debouncer = InboundDebouncer::new(
             InboundDebouncerConfig {
@@ -321,10 +365,9 @@ mod tests {
             },
             flush_tx,
         );
-        let _ = flush_rx;
         let dispatch = AutoReplyDispatch::new(config);
         let router = AgentRouter::new(router_config);
-        StageHarness::new(debouncer, dispatch, router, None).await
+        StageHarness::new(debouncer, flush_rx, dispatch, router, None).await
     }
 
     // ── Tests ────────────────────────────────────────────────────────────────

@@ -58,7 +58,7 @@ pub struct AutoReplyDispatchConfig {
 /// Stages (in order):
 /// 1. Send policy evaluation (allow / deny / silence)
 /// 2. Plugin-owned binding resolution
-/// 3. Workspace hint extraction (`@workspace` mention)
+/// 3. Workspace hint extraction (`#workspace_name` mention)
 /// 4. Suppression check (group chats without mention)
 /// 5. Secondary command gate check (channels::CommandGate)
 #[derive(Debug, Clone)]
@@ -231,8 +231,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_suppress_group_without_mention() {
-        let mut config = AutoReplyDispatchConfig::default();
-        config.suppress_unless_mentioned_in_groups = true;
+        let config = AutoReplyDispatchConfig {
+            suppress_unless_mentioned_in_groups: true,
+            ..Default::default()
+        };
         let dispatch = AutoReplyDispatch::new(config);
 
         let mut msg = IncomingMessage::new("u1", "s1", "hello");
@@ -279,8 +281,10 @@ mod tests {
             crate::gateway::send_policy::RuleCondition::ContentContains("spam".to_string()),
         ));
 
-        let mut config = AutoReplyDispatchConfig::default();
-        config.send_policy = Some(policy);
+        let config = AutoReplyDispatchConfig {
+            send_policy: Some(policy),
+            ..Default::default()
+        };
         let dispatch = AutoReplyDispatch::new(config);
 
         let msg = IncomingMessage::new("u1", "s1", "this is spam");
@@ -303,8 +307,10 @@ mod tests {
                 .condition(crate::gateway::send_policy::RuleCondition::Any),
         );
 
-        let mut config = AutoReplyDispatchConfig::default();
-        config.send_policy = Some(policy);
+        let config = AutoReplyDispatchConfig {
+            send_policy: Some(policy),
+            ..Default::default()
+        };
         let dispatch = AutoReplyDispatch::new(config);
 
         let msg = IncomingMessage::new("u1", "s1", "hello");
@@ -315,8 +321,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_suppress_group_with_mention() {
-        let mut config = AutoReplyDispatchConfig::default();
-        config.suppress_unless_mentioned_in_groups = true;
+        let config = AutoReplyDispatchConfig {
+            suppress_unless_mentioned_in_groups: true,
+            ..Default::default()
+        };
         let dispatch = AutoReplyDispatch::new(config);
 
         let mut msg = IncomingMessage::new("u1", "s1", "hello");
@@ -332,8 +340,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_direct_message_not_suppressed() {
-        let mut config = AutoReplyDispatchConfig::default();
-        config.suppress_unless_mentioned_in_groups = true;
+        let config = AutoReplyDispatchConfig {
+            suppress_unless_mentioned_in_groups: true,
+            ..Default::default()
+        };
         let dispatch = AutoReplyDispatch::new(config);
 
         let mut msg = IncomingMessage::new("u1", "s1", "hello");

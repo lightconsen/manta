@@ -240,8 +240,10 @@ mod tests {
     #[tokio::test]
     async fn test_absorb_and_flush() {
         let (tx, mut rx) = mpsc::channel(10);
-        let mut config = InboundDebouncerConfig::default();
-        config.debounce_ms = 50; // short for testing
+        let config = InboundDebouncerConfig {
+            debounce_ms: 50,
+            ..Default::default()
+        };
         let debouncer = InboundDebouncer::new(config, tx);
 
         let msg1 = IncomingMessage::new("u1", "s1", "hello");

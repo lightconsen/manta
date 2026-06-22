@@ -337,14 +337,12 @@ impl AgentRouter {
 
         // 2b. Check existing session binding by derived `{channel}:{user_id}` key
         let channel_name = match &message.provenance {
-            crate::channels::InputProvenance::ExternalUser { channel, .. } => {
-                Some(channel.as_str())
-            }
+            crate::channels::InputProvenance::ExternalUser { channel, .. } => Some(channel.clone()),
             _ => None,
         };
         let user_id = message.user_id.0.as_str();
 
-        if let Some(ch) = channel_name {
+        if let Some(ch) = channel_name.as_deref() {
             let derived_key = Self::derive_session_key(ch, user_id);
             if derived_key != session_id {
                 let bindings = self.session_bindings.read().await;
@@ -363,11 +361,6 @@ impl AgentRouter {
         }
 
         // 3. Check channel-specific default
-        let channel_name = match &message.provenance {
-            crate::channels::InputProvenance::ExternalUser { channel, .. } => Some(channel.clone()),
-            _ => None,
-        };
-
         if let Some(ch) = &channel_name {
             let defaults = self.channel_defaults.read().await;
             if let Some((agent_id, workspace_id)) = defaults.get(ch) {
