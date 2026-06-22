@@ -105,7 +105,8 @@ impl InboundDebouncer {
 
         let mut buffers = self.buffers.write().await;
 
-        // LRU eviction: if we're at capacity, drop the least-recently-active key.
+        // LRU eviction: if we're at capacity, flush the least-recently-active
+        // key so its messages are not lost, then remove it.
         if buffers.len() >= self.config.max_tracked_keys && !buffers.contains_key(&key) {
             let mut oldest_key: Option<String> = None;
             let mut oldest_time: Option<Instant> = None;
@@ -118,10 +119,21 @@ impl InboundDebouncer {
             }
             if let Some(oldest) = oldest_key {
                 warn!(
-                    "Debouncer at capacity ({}), evicting least-recently-active key {}",
+                    "Debouncer at capacity ({}), flushing least-recently-active key {}",
                     self.config.max_tracked_keys, oldest
                 );
-                buffers.remove(&oldest);
+                if let Some(buf) = buffers.remove(&oldest) {
+                    let guard = buf.lock().await;
+                    if let Some(handle) = guard.timer_handle.as_ref() {
+                        handle.abort();
+                    }
+                    if !guard.items.is_empty() {
+                        let batch = guard.items.clone();
+                        let tx = guard.flush_tx.clone();
+                        drop(guard);
+                        let _ = tx.send(batch).await;
+                    }
+                }
             }
         }
 

@@ -391,7 +391,8 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_workspace_mention_empty() {
-        assert_eq!(AutoReplyDispatch::extract_workspace_mention("just #"), None);
+    fn test_extract_workspace_mention_invalid_start() {
+        assert_eq!(AutoReplyDispatch::extract_workspace_mention("see #-dev"), None);
+        assert_eq!(AutoReplyDispatch::extract_workspace_mention("use # dev"), None);
     }
 }

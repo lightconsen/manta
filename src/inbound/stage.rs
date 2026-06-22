@@ -13,7 +13,7 @@
 //!   pipeline. Currently: identity validation, debounce.
 //! * **Post-debounce stages** – run for every message that leaves the
 //!   debouncer (either because it bypassed debounce or because a batch was
-//!   flushed). Currently: media, dispatch, envelope, queue, router.
+//!   flushed). Currently: dispatch, media, envelope, queue, router.
 //!
 //! This avoids the cycle that would occur if a flushed message ran through the
 //! debounce stage a second time.
@@ -164,15 +164,28 @@ impl InboundStage for IdentityStage {
     }
 
     async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError> {
-        let identity = crate::channels::identity::SenderIdentity {
+        let extra = &ctx.message.metadata.extra;
+
+        let mut identity = crate::channels::identity::SenderIdentity {
             user_id: ctx.message.user_id.0.clone(),
-            display_name: None,
-            username: None,
-            phone: None,
-            email: None,
-            raw: None,
-            platform_data: None,
+            display_name: extract_metadata_string(extra, "display_name"),
+            username: extract_metadata_string(extra, "username"),
+            phone: extract_metadata_string(extra, "phone"),
+            email: extract_metadata_string(extra, "email"),
+            raw: extract_metadata_string(extra, "raw"),
+            platform_data: Some(build_platform_data(extra, &ctx.message.provenance)),
         };
+
+        // Fall back to the provenance channel name as a raw identifier if no
+        // explicit raw value was provided.
+        if identity.raw.is_none() {
+            if let crate::channels::InputProvenance::ExternalUser { channel, .. } =
+                &ctx.message.provenance
+            {
+                identity.raw = Some(format!("{}:{}", channel, ctx.message.user_id.0));
+            }
+        }
+
         if let Err(err) = self.validator.validate(&identity) {
             tracing::warn!(
                 message_id = %ctx.message.id,
@@ -184,6 +197,30 @@ impl InboundStage for IdentityStage {
         }
         Ok(InboundStageAction::Continue)
     }
+}
+
+/// Extract a non-empty string from metadata extra fields.
+fn extract_metadata_string(
+    extra: &std::collections::HashMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<String> {
+    extra
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+/// Build platform_data from metadata extras plus provenance.
+fn build_platform_data(
+    extra: &std::collections::HashMap<String, serde_json::Value>,
+    provenance: &crate::channels::InputProvenance,
+) -> serde_json::Value {
+    let mut data: serde_json::Map<String, serde_json::Value> = extra.clone().into_iter().collect();
+    if let Ok(value) = serde_json::to_value(provenance) {
+        data.insert("provenance".to_string(), value);
+    }
+    serde_json::Value::Object(data)
 }
 
 /// Debounce stage – absorbs messages that should be batched.
@@ -444,7 +481,7 @@ pub fn default_pre_debounce_stages(
 
 /// Build the default list of **post-debounce** inbound stages.
 ///
-/// Stages: Media → Dispatch → Envelope (if `envelope_manager` is provided)
+/// Stages: Dispatch → Media → Envelope (if `envelope_manager` is provided)
 /// → Queue → Router
 pub fn default_post_debounce_stages(
     media_pipeline: MediaUnderstandingPipeline,
@@ -454,8 +491,8 @@ pub fn default_post_debounce_stages(
     router: Arc<AgentRouter>,
 ) -> Vec<Box<dyn InboundStage>> {
     let mut stages: Vec<Box<dyn InboundStage>> = vec![
-        Box::new(MediaStage::new(media_pipeline)),
         Box::new(DispatchStage::new(dispatch)),
+        Box::new(MediaStage::new(media_pipeline)),
     ];
     if let Some(envelope_manager) = envelope_manager {
         stages.push(Box::new(EnvelopeStage::new(envelope_manager)));
@@ -665,5 +702,33 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("router"));
         assert!(err.contains("route_result missing"));
+    }
+
+    #[test]
+    fn test_extract_metadata_string_skips_empty() {
+        let mut extra = std::collections::HashMap::new();
+        extra.insert("username".to_string(), serde_json::json!("alice"));
+        extra.insert("display_name".to_string(), serde_json::json!(""));
+        extra.insert("phone".to_string(), serde_json::json!(12345));
+
+        assert_eq!(extract_metadata_string(&extra, "username"), Some("alice".to_string()));
+        assert_eq!(extract_metadata_string(&extra, "display_name"), None);
+        assert_eq!(extract_metadata_string(&extra, "phone"), None);
+        assert_eq!(extract_metadata_string(&extra, "missing"), None);
+    }
+
+    #[test]
+    fn test_build_platform_data_includes_provenance() {
+        let mut extra = std::collections::HashMap::new();
+        extra.insert("username".to_string(), serde_json::json!("alice"));
+        let provenance = crate::channels::InputProvenance::ExternalUser {
+            channel: "telegram".to_string(),
+            is_direct: true,
+        };
+
+        let data = build_platform_data(&extra, &provenance);
+        let obj = data.as_object().expect("platform_data should be an object");
+        assert_eq!(obj.get("username"), Some(&serde_json::json!("alice")));
+        assert!(obj.contains_key("provenance"));
     }
 }

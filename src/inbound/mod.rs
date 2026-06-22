@@ -5,9 +5,8 @@
 //! processing pipeline:
 //!
 //! ```text
-//! Channel Extension -> Identity (optional) -> Debounce -> Media Understanding
-//! -> Dispatch -> Envelope (optional) -> Queue Mode Resolve -> Agent Router
-//! -> Agent
+//! Channel Extension -> Identity (optional) -> Debounce -> Dispatch -> Media Understanding
+//! -> Envelope (optional) -> Queue Mode Resolve -> Agent Router -> Agent
 //! ```
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -208,6 +207,13 @@ impl DefaultInboundPipeline {
 #[async_trait::async_trait]
 impl InboundPipeline for DefaultInboundPipeline {
     async fn process(&self, message: IncomingMessage) -> Option<RoutedMessage> {
+        if !self.started.load(Ordering::Relaxed) {
+            tracing::warn!(
+                "DefaultInboundPipeline::process() called before start(); \
+                 debounced messages will not be flushed by the background loop"
+            );
+        }
+
         let mut ctx = InboundContext::new(message);
 
         match run_inbound_stages(&self.pre_stages, &mut ctx).await {

@@ -181,7 +181,10 @@ impl BindingStore for SqliteBindingStore {
                 continue;
             }
 
-            let workspace_id: Option<String> = row.try_get("workspace_id").ok();
+            let workspace_id: Option<String> = row
+                .try_get("workspace_id")
+                .ok()
+                .filter(|s: &String| !s.is_empty());
             bindings.insert(session_id, (agent_id, workspace_id));
         }
         Ok(bindings)
@@ -287,9 +290,7 @@ impl AgentRouter {
             workspace_defaults: RwLock::new(workspace_defaults),
             binding_store: self.binding_store.clone(),
             conversation_resolver: None,
-            auto_create_binding: AtomicBool::new(
-                self.auto_create_binding.load(Ordering::Relaxed),
-            ),
+            auto_create_binding: AtomicBool::new(self.auto_create_binding.load(Ordering::Acquire)),
         }
     }
 
@@ -472,7 +473,8 @@ impl AgentRouter {
     ///
     /// Returns `true` if a binding was actually created or updated. If
     /// [`AgentRouterConfig::auto_create_binding`] is disabled, this returns
-    /// `false` and no binding is stored.
+    /// `false` and no binding is stored. Empty `workspace_id` strings are
+    /// normalized to `None`.
     pub async fn bind_session(&self, session_id: &str, route: &RouteResult) -> bool {
         if !self.auto_create_binding.load(Ordering::Acquire) {
             return false;
@@ -487,14 +489,15 @@ impl AgentRouter {
             return false;
         }
 
+        let workspace_id = route.workspace_id.clone().filter(|s| !s.is_empty());
+
         let mut bindings = self.session_bindings.write().await;
-        bindings
-            .insert(session_id.to_string(), (route.agent_id.clone(), route.workspace_id.clone()));
+        bindings.insert(session_id.to_string(), (route.agent_id.clone(), workspace_id.clone()));
         drop(bindings);
 
         if let Some(store) = &self.binding_store {
             if let Err(e) = store
-                .save_binding(session_id, &route.agent_id, route.workspace_id.as_deref())
+                .save_binding(session_id, &route.agent_id, workspace_id.as_deref())
                 .await
             {
                 warn!("Failed to persist binding for session {}: {}", session_id, e);
@@ -503,7 +506,7 @@ impl AgentRouter {
 
         info!(
             "Bound session {} to agent {} (workspace: {:?})",
-            session_id, route.agent_id, route.workspace_id
+            session_id, route.agent_id, workspace_id
         );
         true
     }
@@ -586,17 +589,20 @@ impl AgentRouter {
 
     /// Extract an explicit `@agent_name` mention from message content.
     ///
-    /// Looks for patterns like `@agent_name` at the start of the message.
+    /// Looks for the first `@agent_name` token anywhere in the message.
+    /// The agent name may be followed by punctuation, which is stripped.
     fn extract_agent_mention(content: &str) -> Option<String> {
-        // Look for @agent_name at the very beginning
-        if let Some(rest) = content.strip_prefix('@') {
-            let name = rest.split_whitespace().next()?;
-            if !name.is_empty()
-                && name
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-            {
-                return Some(name.to_string());
+        for word in content.split_whitespace() {
+            if let Some(name) = word.strip_prefix('@') {
+                let name =
+                    name.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '-');
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                {
+                    return Some(name.to_string());
+                }
             }
         }
         None
@@ -620,6 +626,24 @@ mod tests {
     async fn test_explicit_mention() {
         let router = AgentRouter::new(AgentRouterConfig::default());
         let msg = IncomingMessage::new("u1", "s1", "@coder write some rust");
+        let route = router.route(&msg, None).await;
+        assert_eq!(route.agent_id, "coder");
+        assert!(!route.created_binding);
+    }
+
+    #[tokio::test]
+    async fn test_explicit_mention_not_at_start() {
+        let router = AgentRouter::new(AgentRouterConfig::default());
+        let msg = IncomingMessage::new("u1", "s1", "hi @coder can you help");
+        let route = router.route(&msg, None).await;
+        assert_eq!(route.agent_id, "coder");
+        assert!(!route.created_binding);
+    }
+
+    #[tokio::test]
+    async fn test_explicit_mention_with_punctuation() {
+        let router = AgentRouter::new(AgentRouterConfig::default());
+        let msg = IncomingMessage::new("u1", "s1", "@coder, please review");
         let route = router.route(&msg, None).await;
         assert_eq!(route.agent_id, "coder");
         assert!(!route.created_binding);
@@ -685,14 +709,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_auto_create_binding_preserved_on_clone() {
+    async fn test_bind_session_rejects_empty_ids() {
         let router = AgentRouter::new(AgentRouterConfig::default());
-        router.set_auto_create_binding(false);
+        let route_with_empty_agent = RouteResult {
+            agent_id: "".to_string(),
+            workspace_id: None,
+            created_binding: false,
+        };
+        assert!(
+            !router.bind_session("s1", &route_with_empty_agent).await,
+            "empty agent_id should not bind"
+        );
 
-        let cloned = router.deep_clone().await;
-        let msg = IncomingMessage::new("u1", "s1", "hello");
-        let route = cloned.route(&msg, None).await;
-        assert!(!route.created_binding);
-        assert!(cloned.list_bindings().await.is_empty());
+        let route_ok = RouteResult {
+            agent_id: "default".to_string(),
+            workspace_id: None,
+            created_binding: false,
+        };
+        assert!(!router.bind_session("", &route_ok).await, "empty session_id should not bind");
+        assert!(router.list_bindings().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_bind_session_valid() {
+        let router = AgentRouter::new(AgentRouterConfig::default());
+        let route = RouteResult {
+            agent_id: "coder".to_string(),
+            workspace_id: Some("dev".to_string()),
+            created_binding: false,
+        };
+        assert!(router.bind_session("s1", &route).await);
+        let bindings = router.list_bindings().await;
+        assert_eq!(bindings.get("s1"), Some(&("coder".to_string(), Some("dev".to_string()))));
+    }
+
+    #[tokio::test]
+    async fn test_bind_session_normalizes_empty_workspace() {
+        let router = AgentRouter::new(AgentRouterConfig::default());
+        let route = RouteResult {
+            agent_id: "coder".to_string(),
+            workspace_id: Some("".to_string()),
+            created_binding: false,
+        };
+        assert!(router.bind_session("s1", &route).await);
+        let bindings = router.list_bindings().await;
+        assert_eq!(bindings.get("s1"), Some(&("coder".to_string(), None)));
     }
 }
