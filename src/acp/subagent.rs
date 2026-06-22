@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::agent::AgentConfig;
 use crate::channels::IncomingMessage;
 
 use super::config::{AcpSessionId, SpawnMode, SubagentStatus};
@@ -38,11 +37,9 @@ pub struct SubagentHandle {
 pub enum SubagentCommand {
     /// Process a message
     ProcessMessage {
-        message: IncomingMessage,
+        message: Box<IncomingMessage>,
         response_tx: oneshot::Sender<crate::Result<String>>,
     },
-    /// Update configuration
-    UpdateConfig(AgentConfig),
     /// Cancel current operation
     Cancel,
     /// Shutdown the subagent
@@ -50,9 +47,9 @@ pub enum SubagentCommand {
 }
 
 /// Response from a subagent
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SubagentResponse {
     pub subagent_id: String,
-    pub result: Result<String, String>,
+    pub result: Result<String, std::sync::Arc<crate::SyscityError>>,
     pub metadata: Option<serde_json::Value>,
 }

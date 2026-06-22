@@ -287,24 +287,52 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
             AcpCommand::Pause { session_id } => {
                 if let Some(handle) = sessions.get(&session_id) {
                     handle.controller.pause().await;
+                    let state = handle.controller.current_state().await;
+                    ctx.control_plane
+                        .emit(crate::gateway::GatewayEvent::AcpStatusChanged {
+                            session_id,
+                            runtime_state: state.to_string(),
+                        })
+                        .await;
                 }
             }
 
             AcpCommand::Resume { session_id } => {
                 if let Some(handle) = sessions.get(&session_id) {
                     handle.controller.resume().await;
+                    let state = handle.controller.current_state().await;
+                    ctx.control_plane
+                        .emit(crate::gateway::GatewayEvent::AcpStatusChanged {
+                            session_id,
+                            runtime_state: state.to_string(),
+                        })
+                        .await;
                 }
             }
 
             AcpCommand::Step { session_id } => {
                 if let Some(handle) = sessions.get(&session_id) {
                     handle.controller.step().await;
+                    let state = handle.controller.current_state().await;
+                    ctx.control_plane
+                        .emit(crate::gateway::GatewayEvent::AcpStatusChanged {
+                            session_id,
+                            runtime_state: state.to_string(),
+                        })
+                        .await;
                 }
             }
 
             AcpCommand::Cancel { session_id } => {
                 if let Some(handle) = sessions.get(&session_id) {
                     handle.controller.cancel().await;
+                    let state = handle.controller.current_state().await;
+                    ctx.control_plane
+                        .emit(crate::gateway::GatewayEvent::AcpStatusChanged {
+                            session_id,
+                            runtime_state: state.to_string(),
+                        })
+                        .await;
                 }
             }
 
@@ -319,7 +347,6 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         current_iteration: handle.controller.current_iteration(),
                         max_iterations: meta.map(|m| m.max_iterations).unwrap_or(50),
                         queue_depth,
-                        current_message: None,
                     })
                 } else {
                     None

@@ -46,6 +46,8 @@ pub mod state;
 pub use config::*;
 pub use state::*;
 
+pub mod acp_ext;
+pub use acp_ext::*;
 pub mod agent_spawn;
 pub(crate) use agent_spawn::{create_default_tool_registry, spawn_agent_inner};
 pub mod dispatch;

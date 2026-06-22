@@ -118,7 +118,6 @@ pub struct AcpSessionStatus {
     pub current_iteration: usize,
     pub max_iterations: usize,
     pub queue_depth: usize,
-    pub current_message: Option<String>,
 }
 
 /// Subagent configuration
@@ -138,16 +137,6 @@ pub struct SubagentConfig {
     pub context: Option<serde_json::Value>,
     /// Timeout in seconds (for Run mode)
     pub timeout_seconds: Option<u64>,
-    /// Automatically restart if the subagent crashes (default: false)
-    #[serde(default)]
-    pub retry_on_crash: bool,
-    /// Maximum number of crash restart attempts (default: 3)
-    #[serde(default = "default_max_crash_retries")]
-    pub max_crash_retries: u32,
-}
-
-fn default_max_crash_retries() -> u32 {
-    3
 }
 
 impl Default for SubagentConfig {
@@ -160,8 +149,6 @@ impl Default for SubagentConfig {
             temperature: None,
             context: None,
             timeout_seconds: Some(300),
-            retry_on_crash: false,
-            max_crash_retries: default_max_crash_retries(),
         }
     }
 }

@@ -96,11 +96,13 @@ impl ExecutionController {
         info!("Execution cancelled");
     }
 
-    /// Reset to `Idle`.
+    /// Reset to `Idle` and wake any waiters so a new execution can start.
     pub async fn reset(&self) {
         let mut state = self.state.write().await;
         *state = RuntimeState::Idle;
         self.iteration.store(0, std::sync::atomic::Ordering::SeqCst);
+        drop(state);
+        self.notify.notify_waiters();
     }
 
     /// Current runtime state.

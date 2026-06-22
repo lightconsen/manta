@@ -150,8 +150,6 @@ impl Tool for AcpSpawnTool {
             temperature: None,
             context: None,
             timeout_seconds: args.timeout_seconds.or(Some(300)),
-            retry_on_crash: false,
-            max_crash_retries: 3,
         };
 
         info!("Spawning subagent for task: {} (mode: {:?})", args.task, config.mode);

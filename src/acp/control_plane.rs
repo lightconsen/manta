@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -9,8 +8,6 @@ use uuid::Uuid;
 use crate::agent::session_store::SaveSubagentRunParams;
 use crate::agent::{Agent, ProgressCallback};
 use crate::channels::IncomingMessage;
-// AgentHandle is defined in gateway module
-pub use crate::gateway::AgentHandle;
 
 use super::bus::{AcpBus, BusMessage};
 use super::config::{
@@ -308,54 +305,28 @@ impl AcpControlPlane {
 
     /// Pause a running session
     pub async fn pause(&self, session_id: String) {
-        let _ = self
-            .command_tx
-            .send(AcpCommand::Pause { session_id: session_id.clone() })
-            .await;
-        self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
-            session_id,
-            runtime_state: "paused".to_string(),
-        })
-        .await;
+        let _ = self.command_tx.send(AcpCommand::Pause { session_id }).await;
     }
 
     /// Resume a paused session
     pub async fn resume(&self, session_id: String) {
         let _ = self
             .command_tx
-            .send(AcpCommand::Resume { session_id: session_id.clone() })
+            .send(AcpCommand::Resume { session_id })
             .await;
-        self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
-            session_id,
-            runtime_state: "running".to_string(),
-        })
-        .await;
     }
 
     /// Single step a paused session
     pub async fn step(&self, session_id: String) {
-        let _ = self
-            .command_tx
-            .send(AcpCommand::Step { session_id: session_id.clone() })
-            .await;
-        self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
-            session_id,
-            runtime_state: "stepping".to_string(),
-        })
-        .await;
+        let _ = self.command_tx.send(AcpCommand::Step { session_id }).await;
     }
 
     /// Cancel a running session
     pub async fn cancel(&self, session_id: String) {
         let _ = self
             .command_tx
-            .send(AcpCommand::Cancel { session_id: session_id.clone() })
+            .send(AcpCommand::Cancel { session_id })
             .await;
-        self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
-            session_id,
-            runtime_state: "cancelled".to_string(),
-        })
-        .await;
     }
 
     /// Get session status
@@ -463,8 +434,6 @@ impl AcpControlPlane {
         let max_iterations = self.max_iterations;
 
         // Capture fields needed for crash recovery logging
-        let recovery_retry_on_crash = config.retry_on_crash;
-        let recovery_max_retries = config.max_crash_retries;
         let _recovery_config = self.recovery.clone();
         let acp_for_recovery = self.clone();
         let recovery_session_id = session_id.clone();
@@ -473,11 +442,12 @@ impl AcpControlPlane {
 
         let join_handle = tokio::spawn(async move {
             info!("Subagent {} task started", subagent_id_clone);
-            let mut agent = agent;
+            let agent = agent;
 
             while let Some(cmd) = command_rx.recv().await {
                 match cmd {
                     SubagentCommand::ProcessMessage { message, response_tx } => {
+                        let message = *message;
                         debug!("Subagent {} processing message", subagent_id_clone);
 
                         // Build a debug-logging callback so tool activity inside
@@ -561,10 +531,6 @@ impl AcpControlPlane {
                             break;
                         }
                     }
-                    SubagentCommand::UpdateConfig(new_config) => {
-                        debug!("Subagent {} config updated", subagent_id_clone);
-                        agent.update_config(new_config);
-                    }
                     SubagentCommand::Cancel => {
                         debug!("Subagent {} cancelled", subagent_id_clone);
                         controller.cancel().await;
@@ -633,19 +599,26 @@ impl AcpControlPlane {
                             .await;
                     }
                     // Log crash for external recovery (call recover_crashed_subagent to restart)
-                    if recovery_retry_on_crash && current_crash_count < recovery_max_retries {
+                    let recovery_enabled = {
+                        let global = acp_for_recovery.recovery.read().await;
+                        global.enabled && current_crash_count < global.max_retries
+                    };
+                    if recovery_enabled {
                         warn!(
                             "Subagent {} crashed (attempt {}/{}). Auto-recovery enabled — call \
                              acp.recover_crashed_subagent() to restart.",
                             watch_id,
                             current_crash_count + 1,
-                            recovery_max_retries
+                            {
+                                let global = acp_for_recovery.recovery.read().await;
+                                global.max_retries
+                            }
                         );
                     }
 
-                    // Automatic recovery: if enabled globally or per-subagent, schedule a
-                    // recovery command to the ACP actor loop so that recovery does not create
-                    // a direct async recursion cycle with `spawn_subagent`.
+                    // Automatic recovery: if enabled globally, schedule a recovery command to the
+                    // ACP actor loop so that recovery does not create a direct async recursion
+                    // cycle with `spawn_subagent`.
                     let acp = acp_for_recovery.clone();
                     let sid = recovery_session_id.clone();
                     let pid = recovery_parent_id.clone();
@@ -653,8 +626,8 @@ impl AcpControlPlane {
                     tokio::spawn(async move {
                         let (should_recover, delay) = {
                             let global = acp.recovery.read().await;
-                            let should_recover = (recovery_retry_on_crash || global.enabled)
-                                && current_crash_count < recovery_max_retries;
+                            let should_recover =
+                                global.enabled && current_crash_count < global.max_retries;
                             let delay = if should_recover {
                                 global
                                     .backoff_seconds
@@ -677,7 +650,10 @@ impl AcpControlPlane {
                             "Auto-recovering subagent {} (attempt {}/{}) in {}s",
                             watch_id,
                             current_crash_count + 1,
-                            recovery_max_retries,
+                            {
+                                let global = acp.recovery.read().await;
+                                global.max_retries
+                            },
                             delay
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
@@ -722,37 +698,42 @@ impl AcpControlPlane {
             crash_count: 0,
         };
 
-        // Register subagent
+        // Register subagent, session, and thread in a consistent lock order:
+        // subagents -> sessions -> threads.
         let mut subagents = self.subagents.write().await;
         subagents.insert(subagent_id.clone(), handle.clone());
 
-        // Register with session
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(&session_id) {
-            session.subagents.push(subagent_id.clone());
-            // Persist updated subagent list
-            if let Some(ref store) = self.store {
-                let ids: Vec<String> = session.subagents.clone();
-                let parent = session.parent_agent_id.clone();
-                let created = session.created_at;
-                let sid = session_id.0.clone();
-                drop(sessions);
-                let _ = store.save_acp_session(&sid, &parent, &ids, created).await;
+        {
+            let mut sessions = self.sessions.write().await;
+            if let Some(session) = sessions.get_mut(&session_id) {
+                session.subagents.push(subagent_id.clone());
+                // Persist updated subagent list
+                if let Some(ref store) = self.store {
+                    let ids: Vec<String> = session.subagents.clone();
+                    let parent = session.parent_agent_id.clone();
+                    let created = session.created_at;
+                    let sid = session_id.0.clone();
+                    drop(sessions);
+                    let _ = store.save_acp_session(&sid, &parent, &ids, created).await;
+                }
             }
         }
 
-        // Ensure thread exists
-        let mut threads = self.threads.write().await;
-        if !threads.contains_key(&thread_id) {
-            threads.insert(
-                thread_id.clone(),
-                ThreadContext {
-                    id: thread_id.clone(),
-                    active_subagent: None,
-                    created_at: chrono::Utc::now(),
-                },
-            );
+        {
+            let mut threads = self.threads.write().await;
+            if !threads.contains_key(&thread_id) {
+                threads.insert(
+                    thread_id.clone(),
+                    ThreadContext {
+                        id: thread_id.clone(),
+                        active_subagent: None,
+                        created_at: chrono::Utc::now(),
+                    },
+                );
+            }
         }
+
+        drop(subagents);
 
         // Persist subagent run record if store is attached.
         if let Some(ref store) = self.store {
@@ -792,10 +773,10 @@ impl AcpControlPlane {
     /// Recover a crashed subagent by spawning a new one with the same config.
     ///
     /// This method may be called externally or by the automatic recovery
-    /// watchdog. It applies backoff based on `crash_count`, sets the crash
-    /// counter on the new handle to the supplied value, persists a recovery
-    /// event if a store is attached, and updates the session's subagent list
-    /// to point to the replacement.
+    /// watchdog. The backoff delay is the responsibility of the caller; this
+    /// method performs the spawn, sets the crash counter on the new handle,
+    /// persists a recovery event if a store is attached, and updates the
+    /// session's subagent list to point to the replacement.
     pub async fn recover_crashed_subagent(
         &self,
         session_id: AcpSessionId,
@@ -803,20 +784,11 @@ impl AcpControlPlane {
         config: SubagentConfig,
         crash_count: u32,
     ) -> Option<SubagentHandle> {
-        let backoff_delays = {
-            let guard = self.recovery.read().await;
-            guard.backoff_seconds.clone()
-        };
-        let delay_idx = (crash_count as usize).min(backoff_delays.len().saturating_sub(1));
-        let delay = backoff_delays.get(delay_idx).copied().unwrap_or(30);
-
         warn!(
-            "Recovering crashed subagent (attempt {}, retrying in {}s)",
+            "Recovering crashed subagent (attempt {}, crash_count: {})",
             crash_count + 1,
-            delay
+            crash_count
         );
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
 
         let handle = match self
             .spawn_subagent(session_id.clone(), parent_id.clone(), config.clone())
@@ -1190,7 +1162,10 @@ impl AcpControlPlane {
 
         subagent
             .command_tx
-            .send(SubagentCommand::ProcessMessage { message, response_tx })
+            .send(SubagentCommand::ProcessMessage {
+                message: Box::new(message),
+                response_tx,
+            })
             .await
             .map_err(|_| {
                 crate::error::SyscityError::Internal("Subagent command channel closed".to_string())
@@ -1271,7 +1246,7 @@ impl AcpControlPlane {
         subagent
             .command_tx
             .send(SubagentCommand::ProcessMessage {
-                message: steer_msg,
+                message: Box::new(steer_msg),
                 response_tx,
             })
             .await
@@ -1447,30 +1422,6 @@ pub struct SubagentTreeNode {
     pub children: Vec<SubagentTreeNode>,
 }
 
-/// Extension trait for Agent to support ACP
-#[async_trait]
-pub trait AcpAgentExt {
-    /// Spawn a subagent from this agent
-    async fn spawn_subagent(
-        &self,
-        acp: &AcpControlPlane,
-        config: SubagentConfig,
-    ) -> crate::Result<SubagentHandle>;
-}
-
-#[async_trait]
-impl AcpAgentExt for AgentHandle {
-    async fn spawn_subagent(
-        &self,
-        acp: &AcpControlPlane,
-        config: SubagentConfig,
-    ) -> crate::Result<SubagentHandle> {
-        let session_id = AcpSessionId::new();
-        acp.spawn_subagent(session_id, self.id.clone(), config)
-            .await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1519,8 +1470,6 @@ mod tests {
 
         let session_id = acp.create_session("parent".to_string()).await;
         let config = SubagentConfig {
-            retry_on_crash: true,
-            max_crash_retries: 1,
             mode: SpawnMode::Run,
             ..SubagentConfig::default()
         };
@@ -1780,8 +1729,6 @@ mod tests {
                 temperature: None,
                 context: None,
                 timeout_seconds: Some(30),
-                retry_on_crash: false,
-                max_crash_retries: 0,
             };
             spawn_tasks.push(tokio::spawn(async move {
                 acp_clone
@@ -1867,5 +1814,77 @@ mod tests {
     async fn test_acp_control_plane_has_store_without_store() {
         let acp = AcpControlPlane::new(50);
         assert!(!acp.has_store());
+    }
+
+    #[tokio::test]
+    async fn test_pause_resume_step_cancel_emit_status_changed_after_actor_processing() {
+        let acp = AcpControlPlane::new(50).with_agent_builder(mock_agent_builder());
+        let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(16);
+        acp.set_event_tx(event_tx).await;
+
+        // Create a session actor by executing a message.
+        let agent = mock_agent_builder()().expect("mock agent builds");
+        let msg = IncomingMessage::new("user1", "conv1", "hello");
+        let _ = acp.execute_session(Arc::new(agent), msg).await;
+
+        // Pause: event should report the actual state after the actor processed it.
+        acp.pause("conv1".to_string()).await;
+        let event = event_rx.recv().await.expect("receive pause event");
+        assert!(
+            matches!(
+                event,
+                crate::gateway::GatewayEvent::AcpStatusChanged {
+                    ref session_id,
+                    ref runtime_state,
+                } if session_id == "conv1" && runtime_state == "paused"
+            ),
+            "expected AcpStatusChanged(paused), got {:?}",
+            event
+        );
+
+        // Resume.
+        acp.resume("conv1".to_string()).await;
+        let event = event_rx.recv().await.expect("receive resume event");
+        assert!(
+            matches!(
+                event,
+                crate::gateway::GatewayEvent::AcpStatusChanged {
+                    ref session_id,
+                    ref runtime_state,
+                } if session_id == "conv1" && runtime_state == "running"
+            ),
+            "expected AcpStatusChanged(running), got {:?}",
+            event
+        );
+
+        // Step.
+        acp.step("conv1".to_string()).await;
+        let event = event_rx.recv().await.expect("receive step event");
+        assert!(
+            matches!(
+                event,
+                crate::gateway::GatewayEvent::AcpStatusChanged {
+                    ref session_id,
+                    ref runtime_state,
+                } if session_id == "conv1" && runtime_state == "stepping"
+            ),
+            "expected AcpStatusChanged(stepping), got {:?}",
+            event
+        );
+
+        // Cancel.
+        acp.cancel("conv1".to_string()).await;
+        let event = event_rx.recv().await.expect("receive cancel event");
+        assert!(
+            matches!(
+                event,
+                crate::gateway::GatewayEvent::AcpStatusChanged {
+                    ref session_id,
+                    ref runtime_state,
+                } if session_id == "conv1" && runtime_state == "cancelled"
+            ),
+            "expected AcpStatusChanged(cancelled), got {:?}",
+            event
+        );
     }
 }
