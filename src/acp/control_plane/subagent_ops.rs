@@ -197,10 +197,7 @@ impl AcpControlPlane {
     }
 
     /// List subagents in a session
-    pub async fn list_session_subagents(
-        &self,
-        session_id: &AcpSessionId,
-    ) -> Vec<SubagentHandle> {
+    pub async fn list_session_subagents(&self, session_id: &AcpSessionId) -> Vec<SubagentHandle> {
         let subagent_ids = {
             let sessions = self.sessions.read().await;
             sessions
@@ -217,9 +214,7 @@ impl AcpControlPlane {
     }
 
     /// Get session info
-    pub async fn get_session_info(&self,
-        session_id: &AcpSessionId,
-    ) -> Option<AcpSessionInfo> {
+    pub async fn get_session_info(&self, session_id: &AcpSessionId) -> Option<AcpSessionInfo> {
         let sessions = self.sessions.read().await;
         sessions.get(session_id).map(|s| AcpSessionInfo {
             id: s.id.clone(),
@@ -230,10 +225,7 @@ impl AcpControlPlane {
     }
 
     /// Get subagent tree for a session (recursive parent-child hierarchy)
-    pub async fn get_subagent_tree(
-        &self,
-        session_id: &AcpSessionId,
-    ) -> Vec<SubagentTreeNode> {
+    pub async fn get_subagent_tree(&self, session_id: &AcpSessionId) -> Vec<SubagentTreeNode> {
         let (root_parent_id, session_subagent_ids) = {
             let sessions = self.sessions.read().await;
             sessions

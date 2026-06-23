@@ -103,6 +103,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         device_init: tokio::sync::RwLock::new(None),
         perception_init: tokio::sync::RwLock::new(None),
         control_init: tokio::sync::RwLock::new(None),
+        summarizer: tokio::sync::OnceCell::new(),
         task_registry: Arc::new(crate::gateway::task_registry::TaskRegistry::new()),
         auth: AuthState {
             manager: Arc::new(crate::security::AuthManager::new()),

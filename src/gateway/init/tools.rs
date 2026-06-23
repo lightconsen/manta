@@ -191,14 +191,16 @@ pub async fn init_tools(
 
     let tool_registry = Arc::new(
         crate::gateway::create_default_tool_registry(
-            acp.clone(),
-            mcp_manager.clone(),
-            approval_queue.clone(),
-            session_store.clone(),
-            memory_manager_holder.clone(),
-            config.capabilities.clone(),
-            audit_log_dyn,
-            Some(Arc::new(ContentFilter::default())),
+            crate::gateway::agent_spawn::ToolRegistryArgs {
+                acp: acp.clone(),
+                mcp_manager: mcp_manager.clone(),
+                approval_queue: approval_queue.clone(),
+                session_store: session_store.clone(),
+                memory_manager: memory_manager_holder.clone(),
+                capabilities: config.capabilities.clone(),
+                audit_log: audit_log_dyn,
+                content_filter: Some(Arc::new(ContentFilter::default())),
+            },
         )
         .await?,
     );

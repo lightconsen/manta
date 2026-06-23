@@ -357,7 +357,10 @@ async fn init_perception(
                 r.poll_all().await;
             }
         });
-        state.task_registry.insert_abort("perception:poll", &handle).await;
+        state
+            .task_registry
+            .insert_abort("perception:poll", &handle)
+            .await;
         Some(handle)
     } else {
         None
@@ -381,7 +384,10 @@ async fn init_perception(
                 }
             }
         });
-        state.task_registry.insert_join("perception:prune", handle).await;
+        state
+            .task_registry
+            .insert_join("perception:prune", handle)
+            .await;
     }
 
     // Spin up the streaming pipeline (raw_hub → temporal/fusion →
@@ -409,7 +415,10 @@ async fn init_perception(
         reg.clone(),
         std::time::Duration::from_secs(5),
     );
-    state.task_registry.insert_join("perception:stream_sync", sync_handle).await;
+    state
+        .task_registry
+        .insert_join("perception:stream_sync", sync_handle)
+        .await;
 
     // Store PerceptionInit on state (poll_handle tracks the poll loop).
     *state.perception_init.write().await = Some(crate::gateway::state::PerceptionInit {
@@ -457,9 +466,12 @@ async fn init_control(device_config: &crate::gateway::DeviceConfig, state: &Gate
     let handle = crate::device::control::spawn_control_loop(
         registry.clone(),
         handlers.clone(),
-        device_config.control.clone(),
+        state.config.clone(),
     );
-    state.task_registry.insert_abort("control:loop", &handle).await;
+    state
+        .task_registry
+        .insert_abort("control:loop", &handle)
+        .await;
 
     *state.control_init.write().await = Some(crate::gateway::state::ControlInit {
         registry,
@@ -475,17 +487,22 @@ async fn init_control(device_config: &crate::gateway::DeviceConfig, state: &Gate
 
 /// Validate authentication configuration for ambiguity and conflicts.
 ///
-/// Fails fast when both `shared_token` and OAuth providers are configured
-/// but `auth_mode` is not explicitly set.
+/// Fails fast when the configured security settings cannot work at runtime.
 fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
     if !config.security.enabled || !config.security.auth_required {
         return Ok(());
     }
 
-    let has_token = config.security.shared_token.is_some();
+    let has_token = config
+        .security
+        .shared_token
+        .as_deref()
+        .map(|t| !t.is_empty())
+        .unwrap_or(false);
     let has_oauth = config.security.oauth.enabled
         && (config.security.oauth.github.is_some() || config.security.oauth.google.is_some());
-    let mode_unset = config.security.auth_mode == crate::gateway::protocol::AuthMode::None;
+    let mode = config.security.auth_mode;
+    let mode_unset = mode == crate::gateway::protocol::AuthMode::None;
 
     if has_token && has_oauth && mode_unset {
         return Err(crate::error::SyscityError::Validation(
@@ -495,8 +512,50 @@ fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
         ));
     }
 
+    // Token mode requires a non-empty shared token.
+    if mode == crate::gateway::protocol::AuthMode::Token && !has_token {
+        return Err(crate::error::SyscityError::Validation(
+            "auth_mode is 'token' but shared_token is missing or empty".into(),
+        ));
+    }
+
+    // OAuth providers must be complete when enabled.
+    if config.security.oauth.enabled {
+        let providers = [
+            ("github", config.security.oauth.github.as_ref()),
+            ("google", config.security.oauth.google.as_ref()),
+        ];
+        for (name, provider) in providers.iter() {
+            if let Some(p) = provider {
+                if p.client_id.is_empty() || p.client_secret.is_empty() {
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "OAuth provider '{}' is missing client_id or client_secret",
+                        name
+                    )));
+                }
+                if p.redirect_uri.is_empty() {
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "OAuth provider '{}' is missing redirect_uri",
+                        name
+                    )));
+                }
+            }
+        }
+    }
+
+    // When auth is required, at least one mechanism must be configured.
+    let has_device = mode == crate::gateway::protocol::AuthMode::Device;
+    let has_tailscale = mode == crate::gateway::protocol::AuthMode::Tailscale;
+    if !has_token && !has_oauth && !has_device && !has_tailscale {
+        return Err(crate::error::SyscityError::Validation(
+            "security.auth_required is true but no authentication mechanism is configured \
+             (shared_token, OAuth, device, or tailscale)"
+                .into(),
+        ));
+    }
+
     // Warn when token is configured but auth_mode is not Token
-    if has_token && mode_unset && config.security.shared_token.as_deref() != Some("") {
+    if has_token && mode_unset {
         tracing::warn!(
             "shared_token is configured but auth_mode is 'none'. Set auth_mode to 'token' for \
              consistent authentication."
@@ -593,6 +652,7 @@ impl Gateway {
             device_init: RwLock::new(None),
             perception_init: RwLock::new(None),
             control_init: RwLock::new(None),
+            summarizer: tokio::sync::OnceCell::new(),
             task_registry: Arc::new(crate::gateway::task_registry::TaskRegistry::new()),
             auth: AuthState {
                 manager: security_init.auth_manager.clone(),
@@ -769,7 +829,10 @@ impl Gateway {
                     }
                 }
             });
-            state.task_registry.insert_join("mcp_forward", mcp_forward_handle).await;
+            state
+                .task_registry
+                .insert_join("mcp_forward", mcp_forward_handle)
+                .await;
         }
 
         // Initialize audit table (SQLite-backed persistent audit log)
@@ -849,41 +912,31 @@ impl Gateway {
             state.infra.driver_factory.scan_native_plugins_dir(dir);
         }
 
-        let mut device_init = crate::gateway::init::devices::init_devices(
+        let device_init = crate::gateway::init::devices::init_devices(
             &config.device,
             device_drivers,
             &state.tools.registry,
             None,
+            &state.task_registry,
         )
         .await?;
 
-        // Spawn OS device bridge if enabled
-        if let Some(ref mut di) = device_init {
-            if let Some(handle) = crate::gateway::init::devices::spawn_os_bridge_from_config(
+        // Spawn OS device bridge if enabled and register it in the unified
+        // task registry.
+        if let Some(ref di) = device_init {
+            crate::gateway::init::devices::spawn_os_bridge_from_config(
                 &state.infra.driver_factory,
                 di.registry.clone(),
                 &config.device.os_bridge,
                 state.tools.registry.clone(),
                 None,
-            ) {
-                di.os_bridge_handle = Some(handle);
-            }
-
-            // Register device background tasks in the unified registry.
-            if let Some(handle) = di.health_check_handle.take() {
-                state.task_registry.insert_join("device:health", handle).await;
-            }
-            if let Some(handle) = di.hot_plug_handle.take() {
-                state.task_registry.insert_join("device:hotplug", handle).await;
-            }
-            if let Some(handle) = di.os_bridge_handle.take() {
-                state.task_registry.insert_join("device:os_bridge", handle).await;
-            }
+                state.task_registry.clone(),
+            )
+            .await;
         }
 
-        // Store device_init on state for lifecycle management and hot-reload
-        // The handles are now owned by the task registry; the struct retains
-        // the registry itself and empty handle slots.
+        // Store device_init on state for lifecycle management and hot-reload.
+        // Background task handles are owned by the task registry.
         *state.device_init.write().await = device_init;
 
         let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> = state
@@ -895,12 +948,7 @@ impl Gateway {
 
         // Initialize perception fusion layer (delegated to helper)
         let perception_registry: Option<Arc<crate::perception::PerceptionRegistry>> =
-            init_perception(
-                &config.perception,
-                state.as_ref(),
-                device_registry.clone(),
-            )
-            .await;
+            init_perception(&config.perception, state.as_ref(), device_registry.clone()).await;
 
         // Initialize control lane (optional, runs alongside perception)
         init_control(&config.device, state.as_ref()).await;
@@ -911,13 +959,19 @@ impl Gateway {
             inbound_entry_rx,
             shutdown_token.clone(),
         ));
-        state.task_registry.insert_join("message:inbound", inbound_handle).await;
+        state
+            .task_registry
+            .insert_join("message:inbound", inbound_handle)
+            .await;
         let routed_handle = tokio::spawn(dispatch::process_routed_messages(
             state.clone(),
             routed_rx,
             shutdown_token.clone(),
         ));
-        state.task_registry.insert_join("message:routed", routed_handle).await;
+        state
+            .task_registry
+            .insert_join("message:routed", routed_handle)
+            .await;
 
         Ok(Self {
             state,
@@ -972,12 +1026,8 @@ impl Gateway {
 
     /// Gracefully shut down the gateway and its subsystems.
     pub async fn stop(&self) -> crate::Result<()> {
-        lifecycle::stop_gateway(
-            &self.shutdown_token,
-            &self.state,
-            self.config.tailscale_enabled,
-        )
-        .await
+        lifecycle::stop_gateway(&self.shutdown_token, &self.state, self.config.tailscale_enabled)
+            .await
     }
 
     /// Spawn a new agent

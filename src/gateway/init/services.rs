@@ -185,26 +185,23 @@ pub async fn init_memory_services(
 }
 
 /// Initialize hot reload manager if enabled.
-pub async fn init_hot_reload(config: &GatewayConfig, state: &Arc<GatewayState>) {
+pub async fn init_hot_reload(
+    config: &GatewayConfig,
+    state: &Arc<GatewayState>,
+) -> crate::Result<()> {
     if config.hot_reload.enabled {
         info!("Initializing hot reload manager...");
-        match crate::config::hot_reload::HotReloadManager::new() {
-            Ok(manager) => {
-                let manager = Arc::new(manager);
-                info!("Hot reload manager initialized");
-                *state.infra.hot_reload.write().await = Some(manager);
-            }
-            Err(e) => {
-                warn!("Failed to initialize hot reload manager: {}", e);
-            }
-        }
+        let manager = Arc::new(crate::config::hot_reload::HotReloadManager::new()?);
+        info!("Hot reload manager initialized");
+        *state.infra.hot_reload.write().await = Some(manager);
     } else {
         info!("Hot reload disabled");
     }
+    Ok(())
 }
 
 /// Initialize cron scheduler if enabled.
-pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) {
+pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) -> crate::Result<()> {
     if config.cron.enabled {
         info!("Initializing advanced cron scheduler...");
         use crate::cron::cron::{AnnounceDelivery, CronScheduler};
@@ -234,7 +231,10 @@ pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) {
                 }
             }
         });
-        state.task_registry.insert_join("cron:announce", announce_handle).await;
+        state
+            .task_registry
+            .insert_join("cron:announce", announce_handle)
+            .await;
 
         let cron_scheduler_clone = Arc::clone(&cron_scheduler);
         let scheduler_handle = tokio::spawn(async move {
@@ -243,22 +243,22 @@ pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) {
                 warn!("Advanced cron scheduler failed: {}", e);
             }
         });
-        state.task_registry.insert_join("cron:scheduler", scheduler_handle).await;
-        *state
-            .scheduler
-            .cron_scheduler
-            .write()
-            .await = Some(cron_scheduler.clone());
+        state
+            .task_registry
+            .insert_join("cron:scheduler", scheduler_handle)
+            .await;
+        *state.scheduler.cron_scheduler.write().await = Some(cron_scheduler.clone());
         info!("Advanced cron scheduler initialized");
 
         crate::tools::CronTool::set_scheduler(cron_scheduler);
     } else {
         info!("Cron scheduler disabled");
     }
+    Ok(())
 }
 
 /// Initialize the recurring task scheduler.
-pub async fn init_task_scheduler(state: &Arc<GatewayState>) {
+pub async fn init_task_scheduler(state: &Arc<GatewayState>) -> crate::Result<()> {
     let mut task_scheduler = crate::planner::TaskScheduler::new();
     let state_for_scheduler = Arc::clone(state);
     let handler: crate::planner::scheduled_tasks::TaskHandler = Arc::new(move |task| {
@@ -283,16 +283,10 @@ pub async fn init_task_scheduler(state: &Arc<GatewayState>) {
             }
         }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
     });
-    if let Err(e) = task_scheduler.start(handler).await {
-        warn!("TaskScheduler failed to start: {}", e);
-    } else {
-        *state
-            .scheduler
-            .task_scheduler
-            .write()
-            .await = Some(Arc::new(Mutex::new(task_scheduler)));
-        info!("TaskScheduler started");
-    }
+    task_scheduler.start(handler).await?;
+    *state.scheduler.task_scheduler.write().await = Some(Arc::new(Mutex::new(task_scheduler)));
+    info!("TaskScheduler started");
+    Ok(())
 }
 
 /// Wire side-effect executor with runtime context (memory + cron).
@@ -323,9 +317,9 @@ pub async fn init_late_services(
     unified_vector_store: Option<Arc<dyn crate::memory::VectorStore>>,
 ) -> crate::Result<()> {
     init_memory_services(config, state, sqlite_pool, unified_vector_store).await?;
-    init_hot_reload(config, state).await;
-    init_cron(config, state).await;
-    init_task_scheduler(state).await;
+    init_hot_reload(config, state).await?;
+    init_cron(config, state).await?;
+    init_task_scheduler(state).await?;
     init_side_effect_context(state).await;
     Ok(())
 }

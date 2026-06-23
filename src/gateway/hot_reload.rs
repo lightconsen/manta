@@ -398,6 +398,24 @@ pub(crate) async fn register_hot_reload_handlers(
                         }
                     };
 
+                    // Validate auth/security config before applying it.
+                    if let Err(e) = super::validate_auth_config(&new_config) {
+                        error!("Rejected invalid gateway hot-reload config: {}", e);
+                        state
+                            .auth
+                            .audit_log
+                            .log(
+                                crate::security::runtime_audit::AuditEventType::ConfigChange,
+                                "file_watcher",
+                                "config",
+                                false,
+                                format!("Hot-reload config rejected: {}", e),
+                                None,
+                            )
+                            .await;
+                        return Ok(());
+                    }
+
                     // Apply hot-reloadable fields (those that don't require server restart)
                     let mut config = state.config.write().await;
                     config.security = new_config.security;

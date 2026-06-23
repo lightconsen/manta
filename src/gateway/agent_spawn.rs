@@ -29,8 +29,11 @@ pub(crate) struct GatewayAgentResolver {
 #[async_trait]
 impl AgentResolver for GatewayAgentResolver {
     async fn resolve(&self, name: &str) -> Option<Arc<Agent>> {
-        let agents = self.agents.read().await;
-        agents.get(name).map(|h| h.agent.clone())
+        let agent = {
+            let agents = self.agents.read().await;
+            agents.get(name).map(|h| h.agent.clone())
+        };
+        agent
     }
 }
 
@@ -47,7 +50,7 @@ pub(crate) async fn spawn_agent_inner(
     config.agent_id = Some(id.clone());
     info!("Spawning agent: {}", id);
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+    let (tx, rx) = tokio::sync::mpsc::channel(100);
 
     // Create provider from model router
     let provider: Arc<dyn crate::providers::Provider> =
@@ -82,18 +85,28 @@ pub(crate) async fn spawn_agent_inner(
     let perception_adapter: Option<Arc<dyn crate::perception::AgentPerceptionAdapter>> = {
         let init = state.perception_init.read().await;
         let p_cfg = &state.config.read().await.perception;
-        // Build summarizer in the async block (not inside a sync closure)
-        // because the Local variant requires async (model download).
+        // Use the lazily-initialized shared summarizer so the (potentially
+        // async, model-downloading) backend is only built once across all
+        // agent spawns.
         if let Some(p) = init.as_ref() {
-            let summarizer: Option<Arc<dyn crate::perception::PerceptionSummarizer>> = if p_cfg
-                .enable_summary
-            {
-                Some(
-                    build_summarizer(&p_cfg.summarizer_kind, provider.clone(), model.clone()).await,
-                )
-            } else {
-                None
-            };
+            let summarizer: Option<Arc<dyn crate::perception::PerceptionSummarizer>> =
+                if p_cfg.enable_summary {
+                    Some(
+                        state
+                            .summarizer
+                            .get_or_init(|| {
+                                build_summarizer(
+                                    &p_cfg.summarizer_kind,
+                                    provider.clone(),
+                                    model.clone(),
+                                )
+                            })
+                            .await
+                            .clone(),
+                    )
+                } else {
+                    None
+                };
             let adapter_cfg = crate::perception::AdapterConfig {
                 enable_summary: p_cfg.enable_summary,
                 summary_refresh_interval: p_cfg
@@ -179,314 +192,43 @@ pub(crate) async fn spawn_agent_inner(
         }
     }
 
-    let (query_tx, mut query_rx) = tokio::sync::mpsc::channel::<super::AgentQuery>(32);
+    let (query_tx, query_rx) = tokio::sync::mpsc::channel::<super::AgentQuery>(32);
 
     let handle = super::AgentHandle {
         id: id.clone(),
         config: config.clone(),
         tx: tx.clone(),
         query_tx: query_tx.clone(),
-        busy: false,
+        busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         agent: agent.clone(),
     };
+    let handle_for_loop = handle.clone();
 
     {
         let mut agents = state.agents.agents.write().await;
         agents.insert(id.clone(), handle);
     }
 
+    // Register the per-agent stale-context eviction loop (check every 5 min,
+    // evict contexts idle > 30 min) in the task registry so shutdown and agent
+    // replacement can abort it uniformly.
+    let task_registry = state.task_registry.clone();
+    let repair_handle = agent.start_self_repair_loop(
+        std::time::Duration::from_secs(300),
+        std::time::Duration::from_secs(1800),
+    );
+    task_registry
+        .insert_join(format!("agent:{}:repair", id), repair_handle)
+        .await;
+
     // Start agent processing loop
     let agent_id = id.clone();
-    let task_registry = state.task_registry.clone();
+    let agent_for_loop = agent.clone();
+    let busy = handle_for_loop.busy.clone();
+    let state_for_loop = state.clone();
 
     let task_handle = tokio::spawn(async move {
-        info!("Agent {} processing loop started", agent_id);
-
-        // Start per-agent stale-context eviction loop (check every 5 min,
-        // evict contexts idle > 30 min)
-        let repair_handle = agent.start_self_repair_loop(
-            std::time::Duration::from_secs(300),
-            std::time::Duration::from_secs(1800),
-        );
-
-        loop {
-            tokio::select! {
-                           cmd = rx.recv() => {
-                           let cmd = match cmd { Some(c) => c, None => break };
-                           match cmd {
-                               super::AgentCommand::ProcessMessage {
-                                   session_id,
-                                   message,
-                                   user_id,
-                                   channel,
-                                   model_override: _,
-                               } => {
-                                   let source_channel = channel;
-                                   info!("Agent {} processing message for session {}", agent_id, session_id);
-
-            // Update status to processing
-                                   let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
-                                       agent_id: agent_id.clone(),
-                                       status: super::AgentStatus::Processing { session_id: session_id.clone() },
-                                   });
-
-            // Create incoming message for the Agent
-                                   let incoming_msg = crate::channels::IncomingMessage::new(
-                                       user_id.clone(),
-                                       session_id.clone(),
-                                       message.clone(),
-                                   );
-
-            // Build trajectory log for this turn
-                                   let trajectory = Arc::new(tokio::sync::Mutex::new(
-                                       crate::outbound::TrajectoryLog::new()
-                                   ));
-                                   {
-                                       let mut traj = trajectory.lock().await;
-                                       traj.push(crate::outbound::TrajectoryEntry::Start {
-                                           timestamp: std::time::SystemTime::now(),
-                                           session_id: session_id.clone(),
-                                           agent_id: agent_id.clone(),
-                                       });
-                                   }
-
-            // Create progress callback that broadcasts tool events
-            // and also records trajectory entries.
-                                   let progress_state = state.clone();
-                                   let progress_session_id = session_id.clone();
-                                   let progress_agent_id = agent_id.clone();
-                                   let progress_trajectory = trajectory.clone();
-                                   let progress_cb: crate::agent::ProgressCallback =
-                                       Arc::new(move |event: crate::agent::ProgressEvent| {
-                                           let state = progress_state.clone();
-                                           let session_id = progress_session_id.clone();
-                                           let agent_id = progress_agent_id.clone();
-                                           let trajectory = progress_trajectory.clone();
-                                           Box::pin(async move {
-                                               match event {
-                                                   crate::agent::ProgressEvent::ToolCalling {
-                                                       name,
-                                                       arguments,
-                                                   } => {
-                                                       info!(
-                                                           "ToolCalling event: {} for session {}",
-                                                           name, session_id
-                                                       );
-                                                       let _ =
-                                                           state.events.tx.send(super::GatewayEvent::ToolCalling {
-                                                               session_id: session_id.clone(),
-                                                               agent_id: agent_id.clone(),
-                                                               tool_name: name.clone(),
-                                                               arguments: arguments.clone(),
-                                                           });
-                                                       let mut traj = trajectory.lock().await;
-                                                       traj.push(crate::outbound::TrajectoryEntry::ToolCall {
-                                                           timestamp: std::time::SystemTime::now(),
-                                                           name: name.clone(),
-                                                           arguments: serde_json::from_str(&arguments).unwrap_or(serde_json::Value::String(arguments)),
-                                                       });
-                                                   }
-                                                   crate::agent::ProgressEvent::ToolResult {
-                                                       name,
-                                                       result,
-                                                       data,
-                                                   } => {
-                                                       info!(
-                                                           "ToolResult event: {} for session {}",
-                                                           name, session_id
-                                                       );
-                                                       let _ = state.events.tx.send(super::GatewayEvent::ToolResult {
-                                                           session_id: session_id.clone(),
-                                                           agent_id: agent_id.clone(),
-                                                           tool_name: name.clone(),
-                                                           result: result.clone(),
-                                                           data: data.clone(),
-                                                       });
-                                                       let mut traj = trajectory.lock().await;
-                                                       traj.push(crate::outbound::TrajectoryEntry::ToolResult {
-                                                           timestamp: std::time::SystemTime::now(),
-                                                           name: name.clone(),
-                                                           result: serde_json::from_str(&result).unwrap_or(serde_json::Value::String(result)),
-                                                           duration_ms: 0, // Would need actual timing
-                                                       });
-                                                   }
-                                                   crate::agent::ProgressEvent::Completed { response } => {
-                                                       let _ = state.events.tx.send(super::GatewayEvent::Completed {
-                                                           session_id: session_id.clone(),
-                                                           agent_id: agent_id.clone(),
-                                                           response,
-                                                       });
-                                                   }
-                                                   crate::agent::ProgressEvent::Error { message } => {
-                                                       let _ = state.events.tx.send(super::GatewayEvent::ProcessingError {
-                                                           session_id: session_id.clone(),
-                                                           agent_id: agent_id.clone(),
-                                                           message,
-                                                       });
-                                                   }
-                                                   _ => {}
-                                               }
-                                           })
-                                       });
-
-            // Process message with progress callbacks
-                                   let (response_content, response_usage) = match agent
-                                       .process_message_with_progress(incoming_msg, progress_cb)
-                                       .await
-                                   {
-                                       Ok(outgoing) => {
-                                           let mut traj = trajectory.lock().await;
-                                           traj.push(crate::outbound::TrajectoryEntry::Finish {
-                                               timestamp: std::time::SystemTime::now(),
-                                               output: outgoing.content.clone(),
-                                           });
-                                           (outgoing.content, outgoing.usage)
-                                       }
-                                       Err(e) => {
-                                           error!("Agent {} failed to process message: {}", agent_id, e);
-                                           let mut traj = trajectory.lock().await;
-                                           traj.push(crate::outbound::TrajectoryEntry::Error {
-                                               timestamp: std::time::SystemTime::now(),
-                                               message: e.to_string(),
-                                           });
-                                           (format!("Error processing message: {}", e), None)
-                                       }
-                                   };
-
-            // Look up conversation_id for response routing
-                                   let conversation_id = {
-                                       let sessions = state.channels.session_channels.read().await;
-                                       sessions
-                                           .get(&session_id)
-                                           .map(|(_, cid)| cid.clone())
-                                           .unwrap_or_else(|| session_id.clone())
-                                   };
-
-            // Generate run_id for this agent execution (run tracking)
-                                   let run_id = uuid::Uuid::new_v4().to_string();
-
-            // Persist assistant response to session history
-                                   if let Some(ref store) = state.agents.store {
-                                       if let Err(e) = store
-                                           .append_message(&AppendMessageParams {
-                                               session_id: &session_id,
-                                               role: "assistant",
-                                               content: &response_content,
-                                               transcript_id: Some(&session_id),
-                                               run_id: Some(&run_id),
-                                               ..Default::default()
-                                           })
-                                           .await
-                                       {
-                                           warn!("Failed to save assistant message to session history: {}", e);
-                                       }
-                                   }
-
-            // Send response event
-                                   info!("DEBUG: Agent {} sending AgentResponse for session {} (conversation: {})", agent_id, session_id, conversation_id);
-                                   let _ = state.events.tx.send(super::GatewayEvent::AgentResponse {
-                                       session_id: session_id.clone(),
-                                       agent_id: agent_id.clone(),
-                                       content: response_content.clone(),
-                                       channel: source_channel.clone(),
-                                       conversation_id: conversation_id.clone(),
-                                       usage: response_usage,
-                                   });
-
-            // Extract the populated trajectory
-                                   let trajectory = {
-                                       let traj = trajectory.lock().await;
-                                       traj.clone()
-                                   };
-
-            // Route through the outbound pipeline (trajectory → canvas → sse → reply → side effects)
-                                   let outbound_ctx = crate::outbound::OutboundContext {
-                                       session_id: session_id.clone(),
-                                       channel: source_channel.clone(),
-                                       agent_id: agent_id.clone(),
-                                       raw_output: response_content,
-                                       tool_calls: vec![],
-                                       trajectory,
-                                       usage: response_usage,
-                                   };
-                                   let outbound_result = state.pipelines.outbound.process(outbound_ctx).await;
-
-            // Apply canvas updates if the pipeline produced any
-                                   if let Some(canvas_update) = outbound_result.canvas_update {
-                                       state.tools.canvas_manager.apply_update(&session_id, canvas_update).await;
-                                   }
-
-            // Update status to idle
-                                   let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
-                                       agent_id: agent_id.clone(),
-                                       status: super::AgentStatus::Idle,
-                                   });
-                               }
-                               super::AgentCommand::Cancel => {
-                                   warn!("Agent {} received cancel command", agent_id);
-                               }
-                               super::AgentCommand::UpdateConfig(new_config) => {
-                                   info!("Agent {} updating configuration", agent_id);
-            // Update agent configuration dynamically
-                                   {
-                                       let mut agents = state.agents.agents.write().await;
-                                       if let Some(handle) = agents.get_mut(&agent_id) {
-                                           handle.config = new_config.clone();
-                                           info!("Agent {} configuration updated", agent_id);
-                                       }
-                                   }
-            // Send status update
-                                   let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
-                                       agent_id: agent_id.clone(),
-                                       status: super::AgentStatus::Idle,
-                                   });
-                               }
-                               super::AgentCommand::Shutdown => {
-                                   info!("Agent {} shutting down", agent_id);
-                                   let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
-                                       agent_id: agent_id.clone(),
-                                       status: super::AgentStatus::Shutdown,
-                                   });
-                                   break;
-                               }
-                           }
-                           } // cmd = rx.recv() arm
-                           query = query_rx.recv() => {
-                               let query = match query { Some(q) => q, None => break };
-                               match query {
-                                   super::AgentQuery::GetThreadSummaries { response_tx } => {
-                                       let _ = response_tx.send(agent.thread_summaries().await);
-                                   }
-                                   super::AgentQuery::GetThreadTurns { conv_id, response_tx } => {
-                                       let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
-                                   }
-                                   super::AgentQuery::UndoLastTurn { conv_id, response_tx } => {
-                                       let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
-                                   }
-                                   super::AgentQuery::RedoLastTurn { conv_id, response_tx } => {
-                                       let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
-                                   }
-                                   super::AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
-                                       agent.set_skill_trust(skill_trust);
-                                       let incoming = crate::channels::IncomingMessage::new(
-                                           user_id, &session_id, message,
-                                       );
-                                       let no_op: crate::agent::ProgressCallback =
-                                           Arc::new(|_| Box::pin(async {}));
-                                       let result =
-                                           agent.process_message_with_progress(incoming, no_op).await;
-                                       agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
-                                       let _ = response_tx.send(result);
-                                   }
-                               }
-                           }
-                       }
-        } // end tokio::select! and loop
-
-        info!("Agent {} processing loop ended", agent_id);
-
-        // Stop the per-agent repair task when the agent exits
-        repair_handle.abort();
+        run_agent_loop(state_for_loop, agent_id, agent_for_loop, busy, rx, query_rx, true).await;
     });
 
     task_registry
@@ -496,21 +238,606 @@ pub(crate) async fn spawn_agent_inner(
     Ok(())
 }
 
+// ── Shared agent processing loop ─────────────────────────────────────────────
+
+/// Shared per-agent message/query processing loop.
+///
+/// `use_acp` selects between ACP-routed execution (production agents spawned by
+/// the gateway) and direct agent execution (agents created via the REST API).
+pub(crate) async fn run_agent_loop(
+    state: Arc<super::GatewayState>,
+    agent_id: String,
+    agent: Arc<Agent>,
+    busy: Arc<std::sync::atomic::AtomicBool>,
+    mut rx: tokio::sync::mpsc::Receiver<super::AgentCommand>,
+    mut query_rx: tokio::sync::mpsc::Receiver<super::AgentQuery>,
+    use_acp: bool,
+) {
+    use std::sync::atomic::Ordering;
+
+    info!("Agent {} processing loop started", agent_id);
+
+    loop {
+        tokio::select! {
+            cmd = rx.recv() => {
+                let cmd = match cmd { Some(c) => c, None => break };
+                match cmd {
+                    super::AgentCommand::ProcessMessage {
+                        session_id,
+                        message,
+                        user_id,
+                        channel,
+                        model_override,
+                    } => {
+                        busy.store(true, Ordering::Relaxed);
+                        let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
+                            agent_id: agent_id.clone(),
+                            status: super::AgentStatus::Processing {
+                                session_id: session_id.clone(),
+                            },
+                        });
+
+                        if use_acp {
+                            process_message_acp(
+                                &state,
+                                &agent_id,
+                                &agent,
+                                &session_id,
+                                &message,
+                                &user_id,
+                                &channel,
+                            )
+                            .await;
+                        } else {
+                            process_message_direct(
+                                &state,
+                                &agent_id,
+                                &agent,
+                                DirectMessage {
+                                    session_id: session_id.clone(),
+                                    message: message.clone(),
+                                    user_id: user_id.clone(),
+                                    channel: channel.clone(),
+                                    model_override,
+                                },
+                            )
+                            .await;
+                        }
+
+                        let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
+                            agent_id: agent_id.clone(),
+                            status: super::AgentStatus::Idle,
+                        });
+                        busy.store(false, Ordering::Relaxed);
+                    }
+                    super::AgentCommand::Cancel => {
+                        if use_acp {
+                            warn!("Agent {} received cancel command (ACP path)", agent_id);
+                        } else {
+                            warn!("Agent {} received cancel command", agent_id);
+                        }
+                    }
+                    super::AgentCommand::UpdateConfig(new_config) => {
+                        info!("Agent {} updating configuration", agent_id);
+                        {
+                            let mut agents = state.agents.agents.write().await;
+                            if let Some(handle) = agents.get_mut(&agent_id) {
+                                handle.config = new_config.clone();
+                                info!("Agent {} configuration updated", agent_id);
+                            }
+                        }
+                        let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
+                            agent_id: agent_id.clone(),
+                            status: super::AgentStatus::Idle,
+                        });
+                    }
+                    super::AgentCommand::Shutdown => {
+                        info!("Agent {} shutting down", agent_id);
+                        let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
+                            agent_id: agent_id.clone(),
+                            status: super::AgentStatus::Shutdown,
+                        });
+                        break;
+                    }
+                }
+            }
+            query = query_rx.recv() => {
+                let query = match query { Some(q) => q, None => break };
+                match query {
+                    super::AgentQuery::GetThreadSummaries { response_tx } => {
+                        let _ = response_tx.send(agent.thread_summaries().await);
+                    }
+                    super::AgentQuery::GetThreadTurns { conv_id, response_tx } => {
+                        let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
+                    }
+                    super::AgentQuery::UndoLastTurn { conv_id, response_tx } => {
+                        let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                    }
+                    super::AgentQuery::RedoLastTurn { conv_id, response_tx } => {
+                        let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
+                    }
+                    super::AgentQuery::RunSkill {
+                        session_id,
+                        message,
+                        user_id,
+                        skill_trust,
+                        response_tx,
+                    } => {
+                        agent.set_skill_trust(skill_trust);
+                        let incoming = crate::channels::IncomingMessage::new(
+                            user_id,
+                            &session_id,
+                            message,
+                        );
+                        let no_op: crate::agent::ProgressCallback =
+                            Arc::new(|_| Box::pin(async {}));
+                        let result =
+                            agent.process_message_with_progress(incoming, no_op).await;
+                        agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
+                        let _ = response_tx.send(result);
+                    }
+                }
+            }
+        }
+    }
+
+    info!("Agent {} processing loop ended", agent_id);
+}
+
+/// Process a message through the ACP control plane.
+async fn process_message_acp(
+    state: &Arc<super::GatewayState>,
+    agent_id: &str,
+    agent: &Arc<Agent>,
+    session_id: &str,
+    message: &str,
+    user_id: &str,
+    channel: &str,
+) {
+    let incoming_msg = crate::channels::IncomingMessage::new(
+        user_id.to_string(),
+        session_id.to_string(),
+        message.to_string(),
+    )
+    .with_provenance(crate::channels::InputProvenance::ExternalUser {
+        channel: channel.to_string(),
+        is_direct: true,
+    });
+
+    let trajectory = Arc::new(tokio::sync::Mutex::new(crate::outbound::TrajectoryLog::new()));
+    {
+        let mut traj = trajectory.lock().await;
+        traj.push(crate::outbound::TrajectoryEntry::Start {
+            timestamp: std::time::SystemTime::now(),
+            session_id: session_id.to_string(),
+            agent_id: agent_id.to_string(),
+        });
+    }
+
+    let progress_state = state.clone();
+    let progress_session_id = session_id.to_string();
+    let progress_agent_id = agent_id.to_string();
+    let progress_trajectory = trajectory.clone();
+    let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
+        let state = progress_state.clone();
+        let session_id = progress_session_id.clone();
+        let agent_id = progress_agent_id.clone();
+        let trajectory = progress_trajectory.clone();
+        Box::pin(async move {
+            match event {
+                crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                    info!("ToolCalling event: {} for session {}", name, session_id);
+                    let _ = state.events.tx.send(super::GatewayEvent::ToolCalling {
+                        session_id: session_id.clone(),
+                        agent_id: agent_id.clone(),
+                        tool_name: name.clone(),
+                        arguments: arguments.clone(),
+                    });
+                    let mut traj = trajectory.lock().await;
+                    traj.push(crate::outbound::TrajectoryEntry::ToolCall {
+                        timestamp: std::time::SystemTime::now(),
+                        name: name.clone(),
+                        arguments: serde_json::from_str(&arguments)
+                            .unwrap_or(serde_json::Value::String(arguments)),
+                    });
+                }
+                crate::agent::ProgressEvent::ToolResult { name, result, data } => {
+                    info!("ToolResult event: {} for session {}", name, session_id);
+                    let _ = state.events.tx.send(super::GatewayEvent::ToolResult {
+                        session_id: session_id.clone(),
+                        agent_id: agent_id.clone(),
+                        tool_name: name.clone(),
+                        result: result.clone(),
+                        data: data.clone(),
+                    });
+                    let mut traj = trajectory.lock().await;
+                    traj.push(crate::outbound::TrajectoryEntry::ToolResult {
+                        timestamp: std::time::SystemTime::now(),
+                        name: name.clone(),
+                        result: serde_json::from_str(&result)
+                            .unwrap_or(serde_json::Value::String(result)),
+                        duration_ms: 0,
+                    });
+                }
+                crate::agent::ProgressEvent::Completed { response } => {
+                    let _ = state.events.tx.send(super::GatewayEvent::Completed {
+                        session_id: session_id.clone(),
+                        agent_id: agent_id.clone(),
+                        response,
+                    });
+                }
+                crate::agent::ProgressEvent::Error { message } => {
+                    let _ = state.events.tx.send(super::GatewayEvent::ProcessingError {
+                        session_id: session_id.clone(),
+                        agent_id: agent_id.clone(),
+                        message,
+                    });
+                }
+                _ => {}
+            }
+        })
+    });
+
+    let (response_content, response_usage) = match agent
+        .process_message_with_progress(incoming_msg, progress_cb)
+        .await
+    {
+        Ok(outgoing) => {
+            let mut traj = trajectory.lock().await;
+            traj.push(crate::outbound::TrajectoryEntry::Finish {
+                timestamp: std::time::SystemTime::now(),
+                output: outgoing.content.clone(),
+            });
+            (outgoing.content, outgoing.usage)
+        }
+        Err(e) => {
+            error!("Agent {} failed to process message: {}", agent_id, e);
+            let mut traj = trajectory.lock().await;
+            traj.push(crate::outbound::TrajectoryEntry::Error {
+                timestamp: std::time::SystemTime::now(),
+                message: e.to_string(),
+            });
+            (format!("Error processing message: {}", e), None)
+        }
+    };
+
+    let conversation_id = {
+        let sessions = state.channels.session_channels.read().await;
+        sessions
+            .get(session_id)
+            .map(|(_, cid)| cid.clone())
+            .unwrap_or_else(|| session_id.to_string())
+    };
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+
+    if let Some(ref store) = state.agents.store {
+        if let Err(e) = store
+            .append_message(&AppendMessageParams {
+                session_id,
+                role: "assistant",
+                content: &response_content,
+                transcript_id: Some(session_id),
+                run_id: Some(&run_id),
+                ..Default::default()
+            })
+            .await
+        {
+            warn!("Failed to save assistant message to session history: {}", e);
+        }
+    }
+
+    info!(
+        "DEBUG: Agent {} sending AgentResponse for session {} (conversation: {})",
+        agent_id, session_id, conversation_id
+    );
+    let _ = state.events.tx.send(super::GatewayEvent::AgentResponse {
+        session_id: session_id.to_string(),
+        agent_id: agent_id.to_string(),
+        content: response_content.clone(),
+        channel: channel.to_string(),
+        conversation_id: conversation_id.clone(),
+        usage: response_usage,
+    });
+
+    let trajectory = {
+        let traj = trajectory.lock().await;
+        traj.clone()
+    };
+
+    let outbound_ctx = crate::outbound::OutboundContext {
+        session_id: session_id.to_string(),
+        channel: channel.to_string(),
+        agent_id: agent_id.to_string(),
+        raw_output: response_content,
+        tool_calls: vec![],
+        trajectory,
+        usage: response_usage,
+    };
+    let outbound_result = state.pipelines.outbound.process(outbound_ctx).await;
+
+    if let Some(canvas_update) = outbound_result.canvas_update {
+        state
+            .tools
+            .canvas_manager
+            .apply_update(session_id, canvas_update)
+            .await;
+    }
+}
+
+/// Message payload for direct (non-ACP) agent execution.
+struct DirectMessage {
+    /// Target session ID.
+    session_id: String,
+    /// Message content.
+    message: String,
+    /// Originating user ID.
+    user_id: String,
+    /// Originating channel.
+    channel: String,
+    /// Optional model override.
+    model_override: Option<String>,
+}
+
+/// Process a message directly (no ACP serialization).
+async fn process_message_direct(
+    state: &Arc<super::GatewayState>,
+    agent_id: &str,
+    agent: &Arc<Agent>,
+    msg: DirectMessage,
+) {
+    use crate::agent::session_store::AppendMessageParams;
+
+    let DirectMessage {
+        ref session_id,
+        ref message,
+        ref user_id,
+        ref channel,
+        model_override,
+    } = msg;
+
+    let (reasoning_vis, verbose_mode) = {
+        let settings = state.infra.runtime_settings.read().await;
+        (
+            settings
+                .get("reasoning.visibility")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            settings
+                .get("verbose.mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        )
+    };
+
+    let event_tx = state.events.tx.clone();
+    let progress_session = session_id.to_string();
+    let progress_agent = agent_id.to_string();
+    let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
+        let tx = event_tx.clone();
+        let reasoning_vis = reasoning_vis.clone();
+        let verbose_mode = verbose_mode.clone();
+        let sid = progress_session.clone();
+        let aid = progress_agent.clone();
+        Box::pin(async move {
+            match event {
+                crate::agent::ProgressEvent::Started => {
+                    let _ = tx.send(super::GatewayEvent::AgentStatus {
+                        agent_id: aid.clone(),
+                        status: super::AgentStatus::Processing { session_id: sid.clone() },
+                    });
+                }
+                crate::agent::ProgressEvent::Generating { content } => {
+                    if reasoning_vis.as_deref() == Some("off") {
+                        return;
+                    }
+                    if let Some(ref thinking) = content {
+                        if !thinking.is_empty() {
+                            let _ = tx.send(super::GatewayEvent::Thinking {
+                                session_id: sid.clone(),
+                                agent_id: aid.clone(),
+                                content: Some(thinking.clone()),
+                            });
+                        }
+                    }
+                }
+                crate::agent::ProgressEvent::ContentDelta { text } => {
+                    let _ = tx.send(super::GatewayEvent::ContentDelta {
+                        session_id: sid.clone(),
+                        agent_id: aid.clone(),
+                        delta: text,
+                    });
+                }
+                crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                    if verbose_mode.as_deref() == Some("off") {
+                        return;
+                    }
+                    let _ = tx.send(super::GatewayEvent::ToolCalling {
+                        session_id: sid.clone(),
+                        agent_id: aid.clone(),
+                        tool_name: name.clone(),
+                        arguments: arguments.clone(),
+                    });
+                }
+                crate::agent::ProgressEvent::ToolResult { name, result, data } => {
+                    if verbose_mode.as_deref() == Some("off") {
+                        return;
+                    }
+                    let result = if verbose_mode.as_deref() == Some("compact") {
+                        if result.len() > 500 {
+                            format!("{}... (truncated)", &result[..500])
+                        } else {
+                            result
+                        }
+                    } else {
+                        result
+                    };
+                    let _ = tx.send(super::GatewayEvent::ToolResult {
+                        session_id: sid.clone(),
+                        agent_id: aid.clone(),
+                        tool_name: name.clone(),
+                        result,
+                        data,
+                    });
+                }
+                crate::agent::ProgressEvent::ToolResultDelta { .. } => {}
+                crate::agent::ProgressEvent::Completed { response } => {
+                    let _ = tx.send(super::GatewayEvent::Completed {
+                        session_id: sid.clone(),
+                        agent_id: aid.clone(),
+                        response,
+                    });
+                }
+                crate::agent::ProgressEvent::Error { message } => {
+                    let _ = tx.send(super::GatewayEvent::ProcessingError {
+                        session_id: sid.clone(),
+                        agent_id: aid.clone(),
+                        message,
+                    });
+                }
+            }
+        })
+    });
+
+    let think_level = {
+        let s = state.infra.runtime_settings.read().await;
+        s.get("think.level")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    };
+    let extra = think_level.and_then(|level| {
+        let budget = match level.as_str() {
+            "minimal" => 1024u32,
+            "low" => 4096u32,
+            "medium" => 16000u32,
+            "high" => 32000u32,
+            _ => return None,
+        };
+        Some(serde_json::json!({ "thinking": { "type": "enabled", "budget_tokens": budget } }))
+    });
+
+    agent.set_model_override(model_override).await;
+    agent.set_extra_params(extra).await;
+
+    let incoming_msg = crate::channels::IncomingMessage::new(
+        user_id.to_string(),
+        session_id.to_string(),
+        message.to_string(),
+    );
+
+    let result = agent
+        .process_message_with_progress(incoming_msg, progress_cb)
+        .await;
+    agent.set_model_override(None).await;
+
+    match result {
+        Ok(mut outgoing) => {
+            let reasoning_vis = {
+                let s = state.infra.runtime_settings.read().await;
+                s.get("reasoning.visibility")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            };
+            if reasoning_vis.as_deref() == Some("off") {
+                outgoing.reasoning_content = None;
+            }
+
+            if let Some(ref usage) = outgoing.usage {
+                let mut settings = state.infra.runtime_settings.write().await;
+                let current_tokens = settings
+                    .get("usage.tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let total_tokens = usage.prompt_tokens as u64 + usage.completion_tokens as u64;
+                settings.insert(
+                    "usage.tokens".to_string(),
+                    serde_json::json!(current_tokens + total_tokens),
+                );
+                let current_calls = settings
+                    .get("usage.calls")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let tool_calls = outgoing
+                    .tool_calls
+                    .as_ref()
+                    .map(|c| c.len() as u64)
+                    .unwrap_or(0);
+                settings.insert(
+                    "usage.calls".to_string(),
+                    serde_json::json!(current_calls + tool_calls + 1),
+                );
+            }
+
+            let run_id = uuid::Uuid::new_v4().to_string();
+            if let Some(ref store) = state.agents.store {
+                if let Err(e) = store
+                    .append_message(&AppendMessageParams {
+                        session_id,
+                        role: "assistant",
+                        content: &outgoing.content,
+                        transcript_id: Some(session_id),
+                        run_id: Some(&run_id),
+                        ..Default::default()
+                    })
+                    .await
+                {
+                    warn!("Failed to save assistant message to session history: {}", e);
+                }
+            }
+
+            let _ = state.events.tx.send(super::GatewayEvent::AgentResponse {
+                session_id: session_id.to_string(),
+                agent_id: agent_id.to_string(),
+                content: outgoing.content,
+                channel: channel.to_string(),
+                conversation_id: session_id.to_string(),
+                usage: outgoing.usage,
+            });
+        }
+        Err(e) => {
+            error!("Agent {} failed to process: {}", agent_id, e);
+        }
+    }
+}
+
 // ── create_default_tool_registry ─────────────────────────────────────────────
 
+/// Dependencies required to build the default tool registry.
+pub(crate) struct ToolRegistryArgs {
+    /// ACP control plane for subagent/session tools.
+    pub acp: Arc<AcpControlPlane>,
+    /// MCP manager for MCP-backed tools.
+    pub mcp_manager: Arc<McpManager>,
+    /// Shared approval queue.
+    pub approval_queue: Arc<ApprovalQueue>,
+    /// Persistent session store.
+    pub session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
+    /// Lazy memory manager holder.
+    pub memory_manager: Arc<RwLock<Option<Arc<crate::memory::MemoryManager>>>>,
+    /// Capability flags.
+    pub capabilities: CapabilitiesConfig,
+    /// Audit logger.
+    pub audit_log: Arc<dyn crate::security::runtime_audit::AuditLogger>,
+    /// Optional content filter.
+    pub content_filter: Option<Arc<crate::security::content_filter::ContentFilter>>,
+}
+
 /// Create default tool registry with all built-in tools
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_default_tool_registry(
-    acp: Arc<AcpControlPlane>,
-    mcp_manager: Arc<McpManager>,
-    approval_queue: Arc<ApprovalQueue>,
-    session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
-    memory_manager: Arc<RwLock<Option<Arc<crate::memory::MemoryManager>>>>,
-    capabilities: CapabilitiesConfig,
-    audit_log: Arc<dyn crate::security::runtime_audit::AuditLogger>,
-    content_filter: Option<Arc<crate::security::content_filter::ContentFilter>>,
+    args: ToolRegistryArgs,
 ) -> crate::Result<ToolRegistry> {
     use crate::tools::*;
+
+    let ToolRegistryArgs {
+        acp,
+        mcp_manager,
+        approval_queue,
+        session_store,
+        memory_manager,
+        capabilities,
+        audit_log,
+        content_filter,
+    } = args;
 
     let mut registry = ToolRegistry::new()
         .with_approval_queue(approval_queue)

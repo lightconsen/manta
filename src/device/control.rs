@@ -28,10 +28,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use crate::device::registry::DeviceRegistry;
 use crate::device::Device;
+use crate::gateway::GatewayConfig;
 
 // ── Public types
 // ──────────────────────────────────────────────────────────────
@@ -89,7 +91,8 @@ impl Default for ControlConfig {
 
 /// Spawn the control loop on the **current** tokio runtime.
 ///
-/// The loop ticks every `config.loop_interval_ms` and:
+/// The loop ticks every `config.device.control.loop_interval_ms` (re-read each
+/// tick so hot-reload changes take effect without restarting the loop) and:
 /// 1. Calls [`DeviceRegistry::health_check_all`].
 /// 2. For each device in `Error` state: updates its [`SafetyZone::engaged`] to
 ///    `true` (fast-trip).
@@ -99,15 +102,12 @@ impl Default for ControlConfig {
 pub fn spawn_control_loop(
     registry: Arc<DeviceRegistry>,
     handlers: ControlHandlerRegistry,
-    config: ControlConfig,
+    config: Arc<RwLock<GatewayConfig>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let interval = Duration::from_millis(config.loop_interval_ms);
-        let mut ticker = tokio::time::interval(interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
         loop {
-            ticker.tick().await;
+            let interval_ms = { config.read().await.device.control.loop_interval_ms.max(1) };
+            tokio::time::sleep(Duration::from_millis(interval_ms)).await;
 
             // 1. Run health checks on all devices.
             let health_results = registry.health_check_all().await;
@@ -162,27 +162,37 @@ pub fn spawn_control_loop(
 pub fn init_control_runtime(
     registry: Arc<DeviceRegistry>,
     handlers: ControlHandlerRegistry,
-    config: ControlConfig,
+    config: Arc<RwLock<GatewayConfig>>,
 ) -> (Runtime, JoinHandle<()>) {
     let mut builder = tokio::runtime::Builder::new_current_thread();
     builder.enable_all();
     builder.thread_name("control-lane");
 
     #[cfg(target_os = "linux")]
-    if config.pin_cpu {
-        builder.on_thread_start(|| {
-            // Pin to CPU core 3 (adjust for your hardware topology).
-            // Requires CAP_SYS_NICE or root.
-            // SAFETY: sched_setaffinity is a standard libc syscall; the cpu_set
-            // is fully initialised before the call and only used here.
-            #[allow(unsafe_code)]
-            unsafe {
-                let mut cpu_set: libc::cpu_set_t = std::mem::zeroed();
-                libc::CPU_SET(3, &mut cpu_set);
-                let ret =
-                    libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &cpu_set);
-                if ret != 0 {
-                    tracing::warn!("Control lane: failed to pin thread to CPU 3");
+    {
+        let config = Arc::clone(&config);
+        builder.on_thread_start(move || {
+            let pin_cpu = {
+                let cfg = config.blocking_lock();
+                cfg.device.control.pin_cpu
+            };
+            if pin_cpu {
+                // Pin to CPU core 3 (adjust for your hardware topology).
+                // Requires CAP_SYS_NICE or root.
+                // SAFETY: sched_setaffinity is a standard libc syscall; the cpu_set
+                // is fully initialised before the call and only used here.
+                #[allow(unsafe_code)]
+                unsafe {
+                    let mut cpu_set: libc::cpu_set_t = std::mem::zeroed();
+                    libc::CPU_SET(3, &mut cpu_set);
+                    let ret = libc::sched_setaffinity(
+                        0,
+                        std::mem::size_of::<libc::cpu_set_t>(),
+                        &cpu_set,
+                    );
+                    if ret != 0 {
+                        tracing::warn!("Control lane: failed to pin thread to CPU 3");
+                    }
                 }
             }
         });
@@ -262,20 +272,26 @@ mod tests {
         Arc::new(reg)
     }
 
+    fn control_config(interval_ms: u64) -> Arc<RwLock<GatewayConfig>> {
+        Arc::new(RwLock::new(GatewayConfig {
+            device: crate::gateway::DeviceConfig {
+                control: ControlConfig {
+                    enabled: true,
+                    loop_interval_ms: interval_ms,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+    }
+
     #[tokio::test]
     async fn test_spawn_control_loop_runs() {
         let registry = make_registry().await;
         let handlers = new_handler_registry();
 
-        let handle = spawn_control_loop(
-            registry.clone(),
-            handlers,
-            ControlConfig {
-                enabled: true,
-                loop_interval_ms: 20,
-                ..Default::default()
-            },
-        );
+        let handle = spawn_control_loop(registry.clone(), handlers, control_config(20));
 
         // Let the loop tick a couple of times
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -303,15 +319,7 @@ mod tests {
             })],
         );
 
-        let handle = spawn_control_loop(
-            registry.clone(),
-            handlers,
-            ControlConfig {
-                enabled: true,
-                loop_interval_ms: 20,
-                ..Default::default()
-            },
-        );
+        let handle = spawn_control_loop(registry.clone(), handlers, control_config(20));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -328,15 +336,8 @@ mod tests {
         let registry = rt.block_on(make_registry());
         let handlers = new_handler_registry();
 
-        let (ctrl_rt, handle) = init_control_runtime(
-            registry.clone(),
-            handlers,
-            ControlConfig {
-                enabled: true,
-                loop_interval_ms: 50,
-                ..Default::default()
-            },
-        );
+        let (ctrl_rt, handle) =
+            init_control_runtime(registry.clone(), handlers, control_config(50));
 
         // Keep the control runtime alive on a background thread.
         std::thread::spawn(move || {

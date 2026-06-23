@@ -6,9 +6,9 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use tokio::sync::mpsc;
-use tracing::error;
 
 use crate::agent::AgentConfig;
+use crate::gateway::agent_spawn::run_agent_loop;
 use crate::gateway::GatewayState;
 use crate::gateway::*;
 
@@ -27,7 +27,7 @@ pub async fn list_agents_handler(State(state): State<Arc<GatewayState>>) -> impl
             let is_discovered = discovered.contains(id);
             serde_json::json!({
                 "id": id,
-                "busy": handle.busy,
+                "busy": handle.busy.load(std::sync::atomic::Ordering::Relaxed),
                 "status": "running",
                 "discovered": is_discovered,
             })
@@ -69,7 +69,7 @@ pub async fn create_agent_handler(
     config.agent_id = Some(agent_id.clone());
 
     // Create communication channel
-    let (tx, mut rx) = mpsc::channel(100);
+    let (tx, rx) = mpsc::channel(100);
 
     // Create provider from model router
     let provider = match state.infra.model_router.create_default_provider().await {
@@ -114,7 +114,7 @@ pub async fn create_agent_handler(
         )
     };
 
-    let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
+    let (query_tx, query_rx) = mpsc::channel::<AgentQuery>(32);
 
     // Create agent handle
     let handle = AgentHandle {
@@ -122,9 +122,10 @@ pub async fn create_agent_handler(
         config: config.clone(),
         tx: tx.clone(),
         query_tx: query_tx.clone(),
-        busy: false,
+        busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         agent: agent.clone(),
     };
+    let handle_for_loop = handle.clone();
 
     // Insert into agents map
     {
@@ -133,226 +134,18 @@ pub async fn create_agent_handler(
     }
 
     // Start agent processing loop (mirrors spawn_agent behavior)
-    let state_clone = state.clone();
+    let task_registry = state.task_registry.clone();
     let agent_id_clone = agent_id.clone();
     let agent_clone = agent.clone();
-    tokio::spawn(async move {
-        info!("Agent {} processing loop started", agent_id_clone);
-        loop {
-            tokio::select! {
-                cmd = rx.recv() => {
-                let cmd = match cmd { Some(c) => c, None => break };
-                match cmd {
-                    AgentCommand::ProcessMessage { session_id, message, user_id, channel, model_override } => {
-                        let source_channel = channel;
-                        info!("Agent {} processing message for session {}", agent_id_clone, session_id);
+    let busy = handle_for_loop.busy.clone();
+    let state_clone = state.clone();
 
-                        // Update status
-                        let _ = state_clone.events.tx.send(GatewayEvent::AgentStatus {
-                            agent_id: agent_id_clone.clone(),
-                            status: AgentStatus::Processing { session_id: session_id.clone() },
-                        });
-
-                        // Create incoming message
-                        let incoming_msg = crate::channels::IncomingMessage::new(
-                            user_id.clone(), session_id.clone(), message.clone()
-                        );
-
-                        // Process with progress callbacks
-                        let progress_state = state_clone.clone();
-                        let progress_session = session_id.clone();
-                        let progress_agent = agent_id_clone.clone();
-                        let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
-                            let state = progress_state.clone();
-                            let sid = progress_session.clone();
-                            let aid = progress_agent.clone();
-                            Box::pin(async move {
-                                // Read directive settings
-                                let reasoning_vis = {
-                                    let s = state.infra.runtime_settings.read().await;
-                                    s.get("reasoning.visibility").and_then(|v| v.as_str()).map(|s| s.to_string())
-                                };
-                                let verbose_mode = {
-                                    let s = state.infra.runtime_settings.read().await;
-                                    s.get("verbose.mode").and_then(|v| v.as_str()).map(|s| s.to_string())
-                                };
-                                match event {
-                                    crate::agent::ProgressEvent::Started => {
-                                        let _ = state.events.tx.send(GatewayEvent::AgentStatus {
-                                            agent_id: aid.clone(),
-                                            status: AgentStatus::Processing { session_id: sid.clone() },
-                                        });
-                                    }
-                                    crate::agent::ProgressEvent::Generating { content } => {
-                                        if reasoning_vis.as_deref() == Some("off") {
-                                            return;
-                                        }
-                                        // Only emit thinking events when there's actual content
-                                        if let Some(ref thinking) = content {
-                                            if !thinking.is_empty() {
-                                                let _ = state.events.tx.send(GatewayEvent::Thinking {
-                                                    session_id: sid.clone(),
-                                                    agent_id: aid.clone(),
-                                                    content: Some(thinking.clone()),
-                                                });
-                                            }
-                                        }
-                                    }
-                                    crate::agent::ProgressEvent::ContentDelta { text } => {
-                                        let _ = state.events.tx.send(GatewayEvent::ContentDelta {
-                                            session_id: sid.clone(),
-                                            agent_id: aid.clone(),
-                                            delta: text,
-                                        });
-                                    }
-                                    crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
-                                        if verbose_mode.as_deref() == Some("off") {
-                                            return;
-                                        }
-                                        let _ = state.events.tx.send(GatewayEvent::ToolCalling {
-                                            session_id: sid.clone(), agent_id: aid.clone(),
-                                            tool_name: name.clone(), arguments: arguments.clone(),
-                                        });
-                                    }
-                                    crate::agent::ProgressEvent::ToolResult { name, result, data } => {
-                                        if verbose_mode.as_deref() == Some("off") {
-                                            return;
-                                        }
-                                        let result = if verbose_mode.as_deref() == Some("compact") {
-                                            if result.len() > 500 {
-                                                format!("{}... (truncated)", &result[..500])
-                                            } else {
-                                                result
-                                            }
-                                        } else {
-                                            result
-                                        };
-                                        let _ = state.events.tx.send(GatewayEvent::ToolResult {
-                                            session_id: sid.clone(), agent_id: aid.clone(),
-                                            tool_name: name.clone(), result, data,
-                                        });
-                                    }
-                                    crate::agent::ProgressEvent::ToolResultDelta { .. } => {
-                                        // Streaming tool chunks are accumulated locally and emitted
-                                        // as a final ToolResult event; no per-chunk gateway event yet.
-                                    }
-                                    crate::agent::ProgressEvent::Completed { response } => {
-                                        let _ = state.events.tx.send(GatewayEvent::Completed {
-                                            session_id: sid.clone(),
-                                            agent_id: aid.clone(),
-                                            response,
-                                        });
-                                    }
-                                    crate::agent::ProgressEvent::Error { message } => {
-                                        let _ = state.events.tx.send(GatewayEvent::ProcessingError {
-                                            session_id: sid.clone(),
-                                            agent_id: aid.clone(),
-                                            message,
-                                        });
-                                    }
-                                }
-                            })
-                        });
-
-                        // Apply thinking config from runtime settings
-                        let think_level = {
-                            let s = state_clone.infra.runtime_settings.read().await;
-                            s.get("think.level").and_then(|v| v.as_str()).map(|s| s.to_string())
-                        };
-                        let extra = think_level.and_then(|level| {
-                            let budget = match level.as_str() {
-                                "minimal" => 1024u32,
-                                "low" => 4096u32,
-                                "medium" => 16000u32,
-                                "high" => 32000u32,
-                                _ => return None,
-                            };
-                            Some(serde_json::json!({ "thinking": { "type": "enabled", "budget_tokens": budget } }))
-                        });
-                        agent_clone.set_model_override(model_override).await;
-                        agent_clone.set_extra_params(extra).await;
-
-                        let result = agent_clone.process_message_with_progress(incoming_msg, progress_cb).await;
-                        agent_clone.set_model_override(None).await;
-
-                        match result {
-                            Ok(mut outgoing) => {
-                                // Apply reasoning visibility filter
-                                let reasoning_vis = {
-                                    let s = state_clone.infra.runtime_settings.read().await;
-                                    s.get("reasoning.visibility").and_then(|v| v.as_str()).map(|s| s.to_string())
-                                };
-                                if reasoning_vis.as_deref() == Some("off") {
-                                    outgoing.reasoning_content = None;
-                                }
-                                // Accumulate usage
-                                if let Some(ref usage) = outgoing.usage {
-                                    let mut settings = state_clone.infra.runtime_settings.write().await;
-                                    let current_tokens = settings.get("usage.tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let total_tokens = usage.prompt_tokens as u64 + usage.completion_tokens as u64;
-                                    settings.insert("usage.tokens".to_string(), serde_json::json!(current_tokens + total_tokens));
-                                    let current_calls = settings.get("usage.calls").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let tool_calls = outgoing.tool_calls.as_ref().map(|c| c.len() as u64).unwrap_or(0);
-                                    settings.insert("usage.calls".to_string(), serde_json::json!(current_calls + tool_calls + 1));
-                                }
-                                let _ = state_clone.events.tx.send(GatewayEvent::AgentResponse {
-                                    session_id: session_id.clone(), agent_id: agent_id_clone.clone(),
-                                    content: outgoing.content, channel: source_channel.clone(),
-                                    conversation_id: session_id.clone(), usage: outgoing.usage,
-                                });
-                            }
-                            Err(e) => {
-                                error!("Agent {} failed to process: {}", agent_id_clone, e);
-                            }
-                        }
-
-                        let _ = state_clone.events.tx.send(GatewayEvent::AgentStatus {
-                            agent_id: agent_id_clone.clone(), status: AgentStatus::Idle,
-                        });
-                    }
-                    AgentCommand::Shutdown => {
-                        info!("Agent {} shutting down", agent_id_clone);
-                        let _ = state_clone.events.tx.send(GatewayEvent::AgentStatus {
-                            agent_id: agent_id_clone.clone(), status: AgentStatus::Shutdown,
-                        });
-                        break;
-                    }
-                    _ => info!("Agent {} received command: {:?}", agent_id_clone, cmd),
-                }
-                } // cmd = rx.recv() arm
-                query = query_rx.recv() => {
-                    let query = match query { Some(q) => q, None => break };
-                    match query {
-                        AgentQuery::GetThreadSummaries { response_tx } => {
-                            let _ = response_tx.send(agent_clone.thread_summaries().await);
-                        }
-                        AgentQuery::GetThreadTurns { conv_id, response_tx } => {
-                            let _ = response_tx.send(agent_clone.thread_turns_for(&conv_id).await);
-                        }
-                        AgentQuery::UndoLastTurn { conv_id, response_tx } => {
-                            let _ = response_tx.send(agent_clone.undo_last_turn(&conv_id).await);
-                        }
-                        AgentQuery::RedoLastTurn { conv_id, response_tx } => {
-                            let _ = response_tx.send(agent_clone.redo_last_turn(&conv_id).await);
-                        }
-                        AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
-                            agent_clone.set_skill_trust(skill_trust);
-                            let incoming = crate::channels::IncomingMessage::new(
-                                user_id, &session_id, message,
-                            );
-                            let no_op: crate::agent::ProgressCallback =
-                                Arc::new(|_| Box::pin(async {}));
-                            let result =
-                                agent_clone.process_message_with_progress(incoming, no_op).await;
-                            agent_clone.set_skill_trust(crate::tools::SkillTrust::Trusted);
-                            let _ = response_tx.send(result);
-                        }
-                    }
-                }
-            }
-        } // end tokio::select! and loop
-        info!("Agent {} processing loop ended", agent_id_clone);
+    let task_handle = tokio::spawn(async move {
+        run_agent_loop(state_clone, agent_id_clone, agent_clone, busy, rx, query_rx, false).await;
     });
+    task_registry
+        .insert_join(format!("agent:{}", agent_id), task_handle)
+        .await;
 
     info!("✅ Agent {} created successfully", agent_id);
     (
@@ -380,7 +173,7 @@ pub async fn get_agent_handler(
     match agents.get(&id) {
         Some(agent) => Json(serde_json::json!({
             "id": agent.id,
-            "busy": agent.busy,
+            "busy": agent.busy.load(std::sync::atomic::Ordering::Relaxed),
         }))
         .into_response(),
         None => (StatusCode::NOT_FOUND, "Agent not found").into_response(),

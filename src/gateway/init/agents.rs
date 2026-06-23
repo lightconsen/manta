@@ -134,7 +134,6 @@ pub async fn init_agent_state() -> crate::Result<(
 
 /// Convenience helper that wires the ACP builder and returns the agent
 /// subsystem bundle.
-#[allow(clippy::too_many_arguments)]
 pub async fn init_agents(
     config: &GatewayConfig,
     session_store: Option<Arc<SessionStore>>,

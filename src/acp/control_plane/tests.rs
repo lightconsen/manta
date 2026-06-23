@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::acp::config::{CrashRecoveryConfig, SpawnMode, SubagentConfig, SubagentStatus, ThreadBinding};
+use crate::acp::config::{
+    CrashRecoveryConfig, SpawnMode, SubagentConfig, SubagentStatus, ThreadBinding,
+};
 use crate::acp::subagent::SubagentCommand;
 use crate::agent::{Agent, AgentConfig};
 use crate::channels::IncomingMessage;
@@ -32,14 +34,13 @@ async fn test_subagent_crash_auto_recovery() {
             backoff_seconds: vec![0],
         })
         .with_agent_builder(|| {
-            let provider = Arc::new(crate::providers::mock::MockProvider::new().with_callback(
-                |_messages| {
+            let provider =
+                Arc::new(crate::providers::mock::MockProvider::new().with_callback(|_messages| {
                     if !CRASHED.swap(true, Ordering::SeqCst) {
                         panic!("simulated subagent crash")
                     }
                     crate::providers::Message::assistant("recovered")
-                },
-            ));
+                }));
             let tools = Arc::new(crate::tools::ToolRegistry::new());
             let config = AgentConfig::default();
             Ok(Agent::new(config, provider, tools))
@@ -173,12 +174,8 @@ async fn test_thread_context_switch_and_migration() {
     assert_eq!(ctx_a.active_subagent, Some(s2.id.clone()));
 
     // Cleanup
-    acp.shutdown_subagent(&s1.id)
-        .await
-        .expect("shutdown s1");
-    acp.shutdown_subagent(&s2.id)
-        .await
-        .expect("shutdown s2");
+    acp.shutdown_subagent(&s1.id).await.expect("shutdown s1");
+    acp.shutdown_subagent(&s2.id).await.expect("shutdown s2");
 }
 
 #[tokio::test]
@@ -237,12 +234,8 @@ async fn test_cross_session_subagent_bus() {
     assert!(after_unsub.is_empty());
 
     // Cleanup
-    acp.shutdown_subagent(&s1.id)
-        .await
-        .expect("shutdown s1");
-    acp.shutdown_subagent(&s2.id)
-        .await
-        .expect("shutdown s2");
+    acp.shutdown_subagent(&s1.id).await.expect("shutdown s1");
+    acp.shutdown_subagent(&s2.id).await.expect("shutdown s2");
 }
 
 #[tokio::test]

@@ -221,6 +221,11 @@ pub struct GatewayState {
     /// Replaced on hot-reload via the admin API.
     pub control_init: RwLock<Option<ControlInit>>,
 
+    /// Lazily-initialized shared perception summarizer.
+    /// Building the local backend can trigger a model download, so the first
+    /// agent spawn pays that cost and subsequent spawns reuse the result.
+    pub summarizer: tokio::sync::OnceCell<Arc<dyn crate::perception::PerceptionSummarizer>>,
+
     /// Centralized registry for all gateway background tasks.
     pub task_registry: Arc<TaskRegistry>,
 

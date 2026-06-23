@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use tracing::info;
 
-use crate::acp::bus::BusMessage;
 use super::AcpControlPlane;
+use crate::acp::bus::BusMessage;
 
 impl AcpControlPlane {
     /// Subscribe a subagent to a bus topic.
@@ -51,10 +51,7 @@ impl AcpControlPlane {
     }
 
     /// Poll pending bus messages for a subagent on a topic.
-    pub async fn bus_poll(&self,
-        subagent_id: &str,
-        topic: &str,
-    ) -> crate::Result<Vec<BusMessage>> {
+    pub async fn bus_poll(&self, subagent_id: &str, topic: &str) -> crate::Result<Vec<BusMessage>> {
         {
             let subagents = self.subagents.read().await;
             if !subagents.contains_key(subagent_id) {

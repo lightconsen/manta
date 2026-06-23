@@ -11,6 +11,7 @@ use syscity::device::Capability;
 use syscity::device::{DeviceStatus, HealthCheckConfig, HotPlugConfig};
 use syscity::gateway::init::devices::init_devices;
 use syscity::gateway::DeviceConfig;
+use syscity::gateway::TaskRegistry;
 use syscity::tools::ToolRegistry;
 
 /// Full flow: mock driver -> probe -> connect -> verify device state.
@@ -117,8 +118,9 @@ async fn test_status_bus_full_lifecycle() {
         .with_capabilities(vec![sensor as Arc<dyn Capability>]);
     let config = DeviceConfig::default();
     let tool_registry = ToolRegistry::new();
+    let task_registry = TaskRegistry::new();
 
-    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
+    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None, &task_registry)
         .await
         .expect("init should succeed")
         .expect("init should return Some");
@@ -132,13 +134,8 @@ async fn test_status_bus_full_lifecycle() {
     assert_eq!(event.device_id, "dev-sensor-01");
     assert!(matches!(event.current, DeviceStatus::Disconnected));
 
-    // Clean up background handles
-    if let Some(h) = init.health_check_handle {
-        h.abort();
-    }
-    if let Some(h) = init.hot_plug_handle {
-        h.abort();
-    }
+    // Clean up background tasks
+    task_registry.abort_matching("device:").await;
 }
 
 /// Verify that reconnect emits both Disconnected and Connected status events.
@@ -149,8 +146,9 @@ async fn test_status_bus_reconnect_events() {
         .with_capabilities(vec![sensor as Arc<dyn Capability>]);
     let config = DeviceConfig::default();
     let tool_registry = ToolRegistry::new();
+    let task_registry = TaskRegistry::new();
 
-    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
+    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None, &task_registry)
         .await
         .expect("init should succeed")
         .expect("init should return Some");
@@ -174,16 +172,11 @@ async fn test_status_bus_reconnect_events() {
         .iter()
         .any(|s| matches!(s, DeviceStatus::Connected { .. })));
 
-    if let Some(h) = init.health_check_handle {
-        h.abort();
-    }
-    if let Some(h) = init.hot_plug_handle {
-        h.abort();
-    }
+    task_registry.abort_matching("device:").await;
 }
 
-/// Verify that init_devices spawns a health-check loop when the interval is >
-/// 0.
+/// Verify that init_devices registers a health-check task when the interval is
+/// > 0.
 #[tokio::test]
 async fn test_init_devices_spawns_health_loop() {
     let sensor = Arc::new(MockCapability::new("sensor.read"));
@@ -197,24 +190,20 @@ async fn test_init_devices_spawns_health_loop() {
         ..Default::default()
     };
     let tool_registry = ToolRegistry::new();
-    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
+    let task_registry = TaskRegistry::new();
+    let _init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None, &task_registry)
         .await
         .expect("init should succeed")
         .expect("init should return Some");
 
-    assert!(init.health_check_handle.is_some());
-    assert!(init.hot_plug_handle.is_some());
+    assert!(task_registry.contains("device:health").await);
+    assert!(task_registry.contains("device:hotplug").await);
 
-    if let Some(h) = init.health_check_handle {
-        h.abort();
-    }
-    if let Some(h) = init.hot_plug_handle {
-        h.abort();
-    }
+    task_registry.abort_matching("device:").await;
 }
 
-/// Verify that init_devices does not spawn background loops when intervals are
-/// 0.
+/// Verify that init_devices does not register background tasks when intervals
+/// are 0.
 #[tokio::test]
 async fn test_init_devices_no_handle_when_interval_zero() {
     let sensor = Arc::new(MockCapability::new("sensor.read"));
@@ -232,13 +221,14 @@ async fn test_init_devices_no_handle_when_interval_zero() {
         ..Default::default()
     };
     let tool_registry = ToolRegistry::new();
-    let init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
+    let task_registry = TaskRegistry::new();
+    let _init = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None, &task_registry)
         .await
         .expect("init should succeed")
         .expect("init should return Some");
 
-    assert!(init.health_check_handle.is_none());
-    assert!(init.hot_plug_handle.is_none());
+    assert!(!task_registry.contains("device:health").await);
+    assert!(!task_registry.contains("device:hotplug").await);
 }
 
 /// Use make_mock_device_registry with multiple drivers that differ in health,

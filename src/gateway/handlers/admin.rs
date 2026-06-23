@@ -98,26 +98,44 @@ pub async fn reload_all_handler(
     // ── 3. Config fields (hot-reloadable subset) ──────────────────────────
     if scope == "all" || scope == "config" {
         if let Some(ref new_cfg) = new_config {
-            let mut config = state.config.write().await;
-            config.security = new_cfg.security.clone();
-            config.providers = new_cfg.providers.clone();
-            config.mcp = new_cfg.mcp.clone();
-            config.hot_reload = new_cfg.hot_reload.clone();
-            config.cost_guard = new_cfg.cost_guard.clone();
-            config.capabilities = new_cfg.capabilities.clone();
-            config.computer = new_cfg.computer.clone();
-            config.workspace_dir = new_cfg.workspace_dir.clone();
-            config.workspace_only = new_cfg.workspace_only;
-            config.model = new_cfg.model.clone();
-            config.model_provider = new_cfg.model_provider.clone();
-            config.dreaming = new_cfg.dreaming.clone();
-            config.standing_orders = new_cfg.standing_orders.clone();
-            config.cron = new_cfg.cron.clone();
-            config.browser = new_cfg.browser.clone();
-            config.device = new_cfg.device.clone();
-            drop(config);
-            result["config"] = serde_json::json!({ "updated": true });
-            info!("Applied hot-reloadable configuration fields");
+            // Validate security/auth config before applying it.
+            if let Err(e) = crate::gateway::validate_auth_config(new_cfg) {
+                error!("Rejected invalid hot-reload config: {}", e);
+                state
+                    .auth
+                    .audit_log
+                    .log(
+                        crate::security::runtime_audit::AuditEventType::ConfigChange,
+                        "admin",
+                        "config",
+                        false,
+                        format!("Admin reload config rejected: {}", e),
+                        None,
+                    )
+                    .await;
+                result["config"] = serde_json::json!({ "updated": false, "reason": e.to_string() });
+            } else {
+                let mut config = state.config.write().await;
+                config.security = new_cfg.security.clone();
+                config.providers = new_cfg.providers.clone();
+                config.mcp = new_cfg.mcp.clone();
+                config.hot_reload = new_cfg.hot_reload.clone();
+                config.cost_guard = new_cfg.cost_guard.clone();
+                config.capabilities = new_cfg.capabilities.clone();
+                config.computer = new_cfg.computer.clone();
+                config.workspace_dir = new_cfg.workspace_dir.clone();
+                config.workspace_only = new_cfg.workspace_only;
+                config.model = new_cfg.model.clone();
+                config.model_provider = new_cfg.model_provider.clone();
+                config.dreaming = new_cfg.dreaming.clone();
+                config.standing_orders = new_cfg.standing_orders.clone();
+                config.cron = new_cfg.cron.clone();
+                config.browser = new_cfg.browser.clone();
+                config.device = new_cfg.device.clone();
+                drop(config);
+                result["config"] = serde_json::json!({ "updated": true });
+                info!("Applied hot-reloadable configuration fields");
+            }
         } else {
             result["config"] =
                 serde_json::json!({ "updated": false, "reason": "parse or read error" });
@@ -182,6 +200,7 @@ pub async fn reload_all_handler(
                     &config.device,
                     &state.tools.registry,
                     per_reg,
+                    state.task_registry.clone(),
                 )
                 .await
             } else {
@@ -196,27 +215,28 @@ pub async fn reload_all_handler(
                     drivers,
                     &state.tools.registry,
                     per_reg,
+                    &state.task_registry,
                 )
                 .await
             }
         };
 
         match device_result {
-            Ok(mut new_init) => {
+            Ok(new_init) => {
                 // Spawn OS device bridge for the new device init
                 let config = state.config.read().await;
                 let per_init = state.perception_init.read().await;
                 let per_reg = per_init.as_ref().map(|pi| pi.registry.clone());
-                if let Some(ref mut di) = new_init {
-                    if let Some(handle) = crate::gateway::init::devices::spawn_os_bridge_from_config(
+                if let Some(ref di) = new_init {
+                    crate::gateway::init::devices::spawn_os_bridge_from_config(
                         &state.infra.driver_factory,
                         di.registry.clone(),
                         &config.device.os_bridge,
                         state.tools.registry.clone(),
                         per_reg,
-                    ) {
-                        di.os_bridge_handle = Some(handle);
-                    }
+                        state.task_registry.clone(),
+                    )
+                    .await;
                 }
                 drop(per_init);
                 drop(config);
@@ -246,8 +266,12 @@ pub async fn reload_all_handler(
                     let handle = crate::device::control::spawn_control_loop(
                         reg.clone(),
                         handlers.clone(),
-                        state.config.read().await.device.control.clone(),
+                        state.config.clone(),
                     );
+                    state
+                        .task_registry
+                        .insert_abort("control:loop", &handle)
+                        .await;
                     *state.control_init.write().await = Some(crate::gateway::state::ControlInit {
                         registry: reg,
                         handle: Some(handle),
@@ -543,7 +567,7 @@ pub async fn disable_channel_handler(
         .into_response()
 }
 
-/// Persist the current gateway config to disk.
+/// Persist the current gateway config to disk atomically.
 async fn persist_config(state: &Arc<GatewayState>) -> Result<(), String> {
     let config_path = match state.config_path.clone() {
         Some(p) => p,
@@ -555,9 +579,13 @@ async fn persist_config(state: &Arc<GatewayState>) -> Result<(), String> {
         .map_err(|e| format!("TOML serialization failed: {}", e))?;
     drop(config);
 
-    tokio::fs::write(&config_path, toml_str)
+    let tmp_path = config_path.with_extension("toml.tmp");
+    tokio::fs::write(&tmp_path, toml_str)
         .await
-        .map_err(|e| format!("Failed to write config file: {}", e))?;
+        .map_err(|e| format!("Failed to write temporary config file: {}", e))?;
+    tokio::fs::rename(&tmp_path, &config_path)
+        .await
+        .map_err(|e| format!("Failed to atomically replace config file: {}", e))?;
 
     info!("Persisted config to {:?}", config_path);
     Ok(())

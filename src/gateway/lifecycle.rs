@@ -103,7 +103,10 @@ pub(crate) async fn start_gateway(
                 error!("Hot reload error: {}", e);
             }
         });
-        state.task_registry.insert_join("hot_reload", hot_reload_handle).await;
+        state
+            .task_registry
+            .insert_join("hot_reload", hot_reload_handle)
+            .await;
 
         // Register config change handlers
         super::hot_reload::register_hot_reload_handlers(state.clone(), config.clone(), hot_reload)
@@ -120,13 +123,7 @@ pub(crate) async fn start_gateway(
         default_config.system_prompt,
         default_agent_dir.display()
     );
-    match spawn_agent_in_lifecycle(
-        state.clone(),
-        "default".to_string(),
-        default_config,
-    )
-    .await
-    {
+    match spawn_agent_in_lifecycle(state.clone(), "default".to_string(), default_config).await {
         Ok(()) => info!("Default agent spawned successfully"),
         Err(e) => {
             warn!("Failed to spawn default agent: {}", e);
@@ -306,12 +303,18 @@ pub(crate) async fn start_gateway(
                 }
             }
         });
-        state.task_registry.insert_join("approval_forwarder", approval_handle).await;
+        state
+            .task_registry
+            .insert_join("approval_forwarder", approval_handle)
+            .await;
     }
 
     // Start gateway-level self-repair watchdog (60 s interval)
     let repair_handle = tokio::spawn(super::watchdog::run_repair_loop(state.clone()));
-    state.task_registry.insert_join("repair_loop", repair_handle).await;
+    state
+        .task_registry
+        .insert_join("repair_loop", repair_handle)
+        .await;
 
     // Start heartbeat runner if enabled
     if config.heartbeat.enabled {
@@ -323,7 +326,10 @@ pub(crate) async fn start_gateway(
         let heartbeat_handle = tokio::spawn(async move {
             runner.start().await;
         });
-        state.task_registry.insert_join("heartbeat", heartbeat_handle).await;
+        state
+            .task_registry
+            .insert_join("heartbeat", heartbeat_handle)
+            .await;
         info!("Heartbeat runner started");
 
         // Wire heartbeat wake sender into cron scheduler
@@ -357,7 +363,10 @@ pub(crate) async fn start_gateway(
                                             let mut lines = reader.lines();
                                             while let Ok(Some(line)) = lines.next_line().await {
                                                 if let Err(e) = log_tx.send(line) {
-                                                    debug!("No receivers for log tail event: {}", e);
+                                                    debug!(
+                                                        "No receivers for log tail event: {}",
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
@@ -380,7 +389,10 @@ pub(crate) async fn start_gateway(
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         });
-        state.task_registry.insert_join("log_tail", log_tail_handle).await;
+        state
+            .task_registry
+            .insert_join("log_tail", log_tail_handle)
+            .await;
         info!("Log tail broadcaster started");
     }
 
@@ -389,11 +401,8 @@ pub(crate) async fn start_gateway(
     let shutdown = async move { shutdown_token.cancelled().await };
     match timeout(
         Duration::from_secs(30),
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .with_graceful_shutdown(shutdown),
+        axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .with_graceful_shutdown(shutdown),
     )
     .await
     {
@@ -435,7 +444,10 @@ pub(crate) async fn stop_gateway(
     shutdown_token.cancel();
 
     // 1. Drain the unified message workers.
-    let message_handles = state.task_registry.take_matching_join("message:").await;
+    let message_handles = state
+        .task_registry
+        .remove_matching_join_or_abort("message:")
+        .await;
     for handle in message_handles {
         match timeout(Duration::from_secs(5), handle).await {
             Ok(_) => {}
@@ -454,7 +466,10 @@ pub(crate) async fn stop_gateway(
     }
     // Give agents a moment to start their shutdown before we await join handles.
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let agent_handles = state.task_registry.take_matching_join("agent:").await;
+    let agent_handles = state
+        .task_registry
+        .remove_matching_join_or_abort("agent:")
+        .await;
     for handle in agent_handles {
         match timeout(Duration::from_secs(10), handle).await {
             Ok(_) => {}
@@ -463,6 +478,15 @@ pub(crate) async fn stop_gateway(
     }
 
     // 3. Stop configured channels.
+    // Abort channel background tasks first so the channel stop() calls do not
+    // race with gateway-owned inbound/outbound bridges.
+    let channel_handles = state
+        .task_registry
+        .remove_matching_join_or_abort("channel:")
+        .await;
+    for handle in channel_handles {
+        handle.abort();
+    }
     let channel_refs: Vec<Arc<dyn crate::channels::Channel>> = {
         let channels = state.channels.channels.read().await;
         channels.values().cloned().collect()
@@ -551,23 +575,7 @@ pub(crate) async fn stop_gateway(
         handle.abort();
     }
 
-    // 14. Abort device background handles (stored on state for hot-reload).
-    {
-        let mut di = state.device_init.write().await;
-        if let Some(ref mut init) = *di {
-            if let Some(handle) = init.health_check_handle.take() {
-                handle.abort();
-            }
-            if let Some(handle) = init.hot_plug_handle.take() {
-                handle.abort();
-            }
-            if let Some(handle) = init.os_bridge_handle.take() {
-                handle.abort();
-            }
-        }
-    }
-
-    // 15. Abort perception and control lane background handles.
+    // 14. Abort perception background handle.
     {
         let mut pi = state.perception_init.write().await;
         if let Some(ref mut init) = *pi {
@@ -576,20 +584,12 @@ pub(crate) async fn stop_gateway(
             }
         }
     }
-    {
-        let mut ci = state.control_init.write().await;
-        if let Some(ref mut init) = *ci {
-            if let Some(handle) = init.handle.take() {
-                handle.abort();
-            }
-        }
-    }
+    // Control lane handle is registered in the task registry and will be
+    // aborted by step 13 below.
 
-    // 16. Abort any remaining FollowUp flush timers.
+    // 15. Abort any remaining FollowUp flush timers.
     {
-        let timers = std::mem::take(
-            &mut *state.agents.follow_up_timers.write().await,
-        );
+        let timers = std::mem::take(&mut *state.agents.follow_up_timers.write().await);
         for (_session_id, handle) in timers {
             handle.abort();
         }

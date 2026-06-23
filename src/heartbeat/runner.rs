@@ -278,7 +278,7 @@ impl HeartbeatRunner {
             return;
         }
 
-        if handle.busy {
+        if handle.busy.load(std::sync::atomic::Ordering::Relaxed) {
             if req.priority == WakePriority::Retry {
                 debug!("Agent {} busy, skipping retry wake", req.agent_id);
                 return;
@@ -335,7 +335,7 @@ impl HeartbeatRunner {
     ) {
         let agent_id = &handle.id;
 
-        if handle.busy {
+        if handle.busy.load(std::sync::atomic::Ordering::Relaxed) {
             self._emit_event(HeartbeatEvent::Skipped {
                 reason: "agent_busy".to_string(),
                 agent_id: agent_id.clone(),
@@ -570,7 +570,7 @@ mod tests {
             config: agent_config,
             tx,
             query_tx,
-            busy: false,
+            busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             agent,
         }
     }

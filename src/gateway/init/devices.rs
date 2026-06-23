@@ -12,8 +12,6 @@
 
 use std::sync::Arc;
 
-use tokio::task::JoinHandle;
-
 use crate::device::health::spawn_health_check_loop;
 use crate::device::hotplug::spawn_hot_plug_loop;
 use crate::device::os_bridge::bridge::{spawn_os_bridge_loop, DriverBuilder};
@@ -22,21 +20,20 @@ use crate::device::registry::DeviceRegistry;
 use crate::device::DeviceDriver;
 use crate::device::DriverFactory;
 use crate::gateway::DeviceConfig;
+use crate::gateway::TaskRegistry;
 use crate::perception::{DeviceSourceAdapter, PerceptionRegistry};
 use crate::tools::device_tool::DeviceToolWrapper;
 use crate::tools::ToolRegistry;
 
 /// Device subsystem initialization result.
+///
+/// Background task handles are owned by the gateway's [`TaskRegistry`] under
+/// the `device:` prefix; this struct only retains the device registry so that
+/// callers can access discovered devices and trigger reloads.
 pub struct DeviceInit {
     /// Registry managing all discovered devices and their lifecycle
     /// (health checks, reconnect, disconnect).
     pub registry: Arc<DeviceRegistry>,
-    /// Background health-check loop handle, if one was spawned.
-    pub health_check_handle: Option<JoinHandle<()>>,
-    /// Background hot-plug detection loop handle, if one was spawned.
-    pub hot_plug_handle: Option<JoinHandle<()>>,
-    /// Background OS device bridge loop handle, if one was spawned.
-    pub os_bridge_handle: Option<JoinHandle<()>>,
 }
 
 /// Initialize the device subsystem.
@@ -56,6 +53,7 @@ pub async fn init_devices(
     drivers: Vec<Arc<dyn DeviceDriver>>,
     tool_registry: &ToolRegistry,
     perception_registry: Option<&PerceptionRegistry>,
+    task_registry: &crate::gateway::TaskRegistry,
 ) -> crate::Result<Option<DeviceInit>> {
     if !config.enabled || drivers.is_empty() {
         return Ok(None);
@@ -93,29 +91,22 @@ pub async fn init_devices(
     let registry = Arc::new(device_registry);
 
     // Spawn background health-check loop
-    let health_check_handle = if config.health_check.interval_secs > 0 {
+    if config.health_check.interval_secs > 0 {
         let reg = registry.clone();
         let cfg = config.health_check.clone();
-        Some(spawn_health_check_loop(reg, cfg))
-    } else {
-        None
-    };
+        let handle = spawn_health_check_loop(reg, cfg);
+        task_registry.insert_join("device:health", handle).await;
+    }
 
     // Spawn background hot-plug detection loop
-    let hot_plug_handle = if config.hot_plug.scan_interval_secs > 0 {
+    if config.hot_plug.scan_interval_secs > 0 {
         let reg = registry.clone();
         let cfg = config.hot_plug.clone();
-        Some(spawn_hot_plug_loop(reg, cfg))
-    } else {
-        None
-    };
+        let handle = spawn_hot_plug_loop(reg, cfg);
+        task_registry.insert_join("device:hotplug", handle).await;
+    }
 
-    Ok(Some(DeviceInit {
-        registry,
-        health_check_handle,
-        hot_plug_handle,
-        os_bridge_handle: None,
-    }))
+    Ok(Some(DeviceInit { registry }))
 }
 
 // ── Config-driven driver discovery ──────────────────────────────────────
@@ -143,17 +134,18 @@ pub fn discover_drivers_from_config(
 
 /// Spawn the OS device bridge loop from configuration settings.
 ///
-/// Call this after `init_devices()` succeeds. Returns `Some(JoinHandle)` if
-/// the bridge was spawned, `None` if disabled or no matchers configured.
-pub fn spawn_os_bridge_from_config(
+/// Call this after `init_devices()` succeeds. Registers the bridge task in the
+/// provided [`TaskRegistry`] under the `device:os_bridge` name when enabled.
+pub async fn spawn_os_bridge_from_config(
     factory: &DriverFactory,
     registry: Arc<DeviceRegistry>,
     os_bridge: &OsBridgeConfig,
     tool_registry: Arc<ToolRegistry>,
     perception_registry: Option<Arc<PerceptionRegistry>>,
-) -> Option<JoinHandle<()>> {
+    task_registry: Arc<TaskRegistry>,
+) {
     if !os_bridge.enabled || os_bridge.matchers.is_empty() {
-        return None;
+        return;
     }
 
     let matchers = os_bridge.matchers.clone();
@@ -161,44 +153,34 @@ pub fn spawn_os_bridge_from_config(
     let build_driver: DriverBuilder =
         Arc::new(move |kind: &str, params: serde_json::Value| factory.build(kind, params));
 
-    Some(spawn_os_bridge_loop(
-        registry,
-        matchers,
-        tool_registry,
-        perception_registry,
-        build_driver,
-    ))
+    let handle =
+        spawn_os_bridge_loop(registry, matchers, tool_registry, perception_registry, build_driver);
+
+    task_registry.insert_join("device:os_bridge", handle).await;
 }
 
 /// Reload the device subsystem from configuration.
 ///
 /// 1. Disconnects all devices in the old registry.
-/// 2. Aborts the old health-check loop.
+/// 2. Aborts old device background tasks via the [`TaskRegistry`] (`device:`
+///    prefix).
 /// 3. Deregisters all old device tools from the [`ToolRegistry`].
 /// 4. Re-runs driver discovery and init with the new `config`.
-/// 5. Returns the new [`DeviceInit`].
 ///
-/// Returns `Ok(None)` if the device subsystem is disabled or has no drivers.
+/// Returns the new [`DeviceInit`] (containing only the registry).
 pub async fn reload_devices(
     old: DeviceInit,
     factory: &DriverFactory,
     config: &DeviceConfig,
     tool_registry: &ToolRegistry,
     perception_registry: Option<&PerceptionRegistry>,
+    task_registry: Arc<TaskRegistry>,
 ) -> crate::Result<Option<DeviceInit>> {
     // 1. Disconnect all old devices
     old.registry.disconnect_all().await;
 
-    // 2. Abort old loops
-    if let Some(handle) = old.health_check_handle {
-        handle.abort();
-    }
-    if let Some(handle) = old.hot_plug_handle {
-        handle.abort();
-    }
-    if let Some(handle) = old.os_bridge_handle {
-        handle.abort();
-    }
+    // 2. Abort old device background tasks via the unified registry.
+    task_registry.abort_matching("device:").await;
 
     // 3. Deregister all old device tools
     tool_registry.deregister_prefix("device_");
@@ -210,7 +192,7 @@ pub async fn reload_devices(
 
     // 4. Re-run discovery and init
     let drivers = discover_drivers_from_config(factory, config);
-    init_devices(config, drivers, tool_registry, perception_registry).await
+    init_devices(config, drivers, tool_registry, perception_registry, &task_registry).await
 }
 
 #[cfg(test)]
@@ -249,7 +231,8 @@ mod tests {
             enabled: false,
             ..Default::default()
         };
-        let result = init_devices(&config, vec![], &ToolRegistry::new(), None)
+        let registry = TaskRegistry::new();
+        let result = init_devices(&config, vec![], &ToolRegistry::new(), None, &registry)
             .await
             .expect("init_devices should succeed when disabled");
         assert!(result.is_none());
@@ -263,15 +246,16 @@ mod tests {
 
         let config = DeviceConfig::default();
         let tool_registry = ToolRegistry::new();
+        let task_registry = TaskRegistry::new();
 
-        let result = init_devices(&config, vec![Arc::new(driver)], &tool_registry, None)
-            .await
-            .expect("init_devices should succeed")
-            .expect("init_devices should return Some when enabled");
+        let result =
+            init_devices(&config, vec![Arc::new(driver)], &tool_registry, None, &task_registry)
+                .await
+                .expect("init_devices should succeed")
+                .expect("init_devices should return Some when enabled");
 
         // Verify the device is registered
         assert_eq!(result.registry.len().await, 1);
-        assert!(result.health_check_handle.is_some());
 
         // Verify tool is registered in ToolRegistry
         let names = tool_registry.list();
@@ -280,12 +264,17 @@ mod tests {
             "tool should be registered in ToolRegistry: {:?}",
             names,
         );
+
+        // Verify background tasks were registered
+        assert!(task_registry.contains("device:health").await);
+        assert!(task_registry.contains("device:hotplug").await);
     }
 
     #[tokio::test]
     async fn test_init_devices_empty_drivers() {
         let config = DeviceConfig::default();
-        let result = init_devices(&config, vec![], &ToolRegistry::new(), None)
+        let registry = TaskRegistry::new();
+        let result = init_devices(&config, vec![], &ToolRegistry::new(), None, &registry)
             .await
             .expect("init_devices should succeed with no drivers");
         assert!(result.is_none());

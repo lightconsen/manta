@@ -526,7 +526,7 @@ pub async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl Into
     Json(serde_json::json!({
         "agents": {
             "total": agents.len(),
-            "busy": agents.values().filter(|a| a.busy).count(),
+            "busy": agents.values().filter(|a| a.busy.load(std::sync::atomic::Ordering::Relaxed)).count(),
         },
         "channels": channels.len(),
         "version": crate::VERSION,

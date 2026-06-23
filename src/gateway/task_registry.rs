@@ -61,10 +61,7 @@ impl TaskRegistry {
 
     /// Register the [`AbortHandle`] of a task whose [`JoinHandle`] is kept
     /// elsewhere.
-    pub async fn insert_abort(&self,
-        name: impl Into<String>,
-        handle: &JoinHandle<()>,
-    ) {
+    pub async fn insert_abort(&self, name: impl Into<String>, handle: &JoinHandle<()>) {
         let name = name.into();
         let mut tasks = self.tasks.write().await;
         if let Some(old) = tasks.remove(&name) {
@@ -79,6 +76,11 @@ impl TaskRegistry {
         if let Some(task) = self.tasks.write().await.remove(name) {
             task.abort();
         }
+    }
+
+    /// Returns true if a task with the given name is registered.
+    pub async fn contains(&self, name: &str) -> bool {
+        self.tasks.read().await.contains_key(name)
     }
 
     /// Abort and remove all tasks whose names start with `prefix`.
@@ -104,16 +106,15 @@ impl TaskRegistry {
         }
     }
 
-    /// Remove and return a [`JoinHandle`] task by name, if present.
+    /// Remove and return a [`JoinHandle`] task by name, aborting it if present
+    /// but stored as an [`AbortHandle`].
     ///
     /// Returns `None` if the name is missing or stored as an [`AbortHandle`].
-    pub async fn take_join(&self, name: &str,
-    ) -> Option<JoinHandle<()>> {
+    pub async fn remove_join_or_abort(&self, name: &str) -> Option<JoinHandle<()>> {
         match self.tasks.write().await.remove(name) {
             Some(Task::Join(handle)) => Some(handle),
             Some(task @ Task::Abort(_)) => {
-                // Re-insert abort-handle tasks; we can't take ownership of the
-                // underlying JoinHandle.
+                // Abort-handle tasks cannot be owned; abort and discard.
                 task.abort();
                 None
             }
@@ -121,12 +122,18 @@ impl TaskRegistry {
         }
     }
 
+    /// Returns the [`AbortHandle`] for a registered task without removing it.
+    pub async fn get_abort_handle(&self, name: &str) -> Option<AbortHandle> {
+        match self.tasks.read().await.get(name) {
+            Some(Task::Join(handle)) => Some(handle.abort_handle()),
+            Some(Task::Abort(handle)) => Some(handle.clone()),
+            None => None,
+        }
+    }
+
     /// Remove and return all [`JoinHandle`] tasks whose names start with
-    /// `prefix`.
-    pub async fn take_matching_join(
-        &self,
-        prefix: &str,
-    ) -> Vec<JoinHandle<()>> {
+    /// `prefix`, aborting any [`AbortHandle`] entries encountered.
+    pub async fn remove_matching_join_or_abort(&self, prefix: &str) -> Vec<JoinHandle<()>> {
         let mut tasks = self.tasks.write().await;
         let keys: Vec<String> = tasks
             .keys()
@@ -146,8 +153,7 @@ impl TaskRegistry {
     }
 
     /// Remove and return all remaining tasks.
-    pub async fn take_all(&self,
-    ) -> Vec<(String, Task)> {
+    pub async fn take_all(&self) -> Vec<(String, Task)> {
         let mut tasks = self.tasks.write().await;
         std::mem::take(&mut *tasks).into_iter().collect()
     }

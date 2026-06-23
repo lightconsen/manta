@@ -110,7 +110,7 @@ pub async fn spawn_discovered_agent_handler(
             config: config.clone(),
             tx: tx.clone(),
             query_tx: query_tx.clone(),
-            busy: false,
+            busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             agent: agent.clone(),
         };
 
@@ -306,7 +306,7 @@ pub async fn spawn_all_discovered_agents_handler(
                     config: config.clone(),
                     tx: tx.clone(),
                     query_tx: query_tx.clone(),
-                    busy: false,
+                    busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     agent: agent.clone(),
                 };
 

@@ -32,7 +32,7 @@ pub struct AgentHandle {
     /// Request/response query channel (introspection + skill invocations)
     pub query_tx: mpsc::Sender<AgentQuery>,
     /// Whether agent is currently processing
-    pub busy: bool,
+    pub busy: Arc<std::sync::atomic::AtomicBool>,
     /// Reference to the agent for ACP orchestration
     pub agent: Arc<Agent>,
 }

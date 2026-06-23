@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -41,6 +42,13 @@ pub(crate) async fn process_inbound_entries(
             }
         }
     }
+
+    // Drain any in-flight messages with a bounded timeout.
+    let drain_deadline = Duration::from_secs(5);
+    while let Ok(Some(incoming)) = timeout(drain_deadline, rx.recv()).await {
+        let _ = state.pipelines.inbound.process(incoming).await;
+    }
+    info!("Inbound entry worker stopped");
 }
 
 /// Process routed messages from the inbound pipeline.
@@ -63,9 +71,20 @@ pub(crate) async fn process_routed_messages(
             }
         }
     }
+
+    // Drain any in-flight routed messages with a bounded timeout.
+    let drain_deadline = Duration::from_secs(5);
+    while let Ok(Some(routed)) = timeout(drain_deadline, rx.recv()).await {
+        dispatch_routed_message(&state, routed).await;
+    }
+    info!("Routed message worker stopped");
 }
 
 /// Dispatch a single `RoutedMessage` to the resolved agent.
+///
+/// Lock hierarchy observed in this function:
+/// `agents.group_manager` → `agents.message_buffer` → `agents.follow_up_timers`
+/// → `agents.agents` → `infra.runtime_settings`.
 pub(crate) async fn dispatch_routed_message(
     state: &Arc<GatewayState>,
     routed: crate::inbound::RoutedMessage,
@@ -133,13 +152,15 @@ pub(crate) async fn dispatch_routed_message(
             clear_follow_up_timer(state, &session_id).await;
             send_to_agent(
                 state,
-                &agent_id,
-                &session_id,
-                &routed.incoming.content,
-                &routed.incoming.user_id.0,
-                &channel,
-                think_level.clone(),
-                queue_mode.clone(),
+                AgentDispatch {
+                    agent_id: agent_id.clone(),
+                    session_id: session_id.clone(),
+                    message: routed.incoming.content.clone(),
+                    user_id: routed.incoming.user_id.0.clone(),
+                    channel: channel.clone(),
+                    think_level: think_level.clone(),
+                    queue_mode: queue_mode.clone(),
+                },
             )
             .await;
         }
@@ -159,13 +180,15 @@ pub(crate) async fn dispatch_routed_message(
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             send_to_agent(
                 state,
-                &agent_id,
-                &session_id,
-                &routed.incoming.content,
-                &routed.incoming.user_id.0,
-                &channel,
-                think_level.clone(),
-                queue_mode.clone(),
+                AgentDispatch {
+                    agent_id: agent_id.clone(),
+                    session_id: session_id.clone(),
+                    message: routed.incoming.content.clone(),
+                    user_id: routed.incoming.user_id.0.clone(),
+                    channel: channel.clone(),
+                    think_level: think_level.clone(),
+                    queue_mode: queue_mode.clone(),
+                },
             )
             .await;
         }
@@ -247,13 +270,15 @@ pub(crate) async fn dispatch_routed_message(
                 // No buffer to flush; treat as normal message
                 send_to_agent(
                     state,
-                    &agent_id,
-                    &session_id,
-                    &routed.incoming.content,
-                    &routed.incoming.user_id.0,
-                    &channel,
-                    think_level.clone(),
-                    queue_mode.clone(),
+                    AgentDispatch {
+                        agent_id: agent_id.clone(),
+                        session_id: session_id.clone(),
+                        message: routed.incoming.content.clone(),
+                        user_id: routed.incoming.user_id.0.clone(),
+                        channel: channel.clone(),
+                        think_level: think_level.clone(),
+                        queue_mode: queue_mode.clone(),
+                    },
                 )
                 .await;
             }
@@ -262,13 +287,15 @@ pub(crate) async fn dispatch_routed_message(
         crate::inbound::QueueMode::Normal => {
             send_to_agent(
                 state,
-                &agent_id,
-                &session_id,
-                &routed.incoming.content,
-                &routed.incoming.user_id.0,
-                &channel,
-                think_level.clone(),
-                queue_mode.clone(),
+                AgentDispatch {
+                    agent_id: agent_id.clone(),
+                    session_id: session_id.clone(),
+                    message: routed.incoming.content.clone(),
+                    user_id: routed.incoming.user_id.0.clone(),
+                    channel: channel.clone(),
+                    think_level: think_level.clone(),
+                    queue_mode: queue_mode.clone(),
+                },
             )
             .await;
         }
@@ -277,7 +304,13 @@ pub(crate) async fn dispatch_routed_message(
 
 /// Cancel any pending FollowUp flush timer for a session.
 async fn clear_follow_up_timer(state: &GatewayState, session_id: &str) {
-    if let Some(handle) = state.agents.follow_up_timers.write().await.remove(session_id) {
+    if let Some(handle) = state
+        .agents
+        .follow_up_timers
+        .write()
+        .await
+        .remove(session_id)
+    {
         handle.abort();
     }
 }
@@ -323,13 +356,15 @@ pub(crate) async fn flush_session_buffer(
 
     send_to_agent(
         state,
-        agent_id,
-        session_id,
-        &combined,
-        &first_user_id,
-        &first_channel,
-        think_level,
-        queue_mode,
+        AgentDispatch {
+            agent_id: agent_id.to_string(),
+            session_id: session_id.to_string(),
+            message: combined,
+            user_id: first_user_id,
+            channel: first_channel,
+            think_level,
+            queue_mode,
+        },
     )
     .await;
 }
@@ -364,21 +399,57 @@ pub(crate) fn extract_session_name(content: &str) -> String {
     }
 }
 
+/// Payload for dispatching a single message to an agent via ACP.
+#[derive(Clone)]
+pub(crate) struct AgentDispatch {
+    /// Target agent ID.
+    pub agent_id: String,
+    /// Target session ID.
+    pub session_id: String,
+    /// Message content.
+    pub message: String,
+    /// Originating user ID.
+    pub user_id: String,
+    /// Originating channel.
+    pub channel: String,
+    /// Optional thinking level from runtime settings.
+    pub think_level: Option<String>,
+    /// Optional queue mode override.
+    pub queue_mode: Option<String>,
+}
+
 /// Send a single message to an agent via the ACP controller.
 ///
 /// This routes execution through the centralized ACP actor queue,
 /// enabling per-session serial processing and runtime controls
 /// (pause / resume / step / cancel).
-pub(crate) async fn send_to_agent(
-    state: &Arc<GatewayState>,
-    agent_id: &str,
-    session_id: &str,
-    message: &str,
-    user_id: &str,
-    channel: &str,
-    think_level: Option<String>,
-    queue_mode: Option<String>,
-) {
+pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDispatch) {
+    let AgentDispatch {
+        ref agent_id,
+        ref session_id,
+        ref message,
+        ref user_id,
+        ref channel,
+        think_level,
+        queue_mode,
+    } = dispatch;
+
+    // Pre-read directive settings so the progress callback does not need to
+    // capture the runtime_settings Arc across await boundaries.
+    let (reasoning_vis, verbose_mode) = {
+        let settings = state.infra.runtime_settings.read().await;
+        (
+            settings
+                .get("reasoning.visibility")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            settings
+                .get("verbose.mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        )
+    };
+
     let agents = state.agents.agents.read().await;
     let agent_handle = match agents.get(agent_id) {
         Some(h) => h.clone(),
@@ -431,30 +502,17 @@ pub(crate) async fn send_to_agent(
 
     // Build progress callback that forwards events to gateway subscribers
     let event_tx = state.events.tx.clone();
-    let runtime_settings = state.infra.runtime_settings.clone();
     let progress_session = session_id.to_string();
     let progress_agent = agent_id.to_string();
     let progress_channel = channel.to_string();
     let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
         let tx = event_tx.clone();
-        let settings = runtime_settings.clone();
+        let reasoning_vis = reasoning_vis.clone();
+        let verbose_mode = verbose_mode.clone();
         let sid = progress_session.clone();
         let aid = progress_agent.clone();
         let _ch = progress_channel.clone();
         Box::pin(async move {
-            // Read directive settings
-            let reasoning_vis = {
-                let s = settings.read().await;
-                s.get("reasoning.visibility")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            };
-            let verbose_mode = {
-                let s = settings.read().await;
-                s.get("verbose.mode")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            };
             match event {
                 crate::agent::ProgressEvent::Started => {
                     if let Err(e) = tx.send(GatewayEvent::AgentStatus {
@@ -576,31 +634,33 @@ pub(crate) async fn send_to_agent(
                 outgoing.reasoning_content = None;
             }
 
-            // Accumulate usage statistics
+            // Accumulate usage statistics (minimal write-lock hold)
             if let Some(ref usage) = outgoing.usage {
-                let mut settings = state.infra.runtime_settings.write().await;
-                let current_tokens = settings
-                    .get("usage.tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                let total_tokens = usage.prompt_tokens as u64 + usage.completion_tokens as u64;
-                settings.insert(
-                    "usage.tokens".to_string(),
-                    serde_json::json!(current_tokens + total_tokens),
-                );
-                let current_calls = settings
-                    .get("usage.calls")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                let tool_calls = outgoing
-                    .tool_calls
-                    .as_ref()
-                    .map(|c| c.len() as u64)
-                    .unwrap_or(0);
-                settings.insert(
-                    "usage.calls".to_string(),
-                    serde_json::json!(current_calls + tool_calls + 1),
-                );
+                {
+                    let mut settings = state.infra.runtime_settings.write().await;
+                    let current_tokens = settings
+                        .get("usage.tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let total_tokens = usage.prompt_tokens as u64 + usage.completion_tokens as u64;
+                    settings.insert(
+                        "usage.tokens".to_string(),
+                        serde_json::json!(current_tokens + total_tokens),
+                    );
+                    let current_calls = settings
+                        .get("usage.calls")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let tool_calls = outgoing
+                        .tool_calls
+                        .as_ref()
+                        .map(|c| c.len() as u64)
+                        .unwrap_or(0);
+                    settings.insert(
+                        "usage.calls".to_string(),
+                        serde_json::json!(current_calls + tool_calls + 1),
+                    );
+                }
             }
 
             // Generate run_id for this agent execution (run tracking)

@@ -64,7 +64,7 @@ mod tests {
             config: agent_config,
             tx: tokio::sync::mpsc::channel(1).0,
             query_tx: tokio::sync::mpsc::channel(1).0,
-            busy: false,
+            busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             agent: std::sync::Arc::new(agent),
         };
 

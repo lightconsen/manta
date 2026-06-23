@@ -210,6 +210,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         device_init: tokio::sync::RwLock::new(None),
         perception_init: tokio::sync::RwLock::new(None),
         control_init: tokio::sync::RwLock::new(None),
+        summarizer: tokio::sync::OnceCell::new(),
         task_registry: Arc::new(syscity::gateway::task_registry::TaskRegistry::new()),
     }
 }

@@ -348,7 +348,10 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
             AcpCommand::GetStatus { session_id, respond_to } => {
                 let status = if let Some(handle) = sessions.get(&session_id) {
                     let queue_depth = 256_usize.saturating_sub(handle.tx.capacity());
-                    let max_iterations = session_meta.get(&session_id).copied().unwrap_or(ctx.max_iterations);
+                    let max_iterations = session_meta
+                        .get(&session_id)
+                        .copied()
+                        .unwrap_or(ctx.max_iterations);
                     Some(AcpSessionStatus {
                         session_id: session_id.clone(),
                         runtime_state: handle.controller.current_state().await,

@@ -1313,8 +1313,8 @@ async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                 &req.id,
                 serde_json::json!({
                     "agent_id": params.agent_id,
-                    "busy": handle.busy,
-                    "status": if handle.busy { "busy" } else { "idle" },
+                    "busy": handle.busy.load(std::sync::atomic::Ordering::Relaxed),
+                    "status": if handle.busy.load(std::sync::atomic::Ordering::Relaxed) { "busy" } else { "idle" },
                     "config": {
                         "temperature": cfg.temperature,
                         "max_tokens": cfg.max_tokens,
@@ -3214,11 +3214,19 @@ async fn persist_config(state: &Arc<GatewayState>) -> Result<(), WsResponse> {
         let config_guard = state.config.read().await;
         match toml::to_string_pretty(&*config_guard) {
             Ok(toml_str) => {
-                if let Err(e) = tokio::fs::write(&config_path, toml_str).await {
+                let tmp_path = config_path.with_extension("toml.tmp");
+                if let Err(e) = tokio::fs::write(&tmp_path, toml_str).await {
                     return Err(WsResponse::err(
                         "persist",
                         "PERSIST_FAILED",
-                        format!("Failed to write config: {}", e),
+                        format!("Failed to write temporary config: {}", e),
+                    ));
+                }
+                if let Err(e) = tokio::fs::rename(&tmp_path, &config_path).await {
+                    return Err(WsResponse::err(
+                        "persist",
+                        "PERSIST_FAILED",
+                        format!("Failed to atomically replace config: {}", e),
                     ));
                 }
             }

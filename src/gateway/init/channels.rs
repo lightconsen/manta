@@ -14,6 +14,19 @@ use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::gateway::config::ChannelConfig;
 use crate::gateway::GatewayState;
 
+/// Register a channel background task in the unified [`TaskRegistry`].
+async fn register_channel_task(
+    state: &Arc<GatewayState>,
+    name: &str,
+    kind: &str,
+    handle: tokio::task::JoinHandle<()>,
+) {
+    state
+        .task_registry
+        .insert_join(format!("channel:{}:{}", name, kind), handle)
+        .await;
+}
+
 /// Initialize all configured channels.
 pub(crate) async fn init_channels(
     state: Arc<GatewayState>,
@@ -58,9 +71,18 @@ pub(crate) async fn init_plugin_channels(
         return Ok(());
     }
 
-    // Create a shared inbound message channel for plugin channels.
-    // The receiver needs to be wired into the inbound pipeline (see TODO).
-    let (plugin_inbound_tx, _plugin_inbound_rx) = tokio::sync::mpsc::unbounded_channel();
+    // Create a shared inbound message channel for plugin channels and bridge it
+    // into the unified inbound entry so messages from WASM plugins are not lost.
+    let (plugin_inbound_tx, mut plugin_inbound_rx) = tokio::sync::mpsc::unbounded_channel();
+    let state_clone = state.clone();
+    let bridge_handle = tokio::spawn(async move {
+        while let Some(message) = plugin_inbound_rx.recv().await {
+            if let Err(e) = state_clone.pipelines.inbound_entry.send(message).await {
+                warn!("Failed to submit plugin message to inbound entry: {}", e);
+            }
+        }
+    });
+    register_channel_task(&state, "plugin", "inbound", bridge_handle).await;
 
     let registry = PluginChannelRegistry::new(plugin_dir, plugin_inbound_tx);
     let available = registry.discover_plugins().await?;
@@ -93,11 +115,16 @@ pub(crate) async fn init_plugin_channels(
                     .await
                     .insert(name.clone(), channel.clone());
 
-                // Start the plugin channel
-                if let Err(e) = plugin.start().await {
-                    warn!("Failed to start WASM channel plugin '{}': {}", name, e);
-                    continue;
-                }
+                // Start the plugin channel in a background task so init is not
+                // blocked and the task is tracked for shutdown.
+                let plugin_clone = plugin.clone();
+                let plugin_name = name.clone();
+                let start_handle = tokio::spawn(async move {
+                    if let Err(e) = plugin_clone.start().await {
+                        warn!("WASM channel plugin '{}' failed: {}", plugin_name, e);
+                    }
+                });
+                register_channel_task(&state, name, "main", start_handle).await;
 
                 // Wire health monitoring
                 if let Some(ref monitor) = state.channels.health_monitor {
@@ -301,32 +328,35 @@ pub(crate) async fn init_telegram_channel(
 
         // Spawn extension inbound task (Telegram bot -> inbound pipeline)
         let ext_inbound = ext.clone();
-        tokio::spawn(async move {
+        let inbound_handle = tokio::spawn(async move {
             if let Err(e) = ext_inbound.run_inbound(inbound_tx).await {
                 error!("Telegram extension inbound task failed: {}", e);
             }
         });
+        register_channel_task(&state, name, "inbound", inbound_handle).await;
 
         // Bridge inbound messages into the unified entry channel
         let state_clone = state.clone();
-        tokio::spawn(async move {
+        let bridge_handle = tokio::spawn(async move {
             while let Some(message) = inbound_rx.recv().await {
                 if let Err(e) = state_clone.pipelines.inbound_entry.send(message).await {
                     warn!("Failed to submit Telegram message to inbound entry: {}", e);
                 }
             }
         });
+        register_channel_task(&state, name, "bridge", bridge_handle).await;
 
         // Create outbound channel: reply dispatcher -> extension outbound
         let (outbound_tx, outbound_rx) = mpsc::channel::<crate::channels::OutgoingMessage>(1000);
 
         // Spawn extension outbound task (outbound pipeline -> Telegram)
         let ext_outbound = ext.clone();
-        tokio::spawn(async move {
+        let outbound_handle = tokio::spawn(async move {
             if let Err(e) = ext_outbound.run_outbound(outbound_rx).await {
                 error!("Telegram extension outbound task failed: {}", e);
             }
         });
+        register_channel_task(&state, name, "outbound", outbound_handle).await;
 
         // Register a bridge with the reply dispatcher so outbound pipeline
         // messages flow into the extension's run_outbound.
@@ -372,21 +402,23 @@ pub(crate) async fn init_discord_channel(
 
         // Bridge inbound messages into the unified entry channel
         let state_clone = state.clone();
-        tokio::spawn(async move {
+        let bridge_handle = tokio::spawn(async move {
             while let Some(msg) = inbound_rx.recv().await {
                 if let Err(e) = state_clone.pipelines.inbound_entry.send(msg).await {
                     warn!("Failed to submit message to inbound entry: {}", e);
                 }
             }
         });
+        register_channel_task(&state, name, "bridge", bridge_handle).await;
 
         let channel_name = name.to_string();
         let channel_for_task = channel.clone();
-        tokio::spawn(async move {
+        let main_handle = tokio::spawn(async move {
             if let Err(e) = channel_for_task.start().await {
                 error!("Discord channel {} failed: {}", channel_name, e);
             }
         });
+        register_channel_task(&state, name, "main", main_handle).await;
         state
             .channels
             .reply_dispatcher
@@ -426,21 +458,23 @@ pub(crate) async fn init_slack_channel(
 
         // Bridge inbound messages into the unified entry channel
         let state_clone = state.clone();
-        tokio::spawn(async move {
+        let bridge_handle = tokio::spawn(async move {
             while let Some(msg) = inbound_rx.recv().await {
                 if let Err(e) = state_clone.pipelines.inbound_entry.send(msg).await {
                     warn!("Failed to submit message to inbound entry: {}", e);
                 }
             }
         });
+        register_channel_task(&state, name, "bridge", bridge_handle).await;
 
         let channel_name = name.to_string();
         let channel_for_task = channel.clone();
-        tokio::spawn(async move {
+        let main_handle = tokio::spawn(async move {
             if let Err(e) = channel_for_task.start().await {
                 error!("Slack channel {} failed: {}", channel_name, e);
             }
         });
+        register_channel_task(&state, name, "main", main_handle).await;
         state
             .channels
             .reply_dispatcher
@@ -475,11 +509,12 @@ pub(crate) async fn init_whatsapp_channel(
         let channel = Arc::new(crate::channels::whatsapp::WhatsappChannel::new(whatsapp_config));
         let channel_name = name.to_string();
         let channel_for_task = channel.clone();
-        tokio::spawn(async move {
+        let main_handle = tokio::spawn(async move {
             if let Err(e) = channel_for_task.start().await {
                 error!("WhatsApp channel {} failed: {}", channel_name, e);
             }
         });
+        register_channel_task(&state, name, "main", main_handle).await;
         state
             .channels
             .reply_dispatcher
@@ -516,11 +551,12 @@ pub(crate) async fn init_feishu_channel(
         let channel = Arc::new(crate::channels::lark::LarkChannel::new(lark_config));
         let channel_name = name.to_string();
         let channel_for_task = channel.clone();
-        tokio::spawn(async move {
+        let main_handle = tokio::spawn(async move {
             if let Err(e) = channel_for_task.start().await {
                 error!("Feishu channel {} failed: {}", channel_name, e);
             }
         });
+        register_channel_task(&state, name, "main", main_handle).await;
         state
             .channels
             .reply_dispatcher
@@ -561,21 +597,23 @@ pub(crate) async fn init_qq_channel(
 
         // Bridge inbound messages into the unified entry channel
         let state_clone = state.clone();
-        tokio::spawn(async move {
+        let bridge_handle = tokio::spawn(async move {
             while let Some(msg) = inbound_rx.recv().await {
                 if let Err(e) = state_clone.pipelines.inbound_entry.send(msg).await {
                     warn!("Failed to submit message to inbound entry: {}", e);
                 }
             }
         });
+        register_channel_task(&state, name, "bridge", bridge_handle).await;
 
         let channel_name = name.to_string();
         let channel_for_task = channel.clone();
-        tokio::spawn(async move {
+        let main_handle = tokio::spawn(async move {
             if let Err(e) = channel_for_task.start().await {
                 error!("QQ channel {} failed: {}", channel_name, e);
             }
         });
+        register_channel_task(&state, name, "main", main_handle).await;
         state
             .channels
             .reply_dispatcher
