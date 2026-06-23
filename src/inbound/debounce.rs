@@ -3,7 +3,6 @@
 //! Buffers incoming messages per key (channel_id or thread_id) and flushes
 //! them after a configurable timeout. This prevents a flood of rapid
 //! messages from triggering multiple concurrent agent runs.
-//!
 
 use std::collections::HashMap;
 use std::sync::Arc;

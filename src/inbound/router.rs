@@ -27,14 +27,15 @@ pub struct RouteResult {
     /// `true` means the router wrote (or updated) a session-to-agent binding;
     /// `false` means an existing binding, mention, or other non-binding route
     /// was used. This is useful for callers that want to distinguish "fell back
-    /// to default because nothing was bound" from "used an established binding".
+    /// to default because nothing was bound" from "used an established
+    /// binding".
     pub persisted_binding: bool,
     /// Whether this route is the global default fallback.
     ///
-    /// `true` only when no mention, binding, channel default, workspace default,
-    /// or conversation resolver matched and the router fell back to the
-    /// configured global default agent. Callers can use this to treat the route
-    /// as "not found" when there is no established binding.
+    /// `true` only when no mention, binding, channel default, workspace
+    /// default, or conversation resolver matched and the router fell back
+    /// to the configured global default agent. Callers can use this to
+    /// treat the route as "not found" when there is no established binding.
     pub is_fallback: bool,
 }
 

@@ -8,6 +8,38 @@ description = "Syscity - A Rust application"
 license = "Apache-2.0"
 repository = "https://github.com/lightconsen/syscity"
 
+[lints.rust]
+# Treat warnings as errors in CI (also passed via -D warnings on CLI).
+# unsafe_code is already denied at crate level.
+
+[lints.clippy]
+# --- Correctness / error handling ---
+# These are enabled as `warn` first to avoid blocking the build while the
+# legacy codebase is cleaned up. Switch to `deny` once green.
+# Temporarily allow: many legacy functions have no await statements.
+unused_async = "allow"
+
+# Avoid `.unwrap()` / `.expect()` in production code.
+# Temporarily allow: many `expect("lock poisoned")` and construction-time
+# expects remain in the codebase. Move to `warn` once cleaned up.
+unwrap_used = "allow"
+expect_used = "allow"
+
+# Avoid silent `.ok()` on Results.
+result_unit_err = "warn"
+
+# --- Async / concurrency ---
+# Help catch lock-across-await and unneeded async.
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+
+# --- Maintainability ---
+# Temporarily disabled because legacy code has many functions above the
+# threshold. Re-enable once refactored.
+cognitive_complexity = "allow"
+
+# --- Nursery / pedantic lints we want to enforce over time ---
+# These are intentionally warn-only while the codebase is being cleaned up.
 [workspace]
 members = ["crates/*", "desktop"]
 

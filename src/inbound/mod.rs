@@ -105,7 +105,8 @@ pub enum InboundProcessOutcome {
 }
 
 impl InboundProcessOutcome {
-    /// Convert the outcome into the legacy `Option<RoutedMessage>` representation.
+    /// Convert the outcome into the legacy `Option<RoutedMessage>`
+    /// representation.
     ///
     /// Returns `Some(message)` only for [`Self::Routed`]. All other variants
     /// return `None`.
@@ -288,8 +289,8 @@ impl DefaultInboundPipeline {
     pub async fn process_detailed(&self, message: IncomingMessage) -> InboundProcessOutcome {
         if !self.started.load(Ordering::Relaxed) {
             tracing::warn!(
-                "DefaultInboundPipeline::process() called before start(); \
-                 debounced messages will not be flushed by the background loop"
+                "DefaultInboundPipeline::process() called before start(); debounced messages will \
+                 not be flushed by the background loop"
             );
         }
 

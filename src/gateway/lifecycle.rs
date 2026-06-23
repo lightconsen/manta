@@ -589,8 +589,8 @@ pub(crate) async fn stop_gateway(
         info!("Tailscale authentication mode enabled");
     }
 
-    // 13. Abort remaining background tasks (includes followup timers now that
-    //     they live in the unified registry).
+    // 13. Abort remaining background tasks (includes followup timers now that they
+    //     live in the unified registry).
     let background_handles = state.task_registry.take_all().await;
     for (_name, handle) in background_handles {
         handle.abort();

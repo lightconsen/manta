@@ -4,13 +4,12 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use super::AcpControlPlane;
 use crate::acp::config::{SpawnMode, SubagentConfig, SubagentStatus, ThreadBinding, ThreadContext};
 use crate::acp::controller::ExecutionController;
 use crate::acp::session::AcpCommand;
 use crate::acp::subagent::{SubagentCommand, SubagentHandle};
 use crate::agent::session_store::SaveSubagentRunParams;
-
-use super::AcpControlPlane;
 
 impl AcpControlPlane {
     /// Spawn a subagent

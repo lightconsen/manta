@@ -4,12 +4,11 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::agent::{Agent, ProgressCallback};
-use crate::channels::{IncomingMessage, OutgoingMessage};
-
 use super::config::{AcpSessionId, AcpSessionStatus, ExecutionMode};
 use super::control_plane::AcpControlPlane;
 use super::controller::ExecutionController;
+use crate::agent::{Agent, ProgressCallback};
+use crate::channels::{IncomingMessage, OutgoingMessage};
 
 /// Commands sent to the ACP actor
 pub enum AcpCommand {
@@ -53,9 +52,9 @@ pub enum AcpCommand {
     },
     /// Execute a message on behalf of the channel bridge.
     ///
-    /// The ACP actor resolves an agent via the configured default agent builder,
-    /// routes to the requested session, and returns the resulting outgoing
-    /// message on the provided channel.
+    /// The ACP actor resolves an agent via the configured default agent
+    /// builder, routes to the requested session, and returns the resulting
+    /// outgoing message on the provided channel.
     ExecuteForBridge {
         session_id: String,
         message: IncomingMessage,
@@ -381,7 +380,11 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                             Ok(agent) => Arc::new(agent),
                             Err(e) => {
                                 if let Err(send_err) = respond_to.send(Err(e)) {
-                                    warn!("Failed to send ExecuteForBridge builder error response: {:?}", send_err);
+                                    warn!(
+                                        "Failed to send ExecuteForBridge builder error response: \
+                                         {:?}",
+                                        send_err
+                                    );
                                 }
                                 continue;
                             }
@@ -391,7 +394,11 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                                 "No agent builder configured".to_string(),
                             );
                             if let Err(send_err) = respond_to.send(Err(err)) {
-                                warn!("Failed to send ExecuteForBridge no-builder error response: {:?}", send_err);
+                                warn!(
+                                    "Failed to send ExecuteForBridge no-builder error response: \
+                                     {:?}",
+                                    send_err
+                                );
                             }
                             continue;
                         }

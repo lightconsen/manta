@@ -2,11 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::{info, warn};
 
+use super::{AcpControlPlane, AcpSessionId, AcpSessionInfo, SubagentTreeNode};
 use crate::acp::config::SubagentStatus;
 use crate::acp::subagent::{SubagentCommand, SubagentHandle};
 use crate::channels::IncomingMessage;
-
-use super::{AcpControlPlane, AcpSessionId, AcpSessionInfo, SubagentTreeNode};
 
 impl AcpControlPlane {
     /// Send a message to a subagent

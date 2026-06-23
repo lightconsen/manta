@@ -1,8 +1,7 @@
 use tracing::info;
 
-use crate::acp::config::{SubagentStatus, ThreadContext, ThreadContextSummary};
-
 use super::AcpControlPlane;
+use crate::acp::config::{SubagentStatus, ThreadContext, ThreadContextSummary};
 
 impl AcpControlPlane {
     /// Ensure a thread context exists in the control plane.

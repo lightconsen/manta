@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::channels::IncomingMessage;
-
 use super::config::{AcpSessionId, SpawnMode, SubagentStatus};
 use super::controller::ExecutionController;
+use crate::channels::IncomingMessage;
 
 /// Subagent handle - reference to a spawned subagent
 #[derive(Debug, Clone)]

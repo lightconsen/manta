@@ -18,3 +18,9 @@ type-complexity-threshold = 250
 
 # Single char binding names threshold
 single-char-binding-names-threshold = 5
+
+# Additional strictness for gateway correctness review.
+# These options configure specific lints; the actual enable/deny levels live
+# in Cargo.toml [lints.clippy] so they can be toggled incrementally.
+
+# Allow paths to be a bit longer while we refactor; gate the deny level later.

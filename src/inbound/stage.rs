@@ -11,9 +11,9 @@
 //!
 //! * **Pre-debounce stages** – run once when a message first enters the
 //!   pipeline. Currently: identity validation, debounce.
-//! * **Post-debounce stages** – run for every message that leaves the
-//!   debouncer (either because it bypassed debounce or because a batch was
-//!   flushed). Currently: dispatch, media, envelope, queue, router.
+//! * **Post-debounce stages** – run for every message that leaves the debouncer
+//!   (either because it bypassed debounce or because a batch was flushed).
+//!   Currently: dispatch, media, envelope, queue, router.
 //!
 //! This avoids the cycle that would occur if a flushed message ran through the
 //! debounce stage a second time.
@@ -139,8 +139,8 @@ pub trait InboundStage: Send + Sync {
     /// [`InboundStageAction::Suppress`] to drop, or
     /// [`InboundStageAction::Debounce`] to absorb into the debouncer.
     ///
-    /// Returning an `Err` with [`StageError::Fatal`] aborts the entire pipeline;
-    /// callers should log the error and discard the message.
+    /// Returning an `Err` with [`StageError::Fatal`] aborts the entire
+    /// pipeline; callers should log the error and discard the message.
     async fn process(&self, ctx: &mut InboundContext) -> Result<InboundStageAction, StageError>;
 }
 
@@ -149,7 +149,8 @@ pub trait InboundStage: Send + Sync {
 /// Identity validation stage.
 ///
 /// By default validation failures are logged and processing continues, but
-/// [`IdentityFailMode::Suppress`] can be configured to drop the message instead.
+/// [`IdentityFailMode::Suppress`] can be configured to drop the message
+/// instead.
 pub struct IdentityStage {
     validator: IdentityValidator,
     fail_mode: IdentityFailMode,
@@ -574,7 +575,6 @@ mod tests {
     use super::*;
     use crate::channels::IncomingMessage;
     use crate::channels::MessageMetadata;
-
     #[allow(unused_imports)]
     use crate::inbound::dispatch::AutoReplyDispatchConfig;
 
