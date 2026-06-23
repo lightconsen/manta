@@ -576,22 +576,12 @@ pub(crate) async fn stop_gateway(
         handle.abort();
     }
 
-    // 14. Abort perception background handle.
-    {
-        let mut pi = state.perception_init.write().await;
-        if let Some(ref mut init) = *pi {
-            if let Some(handle) = init.poll_handle.take() {
-                handle.abort();
-            }
-        }
-    }
-
-    // 15. Plugin manager shutdown.
+    // 14. Plugin manager shutdown.
     if let Err(e) = state.infra.plugin_manager.shutdown().await {
         warn!("Failed to shutdown plugin manager: {}", e);
     }
 
-    // 16. Storage is left to flush on process exit.
+    // 15. Storage is left to flush on process exit.
     info!("Gateway shutdown complete");
     Ok(())
 }

@@ -46,7 +46,7 @@ async fn device_tool_registered_in_gateway() {
     );
 
     // Verify the device registry is present and has the connected device
-    let device_registry = gateway.device_registry();
+    let device_registry = gateway.device_registry().await;
     assert!(device_registry.is_some(), "Device registry should be present");
     let device_reg = device_registry.unwrap();
     assert_eq!(device_reg.len().await, 1);
@@ -211,7 +211,7 @@ async fn test_device_registry_accessible_from_gateway() {
             .await
             .expect("Failed to create gateway with devices");
 
-    let device_registry = gateway.device_registry();
+    let device_registry = gateway.device_registry().await;
     assert!(device_registry.is_some(), "Device registry should be present");
     let reg = device_registry.unwrap();
 
@@ -240,6 +240,7 @@ async fn test_status_events_available_through_gateway_registry() {
 
     let device_registry = gateway
         .device_registry()
+        .await
         .expect("Device registry should be present");
 
     // Subscribe to status events

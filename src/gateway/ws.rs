@@ -37,6 +37,7 @@ use uuid::Uuid;
 
 use crate::agent::session_store::AppendMessageParams;
 use crate::core::context::RequestContext;
+use crate::gateway::handlers::config::persist_config_atomic;
 use crate::gateway::protocol::*;
 use crate::gateway::{GatewayEvent, GatewayState};
 use crate::security::UserId;
@@ -2298,23 +2299,12 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     drop(config_guard);
     if let Some(config_path) = state.config_path.clone() {
         let config_guard = state.config.read().await;
-        match toml::to_string_pretty(&*config_guard) {
-            Ok(toml_str) => {
-                if let Err(e) = tokio::fs::write(&config_path, toml_str).await {
-                    return WsResponse::err(
-                        &req.id,
-                        "PERSIST_FAILED",
-                        format!("Config updated in memory but failed to write to disk: {}", e),
-                    );
-                }
-            }
-            Err(e) => {
-                return WsResponse::err(
-                    &req.id,
-                    "PERSIST_FAILED",
-                    format!("Config updated in memory but TOML serialization failed: {}", e),
-                );
-            }
+        if let Err(e) = persist_config_atomic(&config_guard, &config_path).await {
+            return WsResponse::err(
+                &req.id,
+                "PERSIST_FAILED",
+                format!("Config updated in memory but failed to persist: {}", e),
+            );
         }
     }
 
@@ -2472,23 +2462,12 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     // Persist GatewayConfig to syscity.toml
     if let Some(config_path) = state.config_path.clone() {
         let config_guard = state.config.read().await;
-        match toml::to_string_pretty(&*config_guard) {
-            Ok(toml_str) => {
-                if let Err(e) = tokio::fs::write(&config_path, toml_str).await {
-                    return WsResponse::err(
-                        &req.id,
-                        "PERSIST_FAILED",
-                        format!("Model added but failed to write config: {}", e),
-                    );
-                }
-            }
-            Err(e) => {
-                return WsResponse::err(
-                    &req.id,
-                    "PERSIST_FAILED",
-                    format!("Model added but TOML serialization failed: {}", e),
-                );
-            }
+        if let Err(e) = persist_config_atomic(&config_guard, &config_path).await {
+            return WsResponse::err(
+                &req.id,
+                "PERSIST_FAILED",
+                format!("Model added but failed to persist config: {}", e),
+            );
         }
     }
 

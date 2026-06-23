@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use axum::{
@@ -22,6 +23,15 @@ pub async fn chat_handler(
     // Use the default agent to process the message
     let agents = state.agents.agents.read().await;
     if let Some(agent_handle) = agents.get("default") {
+        if agent_handle.busy.load(Ordering::Acquire) {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({
+                    "error": "Agent is busy processing another message",
+                })),
+            );
+        }
+
         // Subscribe to events before sending the command to avoid race condition
         let mut event_rx = state.events.tx.subscribe();
 

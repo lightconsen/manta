@@ -131,7 +131,9 @@ pub async fn openai_chat_completions_handler(
                     "model": model,
                     "choices": [{"index": 0, "delta": {"content": word}, "finish_reason": null}]
                 });
-                let _ = tx.send(Ok(SseEvt::default().data(chunk.to_string()))).await;
+                if tx.send(Ok(SseEvt::default().data(chunk.to_string()))).await.is_err() {
+                    break;
+                }
             }
 
             // Final chunk with finish_reason = "stop".
@@ -142,10 +144,13 @@ pub async fn openai_chat_completions_handler(
                 "model": model,
                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
             });
-            let _ = tx
+            if tx
                 .send(Ok(SseEvt::default().data(final_chunk.to_string())))
-                .await;
-            let _ = tx.send(Ok(SseEvt::default().data("[DONE]"))).await;
+                .await
+                .is_ok()
+            {
+                let _ = tx.send(Ok(SseEvt::default().data("[DONE]"))).await;
+            }
         });
 
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);

@@ -224,7 +224,6 @@ impl GatewayState {
 /// Gateway control plane
 pub struct Gateway {
     pub(crate) state: Arc<GatewayState>,
-    pub(crate) config: GatewayConfig,
     pub(crate) shutdown_token: CancellationToken,
 }
 
@@ -974,7 +973,6 @@ impl Gateway {
 
         Ok(Self {
             state,
-            config,
             shutdown_token,
         })
     }
@@ -996,27 +994,22 @@ impl Gateway {
     ///
     /// Returns `None` when no device drivers were registered at startup.
     /// Primarily used in integration / E2E tests to verify device registration.
-    pub fn device_registry(&self) -> Option<Arc<crate::device::registry::DeviceRegistry>> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                self.state.device_init.read().await.as_ref().map(|di| di.registry.clone())
-            })
-        })
+    pub async fn device_registry(&self,
+    ) -> Option<Arc<crate::device::registry::DeviceRegistry>> {
+        self.state.device_init.read().await.as_ref().map(|di| di.registry.clone())
     }
 
     /// Return a clone of the internal `PerceptionRegistry`, if one exists.
     /// Returns `None` when perception is disabled.
-    pub fn perception_registry(&self) -> Option<Arc<crate::perception::PerceptionRegistry>> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                self.state
-                    .perception_init
-                    .read()
-                    .await
-                    .as_ref()
-                    .map(|pi| pi.registry.clone())
-            })
-        })
+    pub async fn perception_registry(
+        &self,
+    ) -> Option<Arc<crate::perception::PerceptionRegistry>> {
+        self.state
+            .perception_init
+            .read()
+            .await
+            .as_ref()
+            .map(|pi| pi.registry.clone())
     }
 
     /// Return a clone of the gateway shutdown token.
@@ -1026,18 +1019,14 @@ impl Gateway {
 
     /// Start the gateway
     pub async fn start(&self) -> crate::Result<()> {
-        lifecycle::start_gateway(
-            self.state.clone(),
-            self.config.clone(),
-            self.shutdown_token.clone(),
-        )
-        .await
+        let config = { self.state.config.read().await.as_ref().clone() };
+        lifecycle::start_gateway(self.state.clone(), config, self.shutdown_token.clone()).await
     }
 
     /// Gracefully shut down the gateway and its subsystems.
     pub async fn stop(&self) -> crate::Result<()> {
-        lifecycle::stop_gateway(&self.shutdown_token, &self.state, self.config.tailscale_enabled)
-            .await
+        let tailscale_enabled = self.state.config.read().await.tailscale_enabled;
+        lifecycle::stop_gateway(&self.shutdown_token, &self.state, tailscale_enabled).await
     }
 
     /// Spawn a new agent

@@ -486,7 +486,7 @@ let drivers: Vec<Arc<dyn DeviceDriver>> = vec![
 let gateway = Gateway::with_devices(config, None, drivers).await?;
 
 // Query device registry at runtime:
-let registry = gateway.device_registry();
+let registry = gateway.device_registry().await;
 if let Some(reg) = registry {
     let devices = reg.list().await;
     let healthy = reg.health_check_all().await;

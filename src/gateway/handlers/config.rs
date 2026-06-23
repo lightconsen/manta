@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use axum::{
@@ -9,6 +10,28 @@ use tracing::info;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
+
+/// Persist a `GatewayConfig` to disk atomically.
+///
+/// Writes to a temporary file next to `config_path` and renames it into place
+/// so readers never observe a partially-written config.
+pub(crate) async fn persist_config_atomic(
+    config: &GatewayConfig,
+    config_path: &Path,
+) -> Result<(), String> {
+    let toml_str =
+        toml::to_string_pretty(config).map_err(|e| format!("TOML serialization failed: {}", e))?;
+
+    let tmp_path = config_path.with_extension("toml.tmp");
+    tokio::fs::write(&tmp_path, toml_str)
+        .await
+        .map_err(|e| format!("Failed to write temporary config file: {}", e))?;
+    tokio::fs::rename(&tmp_path, config_path)
+        .await
+        .map_err(|e| format!("Failed to atomically replace config file: {}", e))?;
+
+    Ok(())
+}
 
 #[allow(dead_code)]
 /// Get current gateway configuration
@@ -43,23 +66,11 @@ pub async fn put_config_handler(
         }
     };
 
-    // Serialize to TOML
-    let toml_str = match toml::to_string_pretty(&new_config) {
-        Ok(s) => s,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": format!("TOML serialization failed: {}", e)})),
-            )
-                .into_response();
-        }
-    };
-
-    // Write to disk
-    if let Err(e) = tokio::fs::write(&config_path, toml_str).await {
+    // Write to disk atomically
+    if let Err(e) = persist_config_atomic(&new_config, &config_path).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Failed to write config file: {}", e)})),
+            Json(serde_json::json!({"error": e})),
         )
             .into_response();
     }

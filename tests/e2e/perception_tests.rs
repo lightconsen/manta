@@ -79,6 +79,7 @@ async fn perception_registry_has_device_sources() {
     // Perception registry is present with device sources
     let reg = gateway
         .perception_registry()
+        .await
         .expect("Perception registry should be present");
     let sources = reg.list_sources().await;
     assert!(!sources.is_empty(), "Should have registered sources");
@@ -146,7 +147,7 @@ async fn perception_with_devices_and_tool_registered() {
         .expect("Failed to create gateway with devices");
 
     // Device capabilities are registered as perception sources
-    let perception_registry = gateway.perception_registry().expect("registry present");
+    let perception_registry = gateway.perception_registry().await.expect("registry present");
     let sources = perception_registry.list_sources().await;
     assert!(
         sources.contains(&"device:dev-sensor-01:sensor.read_temperature".to_string()),
