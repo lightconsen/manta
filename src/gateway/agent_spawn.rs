@@ -39,6 +39,22 @@ impl AgentResolver for GatewayAgentResolver {
 
 // ── spawn_agent_inner ────────────────────────────────────────────────────────
 
+/// Resolve the model an agent should use at spawn time.
+///
+/// Fast mode stores the active model in `runtime_settings` so that toggling it
+/// does not require mutating the immutable config snapshot. If fast mode is not
+/// active, fall back to the configured default model.
+async fn effective_model_for_spawn(state: &super::GatewayState) -> String {
+    let settings = state.infra.runtime_settings.read().await;
+    if let Some(model) = settings
+        .get("fast.active_model")
+        .and_then(|v| v.as_str())
+    {
+        return model.to_string();
+    }
+    state.config.read().await.model.clone()
+}
+
 /// Spawn a single agent, wire it into the Gateway's agent pool, register its
 /// perception adapter and computer adapter, and start the per-agent message
 /// processing loop. The loop's JoinHandle is owned by the task registry.
@@ -53,7 +69,11 @@ pub(crate) async fn spawn_agent_inner(
     // Reserve the agent ID across the async setup to prevent concurrent
     // callers from both passing the duplicate check and creating ghost tasks.
     {
-        let mut pending = state.agents.pending_spawns.lock().await;
+        let mut pending = state
+            .agents
+            .pending_spawns
+            .lock()
+            .expect("pending_spawns mutex poisoned");
         if !pending.insert(id.clone()) {
             return Err(crate::SyscityError::Validation(format!(
                 "Agent '{}' spawn already in progress",
@@ -64,16 +84,14 @@ pub(crate) async fn spawn_agent_inner(
 
     // Ensure the pending entry is cleared on every exit path.
     struct PendingGuard {
-        pending: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+        pending: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
         id: String,
     }
     impl Drop for PendingGuard {
         fn drop(&mut self) {
-            let pending = self.pending.clone();
-            let id = self.id.clone();
-            tokio::spawn(async move {
-                pending.lock().await.remove(&id);
-            });
+            if let Ok(mut pending) = self.pending.lock() {
+                pending.remove(&self.id);
+            }
         }
     }
     let _pending_guard = PendingGuard {
@@ -89,8 +107,9 @@ pub(crate) async fn spawn_agent_inner(
     // Get tool registry from state
     let tools = state.tools.registry.clone();
 
-    // Get the model from config for this agent
-    let model = state.config.read().await.model.clone();
+    // Get the model for this agent, honoring any active fast-mode override
+    // stored in runtime_settings.
+    let model = effective_model_for_spawn(&state).await;
 
     // Create the actual Agent instance with model, memory manager, chat history,
     // shared cost guard, and session management stores.

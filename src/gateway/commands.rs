@@ -1778,28 +1778,36 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
             .get("fast.mode")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let active_model = settings
+            .get("fast.active_model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
         return WsResponse::ok(
             &req.id,
-            serde_json::json!({ "text": format!("⚡ Fast mode: {}", if current { "on" } else { "off" }) }),
+            serde_json::json!({
+                "text": format!(
+                    "⚡ Fast mode: {} (active model: {})",
+                    if current { "on" } else { "off" },
+                    active_model
+                )
+            }),
         );
     }
     let enabled = mode == "on";
 
     if enabled {
-        // Resolve the fast model alias and read current config outside any
-        // config/runtime_settings lock to avoid lock-ordering violations.
+        // Resolve the fast model alias and read the current default model once.
         let fast_model = state.infra.model_router.resolve_alias("fast").await;
         let current_model = state.config.read().await.model.clone();
-
-        // Update config atomically, then update runtime settings.
-        if let Some(ref fast_model) = fast_model {
-            let mut cfg_guard = state.config.write().await;
-            Arc::make_mut(&mut cfg_guard).model = fast_model.clone();
-        }
+        let active_model = fast_model.clone().unwrap_or_else(|| current_model.clone());
 
         {
             let mut settings = state.infra.runtime_settings.write().await;
-            settings.insert("fast.original_model".to_string(), serde_json::json!(current_model));
+            settings.insert(
+                "fast.original_model".to_string(),
+                serde_json::json!(current_model),
+            );
+            settings.insert("fast.active_model".to_string(), serde_json::json!(active_model));
             settings.insert("fast.mode".to_string(), serde_json::json!(true));
         }
 
@@ -1815,29 +1823,40 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
             )
         }
     } else {
-        // Read the original model under a short-lived lock, restore config,
-        // then update runtime settings. Never hold both locks at once.
-        let original = {
+        // Restore the original default model and clear fast state in a single
+        // runtime_settings write. Config is no longer mutated directly.
+        let (original, active_model) = {
             let settings = state.infra.runtime_settings.read().await;
-            settings
-                .get("fast.original_model")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+            (
+                settings
+                    .get("fast.original_model")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                settings
+                    .get("fast.active_model")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            )
         };
-
-        if let Some(ref orig) = original {
-            let mut cfg_guard = state.config.write().await;
-            Arc::make_mut(&mut cfg_guard).model = orig.clone();
-        }
 
         {
             let mut settings = state.infra.runtime_settings.write().await;
             settings.insert("fast.mode".to_string(), serde_json::json!(false));
+            if let Some(ref orig) = original {
+                settings.insert("fast.active_model".to_string(), serde_json::json!(orig));
+            } else {
+                settings.remove("fast.active_model");
+            }
         }
 
         WsResponse::ok(
             &req.id,
-            serde_json::json!({ "text": "⚡ Fast mode disabled. Model restored." }),
+            serde_json::json!({
+                "text": format!(
+                    "⚡ Fast mode disabled. Model restored to '{}'.",
+                    active_model.unwrap_or_else(|| "default".to_string())
+                )
+            }),
         )
     }
 }

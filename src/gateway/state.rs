@@ -76,9 +76,10 @@ pub struct AuthState {
 /// Agent runtime, routing, and session management state.
 pub struct AgentState {
     pub agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
-    /// IDs currently in the process of being spawned. Held across async setup
-    /// in spawn_agent_inner to prevent TOCTOU duplicate agent creation.
-    pub pending_spawns: Arc<Mutex<HashSet<String>>>,
+    /// IDs currently in the process of being spawned. A std::sync::Mutex is
+    /// used so the guard can release the entry synchronously in Drop without
+    /// spawning a detached cleanup task.
+    pub pending_spawns: Arc<std::sync::Mutex<HashSet<String>>>,
     pub router: Arc<AgentRouter>,
     pub registry: Arc<RwLock<AgentRegistry>>,
     pub manager: Arc<RwLock<SessionManager>>,

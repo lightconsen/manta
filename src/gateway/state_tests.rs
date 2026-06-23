@@ -126,7 +126,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         },
         agents: AgentState {
             agents: Arc::new(RwLock::new(HashMap::new())),
-            pending_spawns: Arc::new(Mutex::new(HashSet::new())),
+            pending_spawns: Arc::new(std::sync::Mutex::new(HashSet::new())),
             router: Arc::new(crate::inbound::AgentRouter::new(
                 crate::inbound::AgentRouterConfig::default(),
             )),

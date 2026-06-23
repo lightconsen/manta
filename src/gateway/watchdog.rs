@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::{spawn_agent_inner, GatewayEvent, GatewayState};
@@ -222,8 +223,8 @@ pub(crate) async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
 }
 
 /// Gateway-level self-repair loop — runs every 60 seconds, checks agents and
-/// channels.
-pub(crate) async fn run_repair_loop(state: Arc<GatewayState>) {
+/// channels. Exits promptly when the shutdown token is cancelled.
+pub(crate) async fn run_repair_loop(state: Arc<GatewayState>, shutdown_token: CancellationToken) {
     use std::sync::atomic::Ordering;
     state
         .agents
@@ -235,9 +236,22 @@ pub(crate) async fn run_repair_loop(state: Arc<GatewayState>) {
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
-        ticker.tick().await;
-        *state.agents.repair_state.last_cycle_at.write().await = Some(chrono::Utc::now());
-        run_agent_watchdog_cycle(&state).await;
-        run_channel_watchdog_cycle(&state).await;
+        tokio::select! {
+            _ = shutdown_token.cancelled() => {
+                info!("Repair loop received shutdown signal, exiting");
+                break;
+            }
+            _ = ticker.tick() => {
+                *state.agents.repair_state.last_cycle_at.write().await = Some(chrono::Utc::now());
+                run_agent_watchdog_cycle(&state).await;
+                run_channel_watchdog_cycle(&state).await;
+            }
+        }
     }
+
+    state
+        .agents
+        .repair_state
+        .loop_running
+        .store(false, Ordering::Relaxed);
 }
