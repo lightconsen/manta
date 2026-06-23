@@ -667,7 +667,7 @@ fn handle_help(req: &WsRequest, args: &str) -> WsResponse {
 
 async fn handle_status(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let agents = state.agents.agents.read().await.len();
-    let sessions = state.agents.session_routing.read().await.len();
+    let sessions = state.agents.manager.read().await.len();
 
     let text = format!(
         "📊 **Status**\n\nActive agents: {}\nActive sessions: {}\nStatus: healthy",

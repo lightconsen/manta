@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::acp::AcpControlPlane;
@@ -39,12 +38,12 @@ impl AgentResolver for GatewayAgentResolver {
 
 /// Spawn a single agent, wire it into the Gateway's agent pool, register its
 /// perception adapter and computer adapter, and start the per-agent message
-/// processing loop. Returns the JoinHandle so the Gateway can await shutdown.
+/// processing loop. The loop's JoinHandle is owned by the task registry.
 pub(crate) async fn spawn_agent_inner(
     state: Arc<super::GatewayState>,
     id: String,
     mut config: AgentConfig,
-) -> crate::Result<JoinHandle<()>> {
+) -> crate::Result<()> {
     config.agent_id = Some(id.clone());
     info!("Spawning agent: {}", id);
 
@@ -174,7 +173,7 @@ pub(crate) async fn spawn_agent_inner(
     // jobs can run. Only the first agent is wired; subsequent agents keep
     // the first one active unless explicitly overwritten.
     {
-        if let Some(cron_arc) = state.scheduler.cron_scheduler.get_opt().await {
+        if let Some(cron_arc) = state.scheduler.cron_scheduler.read().await.clone() {
             cron_arc.lock().await.set_agent(agent.clone()).await;
             debug!("Routine engine: wired agent '{}' into cron scheduler", id);
         }
@@ -198,6 +197,7 @@ pub(crate) async fn spawn_agent_inner(
 
     // Start agent processing loop
     let agent_id = id.clone();
+    let task_registry = state.task_registry.clone();
 
     let task_handle = tokio::spawn(async move {
         info!("Agent {} processing loop started", agent_id);
@@ -489,7 +489,11 @@ pub(crate) async fn spawn_agent_inner(
         repair_handle.abort();
     });
 
-    Ok(task_handle)
+    task_registry
+        .insert_join(format!("agent:{}", id), task_handle)
+        .await;
+
+    Ok(())
 }
 
 // ── create_default_tool_registry ─────────────────────────────────────────────

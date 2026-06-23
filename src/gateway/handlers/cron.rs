@@ -16,7 +16,7 @@ use crate::gateway::*;
 #[allow(dead_code)]
 /// `GET /api/v1/cron` — list all scheduled jobs.
 pub async fn list_cron_jobs_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    match state.scheduler.cron_scheduler.get_opt().await {
+    match state.scheduler.cron_scheduler.read().await.clone() {
         Some(scheduler) => {
             let jobs = scheduler.lock().await.list_jobs().await;
             Json(serde_json::json!({ "jobs": jobs, "count": jobs.len() })).into_response()
@@ -58,7 +58,7 @@ pub async fn add_cron_job_handler(
         ExecutionTarget::shell(req.command),
     );
 
-    match state.scheduler.cron_scheduler.get_opt().await {
+    match state.scheduler.cron_scheduler.read().await.clone() {
         Some(scheduler) => match scheduler.lock().await.add_job(job).await {
             Ok(()) => Json(serde_json::json!({
                 "success": true,
@@ -86,7 +86,7 @@ pub async fn remove_cron_job_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.scheduler.cron_scheduler.get_opt().await {
+    match state.scheduler.cron_scheduler.read().await.clone() {
         Some(scheduler) => match scheduler.lock().await.remove_job(&id).await {
             Ok(()) => Json(serde_json::json!({ "success": true, "id": id })).into_response(),
             Err(e) => {
@@ -108,7 +108,7 @@ pub async fn enable_cron_job_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.scheduler.cron_scheduler.get_opt().await {
+    match state.scheduler.cron_scheduler.read().await.clone() {
         Some(scheduler) => match scheduler.lock().await.set_job_enabled(&id, true).await {
             Ok(()) => Json(serde_json::json!({ "success": true, "id": id, "enabled": true }))
                 .into_response(),
@@ -131,7 +131,7 @@ pub async fn disable_cron_job_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.scheduler.cron_scheduler.get_opt().await {
+    match state.scheduler.cron_scheduler.read().await.clone() {
         Some(scheduler) => match scheduler.lock().await.set_job_enabled(&id, false).await {
             Ok(()) => Json(serde_json::json!({ "success": true, "id": id, "enabled": false }))
                 .into_response(),
@@ -154,7 +154,7 @@ pub async fn trigger_cron_job_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.scheduler.cron_scheduler.get_opt().await {
+    match state.scheduler.cron_scheduler.read().await.clone() {
         Some(scheduler) => match scheduler.lock().await.trigger_job(&id).await {
             Ok(()) => Json(serde_json::json!({ "success": true, "id": id, "triggered": true }))
                 .into_response(),
@@ -177,7 +177,7 @@ pub async fn cron_job_logs_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.scheduler.cron_scheduler.get_opt().await {
+    match state.scheduler.cron_scheduler.read().await.clone() {
         Some(scheduler) => match scheduler.lock().await.get_job(&id).await {
             Some(job) => Json(serde_json::json!({
                 "id": job.id,

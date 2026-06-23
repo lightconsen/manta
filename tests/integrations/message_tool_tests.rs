@@ -131,11 +131,11 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             group_manager: Arc::new(RwLock::new(syscity::agent::GroupSessionManager::new())),
             store: None,
             message_buffer: Arc::new(RwLock::new(HashMap::new())),
+            follow_up_timers: Arc::new(RwLock::new(HashMap::new())),
             route_resolver: Arc::new(syscity::agent::RouteResolver::new("default")),
             cost_guard: syscity::agent::CostGuard::new(0, 0),
             repair_state: Arc::new(syscity::gateway::RepairState::new()),
             acp: Arc::new(syscity::acp::AcpControlPlane::new(10)),
-            session_routing: Arc::new(RwLock::new(HashMap::new())),
         },
         channels: syscity::gateway::state::ChannelState {
             channels: Arc::new(RwLock::new(HashMap::new())),
@@ -148,12 +148,12 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
         },
         memory: syscity::gateway::state::MemoryState {
-            vector: syscity::utils::LateInit::new(),
-            session_search: syscity::utils::LateInit::new(),
+            vector: tokio::sync::RwLock::new(None),
+            session_search: tokio::sync::RwLock::new(None),
             manager: Arc::new(RwLock::new(None)),
-            dream_scheduler: syscity::utils::LateInit::new(),
+            dream_scheduler: tokio::sync::RwLock::new(None),
             dream_metrics: Arc::new(syscity::memory::DreamMetrics::default()),
-            standing_order_manager: syscity::utils::LateInit::new(),
+            standing_order_manager: tokio::sync::RwLock::new(None),
         },
         tools: syscity::gateway::state::ToolState {
             registry: Arc::new(syscity::tools::ToolRegistry::new()),
@@ -183,7 +183,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             artifact_store: Arc::new(artifact_store),
             disk_budget: Arc::new(disk_budget),
             session_file_manager: Arc::new(session_file_manager),
-            hot_reload: syscity::utils::LateInit::new(),
+            hot_reload: tokio::sync::RwLock::new(None),
             plugin_manager: Arc::new(
                 syscity::plugins::PluginManager::new(plugins_dir)
                     .await
@@ -202,14 +202,15 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             tool_sdk: Arc::new(RwLock::new(syscity::tools::ToolSdk::new())),
         },
         scheduler: syscity::gateway::state::SchedulerState {
-            task_scheduler: syscity::utils::LateInit::new(),
-            heartbeat_wake_tx: syscity::utils::LateInit::new(),
-            heartbeat_event_tx: syscity::utils::LateInit::new(),
-            cron_scheduler: syscity::utils::LateInit::new(),
+            task_scheduler: tokio::sync::RwLock::new(None),
+            heartbeat_wake_tx: tokio::sync::RwLock::new(None),
+            heartbeat_event_tx: tokio::sync::RwLock::new(None),
+            cron_scheduler: tokio::sync::RwLock::new(None),
         },
         device_init: tokio::sync::RwLock::new(None),
         perception_init: tokio::sync::RwLock::new(None),
         control_init: tokio::sync::RwLock::new(None),
+        task_registry: Arc::new(syscity::gateway::task_registry::TaskRegistry::new()),
     }
 }
 

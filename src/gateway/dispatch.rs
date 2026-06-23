@@ -108,13 +108,29 @@ pub(crate) async fn dispatch_routed_message(
         }
     }
 
+    // ── Cache runtime settings used for this dispatch ─────────────────
+    let (think_level, queue_mode) = {
+        let settings = state.infra.runtime_settings.read().await;
+        (
+            settings
+                .get("think.level")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            settings
+                .get("queue.mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        )
+    };
+
     match routed.queue_mode {
         crate::inbound::QueueMode::Interrupt => {
-            // Clear any buffered messages for this session
+            // Clear any buffered messages and pending timer for this session
             {
                 let mut buffers = state.agents.message_buffer.write().await;
                 buffers.remove(&session_id);
             }
+            clear_follow_up_timer(state, &session_id).await;
             send_to_agent(
                 state,
                 &agent_id,
@@ -122,6 +138,8 @@ pub(crate) async fn dispatch_routed_message(
                 &routed.incoming.content,
                 &routed.incoming.user_id.0,
                 &channel,
+                think_level.clone(),
+                queue_mode.clone(),
             )
             .await;
         }
@@ -131,9 +149,12 @@ pub(crate) async fn dispatch_routed_message(
             {
                 let agents = state.agents.agents.read().await;
                 if let Some(agent) = agents.get(&agent_id) {
-                    let _ = agent.tx.send(AgentCommand::Cancel).await;
+                    if let Err(e) = agent.tx.send(AgentCommand::Cancel).await {
+                        warn!("Failed to send cancel to agent {}: {}", agent_id, e);
+                    }
                 }
             }
+            clear_follow_up_timer(state, &session_id).await;
             // Small delay to let cancel take effect
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             send_to_agent(
@@ -143,12 +164,14 @@ pub(crate) async fn dispatch_routed_message(
                 &routed.incoming.content,
                 &routed.incoming.user_id.0,
                 &channel,
+                think_level.clone(),
+                queue_mode.clone(),
             )
             .await;
         }
 
         crate::inbound::QueueMode::FollowUp => {
-            // Buffer message; flush after a delay if no more arrive
+            // Buffer message; flush after a delay if no more arrive.
             let should_flush = {
                 let mut buffers = state.agents.message_buffer.write().await;
                 let buffer = buffers.entry(session_id.clone()).or_default();
@@ -161,21 +184,48 @@ pub(crate) async fn dispatch_routed_message(
             };
 
             if should_flush {
-                flush_session_buffer(state, &agent_id, &session_id).await;
+                clear_follow_up_timer(state, &session_id).await;
+                flush_session_buffer(
+                    state,
+                    &agent_id,
+                    &session_id,
+                    think_level.clone(),
+                    queue_mode.clone(),
+                )
+                .await;
             } else {
-                // Spawn a delayed flush task
-                let state_clone = state.clone();
-                let agent_id_clone = agent_id.clone();
-                let session_id_clone = session_id.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                    flush_session_buffer(&state_clone, &agent_id_clone, &session_id_clone).await;
-                });
+                let mut timers = state.agents.follow_up_timers.write().await;
+                if !timers.contains_key(&session_id) {
+                    let state_clone = state.clone();
+                    let agent_id_clone = agent_id.clone();
+                    let session_id_clone = session_id.clone();
+                    let think_level_clone = think_level.clone();
+                    let queue_mode_clone = queue_mode.clone();
+                    let handle = tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                        flush_session_buffer(
+                            &state_clone,
+                            &agent_id_clone,
+                            &session_id_clone,
+                            think_level_clone,
+                            queue_mode_clone,
+                        )
+                        .await;
+                        state_clone
+                            .agents
+                            .follow_up_timers
+                            .write()
+                            .await
+                            .remove(&session_id_clone);
+                    });
+                    timers.insert(session_id.clone(), handle);
+                }
             }
         }
 
         crate::inbound::QueueMode::Collect => {
             // /done trigger: flush the buffer
+            clear_follow_up_timer(state, &session_id).await;
             let has_buffered = {
                 let buffers = state.agents.message_buffer.read().await;
                 buffers
@@ -185,7 +235,14 @@ pub(crate) async fn dispatch_routed_message(
             };
 
             if has_buffered {
-                flush_session_buffer(state, &agent_id, &session_id).await;
+                flush_session_buffer(
+                    state,
+                    &agent_id,
+                    &session_id,
+                    think_level.clone(),
+                    queue_mode.clone(),
+                )
+                .await;
             } else {
                 // No buffer to flush; treat as normal message
                 send_to_agent(
@@ -195,6 +252,8 @@ pub(crate) async fn dispatch_routed_message(
                     &routed.incoming.content,
                     &routed.incoming.user_id.0,
                     &channel,
+                    think_level.clone(),
+                    queue_mode.clone(),
                 )
                 .await;
             }
@@ -208,9 +267,18 @@ pub(crate) async fn dispatch_routed_message(
                 &routed.incoming.content,
                 &routed.incoming.user_id.0,
                 &channel,
+                think_level.clone(),
+                queue_mode.clone(),
             )
             .await;
         }
+    }
+}
+
+/// Cancel any pending FollowUp flush timer for a session.
+async fn clear_follow_up_timer(state: &GatewayState, session_id: &str) {
+    if let Some(handle) = state.agents.follow_up_timers.write().await.remove(session_id) {
+        handle.abort();
     }
 }
 
@@ -219,6 +287,8 @@ pub(crate) async fn flush_session_buffer(
     state: &Arc<GatewayState>,
     agent_id: &str,
     session_id: &str,
+    think_level: Option<String>,
+    queue_mode: Option<String>,
 ) {
     let messages: Vec<BufferedMessage> = {
         let mut buffers = state.agents.message_buffer.write().await;
@@ -251,7 +321,17 @@ pub(crate) async fn flush_session_buffer(
         combined.len()
     );
 
-    send_to_agent(state, agent_id, session_id, &combined, &first_user_id, &first_channel).await;
+    send_to_agent(
+        state,
+        agent_id,
+        session_id,
+        &combined,
+        &first_user_id,
+        &first_channel,
+        think_level,
+        queue_mode,
+    )
+    .await;
 }
 
 /// Extract a concise session name from the first assistant response.
@@ -296,6 +376,8 @@ pub(crate) async fn send_to_agent(
     message: &str,
     user_id: &str,
     channel: &str,
+    think_level: Option<String>,
+    queue_mode: Option<String>,
 ) {
     let agents = state.agents.agents.read().await;
     let agent_handle = match agents.get(agent_id) {
@@ -308,12 +390,6 @@ pub(crate) async fn send_to_agent(
     drop(agents);
 
     // Apply thinking config from runtime settings
-    let think_level = {
-        let s = state.infra.runtime_settings.read().await;
-        s.get("think.level")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    };
     let extra = think_level.and_then(|level| {
         let budget = match level.as_str() {
             "minimal" => 1024u32,
@@ -327,14 +403,10 @@ pub(crate) async fn send_to_agent(
     agent_handle.agent.set_extra_params(extra).await;
 
     // Check queue mode and apply interrupt behavior if needed
-    let queue_mode = {
-        let s = state.infra.runtime_settings.read().await;
-        s.get("queue.mode")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    };
     if queue_mode.as_deref() == Some("interrupt") {
-        let _ = state.agents.acp.cancel(session_id.to_string()).await;
+        if let Err(e) = state.agents.acp.cancel(session_id.to_string()).await {
+            warn!("Failed to cancel ACP session {}: {}", session_id, e);
+        }
     }
 
     let incoming_msg = crate::channels::IncomingMessage::new(
@@ -348,12 +420,14 @@ pub(crate) async fn send_to_agent(
     });
 
     // Broadcast processing status
-    let _ = state.events.tx.send(GatewayEvent::AgentStatus {
+    if let Err(e) = state.events.tx.send(GatewayEvent::AgentStatus {
         agent_id: agent_id.to_string(),
         status: AgentStatus::Processing {
             session_id: session_id.to_string(),
         },
-    });
+    }) {
+        debug!("No receivers for AgentStatus event: {}", e);
+    }
 
     // Build progress callback that forwards events to gateway subscribers
     let event_tx = state.events.tx.clone();
@@ -383,10 +457,12 @@ pub(crate) async fn send_to_agent(
             };
             match event {
                 crate::agent::ProgressEvent::Started => {
-                    let _ = tx.send(GatewayEvent::AgentStatus {
+                    if let Err(e) = tx.send(GatewayEvent::AgentStatus {
                         agent_id: aid.clone(),
                         status: AgentStatus::Processing { session_id: sid.clone() },
-                    });
+                    }) {
+                        debug!("No receivers for AgentStatus event: {}", e);
+                    }
                 }
                 crate::agent::ProgressEvent::Generating { content } => {
                     // Skip reasoning events if visibility is off
@@ -396,32 +472,38 @@ pub(crate) async fn send_to_agent(
                     // Only emit thinking events when there's actual content
                     if let Some(ref thinking) = content {
                         if !thinking.is_empty() {
-                            let _ = tx.send(GatewayEvent::Thinking {
+                            if let Err(e) = tx.send(GatewayEvent::Thinking {
                                 session_id: sid.clone(),
                                 agent_id: aid.clone(),
                                 content: Some(thinking.clone()),
-                            });
+                            }) {
+                                debug!("No receivers for Thinking event: {}", e);
+                            }
                         }
                     }
                 }
                 crate::agent::ProgressEvent::ContentDelta { text } => {
-                    let _ = tx.send(GatewayEvent::ContentDelta {
+                    if let Err(e) = tx.send(GatewayEvent::ContentDelta {
                         session_id: sid.clone(),
                         agent_id: aid.clone(),
                         delta: text,
-                    });
+                    }) {
+                        debug!("No receivers for ContentDelta event: {}", e);
+                    }
                 }
                 crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
                     // Skip tool events if verbose is off
                     if verbose_mode.as_deref() == Some("off") {
                         return;
                     }
-                    let _ = tx.send(GatewayEvent::ToolCalling {
+                    if let Err(e) = tx.send(GatewayEvent::ToolCalling {
                         session_id: sid.clone(),
                         agent_id: aid.clone(),
                         tool_name: name.clone(),
                         arguments: arguments.clone(),
-                    });
+                    }) {
+                        debug!("No receivers for ToolCalling event: {}", e);
+                    }
                 }
                 crate::agent::ProgressEvent::ToolResult { name, result, data } => {
                     // Skip tool events if verbose is off
@@ -438,13 +520,15 @@ pub(crate) async fn send_to_agent(
                     } else {
                         result
                     };
-                    let _ = tx.send(GatewayEvent::ToolResult {
+                    if let Err(e) = tx.send(GatewayEvent::ToolResult {
                         session_id: sid.clone(),
                         agent_id: aid.clone(),
                         tool_name: name.clone(),
                         result,
                         data,
-                    });
+                    }) {
+                        debug!("No receivers for ToolResult event: {}", e);
+                    }
                 }
                 crate::agent::ProgressEvent::ToolResultDelta { .. } => {
                     // Streaming tool chunks are accumulated locally and emitted
@@ -452,18 +536,22 @@ pub(crate) async fn send_to_agent(
                     // yet.
                 }
                 crate::agent::ProgressEvent::Completed { response } => {
-                    let _ = tx.send(GatewayEvent::Completed {
+                    if let Err(e) = tx.send(GatewayEvent::Completed {
                         session_id: sid.clone(),
                         agent_id: aid.clone(),
                         response,
-                    });
+                    }) {
+                        debug!("No receivers for Completed event: {}", e);
+                    }
                 }
                 crate::agent::ProgressEvent::Error { message } => {
-                    let _ = tx.send(GatewayEvent::ProcessingError {
+                    if let Err(e) = tx.send(GatewayEvent::ProcessingError {
                         session_id: sid.clone(),
                         agent_id: aid.clone(),
                         message,
-                    });
+                    }) {
+                        debug!("No receivers for ProcessingError event: {}", e);
+                    }
                 }
             }
         })
@@ -549,35 +637,43 @@ pub(crate) async fn send_to_agent(
                             warn!("Failed to save session name: {}", e);
                         } else {
                             info!("Session {} auto-named: '{}'", session_id, name);
-                            let _ = state.events.tx.send(GatewayEvent::SessionRenamed {
+                            if let Err(e) = state.events.tx.send(GatewayEvent::SessionRenamed {
                                 session_id: session_id.to_string(),
                                 name: name.clone(),
-                            });
+                            }) {
+                                debug!("No receivers for SessionRenamed event: {}", e);
+                            }
                         }
                     }
                 }
             }
-            let _ = state.events.tx.send(GatewayEvent::AgentResponse {
+            if let Err(e) = state.events.tx.send(GatewayEvent::AgentResponse {
                 session_id: session_id.to_string(),
                 agent_id: agent_id.to_string(),
                 content: outgoing.content,
                 channel: channel.to_string(),
                 conversation_id: session_id.to_string(),
                 usage: outgoing.usage,
-            });
+            }) {
+                debug!("No receivers for AgentResponse event: {}", e);
+            }
         }
         Err(e) => {
             error!("ACP execution failed for agent {} session {}: {}", agent_id, session_id, e);
-            let _ = state.events.tx.send(GatewayEvent::ProcessingError {
+            if let Err(e) = state.events.tx.send(GatewayEvent::ProcessingError {
                 session_id: session_id.to_string(),
                 agent_id: agent_id.to_string(),
                 message: format!("Execution failed: {}", e),
-            });
+            }) {
+                debug!("No receivers for ProcessingError event: {}", e);
+            }
         }
     }
 
-    let _ = state.events.tx.send(GatewayEvent::AgentStatus {
+    if let Err(e) = state.events.tx.send(GatewayEvent::AgentStatus {
         agent_id: agent_id.to_string(),
         status: AgentStatus::Idle,
-    });
+    }) {
+        debug!("No receivers for AgentStatus event: {}", e);
+    }
 }

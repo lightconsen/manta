@@ -35,13 +35,14 @@ use crate::device::DriverFactory;
 use crate::gateway::hooks::EventHookRegistry;
 use crate::gateway::init::devices::DeviceInit;
 use crate::gateway::rate_limit::MultiTierRateLimiter;
+use crate::gateway::task_registry::TaskRegistry;
 use crate::gateway::AgentHandle;
 use crate::gateway::RepairState;
 use crate::gateway::{GatewayConfig, GatewayEvent};
 use crate::heartbeat::{HeartbeatEvent, WakeRequest};
 use crate::inbound::{AgentRouter, InboundPipeline, RoutedMessage};
 use crate::memory::vector::VectorMemoryService;
-use crate::memory::{DreamMetrics, DreamScheduler, MemoryManager, SessionSearch};
+use crate::memory::{DreamMetrics, MemoryManager, SessionSearch};
 use crate::model_router::ModelRouter;
 use crate::outbound::{OutboundPipeline, ReplyDispatcher, SideEffectExecutor, SseStreamer};
 use crate::planner::TaskScheduler;
@@ -57,7 +58,6 @@ use crate::skills::SkillManager;
 use crate::tools::{
     approval::ApprovalQueue, command_gate::CommandGate, mcp::McpManager, ToolRegistry, ToolSdk,
 };
-use crate::utils::LateInit;
 
 /// Authentication, authorization, and security-related state.
 pub struct AuthState {
@@ -82,12 +82,12 @@ pub struct AgentState {
     pub group_manager: Arc<RwLock<GroupSessionManager>>,
     pub store: Option<Arc<SessionStore>>,
     pub message_buffer: Arc<RwLock<HashMap<String, Vec<crate::gateway::BufferedMessage>>>>,
+    /// Per-session delayed flush timers for FollowUp queue mode.
+    pub follow_up_timers: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
     pub route_resolver: Arc<RouteResolver>,
     pub cost_guard: Arc<CostGuard>,
     pub repair_state: Arc<RepairState>,
     pub acp: Arc<AcpControlPlane>,
-    /// DEPRECATED: use `router` instead for new code.
-    pub session_routing: Arc<RwLock<HashMap<String, String>>>,
 }
 
 /// Channel adapters, extensions, and response dispatch state.
@@ -107,12 +107,12 @@ pub struct ChannelState {
 
 /// Memory, search, and background consolidation state.
 pub struct MemoryState {
-    pub vector: LateInit<Arc<VectorMemoryService>>,
-    pub session_search: LateInit<Arc<SessionSearch>>,
+    pub vector: RwLock<Option<Arc<VectorMemoryService>>>,
+    pub session_search: RwLock<Option<Arc<SessionSearch>>>,
     pub manager: Arc<RwLock<Option<Arc<MemoryManager>>>>,
-    pub dream_scheduler: LateInit<DreamScheduler>,
+    pub dream_scheduler: RwLock<Option<crate::memory::DreamScheduler>>,
     pub dream_metrics: Arc<DreamMetrics>,
-    pub standing_order_manager: LateInit<crate::standing_orders::StandingOrderManager>,
+    pub standing_order_manager: RwLock<Option<crate::standing_orders::StandingOrderManager>>,
 }
 
 /// Tool registry, MCP, skills, and canvas state.
@@ -150,7 +150,7 @@ pub struct InfraState {
     pub artifact_store: Arc<ArtifactStore>,
     pub disk_budget: Arc<DiskBudgetManager>,
     pub session_file_manager: Arc<SessionFileManager>,
-    pub hot_reload: LateInit<Arc<HotReloadManager>>,
+    pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     pub plugin_manager: Arc<PluginManager>,
     pub model_router: Arc<ModelRouter>,
     /// Pluggable device driver factory — shared between config-driven init
@@ -171,10 +171,10 @@ pub struct SdkState {
 
 /// Background schedulers and heartbeat state.
 pub struct SchedulerState {
-    pub task_scheduler: LateInit<Arc<Mutex<TaskScheduler>>>,
-    pub heartbeat_wake_tx: LateInit<mpsc::Sender<WakeRequest>>,
-    pub heartbeat_event_tx: LateInit<broadcast::Sender<HeartbeatEvent>>,
-    pub cron_scheduler: LateInit<Arc<Mutex<CronScheduler>>>,
+    pub task_scheduler: RwLock<Option<Arc<Mutex<TaskScheduler>>>>,
+    pub heartbeat_wake_tx: RwLock<Option<mpsc::Sender<WakeRequest>>>,
+    pub heartbeat_event_tx: RwLock<Option<broadcast::Sender<HeartbeatEvent>>>,
+    pub cron_scheduler: RwLock<Option<Arc<Mutex<CronScheduler>>>>,
 }
 
 /// Perception subsystem init state (registry, streaming context,
@@ -197,8 +197,6 @@ pub struct PerceptionInit {
 pub struct ControlInit {
     /// The device registry shared with the control lane.
     pub registry: Arc<crate::device::registry::DeviceRegistry>,
-    /// The dedicated control runtime (kept alive for the loop).
-    pub runtime: Option<tokio::runtime::Runtime>,
     /// The control loop join handle.
     pub handle: Option<tokio::task::JoinHandle<()>>,
     /// Registered control handlers (shared with driver connections).
@@ -222,6 +220,9 @@ pub struct GatewayState {
     /// Control lane init state (runtime, handlers, loop handle).
     /// Replaced on hot-reload via the admin API.
     pub control_init: RwLock<Option<ControlInit>>,
+
+    /// Centralized registry for all gateway background tasks.
+    pub task_registry: Arc<TaskRegistry>,
 
     pub auth: AuthState,
     pub agents: AgentState,

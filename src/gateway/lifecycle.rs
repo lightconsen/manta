@@ -14,8 +14,6 @@ use axum::{
     Router,
 };
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
@@ -35,8 +33,6 @@ pub(crate) async fn start_gateway(
     state: Arc<GatewayState>,
     config: GatewayConfig,
     shutdown_token: CancellationToken,
-    background_tasks: &Mutex<Vec<JoinHandle<()>>>,
-    agent_tasks: &Mutex<Vec<JoinHandle<()>>>,
 ) -> crate::Result<()> {
     info!("Starting Syscity Gateway control plane...");
 
@@ -48,7 +44,7 @@ pub(crate) async fn start_gateway(
             }
 
             // Watch WASM files for hot-reload
-            if let Some(hot_reload) = state.infra.hot_reload.get_opt().await {
+            if let Some(hot_reload) = state.infra.hot_reload.read().await.clone() {
                 let plugins = state.infra.plugin_manager.list_plugins().await;
                 for plugin in plugins {
                     if let Some(ref main) = plugin.manifest.main {
@@ -91,7 +87,7 @@ pub(crate) async fn start_gateway(
     }
 
     // Initialize hot reload if enabled
-    let hot_reload = state.infra.hot_reload.get_opt().await;
+    let hot_reload = state.infra.hot_reload.read().await.clone();
     if let Some(ref hot_reload) = hot_reload {
         let config_path = crate::dirs::default_config_file();
         if let Err(e) = hot_reload
@@ -107,7 +103,7 @@ pub(crate) async fn start_gateway(
                 error!("Hot reload error: {}", e);
             }
         });
-        background_tasks.lock().await.push(hot_reload_handle);
+        state.task_registry.insert_join("hot_reload", hot_reload_handle).await;
 
         // Register config change handlers
         super::hot_reload::register_hot_reload_handlers(state.clone(), config.clone(), hot_reload)
@@ -128,7 +124,6 @@ pub(crate) async fn start_gateway(
         state.clone(),
         "default".to_string(),
         default_config,
-        agent_tasks,
     )
     .await
     {
@@ -230,7 +225,7 @@ pub(crate) async fn start_gateway(
                 let mut scheduler = crate::memory::DreamScheduler::new(engine);
                 scheduler.start(mm.store(), tier_index);
                 info!("Dream scheduler started");
-                state.memory.dream_scheduler.init(scheduler).await;
+                *state.memory.dream_scheduler.write().await = Some(scheduler);
             }
         }
     }
@@ -243,7 +238,7 @@ pub(crate) async fn start_gateway(
         );
         manager.start();
         info!("Standing orders manager started");
-        state.memory.standing_order_manager.init(manager).await;
+        *state.memory.standing_order_manager.write().await = Some(manager);
     }
 
     // Start browser bridge server if enabled
@@ -300,41 +295,39 @@ pub(crate) async fn start_gateway(
         let event_tx = state.events.tx.clone();
         let approval_handle = tokio::spawn(async move {
             while let Ok(evt) = approval_rx.recv().await {
-                let _ = event_tx.send(crate::gateway::GatewayEvent::ApprovalRequired {
+                if let Err(e) = event_tx.send(crate::gateway::GatewayEvent::ApprovalRequired {
                     approval_id: evt.approval_id,
                     tool_name: evt.tool_name,
                     requested_by: evt.requested_by,
                     risk_level: evt.risk_level,
                     message: evt.message,
-                });
+                }) {
+                    debug!("No receivers for ApprovalRequired event: {}", e);
+                }
             }
         });
-        background_tasks.lock().await.push(approval_handle);
+        state.task_registry.insert_join("approval_forwarder", approval_handle).await;
     }
 
     // Start gateway-level self-repair watchdog (60 s interval)
     let repair_handle = tokio::spawn(super::watchdog::run_repair_loop(state.clone()));
-    background_tasks.lock().await.push(repair_handle);
+    state.task_registry.insert_join("repair_loop", repair_handle).await;
 
     // Start heartbeat runner if enabled
     if config.heartbeat.enabled {
         let runner = crate::heartbeat::HeartbeatRunner::new(state.clone());
         let wake_tx = runner.wake_sender();
         let event_tx = runner.event_tx.clone();
-        state
-            .scheduler
-            .heartbeat_wake_tx
-            .init(wake_tx.clone())
-            .await;
-        state.scheduler.heartbeat_event_tx.init(event_tx).await;
+        *state.scheduler.heartbeat_wake_tx.write().await = Some(wake_tx.clone());
+        *state.scheduler.heartbeat_event_tx.write().await = Some(event_tx);
         let heartbeat_handle = tokio::spawn(async move {
             runner.start().await;
         });
-        background_tasks.lock().await.push(heartbeat_handle);
+        state.task_registry.insert_join("heartbeat", heartbeat_handle).await;
         info!("Heartbeat runner started");
 
         // Wire heartbeat wake sender into cron scheduler
-        if let Some(cron_arc) = state.scheduler.cron_scheduler.get_opt().await {
+        if let Some(cron_arc) = state.scheduler.cron_scheduler.read().await.clone() {
             let mut scheduler = cron_arc.lock().await;
             scheduler.set_heartbeat_wake_tx(wake_tx);
             info!("Cron heartbeat wake integration enabled");
@@ -363,7 +356,9 @@ pub(crate) async fn start_gateway(
                                         } else {
                                             let mut lines = reader.lines();
                                             while let Ok(Some(line)) = lines.next_line().await {
-                                                let _ = log_tx.send(line);
+                                                if let Err(e) = log_tx.send(line) {
+                                                    debug!("No receivers for log tail event: {}", e);
+                                                }
                                             }
                                         }
                                         pos = new_len;
@@ -385,28 +380,40 @@ pub(crate) async fn start_gateway(
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         });
-        background_tasks.lock().await.push(log_tail_handle);
+        state.task_registry.insert_join("log_tail", log_tail_handle).await;
         info!("Log tail broadcaster started");
     }
 
-    // Run the server with graceful shutdown
+    // Run the server with graceful shutdown (bounded by a 30s timeout so a
+    // stuck connection cannot prevent gateway teardown indefinitely).
     let shutdown = async move { shutdown_token.cancelled().await };
-    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
-        .with_graceful_shutdown(shutdown)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
+    match timeout(
+        Duration::from_secs(30),
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown),
+    )
+    .await
+    {
+        Ok(result) => result.map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Gateway server error".to_string(),
             cause: Some(Box::new(e)),
-        })?;
+        })?,
+        Err(_) => {
+            warn!("Axum graceful shutdown timed out after 30s; proceeding with teardown");
+        }
+    }
 
     // Stop dream scheduler on shutdown
-    if let Some(mut scheduler) = state.memory.dream_scheduler.get_opt().await {
+    if let Some(mut scheduler) = state.memory.dream_scheduler.read().await.clone() {
         scheduler.stop().await;
         info!("Dream scheduler stopped");
     }
 
     // Stop standing orders manager on shutdown
-    if let Some(mut manager) = state.memory.standing_order_manager.get_opt().await {
+    if let Some(mut manager) = state.memory.standing_order_manager.read().await.clone() {
         manager.stop().await;
         info!("Standing orders manager stopped");
     }
@@ -419,9 +426,6 @@ pub(crate) async fn start_gateway(
 /// Gracefully shut down the gateway and its subsystems.
 pub(crate) async fn stop_gateway(
     shutdown_token: &CancellationToken,
-    message_workers: &Mutex<Vec<JoinHandle<()>>>,
-    agent_tasks: &Mutex<Vec<JoinHandle<()>>>,
-    background_tasks: &Mutex<Vec<JoinHandle<()>>>,
     state: &Arc<GatewayState>,
     _tailscale_enabled: bool,
 ) -> crate::Result<()> {
@@ -431,10 +435,7 @@ pub(crate) async fn stop_gateway(
     shutdown_token.cancel();
 
     // 1. Drain the unified message workers.
-    let message_handles = {
-        let mut workers = message_workers.lock().await;
-        std::mem::take(&mut *workers)
-    };
+    let message_handles = state.task_registry.take_matching_join("message:").await;
     for handle in message_handles {
         match timeout(Duration::from_secs(5), handle).await {
             Ok(_) => {}
@@ -445,14 +446,15 @@ pub(crate) async fn stop_gateway(
     // 2. Stop all spawned agents and await their loops.
     {
         let agents = state.agents.agents.read().await;
-        for (_id, handle) in agents.iter() {
-            let _ = handle.tx.send(crate::gateway::AgentCommand::Shutdown).await;
+        for (id, handle) in agents.iter() {
+            if let Err(e) = handle.tx.send(crate::gateway::AgentCommand::Shutdown).await {
+                warn!("Failed to send shutdown to agent {}: {}", id, e);
+            }
         }
     }
-    let agent_handles = {
-        let mut tasks = agent_tasks.lock().await;
-        std::mem::take(&mut *tasks)
-    };
+    // Give agents a moment to start their shutdown before we await join handles.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let agent_handles = state.task_registry.take_matching_join("agent:").await;
     for handle in agent_handles {
         match timeout(Duration::from_secs(10), handle).await {
             Ok(_) => {}
@@ -482,7 +484,7 @@ pub(crate) async fn stop_gateway(
     }
 
     // 5. Cron scheduler.
-    if let Some(cron_arc) = state.scheduler.cron_scheduler.get_opt().await {
+    if let Some(cron_arc) = state.scheduler.cron_scheduler.read().await.clone() {
         let mut scheduler = cron_arc.lock().await;
         if let Err(e) = scheduler.shutdown().await {
             warn!("Failed to shutdown cron scheduler: {}", e);
@@ -492,13 +494,13 @@ pub(crate) async fn stop_gateway(
     }
 
     // 6. Dream scheduler.
-    if let Some(mut scheduler) = state.memory.dream_scheduler.get_opt().await {
+    if let Some(mut scheduler) = state.memory.dream_scheduler.read().await.clone() {
         scheduler.stop().await;
         info!("Dream scheduler stopped");
     }
 
     // 7. Standing orders manager.
-    if let Some(mut manager) = state.memory.standing_order_manager.get_opt().await {
+    if let Some(mut manager) = state.memory.standing_order_manager.read().await.clone() {
         manager.stop().await;
         info!("Standing orders manager stopped");
     }
@@ -512,14 +514,14 @@ pub(crate) async fn stop_gateway(
     }
 
     // 9. Hot reload.
-    if let Some(hot_reload) = state.infra.hot_reload.get_opt().await {
+    if let Some(hot_reload) = state.infra.hot_reload.read().await.clone() {
         if let Err(e) = hot_reload.stop().await {
             warn!("Failed to stop hot reload manager: {}", e);
         }
     }
 
     // 10. Task scheduler.
-    if let Some(ts_arc) = state.scheduler.task_scheduler.get_opt().await {
+    if let Some(ts_arc) = state.scheduler.task_scheduler.read().await.clone() {
         let mut scheduler = ts_arc.lock().await;
         if let Err(e) = scheduler.stop().await {
             warn!("Failed to stop task scheduler: {}", e);
@@ -544,11 +546,8 @@ pub(crate) async fn stop_gateway(
     }
 
     // 13. Abort remaining background tasks.
-    let background_handles = {
-        let mut tasks = background_tasks.lock().await;
-        std::mem::take(&mut *tasks)
-    };
-    for handle in background_handles {
+    let background_handles = state.task_registry.take_all().await;
+    for (_name, handle) in background_handles {
         handle.abort();
     }
 
@@ -568,12 +567,40 @@ pub(crate) async fn stop_gateway(
         }
     }
 
-    // 15. Plugin manager shutdown.
+    // 15. Abort perception and control lane background handles.
+    {
+        let mut pi = state.perception_init.write().await;
+        if let Some(ref mut init) = *pi {
+            if let Some(handle) = init.poll_handle.take() {
+                handle.abort();
+            }
+        }
+    }
+    {
+        let mut ci = state.control_init.write().await;
+        if let Some(ref mut init) = *ci {
+            if let Some(handle) = init.handle.take() {
+                handle.abort();
+            }
+        }
+    }
+
+    // 16. Abort any remaining FollowUp flush timers.
+    {
+        let timers = std::mem::take(
+            &mut *state.agents.follow_up_timers.write().await,
+        );
+        for (_session_id, handle) in timers {
+            handle.abort();
+        }
+    }
+
+    // 17. Plugin manager shutdown.
     if let Err(e) = state.infra.plugin_manager.shutdown().await {
         warn!("Failed to shutdown plugin manager: {}", e);
     }
 
-    // 16. Storage is left to flush on process exit.
+    // 18. Storage is left to flush on process exit.
     info!("Gateway shutdown complete");
     Ok(())
 }
@@ -735,10 +762,8 @@ async fn spawn_agent_in_lifecycle(
     state: Arc<GatewayState>,
     id: String,
     config: AgentConfig,
-    agent_tasks: &Mutex<Vec<JoinHandle<()>>>,
 ) -> crate::Result<()> {
-    let handle = spawn_agent_inner(state, id, config).await?;
-    agent_tasks.lock().await.push(handle);
+    spawn_agent_inner(state, id, config).await?;
     Ok(())
 }
 

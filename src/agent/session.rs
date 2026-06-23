@@ -438,6 +438,16 @@ impl SessionManager {
         self.sessions.get(session_id).cloned()
     }
 
+    /// Number of active sessions.
+    pub fn len(&self) -> usize {
+        self.sessions.len()
+    }
+
+    /// Whether there are no active sessions.
+    pub fn is_empty(&self) -> bool {
+        self.sessions.is_empty()
+    }
+
     /// Terminate a session. Also updates SessionStore when available.
     pub fn terminate_session(&mut self, session_id: &str) {
         if let Some(arc) = self.sessions.get(session_id) {

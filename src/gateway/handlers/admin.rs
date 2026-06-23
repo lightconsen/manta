@@ -250,7 +250,6 @@ pub async fn reload_all_handler(
                     );
                     *state.control_init.write().await = Some(crate::gateway::state::ControlInit {
                         registry: reg,
-                        runtime: None,
                         handle: Some(handle),
                         handlers,
                     });

@@ -7,10 +7,6 @@
 //! - WebSocket/HTTP API for channel adapters
 //! - Authentication and security policies
 
-// Transitional: management REST handlers are no longer routed (protocol.md v1.0
-// Phase 3) but kept in source for reference during the migration window.
-// They will be fully removed in Phase 5 cleanup.
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,19 +14,12 @@ use std::time::Instant;
 
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt};
 use tokio::sync::{broadcast, mpsc, RwLock};
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::agent::AgentConfig;
-#[cfg(test)]
-use crate::canvas::CanvasManager;
 use crate::channels::ChannelAcpBridge;
 use crate::inbound::*;
-#[cfg(test)]
-use crate::model_router::ModelRouter;
-#[cfg(test)]
-use crate::plugins::PluginManager;
 
 pub mod auth;
 pub mod command_provider;
@@ -46,6 +35,9 @@ pub mod send_policy;
 pub mod state;
 pub use config::*;
 pub use state::*;
+
+pub mod task_registry;
+pub use task_registry::*;
 
 pub mod acp_ext;
 pub use acp_ext::*;
@@ -234,14 +226,6 @@ pub struct Gateway {
     pub(crate) state: Arc<GatewayState>,
     pub(crate) config: GatewayConfig,
     pub(crate) shutdown_token: CancellationToken,
-    /// Background tasks spawned by `Gateway::new()` and `Gateway::start()`.
-    /// Drained and aborted during `stop()`.
-    pub(crate) background_tasks: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
-    /// Handles for the unified inbound/routed message workers.
-    /// These are drained gracefully by closing their entry channels.
-    pub(crate) message_workers: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
-    /// Handles for each spawned agent processing loop.
-    pub(crate) agent_tasks: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
     /// Physical device registry, populated when device drivers are provided.
     pub(crate) device_registry: Option<Arc<crate::device::registry::DeviceRegistry>>,
     /// Perception fusion layer registry, populated when perception is enabled.
@@ -264,7 +248,6 @@ pub struct Gateway {
 async fn init_perception(
     config: &PerceptionConfig,
     state: &GatewayState,
-    background_tasks: &mut Vec<JoinHandle<()>>,
     device_registry: Option<Arc<crate::device::registry::DeviceRegistry>>,
 ) -> Option<Arc<crate::perception::PerceptionRegistry>> {
     if !config.enabled {
@@ -363,8 +346,8 @@ async fn init_perception(
     );
     state.tools.registry.register_dynamic(tool);
 
-    // Spawn background poll loop
-    if config.poll_interval_secs > 0 {
+    // Spawn background poll loop and keep its handle in PerceptionInit.
+    let poll_handle = if config.poll_interval_secs > 0 {
         let r = reg.clone();
         let interval = std::time::Duration::from_secs(config.poll_interval_secs);
         let handle = tokio::spawn(async move {
@@ -374,8 +357,11 @@ async fn init_perception(
                 r.poll_all().await;
             }
         });
-        background_tasks.push(handle);
-    }
+        state.task_registry.insert_abort("perception:poll", &handle).await;
+        Some(handle)
+    } else {
+        None
+    };
 
     // Spawn periodic prune task for the persistent store.
     if config.persistence_retention_days > 0 && config.persistence_backend != "none" {
@@ -395,7 +381,7 @@ async fn init_perception(
                 }
             }
         });
-        background_tasks.push(handle);
+        state.task_registry.insert_join("perception:prune", handle).await;
     }
 
     // Spin up the streaming pipeline (raw_hub → temporal/fusion →
@@ -423,13 +409,13 @@ async fn init_perception(
         reg.clone(),
         std::time::Duration::from_secs(5),
     );
-    background_tasks.push(sync_handle);
+    state.task_registry.insert_join("perception:stream_sync", sync_handle).await;
 
-    // Store PerceptionInit on state (poll_handle is tracked via background_tasks)
+    // Store PerceptionInit on state (poll_handle tracks the poll loop).
     *state.perception_init.write().await = Some(crate::gateway::state::PerceptionInit {
         registry: reg.clone(),
         context: perception_context,
-        poll_handle: None,
+        poll_handle,
     });
 
     Some(reg)
@@ -473,10 +459,10 @@ async fn init_control(device_config: &crate::gateway::DeviceConfig, state: &Gate
         handlers.clone(),
         device_config.control.clone(),
     );
+    state.task_registry.insert_abort("control:loop", &handle).await;
 
     *state.control_init.write().await = Some(crate::gateway::state::ControlInit {
         registry,
-        runtime: None,
         handle: Some(handle),
         handlers,
     });
@@ -607,6 +593,7 @@ impl Gateway {
             device_init: RwLock::new(None),
             perception_init: RwLock::new(None),
             control_init: RwLock::new(None),
+            task_registry: Arc::new(crate::gateway::task_registry::TaskRegistry::new()),
             auth: AuthState {
                 manager: security_init.auth_manager.clone(),
                 pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
@@ -645,6 +632,7 @@ impl Gateway {
                 group_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
                 store: session_store.clone(),
                 message_buffer: Arc::new(RwLock::new(HashMap::new())),
+                follow_up_timers: Arc::new(RwLock::new(HashMap::new())),
                 route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
                 cost_guard: crate::agent::CostGuard::new(
                     config.cost_guard.daily_limit_cents,
@@ -652,7 +640,6 @@ impl Gateway {
                 ),
                 repair_state: Arc::new(RepairState::new()),
                 acp: acp.clone(),
-                session_routing: Arc::new(RwLock::new(HashMap::new())),
             },
             channels: ChannelState {
                 channels: tools_init.channels.clone(),
@@ -665,12 +652,12 @@ impl Gateway {
                 webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
             },
             memory: MemoryState {
-                vector: crate::utils::LateInit::new(),
-                session_search: crate::utils::LateInit::new(),
+                vector: RwLock::new(None),
+                session_search: RwLock::new(None),
                 manager: tools_init.memory_manager_holder.clone(),
-                dream_scheduler: crate::utils::LateInit::new(),
+                dream_scheduler: RwLock::new(None),
                 dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
-                standing_order_manager: crate::utils::LateInit::new(),
+                standing_order_manager: RwLock::new(None),
             },
             tools: ToolState {
                 registry: tools_init.tool_registry.clone(),
@@ -717,7 +704,7 @@ impl Gateway {
                     let _ = manager.init().await;
                     Arc::new(manager)
                 },
-                hot_reload: crate::utils::LateInit::new(),
+                hot_reload: RwLock::new(None),
                 plugin_manager: tools_init.plugin_manager.clone(),
                 driver_factory: crate::device::DriverFactory::new(),
                 model_router: model_router.clone(),
@@ -730,16 +717,15 @@ impl Gateway {
                 tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
             },
             scheduler: SchedulerState {
-                task_scheduler: crate::utils::LateInit::new(),
-                heartbeat_wake_tx: crate::utils::LateInit::new(),
-                heartbeat_event_tx: crate::utils::LateInit::new(),
-                cron_scheduler: crate::utils::LateInit::new(),
+                task_scheduler: RwLock::new(None),
+                heartbeat_wake_tx: RwLock::new(None),
+                heartbeat_event_tx: RwLock::new(None),
+                cron_scheduler: RwLock::new(None),
             },
         });
 
-        // Background tasks spawned before `Gateway` is fully constructed are
-        // collected here and then handed off to the `background_tasks` field.
-        let mut background_tasks: Vec<JoinHandle<()>> = Vec::new();
+        // Background tasks are registered in `state.task_registry` as they are
+        // spawned, so they can be aborted or awaited by name during shutdown.
 
         // Attach SessionStore to SessionManager for unified session model
         if let Some(ref store) = state.agents.store {
@@ -778,10 +764,12 @@ impl Gateway {
                             GatewayEvent::McpResourceChanged { server_id, uri }
                         }
                     };
-                    let _ = event_tx.send(gateway_event);
+                    if let Err(e) = event_tx.send(gateway_event) {
+                        debug!("No receivers for MCP event: {}", e);
+                    }
                 }
             });
-            background_tasks.push(mcp_forward_handle);
+            state.task_registry.insert_join("mcp_forward", mcp_forward_handle).await;
         }
 
         // Initialize audit table (SQLite-backed persistent audit log)
@@ -880,11 +868,22 @@ impl Gateway {
             ) {
                 di.os_bridge_handle = Some(handle);
             }
+
+            // Register device background tasks in the unified registry.
+            if let Some(handle) = di.health_check_handle.take() {
+                state.task_registry.insert_join("device:health", handle).await;
+            }
+            if let Some(handle) = di.hot_plug_handle.take() {
+                state.task_registry.insert_join("device:hotplug", handle).await;
+            }
+            if let Some(handle) = di.os_bridge_handle.take() {
+                state.task_registry.insert_join("device:os_bridge", handle).await;
+            }
         }
 
         // Store device_init on state for lifecycle management and hot-reload
-        // The health check handle lives on DeviceInit, not background_tasks,
-        // so it can be aborted during hot-reload without ownership conflicts.
+        // The handles are now owned by the task registry; the struct retains
+        // the registry itself and empty handle slots.
         *state.device_init.write().await = device_init;
 
         let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> = state
@@ -899,7 +898,6 @@ impl Gateway {
             init_perception(
                 &config.perception,
                 state.as_ref(),
-                &mut background_tasks,
                 device_registry.clone(),
             )
             .await;
@@ -913,19 +911,18 @@ impl Gateway {
             inbound_entry_rx,
             shutdown_token.clone(),
         ));
+        state.task_registry.insert_join("message:inbound", inbound_handle).await;
         let routed_handle = tokio::spawn(dispatch::process_routed_messages(
             state.clone(),
             routed_rx,
             shutdown_token.clone(),
         ));
+        state.task_registry.insert_join("message:routed", routed_handle).await;
 
         Ok(Self {
             state,
             config,
             shutdown_token,
-            background_tasks: tokio::sync::Mutex::new(background_tasks),
-            message_workers: tokio::sync::Mutex::new(vec![inbound_handle, routed_handle]),
-            agent_tasks: tokio::sync::Mutex::new(Vec::new()),
             device_registry,
             perception_registry,
         })
@@ -963,19 +960,12 @@ impl Gateway {
         self.shutdown_token.clone()
     }
 
-    /// Spawn an agent processing loop and track it for graceful shutdown.
-    async fn spawn_agent_task(&self, handle: JoinHandle<()>) {
-        self.agent_tasks.lock().await.push(handle);
-    }
-
     /// Start the gateway
     pub async fn start(&self) -> crate::Result<()> {
         lifecycle::start_gateway(
             self.state.clone(),
             self.config.clone(),
             self.shutdown_token.clone(),
-            &self.background_tasks,
-            &self.agent_tasks,
         )
         .await
     }
@@ -984,9 +974,6 @@ impl Gateway {
     pub async fn stop(&self) -> crate::Result<()> {
         lifecycle::stop_gateway(
             &self.shutdown_token,
-            &self.message_workers,
-            &self.agent_tasks,
-            &self.background_tasks,
             &self.state,
             self.config.tailscale_enabled,
         )
@@ -995,8 +982,7 @@ impl Gateway {
 
     /// Spawn a new agent
     async fn spawn_agent(&self, id: String, config: AgentConfig) -> crate::Result<()> {
-        let handle = spawn_agent_inner(self.state.clone(), id, config).await?;
-        self.spawn_agent_task(handle).await;
+        spawn_agent_inner(self.state.clone(), id, config).await?;
         Ok(())
     }
 }
@@ -1098,3 +1084,10 @@ impl Gateway {
 mod api_tests;
 #[cfg(test)]
 pub(crate) mod state_tests;
+
+#[cfg(test)]
+use crate::canvas::CanvasManager;
+#[cfg(test)]
+use crate::model_router::ModelRouter;
+#[cfg(test)]
+use crate::plugins::PluginManager;

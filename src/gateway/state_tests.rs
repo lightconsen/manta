@@ -4,6 +4,7 @@
 //! security pipeline: blocklist → DM policy → mention gating → command gate.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tempfile::tempdir;
 
@@ -102,6 +103,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         device_init: tokio::sync::RwLock::new(None),
         perception_init: tokio::sync::RwLock::new(None),
         control_init: tokio::sync::RwLock::new(None),
+        task_registry: Arc::new(crate::gateway::task_registry::TaskRegistry::new()),
         auth: AuthState {
             manager: Arc::new(crate::security::AuthManager::new()),
             pairing_store: Arc::new(PairingStore::new()),
@@ -130,11 +132,11 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             group_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
             store: None,
             message_buffer: Arc::new(RwLock::new(HashMap::new())),
+            follow_up_timers: Arc::new(RwLock::new(HashMap::new())),
             route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
             cost_guard: crate::agent::CostGuard::new(0, 0),
             repair_state: Arc::new(RepairState::new()),
             acp: Arc::new(AcpControlPlane::new(50)),
-            session_routing: Arc::new(RwLock::new(HashMap::new())),
         },
         channels: ChannelState {
             channels: Arc::new(RwLock::new(HashMap::new())),
@@ -147,12 +149,12 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
         },
         memory: MemoryState {
-            vector: crate::utils::LateInit::new(),
-            session_search: crate::utils::LateInit::new(),
+            vector: tokio::sync::RwLock::new(None),
+            session_search: tokio::sync::RwLock::new(None),
             manager: Arc::new(RwLock::new(None)),
-            dream_scheduler: crate::utils::LateInit::new(),
+            dream_scheduler: tokio::sync::RwLock::new(None),
             dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
-            standing_order_manager: crate::utils::LateInit::new(),
+            standing_order_manager: tokio::sync::RwLock::new(None),
         },
         tools: ToolState {
             registry: Arc::new(ToolRegistry::new()),
@@ -182,7 +184,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             artifact_store: Arc::new(artifact_store),
             disk_budget: Arc::new(disk_budget),
             session_file_manager: Arc::new(session_file_manager),
-            hot_reload: crate::utils::LateInit::new(),
+            hot_reload: tokio::sync::RwLock::new(None),
             plugin_manager: Arc::new(
                 PluginManager::new(plugins_dir)
                     .await
@@ -201,10 +203,10 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
         },
         scheduler: SchedulerState {
-            task_scheduler: crate::utils::LateInit::new(),
-            heartbeat_wake_tx: crate::utils::LateInit::new(),
-            heartbeat_event_tx: crate::utils::LateInit::new(),
-            cron_scheduler: crate::utils::LateInit::new(),
+            task_scheduler: tokio::sync::RwLock::new(None),
+            heartbeat_wake_tx: tokio::sync::RwLock::new(None),
+            heartbeat_event_tx: tokio::sync::RwLock::new(None),
+            cron_scheduler: tokio::sync::RwLock::new(None),
         },
     }
 }
@@ -553,8 +555,6 @@ async fn open_policy_allows_any_user() {
 }
 
 // ── HTTP Handler Integration Tests ───────────────────────────────────────────
-
-use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

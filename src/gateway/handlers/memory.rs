@@ -14,7 +14,7 @@ pub async fn memory_search_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<MemorySearchRequest>,
 ) -> impl IntoResponse {
-    match state.memory.vector.get_opt().await {
+    match state.memory.vector.read().await.clone() {
         Some(vm) => {
             match vm
                 .search_collection(&body.query, body.limit, &body.collection)
@@ -50,7 +50,7 @@ pub async fn memory_add_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<MemoryAddRequest>,
 ) -> impl IntoResponse {
-    match state.memory.vector.get_opt().await {
+    match state.memory.vector.read().await.clone() {
         Some(vm) => {
             match vm
                 .add_to_collection(&body.content, body.metadata, &body.collection)
@@ -84,7 +84,7 @@ pub async fn memory_add_handler(
 pub async fn list_memory_collections_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.memory.vector.get_opt().await {
+    match state.memory.vector.read().await.clone() {
         Some(vm) => {
             let collections = vm.list_collections();
             Json(serde_json::json!({

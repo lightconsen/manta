@@ -120,7 +120,7 @@ pub async fn init_memory_services(
                 "Vector memory service initialized with {:?} provider",
                 config.vector_memory.provider
             );
-            state.memory.vector.init(service).await;
+            *state.memory.vector.write().await = Some(service);
         } else {
             warn!("Vector memory enabled but no suitable provider available");
         }
@@ -136,13 +136,9 @@ pub async fn init_memory_services(
         } else {
             info!("Session search (FTS5) initialized");
             let session_search_for_mm = session_search.clone();
-            state
-                .memory
-                .session_search
-                .init(session_search.clone())
-                .await;
+            *state.memory.session_search.write().await = Some(session_search.clone());
 
-            if let Some(vector_svc) = state.memory.vector.get_opt().await {
+            if let Some(vector_svc) = state.memory.vector.read().await.clone() {
                 info!("Initializing MemoryManager with hybrid search...");
                 let store = Arc::new(
                     crate::memory::UnifiedStore::new_with_pool(pool.clone())
@@ -196,7 +192,7 @@ pub async fn init_hot_reload(config: &GatewayConfig, state: &Arc<GatewayState>) 
             Ok(manager) => {
                 let manager = Arc::new(manager);
                 info!("Hot reload manager initialized");
-                state.infra.hot_reload.init(manager).await;
+                *state.infra.hot_reload.write().await = Some(manager);
             }
             Err(e) => {
                 warn!("Failed to initialize hot reload manager: {}", e);
@@ -223,7 +219,7 @@ pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) {
             scheduler.set_announce_tx(announce_tx);
         }
         let event_tx_announce = state.events.tx.clone();
-        tokio::spawn(async move {
+        let announce_handle = tokio::spawn(async move {
             while let Some(delivery) = announce_rx.recv().await {
                 info!("Cron announce → {}:{}", delivery.channel, delivery.to);
                 match event_tx_announce.send(GatewayEvent::CronAnnounce {
@@ -238,19 +234,21 @@ pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) {
                 }
             }
         });
+        state.task_registry.insert_join("cron:announce", announce_handle).await;
 
         let cron_scheduler_clone = Arc::clone(&cron_scheduler);
-        tokio::spawn(async move {
+        let scheduler_handle = tokio::spawn(async move {
             let mut scheduler = cron_scheduler_clone.lock().await;
             if let Err(e) = scheduler.start(command_rx).await {
                 warn!("Advanced cron scheduler failed: {}", e);
             }
         });
-        state
+        state.task_registry.insert_join("cron:scheduler", scheduler_handle).await;
+        *state
             .scheduler
             .cron_scheduler
-            .init(cron_scheduler.clone())
-            .await;
+            .write()
+            .await = Some(cron_scheduler.clone());
         info!("Advanced cron scheduler initialized");
 
         crate::tools::CronTool::set_scheduler(cron_scheduler);
@@ -288,11 +286,11 @@ pub async fn init_task_scheduler(state: &Arc<GatewayState>) {
     if let Err(e) = task_scheduler.start(handler).await {
         warn!("TaskScheduler failed to start: {}", e);
     } else {
-        state
+        *state
             .scheduler
             .task_scheduler
-            .init(Arc::new(Mutex::new(task_scheduler)))
-            .await;
+            .write()
+            .await = Some(Arc::new(Mutex::new(task_scheduler)));
         info!("TaskScheduler started");
     }
 }
@@ -301,7 +299,7 @@ pub async fn init_task_scheduler(state: &Arc<GatewayState>) {
 pub async fn init_side_effect_context(state: &Arc<GatewayState>) {
     let side_effect_ctx = crate::outbound::SideEffectContext {
         memory_manager: state.memory.manager.read().await.as_ref().cloned(),
-        cron_scheduler: state.scheduler.cron_scheduler.get_opt().await,
+        cron_scheduler: state.scheduler.cron_scheduler.read().await.clone(),
         webhook_client: Some(Arc::new(
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))

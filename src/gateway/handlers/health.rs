@@ -130,7 +130,7 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Memory subsystems
-    let vector_memory_ready = if state.memory.vector.is_initialized().await {
+    let vector_memory_ready = if state.memory.vector.read().await.is_some() {
         1.0
     } else {
         0.0
@@ -152,7 +152,7 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Cron
-    let cron_ready = if state.scheduler.cron_scheduler.is_initialized().await {
+    let cron_ready = if state.scheduler.cron_scheduler.read().await.is_some() {
         1.0
     } else {
         0.0
@@ -245,7 +245,7 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     }
 
     // Dream metrics
-    if let Some(dm) = state.memory.dream_scheduler.get_opt().await {
+    if let Some(dm) = state.memory.dream_scheduler.read().await.clone() {
         let metrics = dm.metrics();
         gauge(
             "syscity_dreams_total",
@@ -393,13 +393,13 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     drop(channels);
 
     // Vector memory
-    let vector_memory_ready = state.memory.vector.is_initialized().await;
+    let vector_memory_ready = state.memory.vector.read().await.is_some();
 
     // Memory manager
     let memory_manager_ready = state.memory.manager.read().await.is_some();
 
     // Cron scheduler
-    let cron_ready = state.scheduler.cron_scheduler.is_initialized().await;
+    let cron_ready = state.scheduler.cron_scheduler.read().await.is_some();
 
     // Plugins
     let plugin_count = state.infra.plugin_manager.list_plugins().await.len();
@@ -425,8 +425,9 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     let dream_report = state
         .memory
         .dream_scheduler
-        .get_opt()
+        .read()
         .await
+        .clone()
         .map(|scheduler| {
             let metrics = scheduler.metrics();
             crate::gateway::DreamHealthReport {

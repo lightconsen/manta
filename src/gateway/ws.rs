@@ -2711,7 +2711,7 @@ async fn handle_mcp_disconnect(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
 }
 
 async fn handle_cron_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let jobs = match state.scheduler.cron_scheduler.get_opt().await {
+    let jobs = match state.scheduler.cron_scheduler.read().await.clone() {
         Some(s) => s.lock().await.list_jobs().await,
         None => Vec::new(),
     };
@@ -2750,7 +2750,7 @@ async fn handle_tasks_schedule(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         Err(res) => return res,
     };
 
-    let scheduler = match state.scheduler.task_scheduler.get_opt().await {
+    let scheduler = match state.scheduler.task_scheduler.read().await.clone() {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2785,7 +2785,7 @@ async fn handle_tasks_schedule(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
 }
 
 async fn handle_tasks_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let tasks = match state.scheduler.task_scheduler.get_opt().await {
+    let tasks = match state.scheduler.task_scheduler.read().await.clone() {
         Some(s) => s.lock().await.list().await,
         None => Vec::new(),
     };
@@ -2808,7 +2808,7 @@ async fn handle_tasks_delete(req: &WsRequest, state: &Arc<GatewayState>) -> WsRe
         Err(res) => return res,
     };
 
-    let scheduler = match state.scheduler.task_scheduler.get_opt().await {
+    let scheduler = match state.scheduler.task_scheduler.read().await.clone() {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2841,7 +2841,7 @@ async fn handle_tasks_enable(req: &WsRequest, state: &Arc<GatewayState>) -> WsRe
         Err(res) => return res,
     };
 
-    let scheduler = match state.scheduler.task_scheduler.get_opt().await {
+    let scheduler = match state.scheduler.task_scheduler.read().await.clone() {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2874,7 +2874,7 @@ async fn handle_tasks_disable(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
         Err(res) => return res,
     };
 
-    let scheduler = match state.scheduler.task_scheduler.get_opt().await {
+    let scheduler = match state.scheduler.task_scheduler.read().await.clone() {
         Some(s) => s,
         None => {
             return WsResponse::err(
