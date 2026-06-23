@@ -31,7 +31,12 @@ pub struct AgentHandle {
     pub tx: mpsc::Sender<AgentCommand>,
     /// Request/response query channel (introspection + skill invocations)
     pub query_tx: mpsc::Sender<AgentQuery>,
-    /// Whether agent is currently processing
+    /// Whether agent is currently processing.
+    ///
+    /// Uses acquire/release ordering: `store(true, Release)` in the agent loop
+    /// happens-before any reader that observes it with `load(Acquire)`. This
+    /// guarantees that a reader that sees `busy == true` also sees the message
+    /// processing state set up by the loop.
     pub busy: Arc<std::sync::atomic::AtomicBool>,
     /// Reference to the agent for ACP orchestration
     pub agent: Arc<Agent>,

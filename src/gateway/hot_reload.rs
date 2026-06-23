@@ -417,12 +417,13 @@ pub(crate) async fn register_hot_reload_handlers(
                     }
 
                     // Apply hot-reloadable fields (those that don't require server restart)
-                    let mut config = state.config.write().await;
+                    let mut config_guard = state.config.write().await;
+                    let config = Arc::make_mut(&mut config_guard);
                     config.security = new_config.security;
                     config.providers = new_config.providers;
                     config.mcp = new_config.mcp;
                     config.hot_reload = new_config.hot_reload;
-                    drop(config);
+                    drop(config_guard);
                     info!("✅ Applied gateway config updates (security, providers, mcp settings)");
 
                     // Compute diff and log to audit

@@ -115,7 +115,8 @@ pub async fn reload_all_handler(
                     .await;
                 result["config"] = serde_json::json!({ "updated": false, "reason": e.to_string() });
             } else {
-                let mut config = state.config.write().await;
+                let mut config_guard = state.config.write().await;
+                let config = Arc::make_mut(&mut config_guard);
                 config.security = new_cfg.security.clone();
                 config.providers = new_cfg.providers.clone();
                 config.mcp = new_cfg.mcp.clone();
@@ -132,7 +133,7 @@ pub async fn reload_all_handler(
                 config.cron = new_cfg.cron.clone();
                 config.browser = new_cfg.browser.clone();
                 config.device = new_cfg.device.clone();
-                drop(config);
+                drop(config_guard);
                 result["config"] = serde_json::json!({ "updated": true });
                 info!("Applied hot-reloadable configuration fields");
             }
@@ -466,8 +467,8 @@ pub async fn enable_channel_handler(
     Path(name): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let mut config = state.config.write().await;
-    let channel_config = match config.channels.get_mut(&name) {
+    let mut config_guard = state.config.write().await;
+    let channel_config = match Arc::make_mut(&mut config_guard).channels.get_mut(&name) {
         Some(cfg) => cfg,
         None => {
             return (
@@ -491,7 +492,7 @@ pub async fn enable_channel_handler(
     }
 
     channel_config.enabled = true;
-    drop(config);
+    drop(config_guard);
 
     // Persist config to disk
     if let Err(e) = persist_config(&state).await {
@@ -519,8 +520,8 @@ pub async fn disable_channel_handler(
     Path(name): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let mut config = state.config.write().await;
-    let channel_config = match config.channels.get_mut(&name) {
+    let mut config_guard = state.config.write().await;
+    let channel_config = match Arc::make_mut(&mut config_guard).channels.get_mut(&name) {
         Some(cfg) => cfg,
         None => {
             return (
@@ -544,7 +545,7 @@ pub async fn disable_channel_handler(
     }
 
     channel_config.enabled = false;
-    drop(config);
+    drop(config_guard);
 
     // Persist config to disk
     if let Err(e) = persist_config(&state).await {

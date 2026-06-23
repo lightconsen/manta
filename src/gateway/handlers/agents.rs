@@ -27,7 +27,7 @@ pub async fn list_agents_handler(State(state): State<Arc<GatewayState>>) -> impl
             let is_discovered = discovered.contains(id);
             serde_json::json!({
                 "id": id,
-                "busy": handle.busy.load(std::sync::atomic::Ordering::Relaxed),
+                "busy": handle.busy.load(std::sync::atomic::Ordering::Acquire),
                 "status": "running",
                 "discovered": is_discovered,
             })
@@ -173,7 +173,7 @@ pub async fn get_agent_handler(
     match agents.get(&id) {
         Some(agent) => Json(serde_json::json!({
             "id": agent.id,
-            "busy": agent.busy.load(std::sync::atomic::Ordering::Relaxed),
+            "busy": agent.busy.load(std::sync::atomic::Ordering::Acquire),
         }))
         .into_response(),
         None => (StatusCode::NOT_FOUND, "Agent not found").into_response(),

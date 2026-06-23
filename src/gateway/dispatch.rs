@@ -83,8 +83,8 @@ pub(crate) async fn process_routed_messages(
 /// Dispatch a single `RoutedMessage` to the resolved agent.
 ///
 /// Lock hierarchy observed in this function:
-/// `agents.group_manager` → `agents.message_buffer` → `agents.follow_up_timers`
-/// → `agents.agents` → `infra.runtime_settings`.
+/// `agents.group_manager` → `agents.message_buffer` → `agents.agents`
+/// → `infra.runtime_settings`.
 pub(crate) async fn dispatch_routed_message(
     state: &Arc<GatewayState>,
     routed: crate::inbound::RoutedMessage,
@@ -217,8 +217,8 @@ pub(crate) async fn dispatch_routed_message(
                 )
                 .await;
             } else {
-                let mut timers = state.agents.follow_up_timers.write().await;
-                if !timers.contains_key(&session_id) {
+                let timer_name = format!("followup:{}", session_id);
+                if !state.task_registry.contains(&timer_name).await {
                     let state_clone = state.clone();
                     let agent_id_clone = agent_id.clone();
                     let session_id_clone = session_id.clone();
@@ -234,14 +234,11 @@ pub(crate) async fn dispatch_routed_message(
                             queue_mode_clone,
                         )
                         .await;
-                        state_clone
-                            .agents
-                            .follow_up_timers
-                            .write()
-                            .await
-                            .remove(&session_id_clone);
                     });
-                    timers.insert(session_id.clone(), handle);
+                    state
+                        .task_registry
+                        .insert_join(timer_name, handle)
+                        .await;
                 }
             }
         }
@@ -304,15 +301,10 @@ pub(crate) async fn dispatch_routed_message(
 
 /// Cancel any pending FollowUp flush timer for a session.
 async fn clear_follow_up_timer(state: &GatewayState, session_id: &str) {
-    if let Some(handle) = state
-        .agents
-        .follow_up_timers
-        .write()
-        .await
-        .remove(session_id)
-    {
-        handle.abort();
-    }
+    state
+        .task_registry
+        .abort(&format!("followup:{}", session_id))
+        .await;
 }
 
 /// Flush buffered messages for a session and send as a single batch.

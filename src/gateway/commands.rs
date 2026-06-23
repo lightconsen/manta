@@ -1791,7 +1791,8 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
         let current_model = state.config.read().await.model.clone();
         settings.insert("fast.original_model".to_string(), serde_json::json!(current_model));
         if let Some(fast_model) = state.infra.model_router.resolve_alias("fast").await {
-            state.config.write().await.model = fast_model.clone();
+            let mut cfg_guard = state.config.write().await;
+            Arc::make_mut(&mut cfg_guard).model = fast_model.clone();
             settings.insert("fast.mode".to_string(), serde_json::json!(true));
             return WsResponse::ok(
                 &req.id,
@@ -1807,7 +1808,8 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
         // Restore original model
         let original = settings.get("fast.original_model").and_then(|v| v.as_str());
         if let Some(orig) = original {
-            state.config.write().await.model = orig.to_string();
+            let mut cfg_guard = state.config.write().await;
+            Arc::make_mut(&mut cfg_guard).model = orig.to_string();
         }
         settings.insert("fast.mode".to_string(), serde_json::json!(false));
         WsResponse::ok(

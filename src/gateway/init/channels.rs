@@ -130,12 +130,13 @@ pub(crate) async fn init_plugin_channels(
                 if let Some(ref monitor) = state.channels.health_monitor {
                     let check_interval = std::time::Duration::from_secs(30);
                     let transport_timeout = std::time::Duration::from_secs(10);
-                    monitor.monitor_channel_with_timeout(
+                    let monitor_handle = monitor.monitor_channel_with_timeout(
                         name,
                         channel,
                         check_interval,
                         transport_timeout,
                     );
+                    register_channel_task(&state, name, "monitor", monitor_handle).await;
                 }
 
                 // Record snapshot
@@ -278,7 +279,8 @@ pub(crate) async fn init_single_channel(
         if let Some(channel) = channels.get(name).cloned() {
             drop(channels);
             let check_interval = std::time::Duration::from_secs(30);
-            monitor.monitor_channel(name, channel, check_interval);
+            let monitor_handle = monitor.monitor_channel(name, channel, check_interval);
+            register_channel_task(&state, name, "monitor", monitor_handle).await;
             info!("Started health monitoring for channel '{}'", name);
         } else {
             warn!("Channel '{}' not found in registry for health monitoring", name);

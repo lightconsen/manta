@@ -98,7 +98,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
     ));
 
     GatewayState {
-        config: Arc::new(RwLock::new(config)),
+        config: Arc::new(RwLock::new(Arc::new(config))),
         start_time: std::time::Instant::now(),
         config_path: None,
         auth: syscity::gateway::state::AuthState {
@@ -131,7 +131,6 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             group_manager: Arc::new(RwLock::new(syscity::agent::GroupSessionManager::new())),
             store: None,
             message_buffer: Arc::new(RwLock::new(HashMap::new())),
-            follow_up_timers: Arc::new(RwLock::new(HashMap::new())),
             route_resolver: Arc::new(syscity::agent::RouteResolver::new("default")),
             cost_guard: syscity::agent::CostGuard::new(0, 0),
             repair_state: Arc::new(syscity::gateway::RepairState::new()),

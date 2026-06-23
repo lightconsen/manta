@@ -97,7 +97,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
     ));
 
     GatewayState {
-        config: Arc::new(RwLock::new(config)),
+        config: Arc::new(RwLock::new(Arc::new(config))),
         start_time: std::time::Instant::now(),
         config_path: None,
         device_init: tokio::sync::RwLock::new(None),
@@ -133,7 +133,6 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             group_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
             store: None,
             message_buffer: Arc::new(RwLock::new(HashMap::new())),
-            follow_up_timers: Arc::new(RwLock::new(HashMap::new())),
             route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
             cost_guard: crate::agent::CostGuard::new(0, 0),
             repair_state: Arc::new(RepairState::new()),

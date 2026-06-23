@@ -82,8 +82,6 @@ pub struct AgentState {
     pub group_manager: Arc<RwLock<GroupSessionManager>>,
     pub store: Option<Arc<SessionStore>>,
     pub message_buffer: Arc<RwLock<HashMap<String, Vec<crate::gateway::BufferedMessage>>>>,
-    /// Per-session delayed flush timers for FollowUp queue mode.
-    pub follow_up_timers: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
     pub route_resolver: Arc<RouteResolver>,
     pub cost_guard: Arc<CostGuard>,
     pub repair_state: Arc<RepairState>,
@@ -205,8 +203,13 @@ pub struct ControlInit {
 
 /// Shared gateway state grouped by domain.
 pub struct GatewayState {
-    /// Configuration
-    pub config: Arc<RwLock<GatewayConfig>>,
+    /// Configuration.
+    ///
+    /// Stored as `Arc<RwLock<Arc<GatewayConfig>>>` so that hot-reload can
+    /// atomically replace the entire immutable config snapshot, and readers can
+    /// take a cheap `Arc<GatewayConfig>` clone that remains consistent even
+    /// while a reload is in progress.
+    pub config: Arc<RwLock<Arc<GatewayConfig>>>,
     /// Gateway startup time for uptime calculations
     pub start_time: Instant,
     /// Path to the config file (for runtime persistence)

@@ -269,7 +269,7 @@ pub(crate) async fn run_agent_loop(
                         channel,
                         model_override,
                     } => {
-                        busy.store(true, Ordering::Relaxed);
+                        busy.store(true, Ordering::Release);
                         let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
                             agent_id: agent_id.clone(),
                             status: super::AgentStatus::Processing {
@@ -308,7 +308,7 @@ pub(crate) async fn run_agent_loop(
                             agent_id: agent_id.clone(),
                             status: super::AgentStatus::Idle,
                         });
-                        busy.store(false, Ordering::Relaxed);
+                        busy.store(false, Ordering::Release);
                     }
                     super::AgentCommand::Cancel => {
                         if use_acp {

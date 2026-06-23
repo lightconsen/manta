@@ -226,10 +226,6 @@ pub struct Gateway {
     pub(crate) state: Arc<GatewayState>,
     pub(crate) config: GatewayConfig,
     pub(crate) shutdown_token: CancellationToken,
-    /// Physical device registry, populated when device drivers are provided.
-    pub(crate) device_registry: Option<Arc<crate::device::registry::DeviceRegistry>>,
-    /// Perception fusion layer registry, populated when perception is enabled.
-    pub(crate) perception_registry: Option<Arc<crate::perception::PerceptionRegistry>>,
 }
 
 /// Initialize the perception fusion layer.
@@ -646,7 +642,7 @@ impl Gateway {
 
         // Assemble the domain-grouped GatewayState used by the rest of the system
         let state = Arc::new(GatewayState {
-            config: Arc::new(RwLock::new(config.clone())),
+            config: Arc::new(RwLock::new(Arc::new(config.clone()))),
             start_time: Instant::now(),
             config_path: config_path.clone(),
             device_init: RwLock::new(None),
@@ -692,7 +688,6 @@ impl Gateway {
                 group_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
                 store: session_store.clone(),
                 message_buffer: Arc::new(RwLock::new(HashMap::new())),
-                follow_up_timers: Arc::new(RwLock::new(HashMap::new())),
                 route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
                 cost_guard: crate::agent::CostGuard::new(
                     config.cost_guard.daily_limit_cents,
@@ -947,8 +942,12 @@ impl Gateway {
             .map(|di| di.registry.clone());
 
         // Initialize perception fusion layer (delegated to helper)
-        let perception_registry: Option<Arc<crate::perception::PerceptionRegistry>> =
-            init_perception(&config.perception, state.as_ref(), device_registry.clone()).await;
+        let _perception_registry: Option<Arc<crate::perception::PerceptionRegistry>> =
+            init_perception(&config.perception,
+                state.as_ref(),
+                device_registry.clone(),
+            )
+            .await;
 
         // Initialize control lane (optional, runs alongside perception)
         init_control(&config.device, state.as_ref()).await;
@@ -977,8 +976,6 @@ impl Gateway {
             state,
             config,
             shutdown_token,
-            device_registry,
-            perception_registry,
         })
     }
 
@@ -1000,13 +997,26 @@ impl Gateway {
     /// Returns `None` when no device drivers were registered at startup.
     /// Primarily used in integration / E2E tests to verify device registration.
     pub fn device_registry(&self) -> Option<Arc<crate::device::registry::DeviceRegistry>> {
-        self.device_registry.clone()
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.state.device_init.read().await.as_ref().map(|di| di.registry.clone())
+            })
+        })
     }
 
     /// Return a clone of the internal `PerceptionRegistry`, if one exists.
     /// Returns `None` when perception is disabled.
     pub fn perception_registry(&self) -> Option<Arc<crate::perception::PerceptionRegistry>> {
-        self.perception_registry.clone()
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.state
+                    .perception_init
+                    .read()
+                    .await
+                    .as_ref()
+                    .map(|pi| pi.registry.clone())
+            })
+        })
     }
 
     /// Return a clone of the gateway shutdown token.

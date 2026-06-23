@@ -1313,8 +1313,8 @@ async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                 &req.id,
                 serde_json::json!({
                     "agent_id": params.agent_id,
-                    "busy": handle.busy.load(std::sync::atomic::Ordering::Relaxed),
-                    "status": if handle.busy.load(std::sync::atomic::Ordering::Relaxed) { "busy" } else { "idle" },
+                    "busy": handle.busy.load(std::sync::atomic::Ordering::Acquire),
+                    "status": if handle.busy.load(std::sync::atomic::Ordering::Acquire) { "busy" } else { "idle" },
                     "config": {
                         "temperature": cfg.temperature,
                         "max_tokens": cfg.max_tokens,
@@ -2104,7 +2104,8 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    let mut config = state.config.write().await;
+    let mut config_guard = state.config.write().await;
+    let config = Arc::make_mut(&mut config_guard);
 
     match params.path.as_str() {
         "model" => {
@@ -2294,7 +2295,7 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     }
 
     // Persist config to disk so changes survive restarts and trigger hot-reload
-    drop(config);
+    drop(config_guard);
     if let Some(config_path) = state.config_path.clone() {
         let config_guard = state.config.read().await;
         match toml::to_string_pretty(&*config_guard) {
@@ -2418,8 +2419,8 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
 
         // Update GatewayConfig providers
         {
-            let mut config = state.config.write().await;
-            config
+            let mut config_guard = state.config.write().await;
+            Arc::make_mut(&mut config_guard)
                 .providers
                 .insert(provider_name.clone(), provider_config.clone());
         }
@@ -2603,8 +2604,11 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
     };
 
     {
-        let mut cfg = state.config.write().await;
-        cfg.mcp.servers.insert(payload.id.clone(), config.clone());
+        let mut cfg_guard = state.config.write().await;
+        Arc::make_mut(&mut cfg_guard)
+            .mcp
+            .servers
+            .insert(payload.id.clone(), config.clone());
     }
 
     if payload.auto_connect {
@@ -2639,8 +2643,8 @@ async fn handle_mcp_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     state.tools.registry.deregister_prefix(&prefix);
 
     {
-        let mut cfg = state.config.write().await;
-        cfg.mcp.servers.remove(&payload.id);
+        let mut cfg_guard = state.config.write().await;
+        Arc::make_mut(&mut cfg_guard).mcp.servers.remove(&payload.id);
     }
 
     if let Err(e) = persist_config(state).await {

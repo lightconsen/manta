@@ -102,7 +102,7 @@ impl Default for ControlConfig {
 pub fn spawn_control_loop(
     registry: Arc<DeviceRegistry>,
     handlers: ControlHandlerRegistry,
-    config: Arc<RwLock<GatewayConfig>>,
+    config: Arc<RwLock<Arc<GatewayConfig>>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -162,7 +162,7 @@ pub fn spawn_control_loop(
 pub fn init_control_runtime(
     registry: Arc<DeviceRegistry>,
     handlers: ControlHandlerRegistry,
-    config: Arc<RwLock<GatewayConfig>>,
+    config: Arc<RwLock<Arc<GatewayConfig>>>,
 ) -> (Runtime, JoinHandle<()>) {
     let mut builder = tokio::runtime::Builder::new_current_thread();
     builder.enable_all();
@@ -272,8 +272,8 @@ mod tests {
         Arc::new(reg)
     }
 
-    fn control_config(interval_ms: u64) -> Arc<RwLock<GatewayConfig>> {
-        Arc::new(RwLock::new(GatewayConfig {
+    fn control_config(interval_ms: u64) -> Arc<RwLock<Arc<GatewayConfig>>> {
+        Arc::new(RwLock::new(Arc::new(GatewayConfig {
             device: crate::gateway::DeviceConfig {
                 control: ControlConfig {
                     enabled: true,
@@ -283,7 +283,7 @@ mod tests {
                 ..Default::default()
             },
             ..Default::default()
-        }))
+        })))
     }
 
     #[tokio::test]

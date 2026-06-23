@@ -555,7 +555,7 @@ impl Tool for GatewayTool {
 
                 {
                     let mut cfg = self.state.config.write().await;
-                    *cfg = new_config;
+                    *cfg = Arc::new(new_config);
                 }
 
                 let new_hash = {

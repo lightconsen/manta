@@ -67,7 +67,7 @@ pub async fn put_config_handler(
     // Update in-memory config
     {
         let mut config = state.config.write().await;
-        *config = new_config;
+        *config = Arc::new(new_config);
     }
 
     info!("Config updated and persisted to {:?}", config_path);

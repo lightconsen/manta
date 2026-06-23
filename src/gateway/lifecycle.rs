@@ -569,7 +569,8 @@ pub(crate) async fn stop_gateway(
         info!("Tailscale authentication mode enabled");
     }
 
-    // 13. Abort remaining background tasks.
+    // 13. Abort remaining background tasks (includes followup timers now that
+    //     they live in the unified registry).
     let background_handles = state.task_registry.take_all().await;
     for (_name, handle) in background_handles {
         handle.abort();
@@ -584,23 +585,13 @@ pub(crate) async fn stop_gateway(
             }
         }
     }
-    // Control lane handle is registered in the task registry and will be
-    // aborted by step 13 below.
 
-    // 15. Abort any remaining FollowUp flush timers.
-    {
-        let timers = std::mem::take(&mut *state.agents.follow_up_timers.write().await);
-        for (_session_id, handle) in timers {
-            handle.abort();
-        }
-    }
-
-    // 17. Plugin manager shutdown.
+    // 15. Plugin manager shutdown.
     if let Err(e) = state.infra.plugin_manager.shutdown().await {
         warn!("Failed to shutdown plugin manager: {}", e);
     }
 
-    // 18. Storage is left to flush on process exit.
+    // 16. Storage is left to flush on process exit.
     info!("Gateway shutdown complete");
     Ok(())
 }
