@@ -68,7 +68,7 @@ mod tests {
             agent: std::sync::Arc::new(agent),
         };
 
-        let _ = acp.create_session(handle.id.clone()).await;
+        acp.create_session(handle.id.clone()).await;
         let result = handle
             .spawn_subagent(
                 &acp,

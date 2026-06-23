@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tempfile::tempdir;
+use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::acp::AcpControlPlane;
@@ -106,6 +107,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         control_init: tokio::sync::RwLock::new(None),
         summarizer: tokio::sync::OnceCell::new(),
         task_registry: task_registry.clone(),
+        shutdown_token: CancellationToken::new(),
         auth: AuthState {
             manager: Arc::new(crate::security::AuthManager::new()),
             pairing_store: Arc::new(PairingStore::new()),

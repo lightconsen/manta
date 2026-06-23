@@ -147,7 +147,9 @@ pub async fn init_plugin_manager(
                             warn!("Failed to register plugin provider '{}': {}", task_name, e);
                         }
                     });
-                    let _ = tx.send((format!("plugin:provider:register:{}", name), handle));
+                    if let Err(e) = tx.send((format!("plugin:provider:register:{}", name), handle)) {
+                        warn!("Failed to enqueue plugin provider registration task '{}': {}", name, e);
+                    }
                 }),
                 Arc::new(move |name: String| {
                     let task_name = name.clone();
@@ -158,7 +160,9 @@ pub async fn init_plugin_manager(
                             warn!("Failed to unregister plugin provider '{}': {}", task_name, e);
                         }
                     });
-                    let _ = tx.send((format!("plugin:provider:unregister:{}", name), handle));
+                    if let Err(e) = tx.send((format!("plugin:provider:unregister:{}", name), handle)) {
+                        warn!("Failed to enqueue plugin provider unregistration task '{}': {}", name, e);
+                    }
                 }),
             )
             .await;
@@ -184,7 +188,9 @@ pub async fn init_plugin_manager(
                             ch.write().await.insert(task_name.clone(), channel);
                             info!("Registered plugin channel '{}'", task_name);
                         });
-                        let _ = tx.send((format!("plugin:channel:register:{}", name), handle));
+                        if let Err(e) = tx.send((format!("plugin:channel:register:{}", name), handle)) {
+                            warn!("Failed to enqueue plugin channel registration task '{}': {}", name, e);
+                        }
                     },
                 ),
                 Arc::new(move |name: String| {
@@ -195,7 +201,9 @@ pub async fn init_plugin_manager(
                         ch.write().await.remove(&task_name);
                         info!("Deregistered plugin channel '{}'", task_name);
                     });
-                    let _ = tx.send((format!("plugin:channel:unregister:{}", name), handle));
+                    if let Err(e) = tx.send((format!("plugin:channel:unregister:{}", name), handle)) {
+                        warn!("Failed to enqueue plugin channel unregistration task '{}': {}", name, e);
+                    }
                 }),
             )
             .await;

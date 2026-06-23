@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::acp::AcpControlPlane;
 use crate::adapters::Storage;
@@ -235,6 +236,10 @@ pub struct GatewayState {
 
     /// Centralized registry for all gateway background tasks.
     pub task_registry: Arc<TaskRegistry>,
+
+    /// Shared shutdown signal used by command handlers and background tasks
+    /// that only have access to `GatewayState`.
+    pub shutdown_token: CancellationToken,
 
     pub auth: AuthState,
     pub agents: AgentState,

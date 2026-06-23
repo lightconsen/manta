@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 use crate::acp::{AcpSessionId, SpawnMode, SubagentConfig, ThreadBinding};
 use crate::agent::TranscriptFormat;
@@ -699,7 +699,9 @@ async fn handle_stop(
     let session_id = conn.read().await.subscriptions.first().cloned();
 
     if let Some(sid) = session_id {
-        state.agents.acp.cancel(sid.clone()).await.ok();
+        if let Err(e) = state.agents.acp.cancel(sid.clone()).await {
+            warn!("Failed to send stop signal for session {}: {}", sid, e);
+        }
         return WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": format!("⏹️ Stop signal sent for session `{}`.", sid) }),
@@ -1342,7 +1344,9 @@ async fn handle_acp(
                 Some(rest.to_string())
             };
             if let Some(sid) = sid {
-                state.agents.acp.cancel(sid.clone()).await.ok();
+                if let Err(e) = state.agents.acp.cancel(sid.clone()).await {
+                    warn!("Failed to cancel ACP session {}: {}", sid, e);
+                }
                 return WsResponse::ok(
                     &req.id,
                     serde_json::json!({ "text": format!("🤖 ACP session `{}` cancelled.", sid) }),
@@ -1357,11 +1361,14 @@ async fn handle_acp(
                 Some(rest.to_string())
             };
             if let Some(sid) = sid {
-                let _ = state
+                if let Err(e) = state
                     .agents
                     .acp
                     .terminate_session(&AcpSessionId(sid.clone()))
-                    .await;
+                    .await
+                {
+                    warn!("Failed to terminate ACP session {}: {}", sid, e);
+                }
                 return WsResponse::ok(
                     &req.id,
                     serde_json::json!({ "text": format!("🤖 ACP session `{}` terminated.", sid) }),
@@ -1450,13 +1457,19 @@ async fn handle_acp(
             };
             match sub {
                 "pause" => {
-                    state.agents.acp.pause(sid.clone()).await.ok();
+                    if let Err(e) = state.agents.acp.pause(sid.clone()).await {
+                        warn!("Failed to pause ACP session {}: {}", sid, e);
+                    }
                 }
                 "resume" => {
-                    state.agents.acp.resume(sid.clone()).await.ok();
+                    if let Err(e) = state.agents.acp.resume(sid.clone()).await {
+                        warn!("Failed to resume ACP session {}: {}", sid, e);
+                    }
                 }
                 "step" => {
-                    state.agents.acp.step(sid.clone()).await.ok();
+                    if let Err(e) = state.agents.acp.step(sid.clone()).await {
+                        warn!("Failed to step ACP session {}: {}", sid, e);
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -1533,7 +1546,9 @@ async fn handle_kill(
     if trimmed.is_empty() || trimmed == "all" {
         let session_id = conn.read().await.subscriptions.first().cloned();
         if let Some(sid) = session_id {
-            state.agents.acp.cancel(sid.clone()).await.ok();
+            if let Err(e) = state.agents.acp.cancel(sid.clone()).await {
+                warn!("Failed to send kill signal to session {}: {}", sid, e);
+            }
             return WsResponse::ok(
                 &req.id,
                 serde_json::json!({ "text": format!("💀 Kill signal sent to session `{}`.", sid) }),
@@ -2657,8 +2672,30 @@ async fn handle_debug(req: &WsRequest, state: &Arc<GatewayState>, args: &str) ->
 }
 
 async fn handle_restart(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let state_for_restart = state.clone();
     let restart_handle = tokio::spawn(async move {
+        // Give the response a moment to be sent, then perform graceful shutdown.
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        let shutdown_token = state_for_restart.shutdown_token.clone();
+        shutdown_token.cancel();
+
+        let tailscale_enabled = state_for_restart.config.read().await.tailscale_enabled;
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            crate::gateway::lifecycle::stop_gateway(
+                &shutdown_token,
+                &state_for_restart,
+                tailscale_enabled,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(())) => info!("Graceful shutdown completed for restart"),
+            Ok(Err(e)) => warn!("Graceful shutdown failed during restart: {}", e),
+            Err(_) => warn!("Graceful shutdown timed out during restart"),
+        }
+
         std::process::exit(0);
     });
     state
@@ -2667,7 +2704,7 @@ async fn handle_restart(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
         .await;
     WsResponse::ok(
         &req.id,
-        serde_json::json!({ "text": "🔄 Gateway restart initiated. The process will exit in 1 second." }),
+        serde_json::json!({ "text": "🔄 Gateway restart initiated. The process will exit gracefully." }),
     )
 }
 

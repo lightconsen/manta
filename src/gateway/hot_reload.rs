@@ -278,10 +278,7 @@ pub(crate) async fn register_hot_reload_handlers(
                         };
                         if let Some(channel) = channel {
                             if let Err(e) = channel.stop().await {
-                                warn!(
-                                    "Failed to stop disabled channel '{}': {}",
-                                    channel_name, e
-                                );
+                                warn!("Failed to stop disabled channel '{}': {}", channel_name, e);
                             } else {
                                 info!("✅ Stopped disabled channel '{}'", channel_name);
                             }
@@ -296,10 +293,7 @@ pub(crate) async fn register_hot_reload_handlers(
                     };
                     if let Some(channel) = old_channel {
                         if let Err(e) = channel.stop().await {
-                            warn!(
-                                "Failed to stop channel '{}' before reload: {}",
-                                channel_name, e
-                            );
+                            warn!("Failed to stop channel '{}' before reload: {}", channel_name, e);
                         }
                     }
 

@@ -297,6 +297,16 @@ pub(crate) async fn spawn_agent_inner(
 ///
 /// `use_acp` selects between ACP-routed execution (production agents spawned by
 /// the gateway) and direct agent execution (agents created via the REST API).
+/// Broadcast a gateway event and log if there are no active listeners.
+fn emit_event(
+    tx: &tokio::sync::broadcast::Sender<super::GatewayEvent>,
+    event: super::GatewayEvent,
+) {
+    if let Err(e) = tx.send(event) {
+        warn!("Failed to broadcast gateway event: {}", e);
+    }
+}
+
 pub(crate) async fn run_agent_loop(
     state: Arc<super::GatewayState>,
     agent_id: String,
@@ -323,7 +333,7 @@ pub(crate) async fn run_agent_loop(
                         model_override,
                     } => {
                         busy.store(true, Ordering::Release);
-                        let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
+                        emit_event(&state.events.tx, super::GatewayEvent::AgentStatus {
                             agent_id: agent_id.clone(),
                             status: super::AgentStatus::Processing {
                                 session_id: session_id.clone(),
@@ -357,7 +367,7 @@ pub(crate) async fn run_agent_loop(
                             .await;
                         }
 
-                        let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
+                        emit_event(&state.events.tx, super::GatewayEvent::AgentStatus {
                             agent_id: agent_id.clone(),
                             status: super::AgentStatus::Idle,
                         });
@@ -379,14 +389,14 @@ pub(crate) async fn run_agent_loop(
                                 info!("Agent {} configuration updated", agent_id);
                             }
                         }
-                        let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
+                        emit_event(&state.events.tx, super::GatewayEvent::AgentStatus {
                             agent_id: agent_id.clone(),
                             status: super::AgentStatus::Idle,
                         });
                     }
                     super::AgentCommand::Shutdown => {
                         info!("Agent {} shutting down", agent_id);
-                        let _ = state.events.tx.send(super::GatewayEvent::AgentStatus {
+                        emit_event(&state.events.tx, super::GatewayEvent::AgentStatus {
                             agent_id: agent_id.clone(),
                             status: super::AgentStatus::Shutdown,
                         });
@@ -502,12 +512,15 @@ async fn process_message_acp(
             match event {
                 crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
                     info!("ToolCalling event: {} for session {}", name, session_id);
-                    let _ = state.events.tx.send(super::GatewayEvent::ToolCalling {
-                        session_id: session_id.clone(),
-                        agent_id: agent_id.clone(),
-                        tool_name: name.clone(),
-                        arguments: arguments.clone(),
-                    });
+                    emit_event(
+                        &state.events.tx,
+                        super::GatewayEvent::ToolCalling {
+                            session_id: session_id.clone(),
+                            agent_id: agent_id.clone(),
+                            tool_name: name.clone(),
+                            arguments: arguments.clone(),
+                        },
+                    );
                     let mut traj = trajectory.lock().await;
                     traj.push(crate::outbound::TrajectoryEntry::ToolCall {
                         timestamp: std::time::SystemTime::now(),
@@ -518,13 +531,16 @@ async fn process_message_acp(
                 }
                 crate::agent::ProgressEvent::ToolResult { name, result, data } => {
                     info!("ToolResult event: {} for session {}", name, session_id);
-                    let _ = state.events.tx.send(super::GatewayEvent::ToolResult {
-                        session_id: session_id.clone(),
-                        agent_id: agent_id.clone(),
-                        tool_name: name.clone(),
-                        result: result.clone(),
-                        data: data.clone(),
-                    });
+                    emit_event(
+                        &state.events.tx,
+                        super::GatewayEvent::ToolResult {
+                            session_id: session_id.clone(),
+                            agent_id: agent_id.clone(),
+                            tool_name: name.clone(),
+                            result: result.clone(),
+                            data: data.clone(),
+                        },
+                    );
                     let mut traj = trajectory.lock().await;
                     traj.push(crate::outbound::TrajectoryEntry::ToolResult {
                         timestamp: std::time::SystemTime::now(),
@@ -535,18 +551,24 @@ async fn process_message_acp(
                     });
                 }
                 crate::agent::ProgressEvent::Completed { response } => {
-                    let _ = state.events.tx.send(super::GatewayEvent::Completed {
-                        session_id: session_id.clone(),
-                        agent_id: agent_id.clone(),
-                        response,
-                    });
+                    emit_event(
+                        &state.events.tx,
+                        super::GatewayEvent::Completed {
+                            session_id: session_id.clone(),
+                            agent_id: agent_id.clone(),
+                            response,
+                        },
+                    );
                 }
                 crate::agent::ProgressEvent::Error { message } => {
-                    let _ = state.events.tx.send(super::GatewayEvent::ProcessingError {
-                        session_id: session_id.clone(),
-                        agent_id: agent_id.clone(),
-                        message,
-                    });
+                    emit_event(
+                        &state.events.tx,
+                        super::GatewayEvent::ProcessingError {
+                            session_id: session_id.clone(),
+                            agent_id: agent_id.clone(),
+                            message,
+                        },
+                    );
                 }
                 _ => {}
             }
@@ -606,14 +628,17 @@ async fn process_message_acp(
         "DEBUG: Agent {} sending AgentResponse for session {} (conversation: {})",
         agent_id, session_id, conversation_id
     );
-    let _ = state.events.tx.send(super::GatewayEvent::AgentResponse {
-        session_id: session_id.to_string(),
-        agent_id: agent_id.to_string(),
-        content: response_content.clone(),
-        channel: channel.to_string(),
-        conversation_id: conversation_id.clone(),
-        usage: response_usage,
-    });
+    emit_event(
+        &state.events.tx,
+        super::GatewayEvent::AgentResponse {
+            session_id: session_id.to_string(),
+            agent_id: agent_id.to_string(),
+            content: response_content.clone(),
+            channel: channel.to_string(),
+            conversation_id: conversation_id.clone(),
+            usage: response_usage,
+        },
+    );
 
     let trajectory = {
         let traj = trajectory.lock().await;
@@ -697,10 +722,13 @@ async fn process_message_direct(
         Box::pin(async move {
             match event {
                 crate::agent::ProgressEvent::Started => {
-                    let _ = tx.send(super::GatewayEvent::AgentStatus {
-                        agent_id: aid.clone(),
-                        status: super::AgentStatus::Processing { session_id: sid.clone() },
-                    });
+                    emit_event(
+                        &tx,
+                        super::GatewayEvent::AgentStatus {
+                            agent_id: aid.clone(),
+                            status: super::AgentStatus::Processing { session_id: sid.clone() },
+                        },
+                    );
                 }
                 crate::agent::ProgressEvent::Generating { content } => {
                     if reasoning_vis.as_deref() == Some("off") {
@@ -708,31 +736,40 @@ async fn process_message_direct(
                     }
                     if let Some(ref thinking) = content {
                         if !thinking.is_empty() {
-                            let _ = tx.send(super::GatewayEvent::Thinking {
-                                session_id: sid.clone(),
-                                agent_id: aid.clone(),
-                                content: Some(thinking.clone()),
-                            });
+                            emit_event(
+                                &tx,
+                                super::GatewayEvent::Thinking {
+                                    session_id: sid.clone(),
+                                    agent_id: aid.clone(),
+                                    content: Some(thinking.clone()),
+                                },
+                            );
                         }
                     }
                 }
                 crate::agent::ProgressEvent::ContentDelta { text } => {
-                    let _ = tx.send(super::GatewayEvent::ContentDelta {
-                        session_id: sid.clone(),
-                        agent_id: aid.clone(),
-                        delta: text,
-                    });
+                    emit_event(
+                        &tx,
+                        super::GatewayEvent::ContentDelta {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            delta: text,
+                        },
+                    );
                 }
                 crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
                     if verbose_mode.as_deref() == Some("off") {
                         return;
                     }
-                    let _ = tx.send(super::GatewayEvent::ToolCalling {
-                        session_id: sid.clone(),
-                        agent_id: aid.clone(),
-                        tool_name: name.clone(),
-                        arguments: arguments.clone(),
-                    });
+                    emit_event(
+                        &tx,
+                        super::GatewayEvent::ToolCalling {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            tool_name: name.clone(),
+                            arguments: arguments.clone(),
+                        },
+                    );
                 }
                 crate::agent::ProgressEvent::ToolResult { name, result, data } => {
                     if verbose_mode.as_deref() == Some("off") {
@@ -747,28 +784,37 @@ async fn process_message_direct(
                     } else {
                         result
                     };
-                    let _ = tx.send(super::GatewayEvent::ToolResult {
-                        session_id: sid.clone(),
-                        agent_id: aid.clone(),
-                        tool_name: name.clone(),
-                        result,
-                        data,
-                    });
+                    emit_event(
+                        &tx,
+                        super::GatewayEvent::ToolResult {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            tool_name: name.clone(),
+                            result,
+                            data,
+                        },
+                    );
                 }
                 crate::agent::ProgressEvent::ToolResultDelta { .. } => {}
                 crate::agent::ProgressEvent::Completed { response } => {
-                    let _ = tx.send(super::GatewayEvent::Completed {
-                        session_id: sid.clone(),
-                        agent_id: aid.clone(),
-                        response,
-                    });
+                    emit_event(
+                        &tx,
+                        super::GatewayEvent::Completed {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            response,
+                        },
+                    );
                 }
                 crate::agent::ProgressEvent::Error { message } => {
-                    let _ = tx.send(super::GatewayEvent::ProcessingError {
-                        session_id: sid.clone(),
-                        agent_id: aid.clone(),
-                        message,
-                    });
+                    emit_event(
+                        &tx,
+                        super::GatewayEvent::ProcessingError {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            message,
+                        },
+                    );
                 }
             }
         })
@@ -860,14 +906,17 @@ async fn process_message_direct(
                 }
             }
 
-            let _ = state.events.tx.send(super::GatewayEvent::AgentResponse {
-                session_id: session_id.to_string(),
-                agent_id: agent_id.to_string(),
-                content: outgoing.content,
-                channel: channel.to_string(),
-                conversation_id: session_id.to_string(),
-                usage: outgoing.usage,
-            });
+            emit_event(
+                &state.events.tx,
+                super::GatewayEvent::AgentResponse {
+                    session_id: session_id.to_string(),
+                    agent_id: agent_id.to_string(),
+                    content: outgoing.content,
+                    channel: channel.to_string(),
+                    conversation_id: session_id.to_string(),
+                    usage: outgoing.usage,
+                },
+            );
         }
         Err(e) => {
             error!("Agent {} failed to process: {}", agent_id, e);

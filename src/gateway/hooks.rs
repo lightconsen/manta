@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::gateway::task_registry::TaskRegistry;
 use crate::gateway::GatewayEvent;
@@ -251,7 +251,9 @@ pub async fn emit_event(
     };
 
     // Broadcast
-    let _ = event_tx.send(event.clone());
+    if let Err(e) = event_tx.send(event.clone()) {
+        warn!("Failed to broadcast gateway event: {}", e);
+    }
 
     // Run after hooks (fire-and-forget)
     hooks.run_after(event).await;

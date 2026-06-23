@@ -474,22 +474,28 @@ async fn dispatch_method(
                             let error_text =
                                 format!("Command error: Missing required scope: {}", required);
                             if let Some(ref store) = state.agents.store {
-                                let _ = store
+                                if let Err(e) = store
                                     .append_message(&AppendMessageParams {
                                         session_id,
                                         role: "user",
                                         content: &user_text,
                                         ..Default::default()
                                     })
-                                    .await;
-                                let _ = store
+                                    .await
+                                {
+                                    warn!("Failed to append user command message: {}", e);
+                                }
+                                if let Err(e) = store
                                     .append_message(&AppendMessageParams {
                                         session_id,
                                         role: "assistant",
                                         content: &error_text,
                                         ..Default::default()
                                     })
-                                    .await;
+                                    .await
+                                {
+                                    warn!("Failed to append assistant error message: {}", e);
+                                }
                             }
                         }
                     }
@@ -788,10 +794,7 @@ async fn handle_device_auth(
                 code: code.clone(),
                 display_name: None,
             }) {
-                warn!(
-                    "Failed to broadcast DevicePairRequested for {}: {}",
-                    device.id, e
-                );
+                warn!("Failed to broadcast DevicePairRequested for {}: {}", device.id, e);
             }
             error_invalid_request(
                 &req.id,
@@ -1109,12 +1112,9 @@ async fn handle_chat_abort(
         Err(res) => return res,
     };
 
-    state
-        .agents
-        .acp
-        .cancel(params.session_id.clone())
-        .await
-        .ok();
+    if let Err(e) = state.agents.acp.cancel(params.session_id.clone()).await {
+        warn!("Failed to cancel session {} during abort: {}", params.session_id, e);
+    }
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1207,7 +1207,9 @@ async fn handle_sessions_create(
 
     if let Some(ref store) = state.agents.store {
         let metadata = crate::agent::session_store::SessionMetadata::new(&session_id, "", "", "");
-        let _ = store.save_session(&session_id, &metadata, "{}").await;
+        if let Err(e) = store.save_session(&session_id, &metadata, "{}").await {
+            warn!("Failed to save session {}: {}", session_id, e);
+        }
     }
 
     WsResponse::ok(
@@ -1240,7 +1242,9 @@ async fn handle_sessions_delete(
     }
 
     if let Some(ref store) = state.agents.store {
-        let _ = store.delete_session(&params.session_id).await;
+        if let Err(e) = store.delete_session(&params.session_id).await {
+            warn!("Failed to delete session {}: {}", params.session_id, e);
+        }
     }
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "deleted" }))
@@ -1261,15 +1265,14 @@ async fn handle_sessions_reset(
         Err(res) => return res,
     };
 
-    state
-        .agents
-        .acp
-        .cancel(params.session_id.clone())
-        .await
-        .ok();
+    if let Err(e) = state.agents.acp.cancel(params.session_id.clone()).await {
+        warn!("Failed to cancel session {} during reset: {}", params.session_id, e);
+    }
 
     if let Some(ref store) = state.agents.store {
-        let _ = store.delete_session(&params.session_id).await;
+        if let Err(e) = store.delete_session(&params.session_id).await {
+            warn!("Failed to delete session {} during reset: {}", params.session_id, e);
+        }
     }
 
     WsResponse::ok(
@@ -1296,9 +1299,12 @@ async fn handle_sessions_subscribe(
         Err(res) => return res,
     };
 
-    let _ = cmd_tx
+    if let Err(e) = cmd_tx
         .send(WsCommand::Subscribe(params.session_ids.clone()))
-        .await;
+        .await
+    {
+        warn!("Failed to send subscribe command: {}", e);
+    }
 
     WsResponse::ok(
         &req.id,
@@ -1323,9 +1329,12 @@ async fn handle_sessions_unsubscribe(
         Err(res) => return res,
     };
 
-    let _ = cmd_tx
+    if let Err(e) = cmd_tx
         .send(WsCommand::Unsubscribe(params.session_ids.clone()))
-        .await;
+        .await
+    {
+        warn!("Failed to send unsubscribe command: {}", e);
+    }
 
     WsResponse::ok(
         &req.id,
@@ -1630,7 +1639,14 @@ async fn handle_acp_spawn(
                     }),
                 ),
                 Err(e) => {
-                    let _ = state.agents.acp.shutdown_subagent(&subagent_id).await;
+                    if let Err(shutdown_err) =
+                        state.agents.acp.shutdown_subagent(&subagent_id).await
+                    {
+                        warn!(
+                            "Failed to shutdown subagent {} after task failure: {}",
+                            subagent_id, shutdown_err
+                        );
+                    }
                     WsResponse::err(
                         &req.id,
                         "SPAWN_FAILED",
@@ -1828,15 +1844,21 @@ async fn handle_acp_pause(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespo
         Err(res) => return res,
     };
 
-    state.agents.acp.pause(params.session_id.clone()).await.ok();
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({
-            "session_id": params.session_id,
-            "action": "pause",
-            "status": "requested",
-        }),
-    )
+    match state.agents.acp.pause(params.session_id.clone()).await {
+        Ok(()) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "session_id": params.session_id,
+                "action": "pause",
+                "status": "requested",
+            }),
+        ),
+        Err(e) => WsResponse::err(
+            &req.id,
+            "PAUSE_FAILED",
+            format!("Failed to pause session {}: {}", params.session_id, e),
+        ),
+    }
 }
 
 async fn handle_acp_resume(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
@@ -1850,20 +1872,21 @@ async fn handle_acp_resume(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    state
-        .agents
-        .acp
-        .resume(params.session_id.clone())
-        .await
-        .ok();
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({
-            "session_id": params.session_id,
-            "action": "resume",
-            "status": "requested",
-        }),
-    )
+    match state.agents.acp.resume(params.session_id.clone()).await {
+        Ok(()) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "session_id": params.session_id,
+                "action": "resume",
+                "status": "requested",
+            }),
+        ),
+        Err(e) => WsResponse::err(
+            &req.id,
+            "RESUME_FAILED",
+            format!("Failed to resume session {}: {}", params.session_id, e),
+        ),
+    }
 }
 
 async fn handle_acp_step(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
@@ -1877,15 +1900,21 @@ async fn handle_acp_step(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespon
         Err(res) => return res,
     };
 
-    state.agents.acp.step(params.session_id.clone()).await.ok();
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({
-            "session_id": params.session_id,
-            "action": "step",
-            "status": "requested",
-        }),
-    )
+    match state.agents.acp.step(params.session_id.clone()).await {
+        Ok(()) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "session_id": params.session_id,
+                "action": "step",
+                "status": "requested",
+            }),
+        ),
+        Err(e) => WsResponse::err(
+            &req.id,
+            "STEP_FAILED",
+            format!("Failed to step session {}: {}", params.session_id, e),
+        ),
+    }
 }
 
 async fn handle_acp_cancel(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
@@ -1899,20 +1928,21 @@ async fn handle_acp_cancel(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    state
-        .agents
-        .acp
-        .cancel(params.session_id.clone())
-        .await
-        .ok();
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({
-            "session_id": params.session_id,
-            "action": "cancel",
-            "status": "requested",
-        }),
-    )
+    match state.agents.acp.cancel(params.session_id.clone()).await {
+        Ok(()) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "session_id": params.session_id,
+                "action": "cancel",
+                "status": "requested",
+            }),
+        ),
+        Err(e) => WsResponse::err(
+            &req.id,
+            "CANCEL_FAILED",
+            format!("Failed to cancel session {}: {}", params.session_id, e),
+        ),
+    }
 }
 
 async fn handle_acp_tree(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
@@ -2520,11 +2550,14 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     // If this is the first alias, auto-set it as default
     let aliases = state.infra.model_router.list_aliases().await;
     if aliases.len() == 1 {
-        let _ = state
+        if let Err(e) = state
             .infra
             .model_router
             .switch_default_model(&payload.name)
-            .await;
+            .await
+        {
+            warn!("Failed to switch default model to {}: {}", payload.name, e);
+        }
     }
 
     // Register in catalog for discovery
@@ -2694,7 +2727,9 @@ async fn handle_mcp_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    let _ = state.tools.mcp_manager.disconnect(&payload.id).await;
+    if let Err(e) = state.tools.mcp_manager.disconnect(&payload.id).await {
+        warn!("Failed to disconnect MCP server {}: {}", payload.id, e);
+    }
     let prefix = format!("mcp__{}__", payload.id);
     state.tools.registry.deregister_prefix(&prefix);
 
@@ -3036,6 +3071,18 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
             }
         };
 
+        // Guard against oversized ZIPs before blocking the thread pool.
+        const MAX_ZIP_BYTES: usize = 64 * 1024 * 1024;
+        const MAX_ZIP_ENTRIES: usize = 10_000;
+        const MAX_ENTRY_BYTES: usize = 16 * 1024 * 1024;
+        if zip_bytes.len() > MAX_ZIP_BYTES {
+            return WsResponse::err(
+                &req.id,
+                "INVALID_CONTENT",
+                format!("ZIP exceeds maximum size of {} MB", MAX_ZIP_BYTES / (1024 * 1024)),
+            );
+        }
+
         let skill_dir_clone = skill_dir.clone();
         // Extract ZIP synchronously (ZipFile is not Send)
         #[allow(clippy::type_complexity)]
@@ -3048,7 +3095,12 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
                 Err(e) => return Err(format!("Invalid ZIP: {}", e)),
             };
 
+            if archive.len() > MAX_ZIP_ENTRIES {
+                return Err(format!("ZIP contains too many entries (max {})", MAX_ZIP_ENTRIES));
+            }
+
             let mut files: Vec<(std::path::PathBuf, Vec<u8>)> = Vec::new();
+            let mut total_uncompressed: usize = 0;
             for i in 0..archive.len() {
                 let mut file = match archive.by_index(i) {
                     Ok(f) => f,
@@ -3059,7 +3111,22 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
                     None => continue,
                 };
                 if !file.is_dir() {
-                    let mut contents = Vec::new();
+                    let size = file.size() as usize;
+                    if size > MAX_ENTRY_BYTES {
+                        return Err(format!(
+                            "ZIP entry '{}' exceeds maximum size of {} MB",
+                            outpath.display(),
+                            MAX_ENTRY_BYTES / (1024 * 1024)
+                        ));
+                    }
+                    total_uncompressed = total_uncompressed.saturating_add(size);
+                    if total_uncompressed > MAX_ZIP_BYTES {
+                        return Err(format!(
+                            "ZIP total uncompressed size exceeds {} MB",
+                            MAX_ZIP_BYTES / (1024 * 1024)
+                        ));
+                    }
+                    let mut contents = Vec::with_capacity(size);
                     if let Err(e) = std::io::Read::read_to_end(&mut file, &mut contents) {
                         return Err(format!("Failed to read ZIP entry: {}", e));
                     }
@@ -3069,17 +3136,25 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
             Ok(files)
         });
 
-        let files: Vec<(std::path::PathBuf, Vec<u8>)> = match extract_task.await {
-            Ok(Ok(f)) => f,
-            Ok(Err(msg)) => return WsResponse::err(&req.id, "INVALID_CONTENT", msg),
-            Err(e) => {
-                return WsResponse::err(
-                    &req.id,
-                    "INTERNAL_ERROR",
-                    format!("ZIP extraction failed: {}", e),
-                )
-            }
-        };
+        let files: Vec<(std::path::PathBuf, Vec<u8>)> =
+            match tokio::time::timeout(std::time::Duration::from_secs(30), extract_task).await {
+                Ok(Ok(Ok(f))) => f,
+                Ok(Ok(Err(msg))) => return WsResponse::err(&req.id, "INVALID_CONTENT", msg),
+                Ok(Err(_)) => {
+                    return WsResponse::err(
+                        &req.id,
+                        "INTERNAL_ERROR",
+                        "ZIP extraction task was cancelled".to_string(),
+                    )
+                }
+                Err(_) => {
+                    return WsResponse::err(
+                        &req.id,
+                        "INVALID_CONTENT",
+                        "ZIP extraction timed out".to_string(),
+                    )
+                }
+            };
 
         // Write extracted files
         for (outpath, contents) in files {
@@ -3106,7 +3181,9 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         // Validate SKILL.md exists and is valid
         let skill_md_path = skill_dir.join("SKILL.md");
         if !skill_md_path.exists() {
-            let _ = tokio::fs::remove_dir_all(&skill_dir).await;
+            if let Err(e) = tokio::fs::remove_dir_all(&skill_dir).await {
+                warn!("Failed to remove skill dir {}: {}", skill_dir.display(), e);
+            }
             return WsResponse::err(
                 &req.id,
                 "INVALID_CONTENT",
@@ -3117,7 +3194,9 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         let skill_md_content = match tokio::fs::read_to_string(&skill_md_path).await {
             Ok(c) => c,
             Err(e) => {
-                let _ = tokio::fs::remove_dir_all(&skill_dir).await;
+                if let Err(rm_err) = tokio::fs::remove_dir_all(&skill_dir).await {
+                    warn!("Failed to remove skill dir {}: {}", skill_dir.display(), rm_err);
+                }
                 return WsResponse::err(
                     &req.id,
                     "INVALID_CONTENT",
@@ -3127,7 +3206,9 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         };
 
         if let Err(e) = crate::skills::parse_skill_md(&skill_md_content) {
-            let _ = tokio::fs::remove_dir_all(&skill_dir).await;
+            if let Err(rm_err) = tokio::fs::remove_dir_all(&skill_dir).await {
+                warn!("Failed to remove skill dir {}: {}", skill_dir.display(), rm_err);
+            }
             return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid SKILL.md: {}", e));
         }
     } else if let Some(content) = payload.content {
@@ -3214,6 +3295,8 @@ async fn handle_logs_subscribe(
     let log_tx = state.events.log_tx.clone();
     let cmd_tx = cmd_tx.clone();
     let task_registry = state.task_registry.clone();
+    let shutdown_token = state.shutdown_token.clone();
+    let conn_id_for_task = conn_id.clone();
 
     let task_handle = tokio::spawn(async move {
         // Subscribe to new log lines first to avoid missing any during file read
@@ -3237,11 +3320,8 @@ async fn handle_logs_subscribe(
                         seq: None,
                     };
                     if let Ok(text) = serde_json::to_string(&event) {
-                        if cmd_tx
-                            .send(WsCommand::SendEvent(text))
-                            .await
-                            .is_err()
-                        {
+                        if cmd_tx.send(WsCommand::SendEvent(text)).await.is_err() {
+                            warn!("Log tail send channel closed for {}", conn_id_for_task);
                             break;
                         }
                     }
@@ -3268,11 +3348,16 @@ async fn handle_logs_subscribe(
                             .await
                             .is_err()
                         {
+                            warn!("Log tail send channel closed for {}", conn_id_for_task);
                             break;
                         }
                     }
                 }
                 _ = cancel_rx.recv() => {
+                    break;
+                }
+                _ = shutdown_token.cancelled() => {
+                    info!("Log tail task received shutdown signal for {}", conn_id_for_task);
                     break;
                 }
             }

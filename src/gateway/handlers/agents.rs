@@ -148,10 +148,12 @@ pub async fn delete_agent_handler(
     }
 
     // Send event
-    let _ = state.events.tx.send(GatewayEvent::AgentStatus {
+    if let Err(e) = state.events.tx.send(GatewayEvent::AgentStatus {
         agent_id: id.clone(),
         status: AgentStatus::Shutdown,
-    });
+    }) {
+        warn!("Failed to broadcast agent shutdown event for {}: {}", id, e);
+    }
 
     info!("✅ Agent {} deleted successfully", id);
     StatusCode::NO_CONTENT

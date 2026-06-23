@@ -43,10 +43,14 @@ pub async fn init_storage(config: &GatewayConfig) -> crate::Result<StorageInit> 
                 .map(|s| std::path::PathBuf::from(s.strip_prefix("sqlite:").unwrap_or(s)))
                 .unwrap_or_else(|| crate::dirs::syscity_dir().join("data").join("syscity.db"));
             if let Some(parent) = db_path.parent() {
-                tokio::fs::create_dir_all(parent).await.ok();
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    warn!("Failed to create SQLite directory {:?}: {}", parent, e);
+                }
             }
             if !db_path.exists() {
-                tokio::fs::File::create(&db_path).await.ok();
+                if let Err(e) = tokio::fs::File::create(&db_path).await {
+                    warn!("Failed to create SQLite file {:?}: {}", db_path, e);
+                }
             }
             let db_url = format!("sqlite:///{}", db_path.display());
             info!("Connecting to SQLite storage at: {}", db_url);

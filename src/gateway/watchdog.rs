@@ -68,7 +68,10 @@ pub(crate) async fn prune_repair_records(state: &Arc<GatewayState>) {
     };
     let channel_keys: std::collections::HashSet<String> = {
         let channels = state.channels.channels.read().await;
-        channels.keys().map(|name| format!("channel:{}", name)).collect()
+        channels
+            .keys()
+            .map(|name| format!("channel:{}", name))
+            .collect()
     };
 
     let mut records = state.agents.repair_state.records.write().await;
@@ -148,7 +151,7 @@ pub(crate) async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
                 rec.restart_count += 1;
                 rec.last_restart_at = Some(chrono::Utc::now());
                 info!("Agent {} restarted (attempt {})", agent_id, rec.restart_count);
-                let _ = state.events.tx.send(GatewayEvent::RepairAction {
+                if let Err(e) = state.events.tx.send(GatewayEvent::RepairAction {
                     kind: "agent".into(),
                     target_id: agent_id,
                     description: format!(
@@ -156,7 +159,9 @@ pub(crate) async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
                         rec.restart_count
                     ),
                     restart_count: rec.restart_count,
-                });
+                }) {
+                    warn!("Failed to broadcast repair event: {}", e);
+                }
             }
             Err(e) => {
                 error!("Failed to restart agent {}: {}", agent_id, e);
@@ -230,7 +235,7 @@ pub(crate) async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
                 rec.restart_count += 1;
                 rec.last_restart_at = Some(chrono::Utc::now());
                 info!("Channel {} restarted (attempt {})", name, rec.restart_count);
-                let _ = state.events.tx.send(GatewayEvent::RepairAction {
+                if let Err(e) = state.events.tx.send(GatewayEvent::RepairAction {
                     kind: "channel".into(),
                     target_id: name,
                     description: format!(
@@ -238,7 +243,9 @@ pub(crate) async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
                         rec.restart_count
                     ),
                     restart_count: rec.restart_count,
-                });
+                }) {
+                    warn!("Failed to broadcast repair event: {}", e);
+                }
             }
             Err(e) => {
                 error!("Failed to restart channel {}: {}", name, e);

@@ -290,16 +290,29 @@ pub(crate) async fn start_gateway(
     {
         let mut approval_rx = state.tools.approval_queue.event_tx.subscribe();
         let event_tx = state.events.tx.clone();
+        let shutdown_token = shutdown_token.clone();
         let approval_handle = tokio::spawn(async move {
-            while let Ok(evt) = approval_rx.recv().await {
-                if let Err(e) = event_tx.send(crate::gateway::GatewayEvent::ApprovalRequired {
-                    approval_id: evt.approval_id,
-                    tool_name: evt.tool_name,
-                    requested_by: evt.requested_by,
-                    risk_level: evt.risk_level,
-                    message: evt.message,
-                }) {
-                    debug!("No receivers for ApprovalRequired event: {}", e);
+            loop {
+                tokio::select! {
+                    _ = shutdown_token.cancelled() => {
+                        info!("Approval forwarder received shutdown signal, exiting");
+                        break;
+                    }
+                    result = approval_rx.recv() => {
+                        let evt = match result {
+                            Ok(evt) => evt,
+                            Err(_) => break,
+                        };
+                        if let Err(e) = event_tx.send(crate::gateway::GatewayEvent::ApprovalRequired {
+                            approval_id: evt.approval_id,
+                            tool_name: evt.tool_name,
+                            requested_by: evt.requested_by,
+                            risk_level: evt.risk_level,
+                            message: evt.message,
+                        }) {
+                            debug!("No receivers for ApprovalRequired event: {}", e);
+                        }
+                    }
                 }
             }
         });
@@ -344,50 +357,58 @@ pub(crate) async fn start_gateway(
     // Start log tail broadcaster for real-time log streaming
     {
         let log_tx = state.events.log_tx.clone();
+        let shutdown_token = shutdown_token.clone();
         let log_tail_handle = tokio::spawn(async move {
             let log_path = crate::logs::log_file_path();
             let mut pos: u64 = 0;
             loop {
-                if log_path.exists() {
-                    match tokio::fs::metadata(&log_path).await {
-                        Ok(meta) => {
-                            let new_len = meta.len();
-                            if new_len > pos {
-                                match tokio::fs::File::open(&log_path).await {
-                                    Ok(file) => {
-                                        let mut reader = tokio::io::BufReader::new(file);
-                                        if let Err(e) =
-                                            reader.seek(tokio::io::SeekFrom::Start(pos)).await
-                                        {
-                                            tracing::warn!("Log tail seek error: {}", e);
-                                        } else {
-                                            let mut lines = reader.lines();
-                                            while let Ok(Some(line)) = lines.next_line().await {
-                                                if let Err(e) = log_tx.send(line) {
-                                                    debug!(
-                                                        "No receivers for log tail event: {}",
-                                                        e
-                                                    );
+                tokio::select! {
+                    _ = shutdown_token.cancelled() => {
+                        info!("Log tail broadcaster received shutdown signal, exiting");
+                        break;
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
+                        if log_path.exists() {
+                            match tokio::fs::metadata(&log_path).await {
+                                Ok(meta) => {
+                                    let new_len = meta.len();
+                                    if new_len > pos {
+                                        match tokio::fs::File::open(&log_path).await {
+                                            Ok(file) => {
+                                                let mut reader = tokio::io::BufReader::new(file);
+                                                if let Err(e) =
+                                                    reader.seek(tokio::io::SeekFrom::Start(pos)).await
+                                                {
+                                                    tracing::warn!("Log tail seek error: {}", e);
+                                                } else {
+                                                    let mut lines = reader.lines();
+                                                    while let Ok(Some(line)) = lines.next_line().await {
+                                                        if let Err(e) = log_tx.send(line) {
+                                                            debug!(
+                                                                "No receivers for log tail event: {}",
+                                                                e
+                                                            );
+                                                        }
+                                                    }
                                                 }
+                                                pos = new_len;
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("Log tail open error: {}", e);
                                             }
                                         }
-                                        pos = new_len;
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!("Log tail open error: {}", e);
+                                    } else if new_len < pos {
+                                        // File was truncated/rotated
+                                        pos = 0;
                                     }
                                 }
-                            } else if new_len < pos {
-                                // File was truncated/rotated
-                                pos = 0;
+                                Err(e) => {
+                                    tracing::warn!("Log tail metadata error: {}", e);
+                                }
                             }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Log tail metadata error: {}", e);
                         }
                     }
                 }
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         });
         state

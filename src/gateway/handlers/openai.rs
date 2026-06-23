@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use tokio::sync::mpsc;
+use tracing::warn;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
@@ -154,7 +155,9 @@ pub async fn openai_chat_completions_handler(
                 .await
                 .is_ok()
             {
-                let _ = tx.send(Ok(SseEvt::default().data("[DONE]"))).await;
+                if let Err(e) = tx.send(Ok(SseEvt::default().data("[DONE]"))).await {
+                    warn!("Failed to send SSE [DONE] chunk: {}", e);
+                }
             }
         });
         state

@@ -653,6 +653,7 @@ impl Gateway {
             control_init: RwLock::new(None),
             summarizer: tokio::sync::OnceCell::new(),
             task_registry: task_registry.clone(),
+            shutdown_token: shutdown_token.clone(),
             auth: AuthState {
                 manager: security_init.auth_manager.clone(),
                 pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
@@ -756,13 +757,17 @@ impl Gateway {
                 },
                 disk_budget: {
                     let manager = crate::agent::DiskBudgetManager::new(crate::dirs::budget_dir());
-                    let _ = manager.init();
+                    if let Err(e) = manager.init() {
+                        warn!("Failed to initialize disk budget manager: {}", e);
+                    }
                     Arc::new(manager)
                 },
                 session_file_manager: {
                     let manager =
                         crate::agent::SessionFileManager::new(crate::dirs::session_files_dir());
-                    let _ = manager.init().await;
+                    if let Err(e) = manager.init().await {
+                        warn!("Failed to initialize session file manager: {}", e);
+                    }
                     Arc::new(manager)
                 },
                 hot_reload: RwLock::new(None),

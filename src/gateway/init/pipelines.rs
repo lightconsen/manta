@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+use tracing::warn;
+
 use crate::gateway::GatewayConfig;
 use crate::inbound::{
     AgentRouter, AutoReplyDispatch, AutoReplyDispatchConfig, DefaultInboundPipeline,
@@ -49,7 +51,9 @@ pub async fn init_pipelines(
         );
         let router = AgentRouter::new(crate::inbound::AgentRouterConfig::default())
             .with_binding_store(binding_store);
-        router.load_bindings().await.ok();
+        if let Err(e) = router.load_bindings().await {
+            warn!("Failed to load agent router bindings: {}", e);
+        }
         Arc::new(router)
     } else {
         Arc::new(AgentRouter::new(crate::inbound::AgentRouterConfig::default()))
