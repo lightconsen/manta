@@ -1803,10 +1803,7 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
 
         {
             let mut settings = state.infra.runtime_settings.write().await;
-            settings.insert(
-                "fast.original_model".to_string(),
-                serde_json::json!(current_model),
-            );
+            settings.insert("fast.original_model".to_string(), serde_json::json!(current_model));
             settings.insert("fast.active_model".to_string(), serde_json::json!(active_model));
             settings.insert("fast.mode".to_string(), serde_json::json!(true));
         }

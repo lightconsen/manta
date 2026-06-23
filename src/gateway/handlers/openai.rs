@@ -97,8 +97,9 @@ pub async fn openai_chat_completions_handler(
         // ── Streaming SSE response ──────────────────────────────────────────
         let model = req.model.clone();
         let (tx, rx) = mpsc::channel::<Result<SseEvt, std::convert::Infallible>>(64);
+        let sse_session_id = session_id.clone();
 
-        tokio::spawn(async move {
+        let sse_task = tokio::spawn(async move {
             let completion_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
             let created = chrono::Utc::now().timestamp();
             let timeout_dur = tokio::time::Duration::from_secs(120);
@@ -113,7 +114,7 @@ pub async fn openai_chat_completions_handler(
                     .await
                 {
                     Ok(Ok(GatewayEvent::AgentResponse { session_id: sid, content, .. })) => {
-                        if sid == session_id {
+                        if sid == sse_session_id {
                             break content;
                         }
                     }
@@ -156,6 +157,10 @@ pub async fn openai_chat_completions_handler(
                 let _ = tx.send(Ok(SseEvt::default().data("[DONE]"))).await;
             }
         });
+        state
+            .task_registry
+            .insert_join(format!("openai:sse:{}", session_id), sse_task)
+            .await;
 
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Sse::new(stream)

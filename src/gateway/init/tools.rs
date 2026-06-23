@@ -106,6 +106,7 @@ pub async fn init_plugin_manager(
     tool_registry: Arc<ToolRegistry>,
     model_router: Arc<ModelRouter>,
     channels: Arc<RwLock<HashMap<String, Arc<dyn Channel>>>>,
+    task_registry: Arc<crate::gateway::task_registry::TaskRegistry>,
 ) -> crate::Result<Arc<PluginManager>> {
     let plugins_dir = crate::dirs::config_dir().join("plugins");
     let plugin_manager = {
@@ -114,27 +115,50 @@ pub async fn init_plugin_manager(
         Arc::new(pm)
     };
 
+    // Background task that registers plugin callback spawns in the unified
+    // TaskRegistry. Callbacks are synchronous, so they send handles over this
+    // channel and the async loop registers them with unique names.
+    let (spawn_tx, mut spawn_rx) =
+        mpsc::unbounded_channel::<(String, tokio::task::JoinHandle<()>)>();
+    let registry_task_registry = task_registry.clone();
+    let registry_task = tokio::spawn(async move {
+        while let Some((name, handle)) = spawn_rx.recv().await {
+            registry_task_registry.insert_join(name, handle).await;
+        }
+    });
+    task_registry
+        .insert_abort("plugin:spawn_registry", &registry_task)
+        .await;
+
     // Wire plugin manager to register plugin-backed providers with the model router
     {
         let mr_register = model_router.clone();
         let mr_unregister = model_router.clone();
+        let tx_register = spawn_tx.clone();
+        let tx_unregister = spawn_tx.clone();
         plugin_manager
             .set_provider_callbacks(
                 Arc::new(move |name: String, provider: Arc<dyn crate::providers::Provider + Send + Sync>| {
+                    let task_name = name.clone();
                     let mr = mr_register.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = mr.add_provider_instance(&name, provider).await {
-                            warn!("Failed to register plugin provider '{}': {}", name, e);
+                    let tx = tx_register.clone();
+                    let handle = tokio::spawn(async move {
+                        if let Err(e) = mr.add_provider_instance(&task_name, provider).await {
+                            warn!("Failed to register plugin provider '{}': {}", task_name, e);
                         }
                     });
+                    let _ = tx.send((format!("plugin:provider:register:{}", name), handle));
                 }),
                 Arc::new(move |name: String| {
+                    let task_name = name.clone();
                     let mr = mr_unregister.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = mr.remove_provider(&name).await {
-                            warn!("Failed to unregister plugin provider '{}': {}", name, e);
+                    let tx = tx_unregister.clone();
+                    let handle = tokio::spawn(async move {
+                        if let Err(e) = mr.remove_provider(&task_name).await {
+                            warn!("Failed to unregister plugin provider '{}': {}", task_name, e);
                         }
                     });
+                    let _ = tx.send((format!("plugin:provider:unregister:{}", name), handle));
                 }),
             )
             .await;
@@ -147,23 +171,31 @@ pub async fn init_plugin_manager(
 
         let channels_reg = channels.clone();
         let channels_unreg = channels.clone();
+        let tx_reg = spawn_tx.clone();
+        let tx_unreg = spawn_tx.clone();
         plugin_manager
             .set_channel_callbacks(
                 Arc::new(
                     move |name: String, channel: Arc<dyn crate::channels::Channel + Send + Sync>| {
+                        let task_name = name.clone();
                         let ch = channels_reg.clone();
-                        tokio::spawn(async move {
-                            ch.write().await.insert(name.clone(), channel);
-                            info!("Registered plugin channel '{}'", name);
+                        let tx = tx_reg.clone();
+                        let handle = tokio::spawn(async move {
+                            ch.write().await.insert(task_name.clone(), channel);
+                            info!("Registered plugin channel '{}'", task_name);
                         });
+                        let _ = tx.send((format!("plugin:channel:register:{}", name), handle));
                     },
                 ),
                 Arc::new(move |name: String| {
+                    let task_name = name.clone();
                     let ch = channels_unreg.clone();
-                    tokio::spawn(async move {
-                        ch.write().await.remove(&name);
-                        info!("Deregistered plugin channel '{}'", name);
+                    let tx = tx_unreg.clone();
+                    let handle = tokio::spawn(async move {
+                        ch.write().await.remove(&task_name);
+                        info!("Deregistered plugin channel '{}'", task_name);
                     });
+                    let _ = tx.send((format!("plugin:channel:unregister:{}", name), handle));
                 }),
             )
             .await;
@@ -183,6 +215,7 @@ pub async fn init_tools(
     session_store: Option<Arc<SessionStore>>,
     audit_log_dyn: Arc<dyn AuditLogger>,
     model_router: Arc<ModelRouter>,
+    task_registry: Arc<crate::gateway::task_registry::TaskRegistry>,
 ) -> crate::Result<ToolsInit> {
     let (mcp_manager, mcp_event_rx) = init_mcp_manager().await;
     let approval_queue = Arc::new(ApprovalQueue::new());
@@ -207,8 +240,14 @@ pub async fn init_tools(
 
     let computer_adapter = init_computer_adapter(config, tool_registry.clone()).await;
     let channels = Arc::new(RwLock::new(HashMap::<String, Arc<dyn Channel>>::new()));
-    let plugin_manager =
-        init_plugin_manager(config, tool_registry.clone(), model_router, channels.clone()).await?;
+    let plugin_manager = init_plugin_manager(
+        config,
+        tool_registry.clone(),
+        model_router,
+        channels.clone(),
+        task_registry,
+    )
+    .await?;
     let canvas_manager = Arc::new(CanvasManager::new());
     let channel_extensions = Arc::new(RwLock::new(ChannelExtensionRegistry::new()));
 

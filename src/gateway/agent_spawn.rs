@@ -46,10 +46,7 @@ impl AgentResolver for GatewayAgentResolver {
 /// active, fall back to the configured default model.
 async fn effective_model_for_spawn(state: &super::GatewayState) -> String {
     let settings = state.infra.runtime_settings.read().await;
-    if let Some(model) = settings
-        .get("fast.active_model")
-        .and_then(|v| v.as_str())
-    {
+    if let Some(model) = settings.get("fast.active_model").and_then(|v| v.as_str()) {
         return model.to_string();
     }
     state.config.read().await.model.clone()

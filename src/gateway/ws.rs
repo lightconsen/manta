@@ -871,7 +871,7 @@ async fn handle_chat_send(
         } else {
             name
         };
-        tokio::spawn(async move {
+        let name_task = tokio::spawn(async move {
             if let Some(ref s) = store {
                 if let Err(e) = s.set_session_name(&sid, &name).await {
                     tracing::warn!("Failed to save session name for {}: {}", sid, e);
@@ -880,6 +880,10 @@ async fn handle_chat_send(
                 }
             }
         });
+        state
+            .task_registry
+            .insert_join(format!("ws:session_name:{}", session_id), name_task)
+            .await;
     }
 
     if let Some(ref store) = state.agents.store {

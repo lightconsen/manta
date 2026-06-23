@@ -310,10 +310,8 @@ pub(crate) async fn start_gateway(
     }
 
     // Start gateway-level self-repair watchdog (60 s interval)
-    let repair_handle = tokio::spawn(super::watchdog::run_repair_loop(
-        state.clone(),
-        shutdown_token.clone(),
-    ));
+    let repair_handle =
+        tokio::spawn(super::watchdog::run_repair_loop(state.clone(), shutdown_token.clone()));
     state
         .task_registry
         .insert_join("repair_loop", repair_handle)

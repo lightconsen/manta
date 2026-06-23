@@ -606,6 +606,9 @@ impl Gateway {
         let (skills_manager, agent_registry, session_manager) =
             init::agents::init_agent_state().await?;
 
+        // Assemble the domain-grouped GatewayState used by the rest of the system
+        let task_registry = Arc::new(crate::gateway::task_registry::TaskRegistry::new());
+
         // Initialize tool subsystem (registry, MCP, plugins, channels, computer
         // adapter)
         let tools_init = init::tools::init_tools(
@@ -614,6 +617,7 @@ impl Gateway {
             session_store.clone(),
             audit_log_dyn.clone(),
             model_router.clone(),
+            task_registry.clone(),
         )
         .await?;
 
@@ -640,7 +644,6 @@ impl Gateway {
         .await?;
 
         // Assemble the domain-grouped GatewayState used by the rest of the system
-        let task_registry = Arc::new(crate::gateway::task_registry::TaskRegistry::new());
         let state = Arc::new(GatewayState {
             config: Arc::new(RwLock::new(Arc::new(config.clone()))),
             start_time: Instant::now(),
