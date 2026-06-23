@@ -398,16 +398,33 @@ pub(crate) async fn run_agent_loop(
                 let query = match query { Some(q) => q, None => break };
                 match query {
                     super::AgentQuery::GetThreadSummaries { response_tx } => {
-                        let _ = response_tx.send(agent.thread_summaries().await);
+                        if let Err(e) = response_tx.send(agent.thread_summaries().await) {
+                            warn!("Agent {}: failed to send thread summaries: {:?}", agent_id, e);
+                        }
                     }
                     super::AgentQuery::GetThreadTurns { conv_id, response_tx } => {
-                        let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
+                        if let Err(e) = response_tx.send(agent.thread_turns_for(&conv_id).await) {
+                            warn!(
+                                "Agent {}: failed to send thread turns for {}: {:?}",
+                                agent_id, conv_id, e
+                            );
+                        }
                     }
                     super::AgentQuery::UndoLastTurn { conv_id, response_tx } => {
-                        let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                        if let Err(e) = response_tx.send(agent.undo_last_turn(&conv_id).await) {
+                            warn!(
+                                "Agent {}: failed to send undo result for {}: {:?}",
+                                agent_id, conv_id, e
+                            );
+                        }
                     }
                     super::AgentQuery::RedoLastTurn { conv_id, response_tx } => {
-                        let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
+                        if let Err(e) = response_tx.send(agent.redo_last_turn(&conv_id).await) {
+                            warn!(
+                                "Agent {}: failed to send redo result for {}: {:?}",
+                                agent_id, conv_id, e
+                            );
+                        }
                     }
                     super::AgentQuery::RunSkill {
                         session_id,
@@ -427,7 +444,12 @@ pub(crate) async fn run_agent_loop(
                         let result =
                             agent.process_message_with_progress(incoming, no_op).await;
                         agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
-                        let _ = response_tx.send(result);
+                        if let Err(e) = response_tx.send(result) {
+                            warn!(
+                                "Agent {}: failed to send skill run result for {}: {:?}",
+                                agent_id, session_id, e
+                            );
+                        }
                     }
                 }
             }

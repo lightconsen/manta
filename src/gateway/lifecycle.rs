@@ -465,8 +465,6 @@ pub(crate) async fn stop_gateway(
             }
         }
     }
-    // Give agents a moment to start their shutdown before we await join handles.
-    tokio::time::sleep(Duration::from_millis(100)).await;
     let agent_handles = state
         .task_registry
         .remove_matching_join_or_abort("agent:")

@@ -82,14 +82,18 @@ pub(crate) async fn register_hot_reload_handlers(
                     };
 
                     if should_stop {
-                        // Remove channel from state (channel will be dropped, should clean up
-                        // itself)
-                        let removed = {
+                        // Remove channel from state, then stop it outside the lock so the
+                        // stop() call does not block other state access.
+                        let channel = {
                             let mut channels = state.channels.channels.write().await;
-                            channels.remove(name).is_some()
+                            channels.remove(name)
                         };
-                        if removed {
-                            info!("✅ Stopped channel '{}'", name);
+                        if let Some(channel) = channel {
+                            if let Err(e) = channel.stop().await {
+                                warn!("Failed to stop removed channel '{}': {}", name, e);
+                            } else {
+                                info!("✅ Stopped channel '{}'", name);
+                            }
                         }
                     }
                 }
@@ -121,10 +125,18 @@ pub(crate) async fn register_hot_reload_handlers(
                             if config_changed {
                                 info!("Channel '{}' config changed, restarting...", name);
 
-                                // Remove old channel
-                                {
+                                // Stop the old channel before removing it from state.
+                                let old_channel = {
                                     let mut channels = state.channels.channels.write().await;
-                                    channels.remove(name);
+                                    channels.remove(name)
+                                };
+                                if let Some(channel) = old_channel {
+                                    if let Err(e) = channel.stop().await {
+                                        warn!(
+                                            "Failed to stop channel '{}' before restart: {}",
+                                            name, e
+                                        );
+                                    }
                                 }
 
                                 // Start with new config
@@ -260,17 +272,35 @@ pub(crate) async fn register_hot_reload_handlers(
                     };
 
                     if !new_channel_config.enabled {
-                        let mut channels = state.channels.channels.write().await;
-                        if channels.remove(&channel_name).is_some() {
-                            info!("✅ Stopped disabled channel '{}'", channel_name);
+                        let channel = {
+                            let mut channels = state.channels.channels.write().await;
+                            channels.remove(&channel_name)
+                        };
+                        if let Some(channel) = channel {
+                            if let Err(e) = channel.stop().await {
+                                warn!(
+                                    "Failed to stop disabled channel '{}': {}",
+                                    channel_name, e
+                                );
+                            } else {
+                                info!("✅ Stopped disabled channel '{}'", channel_name);
+                            }
                         }
                         return Ok(());
                     }
 
-                    // Stop existing channel
-                    {
+                    // Stop existing channel before re-initializing with new config.
+                    let old_channel = {
                         let mut channels = state.channels.channels.write().await;
-                        channels.remove(&channel_name);
+                        channels.remove(&channel_name)
+                    };
+                    if let Some(channel) = old_channel {
+                        if let Err(e) = channel.stop().await {
+                            warn!(
+                                "Failed to stop channel '{}' before reload: {}",
+                                channel_name, e
+                            );
+                        }
                     }
 
                     // Re-initialize with new config

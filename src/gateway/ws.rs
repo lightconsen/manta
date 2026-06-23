@@ -331,7 +331,14 @@ async fn handle_websocket(
                                 )
                                 .await;
                                 let res_text = serde_json::to_string(&res).unwrap_or_default();
-                                let _ = cmd_tx.send(WsCommand::SendResponse(res_text)).await;
+                                if cmd_tx
+                                    .send(WsCommand::SendResponse(res_text))
+                                    .await
+                                    .is_err()
+                                {
+                                    warn!("[{}] Failed to send handshake response", conn_id);
+                                    break false;
+                                }
 
                                 if res.ok {
                                     conn.write().await.handshaked = true;
@@ -347,7 +354,13 @@ async fn handle_websocket(
                                     "First message must be connect",
                                 );
                                 let res_text = serde_json::to_string(&res).unwrap_or_default();
-                                let _ = cmd_tx.send(WsCommand::SendResponse(res_text)).await;
+                                if cmd_tx
+                                    .send(WsCommand::SendResponse(res_text))
+                                    .await
+                                    .is_err()
+                                {
+                                    warn!("[{}] Failed to send invalid-request response", conn_id);
+                                }
                                 break false;
                             }
                         }
@@ -387,7 +400,14 @@ async fn handle_websocket(
                         Ok(req) => {
                             let res = dispatch_method(&req, &conn, &state, &cmd_tx).await;
                             let res_text = serde_json::to_string(&res).unwrap_or_default();
-                            let _ = cmd_tx.send(WsCommand::SendResponse(res_text)).await;
+                            if cmd_tx
+                                .send(WsCommand::SendResponse(res_text))
+                                .await
+                                .is_err()
+                            {
+                                warn!("[{}] Failed to send response, connection closed", conn_id);
+                                break;
+                            }
                         }
                         Err(e) => {
                             let conn_id = conn.read().await.conn_id.clone();
@@ -763,11 +783,16 @@ async fn handle_device_auth(
             finalize_hello_ok(req, conn, params, Some(UserId::new(&device.id)), scopes).await
         }
         DeviceAccessResult::PairingRequired { code } => {
-            let _ = state.events.tx.send(GatewayEvent::DevicePairRequested {
+            if let Err(e) = state.events.tx.send(GatewayEvent::DevicePairRequested {
                 device_id: device.id.clone(),
                 code: code.clone(),
                 display_name: None,
-            });
+            }) {
+                warn!(
+                    "Failed to broadcast DevicePairRequested for {}: {}",
+                    device.id, e
+                );
+            }
             error_invalid_request(
                 &req.id,
                 format!(
@@ -809,7 +834,7 @@ async fn handle_chat_send(
         Err(res) => return res,
     };
 
-    let (session_id, is_new_session) = if let Some(sid) = params.session_id {
+    let (session_id, _is_new_session) = if let Some(sid) = params.session_id {
         (sid, false)
     } else {
         let cg = conn.read().await;
@@ -965,14 +990,17 @@ async fn handle_chat_send(
         }
     };
 
-    let mut cg = conn.write().await;
-    if !cg.subscriptions.contains(&session_id) {
-        cg.subscriptions.push(session_id.clone());
-    }
-    drop(cg);
+    let is_new_session = {
+        let mut cg = conn.write().await;
+        let is_new = !cg.subscriptions.contains(&session_id);
+        if is_new {
+            cg.subscriptions.push(session_id.clone());
+        }
+        is_new
+    };
 
     if is_new_session {
-        let _ = state
+        if let Err(e) = state
             .events
             .tx
             .send(crate::gateway::GatewayEvent::SessionCreated {
@@ -982,7 +1010,10 @@ async fn handle_chat_send(
                     .map(|r| r.agent_id.clone())
                     .unwrap_or_default(),
                 user_id: user_id.clone(),
-            });
+            })
+        {
+            warn!("Failed to broadcast SessionCreated for {}: {}", session_id, e);
+        }
     }
 
     WsResponse::ok(
@@ -2054,7 +2085,9 @@ async fn handle_legacy_subscribe(
         Err(res) => return res,
     };
 
-    let _ = cmd_tx.send(WsCommand::Subscribe(params.session_ids)).await;
+    if let Err(e) = cmd_tx.send(WsCommand::Subscribe(params.session_ids)).await {
+        warn!("Failed to send legacy subscribe command: {}", e);
+    }
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "subscribed" }))
 }
@@ -2074,9 +2107,12 @@ async fn handle_legacy_unsubscribe(
         Err(res) => return res,
     };
 
-    let _ = cmd_tx
+    if let Err(e) = cmd_tx
         .send(WsCommand::Unsubscribe(params.session_ids))
-        .await;
+        .await
+    {
+        warn!("Failed to send legacy unsubscribe command: {}", e);
+    }
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
 }
@@ -2335,10 +2371,10 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         }
     }
 
-    // Persist config to disk so changes survive restarts and trigger hot-reload
-    drop(config_guard);
+    // Persist config to disk so changes survive restarts and trigger hot-reload.
+    // Keep the write lock held across persistence so concurrent writers cannot
+    // overwrite our update before it is serialized.
     if let Some(config_path) = state.config_path.clone() {
-        let config_guard = state.config.read().await;
         if let Err(e) = persist_config_atomic(&config_guard, &config_path).await {
             return WsResponse::err(
                 &req.id,
@@ -2347,6 +2383,7 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
             );
         }
     }
+    drop(config_guard);
 
     WsResponse::ok(
         &req.id,
@@ -3152,13 +3189,17 @@ async fn handle_logs_subscribe(
 ) -> WsResponse {
     // Cancel any existing log subscription for this connection and remove its
     // task from the registry so we don't leak aborted tasks.
-    let conn_id = {
+    let (conn_id, prev_cancel_tx) = {
         let cg = conn.write().await;
-        if let Some(ref tx) = cg.log_cancel_tx {
-            let _ = tx.send(()).await;
-        }
-        cg.conn_id.clone()
+        let conn_id = cg.conn_id.clone();
+        let prev_cancel_tx = cg.log_cancel_tx.clone();
+        (conn_id, prev_cancel_tx)
     };
+    if let Some(tx) = prev_cancel_tx {
+        if let Err(e) = tx.send(()).await {
+            warn!("Failed to cancel previous log tail for {}: {}", conn_id, e);
+        }
+    }
     state
         .task_registry
         .abort(&format!("ws:log_tail:{}", conn_id))
@@ -3196,7 +3237,13 @@ async fn handle_logs_subscribe(
                         seq: None,
                     };
                     if let Ok(text) = serde_json::to_string(&event) {
-                        let _ = cmd_tx.send(WsCommand::SendEvent(text)).await;
+                        if cmd_tx
+                            .send(WsCommand::SendEvent(text))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                 }
             }
@@ -3216,7 +3263,13 @@ async fn handle_logs_subscribe(
                         seq: None,
                     };
                     if let Ok(text) = serde_json::to_string(&event) {
-                        let _ = cmd_tx.send(WsCommand::SendEvent(text)).await;
+                        if cmd_tx
+                            .send(WsCommand::SendEvent(text))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                 }
                 _ = cancel_rx.recv() => {
@@ -3238,14 +3291,17 @@ async fn handle_logs_unsubscribe(
     conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
     state: &Arc<GatewayState>,
 ) -> WsResponse {
-    let conn_id = {
+    let (conn_id, cancel_tx) = {
         let mut cg = conn.write().await;
-        if let Some(ref tx) = cg.log_cancel_tx {
-            let _ = tx.send(()).await;
-        }
-        cg.log_cancel_tx = None;
-        cg.conn_id.clone()
+        let conn_id = cg.conn_id.clone();
+        let cancel_tx = cg.log_cancel_tx.take();
+        (conn_id, cancel_tx)
     };
+    if let Some(tx) = cancel_tx {
+        if let Err(e) = tx.send(()).await {
+            warn!("Failed to cancel log tail for {}: {}", conn_id, e);
+        }
+    }
     state
         .task_registry
         .abort(&format!("ws:log_tail:{}", conn_id))

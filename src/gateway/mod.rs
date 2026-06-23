@@ -801,32 +801,41 @@ impl Gateway {
         {
             let event_tx = state.events.tx.clone();
             let mut mcp_event_rx = tools_init.mcp_event_rx;
+            let shutdown_token = shutdown_token.clone();
             let mcp_forward_handle = tokio::spawn(async move {
-                while let Some(event) = mcp_event_rx.recv().await {
-                    let gateway_event = match event {
-                        crate::tools::mcp::McpEvent::Connected {
-                            server_id,
-                            tools,
-                            prompts,
-                            resources,
-                        } => GatewayEvent::McpConnected {
-                            server_id,
-                            tools,
-                            prompts,
-                            resources,
-                        },
-                        crate::tools::mcp::McpEvent::Disconnected { server_id, reason } => {
-                            GatewayEvent::McpDisconnected { server_id, reason }
+                loop {
+                    tokio::select! {
+                        Some(event) = mcp_event_rx.recv() => {
+                            let gateway_event = match event {
+                                crate::tools::mcp::McpEvent::Connected {
+                                    server_id,
+                                    tools,
+                                    prompts,
+                                    resources,
+                                } => GatewayEvent::McpConnected {
+                                    server_id,
+                                    tools,
+                                    prompts,
+                                    resources,
+                                },
+                                crate::tools::mcp::McpEvent::Disconnected { server_id, reason } => {
+                                    GatewayEvent::McpDisconnected { server_id, reason }
+                                }
+                                crate::tools::mcp::McpEvent::Recovered { server_id, attempt } => {
+                                    GatewayEvent::McpRecovered { server_id, attempt }
+                                }
+                                crate::tools::mcp::McpEvent::ResourceChanged { server_id, uri } => {
+                                    GatewayEvent::McpResourceChanged { server_id, uri }
+                                }
+                            };
+                            if let Err(e) = event_tx.send(gateway_event) {
+                                debug!("No receivers for MCP event: {}", e);
+                            }
                         }
-                        crate::tools::mcp::McpEvent::Recovered { server_id, attempt } => {
-                            GatewayEvent::McpRecovered { server_id, attempt }
+                        _ = shutdown_token.cancelled() => {
+                            info!("MCP forward task received shutdown signal, exiting");
+                            break;
                         }
-                        crate::tools::mcp::McpEvent::ResourceChanged { server_id, uri } => {
-                            GatewayEvent::McpResourceChanged { server_id, uri }
-                        }
-                    };
-                    if let Err(e) = event_tx.send(gateway_event) {
-                        debug!("No receivers for MCP event: {}", e);
                     }
                 }
             });
@@ -1040,13 +1049,20 @@ impl Gateway {
 
 impl Gateway {
     /// Spawn an agent from its personality (on-demand spawning)
-    /// Returns true if agent was spawned, false if already exists
-    pub async fn spawn_agent_from_personality(&self, agent_id: &str) -> crate::Result<bool> {
-        // Check if agent already exists
+    ///
+    /// Returns the agent handle and a boolean indicating whether the agent was
+    /// newly spawned (`true`) or already existed (`false`). This keeps the
+    /// spawn-and-lookup atomic from the caller's perspective and avoids races
+    /// where a concurrent spawn succeeds but the caller cannot find the handle.
+    pub async fn spawn_agent_from_personality(
+        &self,
+        agent_id: &str,
+    ) -> crate::Result<(AgentHandle, bool)> {
+        // Fast path: agent already exists.
         {
             let agents = self.state.agents.agents.read().await;
-            if agents.contains_key(agent_id) {
-                return Ok(false);
+            if let Some(handle) = agents.get(agent_id) {
+                return Ok((handle.clone(), false));
             }
         }
 
@@ -1072,7 +1088,15 @@ impl Gateway {
         // Spawn the agent
         self.spawn_agent(agent_id.to_string(), config).await?;
 
-        Ok(true)
+        // The handle must now be present; return it directly.
+        let agents = self.state.agents.agents.read().await;
+        match agents.get(agent_id).cloned() {
+            Some(handle) => Ok((handle, true)),
+            None => Err(crate::error::SyscityError::Validation(format!(
+                "Agent '{}' was spawned but disappeared immediately",
+                agent_id
+            ))),
+        }
     }
 
     /// Spawn all discovered agents
@@ -1085,11 +1109,11 @@ impl Gateway {
         let mut spawned = 0;
         for agent_id in agent_ids {
             match self.spawn_agent_from_personality(&agent_id).await {
-                Ok(true) => {
+                Ok((_, true)) => {
                     info!("✅ Auto-spawned agent '{}'", agent_id);
                     spawned += 1;
                 }
-                Ok(false) => {
+                Ok((_, false)) => {
                     debug!("Agent '{}' already spawned, skipping", agent_id);
                 }
                 Err(e) => {
@@ -1108,20 +1132,11 @@ impl Gateway {
     /// the ad-hoc per-channel initialisation code.
     /// Get or spawn agent by ID (on-demand)
     pub async fn get_or_spawn_agent(&self, agent_id: &str) -> crate::Result<Option<AgentHandle>> {
-        // First check if already spawned
-        {
-            let agents = self.state.agents.agents.read().await;
-            if let Some(handle) = agents.get(agent_id) {
-                return Ok(Some(handle.clone()));
-            }
-        }
-
-        // Try to spawn from personality
         match self.spawn_agent_from_personality(agent_id).await {
-            Ok(true) | Ok(false) => {
-                // Now get the spawned agent
-                let agents = self.state.agents.agents.read().await;
-                Ok(agents.get(agent_id).cloned())
+            Ok((handle, _)) => Ok(Some(handle)),
+            Err(crate::error::SyscityError::Validation(_)) => {
+                // Agent not found in personality registry is treated as "no agent".
+                Ok(None)
             }
             Err(e) => {
                 warn!("Failed to get or spawn agent '{}': {}", agent_id, e);

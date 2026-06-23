@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::{spawn_agent_inner, GatewayEvent, GatewayState};
 use crate::agent::AgentConfig;
@@ -60,8 +60,36 @@ impl RepairState {
     }
 }
 
-/// One watchdog cycle: scan for agents whose command channel has closed and
-/// try to respawn them, subject to per-target restart caps.
+/// Remove stale repair records for agents/channels that no longer exist.
+pub(crate) async fn prune_repair_records(state: &Arc<GatewayState>) {
+    let agent_keys: std::collections::HashSet<String> = {
+        let agents = state.agents.agents.read().await;
+        agents.keys().map(|id| format!("agent:{}", id)).collect()
+    };
+    let channel_keys: std::collections::HashSet<String> = {
+        let channels = state.channels.channels.read().await;
+        channels.keys().map(|name| format!("channel:{}", name)).collect()
+    };
+
+    let mut records = state.agents.repair_state.records.write().await;
+    let stale: Vec<String> = records
+        .keys()
+        .filter(|key| {
+            if key.starts_with("agent:") {
+                !agent_keys.contains(*key)
+            } else if key.starts_with("channel:") {
+                !channel_keys.contains(*key)
+            } else {
+                false
+            }
+        })
+        .cloned()
+        .collect();
+    for key in stale {
+        records.remove(&key);
+        debug!("Pruned stale repair record '{}'", key);
+    }
+}
 pub(crate) async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
     const MAX_RESTARTS: u32 = 5;
     const COOLDOWN_SECS: i64 = 30;
@@ -248,6 +276,7 @@ pub(crate) async fn run_repair_loop(state: Arc<GatewayState>, shutdown_token: Ca
                 *state.agents.repair_state.last_cycle_at.write().await = Some(chrono::Utc::now());
                 run_agent_watchdog_cycle(&state).await;
                 run_channel_watchdog_cycle(&state).await;
+                prune_repair_records(&state).await;
             }
         }
     }

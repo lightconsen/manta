@@ -49,17 +49,10 @@ async fn get_or_create_session(
     sessions: &RwLock<HashMap<String, String>>,
     platform_key: &str,
 ) -> String {
-    {
-        let map = sessions.read().await;
-        if let Some(session_id) = map.get(platform_key) {
-            return session_id.clone();
-        }
-    }
-    // Create new session
-    let new_session = uuid::Uuid::new_v4().to_string();
     let mut map = sessions.write().await;
-    map.insert(platform_key.to_string(), new_session.clone());
-    new_session
+    map.entry(platform_key.to_string())
+        .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+        .clone()
 }
 
 /// Reset session for a platform user (when /new is used)
@@ -262,7 +255,9 @@ async fn whatsapp_webhook_handler(
                                             channel: "whatsapp".to_string(),
                                             is_direct: true,
                                         });
-                                let _ = state.pipelines.inbound_entry.send(incoming).await;
+                                if let Err(e) = state.pipelines.inbound_entry.send(incoming).await {
+                                    warn!("Failed to enqueue WhatsApp message: {}", e);
+                                }
                             }
                         }
                     }
@@ -383,7 +378,9 @@ async fn telegram_webhook_handler(
                     channel: "telegram".to_string(),
                     is_direct: true,
                 });
-            let _ = state.pipelines.inbound_entry.send(incoming).await;
+            if let Err(e) = state.pipelines.inbound_entry.send(incoming).await {
+                warn!("Failed to enqueue Telegram message: {}", e);
+            }
         }
     }
 
@@ -510,7 +507,9 @@ async fn feishu_webhook_handler(
                         channel: "feishu".to_string(),
                         is_direct: true,
                     });
-                let _ = state.pipelines.inbound_entry.send(incoming).await;
+                if let Err(e) = state.pipelines.inbound_entry.send(incoming).await {
+                    warn!("Failed to enqueue Feishu message: {}", e);
+                }
             }
         }
     }
@@ -676,7 +675,9 @@ async fn handle_slack_event(
                 is_direct: channel.starts_with('D'),
             });
 
-    let _ = state.pipelines.inbound_entry.send(incoming).await;
+    if let Err(e) = state.pipelines.inbound_entry.send(incoming).await {
+        warn!("Failed to enqueue Slack message: {}", e);
+    }
 
     (StatusCode::OK, "OK").into_response()
 }
@@ -805,7 +806,14 @@ async fn generic_webhook_handler(
                 is_direct: true,
             },
         );
-        let _ = state.pipelines.inbound_entry.send(incoming).await;
+        if let Err(e) = state.pipelines.inbound_entry.send(incoming).await {
+            warn!("Failed to enqueue {} webhook message: {}", channel, e);
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Gateway queue full, please retry".to_string(),
+            )
+                .into_response();
+        }
     }
 
     Json(WebhookResponse {
