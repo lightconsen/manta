@@ -1784,34 +1784,57 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
         );
     }
     let enabled = mode == "on";
-    let mut settings = state.infra.runtime_settings.write().await;
 
     if enabled {
-        // Save current model and switch to fast alias
+        // Resolve the fast model alias and read current config outside any
+        // config/runtime_settings lock to avoid lock-ordering violations.
+        let fast_model = state.infra.model_router.resolve_alias("fast").await;
         let current_model = state.config.read().await.model.clone();
-        settings.insert("fast.original_model".to_string(), serde_json::json!(current_model));
-        if let Some(fast_model) = state.infra.model_router.resolve_alias("fast").await {
+
+        // Update config atomically, then update runtime settings.
+        if let Some(ref fast_model) = fast_model {
             let mut cfg_guard = state.config.write().await;
             Arc::make_mut(&mut cfg_guard).model = fast_model.clone();
+        }
+
+        {
+            let mut settings = state.infra.runtime_settings.write().await;
+            settings.insert("fast.original_model".to_string(), serde_json::json!(current_model));
             settings.insert("fast.mode".to_string(), serde_json::json!(true));
-            return WsResponse::ok(
+        }
+
+        if let Some(fast_model) = fast_model {
+            WsResponse::ok(
                 &req.id,
                 serde_json::json!({ "text": format!("⚡ Fast mode enabled. Model switched to '{}'.", fast_model) }),
-            );
+            )
+        } else {
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "text": "⚡ Fast mode enabled (no fast alias configured, using current model)." }),
+            )
         }
-        settings.insert("fast.mode".to_string(), serde_json::json!(true));
-        WsResponse::ok(
-            &req.id,
-            serde_json::json!({ "text": "⚡ Fast mode enabled (no fast alias configured, using current model)." }),
-        )
     } else {
-        // Restore original model
-        let original = settings.get("fast.original_model").and_then(|v| v.as_str());
-        if let Some(orig) = original {
+        // Read the original model under a short-lived lock, restore config,
+        // then update runtime settings. Never hold both locks at once.
+        let original = {
+            let settings = state.infra.runtime_settings.read().await;
+            settings
+                .get("fast.original_model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
+
+        if let Some(ref orig) = original {
             let mut cfg_guard = state.config.write().await;
-            Arc::make_mut(&mut cfg_guard).model = orig.to_string();
+            Arc::make_mut(&mut cfg_guard).model = orig.clone();
         }
-        settings.insert("fast.mode".to_string(), serde_json::json!(false));
+
+        {
+            let mut settings = state.infra.runtime_settings.write().await;
+            settings.insert("fast.mode".to_string(), serde_json::json!(false));
+        }
+
         WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": "⚡ Fast mode disabled. Model restored." }),
@@ -1976,8 +1999,10 @@ async fn handle_session(
             }
             match parse_duration(rest) {
                 Some(duration) => {
-                    let mut mgr = state.agents.manager.write().await;
-                    mgr.set_timeout(duration);
+                    {
+                        let mut mgr = state.agents.manager.write().await;
+                        mgr.set_timeout(duration);
+                    }
                     let mut settings = state.infra.runtime_settings.write().await;
                     let key = format!("session.{}", sub);
                     settings.insert(key.clone(), serde_json::json!(rest));

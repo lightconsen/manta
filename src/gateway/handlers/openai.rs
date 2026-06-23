@@ -131,7 +131,11 @@ pub async fn openai_chat_completions_handler(
                     "model": model,
                     "choices": [{"index": 0, "delta": {"content": word}, "finish_reason": null}]
                 });
-                if tx.send(Ok(SseEvt::default().data(chunk.to_string()))).await.is_err() {
+                if tx
+                    .send(Ok(SseEvt::default().data(chunk.to_string())))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }

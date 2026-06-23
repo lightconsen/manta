@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::debug;
 
+use crate::gateway::task_registry::TaskRegistry;
 use crate::gateway::GatewayEvent;
 
 /// Hook execution result
@@ -68,12 +69,23 @@ pub struct EventHookRegistry {
     before_hooks: RwLock<Vec<EventHook>>,
     /// After hooks, sorted by priority
     after_hooks: RwLock<Vec<EventHook>>,
+    /// Optional task registry for lifecycle-managing after-hook callbacks.
+    task_registry: Option<Arc<TaskRegistry>>,
+    /// Monotonic counter for unique after-hook task names.
+    after_spawn_counter: std::sync::atomic::AtomicU64,
 }
 
 impl EventHookRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Attach a task registry so spawned after-hook callbacks are tracked and
+    /// can be aborted during shutdown.
+    pub fn with_task_registry(mut self, task_registry: Arc<TaskRegistry>) -> Self {
+        self.task_registry = Some(task_registry);
+        self
     }
 
     /// Register a before hook
@@ -175,10 +187,19 @@ impl EventHookRegistry {
             if let Some(ref after) = hook.after {
                 let event_clone = event.clone();
                 let after_clone = after.clone();
-                let _hook_name = hook.name.clone();
-                tokio::spawn(async move {
+                let hook_name = hook.name.clone();
+                let task_registry = self.task_registry.clone();
+                let idx = self
+                    .after_spawn_counter
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let handle = tokio::spawn(async move {
                     after_clone(event_clone).await;
                 });
+                if let Some(registry) = task_registry {
+                    registry
+                        .insert_join(format!("hooks:after:{}:{}", hook_name, idx), handle)
+                        .await;
+                }
             }
         }
     }

@@ -68,10 +68,7 @@ pub async fn put_config_handler(
 
     // Write to disk atomically
     if let Err(e) = persist_config_atomic(&new_config, &config_path).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e})),
-        )
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e})))
             .into_response();
     }
 

@@ -5,12 +5,10 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use tokio::sync::mpsc;
 
 use crate::agent::AgentConfig;
-use crate::gateway::agent_spawn::run_agent_loop;
+use crate::gateway::runtime::{AgentCommand, AgentStatus, GatewayEvent};
 use crate::gateway::GatewayState;
-use crate::gateway::*;
 
 #[allow(dead_code)]
 pub async fn list_agents_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
@@ -59,109 +57,39 @@ pub async fn create_agent_handler(
 ) -> impl IntoResponse {
     use tracing::info;
 
-    use crate::agent::Agent;
-
     // Generate unique agent ID
     let agent_id = format!("agent-{}", uuid::Uuid::new_v4());
     info!("Creating new agent via API: {}", agent_id);
 
-    let mut config = config;
-    config.agent_id = Some(agent_id.clone());
+    // Extract summary fields before handing config to spawn_agent_inner.
+    let response_config = serde_json::json!({
+        "max_context_tokens": config.max_context_tokens,
+        "max_concurrent_tools": config.max_concurrent_tools,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+    });
 
-    // Create communication channel
-    let (tx, rx) = mpsc::channel(100);
-
-    // Create provider from model router
-    let provider = match state.infra.model_router.create_default_provider().await {
-        Ok(p) => p,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
+    match crate::gateway::agent_spawn::spawn_agent_inner(state, agent_id.clone(), config).await {
+        Ok(()) => {
+            info!("✅ Agent {} created successfully", agent_id);
+            (
+                StatusCode::CREATED,
                 Json(serde_json::json!({
-                    "error": format!("Failed to create provider: {}", e)
+                    "id": agent_id,
+                    "status": "created",
+                    "config": response_config,
                 })),
             )
-                .into_response();
+                .into_response()
         }
-    };
-
-    // Get tools, model, and memory manager
-    let tools = state.tools.registry.clone();
-    let model = state.config.read().await.model.clone();
-    let memory_manager = state.memory.manager.read().await.as_ref().cloned();
-
-    // Create agent instance with memory manager and session management stores
-    let agent = if let Some(mm) = memory_manager {
-        Arc::new(
-            Agent::new(config.clone(), provider, tools)
-                .with_model(model)
-                .with_memory_manager(mm)
-                .with_transcript_store(Arc::clone(&state.infra.transcript_store))
-                .with_artifact_store(Arc::clone(&state.infra.artifact_store))
-                .with_disk_budget(Arc::clone(&state.infra.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
-                .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("Failed to create agent: {}", e)
+            })),
         )
-    } else {
-        Arc::new(
-            Agent::new(config.clone(), provider, tools)
-                .with_model(model)
-                .with_transcript_store(Arc::clone(&state.infra.transcript_store))
-                .with_artifact_store(Arc::clone(&state.infra.artifact_store))
-                .with_disk_budget(Arc::clone(&state.infra.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
-                .with_skill_manager(Arc::clone(&state.tools.skills_manager)),
-        )
-    };
-
-    let (query_tx, query_rx) = mpsc::channel::<AgentQuery>(32);
-
-    // Create agent handle
-    let handle = AgentHandle {
-        id: agent_id.clone(),
-        config: config.clone(),
-        tx: tx.clone(),
-        query_tx: query_tx.clone(),
-        busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        agent: agent.clone(),
-    };
-    let handle_for_loop = handle.clone();
-
-    // Insert into agents map
-    {
-        let mut agents = state.agents.agents.write().await;
-        agents.insert(agent_id.clone(), handle);
+            .into_response(),
     }
-
-    // Start agent processing loop (mirrors spawn_agent behavior)
-    let task_registry = state.task_registry.clone();
-    let agent_id_clone = agent_id.clone();
-    let agent_clone = agent.clone();
-    let busy = handle_for_loop.busy.clone();
-    let state_clone = state.clone();
-
-    let task_handle = tokio::spawn(async move {
-        run_agent_loop(state_clone, agent_id_clone, agent_clone, busy, rx, query_rx, false).await;
-    });
-    task_registry
-        .insert_join(format!("agent:{}", agent_id), task_handle)
-        .await;
-
-    info!("✅ Agent {} created successfully", agent_id);
-    (
-        StatusCode::CREATED,
-        Json(serde_json::json!({
-            "id": agent_id,
-            "status": "created",
-            "config": {
-                "max_context_tokens": config.max_context_tokens,
-                "max_concurrent_tools": config.max_concurrent_tools,
-                "temperature": config.temperature,
-                "max_tokens": config.max_tokens,
-            }
-        })),
-    )
-        .into_response()
 }
 
 #[allow(dead_code)]

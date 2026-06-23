@@ -502,7 +502,7 @@ async fn dispatch_method(
         "skills.list" => handle_skills_list(req, state).await,
         "skills.install" => handle_skills_install(req, state).await,
         "logs.subscribe" => handle_logs_subscribe(req, conn, state, cmd_tx).await,
-        "logs.unsubscribe" => handle_logs_unsubscribe(req, conn).await,
+        "logs.unsubscribe" => handle_logs_unsubscribe(req, conn, state).await,
         "acp.list" => handle_acp_list(req, state).await,
         "acp.spawn" => handle_acp_spawn(req, conn, state).await,
         "acp.terminate" => handle_acp_terminate(req, state).await,
@@ -2105,21 +2105,34 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         Err(res) => return res,
     };
 
-    let mut config_guard = state.config.write().await;
-    let config = Arc::make_mut(&mut config_guard);
-
-    match params.path.as_str() {
-        "model" => {
-            if let Some(v) = params.value.as_str() {
-                config.model = v.to_string();
-                // Also update model router default alias
-                if let Err(e) = state.infra.model_router.switch_default_model(v).await {
+    // Handle model switching outside the config write lock so the lock is not
+    // held across an async model-router operation.
+    let model_update = if params.path == "model" {
+        if let Some(v) = params.value.as_str() {
+            match state.infra.model_router.switch_default_model(v).await {
+                Ok(()) => Some(v.to_string()),
+                Err(e) => {
                     return WsResponse::err(
                         &req.id,
                         "CONFIG_ERROR",
                         format!("Failed to switch model: {}", e),
                     );
                 }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut config_guard = state.config.write().await;
+    let config = Arc::make_mut(&mut config_guard);
+
+    match params.path.as_str() {
+        "model" => {
+            if let Some(v) = model_update {
+                config.model = v;
             }
         }
         "model_provider" => {
@@ -2623,7 +2636,10 @@ async fn handle_mcp_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
 
     {
         let mut cfg_guard = state.config.write().await;
-        Arc::make_mut(&mut cfg_guard).mcp.servers.remove(&payload.id);
+        Arc::make_mut(&mut cfg_guard)
+            .mcp
+            .servers
+            .remove(&payload.id);
     }
 
     if let Err(e) = persist_config(state).await {
@@ -3107,13 +3123,19 @@ async fn handle_logs_subscribe(
     state: &Arc<GatewayState>,
     cmd_tx: &mpsc::Sender<WsCommand>,
 ) -> WsResponse {
-    // Cancel any existing log subscription for this connection
-    {
+    // Cancel any existing log subscription for this connection and remove its
+    // task from the registry so we don't leak aborted tasks.
+    let conn_id = {
         let cg = conn.write().await;
         if let Some(ref tx) = cg.log_cancel_tx {
             let _ = tx.send(()).await;
         }
-    }
+        cg.conn_id.clone()
+    };
+    state
+        .task_registry
+        .abort(&format!("ws:log_tail:{}", conn_id))
+        .await;
 
     let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
     {
@@ -3123,8 +3145,9 @@ async fn handle_logs_subscribe(
 
     let log_tx = state.events.log_tx.clone();
     let cmd_tx = cmd_tx.clone();
+    let task_registry = state.task_registry.clone();
 
-    tokio::spawn(async move {
+    let task_handle = tokio::spawn(async move {
         // Subscribe to new log lines first to avoid missing any during file read
         let mut log_rx = log_tx.subscribe();
 
@@ -3176,18 +3199,31 @@ async fn handle_logs_subscribe(
         }
     });
 
+    task_registry
+        .insert_join(format!("ws:log_tail:{}", conn_id), task_handle)
+        .await;
+
     WsResponse::ok(&req.id, serde_json::json!({ "status": "subscribed" }))
 }
 
 async fn handle_logs_unsubscribe(
     req: &WsRequest,
     conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
 ) -> WsResponse {
-    let mut cg = conn.write().await;
-    if let Some(ref tx) = cg.log_cancel_tx {
-        let _ = tx.send(()).await;
+    let conn_id = {
+        let mut cg = conn.write().await;
+        if let Some(ref tx) = cg.log_cancel_tx {
+            let _ = tx.send(()).await;
+        }
         cg.log_cancel_tx = None;
-    }
+        cg.conn_id.clone()
+    };
+    state
+        .task_registry
+        .abort(&format!("ws:log_tail:{}", conn_id))
+        .await;
+
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
 }
 

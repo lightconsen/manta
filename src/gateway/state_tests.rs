@@ -95,6 +95,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             .await
             .expect("skill manager"),
     ));
+    let task_registry = Arc::new(crate::gateway::task_registry::TaskRegistry::new());
 
     GatewayState {
         config: Arc::new(RwLock::new(Arc::new(config))),
@@ -104,7 +105,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         perception_init: tokio::sync::RwLock::new(None),
         control_init: tokio::sync::RwLock::new(None),
         summarizer: tokio::sync::OnceCell::new(),
-        task_registry: Arc::new(crate::gateway::task_registry::TaskRegistry::new()),
+        task_registry: task_registry.clone(),
         auth: AuthState {
             manager: Arc::new(crate::security::AuthManager::new()),
             pairing_store: Arc::new(PairingStore::new()),
@@ -175,7 +176,9 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         events: EventState {
             tx: event_tx,
             log_tx,
-            hook_registry: Arc::new(hooks::EventHookRegistry::new()),
+            hook_registry: Arc::new(
+                hooks::EventHookRegistry::new().with_task_registry(task_registry.clone()),
+            ),
         },
         infra: InfraState {
             storage: Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new())),

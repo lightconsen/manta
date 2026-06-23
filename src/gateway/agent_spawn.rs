@@ -50,6 +50,18 @@ pub(crate) async fn spawn_agent_inner(
     config.agent_id = Some(id.clone());
     info!("Spawning agent: {}", id);
 
+    // Prevent duplicate agent IDs under a brief lock. This makes the helper
+    // safe to call from both gateway startup and REST/discovery handlers.
+    {
+        let agents = state.agents.agents.read().await;
+        if agents.contains_key(&id) {
+            return Err(crate::SyscityError::Validation(format!(
+                "Agent '{}' is already running",
+                id
+            )));
+        }
+    }
+
     let (tx, rx) = tokio::sync::mpsc::channel(100);
 
     // Create provider from model router

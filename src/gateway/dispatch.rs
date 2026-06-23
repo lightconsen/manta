@@ -104,8 +104,14 @@ pub(crate) async fn dispatch_routed_message(
     // ── Group session membership check ───────────────────────────────
     {
         let user_id = &routed.incoming.user_id.0;
-        let groups = state.agents.group_manager.read().await;
-        if let Some(group) = groups.get_group(&session_id) {
+        // Look up the group under a short-lived lock, then release it before
+        // acquiring the per-group lock. This avoids holding the group-manager
+        // read lock across an await point.
+        let group_opt = {
+            let groups = state.agents.group_manager.read().await;
+            groups.get_group(&session_id)
+        };
+        if let Some(group) = group_opt {
             let group = group.read().await;
             if !group.is_member(user_id) {
                 warn!(
@@ -235,10 +241,7 @@ pub(crate) async fn dispatch_routed_message(
                         )
                         .await;
                     });
-                    state
-                        .task_registry
-                        .insert_join(timer_name, handle)
-                        .await;
+                    state.task_registry.insert_join(timer_name, handle).await;
                 }
             }
         }
