@@ -541,7 +541,7 @@ pub async fn handle_commands_execute(
             "plugins" => handle_plugins(req, state, &params.args).await,
             "mcp" => handle_mcp(req, state, &params.args).await,
             "debug" => handle_debug(req, state, &params.args).await,
-            "restart" => handle_restart(req).await,
+            "restart" => handle_restart(req, state).await,
             "bash" => handle_bash(req, &params.args).await,
             _ => WsResponse::err(
                 &req.id,
@@ -2659,11 +2659,15 @@ async fn handle_debug(req: &WsRequest, state: &Arc<GatewayState>, args: &str) ->
     }
 }
 
-async fn handle_restart(req: &WsRequest) -> WsResponse {
-    tokio::spawn(async move {
+async fn handle_restart(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let restart_handle = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         std::process::exit(0);
     });
+    state
+        .task_registry
+        .insert_join("system:restart", restart_handle)
+        .await;
     WsResponse::ok(
         &req.id,
         serde_json::json!({ "text": "🔄 Gateway restart initiated. The process will exit in 1 second." }),

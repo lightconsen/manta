@@ -33,8 +33,13 @@ pub async fn reload_all_handler(
     let scope = req.scope.to_lowercase();
     let mut result = serde_json::json!({ "scope": &scope });
 
+    // Take one consistent config snapshot for the entire reload operation.
+    // All downstream code uses this snapshot instead of re-locking config,
+    // preventing interleaved config states from hot-reload or other requests.
+    let config_snapshot = Arc::new(state.config.read().await.clone());
+
     // ── Snapshot pre-reload config for audit diff ──────────────────────
-    let pre_snapshot = state.config.read().await.snapshot();
+    let pre_snapshot = config_snapshot.snapshot();
 
     // ── 1. Reload main configuration from disk ────────────────────────────
     let new_config =
@@ -70,6 +75,10 @@ pub async fn reload_all_handler(
         } else {
             None
         };
+
+    // Use the freshly reloaded config for this operation, falling back to the
+    // consistent snapshot so all scopes see the same state.
+    let active_config = new_config.as_ref().unwrap_or(&config_snapshot);
 
     // ── 2. Plugins ────────────────────────────────────────────────────────
     if scope == "all" || scope == "plugins" {
@@ -181,8 +190,7 @@ pub async fn reload_all_handler(
         // so newly placed .so/.dylib files are picked up on hot-reload.
         #[cfg(feature = "native-plugins")]
         {
-            let config = state.config.read().await;
-            if let Some(ref dir) = config.device.native_plugins_dir {
+            if let Some(ref dir) = active_config.device.native_plugins_dir {
                 tracing::info!("Re-scanning native plugins directory: {:?}", dir);
                 state.infra.driver_factory.scan_native_plugins_dir(dir);
             }
@@ -194,11 +202,10 @@ pub async fn reload_all_handler(
             let per_reg = per_init.as_ref().map(|pi| &*pi.registry);
 
             if let Some(old) = old_init {
-                let config = state.config.read().await;
                 crate::gateway::init::devices::reload_devices(
                     old,
                     &state.infra.driver_factory,
-                    &config.device,
+                    &active_config.device,
                     &state.tools.registry,
                     per_reg,
                     state.task_registry.clone(),
@@ -206,13 +213,12 @@ pub async fn reload_all_handler(
                 .await
             } else {
                 // No previous init — run fresh init from config
-                let config = state.config.read().await;
                 let drivers = crate::gateway::init::devices::discover_drivers_from_config(
                     &state.infra.driver_factory,
-                    &config.device,
+                    &active_config.device,
                 );
                 crate::gateway::init::devices::init_devices(
-                    &config.device,
+                    &active_config.device,
                     drivers,
                     &state.tools.registry,
                     per_reg,
@@ -225,14 +231,13 @@ pub async fn reload_all_handler(
         match device_result {
             Ok(new_init) => {
                 // Spawn OS device bridge for the new device init
-                let config = state.config.read().await;
                 let per_init = state.perception_init.read().await;
                 let per_reg = per_init.as_ref().map(|pi| pi.registry.clone());
                 if let Some(ref di) = new_init {
                     crate::gateway::init::devices::spawn_os_bridge_from_config(
                         &state.infra.driver_factory,
                         di.registry.clone(),
-                        &config.device.os_bridge,
+                        &active_config.device.os_bridge,
                         state.tools.registry.clone(),
                         per_reg,
                         state.task_registry.clone(),
@@ -240,7 +245,6 @@ pub async fn reload_all_handler(
                     .await;
                 }
                 drop(per_init);
-                drop(config);
                 *state.device_init.write().await = new_init;
 
                 // Abort old control lane handle before re-initializing
@@ -252,7 +256,6 @@ pub async fn reload_all_handler(
                 }
 
                 // Re-init control lane from (possibly updated) config
-                let config = state.config.read().await;
                 // Re-borrow device_init to get the fresh registry
                 let registry = state
                     .device_init
@@ -260,7 +263,6 @@ pub async fn reload_all_handler(
                     .await
                     .as_ref()
                     .map(|di| di.registry.clone());
-                drop(config);
 
                 if let Some(reg) = registry {
                     let handlers = crate::device::control::new_handler_registry();

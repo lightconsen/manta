@@ -106,10 +106,13 @@ pub(crate) async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
         }
 
         warn!("Agent {} tx closed — attempting restart", agent_id);
-        state.agents.agents.write().await.remove(&agent_id);
 
         match spawn_agent_inner(state.clone(), agent_id.clone(), config).await {
             Ok(_handle) => {
+                // Only replace the old handle after a successful spawn so the
+                // agent remains visible for retry if spawn fails.
+                state.agents.agents.write().await.remove(&agent_id);
+
                 let mut records = state.agents.repair_state.records.write().await;
                 let rec = records
                     .entry(key)
