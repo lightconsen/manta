@@ -205,8 +205,11 @@ async fn whatsapp_webhook_handler(
                                         from, new_session
                                     );
                                     // Send confirmation message back to user
-                                    let channels = state.channels.channels.read().await;
-                                    if let Some(channel) = channels.get("whatsapp") {
+                                    let channel_opt = {
+                                        let channels = state.channels.channels.read().await;
+                                        channels.get("whatsapp").cloned()
+                                    };
+                                    if let Some(channel) = channel_opt {
                                         let confirmation = OutgoingMessage::new(
                                             ConversationId(from.to_string()),
                                             "✅ New session started. How can I help you?",

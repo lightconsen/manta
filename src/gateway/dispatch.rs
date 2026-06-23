@@ -223,26 +223,27 @@ pub(crate) async fn dispatch_routed_message(
                 )
                 .await;
             } else {
+                // Always register the timer. insert_join aborts any existing
+                // timer for this session under the registry lock, eliminating
+                // the race between contains() and insert.
                 let timer_name = format!("followup:{}", session_id);
-                if !state.task_registry.contains(&timer_name).await {
-                    let state_clone = state.clone();
-                    let agent_id_clone = agent_id.clone();
-                    let session_id_clone = session_id.clone();
-                    let think_level_clone = think_level.clone();
-                    let queue_mode_clone = queue_mode.clone();
-                    let handle = tokio::spawn(async move {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                        flush_session_buffer(
-                            &state_clone,
-                            &agent_id_clone,
-                            &session_id_clone,
-                            think_level_clone,
-                            queue_mode_clone,
-                        )
-                        .await;
-                    });
-                    state.task_registry.insert_join(timer_name, handle).await;
-                }
+                let state_clone = state.clone();
+                let agent_id_clone = agent_id.clone();
+                let session_id_clone = session_id.clone();
+                let think_level_clone = think_level.clone();
+                let queue_mode_clone = queue_mode.clone();
+                let handle = tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                    flush_session_buffer(
+                        &state_clone,
+                        &agent_id_clone,
+                        &session_id_clone,
+                        think_level_clone,
+                        queue_mode_clone,
+                    )
+                    .await;
+                });
+                state.task_registry.insert_join(timer_name, handle).await;
             }
         }
 

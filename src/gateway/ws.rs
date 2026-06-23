@@ -234,6 +234,9 @@ async fn handle_websocket(
         StreamExt::split(socket);
     let conn_send = conn.clone();
 
+    let conn_task_prefix = format!("ws:conn:{}", conn_id);
+    let task_registry = state.task_registry.clone();
+
     let send_task = tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -302,6 +305,9 @@ async fn handle_websocket(
             }
         }
     });
+    task_registry
+        .insert_join(format!("{}:send", conn_task_prefix), send_task)
+        .await;
 
     let recv_task = tokio::spawn(async move {
         let handshake_ok = loop {
@@ -398,11 +404,28 @@ async fn handle_websocket(
         let conn_id = conn.read().await.conn_id.clone();
         info!("[{}] WebSocket disconnected", conn_id);
     });
+    task_registry
+        .insert_join(format!("{}:recv", conn_task_prefix), recv_task)
+        .await;
+
+    let send_task_name = format!("{}:send", conn_task_prefix);
+    let recv_task_name = format!("{}:recv", conn_task_prefix);
+
+    let send_join = task_registry
+        .remove_join_or_abort(&send_task_name)
+        .await
+        .expect("send task registered");
+    let recv_join = task_registry
+        .remove_join_or_abort(&recv_task_name)
+        .await
+        .expect("recv task registered");
 
     tokio::select! {
-        _ = send_task => {}
-        _ = recv_task => {}
+        _ = send_join => {}
+        _ = recv_join => {}
     }
+
+    task_registry.abort_matching(&conn_task_prefix).await;
 
     info!("[{}] WebSocket session ended", conn_id);
 }

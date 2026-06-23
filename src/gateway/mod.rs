@@ -7,13 +7,13 @@
 //! - WebSocket/HTTP API for channel adapters
 //! - Authentication and security policies
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt};
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -682,6 +682,7 @@ impl Gateway {
             },
             agents: AgentState {
                 agents: Arc::new(RwLock::new(HashMap::new())),
+                pending_spawns: Arc::new(Mutex::new(HashSet::new())),
                 router: pipelines_init.agent_router.clone(),
                 registry: agent_registry.clone(),
                 manager: session_manager.clone(),

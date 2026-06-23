@@ -9,7 +9,7 @@
 //! Handlers access nested state directly, e.g. `state.auth.manager`,
 //! `state.tools.registry`, `state.pipelines.inbound`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -76,6 +76,9 @@ pub struct AuthState {
 /// Agent runtime, routing, and session management state.
 pub struct AgentState {
     pub agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
+    /// IDs currently in the process of being spawned. Held across async setup
+    /// in spawn_agent_inner to prevent TOCTOU duplicate agent creation.
+    pub pending_spawns: Arc<Mutex<HashSet<String>>>,
     pub router: Arc<AgentRouter>,
     pub registry: Arc<RwLock<AgentRegistry>>,
     pub manager: Arc<RwLock<SessionManager>>,
