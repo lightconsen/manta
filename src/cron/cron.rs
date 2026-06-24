@@ -413,6 +413,12 @@ pub struct RunLogEntry {
 const MAX_TIMER_DELAY_MS: u64 = 60_000;
 /// Minimum delay between timer fires to prevent tight loops
 const MIN_REFIRE_GAP_MS: u64 = 2_000;
+/// Hard upper bound on a single shell command's execution time.
+/// A hung process otherwise keeps `running_at_ms` set forever, making
+/// the job permanently un-runnable until the scheduler restarts.
+const SHELL_EXEC_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// Hard upper bound on a single agent task's execution time.
+const AGENT_EXEC_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Commands for the scheduler
 #[allow(clippy::large_enum_variant)]
@@ -428,6 +434,17 @@ pub enum CronCommand {
 }
 
 /// Advanced cron scheduler with single global timer
+///
+/// # Concurrency model
+///
+/// Writes are serialised through the `command_tx` actor channel: only
+/// `handle_command` mutates the `jobs` map. Reads, however, bypass the
+/// actor and acquire the `RwLock` directly (see `calculate_next_wake_ms`
+/// and `run_due_jobs`). This is intentional — the timer needs lock-step
+/// access to the schedule without round-tripping through the command
+/// queue. Do **not** add reader paths that assume actor serialisation;
+/// the only ordering guarantee is "writes are linearised, reads see a
+/// consistent snapshot taken under a read lock".
 pub struct CronScheduler {
     jobs: Arc<RwLock<HashMap<String, CronJob>>>,
     command_tx: mpsc::Sender<CronCommand>,
@@ -864,13 +881,34 @@ impl CronScheduler {
         let run_id = uuid::Uuid::new_v4().to_string();
         let started_at = Utc::now();
 
-        // Execute based on target type
+        // Execute based on target type. Each path is wrapped in a hard
+        // timeout — without it a hung process or stalled agent keeps
+        // running_at_ms set forever, making the job permanently un-runnable.
         let result = match &job.target {
-            ExecutionTarget::Shell { command } => Self::execute_shell(command).await,
+            ExecutionTarget::Shell { command } => {
+                match tokio::time::timeout(SHELL_EXEC_TIMEOUT, Self::execute_shell(command)).await {
+                    Ok(r) => r,
+                    Err(_) => Err(SyscityError::Internal(format!(
+                        "Shell command timed out after {:?}",
+                        SHELL_EXEC_TIMEOUT
+                    ))),
+                }
+            }
             ExecutionTarget::Agent { prompt, agent_id, .. } => {
                 let agent_guard = agent.read().await;
                 if let Some(ref agent_ref) = *agent_guard {
-                    Self::execute_agent(agent_ref, &job, prompt, agent_id.as_deref()).await
+                    match tokio::time::timeout(
+                        AGENT_EXEC_TIMEOUT,
+                        Self::execute_agent(agent_ref, &job, prompt, agent_id.as_deref()),
+                    )
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(_) => Err(SyscityError::Internal(format!(
+                            "Agent task timed out after {:?}",
+                            AGENT_EXEC_TIMEOUT
+                        ))),
+                    }
                 } else {
                     Err(SyscityError::Internal("No agent configured for cron job".to_string()))
                 }
@@ -927,12 +965,25 @@ impl CronScheduler {
                     }
                 }
 
-                // Update next run (or schedule retry on error)
+                // Update next run (or schedule retry on error).
+                //
+                // Note: one-shot (`Schedule::At`) jobs are removed below, so
+                // there is no point computing a retry slot for them — the
+                // job ceases to exist after this block.
                 match &result {
                     Ok(_) => j.update_next_run(completed_at),
+                    Err(_) if j.schedule.is_one_shot() => {
+                        // One-shot: no retry, no next_run — the job is about
+                        // to be removed.
+                    }
                     Err(_) => {
                         if j.state.consecutive_errors <= j.retry.max_retries {
-                            let delay = j.retry.delay_for_attempt(j.state.consecutive_errors);
+                            // delay_for_attempt is 0-indexed: attempt 0 → 30s,
+                            // attempt 1 → 60s, etc. consecutive_errors is the
+                            // count of failures so far (>=1 here), so subtract
+                            // one to start the first retry at the 30s tier.
+                            let attempt = j.state.consecutive_errors.saturating_sub(1);
+                            let delay = j.retry.delay_for_attempt(attempt);
                             let retry_at = completed_at
                                 + chrono::Duration::from_std(delay)
                                     .unwrap_or_else(|_| chrono::Duration::seconds(60));
@@ -1210,6 +1261,10 @@ impl CronScheduler {
     }
 
     /// Save jobs to store
+    ///
+    /// Writes are atomic: serialise to `path.tmp`, then `rename` over `path`.
+    /// A mid-write crash leaves the old file intact rather than truncating
+    /// the jobs store and losing every persisted job on next start.
     async fn save_jobs(jobs: &Arc<RwLock<HashMap<String, CronJob>>>, path: &PathBuf) -> Result<()> {
         let jobs_lock = jobs.read().await;
         let jobs_vec: Vec<&CronJob> = jobs_lock.values().collect();
@@ -1224,9 +1279,31 @@ impl CronScheduler {
             }
         }
 
-        tokio::fs::write(path, json)
+        // Atomic write: tmp + rename. The rename is atomic on POSIX and
+        // Windows (since NTFS w/ MoveFileExW). On crash we keep the old
+        // file rather than corrupting the live one.
+        let mut tmp_path = path.clone();
+        let mut tmp_name = path
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_default();
+        tmp_name.push(".tmp");
+        tmp_path.set_file_name(tmp_name);
+
+        tokio::fs::write(&tmp_path, json)
             .await
-            .map_err(|e| SyscityError::Internal(format!("Failed to write jobs file: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to write jobs tmp file: {}", e)))?;
+
+        tokio::fs::rename(&tmp_path, path).await.map_err(|e| {
+            // Best-effort cleanup of the stale tmp file; ignore the result.
+            let tmp_for_cleanup = tmp_path.clone();
+            tokio::spawn(async move {
+                if let Err(e) = tokio::fs::remove_file(&tmp_for_cleanup).await {
+                    warn!("failed to clean up cron jobs tmp file {tmp_for_cleanup:?}: {e}");
+                }
+            });
+            SyscityError::Internal(format!("Failed to rename jobs tmp file into place: {}", e))
+        })?;
 
         Ok(())
     }
@@ -1273,20 +1350,46 @@ impl CronScheduler {
     }
 
     /// List all jobs
+    ///
+    /// Returns an empty `Vec` if the scheduler has been shut down or the
+    /// command channel is closed; the failure is logged at `warn!` so an
+    /// empty list under that condition is not silent.
     pub async fn list_jobs(&self) -> Vec<CronJob> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.command_tx.send(CronCommand::ListJobs(tx)).await;
-        rx.await.unwrap_or_default()
+        if let Err(e) = self.command_tx.send(CronCommand::ListJobs(tx)).await {
+            warn!("list_jobs: command channel closed: {e}");
+            return Vec::new();
+        }
+        match rx.await {
+            Ok(list) => list,
+            Err(e) => {
+                warn!("list_jobs: response channel closed before reply: {e}");
+                Vec::new()
+            }
+        }
     }
 
     /// Get a specific job
+    ///
+    /// Returns `None` both for an absent job and for a closed command/response
+    /// channel; the channel-failure cases are logged at `warn!`.
     pub async fn get_job(&self, job_id: &str) -> Option<CronJob> {
         let (tx, rx) = oneshot::channel();
-        let _ = self
+        if let Err(e) = self
             .command_tx
             .send(CronCommand::GetJob(job_id.to_string(), tx))
-            .await;
-        rx.await.ok().flatten()
+            .await
+        {
+            warn!("get_job({job_id}): command channel closed: {e}");
+            return None;
+        }
+        match rx.await {
+            Ok(opt) => opt,
+            Err(e) => {
+                warn!("get_job({job_id}): response channel closed before reply: {e}");
+                None
+            }
+        }
     }
 
     /// Shutdown the scheduler
@@ -1813,17 +1916,56 @@ mod tests {
     async fn test_save_jobs_fails_on_readonly_path() {
         let jobs: Arc<RwLock<HashMap<String, CronJob>>> = Arc::new(RwLock::new(HashMap::new()));
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("cron_jobs.json");
+        let subdir = dir.path().join("locked");
+        std::fs::create_dir(&subdir).unwrap();
+        let path = subdir.join("cron_jobs.json");
 
-        // Create the file and remove write permissions so the subsequent
-        // tokio::fs::write inside save_jobs fails with EACCES.
-        tokio::fs::write(&path, b"").await.unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        // Make the *parent directory* read-only so save_jobs cannot create the
+        // tmp file (atomic write writes to <path>.tmp first, then renames).
+        // We use the directory rather than just the file because rename(2)
+        // ignores the destination file's permissions and only checks the
+        // directory's write bit.
+        let mut perms = std::fs::metadata(&subdir).unwrap().permissions();
         perms.set_readonly(true);
-        std::fs::set_permissions(&path, perms).unwrap();
+        std::fs::set_permissions(&subdir, perms).unwrap();
 
         let result = CronScheduler::save_jobs(&jobs, &path).await;
-        assert!(result.is_err(), "save_jobs should fail when the target file is read-only");
+
+        // Restore write perms so the tempdir can be cleaned up.
+        let mut perms = std::fs::metadata(&subdir).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = std::fs::set_permissions(&subdir, perms);
+
+        assert!(result.is_err(), "save_jobs should fail when the target directory is read-only");
+    }
+
+    /// M3: save_jobs writes via a tmp file + rename, and on success leaves no
+    /// `.tmp` file behind in the target directory.
+    #[tokio::test]
+    async fn test_save_jobs_is_atomic_and_leaves_no_tmp_file() {
+        let mut map: HashMap<String, CronJob> = HashMap::new();
+        let future = Utc::now() + ChronoDuration::hours(1);
+        let job = CronJob::new(
+            "atomic-job",
+            "Atomic Test",
+            Schedule::At { timestamp: future },
+            ExecutionTarget::shell("echo hi"),
+        );
+        map.insert(job.id.clone(), job);
+        let jobs: Arc<RwLock<HashMap<String, CronJob>>> = Arc::new(RwLock::new(map));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cron_jobs.json");
+        let tmp_path = dir.path().join("cron_jobs.json.tmp");
+
+        CronScheduler::save_jobs(&jobs, &path).await.unwrap();
+
+        assert!(path.exists(), "final jobs file should exist after save");
+        assert!(!tmp_path.exists(), "tmp file should be renamed away, not left behind");
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(content.contains("atomic-job"), "saved file should contain the job id");
     }
 
     #[tokio::test]
