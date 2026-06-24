@@ -11,6 +11,12 @@ repository = "https://github.com/lightconsen/syscity"
 [lints.rust]
 # Treat warnings as errors in CI (also passed via -D warnings on CLI).
 # unsafe_code is already denied at crate level.
+#
+# Note: `unused_results` was evaluated and rejected — it flagged ~1040 sites,
+# the vast majority being builder chains (Command::arg, HeaderMap::insert,
+# HashMap::insert returning the old value) where ignoring the result is the
+# intended idiom. The high-signal cases (dropped JoinHandle / Future / sqlx
+# Query) are covered more precisely by the clippy lints below.
 
 [lints.clippy]
 # --- Correctness / error handling ---
@@ -27,6 +33,21 @@ expect_used = "deny"
 
 # Avoid silent `.ok()` on Results.
 result_unit_err = "warn"
+
+# Catch silently-dropped values that almost always indicate a bug.
+#
+# `let_underscore_future` is enforced at `deny` — currently 0 violations.
+# This catches the genuinely scary case: `let _ = some_async_fn()` (a
+# forgotten `.await` — the future is dropped without running).
+#
+# `let_underscore_must_use` was evaluated and left at `allow`:
+# 194 call sites would trip it, and a manual audit found the vast majority
+# are intentional fire-and-forget (idempotent sqlx migrations whose error
+# is expected, Discord `channel.say(...)` notifications, `OnceCell::set`
+# for one-shot init). Forcing each to add `#[allow(...)]` would add noise
+# without finding bugs. Re-enable if a future bug points to this pattern.
+let_underscore_must_use = "allow"
+let_underscore_future = "deny"
 
 # --- Async / concurrency ---
 # Help catch lock-across-await and unneeded async.
