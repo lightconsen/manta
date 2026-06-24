@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, instrument, warn};
 
@@ -240,14 +240,21 @@ impl AnthropicProvider {
         let mut headers = HeaderMap::new();
         match &*cred {
             crate::model_router::Credential::ApiKey { key } => {
-                headers.insert("x-api-key", key.parse().unwrap());
+                if let Ok(v) = HeaderValue::try_from(key.as_str()) {
+                    headers.insert("x-api-key", v);
+                }
             }
             _ => {
-                headers.insert("Authorization", cred.authorization_header().parse().unwrap());
+                let auth = cred.authorization_header();
+                if let Ok(v) = HeaderValue::try_from(auth.as_str()) {
+                    headers.insert("Authorization", v);
+                }
             }
         }
-        headers.insert("anthropic-version", self.api_version.parse().unwrap());
-        headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+        if let Ok(v) = HeaderValue::try_from(self.api_version.as_str()) {
+            headers.insert("anthropic-version", v);
+        }
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers
     }
 

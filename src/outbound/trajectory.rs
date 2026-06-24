@@ -5,14 +5,21 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::SystemTime;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
 use crate::error::Result;
+
+#[allow(clippy::unwrap_used)]
+static RE_HOME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(~|/Users/\w+|/home/\w+)").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_HEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9a-fA-F]{32,}").unwrap());
 
 /// A single entry in the trajectory log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -292,13 +299,8 @@ impl TrajectoryWriter {
     /// - Replaces `~`, `/Users/<name>`, `/home/<name>` with `$HOME`
     /// - Replaces 32+ character hex strings with `[REDACTED]`
     pub fn redact(input: &str) -> String {
-        // Regex for home directory patterns.
-        let home_re = regex::Regex::new(r"(~|/Users/\w+|/home/\w+)").unwrap();
-        // Regex for 32+ character hex strings (API keys, tokens, etc.).
-        let hex_re = regex::Regex::new(r"[0-9a-fA-F]{32,}").unwrap();
-
-        let result = home_re.replace_all(input, "$$HOME");
-        let result = hex_re.replace_all(&result, "[REDACTED]");
+        let result = RE_HOME.replace_all(input, "$$HOME");
+        let result = RE_HEX.replace_all(&result, "[REDACTED]");
         result.to_string()
     }
 

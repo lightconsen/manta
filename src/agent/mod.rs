@@ -124,6 +124,13 @@ pub use turns::{Thread, ThreadManager, Turn, TurnState};
 use self::heuristics::{is_complex_task, is_desktop_task};
 use self::session_store::SessionStore;
 
+#[allow(clippy::unwrap_used)] // static regex literals validated at compile-time
+static RE_CODE_BLOCK: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"```(\w+)?\n(.*?)\n```").unwrap());
+#[allow(clippy::unwrap_used)] // static regex literals validated at compile-time
+static RE_URL: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r#"https?://[^\s)\]>'"`]+"#).unwrap());
+
 /// Fast check for desktop-operation tasks that should use ComputerUseLoop.
 fn parse_loop_decision(text: &str) -> crate::Result<crate::computer::LoopDecision> {
     let trimmed = text.trim();
@@ -3641,15 +3648,12 @@ Your response:"#,
     /// Extract artifacts (code blocks, links) from tool result content
     /// and store them in the artifact store.
     fn extract_and_store_artifacts(&self, session_id: &str, content: &str, tool_name: &str) {
-        use regex::Regex;
-
         let Some(ref artifact_store) = self.artifact_store else {
             return;
         };
 
         // Extract code blocks: ```language\ncode\n```
-        let code_block_re = Regex::new(r"```(\w+)?\n(.*?)\n```").expect("valid code block regex");
-        for (idx, cap) in code_block_re.captures_iter(content).enumerate() {
+        for (idx, cap) in RE_CODE_BLOCK.captures_iter(content).enumerate() {
             let language = cap.get(1).map(|m| m.as_str()).unwrap_or("text");
             let code = cap.get(2).map(|m| m.as_str()).unwrap_or("");
             if code.len() < 20 {
@@ -3676,8 +3680,7 @@ Your response:"#,
         }
 
         // Extract URLs/links
-        let url_re = Regex::new(r#"https?://[^\s)\]>'"`]+"#).expect("valid url regex");
-        for (idx, cap) in url_re.captures_iter(content).enumerate() {
+        for (idx, cap) in RE_URL.captures_iter(content).enumerate() {
             let url = cap.get(0).map(|m| m.as_str()).unwrap_or("");
             if url.len() < 10 {
                 continue;

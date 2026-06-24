@@ -69,7 +69,7 @@ fn oauth_http_client() -> reqwest::Client {
     reqwest::ClientBuilder::new()
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .expect("OAuth HTTP client should build")
+        .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 /// Handler: Initiate GitHub OAuth login

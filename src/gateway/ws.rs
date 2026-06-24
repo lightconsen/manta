@@ -189,7 +189,11 @@ async fn validate_ws_upgrade_request(
         .body(axum::body::Body::from(
             "Unauthorized: valid session cookie or API token required",
         ))
-        .unwrap();
+        .unwrap_or_else(|_| {
+            axum::http::Response::new(axum::body::Body::from(
+                "Unauthorized: valid session cookie or API token required",
+            ))
+        });
     Err(resp)
 }
 
@@ -431,14 +435,20 @@ async fn handle_websocket(
     let send_task_name = format!("{}:send", conn_task_prefix);
     let recv_task_name = format!("{}:recv", conn_task_prefix);
 
-    let send_join = task_registry
-        .remove_join_or_abort(&send_task_name)
-        .await
-        .expect("send task registered");
-    let recv_join = task_registry
-        .remove_join_or_abort(&recv_task_name)
-        .await
-        .expect("recv task registered");
+    let send_join = match task_registry.remove_join_or_abort(&send_task_name).await {
+        Some(h) => h,
+        None => {
+            warn!("[{}] send task missing from registry", conn_id);
+            return;
+        }
+    };
+    let recv_join = match task_registry.remove_join_or_abort(&recv_task_name).await {
+        Some(h) => h,
+        None => {
+            warn!("[{}] recv task missing from registry", conn_id);
+            return;
+        }
+    };
 
     tokio::select! {
         _ = send_join => {}

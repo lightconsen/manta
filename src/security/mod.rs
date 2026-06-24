@@ -961,9 +961,113 @@ mod tests {
 
 /// Secret scanning for detecting sensitive data leaks
 pub mod secrets {
+    use std::sync::LazyLock;
+
     use regex::Regex;
 
-    /// Secret pattern definition
+    #[allow(clippy::unwrap_used)]
+    static DEFAULT_PATTERNS: LazyLock<Vec<SecretPattern>> = LazyLock::new(|| {
+        vec![
+            // API Keys
+            SecretPattern {
+                name: "OpenAI API Key",
+                regex: Regex::new(r"sk-[a-zA-Z0-9]{48}").unwrap(),
+                severity: Severity::Critical,
+                description: "OpenAI API key detected",
+            },
+            SecretPattern {
+                name: "Anthropic API Key",
+                regex: Regex::new(r"sk-ant-[a-zA-Z0-9_-]{40,}").unwrap(),
+                severity: Severity::Critical,
+                description: "Anthropic API key detected",
+            },
+            SecretPattern {
+                name: "AWS Access Key ID",
+                regex: Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(),
+                severity: Severity::Critical,
+                description: "AWS Access Key ID detected",
+            },
+            SecretPattern {
+                name: "AWS Secret Access Key",
+                regex: Regex::new(r"[0-9a-zA-Z/+]{40}").unwrap(),
+                severity: Severity::Critical,
+                description: "Potential AWS Secret Key detected",
+            },
+            // Private Keys
+            SecretPattern {
+                name: "RSA Private Key",
+                regex: Regex::new(r"-----BEGIN (RSA )?PRIVATE KEY-----").unwrap(),
+                severity: Severity::Critical,
+                description: "RSA private key detected",
+            },
+            SecretPattern {
+                name: "SSH Private Key",
+                regex: Regex::new(r"-----BEGIN OPENSSH PRIVATE KEY-----").unwrap(),
+                severity: Severity::Critical,
+                description: "SSH private key detected",
+            },
+            SecretPattern {
+                name: "PGP Private Key",
+                regex: Regex::new(r"-----BEGIN PGP PRIVATE KEY BLOCK-----").unwrap(),
+                severity: Severity::Critical,
+                description: "PGP private key detected",
+            },
+            // Database URLs
+            SecretPattern {
+                name: "Database Connection String",
+                regex: Regex::new(r"(postgres|mysql|mongodb)://[^:]+:[^@]+@").unwrap(),
+                severity: Severity::High,
+                description: "Database connection string with password detected",
+            },
+            // Tokens
+            SecretPattern {
+                name: "Bearer Token",
+                regex: Regex::new(r"(?i)bearer\s+[a-zA-Z0-9_\-\.]{20,}").unwrap(),
+                severity: Severity::High,
+                description: "Bearer token detected",
+            },
+            SecretPattern {
+                name: "GitHub Token",
+                regex: Regex::new(r"gh[pousr]_[A-Za-z0-9_]{36,}").unwrap(),
+                severity: Severity::Critical,
+                description: "GitHub personal access token detected",
+            },
+            SecretPattern {
+                name: "Slack Token",
+                regex: Regex::new(r"xox[baprs]-[0-9a-zA-Z\-]{10,48}").unwrap(),
+                severity: Severity::Critical,
+                description: "Slack API token detected",
+            },
+            SecretPattern {
+                name: "Discord Token",
+                regex: Regex::new(r"[MN][A-Za-z\d]{23}\.[\w-]{6}\.[\w-]{27}").unwrap(),
+                severity: Severity::Critical,
+                description: "Discord bot token detected",
+            },
+            // Generic patterns
+            SecretPattern {
+                name: "Generic API Key",
+                regex: Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[a-zA-Z0-9_-]{16,}")
+                    .unwrap(),
+                severity: Severity::Medium,
+                description: "Potential API key detected",
+            },
+            SecretPattern {
+                name: "Generic Secret",
+                regex: Regex::new(r"(?i)(secret|password|passwd|pwd)\s*[=:]\s*[^\s]{8,}")
+                    .unwrap(),
+                severity: Severity::Medium,
+                description: "Potential password/secret detected",
+            },
+            SecretPattern {
+                name: "JWT Token",
+                regex: Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*")
+                    .unwrap(),
+                severity: Severity::High,
+                description: "JWT token detected",
+            },
+        ]
+    });
     #[derive(Debug, Clone)]
     pub struct SecretPattern {
         /// Pattern name
@@ -1041,110 +1145,10 @@ pub mod secrets {
     impl SecretScanner {
         /// Create a new scanner with default patterns
         pub fn with_default_patterns() -> Self {
-            let patterns = vec![
-                // API Keys
-                SecretPattern {
-                    name: "OpenAI API Key",
-                    regex: Regex::new(r"sk-[a-zA-Z0-9]{48}").unwrap(),
-                    severity: Severity::Critical,
-                    description: "OpenAI API key detected",
-                },
-                SecretPattern {
-                    name: "Anthropic API Key",
-                    regex: Regex::new(r"sk-ant-[a-zA-Z0-9_-]{40,}").unwrap(),
-                    severity: Severity::Critical,
-                    description: "Anthropic API key detected",
-                },
-                SecretPattern {
-                    name: "AWS Access Key ID",
-                    regex: Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(),
-                    severity: Severity::Critical,
-                    description: "AWS Access Key ID detected",
-                },
-                SecretPattern {
-                    name: "AWS Secret Access Key",
-                    regex: Regex::new(r"[0-9a-zA-Z/+]{40}").unwrap(),
-                    severity: Severity::Critical,
-                    description: "Potential AWS Secret Key detected",
-                },
-                // Private Keys
-                SecretPattern {
-                    name: "RSA Private Key",
-                    regex: Regex::new(r"-----BEGIN (RSA )?PRIVATE KEY-----").unwrap(),
-                    severity: Severity::Critical,
-                    description: "RSA private key detected",
-                },
-                SecretPattern {
-                    name: "SSH Private Key",
-                    regex: Regex::new(r"-----BEGIN OPENSSH PRIVATE KEY-----").unwrap(),
-                    severity: Severity::Critical,
-                    description: "SSH private key detected",
-                },
-                SecretPattern {
-                    name: "PGP Private Key",
-                    regex: Regex::new(r"-----BEGIN PGP PRIVATE KEY BLOCK-----").unwrap(),
-                    severity: Severity::Critical,
-                    description: "PGP private key detected",
-                },
-                // Database URLs
-                SecretPattern {
-                    name: "Database Connection String",
-                    regex: Regex::new(r"(postgres|mysql|mongodb)://[^:]+:[^@]+@").unwrap(),
-                    severity: Severity::High,
-                    description: "Database connection string with password detected",
-                },
-                // Tokens
-                SecretPattern {
-                    name: "Bearer Token",
-                    regex: Regex::new(r"(?i)bearer\s+[a-zA-Z0-9_\-\.]{20,}").unwrap(),
-                    severity: Severity::High,
-                    description: "Bearer token detected",
-                },
-                SecretPattern {
-                    name: "GitHub Token",
-                    regex: Regex::new(r"gh[pousr]_[A-Za-z0-9_]{36,}").unwrap(),
-                    severity: Severity::Critical,
-                    description: "GitHub personal access token detected",
-                },
-                SecretPattern {
-                    name: "Slack Token",
-                    regex: Regex::new(r"xox[baprs]-[0-9a-zA-Z\-]{10,48}").unwrap(),
-                    severity: Severity::Critical,
-                    description: "Slack API token detected",
-                },
-                SecretPattern {
-                    name: "Discord Token",
-                    regex: Regex::new(r"[MN][A-Za-z\d]{23}\.[\w-]{6}\.[\w-]{27}").unwrap(),
-                    severity: Severity::Critical,
-                    description: "Discord bot token detected",
-                },
-                // Generic patterns
-                SecretPattern {
-                    name: "Generic API Key",
-                    regex: Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[a-zA-Z0-9_-]{16,}")
-                        .unwrap(),
-                    severity: Severity::Medium,
-                    description: "Potential API key detected",
-                },
-                SecretPattern {
-                    name: "Generic Secret",
-                    regex: Regex::new(r"(?i)(secret|password|passwd|pwd)\s*[=:]\s*[^\s]{8,}")
-                        .unwrap(),
-                    severity: Severity::Medium,
-                    description: "Potential password/secret detected",
-                },
-                SecretPattern {
-                    name: "JWT Token",
-                    regex: Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*")
-                        .unwrap(),
-                    severity: Severity::Medium,
-                    description: "JWT token detected",
-                },
-            ];
-
-            Self { patterns }
+            Self {
+                patterns: DEFAULT_PATTERNS.clone(),
+            }
         }
-
         /// Create an empty scanner
         pub fn empty() -> Self {
             Self { patterns: vec![] }

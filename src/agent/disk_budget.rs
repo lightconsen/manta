@@ -240,7 +240,7 @@ impl DiskBudgetManager {
         &self,
         session_id: &str,
     ) -> std::sync::MutexGuard<'_, HashMap<String, SessionBudget>> {
-        let mut budgets = self.budgets.lock().expect("lock poisoned");
+        let mut budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
         budgets
             .entry(session_id.to_string())
             .or_insert_with(|| SessionBudget::new(self.default_limit));
@@ -249,7 +249,7 @@ impl DiskBudgetManager {
 
     /// Set a custom budget limit for a session.
     pub fn set_budget(&self, session_id: &str, limit_bytes: usize) {
-        let mut budgets = self.budgets.lock().expect("lock poisoned");
+        let mut budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
         budgets.insert(session_id.to_string(), SessionBudget::new(limit_bytes));
         info!("Set budget for session {} to {} bytes", session_id, limit_bytes);
     }
@@ -272,7 +272,7 @@ impl DiskBudgetManager {
 
     /// Remove a tracked item.
     pub fn remove_item(&self, session_id: &str, item_id: &str) -> bool {
-        let mut budgets = self.budgets.lock().expect("lock poisoned");
+        let mut budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
         budgets
             .get_mut(session_id)
             .map(|b| b.remove_item(item_id))
@@ -281,7 +281,7 @@ impl DiskBudgetManager {
 
     /// Touch an item (mark as accessed).
     pub fn touch(&self, session_id: &str, item_id: &str) {
-        let mut budgets = self.budgets.lock().expect("lock poisoned");
+        let mut budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(budget) = budgets.get_mut(session_id) {
             budget.touch(item_id);
         }
@@ -289,7 +289,7 @@ impl DiskBudgetManager {
 
     /// Clear all tracked items for a session.
     pub fn clear_session(&self, session_id: &str) {
-        let mut budgets = self.budgets.lock().expect("lock poisoned");
+        let mut budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
         if budgets.remove(session_id).is_some() {
             info!("Cleared disk budget for session {}", session_id);
         }
@@ -297,7 +297,7 @@ impl DiskBudgetManager {
 
     /// Get budget stats for a session.
     pub fn session_stats(&self, session_id: &str) -> Option<SessionBudgetStats> {
-        let budgets = self.budgets.lock().expect("lock poisoned");
+        let budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
         budgets.get(session_id).map(|b| SessionBudgetStats {
             limit_bytes: b.limit_bytes,
             used_bytes: b.used_bytes,
@@ -313,7 +313,7 @@ impl DiskBudgetManager {
 
     /// Get global stats across all sessions.
     pub fn global_stats(&self) -> GlobalBudgetStats {
-        let budgets = self.budgets.lock().expect("lock poisoned");
+        let budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
         let session_count = budgets.len();
         let total_used: usize = budgets.values().map(|b| b.used_bytes).sum();
         let total_limit: usize = budgets.values().map(|b| b.limit_bytes).sum();
@@ -327,7 +327,7 @@ impl DiskBudgetManager {
 
     /// Check if a session is over budget.
     pub fn is_over_budget(&self, session_id: &str) -> bool {
-        let budgets = self.budgets.lock().expect("lock poisoned");
+        let budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
         budgets
             .get(session_id)
             .map(|b| b.used_bytes > b.limit_bytes)

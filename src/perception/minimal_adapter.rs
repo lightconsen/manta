@@ -112,14 +112,14 @@ impl Inner {
     /// the recent ring; signal any waiters.
     fn push_event(&self, ev: Event) {
         {
-            let mut p = self.pending.lock().expect("pending poisoned");
+            let mut p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
             if p.len() >= self.config.max_pending {
                 p.pop_front();
             }
             p.push_back(ev.clone());
         }
         {
-            let mut r = self.recent.lock().expect("recent poisoned");
+            let mut r = self.recent.lock().unwrap_or_else(|e| e.into_inner());
             if r.len() >= self.config.max_recent {
                 r.pop_front();
             }
@@ -202,7 +202,7 @@ fn spawn_derived_task(inner: Arc<Inner>, derived_hub: Arc<DerivedStreamHub>) -> 
             match rx.recv().await {
                 Ok(ev) => {
                     let admitted = {
-                        let mut g = inner.gate.lock().expect("gate poisoned");
+                        let mut g = inner.gate.lock().unwrap_or_else(|e| e.into_inner());
                         g.admit(&ev)
                     };
                     if admitted {
@@ -231,19 +231,19 @@ fn spawn_raw_task(inner: Arc<Inner>, raw_hub: Arc<PerceptionStreamHub>) -> JoinH
                 Ok(obs) => {
                     // Cheap pre-filter using current focus.
                     let pre_pass = {
-                        let f = inner.focus.lock().expect("focus poisoned");
+                        let f = inner.focus.lock().unwrap_or_else(|e| e.into_inner());
                         f.admits_modality(obs.modality) && f.admits_source(&obs.source)
                     };
                     if !pre_pass {
                         continue;
                     }
                     let maybe_change = {
-                        let mut sf = inner.filter.lock().expect("filter poisoned");
+                        let mut sf = inner.filter.lock().unwrap_or_else(|e| e.into_inner());
                         sf.evaluate(&obs)
                     };
                     if let Some(ev) = maybe_change {
                         let admitted = {
-                            let mut g = inner.gate.lock().expect("gate poisoned");
+                            let mut g = inner.gate.lock().unwrap_or_else(|e| e.into_inner());
                             g.admit(&ev)
                         };
                         if admitted {
@@ -280,7 +280,7 @@ fn spawn_summary_refresh_task(inner: Arc<Inner>, interval: Duration) -> JoinHand
             // Skip the round-trip when there's nothing worth
             // summarizing — keeps the LLM bill down on idle agents.
             let has_signal = {
-                let r = inner.recent.lock().expect("recent poisoned");
+                let r = inner.recent.lock().unwrap_or_else(|e| e.into_inner());
                 !r.is_empty()
             } || !inner.temporal.snapshot_aggregates().is_empty();
             if !has_signal {
@@ -290,7 +290,7 @@ fn spawn_summary_refresh_task(inner: Arc<Inner>, interval: Duration) -> JoinHand
                 Ok(summary) => {
                     let trimmed = summary.trim().to_string();
                     if !trimmed.is_empty() {
-                        *inner.last_summary.lock().expect("last_summary poisoned") = Some(trimmed);
+                        *inner.last_summary.lock().unwrap_or_else(|e| e.into_inner()) = Some(trimmed);
                     }
                 }
                 Err(e) => {
@@ -316,7 +316,7 @@ async fn summarize_with_inner(inner: &Inner, dur: Duration) -> Result<String, Ad
     let recent: Vec<Event> = inner
         .recent
         .lock()
-        .expect("recent poisoned")
+        .unwrap_or_else(|e| e.into_inner())
         .iter()
         .filter(|e| e.at() >= cutoff)
         .cloned()
@@ -344,21 +344,21 @@ impl AgentPerceptionAdapter for MinimalAdapter {
         // Per spec: gate whitelist replaced + freq reset; salience
         // baselines retained, dedup cleared.
         {
-            let mut g = self.inner.gate.lock().expect("gate poisoned");
+            let mut g = self.inner.gate.lock().unwrap_or_else(|e| e.into_inner());
             g.set_focus(focus.clone());
         }
         {
-            let mut sf = self.inner.filter.lock().expect("filter poisoned");
+            let mut sf = self.inner.filter.lock().unwrap_or_else(|e| e.into_inner());
             sf.set_config(focus.salience.clone());
         }
         {
-            let mut f = self.inner.focus.lock().expect("focus poisoned");
+            let mut f = self.inner.focus.lock().unwrap_or_else(|e| e.into_inner());
             *f = focus;
         }
     }
 
     async fn current_focus(&self) -> Focus {
-        self.inner.focus.lock().expect("focus poisoned").clone()
+        self.inner.focus.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     fn now(&self) -> Snapshot {
@@ -367,7 +367,7 @@ impl AgentPerceptionAdapter for MinimalAdapter {
             .inner
             .recent
             .lock()
-            .expect("recent poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .cloned()
             .collect();
@@ -375,7 +375,7 @@ impl AgentPerceptionAdapter for MinimalAdapter {
             .inner
             .last_summary
             .lock()
-            .expect("last_summary poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .clone();
         Snapshot {
             at: SystemTime::now(),
@@ -390,7 +390,7 @@ impl AgentPerceptionAdapter for MinimalAdapter {
         loop {
             let notified = self.inner.notify.notified();
             {
-                let mut q = self.inner.pending.lock().expect("pending poisoned");
+                let mut q = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(ev) = q.pop_front() {
                     return Some(ev);
                 }
@@ -412,7 +412,7 @@ impl AgentPerceptionAdapter for MinimalAdapter {
                 .inner
                 .last_summary
                 .lock()
-                .expect("last_summary poisoned") = Some(trimmed.clone());
+                .unwrap_or_else(|e| e.into_inner()) = Some(trimmed.clone());
         }
         Ok(summary)
     }
@@ -420,7 +420,7 @@ impl AgentPerceptionAdapter for MinimalAdapter {
     async fn shutdown(self: Arc<Self>) {
         self.inner.shutdown.store(true, Ordering::SeqCst);
         self.inner.notify.notify_waiters();
-        let handles = std::mem::take(&mut *self.handles.lock().expect("handles poisoned"));
+        let handles = std::mem::take(&mut *self.handles.lock().unwrap_or_else(|e| e.into_inner()));
         for h in handles {
             h.abort();
         }

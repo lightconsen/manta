@@ -13,7 +13,7 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::{ConnectInfo, Request, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     middleware::Next,
     response::Response,
 };
@@ -575,16 +575,13 @@ pub async fn rate_limit_middleware(
             crate::gateway::rate_limit::MultiTierResult::Allowed { remaining } => {
                 let mut response = next.run(req).await;
                 let headers = response.headers_mut();
-                headers.insert(
-                    "X-RateLimit-Limit",
-                    "100".parse().expect("failed to parse header value"),
-                );
+                headers.insert("X-RateLimit-Limit", HeaderValue::from_static("100"));
                 headers.insert(
                     "X-RateLimit-Remaining",
                     remaining
                         .to_string()
                         .parse()
-                        .expect("failed to parse header value"),
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
                 );
                 Ok(response)
             }
@@ -596,17 +593,17 @@ pub async fn rate_limit_middleware(
                         "Rate limit exceeded on tier '{}'. Retry after {} seconds.",
                         tier, retry_after_secs
                     )))
-                    .expect("failed to build response");
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
                 response.headers_mut().insert(
                     "Retry-After",
                     retry_after_secs
                         .to_string()
                         .parse()
-                        .expect("failed to parse header value"),
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
                 );
                 response.headers_mut().insert(
                     "X-RateLimit-Tier",
-                    tier.parse().expect("failed to parse header value"),
+                    tier.parse().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
                 );
                 Ok(response)
             }
@@ -631,21 +628,21 @@ pub async fn rate_limit_middleware(
                         .unwrap_or(100)
                         .to_string()
                         .parse()
-                        .expect("failed to parse header value"),
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
                 );
                 headers.insert(
                     "X-RateLimit-Remaining",
                     remaining
                         .to_string()
                         .parse()
-                        .expect("failed to parse header value"),
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
                 );
                 headers.insert(
                     "X-RateLimit-Reset",
                     reset_after_secs
                         .to_string()
                         .parse()
-                        .expect("failed to parse header value"),
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
                 );
 
                 Ok(response)
@@ -658,14 +655,14 @@ pub async fn rate_limit_middleware(
                         "Rate limit exceeded. Retry after {} seconds.",
                         retry_after_secs
                     )))
-                    .expect("failed to build response");
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
                 response.headers_mut().insert(
                     "Retry-After",
                     retry_after_secs
                         .to_string()
                         .parse()
-                        .expect("failed to parse header value"),
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
                 );
 
                 Ok(response)
@@ -746,34 +743,23 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
     // Content Security Policy with route-aware strategy
     headers.insert(
         "Content-Security-Policy",
-        csp_policy
-            .to_header_value()
-            .parse()
-            .expect("failed to parse header value"),
+        HeaderValue::try_from(csp_policy.to_header_value())
+            .unwrap_or_else(|_| HeaderValue::from_static("default-src 'none'")),
     );
 
-    headers.insert(
-        "X-Content-Type-Options",
-        "nosniff".parse().expect("failed to parse header value"),
-    );
-    headers.insert("X-Frame-Options", "DENY".parse().expect("failed to parse header value"));
+    headers.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
+    headers.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
     headers.insert(
         "Referrer-Policy",
-        "strict-origin-when-cross-origin"
-            .parse()
-            .expect("failed to parse header value"),
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
     );
     headers.insert(
         "Permissions-Policy",
-        "camera=(), microphone=(), geolocation=()"
-            .parse()
-            .expect("failed to parse header value"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
     );
     headers.insert(
         "Strict-Transport-Security",
-        "max-age=31536000; includeSubDomains"
-            .parse()
-            .expect("failed to parse header value"),
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
     );
 
     response
@@ -886,7 +872,7 @@ mod tests {
     fn test_extract_client_ip_x_forwarded_for() {
         let mut req = Request::new(Body::empty());
         req.headers_mut()
-            .insert("x-forwarded-for", "203.0.113.195, 70.41.3.18".parse().unwrap());
+            .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.195, 70.41.3.18"));
         let ip = extract_client_ip(&req);
         assert_eq!(ip, Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 195))));
     }
@@ -895,7 +881,7 @@ mod tests {
     fn test_extract_client_ip_x_real_ip() {
         let mut req = Request::new(Body::empty());
         req.headers_mut()
-            .insert("x-real-ip", "192.168.1.1".parse().unwrap());
+            .insert("x-real-ip", HeaderValue::from_static("192.168.1.1"));
         let ip = extract_client_ip(&req);
         assert_eq!(ip, Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
     }
@@ -904,9 +890,9 @@ mod tests {
     fn test_extract_client_ip_x_forwarded_for_priority() {
         let mut req = Request::new(Body::empty());
         req.headers_mut()
-            .insert("x-forwarded-for", "10.0.0.1".parse().unwrap());
+            .insert("x-forwarded-for", HeaderValue::from_static("10.0.0.1"));
         req.headers_mut()
-            .insert("x-real-ip", "192.168.1.1".parse().unwrap());
+            .insert("x-real-ip", HeaderValue::from_static("192.168.1.1"));
         let ip = extract_client_ip(&req);
         // X-Forwarded-For takes priority
         assert_eq!(ip, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
@@ -923,7 +909,7 @@ mod tests {
     fn test_extract_client_ip_invalid() {
         let mut req = Request::new(Body::empty());
         req.headers_mut()
-            .insert("x-forwarded-for", "not-an-ip".parse().unwrap());
+            .insert("x-forwarded-for", HeaderValue::from_static("not-an-ip"));
         let ip = extract_client_ip(&req);
         assert_eq!(ip, None);
     }

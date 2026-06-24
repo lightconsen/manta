@@ -3,6 +3,46 @@
 //! This module provides formatters to convert markdown to channel-specific
 //! formats.
 
+use std::sync::LazyLock;
+
+use regex::Regex;
+
+macro_rules! static_regex {
+    ($name:ident, $pat:literal) => {
+        #[allow(clippy::unwrap_used)]
+        static $name: LazyLock<Regex> = LazyLock::new(|| Regex::new($pat).unwrap());
+    };
+}
+
+// Telegram HTML patterns
+static_regex!(TELEGRAM_RE_CODE_BLOCK, r"```(\w+)?\n(.*?)```");
+static_regex!(TELEGRAM_RE_BOLD_DOUBLE_STAR, r"\*\*(.+?)\*\*");
+static_regex!(TELEGRAM_RE_BOLD_DOUBLE_UNDERSCORE, r"__(.+?)__");
+static_regex!(TELEGRAM_RE_ITALIC_STAR, r"\*([^*]+)\*");
+static_regex!(TELEGRAM_RE_CODE_INLINE, r"`([^`]+)`");
+static_regex!(TELEGRAM_RE_STRIKETHROUGH, r"~~(.+?)~~");
+static_regex!(TELEGRAM_RE_LINK, r"\[([^\]]+)\]\(([^)]+)\)");
+
+// Slack mrkdwn patterns
+static_regex!(SLACK_RE_CODE_BLOCK, r"```(\w+)?\n(.*?)```");
+static_regex!(SLACK_RE_BOLD_DOUBLE_STAR, r"\*\*(.+?)\*\*");
+static_regex!(SLACK_RE_BOLD_DOUBLE_UNDERSCORE, r"__(.+?)__");
+static_regex!(SLACK_RE_ITALIC_STAR, r"\*([^*]+)\*");
+static_regex!(SLACK_RE_ITALIC_UNDERSCORE, r"_([^_]+)_");
+static_regex!(SLACK_RE_CODE_INLINE, r"`([^`]+)`");
+static_regex!(SLACK_RE_STRIKETHROUGH, r"~~(.+?)~~");
+static_regex!(SLACK_RE_LINK, r"\[([^\]]+)\]\(([^)]+)\)");
+
+// Plain text patterns
+static_regex!(PLAIN_RE_CODE_BLOCK, r"```[\w]*\n(.*?)```");
+static_regex!(PLAIN_RE_BOLD_DOUBLE_STAR, r"\*\*(.+?)\*\*");
+static_regex!(PLAIN_RE_BOLD_DOUBLE_UNDERSCORE, r"__(.+?)__");
+static_regex!(PLAIN_RE_ITALIC_STAR, r"\*([^*]+)\*");
+static_regex!(PLAIN_RE_ITALIC_UNDERSCORE, r"_([^_]+)_");
+static_regex!(PLAIN_RE_CODE_INLINE, r"`([^`]+)`");
+static_regex!(PLAIN_RE_STRIKETHROUGH, r"~~(.+?)~~");
+static_regex!(PLAIN_RE_LINK, r"\[([^\]]+)\]\(([^)]+)\)");
+
 /// A formatter that converts markdown to channel-specific formats
 pub trait MessageFormatter: Send + Sync {
     /// Format markdown text for this channel
@@ -59,8 +99,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
         let mut result = text.to_string();
 
         // Code blocks first (to protect content inside)
-        result = regex::Regex::new(r"```(\w+)?\n(.*?)```")
-            .unwrap()
+        result = TELEGRAM_RE_CODE_BLOCK
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 let lang = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let code = caps.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -69,15 +108,13 @@ impl MessageFormatter for TelegramHtmlFormatter {
             .to_string();
 
         // Bold
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
+        result = TELEGRAM_RE_BOLD_DOUBLE_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_bold(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
 
-        result = regex::Regex::new(r"__(.+?)__")
-            .unwrap()
+        result = TELEGRAM_RE_BOLD_DOUBLE_UNDERSCORE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_bold(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
@@ -86,8 +123,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
         // Italic: *text* -> <i>text</i>
         // Use placeholders to protect bold from being converted
         let bold_placeholder = "\x00BOLD\x00";
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
+        result = TELEGRAM_RE_BOLD_DOUBLE_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!(
                     "{}{}{}",
@@ -98,8 +134,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
             })
             .to_string();
 
-        result = regex::Regex::new(r"__(.+?)__")
-            .unwrap()
+        result = TELEGRAM_RE_BOLD_DOUBLE_UNDERSCORE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!(
                     "{}{}{}",
@@ -111,8 +146,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
             .to_string();
 
         // Now process italic
-        result = regex::Regex::new(r"\*([^*]+)\*")
-            .unwrap()
+        result = TELEGRAM_RE_ITALIC_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_italic(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
@@ -122,16 +156,14 @@ impl MessageFormatter for TelegramHtmlFormatter {
         result = result.replace(bold_placeholder, "**");
 
         // Inline code
-        result = regex::Regex::new(r"`([^`]+)`")
-            .unwrap()
+        result = TELEGRAM_RE_CODE_INLINE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_inline_code(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
 
         // Strikethrough
-        result = regex::Regex::new(r"~~(.+?)~~")
-            .unwrap()
+        result = TELEGRAM_RE_STRIKETHROUGH
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!(
                     "<s>{}</s>",
@@ -141,8 +173,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
             .to_string();
 
         // Links
-        result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
-            .unwrap()
+        result = TELEGRAM_RE_LINK
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 let text = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let url = caps.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -284,8 +315,7 @@ impl MessageFormatter for SlackFormatter {
         let mut result = text.to_string();
 
         // Code blocks (protect first)
-        result = regex::Regex::new(r"```(\w+)?\n(.*?)```")
-            .unwrap()
+        result = SLACK_RE_CODE_BLOCK
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 let lang = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let code = caps.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -296,8 +326,7 @@ impl MessageFormatter for SlackFormatter {
         // Bold: **text** -> <b>text</b> temporarily to protect from italic conversion
         // Use placeholders to avoid conflicts with italic processing
         let bold_placeholder = "\x00BOLD\x00";
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
+        result = SLACK_RE_BOLD_DOUBLE_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!(
                     "{}{}{}",
@@ -309,8 +338,7 @@ impl MessageFormatter for SlackFormatter {
             .to_string();
 
         // Also handle __bold__
-        result = regex::Regex::new(r"__(.+?)__")
-            .unwrap()
+        result = SLACK_RE_BOLD_DOUBLE_UNDERSCORE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!(
                     "{}{}{}",
@@ -322,16 +350,14 @@ impl MessageFormatter for SlackFormatter {
             .to_string();
 
         // Italic: *text* -> _text_
-        result = regex::Regex::new(r"\*([^*]+)\*")
-            .unwrap()
+        result = SLACK_RE_ITALIC_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_italic(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
 
         // Italic: _text_ -> _text_ (keep as is)
-        result = regex::Regex::new(r"_([^_]+)_")
-            .unwrap()
+        result = SLACK_RE_ITALIC_UNDERSCORE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_italic(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
@@ -341,24 +367,21 @@ impl MessageFormatter for SlackFormatter {
         result = result.replace(bold_placeholder, "*");
 
         // Inline code
-        result = regex::Regex::new(r"`([^`]+)`")
-            .unwrap()
+        result = SLACK_RE_CODE_INLINE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_inline_code(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
 
         // Strikethrough: ~~text~~ -> ~text~
-        result = regex::Regex::new(r"~~(.+?)~~")
-            .unwrap()
+        result = SLACK_RE_STRIKETHROUGH
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("~{}~", Self::escape_slack(caps.get(1).map(|m| m.as_str()).unwrap_or("")))
             })
             .to_string();
 
         // Links: [text](url) -> <url|text>
-        result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
-            .unwrap()
+        result = SLACK_RE_LINK
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 let text = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let url = caps.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -413,27 +436,23 @@ impl PlainTextFormatter {
         let mut result = text.to_string();
 
         // Code blocks
-        result = regex::Regex::new(r"```[\w]*\n(.*?)```")
-            .unwrap()
+        result = PLAIN_RE_CODE_BLOCK
             .replace_all(&result, "$1")
             .to_string();
 
         // Bold
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
+        result = PLAIN_RE_BOLD_DOUBLE_STAR
             .replace_all(&result, "$1")
             .to_string();
 
-        result = regex::Regex::new(r"__(.+?)__")
-            .unwrap()
+        result = PLAIN_RE_BOLD_DOUBLE_UNDERSCORE
             .replace_all(&result, "$1")
             .to_string();
 
         // Italic: remove *text* and _text_
         // Process bold first to protect, then italic, then restore bold
         let bold_placeholder = "\x00BOLD\x00";
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
+        result = PLAIN_RE_BOLD_DOUBLE_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!(
                     "{}{}{}",
@@ -444,8 +463,7 @@ impl PlainTextFormatter {
             })
             .to_string();
 
-        result = regex::Regex::new(r"__(.+?)__")
-            .unwrap()
+        result = PLAIN_RE_BOLD_DOUBLE_UNDERSCORE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!(
                     "{}{}{}",
@@ -457,13 +475,11 @@ impl PlainTextFormatter {
             .to_string();
 
         // Now safe to process italic
-        result = regex::Regex::new(r"\*([^*]+)\*")
-            .unwrap()
+        result = PLAIN_RE_ITALIC_STAR
             .replace_all(&result, "$1")
             .to_string();
 
-        result = regex::Regex::new(r"_([^_]+)_")
-            .unwrap()
+        result = PLAIN_RE_ITALIC_UNDERSCORE
             .replace_all(&result, "$1")
             .to_string();
 
@@ -471,20 +487,17 @@ impl PlainTextFormatter {
         result = result.replace(bold_placeholder, "");
 
         // Inline code
-        result = regex::Regex::new(r"`([^`]+)`")
-            .unwrap()
+        result = PLAIN_RE_CODE_INLINE
             .replace_all(&result, "$1")
             .to_string();
 
         // Strikethrough
-        result = regex::Regex::new(r"~~(.+?)~~")
-            .unwrap()
+        result = PLAIN_RE_STRIKETHROUGH
             .replace_all(&result, "$1")
             .to_string();
 
         // Links: keep text, add URL in parentheses
-        result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
-            .unwrap()
+        result = PLAIN_RE_LINK
             .replace_all(&result, "$1 ($2)")
             .to_string();
 

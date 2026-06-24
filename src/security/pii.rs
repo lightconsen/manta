@@ -6,6 +6,7 @@
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 /// Data classification tiers for detected content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -92,64 +93,69 @@ impl Default for PiiDetector {
     }
 }
 
+/// Built-in PII detection patterns.
+#[allow(clippy::unwrap_used)]
+static DEFAULT_PATTERNS: LazyLock<Vec<PiiPattern>> = LazyLock::new(|| {
+    vec![
+        // ── Chinese National ID ──────────────────────────────────────────
+        PiiPattern {
+            name: "chinese_id",
+            regex: Regex::new(r"[1-9]\d{5}(?:18\d{2}|19\d{2}|20\d{2})\d{2}\d{2}\d{3}[\dXx]").unwrap(),
+            classification: DataClassification::Restricted,
+            confidence: 0.90,
+            description: "Chinese national ID number detected",
+            validate: validate_chinese_id,
+            redact: redact_chinese_id,
+        },
+        // ── Bank Card (generic, validated with Luhn) ─────────────────────
+        PiiPattern {
+            name: "bank_card",
+            regex: Regex::new(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|6(?:011|5[0-9]{2})[0-9]{12}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|(?:2131|1800|35\d{3})\d{11}|\d{13,19})\b").unwrap(),
+            classification: DataClassification::Confidential,
+            confidence: 0.85,
+            description: "Bank card number detected",
+            validate: validate_luhn,
+            redact: redact_bank_card,
+        },
+        // ── Chinese Mobile Phone ─────────────────────────────────────────
+        PiiPattern {
+            name: "phone_cn",
+            regex: Regex::new(r"(?:\+?86\s?)?1[3-9]\d{9}").unwrap(),
+            classification: DataClassification::Internal,
+            confidence: 0.80,
+            description: "Chinese mobile phone number detected",
+            validate: |_s| true,
+            redact: redact_phone,
+        },
+        // ── Landline (with optional area code) ───────────────────────────
+        PiiPattern {
+            name: "phone_landline",
+            regex: Regex::new(r"0\d{2,3}-?\d{7,8}").unwrap(),
+            classification: DataClassification::Internal,
+            confidence: 0.70,
+            description: "Chinese landline phone number detected",
+            validate: |_s| true,
+            redact: redact_landline,
+        },
+        // ── Email Address ────────────────────────────────────────────────
+        PiiPattern {
+            name: "email",
+            regex: Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap(),
+            classification: DataClassification::Internal,
+            confidence: 0.90,
+            description: "Email address detected",
+            validate: |_s| true,
+            redact: redact_email,
+        },
+    ]
+});
+
 impl PiiDetector {
     /// Create a detector with the built-in PII patterns.
     pub fn with_default_patterns() -> Self {
-        let patterns = vec![
-            // ── Chinese National ID ──────────────────────────────────────────
-            PiiPattern {
-                name: "chinese_id",
-                regex: Regex::new(r"[1-9]\d{5}(?:18\d{2}|19\d{2}|20\d{2})\d{2}\d{2}\d{3}[\dXx]").unwrap(),
-                classification: DataClassification::Restricted,
-                confidence: 0.90,
-                description: "Chinese national ID number detected",
-                validate: validate_chinese_id,
-                redact: redact_chinese_id,
-            },
-            // ── Bank Card (generic, validated with Luhn) ─────────────────────
-            PiiPattern {
-                name: "bank_card",
-                // Matches 13–19 digit sequences that look like card numbers.
-                regex: Regex::new(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|6(?:011|5[0-9]{2})[0-9]{12}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|(?:2131|1800|35\d{3})\d{11}|\d{13,19})\b").unwrap(),
-                classification: DataClassification::Confidential,
-                confidence: 0.85,
-                description: "Bank card number detected",
-                validate: validate_luhn,
-                redact: redact_bank_card,
-            },
-            // ── Chinese Mobile Phone ─────────────────────────────────────────
-            PiiPattern {
-                name: "phone_cn",
-                regex: Regex::new(r"(?:\+?86\s?)?1[3-9]\d{9}").unwrap(),
-                classification: DataClassification::Internal,
-                confidence: 0.80,
-                description: "Chinese mobile phone number detected",
-                validate: |_s| true,
-                redact: redact_phone,
-            },
-            // ── Landline (with optional area code) ───────────────────────────
-            PiiPattern {
-                name: "phone_landline",
-                regex: Regex::new(r"0\d{2,3}-?\d{7,8}").unwrap(),
-                classification: DataClassification::Internal,
-                confidence: 0.70,
-                description: "Chinese landline phone number detected",
-                validate: |_s| true,
-                redact: redact_landline,
-            },
-            // ── Email Address ────────────────────────────────────────────────
-            PiiPattern {
-                name: "email",
-                regex: Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap(),
-                classification: DataClassification::Internal,
-                confidence: 0.90,
-                description: "Email address detected",
-                validate: |_s| true,
-                redact: redact_email,
-            },
-        ];
-
-        Self { patterns }
+        Self {
+            patterns: DEFAULT_PATTERNS.clone(),
+        }
     }
 
     /// Create an empty detector (add patterns manually).

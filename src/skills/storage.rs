@@ -393,7 +393,9 @@ impl SkillStorage {
 
 impl Default for SkillStorage {
     fn default() -> Self {
-        // Safe unwrap - user_skills_dir only fails if no home directory
+        // Default trait cannot return Result; user_skills_dir only fails if
+        // no home directory is set, which is unrecoverable in this context.
+        #[allow(clippy::expect_used)]
         Self::new().expect("Failed to create skill storage")
     }
 }

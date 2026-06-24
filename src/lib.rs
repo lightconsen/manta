@@ -35,6 +35,7 @@
 #![allow(missing_docs)]
 #![deny(unsafe_code)]
 #![recursion_limit = "256"]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod acp;
 pub mod adapters;

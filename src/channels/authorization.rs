@@ -38,13 +38,13 @@ impl OwnerStore {
 
     /// Get the current state for a user.
     pub fn get(&self, user_id: &str) -> OwnerState {
-        let states = self.states.read().expect("OwnerStore lock poisoned");
+        let states = self.states.read().unwrap_or_else(|e| e.into_inner());
         states.get(user_id).copied().unwrap_or_default()
     }
 
     /// Set the state for a user directly.
     pub fn set(&self, user_id: impl Into<String>, state: OwnerState) {
-        let mut states = self.states.write().expect("OwnerStore lock poisoned");
+        let mut states = self.states.write().unwrap_or_else(|e| e.into_inner());
         states.insert(user_id.into(), state);
     }
 
@@ -55,7 +55,7 @@ impl OwnerStore {
         new_state: OwnerState,
     ) -> Result<(), OwnerTransitionError> {
         let user_id = user_id.into();
-        let mut states = self.states.write().expect("OwnerStore lock poisoned");
+        let mut states = self.states.write().unwrap_or_else(|e| e.into_inner());
         let current = states.get(&user_id).copied().unwrap_or_default();
 
         let allowed = match (current, new_state) {

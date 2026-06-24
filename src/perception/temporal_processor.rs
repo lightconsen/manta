@@ -98,7 +98,7 @@ impl DefaultTemporalProcessor {
     fn push_inner(&self, obs: &Observation) {
         let key = (obs.source.clone(), obs.modality);
         let scalar = extract_scalar(&obs.data);
-        let mut state = self.state.write().expect("temporal state poisoned");
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         let series = state.entry(key).or_insert_with(|| Series {
             samples: VecDeque::new(),
             first_at: obs.created_at,
@@ -132,7 +132,7 @@ impl DefaultTemporalProcessor {
 #[async_trait]
 impl TemporalProcessor for DefaultTemporalProcessor {
     fn snapshot_aggregates(&self) -> HashMap<(String, Modality), Aggregate> {
-        let state = self.state.read().expect("temporal state poisoned");
+        let state = self.state.read().unwrap_or_else(|e| e.into_inner());
         let now = SystemTime::now();
         let mut out = HashMap::with_capacity(state.len());
         for ((source, modality), series) in state.iter() {

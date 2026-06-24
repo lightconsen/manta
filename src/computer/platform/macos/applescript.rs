@@ -64,7 +64,9 @@ impl AppleScriptTool {
 
         let mut child_opt = Some(child);
         let wait_result = timeout(Duration::from_secs(timeout_secs), async {
-            let c = child_opt.take().unwrap();
+            let Some(c) = child_opt.take() else {
+                return Err(std::io::Error::other("child handle missing"));
+            };
             c.wait_with_output().await
         })
         .await;

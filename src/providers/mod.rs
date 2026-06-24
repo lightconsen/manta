@@ -169,12 +169,8 @@ impl Message {
 
     /// Add metadata to the message
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        if self.metadata.is_none() {
-            self.metadata = Some(HashMap::new());
-        }
         self.metadata
-            .as_mut()
-            .unwrap()
+            .get_or_insert_with(HashMap::new)
             .insert(key.into(), value.into());
         self
     }

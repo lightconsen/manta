@@ -134,7 +134,7 @@ pub fn spawn_control_loop(
             for id in &device_ids {
                 if let Some(device) = registry.get(id).await {
                     // Hold the lock only while iterating handlers (synchronous).
-                    let map = handlers.lock().unwrap();
+                    let map = handlers.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(handler_list) = map.get(id) {
                         for handler in handler_list {
                             handler(device.clone());
@@ -163,7 +163,7 @@ pub fn init_control_runtime(
     registry: Arc<DeviceRegistry>,
     handlers: ControlHandlerRegistry,
     config: Arc<RwLock<Arc<GatewayConfig>>>,
-) -> (Runtime, JoinHandle<()>) {
+) -> crate::Result<(Runtime, JoinHandle<()>)> {
     let mut builder = tokio::runtime::Builder::new_current_thread();
     builder.enable_all();
     builder.thread_name("control-lane");
@@ -198,12 +198,13 @@ pub fn init_control_runtime(
         });
     }
 
-    let rt = builder.build().expect("control lane runtime");
+    let rt = builder.build()?;
     // The async block intentionally returns the JoinHandle without awaiting it.
+    #[allow(clippy::async_yields_async)]
     #[allow(clippy::async_yields_async)]
     let handle = rt.block_on(async move { spawn_control_loop(registry, handlers, config) });
 
-    (rt, handle)
+    Ok((rt, handle))
 }
 
 // ── Helper to create an empty handler registry ──────────────────────────────
@@ -312,7 +313,7 @@ mod tests {
         let invoked = Arc::new(AtomicBool::new(false));
 
         let inv = invoked.clone();
-        handlers.lock().unwrap().insert(
+        handlers.lock().unwrap_or_else(|e| e.into_inner()).insert(
             "dev-sensor-01".into(),
             vec![Box::new(move |_device| {
                 inv.store(true, Ordering::Release);

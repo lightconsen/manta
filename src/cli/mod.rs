@@ -327,7 +327,9 @@ fn init_logging(log_level: Option<&str>) {
         .compact()
         .finish();
 
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set logger");
+    if tracing::subscriber::set_global_default(subscriber).is_err() {
+        eprintln!("warning: failed to set global tracing subscriber");
+    }
 }
 
 impl Cli {

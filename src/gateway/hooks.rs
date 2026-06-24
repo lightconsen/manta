@@ -97,15 +97,16 @@ impl EventHookRegistry {
         hook: BeforeHook,
     ) {
         let mut hooks = self.before_hooks.write().await;
+        let hook_name: String = name.into();
         hooks.push(EventHook {
-            name: name.into(),
+            name: hook_name.clone(),
             priority,
             event_filter,
             before: Some(hook),
             after: None,
         });
         hooks.sort_by_key(|h| h.priority);
-        debug!("Registered before hook: {} (priority={})", hooks.last().unwrap().name, priority);
+        debug!("Registered before hook: {} (priority={})", hook_name, priority);
     }
 
     /// Register an after hook
@@ -117,15 +118,16 @@ impl EventHookRegistry {
         hook: AfterHook,
     ) {
         let mut hooks = self.after_hooks.write().await;
+        let hook_name: String = name.into();
         hooks.push(EventHook {
-            name: name.into(),
+            name: hook_name.clone(),
             priority,
             event_filter,
             before: None,
             after: Some(hook),
         });
         hooks.sort_by_key(|h| h.priority);
-        debug!("Registered after hook: {} (priority={})", hooks.last().unwrap().name, priority);
+        debug!("Registered after hook: {} (priority={})", hook_name, priority);
     }
 
     /// Remove a hook by name

@@ -316,7 +316,8 @@ impl PluginRuntime {
 
         // Register WASI in the linker so plugins can use WASI APIs
         wasmtime_wasi::p1::add_to_linker_sync(linker, |state: &mut PluginState| {
-            state.wasi_ctx.get_mut().unwrap()
+            #[allow(clippy::expect_used)] // wasi_ctx always set during plugin construction
+            state.wasi_ctx.get_mut().expect("wasi context initialized")
         })
         .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
@@ -1962,6 +1963,7 @@ impl Drop for PluginRuntime {
 
 impl Default for PluginRuntime {
     fn default() -> Self {
+        #[allow(clippy::expect_used)] // Default trait cannot return Result
         Self::new().expect("Failed to create plugin runtime")
     }
 }

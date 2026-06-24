@@ -70,7 +70,10 @@ impl OmniParserDetector {
     /// on first call; reuses cached file on subsequent calls.
     pub async fn new_auto() -> crate::Result<Self> {
         let paths = super::resolve_or_download_vision_models().await?;
-        Self::new(paths.omniparser.to_str().unwrap())
+        let path = paths.omniparser.to_str().ok_or_else(|| {
+            SyscityError::Validation("omniparser model path is not valid UTF-8".into())
+        })?;
+        Self::new(path)
     }
 
     /// Set confidence thresholds.

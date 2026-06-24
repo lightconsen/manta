@@ -5,12 +5,23 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::error::{ConfigError, Result};
 use crate::secrets::SecretRef;
+
+#[allow(clippy::unwrap_used)]
+static RE_ENV_VAR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?P<full>\$\$(?P<escaped>[\w_]+)|\$\{(?P<braced>\w+)\}|\$(?P<plain>\w+))")
+        .unwrap()
+});
+
+#[allow(clippy::unwrap_used)]
+static RE_HHMM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d{2}:\d{2}$").unwrap());
 
 /// Default configuration file name
 pub const DEFAULT_CONFIG_FILE: &str = "syscity.toml";
@@ -1001,15 +1012,10 @@ impl Config {
     /// other env vars are **not** recursively resolved.
     fn interpolate_env_vars(input: &str) -> String {
         // Match both ${VAR} and $VAR — but not $$ (escaped dollar)
-        let re = regex::Regex::new(
-            r"(?P<full>\$\$(?P<escaped>[\w_]+)|\$\{(?P<braced>\w+)\}|\$(?P<plain>\w+))",
-        )
-        .expect("valid env var regex");
-
-        re.replace_all(input, |caps: &regex::Captures<'_>| {
+        RE_ENV_VAR.replace_all(input, |caps: &regex::Captures<'_>| {
             // $$VAR → literal $VAR (escape)
-            if caps.name("escaped").is_some() {
-                return format!("${}", caps.name("escaped").unwrap().as_str());
+            if let Some(escaped) = caps.name("escaped") {
+                return format!("${}", escaped.as_str());
             }
 
             let var_name = caps
@@ -1096,8 +1102,7 @@ impl Config {
 
         // Heartbeat: active hours must be a valid HH:MM format
         if self.heartbeat.enabled {
-            let time_re = regex::Regex::new(r"^\d{2}:\d{2}$").expect("valid time regex");
-            if !time_re.is_match(&self.heartbeat.active_hours_start) {
+            if !RE_HHMM.is_match(&self.heartbeat.active_hours_start) {
                 return Err(ConfigError::InvalidValue {
                     key: "heartbeat.active_hours_start".to_string(),
                     message: format!(
@@ -1107,7 +1112,7 @@ impl Config {
                 }
                 .into());
             }
-            if !time_re.is_match(&self.heartbeat.active_hours_end) {
+            if !RE_HHMM.is_match(&self.heartbeat.active_hours_end) {
                 return Err(ConfigError::InvalidValue {
                     key: "heartbeat.active_hours_end".to_string(),
                     message: format!(
@@ -1675,6 +1680,7 @@ pub mod hot_reload {
 
     impl Default for HotReloadManager {
         fn default() -> Self {
+            #[allow(clippy::expect_used)]
             Self::new().expect("Failed to create HotReloadManager")
         }
     }

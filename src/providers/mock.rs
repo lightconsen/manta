@@ -94,7 +94,7 @@ impl MockProvider {
     /// Each call to `complete()` (or `stream()`) consumes the next response.
     /// When the sequence is exhausted the provider returns a fallback message.
     pub fn with_responses(self, responses: Vec<Message>) -> Self {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.responses = responses;
         drop(state);
         self
@@ -111,7 +111,7 @@ impl MockProvider {
     where
         F: Fn(&[Message]) -> Message + Send + Sync + 'static,
     {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.callback = Some(Box::new(callback));
         drop(state);
         self
@@ -119,27 +119,27 @@ impl MockProvider {
 
     /// Return every `CompletionRequest` that has been sent to this provider.
     pub fn history(&self) -> Vec<CompletionRequest> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.history.clone()
     }
 
     /// Number of times `complete()` or `stream()` has been called.
     pub fn call_count(&self) -> usize {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.history.len()
     }
 
     /// Reset the response index back to 0 (for reusing the same provider
     /// across multiple independent tests).
     pub fn reset(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.index = 0;
         state.history.clear();
     }
 
     /// Resolve the next message to return, advancing the sequence if needed.
     fn resolve_message(&self, request: &CompletionRequest) -> Message {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.history.push(request.clone());
 
         if let Some(ref cb) = state.callback {

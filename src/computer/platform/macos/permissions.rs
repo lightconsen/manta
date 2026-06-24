@@ -47,7 +47,7 @@ pub fn open_accessibility_settings() {
         .arg("-e")
         .arg(r#"tell application "System Settings" to activate"#)
         .output();
-    if modern.is_err() || !modern.unwrap().status.success() {
+    if !matches!(&modern, Ok(out) if out.status.success()) {
         let _ = Command::new("osascript")
             .arg("-e")
             .arg(r#"tell application "System Preferences" to activate"#)

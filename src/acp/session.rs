@@ -503,7 +503,8 @@ pub(crate) async fn get_or_create_session<'a>(
         session_meta.insert(session_id.to_string(), meta);
     }
 
-    sessions.get(session_id).unwrap()
+    #[allow(clippy::expect_used)] // just inserted above when missing
+    sessions.get(session_id).expect("session handle inserted above")
 }
 
 /// Per-session actor loop — processes messages serially for one session.

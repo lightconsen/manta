@@ -1370,6 +1370,7 @@ impl ModelRouter {
         info!("Task classified as: {:?}", task_type);
 
         let config = self.config.read().await;
+        #[allow(clippy::expect_used)] // cost_aware presence checked by caller
         let cost_aware = config
             .cost_aware
             .as_ref()

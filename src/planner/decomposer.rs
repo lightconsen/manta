@@ -336,10 +336,11 @@ fn detect_cycle(subtasks: &[SubTask]) -> Option<Vec<String>> {
         visited += 1;
         if let Some(children) = adj.get(&id) {
             for child in children {
-                let d = in_degree.get_mut(child).unwrap();
-                *d -= 1;
-                if *d == 0 {
-                    queue.push_back(child.clone());
+                if let Some(d) = in_degree.get_mut(child) {
+                    *d -= 1;
+                    if *d == 0 {
+                        queue.push_back(child.clone());
+                    }
                 }
             }
         }

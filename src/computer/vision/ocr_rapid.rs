@@ -92,11 +92,15 @@ impl RapidOcr {
     /// on first call; reuses cached files on subsequent calls.
     pub async fn new_auto() -> crate::Result<Self> {
         let paths = super::resolve_or_download_vision_models().await?;
-        Self::new(
-            paths.det.to_str().unwrap(),
-            paths.rec.to_str().unwrap(),
-            paths.cls.as_ref().and_then(|p| p.to_str()),
-        )
+        let det = paths
+            .det
+            .to_str()
+            .ok_or_else(|| SyscityError::Validation("det model path is not valid UTF-8".into()))?;
+        let rec = paths
+            .rec
+            .to_str()
+            .ok_or_else(|| SyscityError::Validation("rec model path is not valid UTF-8".into()))?;
+        Self::new(det, rec, paths.cls.as_ref().and_then(|p| p.to_str()))
     }
 
     /// Set detection threshold (default 0.3).

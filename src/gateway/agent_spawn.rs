@@ -70,7 +70,7 @@ pub(crate) async fn spawn_agent_inner(
             .agents
             .pending_spawns
             .lock()
-            .expect("pending_spawns mutex poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         if !pending.insert(id.clone()) {
             return Err(crate::SyscityError::Validation(format!(
                 "Agent '{}' spawn already in progress",

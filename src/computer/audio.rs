@@ -181,6 +181,7 @@ impl AudioCapture {
 
 impl Default for AudioCapture {
     fn default() -> Self {
+        #[allow(clippy::expect_used)] // Default trait cannot return Result
         Self::new().expect("default AudioCapture should not fail")
     }
 }

@@ -437,9 +437,10 @@ end tell"#,
                     })?;
                     *guard = Some(watcher);
                 }
-                guard
-                    .as_mut()
-                    .unwrap()
+                let watcher = guard.as_mut().ok_or_else(|| {
+                    ComputerError::Other("file watcher missing after init".to_string())
+                })?;
+                watcher
                     .watch_directory(&path)
                     .map_err(|e| {
                         ComputerError::Other(format!("Failed to watch directory: {}", e))
@@ -463,9 +464,10 @@ end tell"#,
                     })?;
                     *guard = Some(watcher);
                 }
-                guard
-                    .as_mut()
-                    .unwrap()
+                let watcher = guard.as_mut().ok_or_else(|| {
+                    ComputerError::Other("file watcher missing after init".to_string())
+                })?;
+                watcher
                     .watch_file(&path)
                     .map_err(|e| ComputerError::Other(format!("Failed to watch file: {}", e)))?;
                 Ok(ActionResult::success(format!("Watching file: {}", path)))

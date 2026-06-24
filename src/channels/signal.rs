@@ -10,9 +10,10 @@
 //! can be sent and received.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
@@ -23,6 +24,12 @@ use crate::channels::{
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
+
+#[allow(clippy::unwrap_used)]
+static RE_HTML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new("<[^>]+>").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_MD_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
 
 /// Default signal-cli JSON-RPC endpoint
 const DEFAULT_SIGNAL_RPC_URL: &str = "http://localhost:8080/api/v1/rpc";
@@ -130,7 +137,7 @@ impl SignalChannel {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .expect("Failed to create HTTP client");
+            .unwrap_or_else(|_| reqwest::Client::new());
 
         Self {
             config,
@@ -336,16 +343,10 @@ impl SignalChannel {
         let mut result = text.to_string();
 
         // Strip HTML tags if present
-        result = regex::Regex::new("<[^>]+>")
-            .unwrap()
-            .replace_all(&result, "")
-            .to_string();
+        result = RE_HTML_TAG.replace_all(&result, "").to_string();
 
         // Convert markdown links to plain text
-        result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
-            .unwrap()
-            .replace_all(&result, "$1 ($2)")
-            .to_string();
+        result = RE_MD_LINK.replace_all(&result, "$1 ($2)").to_string();
 
         result
     }

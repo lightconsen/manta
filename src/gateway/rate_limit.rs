@@ -12,7 +12,7 @@ use std::time::Duration;
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     middleware::Next,
     response::Response,
 };
@@ -677,35 +677,29 @@ pub async fn multi_tier_rate_limit_middleware(
             let mut response = next.run(req).await;
             let headers = response.headers_mut();
             headers
-                .insert("X-RateLimit-Limit", "100".parse().expect("failed to parse header value"));
-            headers.insert(
-                "X-RateLimit-Remaining",
-                remaining
-                    .to_string()
-                    .parse()
-                    .expect("failed to parse header value"),
-            );
+                .insert("X-RateLimit-Limit", HeaderValue::from_static("100"));
+            if let Ok(v) = HeaderValue::try_from(remaining.to_string()) {
+                headers.insert("X-RateLimit-Remaining", v);
+            }
             Ok(response)
         }
         MultiTierResult::Denied { tier, retry_after_secs } => {
             warn!("Rate limit exceeded for user: {} on tier: {}", user_id, tier);
+            let body = format!(
+                "Rate limit exceeded on tier '{}'. Retry after {} seconds.",
+                tier, retry_after_secs
+            );
             let mut response = Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
-                .body(Body::from(format!(
-                    "Rate limit exceeded on tier '{}'. Retry after {} seconds.",
-                    tier, retry_after_secs
-                )))
-                .expect("failed to build response");
-            response.headers_mut().insert(
-                "Retry-After",
-                retry_after_secs
-                    .to_string()
-                    .parse()
-                    .expect("failed to parse header value"),
-            );
-            response
-                .headers_mut()
-                .insert("X-RateLimit-Tier", tier.parse().expect("failed to parse header value"));
+                .body(Body::from(body))
+                .unwrap_or_else(|_| Response::new(Body::empty()));
+            let headers = response.headers_mut();
+            if let Ok(v) = HeaderValue::try_from(retry_after_secs.to_string()) {
+                headers.insert("Retry-After", v);
+            }
+            if let Ok(v) = HeaderValue::try_from(tier) {
+                headers.insert("X-RateLimit-Tier", v);
+            }
             Ok(response)
         }
     }

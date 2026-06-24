@@ -281,25 +281,23 @@ impl ArtifactStore {
 
     /// Add an artifact to a session.
     pub fn add(&self, artifact: Artifact) {
-        let mut artifacts = self.artifacts.lock().expect("lock poisoned");
-        let list = artifacts.entry(artifact.session_id.clone()).or_default();
+        let mut artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
+        let id = artifact.id.clone();
+        let session_id = artifact.session_id.clone();
+        let list = artifacts.entry(session_id.clone()).or_default();
         list.push(artifact);
-        debug!(
-            "Added artifact '{}' to session {}",
-            list.last().unwrap().id,
-            list.last().unwrap().session_id
-        );
+        debug!("Added artifact '{}' to session {}", id, session_id);
     }
 
     /// Get all artifacts for a session.
     pub fn get_for_session(&self, session_id: &str) -> Vec<Artifact> {
-        let artifacts = self.artifacts.lock().expect("lock poisoned");
+        let artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         artifacts.get(session_id).cloned().unwrap_or_default()
     }
 
     /// Get a specific artifact by ID.
     pub fn get(&self, session_id: &str, artifact_id: &str) -> Option<Artifact> {
-        let artifacts = self.artifacts.lock().expect("lock poisoned");
+        let artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         artifacts
             .get(session_id)
             .and_then(|list| list.iter().find(|a| a.id == artifact_id).cloned())
@@ -307,13 +305,13 @@ impl ArtifactStore {
 
     /// List all artifacts across all sessions.
     pub fn list_all(&self) -> Vec<Artifact> {
-        let artifacts = self.artifacts.lock().expect("lock poisoned");
+        let artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         artifacts.values().flatten().cloned().collect()
     }
 
     /// List artifact IDs for a session.
     pub fn list_session(&self, session_id: &str) -> Vec<String> {
-        let artifacts = self.artifacts.lock().expect("lock poisoned");
+        let artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         artifacts
             .get(session_id)
             .map(|list| list.iter().map(|a| a.id.clone()).collect())
@@ -322,7 +320,7 @@ impl ArtifactStore {
 
     /// Remove a specific artifact.
     pub fn remove(&self, session_id: &str, artifact_id: &str) -> Option<Artifact> {
-        let mut artifacts = self.artifacts.lock().expect("lock poisoned");
+        let mut artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(list) = artifacts.get_mut(session_id) {
             let pos = list.iter().position(|a| a.id == artifact_id);
             if let Some(pos) = pos {
@@ -334,7 +332,7 @@ impl ArtifactStore {
 
     /// Remove all artifacts for a session (cleanup on session end).
     pub fn clear_session(&self, session_id: &str) -> Vec<Artifact> {
-        let mut artifacts = self.artifacts.lock().expect("lock poisoned");
+        let mut artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         let removed = artifacts.remove(session_id).unwrap_or_default();
         info!("Cleared {} artifacts for session {}", removed.len(), session_id);
         removed
@@ -364,7 +362,7 @@ impl ArtifactStore {
 
     /// Get store stats.
     pub fn stats(&self) -> ArtifactStoreStats {
-        let artifacts = self.artifacts.lock().expect("lock poisoned");
+        let artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         let total = artifacts.values().map(|v| v.len()).sum();
         let total_size: usize = artifacts.values().flatten().map(|a| a.size_bytes).sum();
         ArtifactStoreStats {

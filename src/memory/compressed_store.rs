@@ -214,7 +214,7 @@ impl CompressedJsonlStore {
             let shard = self.dir.join(format!("{}.jsonl.gz", date));
             let lines: Vec<String> = mems
                 .iter()
-                .map(|m| serde_json::to_string(m).unwrap())
+                .filter_map(|m| serde_json::to_string(m).ok())
                 .collect();
             let compressed = Self::compress_lines(&lines)?;
 

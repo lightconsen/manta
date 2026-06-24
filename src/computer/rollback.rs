@@ -42,6 +42,16 @@ pub struct RollbackManager {
 }
 
 impl RollbackManager {
+    /// Return a reference to the most recently pushed snapshot, or an
+    /// internal error if the snapshot list is unexpectedly empty.
+    fn last_snapshot(&self) -> crate::Result<&Snapshot> {
+        self.snapshots.last().ok_or_else(|| {
+            crate::error::SyscityError::Internal(
+                "snapshot push did not produce a last entry".to_string(),
+            )
+        })
+    }
+
     /// Create a new rollback manager.
     ///
     /// Backups are stored in a temporary directory that is cleaned up on drop.
@@ -91,7 +101,7 @@ impl RollbackManager {
                 backup_path,
             };
             self.snapshots.push(snap);
-            return Ok(self.snapshots.last().unwrap());
+            return self.last_snapshot();
         }
 
         let backup_path = self.backup_dir.join(format!(
@@ -115,7 +125,7 @@ impl RollbackManager {
             backup_path,
         };
         self.snapshots.push(snap);
-        Ok(self.snapshots.last().unwrap())
+        self.last_snapshot()
     }
 
     /// Snapshot a directory before modifying it.
@@ -149,7 +159,7 @@ impl RollbackManager {
             backup_path,
         };
         self.snapshots.push(snap);
-        Ok(self.snapshots.last().unwrap())
+        self.last_snapshot()
     }
 
     /// Create an APFS snapshot on macOS (best-effort).
@@ -181,7 +191,7 @@ impl RollbackManager {
             snapshot_name,
         };
         self.snapshots.push(snap);
-        Ok(self.snapshots.last().unwrap())
+        self.last_snapshot()
     }
 
     /// Create a Btrfs snapshot on Linux (best-effort).
@@ -240,7 +250,7 @@ impl RollbackManager {
             snapshot_path,
         };
         self.snapshots.push(snap);
-        Ok(self.snapshots.last().unwrap())
+        self.last_snapshot()
     }
 
     /// Create a Windows System Restore point (best-effort).
@@ -287,7 +297,7 @@ Checkpoint-Computer -Description $description -RestorePointType 'MODIFY_SETTINGS
             backup_path: PathBuf::from(format!("system-restore:{}", description)),
         };
         self.snapshots.push(snap);
-        Ok(self.snapshots.last().unwrap())
+        self.last_snapshot()
     }
 
     /// Restore all snapshots in reverse order (LIFO).
@@ -437,14 +447,14 @@ Checkpoint-Computer -Description $description -RestorePointType 'MODIFY_SETTINGS
         #[cfg(target_os = "macos")]
         {
             if self.snapshot_apfs(path).await.is_ok() {
-                return Ok(self.snapshots.last().unwrap());
+                return self.last_snapshot();
             }
             tracing::warn!("APFS snapshot failed, falling back to directory backup");
         }
         #[cfg(target_os = "linux")]
         {
             if self.snapshot_btrfs(path).await.is_ok() {
-                return Ok(self.snapshots.last().unwrap());
+                return self.last_snapshot();
             }
             tracing::warn!("Btrfs snapshot failed, falling back to directory backup");
         }
@@ -452,7 +462,7 @@ Checkpoint-Computer -Description $description -RestorePointType 'MODIFY_SETTINGS
         {
             let description = format!("syscity-rollback-{}", uuid::Uuid::new_v4());
             if self.snapshot_windows(&description).await.is_ok() {
-                return Ok(self.snapshots.last().unwrap());
+                return self.last_snapshot();
             }
             tracing::warn!("Windows System Restore failed, falling back to directory backup");
         }

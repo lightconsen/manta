@@ -12,6 +12,10 @@ use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 
+#[allow(clippy::unwrap_used)] // Static regex with known-valid pattern.
+static RE_IMAGE_DIMS: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(\d+)\s*x\s*(\d+)").unwrap());
+
 // ── Image Tool (view / inspect) ─────────────────────────────────────────────
 
 /// Image inspection tool
@@ -141,8 +145,7 @@ impl Tool for ImageTool {
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
             // Parse "640 x 480" from file output
-            let re = regex::Regex::new(r"(\d+)\s*x\s*(\d+)").unwrap();
-            if let Some(caps) = re.captures(&stdout) {
+            if let Some(caps) = RE_IMAGE_DIMS.captures(&stdout) {
                 width = caps.get(1).and_then(|m| m.as_str().parse().ok());
                 height = caps.get(2).and_then(|m| m.as_str().parse().ok());
             }
@@ -322,9 +325,11 @@ impl Tool for ImageGenerateTool {
         });
 
         let client = reqwest::Client::new();
+        #[allow(clippy::expect_used)] // None case handled by early return above
+        let api_key_str = api_key.expect("api_key presence checked above");
         let response = client
             .post("https://api.openai.com/v1/images/generations")
-            .header("Authorization", format!("Bearer {}", api_key.unwrap()))
+            .header("Authorization", format!("Bearer {}", api_key_str))
             .header("Content-Type", "application/json")
             .json(&body)
             .timeout(std::time::Duration::from_secs(120))

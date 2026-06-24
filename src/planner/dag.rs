@@ -66,7 +66,7 @@ impl DagScheduler {
         for (id, task) in &plan.tasks {
             for dep in &task.dependencies {
                 adj.entry(dep.clone()).or_default().push(id.clone());
-                *in_degree.get_mut(id).unwrap() += 1;
+                *in_degree.entry(id.clone()).or_insert(0) += 1;
             }
         }
 
@@ -81,10 +81,11 @@ impl DagScheduler {
             visited += 1;
             if let Some(children) = adj.get(&id) {
                 for child in children {
-                    let d = in_degree.get_mut(child).unwrap();
-                    *d -= 1;
-                    if *d == 0 {
-                        queue.push_back(child.clone());
+                    if let Some(d) = in_degree.get_mut(child) {
+                        *d -= 1;
+                        if *d == 0 {
+                            queue.push_back(child.clone());
+                        }
                     }
                 }
             }
@@ -115,7 +116,7 @@ impl DagScheduler {
         for (id, task) in &plan.tasks {
             for dep in &task.dependencies {
                 adj.entry(dep.clone()).or_default().push(id.clone());
-                *in_degree.get_mut(id).unwrap() += 1;
+                *in_degree.entry(id.clone()).or_insert(0) += 1;
             }
         }
 
@@ -130,10 +131,11 @@ impl DagScheduler {
             order.push(id.clone());
             if let Some(children) = adj.get(&id) {
                 for child in children {
-                    let d = in_degree.get_mut(child).unwrap();
-                    *d -= 1;
-                    if *d == 0 {
-                        queue.push_back(child.clone());
+                    if let Some(d) = in_degree.get_mut(child) {
+                        *d -= 1;
+                        if *d == 0 {
+                            queue.push_back(child.clone());
+                        }
                     }
                 }
             }

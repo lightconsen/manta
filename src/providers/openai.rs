@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::Stream;
-use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, instrument, warn};
 
@@ -56,10 +56,10 @@ impl OpenAiProvider {
     /// key).
     pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         // Mimic curl's User-Agent to avoid API blocks
-        headers.insert("User-Agent", "curl/8.7.1".parse().unwrap());
-        headers.insert("Accept", "application/json".parse().unwrap());
+        headers.insert("User-Agent", HeaderValue::from_static("curl/8.7.1"));
+        headers.insert("Accept", HeaderValue::from_static("application/json"));
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(180)) // Increased to 3 minutes
@@ -126,19 +126,27 @@ impl OpenAiProvider {
     /// Build headers with authorization (async to read the RwLock).
     async fn headers(&self) -> HeaderMap {
         let cred = self.credential.read().await;
+        let auth = cred.authorization_header();
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, cred.authorization_header().parse().unwrap());
-        headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::try_from(auth.as_str()).unwrap_or_else(|_| HeaderValue::from_static("")),
+        );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers
     }
 
     /// Build headers for streaming SSE requests (async to read the RwLock).
     async fn stream_headers(&self) -> HeaderMap {
         let cred = self.credential.read().await;
+        let auth = cred.authorization_header();
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, cred.authorization_header().parse().unwrap());
-        headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
-        headers.insert("Accept", "text/event-stream".parse().unwrap());
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::try_from(auth.as_str()).unwrap_or_else(|_| HeaderValue::from_static("")),
+        );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert("Accept", HeaderValue::from_static("text/event-stream"));
         headers
     }
 

@@ -173,7 +173,7 @@ impl WsClient {
 
         let (tx, rx) = oneshot::channel();
         {
-            let mut pending = self.pending.lock().unwrap();
+            let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
             pending.insert(id, tx);
         }
 
@@ -292,7 +292,7 @@ fn handle_text(text: &str, event_tx: &mpsc::UnboundedSender<WsMessage>, pending:
             };
 
             let waiter = {
-                let mut pending = pending.lock().unwrap();
+                let mut pending = pending.lock().unwrap_or_else(|e| e.into_inner());
                 pending.remove(&response.id)
             };
 

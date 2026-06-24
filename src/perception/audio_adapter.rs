@@ -171,7 +171,10 @@ impl PerceptionSource for MicrophoneAdapter {
     }
 
     fn status(&self) -> SourceStatus {
-        self.status.lock().unwrap().clone()
+        self.status
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_else(|p| p.into_inner().clone())
     }
 
     async fn observe(&self) -> Vec<Observation> {

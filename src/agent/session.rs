@@ -259,7 +259,8 @@ impl MultiAgentSession {
         self.agents.insert(agent_id.clone(), agent);
         self.last_activity = Utc::now();
 
-        self.agents.get(&agent_id).unwrap()
+        #[allow(clippy::expect_used)] // just inserted above
+        self.agents.get(&agent_id).expect("agent just inserted")
     }
 
     /// Terminate an agent

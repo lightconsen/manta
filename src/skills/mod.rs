@@ -304,6 +304,7 @@ impl Skill {
     /// Add a trigger to the skill
     pub fn with_trigger(mut self, trigger_type: TriggerType, pattern: impl Into<String>) -> Self {
         let pattern = pattern.into();
+        #[allow(clippy::expect_used)] // builder API: invalid regex is a programmer error
         let trigger = SkillTrigger::try_new(trigger_type, pattern, 0, true, true)
             .expect("invalid regex pattern in trigger");
         self.triggers.push(trigger);

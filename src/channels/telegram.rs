@@ -161,29 +161,41 @@ impl TelegramChannel {
 
 /// Pre-compiled regex patterns for markdown parsing
 #[allow(clippy::incompatible_msrv)]
+#[allow(clippy::unwrap_used)]
 static RE_BOLD_DOUBLE_STAR: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\*\*(.+?)\*\*").unwrap());
 #[allow(clippy::incompatible_msrv)]
+#[allow(clippy::unwrap_used)]
 static RE_BOLD_DOUBLE_UNDERSCORE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"__(.+?)__").unwrap());
 #[allow(clippy::incompatible_msrv)]
+#[allow(clippy::unwrap_used)]
 static RE_ITALIC_STAR: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\*([^*]+)\*").unwrap());
 #[allow(clippy::incompatible_msrv)]
+#[allow(clippy::unwrap_used)]
 static RE_ITALIC_UNDERSCORE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"_([^_]+)_").unwrap());
 #[allow(clippy::incompatible_msrv)]
+#[allow(clippy::unwrap_used)]
 static RE_CODE_INLINE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"`([^`]+)`").unwrap());
 #[allow(clippy::incompatible_msrv)]
+#[allow(clippy::unwrap_used)]
 static RE_CODE_BLOCK: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"```(\w+)?\n(.*?)```").unwrap());
 #[allow(clippy::incompatible_msrv)]
+#[allow(clippy::unwrap_used)]
 static RE_STRIKETHROUGH: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"~~(.+?)~~").unwrap());
 #[allow(clippy::incompatible_msrv)]
+#[allow(clippy::unwrap_used)]
 static RE_LINK: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+#[allow(clippy::incompatible_msrv)]
+#[allow(clippy::unwrap_used)]
+static RE_BOLD_RESTORE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\x00BOLD\x00(.+?)\x00BOLD\x00").unwrap());
 
 impl TelegramChannel {
     /// Convert markdown to Telegram HTML
@@ -229,9 +241,7 @@ impl TelegramChannel {
         // Restore bold placeholders with actual HTML tags.
         // The placeholder wraps content as: \x00BOLD\x00text\x00BOLD\x00
         // Use a regex to capture the content between the two markers.
-        let re_bold_restore =
-            regex::Regex::new(r"\x00BOLD\x00(.+?)\x00BOLD\x00").expect("valid regex");
-        result = re_bold_restore
+        result = RE_BOLD_RESTORE
             .replace_all(&result, "<b>$1</b>")
             .to_string();
 
@@ -348,7 +358,12 @@ impl Channel for TelegramChannel {
                     }
                     info!("Telegram channel shutting down (stop requested)");
                 }
-                result = async { handle.take().unwrap().await } => {
+                result = async {
+                    match handle.take() {
+                        Some(h) => h.await,
+                        None => std::future::pending().await,
+                    }
+                } => {
                     match result {
                         Ok(_) => warn!("Telegram dispatcher exited unexpectedly"),
                         Err(e) if e.is_panic() => {

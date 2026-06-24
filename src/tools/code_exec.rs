@@ -229,8 +229,12 @@ print(json.dumps(result))
         // Wait for execution with timeout
         let timeout_duration = Duration::from_secs(timeout_secs);
         let result = timeout(timeout_duration, async {
-            let stdout = child.stdout.take().unwrap();
-            let stderr = child.stderr.take().unwrap();
+            let stdout = child.stdout.take().ok_or_else(|| {
+                crate::error::SyscityError::Internal("stdout pipe missing".into())
+            })?;
+            let stderr = child.stderr.take().ok_or_else(|| {
+                crate::error::SyscityError::Internal("stderr pipe missing".into())
+            })?;
 
             let mut stdout_reader = tokio::io::BufReader::new(stdout);
             let mut stderr_reader = tokio::io::BufReader::new(stderr);

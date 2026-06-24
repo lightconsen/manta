@@ -5,12 +5,19 @@
 //! `chromiumoxide` if available, or falls back to generating
 //! an HTML file that the user can print to PDF.
 
+use std::sync::LazyLock;
+
 use async_trait::async_trait;
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::{info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+
+#[allow(clippy::unwrap_used)]
+static RE_INLINE_CODE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
 
 /// PDF generation tool
 pub struct PdfTool;
@@ -68,10 +75,14 @@ fn markdown_to_html(content: &str, title: &str) -> String {
     for level in (1..=6).rev() {
         let prefix = "#".repeat(level);
         let tag = format!("h{}", level);
-        let re = regex::Regex::new(&format!(r"(?m)^{prefix} (.+)$")).unwrap();
+        let re = match regex::Regex::new(&format!(r"(?m)^{prefix} (.+)$")) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
         html = re
             .replace_all(&html, |caps: &regex::Captures<'_>| {
-                format!("<{}>{}</{}>", tag, caps.get(1).unwrap().as_str(), tag)
+                let text = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                format!("<{}>{}</{}>", tag, text, tag)
             })
             .to_string();
     }
@@ -127,10 +138,10 @@ fn markdown_to_html(content: &str, title: &str) -> String {
     html = result;
 
     // Inline code
-    let re = regex::Regex::new(r"`([^`]+)`").unwrap();
-    html = re
+    html = RE_INLINE_CODE
         .replace_all(&html, |caps: &regex::Captures<'_>| {
-            format!("<code>{}</code>", caps.get(1).unwrap().as_str())
+            let text = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            format!("<code>{}</code>", text)
         })
         .to_string();
 

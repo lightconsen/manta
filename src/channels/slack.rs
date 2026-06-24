@@ -2,11 +2,12 @@
 //!
 //! This module implements the Channel trait for Slack using the Web API.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
 #[cfg(feature = "slack")]
 use futures::{SinkExt, StreamExt};
+use regex::Regex;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
@@ -16,6 +17,28 @@ use crate::channels::{
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
+
+#[allow(clippy::unwrap_used)]
+static RE_BOLD_STAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\*\*(.+?)\*\*").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_BOLD_UNDERSCORE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"__(.+?)__").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_ITALIC_STAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\*(.+?)\*").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_STRIKETHROUGH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"~~(.+?)~~").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_UNDERSCORE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"_(.+?)_").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_CODE_INLINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
 
 /// Slack channel configuration
 #[derive(Debug, Clone)]
@@ -198,14 +221,12 @@ impl SlackChannel {
         let italic_placeholder = "<<<ITALIC>>>";
 
         // Step 1: Protect bold patterns (**text** and __text__)
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
+        result = RE_BOLD_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
             })
             .to_string();
-        result = regex::Regex::new(r"__(.+?)__")
-            .unwrap()
+        result = RE_BOLD_UNDERSCORE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
             })
@@ -213,8 +234,7 @@ impl SlackChannel {
 
         // Step 2: Protect italic patterns (*text*)
         // These become <<<ITALIC>>>text<<<ITALIC>>>
-        result = regex::Regex::new(r"\*(.+?)\*")
-            .unwrap()
+        result = RE_ITALIC_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", italic_placeholder, &caps[1], italic_placeholder)
             })
@@ -227,16 +247,10 @@ impl SlackChannel {
         result = result.replace(italic_placeholder, "_");
 
         // Strikethrough: ~~text~~ -> ~text~
-        result = regex::Regex::new(r"~~(.+?)~~")
-            .unwrap()
-            .replace_all(&result, "~$1~")
-            .to_string();
+        result = RE_STRIKETHROUGH.replace_all(&result, "~$1~").to_string();
 
         // Links: [text](url) -> <url|text>
-        result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
-            .unwrap()
-            .replace_all(&result, "<$2|$1>")
-            .to_string();
+        result = RE_LINK.replace_all(&result, "<$2|$1>").to_string();
 
         result
     }
@@ -250,22 +264,19 @@ impl SlackChannel {
         let italic_placeholder = "<<<ITALIC>>>";
 
         // Protect bold patterns
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
+        result = RE_BOLD_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
             })
             .to_string();
-        result = regex::Regex::new(r"__(.+?)__")
-            .unwrap()
+        result = RE_BOLD_UNDERSCORE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
             })
             .to_string();
 
         // Protect italic patterns
-        result = regex::Regex::new(r"\*(.+?)\*")
-            .unwrap()
+        result = RE_ITALIC_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", italic_placeholder, &caps[1], italic_placeholder)
             })
@@ -277,18 +288,9 @@ impl SlackChannel {
         // Restore and strip italic placeholders (keep content only)
         result = result.replace(italic_placeholder, "");
 
-        result = regex::Regex::new(r"_(.+?)_")
-            .unwrap()
-            .replace_all(&result, "$1")
-            .to_string();
-        result = regex::Regex::new(r"`([^`]+)`")
-            .unwrap()
-            .replace_all(&result, "$1")
-            .to_string();
-        result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
-            .unwrap()
-            .replace_all(&result, "$1 ($2)")
-            .to_string();
+        result = RE_UNDERSCORE.replace_all(&result, "$1").to_string();
+        result = RE_CODE_INLINE.replace_all(&result, "$1").to_string();
+        result = RE_LINK.replace_all(&result, "$1 ($2)").to_string();
 
         result
     }
@@ -356,9 +358,8 @@ impl Channel for SlackChannel {
                 .store(true, std::sync::atomic::Ordering::SeqCst);
 
             // Start Socket Mode listener if app_token is provided
-            if self.config.app_token.is_some() {
+            if let Some(app_token) = self.config.app_token.clone() {
                 let running = self.running.clone();
-                let app_token = self.config.app_token.clone().unwrap();
                 let bot_token = self.config.bot_token.clone();
                 let message_tx = self.config.message_tx.clone();
                 let policy = ChannelPolicy::new(

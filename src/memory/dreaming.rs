@@ -840,11 +840,11 @@ impl DreamEngine {
 
                 let summary_content = format!("Topic '{}': {}", topic, summaries.join("; "));
 
-                let summary = Memory::new(
-                    unique_memories.first().unwrap().user_id.clone(),
-                    summary_content,
-                    "dream_summary",
-                )
+                let user_id = match unique_memories.first() {
+                    Some(m) => m.user_id.clone(),
+                    None => continue,
+                };
+                let summary = Memory::new(user_id, summary_content, "dream_summary")
                 .with_importance_score(0.7)
                 .with_source("dream_deep")
                 .with_metadata(serde_json::json!({

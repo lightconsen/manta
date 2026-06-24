@@ -12,9 +12,10 @@
 //! - Contact and chat management
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
@@ -28,6 +29,9 @@ use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 
 /// Default BlueBubbles server URL
 const DEFAULT_BLUEBUBBLES_URL: &str = "http://localhost:3000";
+
+#[allow(clippy::unwrap_used)]
+static RE_HTML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new("<[^>]+>").unwrap());
 
 /// iMessage channel configuration
 #[derive(Debug, Clone)]
@@ -162,7 +166,7 @@ impl ImessageChannel {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .expect("Failed to create HTTP client");
+            .unwrap_or_else(|_| reqwest::Client::new());
 
         Self {
             config,
@@ -323,10 +327,7 @@ impl ImessageChannel {
         let mut result = text.to_string();
 
         // Strip HTML tags
-        result = regex::Regex::new("<[^>]+>")
-            .unwrap()
-            .replace_all(&result, "")
-            .to_string();
+        result = RE_HTML_TAG.replace_all(&result, "").to_string();
 
         result
     }

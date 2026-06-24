@@ -17,15 +17,28 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::SystemTime;
 
+use regex::Regex;
 use tokio::fs;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::error::SyscityError;
 use crate::memory::soul::SoulAnalysis;
+
+#[allow(clippy::unwrap_used)]
+static RE_CODE_FENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"```(\w+)").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-zA-Z]{4,}").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_PREFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(?:i\s+(?:prefer|like|want|need)|please\s+use|always\s+use|use)\s+([^.]{3,80})",
+    )
+    .unwrap()
+});
 
 /// Controls which memory files are included in the system prompt.
 ///
@@ -405,9 +418,8 @@ impl PersonalityMemory {
 
         // --- code style detection ---
         let mut lang_counts: HashMap<String, usize> = HashMap::new();
-        let code_fence = regex::Regex::new(r"```(\w+)").expect("valid regex");
         for msg in messages {
-            for cap in code_fence.captures_iter(&msg.content) {
+            for cap in RE_CODE_FENCE.captures_iter(&msg.content) {
                 let lang = cap[1].to_lowercase();
                 *lang_counts.entry(lang).or_insert(0) += 1;
             }
@@ -471,10 +483,9 @@ impl PersonalityMemory {
             "while", "will", "with", "without", "would", "you", "your",
         ];
         let mut word_counts: HashMap<String, usize> = HashMap::new();
-        let word_re = regex::Regex::new(r"[a-zA-Z]{4,}").expect("valid regex");
         for msg in &user_msgs {
             let lower = msg.content.to_lowercase();
-            for m in word_re.find_iter(&lower) {
+            for m in RE_WORD.find_iter(&lower) {
                 let w = m.as_str();
                 if !stopwords.contains(&w) {
                     *word_counts.entry(w.to_string()).or_insert(0) += 1;
@@ -489,12 +500,8 @@ impl PersonalityMemory {
         analysis.common_topics = topics.into_iter().take(5).map(|(w, _)| w).collect();
 
         // --- explicit preferences ---
-        let pref_re = regex::Regex::new(
-            r"(?i)(?:i\s+(?:prefer|like|want|need)|please\s+use|always\s+use|use)\s+([^.]{3,80})",
-        )
-        .expect("valid regex");
         for msg in &user_msgs {
-            for cap in pref_re.captures_iter(&msg.content) {
+            for cap in RE_PREFERENCE.captures_iter(&msg.content) {
                 let phrase = cap[1].trim().to_string();
                 if phrase.len() >= 3 {
                     let key = format!("preference_{}", analysis.user_preferences.len() + 1);

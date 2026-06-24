@@ -143,6 +143,7 @@ impl SalienceFilter {
         };
 
         // (5) delta vs threshold.
+        #[allow(clippy::expect_used)] // baseline presence ensured by step (4) above
         let baseline = self.baselines.get(&key).expect("baseline checked above");
         let above = match (baseline.scalar, new_scalar) {
             (Some(old), Some(new)) => {

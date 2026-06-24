@@ -5,9 +5,10 @@
 //! Access Token.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -20,6 +21,14 @@ use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 
 /// Meta Business API base URL for WhatsApp
 const META_API_BASE: &str = "https://graph.facebook.com/v18.0";
+
+#[allow(clippy::unwrap_used)]
+static RE_BOLD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*\*(.+?)\*\*").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_ITALIC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*([^\*]+)\*").unwrap());
+#[allow(clippy::unwrap_used)]
+static RE_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
 
 /// WhatsApp channel configuration
 #[derive(Debug, Clone)]
@@ -168,7 +177,7 @@ impl WhatsappChannel {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .expect("Failed to create HTTP client");
+            .unwrap_or_else(|_| reqwest::Client::new());
 
         Self {
             config,
@@ -387,12 +396,11 @@ impl WhatsappChannel {
 
         // Step 1: Protect bold text (**text**) by extracting and replacing with
         // numbered placeholders
-        let bold_re = regex::Regex::new(r"\*\*(.+?)\*\*").unwrap();
         let mut bold_segments: Vec<String> = Vec::new();
         let mut counter = 0;
 
         // Extract bold segments and replace with placeholders
-        result = bold_re
+        result = RE_BOLD
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 let content = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let placeholder = format!("\x00BOLD{}\x00", counter);
@@ -403,10 +411,7 @@ impl WhatsappChannel {
             .to_string();
 
         // Step 2: Convert remaining *text* to _text_ (italic)
-        result = regex::Regex::new(r"\*([^\*]+)\*")
-            .unwrap()
-            .replace_all(&result, "_${1}_")
-            .to_string();
+        result = RE_ITALIC.replace_all(&result, "_${1}_").to_string();
 
         // Step 3: Restore bold segments with *text* format
         for (i, segment) in bold_segments.iter().enumerate() {
@@ -417,10 +422,7 @@ impl WhatsappChannel {
         // Strikethrough: ~~text~~ is the same in WhatsApp
 
         // Links: [text](url) -> text: url
-        result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
-            .unwrap()
-            .replace_all(&result, "$1: $2")
-            .to_string();
+        result = RE_LINK.replace_all(&result, "$1: $2").to_string();
 
         result
     }

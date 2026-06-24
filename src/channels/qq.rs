@@ -169,7 +169,7 @@ impl QqChannel {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .expect("Failed to create HTTP client");
+            .unwrap_or_else(|_| reqwest::Client::new());
 
         let initial_token = config.access_token.clone();
         let message_tx = config.message_tx.clone();
@@ -374,7 +374,7 @@ impl QqChannel {
             .api_request(
                 reqwest::Method::POST,
                 &endpoint,
-                Some(serde_json::to_value(&req).unwrap()),
+                Some(serde_json::to_value(&req).unwrap_or(serde_json::Value::Null)),
             )
             .await?;
 

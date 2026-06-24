@@ -389,7 +389,8 @@ impl Tool for DesktopControlTool {
                                 _ => k.as_str(),
                             })
                             .collect();
-                        format!("{}-{}", modifiers.join(""), keys.last().unwrap())
+                        let last = keys.last().map(|s| s.as_str()).unwrap_or("");
+                        format!("{}-{}", modifiers.join(""), last)
                     } else {
                         keys.join("")
                     };

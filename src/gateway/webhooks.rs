@@ -693,13 +693,9 @@ async fn generic_webhook_handler(
 
     // Get channel config
     let config = state.config.read().await;
-    let channel_config = config.channels.get(&channel);
-
-    if channel_config.is_none() {
+    let Some(channel_config) = config.channels.get(&channel) else {
         return (StatusCode::NOT_FOUND, "Channel not configured").into_response();
-    }
-
-    let channel_config = channel_config.unwrap();
+    };
 
     if !channel_config.enabled {
         return (StatusCode::SERVICE_UNAVAILABLE, "Channel disabled").into_response();

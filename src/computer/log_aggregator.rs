@@ -37,7 +37,7 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Datelike, Utc};
@@ -47,6 +47,26 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tracing::warn;
+
+#[allow(clippy::unwrap_used)]
+static RE_ISO_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?\s*").unwrap()
+});
+#[allow(clippy::unwrap_used)]
+static RE_SYSLOG_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s*").unwrap()
+});
+#[allow(clippy::unwrap_used)]
+static RE_BRACKET_LEVEL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*\[(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)\]\s*(.*)$").unwrap()
+});
+#[allow(clippy::unwrap_used)]
+static RE_COLON_LEVEL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)[\s:=\-]+(.*)$").unwrap()
+});
+#[allow(clippy::unwrap_used)]
+static RE_PROCESS_INFO: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(\S+?)\[(\d+)\]\s*:\s*(.*)$").unwrap());
 
 /// Severity level of a log entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -650,14 +670,12 @@ fn parse_windows_event_line(_line: &str, _source_name: &str) -> Option<LogEntry>
 /// Strip a recognized timestamp prefix from the start of a log line.
 fn strip_timestamp_prefix(line: &str) -> &str {
     // ISO 8601 / RFC 3339.
-    let iso_re =
-        Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?\s*")
-            .unwrap();
+    let iso_re = RE_ISO_TIMESTAMP.clone();
     if let Some(m) = iso_re.find(line) {
         return line[m.end()..].trim_start();
     }
     // Syslog style: "Jan 15 10:30:00".
-    let syslog_re = Regex::new(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s*").unwrap();
+    let syslog_re = RE_SYSLOG_TIMESTAMP.clone();
     if let Some(m) = syslog_re.find(line) {
         return line[m.end()..].trim_start();
     }
@@ -700,24 +718,20 @@ fn extract_timestamp(line: &str) -> Option<DateTime<Utc>> {
 /// Extract severity level from the line and return the remainder text.
 fn extract_level_and_remainder(line: &str) -> (LogLevel, &str) {
     // Check for bracketed level: [ERROR], [WARN], etc.
-    let bracket_re =
-        Regex::new(r"(?i)^\s*\[(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)\]\s*(.*)$")
-            .unwrap();
+    let bracket_re = RE_BRACKET_LEVEL.clone();
     if let Some(caps) = bracket_re.captures(line) {
-        let level_str = caps.get(1).unwrap().as_str();
-        let rest = caps.get(2).unwrap().as_str();
+        let level_str = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let rest = caps.get(2).map(|m| m.as_str()).unwrap_or("");
         if let Some(level) = LogLevel::parse(level_str) {
             return (level, rest);
         }
     }
 
     // Check for colon-separated level: ERROR: message, WARN - message.
-    let colon_re =
-        Regex::new(r"(?i)^\s*(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)[\s:=\-]+(.*)$")
-            .unwrap();
+    let colon_re = RE_COLON_LEVEL.clone();
     if let Some(caps) = colon_re.captures(line) {
-        let level_str = caps.get(1).unwrap().as_str();
-        let rest = caps.get(2).unwrap().as_str();
+        let level_str = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let rest = caps.get(2).map(|m| m.as_str()).unwrap_or("");
         if let Some(level) = LogLevel::parse(level_str) {
             return (level, rest);
         }
@@ -729,7 +743,7 @@ fn extract_level_and_remainder(line: &str) -> (LogLevel, &str) {
 
 /// Try to extract process name and PID from prefixes like `process[123]:`.
 fn extract_process_info(line: &str) -> (Option<String>, Option<u32>, &str) {
-    let re = Regex::new(r"^\s*(\S+?)\[(\d+)\]\s*:\s*(.*)$").unwrap();
+    let re = RE_PROCESS_INFO.clone();
     if let Some(caps) = re.captures(line) {
         let proc = caps.get(1).map(|m| m.as_str().to_string());
         let pid = caps.get(2).and_then(|m| m.as_str().parse().ok());

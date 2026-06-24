@@ -354,13 +354,13 @@ impl TierIndex {
             last_accessed: None,
             relevance_score: 0.5,
         };
-        let mut guard = self.entries.write().expect("lock poisoned");
+        let mut guard = self.entries.write().unwrap_or_else(|e| e.into_inner());
         guard.insert(id, entry);
     }
 
     /// Record an access to a memory.
     pub fn record_access(&self, id: &str) {
-        let mut guard = self.entries.write().expect("lock poisoned");
+        let mut guard = self.entries.write().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = guard.get_mut(id) {
             entry.access_count += 1;
             entry.last_accessed = Some(SystemTime::now());
@@ -369,7 +369,7 @@ impl TierIndex {
 
     /// Update the tier of a memory.
     pub fn update_tier(&self, id: &str, new_tier: MemoryTier) {
-        let mut guard = self.entries.write().expect("lock poisoned");
+        let mut guard = self.entries.write().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = guard.get_mut(id) {
             entry.tier = new_tier;
             entry.tier_entered_at = SystemTime::now();
@@ -378,25 +378,25 @@ impl TierIndex {
 
     /// Get the tier of a memory.
     pub fn get_tier(&self, id: &str) -> Option<MemoryTier> {
-        let guard = self.entries.read().expect("lock poisoned");
+        let guard = self.entries.read().unwrap_or_else(|e| e.into_inner());
         guard.get(id).map(|e| e.tier)
     }
 
     /// Get tiered metadata for a memory.
     pub fn get(&self, id: &str) -> Option<TieredMemory> {
-        let guard = self.entries.read().expect("lock poisoned");
+        let guard = self.entries.read().unwrap_or_else(|e| e.into_inner());
         guard.get(id).cloned()
     }
 
     /// Remove a memory from the index.
     pub fn remove(&self, id: &str) {
-        let mut guard = self.entries.write().expect("lock poisoned");
+        let mut guard = self.entries.write().unwrap_or_else(|e| e.into_inner());
         guard.remove(id);
     }
 
     /// Count memories in each tier.
     pub fn counts_by_tier(&self) -> HashMap<MemoryTier, usize> {
-        let guard = self.entries.read().expect("lock poisoned");
+        let guard = self.entries.read().unwrap_or_else(|e| e.into_inner());
         let mut counts = HashMap::new();
         for entry in guard.values() {
             *counts.entry(entry.tier).or_insert(0) += 1;
@@ -406,7 +406,7 @@ impl TierIndex {
 
     /// List all memory IDs in a given tier.
     pub fn ids_in_tier(&self, tier: MemoryTier) -> Vec<String> {
-        let guard = self.entries.read().expect("lock poisoned");
+        let guard = self.entries.read().unwrap_or_else(|e| e.into_inner());
         guard
             .values()
             .filter(|e| e.tier == tier)
@@ -416,7 +416,7 @@ impl TierIndex {
 
     /// Total number of indexed memories.
     pub fn len(&self) -> usize {
-        let guard = self.entries.read().expect("lock poisoned");
+        let guard = self.entries.read().unwrap_or_else(|e| e.into_inner());
         guard.len()
     }
 

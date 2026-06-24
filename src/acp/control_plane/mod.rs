@@ -83,9 +83,13 @@ impl AcpControlPlane {
                 control_plane: acp.clone(),
             },
         ));
-        *acp.actor_handle
-            .try_lock()
-            .expect("actor handle lock available during construction") = Some(handle);
+        // The lock was just created above and no other task can hold it.
+        #[allow(clippy::expect_used)]
+        {
+            *acp.actor_handle
+                .try_lock()
+                .expect("actor handle lock available during construction") = Some(handle);
+        }
         acp
     }
 
@@ -101,6 +105,9 @@ impl AcpControlPlane {
         F: Fn() -> crate::Result<Agent> + Send + Sync + 'static,
     {
         {
+            // The RwLock was created with `AcpControlPlane::new` and no other
+            // task can hold it during this builder call.
+            #[allow(clippy::expect_used)]
             let mut guard = self
                 .default_agent_builder
                 .try_write()
@@ -113,6 +120,9 @@ impl AcpControlPlane {
     /// Configure automatic crash recovery.
     pub fn with_recovery(self, recovery: CrashRecoveryConfig) -> Self {
         {
+            // The RwLock was created with `AcpControlPlane::new` and no other
+            // task can hold it during this builder call.
+            #[allow(clippy::expect_used)]
             let mut guard = self
                 .recovery
                 .try_write()

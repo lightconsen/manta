@@ -150,7 +150,8 @@ impl SessionStore {
         let store = Self {
             pool,
             cache: Arc::new(RwLock::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(1000).unwrap(),
+                #[allow(clippy::expect_used)] // 1000 is a known non-zero literal
+                std::num::NonZeroUsize::new(1000).expect("1000 is non-zero"),
             ))),
         };
 

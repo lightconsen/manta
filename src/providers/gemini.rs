@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::Stream;
-use reqwest::header::{HeaderMap, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, instrument, warn};
 
@@ -36,9 +36,9 @@ impl GeminiProvider {
     /// Create a new Gemini provider from an API key string.
     pub fn new(api_key: impl Into<String>) -> crate::Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
-        headers.insert("User-Agent", "syscity/1.0".parse().unwrap());
-        headers.insert("Accept", "application/json".parse().unwrap());
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert("User-Agent", HeaderValue::from_static("syscity/1.0"));
+        headers.insert("Accept", HeaderValue::from_static("application/json"));
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(180))
@@ -82,8 +82,10 @@ impl GeminiProvider {
     /// Build auth headers with the API key.
     fn headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        headers.insert("x-goog-api-key", self.api_key.parse().unwrap());
-        headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+        if let Ok(v) = HeaderValue::try_from(self.api_key.as_str()) {
+            headers.insert("x-goog-api-key", v);
+        }
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers
     }
 

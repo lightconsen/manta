@@ -239,19 +239,19 @@ impl CommandGate {
 
     /// Grant `level` to `user_id`.
     pub fn set_user_level(&self, user_id: impl Into<String>, level: UserLevel) {
-        let mut map = self.levels.write().expect("CommandGate lock poisoned");
+        let mut map = self.levels.write().unwrap_or_else(|e| e.into_inner());
         map.insert(user_id.into(), level);
     }
 
     /// Remove a custom level for `user_id` (reverts to the default).
     pub fn clear_user_level(&self, user_id: &str) {
-        let mut map = self.levels.write().expect("CommandGate lock poisoned");
+        let mut map = self.levels.write().unwrap_or_else(|e| e.into_inner());
         map.remove(user_id);
     }
 
     /// Retrieve the effective level for a user.
     pub fn user_level(&self, user_id: &str) -> UserLevel {
-        let map = self.levels.read().expect("CommandGate lock poisoned");
+        let map = self.levels.read().unwrap_or_else(|e| e.into_inner());
         *map.get(user_id).unwrap_or(&self.unknown_user_level)
     }
 
@@ -294,7 +294,7 @@ impl CommandGate {
     pub fn user_levels(&self) -> HashMap<String, UserLevel> {
         self.levels
             .read()
-            .expect("CommandGate lock poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
 }

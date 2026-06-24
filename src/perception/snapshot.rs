@@ -113,6 +113,7 @@ impl Snapshot {
             modalities.sort_by_key(|m| format!("{m:?}"));
 
             for modality in modalities {
+                #[allow(clippy::expect_used)] // modality came from by_modality.keys() above
                 let keys = by_modality.get_mut(&modality).expect("modality present");
                 keys.sort_by(|a, b| a.0.cmp(&b.0));
                 let total = keys.len();

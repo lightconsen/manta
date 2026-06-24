@@ -21,12 +21,40 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use serde_json::Value;
 
 use super::hooks::ToolPolicyDecision;
+
+#[allow(clippy::unwrap_used)]
+static PATH_BLACKLIST: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        // SSH keys
+        Regex::new(r"(?i)^.*/\.ssh(/|$)").unwrap(),
+        // System credential stores
+        Regex::new(r"(?i)^.*/\.gnupg(/|$)").unwrap(),
+        Regex::new(r"(?i)^.*/\.aws(/|$)").unwrap(),
+        Regex::new(r"(?i)^.*/\.docker(/|$)").unwrap(),
+        Regex::new(r"(?i)^.*/\.kube(/|$)").unwrap(),
+        Regex::new(r"(?i)^.*/\.config/gcloud(/|$)").unwrap(),
+        Regex::new(r"(?i)^.*/\.config/azure(/|$)").unwrap(),
+        Regex::new(r"(?i)^.*/\.netrc$").unwrap(),
+        Regex::new(r"(?i)^.*/\.git-credentials$").unwrap(),
+        // System directories (absolute paths only)
+        Regex::new(r"^/etc(/|$)").unwrap(),
+        Regex::new(r"^/sys(/|$)").unwrap(),
+        Regex::new(r"^/proc(/|$)").unwrap(),
+        Regex::new(r"^/dev(/|$)").unwrap(),
+        Regex::new(r"^/boot(/|$)").unwrap(),
+        Regex::new(r"^/var/log(/|$)").unwrap(),
+        // Windows system directories
+        Regex::new(r"(?i)^[A-Z]:\\Windows(/|\\|$)").unwrap(),
+        Regex::new(r"(?i)^[A-Z]:\\Program Files(/|\\|$)").unwrap(),
+        Regex::new(r"(?i)^[A-Z]:\\ProgramData(/|\\|$)").unwrap(),
+    ]
+});
 
 /// Violation detected by the sandbox interceptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,30 +198,7 @@ impl SandboxInterceptor {
             command_blacklist.insert(cmd.to_string());
         }
 
-        let path_blacklist = vec![
-            // SSH keys
-            Regex::new(r"(?i)^.*/\.ssh(/|$)").unwrap(),
-            // System credential stores
-            Regex::new(r"(?i)^.*/\.gnupg(/|$)").unwrap(),
-            Regex::new(r"(?i)^.*/\.aws(/|$)").unwrap(),
-            Regex::new(r"(?i)^.*/\.docker(/|$)").unwrap(),
-            Regex::new(r"(?i)^.*/\.kube(/|$)").unwrap(),
-            Regex::new(r"(?i)^.*/\.config/gcloud(/|$)").unwrap(),
-            Regex::new(r"(?i)^.*/\.config/azure(/|$)").unwrap(),
-            Regex::new(r"(?i)^.*/\.netrc$").unwrap(),
-            Regex::new(r"(?i)^.*/\.git-credentials$").unwrap(),
-            // System directories (absolute paths only)
-            Regex::new(r"^/etc(/|$)").unwrap(),
-            Regex::new(r"^/sys(/|$)").unwrap(),
-            Regex::new(r"^/proc(/|$)").unwrap(),
-            Regex::new(r"^/dev(/|$)").unwrap(),
-            Regex::new(r"^/boot(/|$)").unwrap(),
-            Regex::new(r"^/var/log(/|$)").unwrap(),
-            // Windows system directories
-            Regex::new(r"(?i)^[A-Z]:\\Windows(/|\\|$)").unwrap(),
-            Regex::new(r"(?i)^[A-Z]:\\Program Files(/|\\|$)").unwrap(),
-            Regex::new(r"(?i)^[A-Z]:\\ProgramData(/|\\|$)").unwrap(),
-        ];
+        let path_blacklist = PATH_BLACKLIST.clone();
 
         Self {
             command_blacklist,

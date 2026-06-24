@@ -237,39 +237,30 @@ impl ProviderUsageTracker {
             "today" => {
                 let start = now
                     .with_hour(0)
-                    .unwrap()
-                    .with_minute(0)
-                    .unwrap()
-                    .with_second(0)
-                    .unwrap()
-                    .with_nanosecond(0)
-                    .unwrap();
+                    .and_then(|d| d.with_minute(0))
+                    .and_then(|d| d.with_second(0))
+                    .and_then(|d| d.with_nanosecond(0))
+                    .unwrap_or(now);
                 let end = start + Duration::days(1);
                 (start, end)
             }
             "this_hour" => {
                 let start = now
                     .with_minute(0)
-                    .unwrap()
-                    .with_second(0)
-                    .unwrap()
-                    .with_nanosecond(0)
-                    .unwrap();
+                    .and_then(|d| d.with_second(0))
+                    .and_then(|d| d.with_nanosecond(0))
+                    .unwrap_or(now);
                 let end = start + Duration::hours(1);
                 (start, end)
             }
             "this_month" => {
                 let start = now
                     .with_day(1)
-                    .unwrap()
-                    .with_hour(0)
-                    .unwrap()
-                    .with_minute(0)
-                    .unwrap()
-                    .with_second(0)
-                    .unwrap()
-                    .with_nanosecond(0)
-                    .unwrap();
+                    .and_then(|d| d.with_hour(0))
+                    .and_then(|d| d.with_minute(0))
+                    .and_then(|d| d.with_second(0))
+                    .and_then(|d| d.with_nanosecond(0))
+                    .unwrap_or(now);
                 let end = start + Duration::days(32); // generous upper bound
                 (start, end)
             }

@@ -225,6 +225,7 @@ impl FileWatcher {
 
 impl Default for FileWatcher {
     fn default() -> Self {
+        #[allow(clippy::expect_used)] // Default trait cannot return Result
         Self::new().expect("Failed to create default FileWatcher")
     }
 }

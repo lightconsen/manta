@@ -150,7 +150,7 @@ impl LarkChannel {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .expect("Failed to create HTTP client");
+            .unwrap_or_else(|_| reqwest::Client::new());
 
         let initial_token = config.tenant_access_token.clone().unwrap_or_default();
 
@@ -371,7 +371,7 @@ impl LarkChannel {
             .api_request(
                 reqwest::Method::POST,
                 "/im/v1/messages",
-                Some(serde_json::to_value(&req).unwrap()),
+                Some(serde_json::to_value(&req).unwrap_or(serde_json::Value::Null)),
             )
             .await?;
 

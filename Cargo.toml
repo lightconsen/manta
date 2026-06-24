@@ -20,10 +20,10 @@ repository = "https://github.com/lightconsen/syscity"
 unused_async = "allow"
 
 # Avoid `.unwrap()` / `.expect()` in production code.
-# Temporarily allow: many `expect("lock poisoned")` and construction-time
-# expects remain in the codebase. Move to `warn` once cleaned up.
-unwrap_used = "allow"
-expect_used = "allow"
+# Now enforced at deny level after cleanup pass — call sites that genuinely
+# need them must add a localized `#[allow(...)]` with a justification comment.
+unwrap_used = "deny"
+expect_used = "deny"
 
 # Avoid silent `.ok()` on Results.
 result_unit_err = "warn"

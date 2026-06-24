@@ -229,7 +229,7 @@ impl SendPolicy {
 
     /// Add a rule to the policy.
     pub fn add_rule(&self, rule: PolicyRule) {
-        let mut inner = self.inner.write().expect("SendPolicy lock poisoned");
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
         inner.rules.push(rule);
         // Sort descending by priority so we always evaluate high-priority first.
         inner.rules.sort_by_key(|b| std::cmp::Reverse(b.priority));
@@ -237,7 +237,7 @@ impl SendPolicy {
 
     /// Remove all rules with the given name.
     pub fn remove_rule(&self, name: &str) {
-        let mut inner = self.inner.write().expect("SendPolicy lock poisoned");
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
         inner.rules.retain(|r| r.name != name);
     }
 
@@ -245,7 +245,7 @@ impl SendPolicy {
     pub fn rules(&self) -> Vec<PolicyRule> {
         self.inner
             .read()
-            .expect("SendPolicy lock poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .rules
             .clone()
     }
@@ -254,7 +254,7 @@ impl SendPolicy {
     pub fn set_default(&self, default: DefaultPolicy) {
         self.inner
             .write()
-            .expect("SendPolicy lock poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .default = default;
     }
 
@@ -263,7 +263,7 @@ impl SendPolicy {
     /// Returns the `PolicyDecision` for the first matching rule, or the
     /// default decision when no rule matches.
     pub fn evaluate(&self, user_id: &str, channel: &str, content: &str) -> PolicyDecision {
-        let inner = self.inner.read().expect("SendPolicy lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
 
         for rule in &inner.rules {
             if rule.applies(user_id, channel, content) {

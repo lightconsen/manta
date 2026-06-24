@@ -92,7 +92,9 @@ impl DaemonManager {
             .spawn()
             .map_err(crate::error::SyscityError::Io)?;
 
-        let pid = child.id().expect("Failed to get child PID");
+        let pid = child.id().ok_or_else(|| {
+            crate::error::SyscityError::Internal("Failed to get child PID".to_string())
+        })?;
 
         // Write PID file
         self.write_pid(pid).await?;
@@ -456,8 +458,10 @@ workspace_only = true
             #[cfg(unix)]
             {
                 use tokio::signal::unix::{signal, SignalKind};
+                #[allow(clippy::expect_used)] // signal handler install can't recover
                 let mut sigterm =
                     signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+                #[allow(clippy::expect_used)] // signal handler install can't recover
                 let mut sigint =
                     signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
                 tokio::select! {

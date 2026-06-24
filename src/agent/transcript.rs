@@ -412,7 +412,7 @@ impl TranscriptStore {
         scope: impl Into<String>,
     ) -> std::sync::MutexGuard<'_, HashMap<String, Transcript>> {
         let session_id = session_id.into();
-        let mut active = self.active.lock().expect("lock poisoned");
+        let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         active
             .entry(session_id.clone())
             .or_insert_with(|| Transcript::new(session_id, channel, peer, scope));
@@ -436,7 +436,7 @@ impl TranscriptStore {
 
     /// Get a transcript by session ID.
     pub fn get(&self, session_id: &str) -> Option<Transcript> {
-        let active = self.active.lock().expect("lock poisoned");
+        let active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         active.get(session_id).cloned()
     }
 
@@ -467,7 +467,7 @@ impl TranscriptStore {
     /// Export all active transcripts.
     pub async fn export_all(&self, format: TranscriptFormat) -> Vec<Result<PathBuf, String>> {
         let session_ids = {
-            let active = self.active.lock().expect("lock poisoned");
+            let active = self.active.lock().unwrap_or_else(|e| e.into_inner());
             active.keys().cloned().collect::<Vec<String>>()
         };
 
@@ -516,7 +516,7 @@ impl TranscriptStore {
     /// Get store stats.
     pub async fn stats(&self) -> TranscriptStoreStats {
         let (active_sessions, total_messages) = {
-            let active = self.active.lock().expect("lock poisoned");
+            let active = self.active.lock().unwrap_or_else(|e| e.into_inner());
             (active.len(), active.values().map(|t| t.message_count()).sum())
         };
         let file_count = self.list_files().await.len();
@@ -529,13 +529,13 @@ impl TranscriptStore {
 
     /// Remove a transcript from active memory.
     pub fn remove(&self, session_id: &str) -> Option<Transcript> {
-        let mut active = self.active.lock().expect("lock poisoned");
+        let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         active.remove(session_id)
     }
 
     /// Clear all active transcripts (files are preserved).
     pub fn clear_active(&self) {
-        let mut active = self.active.lock().expect("lock poisoned");
+        let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         active.clear();
     }
 }
