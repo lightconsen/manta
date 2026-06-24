@@ -88,9 +88,9 @@ syscity/
 ## Development Workflow
 
 1. **Before committing:**
-   - Run `cargo fmt`
-   - Run `cargo clippy -- -D warnings`
-   - Run `cargo test`
+   - Run `./scripts/self-check.sh` (runs all automated checks)
+   - Or run individual steps: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`
+   - Run `./scripts/static-analysis.sh --full` for cross-module anti-patterns
    - Run `cargo doc` to check docs build
 
 2. **CI Checks:**
@@ -99,3 +99,14 @@ syscity/
    - Tests: `cargo test --all-features`
    - Documentation: `cargo doc --no-deps`
    - Security audit: `cargo audit`
+   - Static analysis: `./scripts/static-analysis.sh`
+
+3. **Self-review checklist (review every change against these):**
+   - **Error handling**: No `let _ =` or `.ok()` silently drops errors? (static-analysis.sh checks this)
+   - **Lock safety**: No `std::sync::Mutex` held across `.await`? (static-analysis.sh flags potential cases)
+   - **Task registration**: Are all `tokio::spawn` handles registered in `TaskRegistry`?
+   - **Shutdown safety**: Do all long-running loops use `select!` with a shutdown signal?
+   - **Audit/event failures**: Are audit log and event send failures logged with `warn!`?
+
+   The automated checks cover patterns 1-2; patterns 3-5 require manual review. Reference the
+   full checklist at `.github/PULL_REQUEST_TEMPLATE.md`.

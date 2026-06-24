@@ -27,6 +27,13 @@
 - [ ] My commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
 - [ ] I have signed off my commits (`git commit -s`)
 
+### Correctness checklist
+
+- [ ] **Error handling**: No `let _ =` or `.ok()` silently drops errors (`./scripts/static-analysis.sh`)
+- [ ] **Lock safety**: No `std::sync::Mutex` held across `.await` (`./scripts/static-analysis.sh --full`)
+- [ ] **Task registration**: All `tokio::spawn` handles registered in `TaskRegistry`
+- [ ] **Shutdown safety**: All long-running loops use `select!` with a shutdown signal
+
 ## Testing
 
 <!-- Describe the tests you ran and how to reproduce them -->
