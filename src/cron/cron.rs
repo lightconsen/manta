@@ -12,7 +12,8 @@ use std::time::Duration;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use cron::Schedule as CronSchedule;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::agent::Agent;
@@ -407,7 +408,12 @@ pub enum CronCommand {
 pub struct CronScheduler {
     jobs: Arc<RwLock<HashMap<String, CronJob>>>,
     command_tx: mpsc::Sender<CronCommand>,
-    shutdown_tx: Option<mpsc::Sender<()>>,
+    /// Broadcast so both the command-handler and timer tasks can subscribe.
+    shutdown_tx: Option<broadcast::Sender<()>>,
+    /// JoinHandles of the inner background tasks (command handler, timer).
+    /// Tracked so `shutdown()` can await/abort them; the gateway-level
+    /// `TaskRegistry` only tracks the outer `start()` wrapper task.
+    inner_handles: Vec<JoinHandle<()>>,
     /// Shared agent reference — wrapping in `Arc<RwLock<…>>` lets
     /// `set_agent()` update the running scheduler's agent without
     /// restarting any background tasks.
@@ -440,6 +446,7 @@ impl CronScheduler {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             command_tx,
             shutdown_tx: None,
+            inner_handles: Vec::new(),
             agent: Arc::new(RwLock::new(None)),
             store_path: None,
             announce_tx: None,
@@ -484,7 +491,10 @@ impl CronScheduler {
 
     /// Start the scheduler
     pub async fn start(&mut self, mut command_rx: mpsc::Receiver<CronCommand>) -> Result<()> {
-        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
+        // Broadcast so both the command-handler and timer tasks can subscribe.
+        // Capacity 1 is enough — we only ever send a single `()` shutdown.
+        let (shutdown_tx, mut cmd_shutdown_rx) = broadcast::channel::<()>(1);
+        let mut timer_shutdown_rx = shutdown_tx.subscribe();
         self.shutdown_tx = Some(shutdown_tx);
 
         // Load jobs from store if configured
@@ -503,7 +513,7 @@ impl CronScheduler {
         let heartbeat_wake_tx = self.heartbeat_wake_tx.clone();
 
         // Spawn command handler
-        tokio::spawn(async move {
+        let cmd_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     cmd = command_rx.recv() => {
@@ -511,13 +521,14 @@ impl CronScheduler {
                             Self::handle_command(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx, cmd).await;
                         }
                     }
-                    _ = shutdown_rx.recv() => {
-                        info!("Cron scheduler shutting down");
+                    _ = cmd_shutdown_rx.recv() => {
+                        info!("Cron scheduler command handler shutting down");
                         break;
                     }
                 }
             }
         });
+        self.inner_handles.push(cmd_handle);
 
         // Spawn single global timer task
         let jobs_for_timer = Arc::clone(&self.jobs);
@@ -527,7 +538,7 @@ impl CronScheduler {
         let heartbeat_wake_tx_for_timer = self.heartbeat_wake_tx.clone();
         let rearm_notify = Arc::clone(&self.rearm_notify);
 
-        tokio::spawn(async move {
+        let timer_handle = tokio::spawn(async move {
             // Track if we're currently running jobs to prevent overlapping ticks
             let running = Arc::new(RwLock::new(false));
 
@@ -550,19 +561,23 @@ impl CronScheduler {
                     final_delay
                 );
 
-                // Wait for timer OR rearm notification
+                // Wait for timer OR rearm notification OR shutdown
                 let sleep_fut = tokio::time::sleep(Duration::from_millis(final_delay));
                 let notify_fut = rearm_notify.notified();
 
                 tokio::select! {
-                                   _ = sleep_fut => {
-                // Timer fired - proceed to check jobs
-                                   }
-                                   _ = notify_fut => {
-                                       debug!("Timer re-arming due to schedule change");
-                                       continue; // Recalculate immediately
-                                   }
-                               }
+                    _ = sleep_fut => {
+                        // Timer fired - proceed to check jobs
+                    }
+                    _ = notify_fut => {
+                        debug!("Timer re-arming due to schedule change");
+                        continue; // Recalculate immediately
+                    }
+                    _ = timer_shutdown_rx.recv() => {
+                        info!("Cron scheduler timer shutting down");
+                        break;
+                    }
+                }
 
                 // Check if already running (prevent overlapping ticks)
                 let running_guard = running.read().await;
@@ -601,6 +616,7 @@ impl CronScheduler {
                 // The loop continues and re-arms automatically
             }
         });
+        self.inner_handles.push(timer_handle);
 
         info!("Cron scheduler started (single global timer)");
         Ok(())
@@ -907,7 +923,9 @@ impl CronScheduler {
         }
 
         // Log the run
-        if let Err(e) = Self::log_run(job_id, &run_id, started_at, completed_at, result, store_path).await {
+        if let Err(e) =
+            Self::log_run(job_id, &run_id, started_at, completed_at, result, store_path).await
+        {
             warn!("Failed to log cron run: {e}");
         }
 
@@ -922,13 +940,16 @@ impl CronScheduler {
                     "Cron job '{}' completed with heartbeat wake — waking agent {}",
                     job.name, agent_id
                 );
-                let _ = tx
+                if let Err(e) = tx
                     .send(crate::heartbeat::WakeRequest {
                         agent_id,
                         priority: crate::heartbeat::WakePriority::Action,
                         prompt: None,
                     })
-                    .await;
+                    .await
+                {
+                    warn!("Cron job '{}' could not send heartbeat wake request: {}", job.name, e);
+                }
             }
         }
     }
@@ -1161,7 +1182,9 @@ impl CronScheduler {
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.ok();
+            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                warn!("failed to create cron jobs store directory {parent:?}: {e}");
+            }
         }
 
         tokio::fs::write(path, json)
@@ -1232,7 +1255,29 @@ impl CronScheduler {
     /// Shutdown the scheduler
     pub async fn shutdown(&mut self) -> Result<()> {
         if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(()).await;
+            // Broadcast send fails only when no receivers remain — by then
+            // the inner tasks have already exited, so ignore that case.
+            let _ = tx.send(());
+        }
+
+        // Drain inner JoinHandles and wait briefly for graceful exit; abort
+        // any that don't finish in time. This guarantees no orphaned tasks
+        // survive a shutdown() call.
+        let handles = std::mem::take(&mut self.inner_handles);
+        for handle in handles {
+            let abort = handle.abort_handle();
+            match tokio::time::timeout(Duration::from_secs(5), handle).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    if !e.is_cancelled() {
+                        warn!("Cron inner task join error: {}", e);
+                    }
+                }
+                Err(_) => {
+                    warn!("Cron inner task did not exit within 5s; aborting");
+                    abort.abort();
+                }
+            }
         }
         Ok(())
     }
@@ -1709,10 +1754,7 @@ mod tests {
         std::fs::set_permissions(&path, perms).unwrap();
 
         let result = CronScheduler::save_jobs(&jobs, &path).await;
-        assert!(
-            result.is_err(),
-            "save_jobs should fail when the target file is read-only"
-        );
+        assert!(result.is_err(), "save_jobs should fail when the target file is read-only");
     }
 
     #[tokio::test]
@@ -1739,10 +1781,7 @@ mod tests {
             &Some(store_path),
         )
         .await;
-        assert!(
-            result.is_err(),
-            "log_run should fail when runs.jsonl is read-only"
-        );
+        assert!(result.is_err(), "log_run should fail when runs.jsonl is read-only");
     }
 
     #[tokio::test]
@@ -1788,13 +1827,7 @@ mod tests {
             updated.state.running_at_ms.is_none(),
             "running_at_ms should be cleared after execution"
         );
-        assert_eq!(
-            updated.state.run_count, 1,
-            "run_count should be incremented after execution"
-        );
-        assert!(
-            updated.state.last_error.is_none(),
-            "no error for successful shell execution"
-        );
+        assert_eq!(updated.state.run_count, 1, "run_count should be incremented after execution");
+        assert!(updated.state.last_error.is_none(), "no error for successful shell execution");
     }
 }
