@@ -1394,15 +1394,21 @@ impl DreamReviewQueue {
             items[i].status = ReviewStatus::Rejected; // reuse Rejected as "applied"
             match &items[i].action {
                 DreamAction::Delete { memory_id, .. } => {
-                    let _ = store.delete(&crate::memory::MemoryId::new(memory_id)).await;
-                    tier_index.remove(memory_id);
+                    if let Err(e) = store.delete(&crate::memory::MemoryId::new(memory_id)).await {
+                        warn!("Dream apply: failed to delete memory {}: {e}", memory_id);
+                    } else {
+                        tier_index.remove(memory_id);
+                    }
                     applied += 1;
                 }
                 DreamAction::Merge { memory_ids, summary } => {
                     // Delete source memories and store the summary
                     for id in memory_ids {
-                        let _ = store.delete(&crate::memory::MemoryId::new(id)).await;
-                        tier_index.remove(id);
+                        if let Err(e) = store.delete(&crate::memory::MemoryId::new(id)).await {
+                            warn!("Dream apply: failed to delete memory {} during merge: {e}", id);
+                        } else {
+                            tier_index.remove(id);
+                        }
                     }
                     let mem = crate::memory::Memory::new("system", summary.clone(), "dream_merge")
                         .with_importance_score(0.7)
@@ -1604,7 +1610,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::memory::{MemoryStore, UnifiedStore};
+    use crate::memory::{
+        Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore, UnifiedStore,
+    };
+    use crate::SyscityError;
 
     #[tokio::test]
     async fn test_dream_light() {
@@ -1840,5 +1849,114 @@ mod tests {
         assert_eq!(metrics.dream_duration_ms_total.load(Ordering::Relaxed), 42);
         assert_eq!(metrics.llm_tokens_input_total.load(Ordering::Relaxed), 100);
         assert_eq!(metrics.llm_tokens_output_total.load(Ordering::Relaxed), 50);
+    }
+
+    // ── Negative tests: apply_approved error handling ───────────────────────
+
+    /// A memory store whose `delete` always fails, used to verify that
+    /// `apply_approved` logs the error and skips `tier_index.remove`.
+    struct FailingStore;
+
+    #[async_trait::async_trait]
+    impl MemoryStore for FailingStore {
+        async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
+            Ok(memory.id) // succeed with a no-op store
+        }
+        async fn get(&self, _id: &MemoryId) -> crate::Result<Option<Memory>> {
+            Ok(None)
+        }
+        async fn update(&self, _memory: Memory) -> crate::Result<()> {
+            Ok(())
+        }
+        async fn delete(&self, _id: &MemoryId) -> crate::Result<bool> {
+            Err(SyscityError::Internal("mock: delete failed".into()))
+        }
+        async fn search(&self, _query: MemoryQuery) -> crate::Result<Vec<Memory>> {
+            Ok(vec![])
+        }
+        async fn cleanup_expired(&self) -> crate::Result<usize> {
+            Ok(0)
+        }
+        async fn stats(&self) -> crate::Result<MemoryStats> {
+            Ok(MemoryStats::default())
+        }
+        async fn close(&self) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_apply_approved_delete_failure_keeps_tier_index() {
+        let queue = DreamReviewQueue::new();
+        let store = FailingStore;
+        let tier_index = TierIndex::new();
+
+        // Pre-populate tier_index with the memory that will be "deleted"
+        tier_index.insert("mem-1", MemoryTier::ShortTerm);
+
+        // Enqueue a Delete action and approve it
+        queue
+            .enqueue(
+                "dream-1",
+                DreamPhase::Light,
+                DreamAction::Delete {
+                    memory_id: "mem-1".to_string(),
+                    reason: "duplicate".to_string(),
+                },
+            )
+            .await;
+        let pending = queue.list_pending().await;
+        assert_eq!(pending.len(), 1);
+        queue.approve(&pending[0].id).await;
+
+        // Apply — delete will fail but should not panic
+        let applied = queue.apply_approved(&store, &tier_index).await.unwrap();
+        assert_eq!(applied, 1, "should count as applied even when delete fails");
+
+        // tier_index must still contain the memory_id (delete failed)
+        assert!(
+            tier_index.get("mem-1").is_some(),
+            "tier_index should still contain mem-1 after failed delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_approved_merge_failure_keeps_tier_index() {
+        let queue = DreamReviewQueue::new();
+        let store = FailingStore;
+        let tier_index = TierIndex::new();
+
+        // Pre-populate tier_index with memories that will be "deleted"
+        tier_index.insert("mem-1", MemoryTier::ShortTerm);
+        tier_index.insert("mem-2", MemoryTier::ShortTerm);
+
+        // Enqueue a Merge action and approve it
+        queue
+            .enqueue(
+                "dream-1",
+                DreamPhase::Deep,
+                DreamAction::Merge {
+                    memory_ids: vec!["mem-1".to_string(), "mem-2".to_string()],
+                    summary: "merged summary".to_string(),
+                },
+            )
+            .await;
+        let pending = queue.list_pending().await;
+        assert_eq!(pending.len(), 1);
+        queue.approve(&pending[0].id).await;
+
+        // Apply — deletes will fail but should not panic
+        let applied = queue.apply_approved(&store, &tier_index).await.unwrap();
+        assert_eq!(applied, 1, "should count as applied even when deletes fail");
+
+        // tier_index must still contain both memory_ids (deletes failed)
+        assert!(
+            tier_index.get("mem-1").is_some(),
+            "tier_index should still contain mem-1 after failed merge delete"
+        );
+        assert!(
+            tier_index.get("mem-2").is_some(),
+            "tier_index should still contain mem-2 after failed merge delete"
+        );
     }
 }

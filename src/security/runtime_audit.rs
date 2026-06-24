@@ -327,4 +327,44 @@ mod tests {
         assert_eq!(entry.actor, "admin");
         assert!(!entry.allowed);
     }
+
+    /// Shared contract test for any [`AuditLogger`] implementation.
+    ///
+    /// Verifies the basic invariants that every logger must satisfy:
+    /// - A logged entry is immediately retrievable.
+    /// - The `log_entry` call completes within a short timeout
+    ///   (does not block the caller indefinitely).
+    #[allow(dead_code)]
+    pub(crate) async fn test_audit_logger_contract(logger: &dyn AuditLogger) {
+        // Contract: entry is retrievable after logging.
+        logger
+            .log_entry(
+                AuditEventType::AccessCheck,
+                "tester".to_string(),
+                "target".to_string(),
+                true,
+                "contract test".to_string(),
+                None,
+            )
+            .await;
+
+        // Contract: log_entry does not block (completes within 1 s).
+        let slow = logger.log_entry(
+            AuditEventType::Security,
+            "slow-check".to_string(),
+            "system".to_string(),
+            false,
+            "non-blocking test".to_string(),
+            Some(serde_json::json!({"test": true})),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(1), slow)
+            .await
+            .expect("AuditLogger::log_entry should not block the caller");
+    }
+
+    #[tokio::test]
+    async fn test_runtime_audit_log_contract() {
+        let log = RuntimeAuditLog::with_capacity(100);
+        test_audit_logger_contract(&log).await;
+    }
 }

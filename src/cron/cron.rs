@@ -898,11 +898,15 @@ impl CronScheduler {
 
         // Persist
         if let Some(ref path) = store_path {
-            let _ = Self::save_jobs(jobs, path).await;
+            if let Err(e) = Self::save_jobs(jobs, path).await {
+                warn!("Failed to persist cron jobs after run: {e}");
+            }
         }
 
         // Log the run
-        let _ = Self::log_run(job_id, &run_id, started_at, completed_at, result, store_path).await;
+        if let Err(e) = Self::log_run(job_id, &run_id, started_at, completed_at, result, store_path).await {
+            warn!("Failed to log cron run: {e}");
+        }
 
         // Send heartbeat wake if configured and job succeeded
         if matches!(job.wake_mode, WakeMode::HeartbeatWake) {
@@ -1684,5 +1688,110 @@ mod tests {
         assert_eq!(deserialized.id, job.id);
         // Also verify the agent target is preserved
         assert!(matches!(deserialized.target, ExecutionTarget::Agent { .. }));
+    }
+
+    // ── Negative tests: persistence error handling ──────────────────────────
+
+    #[tokio::test]
+    async fn test_save_jobs_fails_on_readonly_path() {
+        let jobs: Arc<RwLock<HashMap<String, CronJob>>> = Arc::new(RwLock::new(HashMap::new()));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cron_jobs.json");
+
+        // Create the file and remove write permissions so the subsequent
+        // tokio::fs::write inside save_jobs fails with EACCES.
+        tokio::fs::write(&path, b"").await.unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        let result = CronScheduler::save_jobs(&jobs, &path).await;
+        assert!(
+            result.is_err(),
+            "save_jobs should fail when the target file is read-only"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_log_run_fails_on_readonly_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store_path = dir.path().join("cron_jobs.json");
+        // log_run derives the log path as <store_path>.runs.jsonl
+        let log_path = dir.path().join("cron_jobs.runs.jsonl");
+
+        // Create the runs.jsonl file and make it read-only so the
+        // OpenOptions::append inside log_run fails.
+        tokio::fs::write(&log_path, b"").await.unwrap();
+        let mut perms = std::fs::metadata(&log_path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&log_path, perms).unwrap();
+
+        let now = Utc::now();
+        let result = CronScheduler::log_run(
+            "test-job",
+            "test-run-id",
+            now,
+            now + ChronoDuration::seconds(1),
+            Ok("output".to_string()),
+            &Some(store_path),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "log_run should fail when runs.jsonl is read-only"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_job_persistence_failure_does_not_panic() {
+        let jobs: Arc<RwLock<HashMap<String, CronJob>>> = Arc::new(RwLock::new(HashMap::new()));
+        let agent: Arc<RwLock<Option<Arc<Agent>>>> = Arc::new(RwLock::new(None));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cron_jobs.json");
+
+        // Make the store path read-only so save_jobs + log_run fail.
+        tokio::fs::write(&path, b"").await.unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        let job = CronJob::new(
+            "test-job",
+            "Test Job",
+            Schedule::Every {
+                interval: Duration::from_secs(3600),
+                anchor: None,
+            },
+            ExecutionTarget::shell("echo hello"),
+        );
+        jobs.write().await.insert("test-job".to_string(), job);
+
+        // Execute with force=true; persistence will fail but must not panic
+        CronScheduler::execute_job(
+            &jobs,
+            "test-job",
+            &agent,
+            &Some(path),
+            &None, // announce_tx
+            &None, // heartbeat_wake_tx
+            true,  // force
+        )
+        .await;
+
+        // Job state must still be updated despite persistence failure
+        let updated = jobs.read().await.get("test-job").cloned().unwrap();
+        assert!(
+            updated.state.running_at_ms.is_none(),
+            "running_at_ms should be cleared after execution"
+        );
+        assert_eq!(
+            updated.state.run_count, 1,
+            "run_count should be incremented after execution"
+        );
+        assert!(
+            updated.state.last_error.is_none(),
+            "no error for successful shell execution"
+        );
     }
 }

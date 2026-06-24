@@ -46,7 +46,9 @@ pub(crate) async fn process_inbound_entries(
     // Drain any in-flight messages with a bounded timeout.
     let drain_deadline = Duration::from_secs(5);
     while let Ok(Some(incoming)) = timeout(drain_deadline, rx.recv()).await {
-        let _ = state.pipelines.inbound.process(incoming).await;
+        if state.pipelines.inbound.process(incoming).await.is_none() {
+            warn!("Drain: inbound pipeline absorbed a message (routing returned None)");
+        }
     }
     info!("Inbound entry worker stopped");
 }

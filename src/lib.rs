@@ -73,6 +73,7 @@ pub mod standing_orders;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
 pub mod tools;
+pub mod test_helpers;
 pub mod tui;
 pub mod utils;
 

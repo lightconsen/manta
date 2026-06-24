@@ -337,8 +337,10 @@ mod tests {
         let registry = rt.block_on(make_registry());
         let handlers = new_handler_registry();
 
-        let (ctrl_rt, handle) =
-            init_control_runtime(registry.clone(), handlers, control_config(50));
+        let Ok((ctrl_rt, handle)) =
+            init_control_runtime(registry.clone(), handlers, control_config(50)) else {
+            panic!("init_control_runtime should succeed");
+        };
 
         // Keep the control runtime alive on a background thread.
         std::thread::spawn(move || {
