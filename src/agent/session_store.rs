@@ -746,6 +746,7 @@ impl SessionStore {
         .bind(params.session_id)
         .execute(&self.pool)
         .await
+        .map_err(|e| warn!("failed to increment session message_count: {e}"))
         .ok();
 
         Ok(result.last_insert_rowid())
@@ -1003,6 +1004,7 @@ impl SessionStore {
         .bind(session_id)
         .execute(&self.pool)
         .await
+        .map_err(|e| warn!("failed to update session message_count (+2): {e}"))
         .ok();
 
         debug!("Turn appended: {}/{} index={}", session_id, thread_id, turn_index);
@@ -1112,6 +1114,7 @@ impl SessionStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
+            .map_err(|e| warn!("failed to decrement session message_count: {e}"))
             .ok();
 
         debug!("Deleted turn {}/{}/{}: {} rows", session_id, thread_id, turn_index, affected);

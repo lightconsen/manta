@@ -490,7 +490,10 @@ impl CronScheduler {
         // Load jobs from store if configured
         let store_path = self.store_path.clone();
         if let Some(ref path) = store_path {
-            self.load_jobs(path).await.ok();
+            self.load_jobs(path)
+                .await
+                .map_err(|e| warn!("failed to load persisted cron jobs at startup: {e}"))
+                .ok();
         }
 
         let jobs = Arc::clone(&self.jobs);

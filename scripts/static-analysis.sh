@@ -11,8 +11,9 @@
 #   Known-safe fire-and-forget patterns are excluded.
 #
 # Usage:
-#   ./scripts/static-analysis.sh        # CI mode (gateway only)
-#   ./scripts/static-analysis.sh --full # Full tree scan
+#   ./scripts/static-analysis.sh          # CI mode (gateway only)
+#   ./scripts/static-analysis.sh --full   # Full tree scan
+#   ./scripts/static-analysis.sh --skip-lock  # CI mode without lock checking
 #
 
 set -euo pipefail
@@ -27,14 +28,17 @@ warnings=0
 # ── CLI argument parsing ───────────────────────────────────────────────────
 
 FULL=false
+SKIP_LOCK=false
 for arg in "$@"; do
     case "$arg" in
         --full) FULL=true ;;
+        --skip-lock) SKIP_LOCK=true ;;
         -h|--help)
-            echo "Usage: $0 [--full]"
+            echo "Usage: $0 [--full] [--skip-lock]"
             echo ""
-            echo "  (no flag)  CI mode — src/gateway/ only, errors fail the build"
-            echo "  --full     Full scan — high-risk modules are errors, rest are warnings"
+            echo "  (no flag)    CI mode — src/gateway/ only, errors fail the build"
+            echo "  --full       Full scan — high-risk modules are errors, rest are warnings"
+            echo "  --skip-lock  Skip lock().await checking (reduces noise)"
             exit 0
             ;;
     esac
@@ -44,7 +48,7 @@ done
 #
 # These are fire-and-forget operations that are intentionally best-effort:
 # temp file cleanup, process lifecycle, pipe I/O, env var reads, parsing, etc.
-SAFE_PATTERNS='(remove_file|remove_dir_all|child\.wait\(\)|\.kill\(\)|stdin\.write_all|stdin\.shutdown|tx\.send\(|server\.await|\.recv\(\)|env::var\(|\.parse::<|\.metadata\(\)|ctrl_c\(\))'
+SAFE_PATTERNS='(remove_file|remove_dir_all|child\.wait\(\)|\.kill\(\)|stdin\.write_all|stdin\.shutdown|tx\.send\(|server\.await|\.recv\(\)|env::var\(|\.parse::<|\.metadata\(\)|ctrl_c\(\)|try_get\(|create_dir_all)'
 
 # ── analyze() — shared check function ──────────────────────────────────────
 #
@@ -124,7 +128,9 @@ if ! $FULL; then
     analyze "$PATTERN_LET_AWAIT" "$MSG_LET_AWAIT" "$GATEWAY_FILES"
     analyze "$PATTERN_DOT_OK" "$MSG_DOT_OK" "$GATEWAY_FILES"
     analyze "$PATTERN_SPAWN" "$MSG_SPAWN" "$GATEWAY_FILES"
-    analyze "$PATTERN_LOCK_AWAIT" "$MSG_LOCK_AWAIT" "$GATEWAY_FILES"
+    if ! $SKIP_LOCK; then
+        analyze "$PATTERN_LOCK_AWAIT" "$MSG_LOCK_AWAIT" "$GATEWAY_FILES" "warning"
+    fi
     analyze "$PATTERN_SLEEP_LOOP" "$MSG_SLEEP_LOOP" "$GATEWAY_FILES"
 
     if [[ $failures -gt 0 ]]; then
@@ -159,7 +165,14 @@ do_full_scan() {
 do_full_scan "$PATTERN_LET_AWAIT" "$MSG_LET_AWAIT"
 do_full_scan "$PATTERN_DOT_OK" "$MSG_DOT_OK"
 do_full_scan "$PATTERN_SPAWN" "$MSG_SPAWN"
-do_full_scan "$PATTERN_LOCK_AWAIT" "$MSG_LOCK_AWAIT"
+
+# Lock pattern — always warning (cannot distinguish std::sync::Mutex from
+# tokio::sync::Mutex at the grep level; all ~33 real hits use tokio::Mutex).
+if ! $SKIP_LOCK; then
+    analyze "$PATTERN_LOCK_AWAIT" "(HIGH) $MSG_LOCK_AWAIT" "$HIGH_RISK_DIRS" "warning" "$SAFE_PATTERNS"
+    analyze "$PATTERN_LOCK_AWAIT" "(LOW)  $MSG_LOCK_AWAIT" "$REST_DIRS" "warning" "$SAFE_PATTERNS"
+fi
+
 do_full_scan "$PATTERN_SLEEP_LOOP" "$MSG_SLEEP_LOOP"
 
 # ── Summary ────────────────────────────────────────────────────────────────

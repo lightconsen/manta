@@ -916,7 +916,9 @@ impl PluginChannelRegistry {
         {
             let mut plugins = self.plugins.write().await;
             if let Some(plugin) = plugins.remove(name) {
-                let _ = plugin.stop().await;
+                if let Err(e) = plugin.stop().await {
+                    warn!("failed to stop plugin '{}': {e}", name);
+                }
                 info!("Unloaded plugin '{}'", name);
             }
         }
