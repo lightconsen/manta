@@ -132,14 +132,28 @@ impl Schedule {
                 }
             }
             Schedule::Every { interval, anchor } => {
+                let interval_secs = interval.as_secs();
+                if interval_secs == 0 {
+                    warn!(
+                        "Schedule::Every interval is zero — job will never run \
+                         (interval must be >= 1 second)"
+                    );
+                    return None;
+                }
+
                 let anchor = anchor.unwrap_or(from);
 
                 if from < anchor {
                     Some(anchor)
                 } else {
                     let elapsed = from.signed_duration_since(anchor);
-                    let periods = (elapsed.num_seconds() / interval.as_secs() as i64) + 1;
-                    Some(anchor + ChronoDuration::seconds(periods * interval.as_secs() as i64))
+                    let interval_i64 = interval_secs as i64;
+                    let periods = elapsed
+                        .num_seconds()
+                        .checked_div(interval_i64)?
+                        .checked_add(1)?;
+                    let offset_secs = periods.checked_mul(interval_i64)?;
+                    Some(anchor + ChronoDuration::seconds(offset_secs))
                 }
             }
             Schedule::Cron {
@@ -156,7 +170,16 @@ impl Schedule {
                     expression.clone()
                 };
 
-                let schedule = CronSchedule::from_str(&normalized).ok()?;
+                let schedule = match CronSchedule::from_str(&normalized) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!(
+                            "invalid cron expression {:?}: {} — job will never run",
+                            expression, e
+                        );
+                        return None;
+                    }
+                };
 
                 // Get next occurrence
                 let next = schedule.upcoming(Utc).next()?;
@@ -597,21 +620,35 @@ impl CronScheduler {
                 let announce_tx = announce_tx_for_timer.clone();
                 let heartbeat_wake_tx = heartbeat_wake_tx_for_timer.clone();
 
-                // Run jobs (result unused)
-                async {
-                    Self::run_due_jobs(
+                // Run jobs (result unused). Wrap in select! against shutdown
+                // so a long-running batch cannot block graceful exit.
+                let mut shutdown_during_jobs = false;
+                tokio::select! {
+                    _ = Self::run_due_jobs(
                         &jobs,
                         &agent,
                         &store_path,
                         &announce_tx,
                         &heartbeat_wake_tx,
-                    )
-                    .await;
+                    ) => {
+                        // batch completed normally
+                    }
+                    _ = timer_shutdown_rx.recv() => {
+                        warn!(
+                            "Cron scheduler shutting down with jobs in flight; \
+                             abandoning batch. running_at_ms will be cleared on next start."
+                        );
+                        shutdown_during_jobs = true;
+                    }
                 }
-                .await;
 
                 // Always mark as not running and continue (re-arm happens at loop start)
                 *running.write().await = false;
+
+                if shutdown_during_jobs {
+                    info!("Cron scheduler timer shutting down (mid-batch)");
+                    break;
+                }
 
                 // The loop continues and re-arms automatically
             }
@@ -1321,6 +1358,38 @@ mod tests {
         // Should be about 1 hour from now
         let diff = next.unwrap() - now;
         assert!(diff.num_seconds() >= 3600);
+    }
+
+    #[test]
+    fn test_schedule_next_run_every_zero_interval_returns_none() {
+        // Regression: previously panicked with divide-by-zero
+        let schedule = Schedule::Every {
+            interval: Duration::ZERO,
+            anchor: None,
+        };
+        assert_eq!(schedule.next_run(Utc::now()), None);
+    }
+
+    #[test]
+    fn test_schedule_next_run_every_subsecond_interval_returns_none() {
+        // Sub-second intervals truncate to 0 seconds — also rejected
+        let schedule = Schedule::Every {
+            interval: Duration::from_millis(500),
+            anchor: None,
+        };
+        assert_eq!(schedule.next_run(Utc::now()), None);
+    }
+
+    #[test]
+    fn test_schedule_next_run_cron_invalid_returns_none() {
+        // Regression: invalid cron expression must not panic and must not
+        // silently succeed — it returns None so the scheduler skips the job.
+        let schedule = Schedule::Cron {
+            expression: "not a cron expression".to_string(),
+            timezone: None,
+            stagger_ms: None,
+        };
+        assert_eq!(schedule.next_run(Utc::now()), None);
     }
 
     #[test]
