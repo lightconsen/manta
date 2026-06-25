@@ -19,8 +19,6 @@ pub struct ApiClient {
     client: Client,
     base_url: String,
     api_key: Option<String>,
-    #[allow(dead_code)]
-    timeout: Duration,
     retry_config: crate::config::RetryConfig,
 }
 
@@ -31,34 +29,16 @@ impl ApiClient {
     pub async fn new_async(config: &ServiceConfig) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
-            .no_proxy()
             .build()
             .map_err(|e| SyscityError::Internal(format!("Failed to build HTTP client: {}", e)))?;
 
         // Resolve API key if it's a SecretRef
-        let api_key = if let Some(ref key_ref) = config.api_key {
-            match key_ref {
-                SecretRef::String(s) if !s.starts_with('$') => Some(s.clone()),
-                SecretRef::String(s) => {
-                    // Try to resolve env var reference
-                    let var_name = s.trim_start_matches('$');
-                    std::env::var(var_name).ok()
-                }
-                _ => {
-                    // For other SecretRef variants, we need the secrets resolver
-                    // For now, return None and let the caller resolve it properly
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let api_key = Self::resolve_api_key(config.api_key.as_ref());
 
         Ok(Self {
             client,
             base_url: config.endpoint.clone(),
             api_key,
-            timeout: Duration::from_secs(config.timeout_seconds),
             retry_config: config.retry.clone(),
         })
     }
@@ -69,22 +49,10 @@ impl ApiClient {
     /// Use `new_async` for proper secret resolution, or ensure secrets are
     /// resolved in the config before calling this method.
     pub fn new(config: &ServiceConfig) -> Result<Self> {
-        // Try to get the resolved API key
-        let api_key = config.api_key.as_ref().and_then(|key_ref| {
-            match key_ref {
-                SecretRef::String(s) if !s.starts_with('$') => Some(s.clone()),
-                SecretRef::String(s) => {
-                    // Try to resolve env var reference synchronously
-                    let var_name = s.trim_start_matches('$');
-                    std::env::var(var_name).ok()
-                }
-                _ => None, // Cannot resolve other variants synchronously
-            }
-        });
+        let api_key = Self::resolve_api_key(config.api_key.as_ref());
 
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
-            .no_proxy()
             .build()
             .map_err(|e| SyscityError::Internal(format!("Failed to build HTTP client: {}", e)))?;
 
@@ -92,7 +60,6 @@ impl ApiClient {
             client,
             base_url: config.endpoint.clone(),
             api_key,
-            timeout: Duration::from_secs(config.timeout_seconds),
             retry_config: config.retry.clone(),
         })
     }
@@ -107,9 +74,62 @@ impl ApiClient {
             client,
             base_url: base_url.into(),
             api_key,
-            timeout: Duration::from_secs(30),
             retry_config: crate::config::RetryConfig::default(),
         }
+    }
+
+    /// Resolve an optional SecretRef to an API key string.
+    ///
+    /// Supports three formats:
+    /// - `${VAR_NAME}` — explicit env var reference
+    /// - `$VAR_NAME` — shorthand env var reference (backward compat)
+    /// - anything else — literal API key
+    ///
+    /// If an env var reference is used but the variable is not set, the
+    /// original string is returned as-is with a warning, rather than silently
+    /// becoming `None`.
+    fn resolve_api_key(key_ref: Option<&SecretRef>) -> Option<String> {
+        let s = match key_ref? {
+            SecretRef::String(s) => s,
+            _ => return None,
+        };
+
+        // Check for explicit env var syntax: ${VAR_NAME}
+        if let Some(inner) = s.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+            match std::env::var(inner) {
+                Ok(val) => return Some(val),
+                Err(_) => {
+                    tracing::warn!(
+                        "API key env var ${{{}}} not set, using literal string",
+                        inner
+                    );
+                    return Some(s.clone());
+                }
+            }
+        }
+
+        // Check for shorthand env var syntax: $VAR_NAME
+        if let Some(var_name) = s.strip_prefix('$') {
+            // Validate it looks like an env var name to avoid misinterpreting
+            // literal keys that happen to start with $
+            let is_valid_name = !var_name.is_empty()
+                && var_name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+            if is_valid_name {
+                match std::env::var(var_name) {
+                    Ok(val) => return Some(val),
+                    Err(_) => {
+                        tracing::warn!(
+                            "API key env var ${} not set, using literal string",
+                            var_name
+                        );
+                        return Some(s.clone());
+                    }
+                }
+            }
+        }
+
+        // Plain literal string
+        Some(s.clone())
     }
 
     /// Build a request with common headers
@@ -262,15 +282,13 @@ impl ApiClient {
 
     /// Check if the API is healthy
     pub async fn health_check(&self) -> Result<bool> {
-        match self
-            .client
-            .get(format!("{}/health", self.base_url.trim_end_matches('/')))
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-        {
+        let request = self.build_request(Method::GET, "/health");
+        match self.execute_with_retry(request).await {
             Ok(response) => Ok(response.status().is_success()),
-            Err(_) => Ok(false),
+            Err(e) => {
+                tracing::warn!(error = %e, "Health check failed");
+                Ok(false)
+            }
         }
     }
 }

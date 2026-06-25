@@ -4,11 +4,13 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use sqlx::Row;
 use thiserror::Error;
+use tokio::sync::RwLock;
+use tracing::warn;
 
 use crate::core::models::{Entity, Id};
 use crate::error::SyscityError;
@@ -125,7 +127,7 @@ impl InMemoryStorage {
     /// Create a new in-memory storage with specified max size
     pub fn with_capacity(max_size: usize) -> Self {
         Self {
-            data: Arc::new(RwLock::new(HashMap::with_capacity(max_size.min(1000)))),
+            data: Arc::new(RwLock::new(HashMap::with_capacity(max_size))),
             max_size,
         }
     }
@@ -140,28 +142,17 @@ impl Default for InMemoryStorage {
 #[async_trait]
 impl Storage for InMemoryStorage {
     async fn get(&self, id: Id) -> Result<Entity, StorageError> {
-        let data = self
-            .data
-            .read()
-            .map_err(|_| StorageError::Backend("Failed to acquire read lock".to_string()))?;
-
+        let data = self.data.read().await;
         data.get(&id).cloned().ok_or(StorageError::NotFound(id))
     }
 
     async fn list(&self) -> Result<Vec<Entity>, StorageError> {
-        let data = self
-            .data
-            .read()
-            .map_err(|_| StorageError::Backend("Failed to acquire read lock".to_string()))?;
-
+        let data = self.data.read().await;
         Ok(data.values().cloned().collect())
     }
 
     async fn create(&self, entity: &Entity) -> Result<(), StorageError> {
-        let mut data = self
-            .data
-            .write()
-            .map_err(|_| StorageError::Backend("Failed to acquire write lock".to_string()))?;
+        let mut data = self.data.write().await;
 
         if data.len() >= self.max_size {
             return Err(StorageError::Full);
@@ -172,10 +163,7 @@ impl Storage for InMemoryStorage {
     }
 
     async fn update(&self, entity: &Entity) -> Result<(), StorageError> {
-        let mut data = self
-            .data
-            .write()
-            .map_err(|_| StorageError::Backend("Failed to acquire write lock".to_string()))?;
+        let mut data = self.data.write().await;
 
         if !data.contains_key(&entity.id) {
             return Err(StorageError::NotFound(entity.id));
@@ -186,10 +174,7 @@ impl Storage for InMemoryStorage {
     }
 
     async fn delete(&self, id: Id) -> Result<(), StorageError> {
-        let mut data = self
-            .data
-            .write()
-            .map_err(|_| StorageError::Backend("Failed to acquire write lock".to_string()))?;
+        let mut data = self.data.write().await;
 
         data.remove(&id)
             .ok_or(StorageError::NotFound(id))
@@ -197,21 +182,12 @@ impl Storage for InMemoryStorage {
     }
 
     async fn count(&self) -> Result<usize, StorageError> {
-        let data = self
-            .data
-            .read()
-            .map_err(|_| StorageError::Backend("Failed to acquire read lock".to_string()))?;
-
+        let data = self.data.read().await;
         Ok(data.len())
     }
 
     async fn health_check(&self) -> Result<(), StorageError> {
-        // In-memory storage is always healthy unless we can't acquire the lock
-        let _guard = self
-            .data
-            .read()
-            .map_err(|_| StorageError::Backend("Storage lock poisoned".to_string()))?;
-        drop(_guard);
+        let _guard = self.data.read().await;
         Ok(())
     }
 }
@@ -261,8 +237,11 @@ impl Storage for FileStorage {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
                 let content = tokio::fs::read_to_string(&path).await?;
-                if let Ok(entity) = serde_json::from_str::<Entity>(&content) {
-                    entities.push(entity);
+                match serde_json::from_str::<Entity>(&content) {
+                    Ok(entity) => entities.push(entity),
+                    Err(e) => {
+                        warn!(path = %path.display(), error = %e, "Skipping corrupted entity file");
+                    }
                 }
             }
         }
@@ -280,7 +259,10 @@ impl Storage for FileStorage {
         let content = serde_json::to_string_pretty(entity)
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
 
-        tokio::fs::write(&path, content).await?;
+        // Atomic write: write to temp file, then rename
+        let tmp_path = path.with_extension("tmp");
+        tokio::fs::write(&tmp_path, &content).await?;
+        tokio::fs::rename(&tmp_path, &path).await?;
         Ok(())
     }
 
@@ -294,7 +276,10 @@ impl Storage for FileStorage {
         let content = serde_json::to_string_pretty(entity)
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
 
-        tokio::fs::write(&path, content).await?;
+        // Atomic write: write to temp file, then rename
+        let tmp_path = path.with_extension("tmp");
+        tokio::fs::write(&tmp_path, &content).await?;
+        tokio::fs::rename(&tmp_path, &path).await?;
         Ok(())
     }
 
@@ -480,6 +465,27 @@ impl SqliteStorage {
         .map_err(|e| {
             StorageError::Backend(format!("Failed to create memory expires index: {}", e))
         })?;
+
+        // Migration: add columns that may not exist in older schemas
+        for migration in &[
+            "ALTER TABLE memories ADD COLUMN importance_score REAL NOT NULL DEFAULT 0.5",
+            "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'",
+        ] {
+            if let Err(e) = sqlx::query(migration).execute(&self.pool).await {
+                // SQLite returns error code 1 for "duplicate column" — this is
+                // expected during startup if the column already exists.
+                // The error message contains "duplicate column name" on SQLite >= 3.36
+                // or a generic "duplicate column" on older versions.
+                // We only surface non-duplicate-column errors.
+                let msg = e.to_string();
+                if !msg.contains("duplicate column") {
+                    return Err(StorageError::Backend(format!(
+                        "Migration failed: {}: {}",
+                        migration, msg
+                    )));
+                }
+            }
+        }
 
         Ok(())
     }
@@ -958,12 +964,15 @@ impl ChatHistoryStore for SqliteStorage {
         user_id: &str,
         limit: usize,
     ) -> crate::Result<Vec<String>> {
+        // Use GROUP BY to get each conversation once, ordered by most recent
+        // message
         let rows = sqlx::query(
             r#"
-            SELECT DISTINCT conversation_id
+            SELECT conversation_id
             FROM chat_messages
             WHERE user_id = ?1
-            ORDER BY created_at DESC
+            GROUP BY conversation_id
+            ORDER BY MAX(created_at) DESC
             LIMIT ?2
             "#,
         )
@@ -1033,8 +1042,8 @@ impl MemoryStore for SqliteStorage {
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO memories
-            (id, user_id, conversation_id, content, memory_type, embedding, created_at, expires_at, metadata)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            (id, user_id, conversation_id, content, memory_type, embedding, created_at, expires_at, metadata, importance_score, source)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
         )
         .bind(memory.id.to_string())
@@ -1046,6 +1055,8 @@ impl MemoryStore for SqliteStorage {
         .bind(system_time_to_secs(memory.created_at))
         .bind(expires_at)
         .bind(metadata_json)
+        .bind(memory.importance_score)
+        .bind(&memory.source)
         .execute(&self.pool)
         .await
         .map_err(|e| crate::error::SyscityError::ExternalService {
@@ -1095,8 +1106,8 @@ impl MemoryStore for SqliteStorage {
                     created_at,
                     expires_at,
                     metadata,
-                    importance_score: 0.5,
-                    source: "agent".to_string(),
+                    importance_score: row.get::<f64, _>("importance_score") as f32,
+                    source: row.get::<String, _>("source"),
                 }))
             }
             None => Ok(None),
@@ -1123,42 +1134,40 @@ impl MemoryStore for SqliteStorage {
     }
 
     async fn search(&self, query: MemoryQuery) -> crate::Result<Vec<Memory>> {
-        let mut sql = "SELECT * FROM memories WHERE 1=1".to_string();
-        let mut params: Vec<String> = Vec::new();
+        use sqlx::QueryBuilder;
+
+        let mut builder: QueryBuilder<'_, sqlx::Sqlite> =
+            QueryBuilder::new("SELECT * FROM memories WHERE 1=1");
 
         if let Some(user_id) = &query.user_id {
-            sql.push_str(&format!(" AND user_id = ?{}", params.len() + 1));
-            params.push(user_id.clone());
+            builder.push(" AND user_id = ").push_bind(user_id);
         }
 
         if let Some(conversation_id) = &query.conversation_id {
-            sql.push_str(&format!(" AND conversation_id = ?{}", params.len() + 1));
-            params.push(conversation_id.clone());
+            builder
+                .push(" AND conversation_id = ")
+                .push_bind(conversation_id);
         }
 
         if let Some(memory_type) = &query.memory_type {
-            sql.push_str(&format!(" AND memory_type = ?{}", params.len() + 1));
-            params.push(memory_type.clone());
+            builder.push(" AND memory_type = ").push_bind(memory_type);
         }
 
         if let Some(content_query) = &query.content_query {
-            sql.push_str(&format!(" AND content LIKE ?{}", params.len() + 1));
-            params.push(format!("%{}%", content_query));
+            builder
+                .push(" AND content LIKE ")
+                .push_bind(format!("%{}%", content_query));
         }
 
         if !query.include_expired {
-            sql.push_str(" AND (expires_at IS NULL OR expires_at > UNIXEPOCH())");
+            builder.push(" AND (expires_at IS NULL OR expires_at > UNIXEPOCH())");
         }
 
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{}", params.len() + 1));
-        params.push(query.limit.to_string());
+        builder
+            .push(" ORDER BY created_at DESC LIMIT ")
+            .push_bind(query.limit as i64);
 
-        let mut query_builder = sqlx::query(&sql);
-        for param in params {
-            query_builder = query_builder.bind(param);
-        }
-
-        let rows = query_builder.fetch_all(&self.pool).await.map_err(|e| {
+        let rows = builder.build().fetch_all(&self.pool).await.map_err(|e| {
             crate::error::SyscityError::ExternalService {
                 source: "Failed to search memories".to_string(),
                 cause: Some(Box::new(e)),
@@ -1193,8 +1202,8 @@ impl MemoryStore for SqliteStorage {
                     created_at,
                     expires_at,
                     metadata,
-                    importance_score: 0.5,
-                    source: "agent".to_string(),
+                    importance_score: row.get::<f64, _>("importance_score") as f32,
+                    source: row.get::<String, _>("source"),
                 })
             })
             .collect();
