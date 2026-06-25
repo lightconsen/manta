@@ -29,10 +29,12 @@ pub struct BridgeState {
 }
 
 /// Browser bridge HTTP server
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BrowserBridge {
     state: BridgeState,
     port: u16,
+    /// Handle to the axum::serve task for graceful shutdown
+    serve_handle: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Navigate request
@@ -140,7 +142,11 @@ impl BrowserBridge {
     pub fn new(pool: Arc<BrowserPool>, port: u16) -> Self {
         let token = uuid::Uuid::new_v4().to_string();
         let state = BridgeState { pool, token: token.clone() };
-        Self { state, port }
+        Self {
+            state,
+            port,
+            serve_handle: Arc::new(std::sync::Mutex::new(None)),
+        }
     }
 
     /// Get the bearer token for auth
@@ -169,13 +175,26 @@ impl BrowserBridge {
         self.port = actual_port;
         info!(port = actual_port, "Browser bridge server starting");
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, app).await {
                 error!("Bridge server error: {}", e);
             }
         });
 
+        if let Ok(mut guard) = self.serve_handle.lock() {
+            *guard = Some(handle);
+        }
         Ok(actual_port)
+    }
+
+    /// Stop the HTTP server gracefully.
+    pub fn stop_server(&self) {
+        if let Ok(mut guard) = self.serve_handle.lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+                info!("Bridge server stopped");
+            }
+        }
     }
 
     /// Shut down the browser pool used by this bridge.

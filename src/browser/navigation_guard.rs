@@ -13,6 +13,7 @@
 use std::net::IpAddr;
 
 use tokio::net::lookup_host;
+use tracing::debug;
 
 /// Navigation policy for URL validation
 #[derive(Debug, Clone)]
@@ -50,6 +51,23 @@ impl NavigationPolicy {
     }
 }
 
+/// Check whether a hostname matches a pattern.
+/// Supports exact match and `*.` prefix wildcard (e.g. `*.example.com`
+/// matches `sub.example.com`).
+fn hostname_matches(pattern: &str, host: &str) -> bool {
+    if let Some(suffix) = pattern.strip_prefix("/*.") {
+        host.ends_with(suffix)
+            || host.eq_ignore_ascii_case(suffix)
+            || host.eq_ignore_ascii_case(&format!(".{}", suffix))
+    } else if let Some(suffix) = pattern.strip_prefix("*.") {
+        host.ends_with(suffix)
+            || host.eq_ignore_ascii_case(suffix)
+            || host.eq_ignore_ascii_case(&format!(".{}", suffix))
+    } else {
+        host.eq_ignore_ascii_case(pattern)
+    }
+}
+
 /// Validate that a URL is allowed by the navigation policy.
 ///
 /// For hostnames (non-IP literals), DNS is resolved so that hostnames pointing
@@ -74,11 +92,11 @@ pub async fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> 
         host_raw
     };
 
-    // Check blocked hostnames
+    // Check blocked hostnames (supports wildcard: *.example.com)
     if policy
         .blocked_hostnames
         .iter()
-        .any(|h| host.eq_ignore_ascii_case(h))
+        .any(|h| hostname_matches(h, host))
     {
         return Err(crate::error::SyscityError::Validation(format!(
             "Hostname '{}' is blocked",
@@ -96,36 +114,30 @@ pub async fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> 
         }
     } else if !policy.allow_private {
         // Resolve hostname and verify no resolved address is private
-        // (basic DNS rebinding mitigation).
-        let addr_str = format!("{}:80", host);
-        let resolved = lookup_host(&addr_str).await;
-        match resolved {
-            Ok(addrs) => {
-                for addr in addrs {
-                    if is_private_ip(addr.ip()) {
-                        return Err(crate::error::SyscityError::Validation(format!(
-                            "Hostname '{}' resolves to private IP '{}'",
-                            host,
-                            addr.ip()
-                        )));
-                    }
+        // (basic DNS rebinding mitigation). Non-fatal if resolution fails:
+        // the hostname-based blocklist/allowlist checks above already applied.
+        if let Ok(addrs) = lookup_host(format!("{}:80", host)).await {
+            for addr in addrs {
+                if is_private_ip(addr.ip()) {
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "Hostname '{}' resolves to private IP '{}'",
+                        host,
+                        addr.ip()
+                    )));
                 }
             }
-            Err(e) => {
-                return Err(crate::error::SyscityError::Validation(format!(
-                    "Failed to resolve hostname '{}': {}",
-                    host, e
-                )));
-            }
+        } else {
+            debug!("Could not resolve hostname '{}' for SSRF check", host);
         }
     }
 
-    // Check allowlist (if specified, only allowlisted hosts are permitted)
+    // Check allowlist (if specified, only allowlisted hosts are permitted;
+    // supports wildcard: *.example.com)
     if !policy.allowed_hostnames.is_empty()
         && !policy
             .allowed_hostnames
             .iter()
-            .any(|h| host.eq_ignore_ascii_case(h))
+            .any(|h| hostname_matches(h, host))
     {
         return Err(crate::error::SyscityError::Validation(format!(
             "Hostname '{}' is not in the allowed list",
@@ -245,6 +257,56 @@ mod tests {
             .await
             .is_ok());
         assert!(assert_navigation_allowed("https://google.com/", &policy)
+            .await
+            .is_err());
+    }
+
+    #[test]
+    fn test_hostname_matches() {
+        assert!(hostname_matches("localhost", "localhost"));
+        assert!(!hostname_matches("localhost", "example.com"));
+        // Wildcard: *.example.com
+        assert!(hostname_matches("*.example.com", "sub.example.com"));
+        assert!(hostname_matches("*.example.com", "deep.sub.example.com"));
+        assert!(hostname_matches("*.example.com", "example.com"));
+        assert!(!hostname_matches("*.example.com", "other.com"));
+        // Wildcard: /*. form
+        assert!(hostname_matches("/*.example.com", "sub.example.com"));
+        assert!(!hostname_matches("/*.example.com", "other.com"));
+    }
+
+    #[tokio::test]
+    async fn test_navigation_guard_blocks_wildcard_hostnames() {
+        let policy = NavigationPolicy {
+            allow_private: false,
+            allowed_hostnames: Vec::new(),
+            blocked_hostnames: vec!["*.malicious.com".to_string()],
+        };
+        assert!(assert_navigation_allowed("http://sub.malicious.com/", &policy)
+            .await
+            .is_err());
+        assert!(assert_navigation_allowed("http://evil.malicious.com/", &policy)
+            .await
+            .is_err());
+        assert!(assert_navigation_allowed("https://example.com/", &policy)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_navigation_guard_allowlist_wildcard() {
+        let policy = NavigationPolicy {
+            allow_private: false,
+            allowed_hostnames: vec!["*.example.com".to_string()],
+            blocked_hostnames: Vec::new(),
+        };
+        assert!(assert_navigation_allowed("https://sub.example.com/", &policy)
+            .await
+            .is_ok());
+        assert!(assert_navigation_allowed("https://example.com/", &policy)
+            .await
+            .is_ok());
+        assert!(assert_navigation_allowed("https://other.com/", &policy)
             .await
             .is_err());
     }

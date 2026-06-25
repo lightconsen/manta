@@ -208,6 +208,16 @@ pub async fn aria_snapshot(
         return interactive.includes(role);
     }
 
+    function getDepth(el) {
+        let depth = 0;
+        let parent = el.parentElement;
+        while (parent && parent.tagName !== 'BODY') {
+            depth++;
+            parent = parent.parentElement;
+        }
+        return depth;
+    }
+
     // Collect all candidate elements
     const allElements = document.querySelectorAll(interactiveSelectors.join(', '));
 
@@ -237,7 +247,8 @@ pub async fn aria_snapshot(
             role: role,
             name: name || '(unnamed)',
             value: getValue(el),
-            tag: el.tagName.toLowerCase()
+            tag: el.tagName.toLowerCase(),
+            indent: getDepth(el)
         });
     }
 
@@ -286,23 +297,29 @@ pub async fn aria_snapshot(
             .get("value")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let indent = el
+            .get("indent")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .unwrap_or(0);
 
         let line = AriaNodeLine {
             ref_id: ref_id.unwrap_or(0),
             role,
             name,
             value,
-            indent: 0,
+            indent,
         };
 
         let line_text = format!("[{}] {} \"{}\"", line.ref_id, line.role, line.name);
-        char_count += line_text.len() + 1;
+        let line_len = line_text.len() + 1;
 
-        if char_count > max_chars && !truncated {
+        if char_count + line_len > max_chars && !truncated {
             truncated = true;
             break;
         }
 
+        char_count += line_len;
         lines.push(line);
     }
 
@@ -322,6 +339,11 @@ pub async fn act_by_ref(
     ref_id: usize,
     action: ActKind,
 ) -> crate::Result<String> {
+    if ref_id == 0 {
+        return Err(crate::error::SyscityError::Validation(
+            "ref_id must be a positive integer".to_string(),
+        ));
+    }
     let selector = format!("[data-syscity-ref=\"{}\"]", ref_id);
 
     match action {
@@ -352,6 +374,7 @@ pub async fn act_by_ref(
         }
 
         ActKind::Type { text } => {
+            let escaped = escape_js_string(&text);
             let script = format!(
                 r#"() => {{
                     const el = document.querySelector('{}');
@@ -366,9 +389,7 @@ pub async fn act_by_ref(
                     return {{ error: "Element is not an input" }};
                 }}"#,
                 selector,
-                text.replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('\'', "\\'")
+                escaped,
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
                 crate::error::SyscityError::ExternalService {
@@ -414,6 +435,7 @@ pub async fn act_by_ref(
         }
 
         ActKind::Fill { text } => {
+            let escaped = escape_js_string(&text);
             let script = format!(
                 r#"() => {{
                     const el = document.querySelector('{}');
@@ -429,9 +451,7 @@ pub async fn act_by_ref(
                     return {{ error: "Element is not an input" }};
                 }}"#,
                 selector,
-                text.replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('\'', "\\'")
+                escaped,
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
                 crate::error::SyscityError::ExternalService {
@@ -449,6 +469,16 @@ pub async fn act_by_ref(
             Ok(format!("Filled element [ref={}]", ref_id))
         }
     }
+}
+
+/// Escape a string for safe interpolation into a single-quoted JS string.
+fn escape_js_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 /// Action kinds for ref-based interaction

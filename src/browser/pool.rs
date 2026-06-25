@@ -126,7 +126,7 @@ impl BrowserInstance {
         let browser = Arc::new(browser);
 
         // Spawn handler task for the connected browser as well
-        let _handler_task = tokio::spawn(async move {
+        let handler_task = tokio::spawn(async move {
             use futures::StreamExt;
             while let Some(h) = handler.next().await {
                 if h.is_err() {
@@ -135,15 +135,12 @@ impl BrowserInstance {
             }
         });
 
-        // For connected browsers we don't manage the handler lifecycle
-        let dummy_task = tokio::spawn(async {});
-
         Ok(Self {
             browser: browser.clone(),
             pages: RwLock::new(HashMap::new()),
             profile: profile.clone(),
             last_used: RwLock::new(Instant::now()),
-            _handler_abort: dummy_task.abort_handle(),
+            _handler_abort: handler_task.abort_handle(),
         })
     }
 
@@ -180,7 +177,7 @@ impl BrowserInstance {
         pages.get(target_id).cloned()
     }
 
-    /// Close a page by target ID
+    /// Close a page by target ID — closes the CDP page and removes from map
     #[cfg(feature = "browser")]
     pub async fn close_page(&self, target_id: &str) -> crate::Result<bool> {
         let page = {
@@ -188,8 +185,11 @@ impl BrowserInstance {
             pages.remove(target_id)
         };
 
-        if let Some(_handle) = page {
-            // Page is removed from map; it will be closed when the handle is dropped
+        if let Some(handle) = page {
+            // Close the CDP page via JavaScript so page is actually closed in Chrome
+            let close_script = "window.close();";
+            let _ = handle.page.evaluate(close_script).await;
+
             *self.last_used.write().await = Instant::now();
             Ok(true)
         } else {
@@ -286,20 +286,15 @@ pub struct BrowserPool {
 }
 
 impl BrowserPool {
-    /// Create a new empty browser pool
-    pub fn new(config: BrowserPoolConfig) -> Self {
-        let instances: Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let mut profiles_map = HashMap::new();
-        profiles_map
-            .insert(config.default_profile.clone(), BrowserProfile::new(&config.default_profile));
-        let profiles = Arc::new(RwLock::new(profiles_map));
-
-        // Start background cleanup task only if a Tokio runtime is available
-        let cleanup_handle = tokio::runtime::Handle::try_current().ok().map(|_| {
-            let instances = instances.clone();
-            let idle_timeout = Duration::from_secs(config.idle_timeout_secs);
-            let interval = Duration::from_secs(config.cleanup_interval_secs);
+    /// Start the background idle-eviction task.
+    fn spawn_cleanup(
+        instances: Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>>,
+        idle_timeout_secs: u64,
+        cleanup_interval_secs: u64,
+    ) -> Option<tokio::task::AbortHandle> {
+        tokio::runtime::Handle::try_current().ok().map(|_| {
+            let idle_timeout = Duration::from_secs(idle_timeout_secs);
+            let interval = Duration::from_secs(cleanup_interval_secs);
 
             let task = tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
@@ -309,7 +304,20 @@ impl BrowserPool {
                 }
             });
             task.abort_handle()
-        });
+        })
+    }
+
+    /// Create a new empty browser pool
+    pub fn new(config: BrowserPoolConfig) -> Self {
+        let instances: Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let mut profiles_map = HashMap::new();
+        profiles_map
+            .insert(config.default_profile.clone(), BrowserProfile::new(&config.default_profile));
+        let profiles = Arc::new(RwLock::new(profiles_map));
+
+        let cleanup_handle =
+            Self::spawn_cleanup(instances.clone(), config.idle_timeout_secs, config.cleanup_interval_secs);
 
         Self {
             instances,
@@ -331,20 +339,8 @@ impl BrowserPool {
         let instances: Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
-        let cleanup_handle = tokio::runtime::Handle::try_current().ok().map(|_| {
-            let instances = instances.clone();
-            let idle_timeout = Duration::from_secs(config.idle_timeout_secs);
-            let interval = Duration::from_secs(config.cleanup_interval_secs);
-
-            let task = tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
-                loop {
-                    ticker.tick().await;
-                    Self::evict_idle(&instances, idle_timeout).await;
-                }
-            });
-            task.abort_handle()
-        });
+        let cleanup_handle =
+            Self::spawn_cleanup(instances.clone(), config.idle_timeout_secs, config.cleanup_interval_secs);
 
         Self {
             instances,

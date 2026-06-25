@@ -3,6 +3,8 @@
 //! Optional P3 feature. Runs browser in a Docker container for isolation.
 //! Requires `browser` feature.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
@@ -72,6 +74,23 @@ pub struct BrowserSandbox {
     config: SandboxConfig,
 }
 
+/// Validate that a Docker image or container name contains only safe characters.
+fn validate_docker_arg(value: &str) -> crate::Result<()> {
+    // Allow alphanumeric, hyphens, underscores, dots, slashes, colons (for tags)
+    if value.is_empty()
+        || value.contains(' ')
+        || value.contains(char::is_control)
+        || value.chars().any(|c| !c.is_ascii_alphanumeric()
+            && c != '-' && c != '_' && c != '.' && c != '/' && c != ':')
+    {
+        return Err(crate::error::SyscityError::Validation(format!(
+            "Invalid Docker argument: '{}'",
+            value
+        )));
+    }
+    Ok(())
+}
+
 impl BrowserSandbox {
     /// Create a new sandbox
     pub fn new(config: SandboxConfig) -> Self {
@@ -86,6 +105,10 @@ impl BrowserSandbox {
     /// Start the sandbox container
     pub async fn start(&self) -> crate::Result<SandboxInfo> {
         info!("Starting browser sandbox container");
+
+        // Validate Docker arguments before running any command
+        validate_docker_arg(&self.config.image)?;
+        validate_docker_arg(&self.config.cpu_limit)?;
 
         // Check if Docker is available
         match tokio::process::Command::new("docker")
@@ -105,6 +128,7 @@ impl BrowserSandbox {
         }
 
         let container_name = format!("syscity-browser-sandbox-{}", uuid::Uuid::new_v4());
+        validate_docker_arg(&container_name)?;
         let cdp_port = self.config.cdp_port;
         let vnc_port = self.config.vnc_port;
         let novnc_port = self.config.novnc_port;
@@ -158,13 +182,36 @@ impl BrowserSandbox {
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
         info!(container_id = %container_id, "Browser sandbox container started");
 
-        // Wait a moment for Chrome to start inside the container
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+        // Wait for Chrome CDP port to be available (poll up to 30s)
+        let cdp_url = format!("http://127.0.0.1:{}", cdp_port);
+        let poll_start = tokio::time::Instant::now();
+        let poll_timeout = Duration::from_secs(30);
+        let mut ready = false;
+        while poll_start.elapsed() < poll_timeout {
+            if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", cdp_port))
+                .await
+                .is_ok()
+            {
+                info!(cdp_port = cdp_port, "Chrome CDP port ready");
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        if !ready {
+            return Err(crate::error::SyscityError::ExternalService {
+                source: format!(
+                    "Chrome CDP port {} did not become ready within 30s",
+                    cdp_port
+                ),
+                cause: None,
+            });
+        }
 
         Ok(SandboxInfo {
             container_id,
             container_name,
-            cdp_url: format!("http://127.0.0.1:{}", cdp_port),
+            cdp_url,
             vnc_port,
             novnc_port,
         })

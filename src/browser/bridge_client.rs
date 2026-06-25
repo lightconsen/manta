@@ -20,6 +20,17 @@ pub struct HealthResponse {
     pub status: String,
 }
 
+/// Health check result
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HealthStatus {
+    /// Server is reachable and healthy
+    Healthy,
+    /// Server responded but reported unhealthy
+    Unhealthy,
+    /// Server is not reachable
+    Unreachable,
+}
+
 /// Response from bridge status endpoint
 #[derive(Debug, Deserialize)]
 pub struct StatusResponse {
@@ -126,17 +137,17 @@ impl BridgeClient {
     }
 
     /// Check if the bridge is reachable
-    pub async fn health_check(&self) -> crate::Result<bool> {
+    pub async fn health_check(&self) -> HealthStatus {
         let url = format!("{}/health", self.base_url);
         match self.client.get(&url).send().await {
-            Ok(res) if res.status().is_success() => Ok(true),
-            Ok(res) => {
-                debug!("Bridge health returned status: {}", res.status());
-                Ok(false)
+            Ok(res) if res.status().is_success() => HealthStatus::Healthy,
+            Ok(_res) => {
+                debug!("Bridge health returned non-success status");
+                HealthStatus::Unhealthy
             }
             Err(e) => {
                 debug!("Bridge health check failed: {}", e);
-                Ok(false)
+                HealthStatus::Unreachable
             }
         }
     }
@@ -402,8 +413,8 @@ mod tests {
     #[tokio::test]
     async fn test_bridge_client_create() {
         let client = BridgeClient::new("http://localhost:18800", "test-token");
-        // health_check will fail because no server is running, but shouldn't panic
-        let _ = client.health_check().await;
+        // health_check will return Unreachable because no server is running
+        assert_eq!(client.health_check().await, HealthStatus::Unreachable);
     }
 
     #[test]
