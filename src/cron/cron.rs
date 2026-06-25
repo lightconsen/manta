@@ -614,6 +614,7 @@ impl CronScheduler {
         let announce_tx = self.announce_tx.clone();
         let heartbeat_wake_tx = self.heartbeat_wake_tx.clone();
         let inflight = Arc::clone(&self.inflight);
+        let rearm_notify = Arc::clone(&self.rearm_notify);
 
         // Spawn command handler
         let cmd_handle = tokio::spawn(async move {
@@ -621,7 +622,7 @@ impl CronScheduler {
                 tokio::select! {
                     cmd = command_rx.recv() => {
                         if let Some(cmd) = cmd {
-                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx, &inflight, cmd).await;
+                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx, &inflight, &rearm_notify, cmd).await;
                         }
                     }
                     _ = cmd_shutdown_rx.recv() => {
@@ -844,12 +845,9 @@ impl CronScheduler {
         }
     }
 
-    /// Trigger timer rearm after schedule changes
-    fn trigger_rearm(&self) {
-        self.rearm_notify.notify_one();
-    }
 
     /// Handle scheduler commands
+    #[allow(clippy::too_many_arguments)]
     async fn handle_command(
         jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
@@ -857,6 +855,7 @@ impl CronScheduler {
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
         heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
         inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
+        rearm_notify: &Arc<tokio::sync::Notify>,
         cmd: CronCommand,
     ) {
         match cmd {
@@ -881,6 +880,12 @@ impl CronScheduler {
                         .await
                         .unwrap_or_else(|e| warn!("Failed to persist cron jobs (Add): {}", e));
                 }
+
+                // Notify the timer so it recalculates with the new job
+                // included. This is done inside handle_command — not at the
+                // call site — so there is no TOCTOU window where the timer
+                // wakes up before the job is inserted into the map.
+                rearm_notify.notify_one();
             }
             CronCommand::Remove(id) => {
                 info!("Removing job: {}", id);
@@ -896,6 +901,11 @@ impl CronScheduler {
                         .await
                         .unwrap_or_else(|e| warn!("Failed to persist cron jobs (Remove): {}", e));
                 }
+
+                // Rearm so the timer no longer waits for the removed job's
+                // next_run_at — preventing a phantom wake once the old
+                // sleep expires.
+                rearm_notify.notify_one();
             }
             CronCommand::SetEnabled(id, enabled) => {
                 let mut jobs_lock = jobs.write().await;
@@ -915,6 +925,11 @@ impl CronScheduler {
                         warn!("Failed to persist cron jobs (SetEnabled): {}", e)
                     });
                 }
+
+                // Always rearm — when enabling (timer may have been waiting
+                // for this job's next run) and when disabling (timer may be
+                // sleeping toward this job, so we recalibrate without it).
+                rearm_notify.notify_one();
             }
             CronCommand::Trigger(id) => {
                 info!("Triggering job: {}", id);
@@ -1692,10 +1707,7 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::Add(job))
             .await
-            .map_err(|e| SyscityError::Internal(format!("Failed to add job: {}", e)))?;
-        // Trigger rearm to pick up new job
-        self.trigger_rearm();
-        Ok(())
+            .map_err(|e| SyscityError::Internal(format!("Failed to add job: {}", e)))
     }
 
     /// Remove a job
@@ -1703,9 +1715,7 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::Remove(job_id.to_string()))
             .await
-            .map_err(|e| SyscityError::Internal(format!("Failed to remove job: {}", e)))?;
-        self.trigger_rearm();
-        Ok(())
+            .map_err(|e| SyscityError::Internal(format!("Failed to remove job: {}", e)))
     }
 
     /// Enable/disable a job
@@ -1713,11 +1723,7 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::SetEnabled(job_id.to_string(), enabled))
             .await
-            .map_err(|e| SyscityError::Internal(format!("Failed to set job state: {}", e)))?;
-        if enabled {
-            self.trigger_rearm();
-        }
-        Ok(())
+            .map_err(|e| SyscityError::Internal(format!("Failed to set job state: {}", e)))
     }
 
     /// Trigger a job immediately
