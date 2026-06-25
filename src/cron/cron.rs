@@ -12,8 +12,8 @@ use std::time::Duration;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use cron::Schedule as CronSchedule;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
-use tokio::task::JoinHandle;
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex as TokioMutex, RwLock};
+use tokio::task::{AbortHandle, JoinHandle};
 use tracing::{debug, error, info, warn};
 
 use crate::agent::Agent;
@@ -194,12 +194,14 @@ impl Schedule {
                 // Get next occurrence
                 let next = schedule.upcoming(Utc).next()?;
 
-                // Add stagger if configured
-                if let Some(stagger) = stagger_ms {
-                    let jitter = rand::random::<u64>() % stagger;
-                    Some(next + ChronoDuration::milliseconds(jitter as i64))
-                } else {
-                    Some(next)
+                // Add stagger if configured. `% 0` panics, so we treat
+                // `Some(0)` the same as `None` — no jitter.
+                match stagger_ms {
+                    Some(stagger) if *stagger > 0 => {
+                        let jitter = rand::random::<u64>() % stagger;
+                        Some(next + ChronoDuration::milliseconds(jitter as i64))
+                    }
+                    _ => Some(next),
                 }
             }
         }
@@ -501,6 +503,18 @@ pub struct CronScheduler {
     heartbeat_wake_tx: Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
     /// Notify the timer to re-calculate next wake time
     rearm_notify: Arc<tokio::sync::Notify>,
+    /// Abort handles of in-flight job tasks.
+    ///
+    /// Two paths register here:
+    ///
+    /// - `CronCommand::Trigger` spawns `execute_job` as a detached task
+    ///   so the command actor is not blocked for the full job duration.
+    /// - `execute_job` spawns the agent inner future (so timeout aborts
+    ///   propagate to the next `.await` inside the agent).
+    ///
+    /// On `shutdown()` we abort every entry so neither survives the
+    /// scheduler.
+    inflight: Arc<TokioMutex<Vec<AbortHandle>>>,
 }
 
 impl std::fmt::Debug for CronScheduler {
@@ -526,6 +540,7 @@ impl CronScheduler {
             announce_tx: None,
             heartbeat_wake_tx: None,
             rearm_notify: Arc::new(tokio::sync::Notify::new()),
+            inflight: Arc::new(TokioMutex::new(Vec::new())),
         };
         (scheduler, command_rx)
     }
@@ -585,6 +600,7 @@ impl CronScheduler {
         let store_path = self.store_path.clone();
         let announce_tx = self.announce_tx.clone();
         let heartbeat_wake_tx = self.heartbeat_wake_tx.clone();
+        let inflight = Arc::clone(&self.inflight);
 
         // Spawn command handler
         let cmd_handle = tokio::spawn(async move {
@@ -592,7 +608,7 @@ impl CronScheduler {
                 tokio::select! {
                     cmd = command_rx.recv() => {
                         if let Some(cmd) = cmd {
-                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx, cmd).await;
+                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx, &inflight, cmd).await;
                         }
                     }
                     _ = cmd_shutdown_rx.recv() => {
@@ -611,6 +627,7 @@ impl CronScheduler {
         let announce_tx_for_timer = self.announce_tx.clone();
         let heartbeat_wake_tx_for_timer = self.heartbeat_wake_tx.clone();
         let rearm_notify = Arc::clone(&self.rearm_notify);
+        let inflight_for_timer = Arc::clone(&self.inflight);
 
         let timer_handle = tokio::spawn(async move {
             // Track if we're currently running jobs to prevent overlapping ticks
@@ -670,6 +687,7 @@ impl CronScheduler {
                 let store_path = store_path_for_timer.clone();
                 let announce_tx = announce_tx_for_timer.clone();
                 let heartbeat_wake_tx = heartbeat_wake_tx_for_timer.clone();
+                let inflight = Arc::clone(&inflight_for_timer);
 
                 // Run jobs (result unused). Wrap in select! against shutdown
                 // so a long-running batch cannot block graceful exit.
@@ -681,6 +699,7 @@ impl CronScheduler {
                         &store_path,
                         &announce_tx,
                         &heartbeat_wake_tx,
+                        &inflight,
                     ) => {
                         // batch completed normally
                     }
@@ -756,6 +775,7 @@ impl CronScheduler {
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
         heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
+        inflight: &Arc<TokioMutex<Vec<AbortHandle>>>,
     ) {
         let due_job_ids: Vec<String> = {
             let jobs_lock = jobs.read().await;
@@ -786,6 +806,7 @@ impl CronScheduler {
             let store_path = store_path.clone();
             let announce_tx = announce_tx.clone();
             let heartbeat_wake_tx = heartbeat_wake_tx.clone();
+            let inflight = Arc::clone(inflight);
             set.spawn(async move {
                 Self::execute_job(
                     &jobs,
@@ -794,6 +815,7 @@ impl CronScheduler {
                     &store_path,
                     &announce_tx,
                     &heartbeat_wake_tx,
+                    &inflight,
                     false,
                 )
                 .await;
@@ -821,6 +843,7 @@ impl CronScheduler {
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
         heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
+        inflight: &Arc<TokioMutex<Vec<AbortHandle>>>,
         cmd: CronCommand,
     ) {
         match cmd {
@@ -877,16 +900,29 @@ impl CronScheduler {
             }
             CronCommand::Trigger(id) => {
                 info!("Triggering job: {}", id);
-                Self::execute_job(
-                    jobs,
-                    &id,
-                    agent,
-                    store_path,
-                    announce_tx,
-                    heartbeat_wake_tx,
-                    true,
-                )
-                .await;
+                // Spawn the job execution detached so the command actor is
+                // not blocked for the full job duration. Register the
+                // abort handle so `shutdown()` can cancel it.
+                let jobs_c = Arc::clone(jobs);
+                let agent_c = Arc::clone(agent);
+                let store_path_c = store_path.clone();
+                let announce_tx_c = announce_tx.clone();
+                let heartbeat_wake_tx_c = heartbeat_wake_tx.clone();
+                let inflight_c = Arc::clone(inflight);
+                let handle = tokio::spawn(async move {
+                    Self::execute_job(
+                        &jobs_c,
+                        &id,
+                        &agent_c,
+                        &store_path_c,
+                        &announce_tx_c,
+                        &heartbeat_wake_tx_c,
+                        &inflight_c,
+                        true,
+                    )
+                    .await;
+                });
+                inflight.lock().await.push(handle.abort_handle());
             }
             CronCommand::GetNextRun(id, tx) => {
                 let jobs_lock = jobs.read().await;
@@ -911,6 +947,7 @@ impl CronScheduler {
     /// When `force` is true, the job runs regardless of `should_run` /
     /// `next_run_at`. Used by manual trigger (`Trigger` command).
     /// Timer-driven execution passes `false`.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_job(
         jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         job_id: &str,
@@ -918,6 +955,7 @@ impl CronScheduler {
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
         heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
+        inflight: &Arc<TokioMutex<Vec<AbortHandle>>>,
         force: bool,
     ) {
         let job = {
@@ -1001,6 +1039,10 @@ impl CronScheduler {
                         .await
                     });
                     let abort_handle = handle.abort_handle();
+                    // Register the agent inner spawn so `shutdown()` can
+                    // abort it. Without this, the inner task would survive
+                    // the scheduler.
+                    inflight.lock().await.push(abort_handle.clone());
                     match tokio::time::timeout(AGENT_EXEC_TIMEOUT, handle).await {
                         Ok(Ok(r)) => r,
                         Ok(Err(e)) => {
@@ -1107,7 +1149,16 @@ impl CronScheduler {
                             warn!("Scheduling retry for job '{}' at {:?}", j.name, retry_at);
                             j.state.next_run_at = Some(retry_at);
                         } else {
-                            j.update_next_run(completed_at);
+                            // Max retries exhausted — disable the job so it
+                            // stops burning resources on a doomed task.
+                            // Operator must re-enable explicitly after
+                            // fixing the underlying cause.
+                            error!(
+                                "Job '{}' disabled after {} consecutive failures (max_retries={})",
+                                j.name, j.state.consecutive_errors, j.retry.max_retries
+                            );
+                            j.enabled = false;
+                            j.state.next_run_at = None;
                         }
                     }
                 }
@@ -1129,11 +1180,21 @@ impl CronScheduler {
         // structure that would have frozen the whole scheduler. With the
         // lock released, concurrent Add/Remove/Trigger and the timer
         // continue to make progress.
-        if let Some((delivery, message, job_name)) = delivery_intent {
-            if let Err(e) = Self::deliver_result(&delivery, &message, announce_tx).await {
-                warn!("Delivery failed for job '{}': {}", job_name, e);
+        //
+        // Capture the outcome so the run log can record whether delivery
+        // actually succeeded — not just whether execution succeeded.
+        let delivery_status = if let Some((delivery, message, job_name)) = delivery_intent {
+            match Self::deliver_result(&delivery, &message, announce_tx).await {
+                Ok(()) => Some(DeliveryStatus::Delivered),
+                Err(e) => {
+                    warn!("Delivery failed for job '{}': {}", job_name, e);
+                    Some(DeliveryStatus::Failed(e.to_string()))
+                }
             }
-        }
+        } else {
+            // DeliveryMode::None — there is no delivery to report on.
+            None
+        };
 
         // Persist
         if let Some(ref path) = store_path {
@@ -1143,8 +1204,16 @@ impl CronScheduler {
         }
 
         // Log the run
-        if let Err(e) =
-            Self::log_run(job_id, &run_id, started_at, completed_at, result, store_path).await
+        if let Err(e) = Self::log_run(
+            job_id,
+            &run_id,
+            started_at,
+            completed_at,
+            result,
+            delivery_status,
+            store_path,
+        )
+        .await
         {
             warn!("Failed to log cron run: {e}");
         }
@@ -1269,26 +1338,33 @@ impl CronScheduler {
     }
 
     /// Execute via agent
+    ///
+    /// `agent_id` is attached to the outgoing message metadata so
+    /// downstream routing can dispatch the work to a specific sub-agent.
+    /// `None` lets the routing layer pick the default agent.
     async fn execute_agent(
         agent: &Arc<Agent>,
         job: &CronJob,
         prompt: &str,
-        _agent_id: Option<&str>,
+        agent_id: Option<&str>,
     ) -> Result<String> {
         let session_id = match job.session {
             SessionTarget::Main => "cron:main".to_string(),
             SessionTarget::Isolated => format!("cron:{}", job.id),
         };
 
+        let mut metadata = crate::channels::MessageMetadata::new()
+            .with_extra("job_id", job.id.clone())
+            .with_extra("job_name", job.name.clone());
+        if let Some(id) = agent_id {
+            metadata = metadata.with_extra("agent_id", id.to_string());
+        }
+
         let message = IncomingMessage::new("system", &session_id, prompt)
             .with_provenance(crate::channels::InputProvenance::InternalSystem {
                 source: "cron".to_string(),
             })
-            .with_metadata(
-                crate::channels::MessageMetadata::new()
-                    .with_extra("job_id", job.id.clone())
-                    .with_extra("job_name", job.name.clone()),
-            );
+            .with_metadata(metadata);
 
         let response = agent.process_message(message).await?;
         Ok(response.content)
@@ -1388,6 +1464,7 @@ impl CronScheduler {
         started_at: DateTime<Utc>,
         completed_at: DateTime<Utc>,
         result: Result<String>,
+        delivery_status: Option<DeliveryStatus>,
         store_path: &Option<PathBuf>,
     ) -> Result<()> {
         let entry = match result {
@@ -1399,7 +1476,7 @@ impl CronScheduler {
                 status: RunStatus::Ok,
                 output: Some(output),
                 error: None,
-                delivery_status: Some(DeliveryStatus::Delivered),
+                delivery_status,
             },
             Err(e) => RunLogEntry {
                 run_id: run_id.to_string(),
@@ -1409,7 +1486,10 @@ impl CronScheduler {
                 status: RunStatus::Error,
                 output: None,
                 error: Some(format!("{}", e)),
-                delivery_status: Some(DeliveryStatus::Failed("Execution error".to_string())),
+                // When execution itself failed, the delivery field still
+                // reflects whatever happened with the error-payload
+                // delivery (or `None` for `DeliveryMode::None`).
+                delivery_status,
             },
         };
 
@@ -1611,6 +1691,16 @@ impl CronScheduler {
             // Broadcast send fails only when no receivers remain — by then
             // the inner tasks have already exited, so ignore that case.
             let _ = tx.send(());
+        }
+
+        // Abort any in-flight detached job tasks (triggered jobs, agent
+        // inner spawns). Without this they would continue running after
+        // the scheduler is gone.
+        {
+            let mut inflight = self.inflight.lock().await;
+            for abort in inflight.drain(..) {
+                abort.abort();
+            }
         }
 
         // Drain inner JoinHandles and wait briefly for graceful exit; abort
@@ -2202,6 +2292,7 @@ mod tests {
             now,
             now + ChronoDuration::seconds(1),
             Ok("output".to_string()),
+            Some(DeliveryStatus::Delivered),
             &Some(store_path),
         )
         .await;
@@ -2234,6 +2325,7 @@ mod tests {
         jobs.write().await.insert("test-job".to_string(), job);
 
         // Execute with force=true; persistence will fail but must not panic
+        let inflight = Arc::new(TokioMutex::new(Vec::new()));
         CronScheduler::execute_job(
             &jobs,
             "test-job",
@@ -2241,7 +2333,8 @@ mod tests {
             &Some(path),
             &None, // announce_tx
             &None, // heartbeat_wake_tx
-            true,  // force
+            &inflight,
+            true, // force
         )
         .await;
 
@@ -2282,6 +2375,7 @@ mod tests {
 
         // Force-trigger should be refused; run_count must not advance and
         // running_at_ms must not change.
+        let inflight = Arc::new(TokioMutex::new(Vec::new()));
         CronScheduler::execute_job(
             &jobs,
             "running-job",
@@ -2289,6 +2383,7 @@ mod tests {
             &None,
             &None,
             &None,
+            &inflight,
             true, // force
         )
         .await;
@@ -2409,7 +2504,8 @@ mod tests {
         let agent: Arc<RwLock<Option<Arc<Agent>>>> = Arc::new(RwLock::new(None));
 
         let start = tokio::time::Instant::now();
-        CronScheduler::run_due_jobs(&jobs, &agent, &None, &None, &None).await;
+        let inflight = Arc::new(TokioMutex::new(Vec::new()));
+        CronScheduler::run_due_jobs(&jobs, &agent, &None, &None, &None, &inflight).await;
         let elapsed = start.elapsed();
 
         // Serial: ~2.0s (4 × 500ms). Concurrent: ~0.5s. Use 1.5s as a
@@ -2429,6 +2525,93 @@ mod tests {
             "all one-shot jobs should have been removed after execution; \
              remaining: {:?}",
             remaining.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// `% 0` panics. Schedule construction with `stagger_ms = Some(0)`
+    /// must be treated as "no stagger" and not panic at next-run-time.
+    #[test]
+    fn test_schedule_cron_stagger_zero_does_not_panic() {
+        let sched = Schedule::Cron {
+            expression: "0 * * * * *".to_string(), // every minute on :00
+            timezone: None,
+            stagger_ms: Some(0),
+        };
+        // Without the guard, this would panic with "attempt to calculate
+        // the remainder with a divisor of zero" inside `next_run`.
+        let next = sched.next_run(Utc::now());
+        assert!(next.is_some(), "stagger_ms=0 must still produce a next run");
+    }
+
+    /// Once `consecutive_errors` exceeds `max_retries`, the scheduler
+    /// disables the job rather than continuing to retry forever.
+    #[tokio::test]
+    async fn test_job_disabled_after_max_retries_exhausted() {
+        let mut map: HashMap<String, CronJob> = HashMap::new();
+        let mut job = CronJob::new(
+            "doomed",
+            "Doomed",
+            // Use a recurring schedule so the failure path retries
+            // instead of being a one-shot.
+            Schedule::Every {
+                interval: Duration::from_secs(60),
+                anchor: None,
+            },
+            ExecutionTarget::shell("exit 1"),
+        );
+        job.retry.max_retries = 2;
+        // Simulate two failures already on the books — the next failed
+        // run lands at consecutive_errors = 3, which exceeds max_retries.
+        job.state.consecutive_errors = 2;
+        map.insert(job.id.clone(), job);
+        let jobs: Arc<RwLock<HashMap<String, CronJob>>> = Arc::new(RwLock::new(map));
+        let agent: Arc<RwLock<Option<Arc<Agent>>>> = Arc::new(RwLock::new(None));
+        let inflight = Arc::new(TokioMutex::new(Vec::new()));
+
+        CronScheduler::execute_job(
+            &jobs, "doomed", &agent, &None, &None, &None, &inflight, true, // force
+        )
+        .await;
+
+        let after = jobs.read().await.get("doomed").cloned().unwrap();
+        assert!(!after.enabled, "job must be disabled after exhausting retries");
+        assert!(after.state.next_run_at.is_none(), "next_run_at cleared on disable");
+        assert!(after.state.consecutive_errors > after.retry.max_retries);
+    }
+
+    /// `log_run` must record whatever delivery outcome was passed in —
+    /// not synthesise a value from the execution result. This is the
+    /// regression for the previous hard-coded `Delivered`/`Execution
+    /// error` mapping that ignored real delivery failures.
+    #[tokio::test]
+    async fn test_log_run_records_supplied_delivery_status() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = dir.path().join("cron.json");
+
+        let now = Utc::now();
+        CronScheduler::log_run(
+            "j",
+            "r",
+            now,
+            now + ChronoDuration::seconds(1),
+            Ok("output".to_string()),
+            Some(DeliveryStatus::Failed("webhook 500".to_string())),
+            &Some(store.clone()),
+        )
+        .await
+        .expect("log_run");
+
+        let log_path = store.with_extension("runs.jsonl");
+        let line = tokio::fs::read_to_string(&log_path)
+            .await
+            .expect("read log");
+        let entry: RunLogEntry = serde_json::from_str(line.trim()).expect("parse");
+        assert_eq!(entry.status, RunStatus::Ok);
+        assert_eq!(
+            entry.delivery_status,
+            Some(DeliveryStatus::Failed("webhook 500".to_string())),
+            "delivery_status must reflect the caller-supplied outcome, \
+             not be synthesised from execution result"
         );
     }
 }
