@@ -1061,8 +1061,8 @@ impl CronScheduler {
                         // the child Child handle inside execute_shell
                         // sends SIGKILL to the underlying `sh` process.
                         Err(SyscityError::Internal(format!(
-                            "Shell command timed out after {:?}",
-                            SHELL_EXEC_TIMEOUT
+                            "Shell command timed out after {:?}: '{}' (job={})",
+                            SHELL_EXEC_TIMEOUT, command, job_id
                         )))
                     }
                 }
@@ -1093,7 +1093,10 @@ impl CronScheduler {
                     match tokio::time::timeout(AGENT_EXEC_TIMEOUT, handle).await {
                         Ok(Ok(r)) => r,
                         Ok(Err(e)) => {
-                            Err(SyscityError::Internal(format!("Agent task join error: {}", e)))
+                            Err(SyscityError::Internal(format!(
+                                "Agent task join error for job '{}' (id={}): {}",
+                                job.name, job_id, e
+                            )))
                         }
                         Err(_) => {
                             // Explicitly abort so cancellation actually
@@ -1102,13 +1105,16 @@ impl CronScheduler {
                             // detached after we give up waiting.
                             abort_handle.abort();
                             Err(SyscityError::Internal(format!(
-                                "Agent task timed out after {:?}",
-                                AGENT_EXEC_TIMEOUT
+                                "Agent task timed out after {:?} for job '{}' (id={})",
+                                AGENT_EXEC_TIMEOUT, job.name, job_id
                             )))
                         }
                     }
                 } else {
-                    Err(SyscityError::Internal("No agent configured for cron job".to_string()))
+                    Err(SyscityError::Internal(format!(
+                        "No agent configured for cron job '{}' (id={})",
+                        job.name, job_id
+                    )))
                 }
             }
         };
@@ -1609,11 +1615,16 @@ impl CronScheduler {
     /// A mid-write crash leaves the old file intact rather than truncating
     /// the jobs store and losing every persisted job on next start.
     async fn save_jobs(jobs: &Arc<RwLock<HashMap<String, CronJob>>>, path: &PathBuf) -> Result<()> {
-        let jobs_lock = jobs.read().await;
-        let jobs_vec: Vec<&CronJob> = jobs_lock.values().collect();
-
-        let json = serde_json::to_string_pretty(&jobs_vec)
-            .map_err(|e| SyscityError::Internal(format!("Failed to serialize jobs: {}", e)))?;
+        // Scope the read lock to the data-collection phase only. Serialization
+        // is fast, but filesystem I/O may block for milliseconds; dropping the
+        // lock before I/O means Add/Remove/SetEnabled are never blocked behind
+        // a write-to-disk.
+        let json = {
+            let jobs_lock = jobs.read().await;
+            let jobs_vec: Vec<&CronJob> = jobs_lock.values().collect();
+            serde_json::to_string_pretty(&jobs_vec)
+                .map_err(|e| SyscityError::Internal(format!("Failed to serialize jobs: {}", e)))?
+        };
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
