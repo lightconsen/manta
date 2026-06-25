@@ -503,7 +503,8 @@ pub struct CronScheduler {
     heartbeat_wake_tx: Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
     /// Notify the timer to re-calculate next wake time
     rearm_notify: Arc<tokio::sync::Notify>,
-    /// Abort handles of in-flight job tasks.
+    /// Abort handles of in-flight job tasks, each tagged with the job
+    /// id that spawned it.
     ///
     /// Two paths register here:
     ///
@@ -515,9 +516,12 @@ pub struct CronScheduler {
     /// Each push first reaps finished handles via `push_inflight`, so the
     /// vector stays bounded by the count of currently in-flight tasks
     /// rather than growing once per job execution over the scheduler's
-    /// lifetime. On `shutdown()` we abort every remaining entry so neither
-    /// survives the scheduler.
-    inflight: Arc<TokioMutex<Vec<AbortHandle>>>,
+    /// lifetime. `CronCommand::Remove` calls `abort_job` to cancel any
+    /// in-flight execution that belongs to the job being deleted, so the
+    /// removed job stops burning CPU writing back to a record that has
+    /// just been erased. On `shutdown()` we abort every remaining entry
+    /// so nothing survives the scheduler.
+    inflight: Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
 }
 
 impl std::fmt::Debug for CronScheduler {
@@ -778,7 +782,7 @@ impl CronScheduler {
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
         heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
-        inflight: &Arc<TokioMutex<Vec<AbortHandle>>>,
+        inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
     ) {
         let due_job_ids: Vec<String> = {
             let jobs_lock = jobs.read().await;
@@ -846,7 +850,7 @@ impl CronScheduler {
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
         heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
-        inflight: &Arc<TokioMutex<Vec<AbortHandle>>>,
+        inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
         cmd: CronCommand,
     ) {
         match cmd {
@@ -874,6 +878,11 @@ impl CronScheduler {
             }
             CronCommand::Remove(id) => {
                 info!("Removing job: {}", id);
+                // Cancel any in-flight execution belonging to this job before
+                // dropping it from the map — otherwise the orphan task would
+                // keep running and write back to a record that no longer
+                // exists.
+                Self::abort_job(inflight, &id).await;
                 jobs.write().await.remove(&id);
 
                 if let Some(ref path) = store_path {
@@ -912,10 +921,11 @@ impl CronScheduler {
                 let announce_tx_c = announce_tx.clone();
                 let heartbeat_wake_tx_c = heartbeat_wake_tx.clone();
                 let inflight_c = Arc::clone(inflight);
+                let id_for_spawn = id.clone();
                 let handle = tokio::spawn(async move {
                     Self::execute_job(
                         &jobs_c,
-                        &id,
+                        &id_for_spawn,
                         &agent_c,
                         &store_path_c,
                         &announce_tx_c,
@@ -925,7 +935,7 @@ impl CronScheduler {
                     )
                     .await;
                 });
-                Self::push_inflight(inflight, handle.abort_handle()).await;
+                Self::push_inflight(inflight, id, handle.abort_handle()).await;
             }
             CronCommand::GetNextRun(id, tx) => {
                 let jobs_lock = jobs.read().await;
@@ -948,10 +958,35 @@ impl CronScheduler {
     /// Push an abort handle into the in-flight tracker, reaping any
     /// already-finished entries first so the list stays bounded by the
     /// count of currently-running tasks rather than total spawn count.
-    async fn push_inflight(inflight: &Arc<TokioMutex<Vec<AbortHandle>>>, handle: AbortHandle) {
+    /// Tagged with `job_id` so `abort_job` can target a specific job's
+    /// outstanding executions.
+    async fn push_inflight(
+        inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
+        job_id: String,
+        handle: AbortHandle,
+    ) {
         let mut guard = inflight.lock().await;
-        guard.retain(|h| !h.is_finished());
-        guard.push(handle);
+        guard.retain(|(_, h)| !h.is_finished());
+        guard.push((job_id, handle));
+    }
+
+    /// Abort any in-flight executions associated with `job_id` and drop
+    /// their handles from the tracker. Called when a job is removed so
+    /// the orphan task does not continue running and writing back to a
+    /// state record that no longer exists.
+    async fn abort_job(
+        inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
+        job_id: &str,
+    ) {
+        let mut guard = inflight.lock().await;
+        guard.retain(|(id, h)| {
+            if id == job_id {
+                h.abort();
+                false
+            } else {
+                !h.is_finished()
+            }
+        });
     }
 
     /// Execute a job
@@ -967,7 +1002,7 @@ impl CronScheduler {
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
         heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
-        inflight: &Arc<TokioMutex<Vec<AbortHandle>>>,
+        inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
         force: bool,
     ) {
         let job = {
@@ -1054,7 +1089,7 @@ impl CronScheduler {
                     // Register the agent inner spawn so `shutdown()` can
                     // abort it. Without this, the inner task would survive
                     // the scheduler.
-                    Self::push_inflight(inflight, abort_handle.clone()).await;
+                    Self::push_inflight(inflight, job_id.to_string(), abort_handle.clone()).await;
                     match tokio::time::timeout(AGENT_EXEC_TIMEOUT, handle).await {
                         Ok(Ok(r)) => r,
                         Ok(Err(e)) => {
@@ -1241,14 +1276,17 @@ impl CronScheduler {
                     "Cron job '{}' completed with heartbeat wake — waking agent {}",
                     job.name, agent_id
                 );
-                if let Err(e) = tx
-                    .send(crate::heartbeat::WakeRequest {
-                        agent_id,
-                        priority: crate::heartbeat::WakePriority::Action,
-                        prompt: None,
-                    })
-                    .await
-                {
+                // Use `try_send` rather than `send().await`: this hop is
+                // strictly best-effort, and an `.await` here would stall
+                // the job-completion path indefinitely if the heartbeat
+                // channel is saturated. Both `Full` and `Closed` are
+                // logged but otherwise ignored — the next cron tick
+                // will get another chance.
+                if let Err(e) = tx.try_send(crate::heartbeat::WakeRequest {
+                    agent_id,
+                    priority: crate::heartbeat::WakePriority::Action,
+                    prompt: None,
+                }) {
                     warn!("Cron job '{}' could not send heartbeat wake request: {}", job.name, e);
                 }
             }
@@ -1710,7 +1748,7 @@ impl CronScheduler {
         // the scheduler is gone.
         {
             let mut inflight = self.inflight.lock().await;
-            for abort in inflight.drain(..) {
+            for (_id, abort) in inflight.drain(..) {
                 abort.abort();
             }
         }
@@ -2650,7 +2688,7 @@ mod tests {
             let abort = h.abort_handle();
             h.await.expect("ran");
             // `abort` now refers to a finished task.
-            CronScheduler::push_inflight(&inflight, abort).await;
+            CronScheduler::push_inflight(&inflight, "test-job".to_string(), abort).await;
         }
 
         // The vector contains 5 finished handles plus possibly the last
@@ -2670,7 +2708,7 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(60)).await;
         });
         let live_abort = live.abort_handle();
-        CronScheduler::push_inflight(&inflight, live_abort).await;
+        CronScheduler::push_inflight(&inflight, "live-job".to_string(), live_abort).await;
 
         // After this push, all the previously-finished handles should
         // have been reaped, leaving only the live one.
