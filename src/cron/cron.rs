@@ -113,8 +113,18 @@ pub enum Schedule {
         anchor: Option<DateTime<Utc>>,
     },
     /// Cron expression
+    ///
+    /// **Note on the `timezone` field**: cron expressions are currently
+    /// always evaluated in UTC. The `timezone` field is preserved for
+    /// forward compatibility but has no effect today; a warning is
+    /// emitted at job registration time when a non-`None` value is
+    /// supplied so the limitation is visible. Schedules that need local
+    /// time must convert externally for now.
     Cron {
         expression: String,
+        /// **Currently unsupported** — always evaluated as UTC. Setting
+        /// this field logs a one-time warning at job registration but
+        /// otherwise has no effect on schedule resolution.
         timezone: Option<String>,
         stagger_ms: Option<u64>,
     },
@@ -199,6 +209,24 @@ impl Schedule {
     /// execution
     pub fn is_one_shot(&self) -> bool {
         matches!(self, Schedule::At { .. })
+    }
+
+    /// Emit one-shot warnings for partially-supported schedule fields.
+    ///
+    /// Called once per job at registration / load time (Add command and
+    /// `load_jobs`) so that contract violations don't disappear into a
+    /// silent loop. Currently surfaces:
+    ///
+    /// - `Schedule::Cron { timezone: Some(_) }` — field ignored, always
+    ///   evaluated in UTC.
+    pub fn warn_unsupported_fields(&self, job_name: &str) {
+        if let Schedule::Cron { timezone: Some(tz), .. } = self {
+            warn!(
+                "cron job '{}' specifies timezone={:?} which is currently \
+                 unsupported — schedule will be evaluated in UTC",
+                job_name, tz
+            );
+        }
     }
 }
 
@@ -419,6 +447,12 @@ const MIN_REFIRE_GAP_MS: u64 = 2_000;
 const SHELL_EXEC_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Hard upper bound on a single agent task's execution time.
 const AGENT_EXEC_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Hard upper bound on the bytes captured from a shell job's stdout or
+/// stderr. Excess output is discarded (the child eventually blocks on
+/// its pipe and is reaped by `kill_on_drop` when the outer timeout
+/// fires). 1 MiB is enough to capture any reasonable error message
+/// without letting a misconfigured `cat /dev/urandom` OOM the gateway.
+const MAX_SHELL_OUTPUT_BYTES: usize = 1024 * 1024;
 
 /// Commands for the scheduler
 #[allow(clippy::large_enum_variant)]
@@ -707,6 +741,15 @@ impl CronScheduler {
     }
 
     /// Run all jobs that are currently due
+    ///
+    /// Due jobs are dispatched concurrently via [`tokio::task::JoinSet`].
+    /// A single slow job (within its execution timeout) no longer blocks
+    /// peers due in the same tick. The function still awaits the entire
+    /// set so the outer timer's shutdown `select!` continues to bound the
+    /// batch — abandoning the awaited JoinSet at shutdown drops all
+    /// inner JoinHandles, which (combined with `kill_on_drop` on shell
+    /// children and the explicit abort path on agent tasks inside
+    /// `execute_job`) releases resources promptly.
     async fn run_due_jobs(
         jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
@@ -734,19 +777,35 @@ impl CronScheduler {
             return;
         }
 
-        info!("Running {} due cron jobs", due_job_ids.len());
+        info!("Running {} due cron jobs concurrently", due_job_ids.len());
 
+        let mut set = tokio::task::JoinSet::new();
         for job_id in due_job_ids {
-            Self::execute_job(
-                jobs,
-                &job_id,
-                agent,
-                store_path,
-                announce_tx,
-                heartbeat_wake_tx,
-                false,
-            )
-            .await;
+            let jobs = Arc::clone(jobs);
+            let agent = Arc::clone(agent);
+            let store_path = store_path.clone();
+            let announce_tx = announce_tx.clone();
+            let heartbeat_wake_tx = heartbeat_wake_tx.clone();
+            set.spawn(async move {
+                Self::execute_job(
+                    &jobs,
+                    &job_id,
+                    &agent,
+                    &store_path,
+                    &announce_tx,
+                    &heartbeat_wake_tx,
+                    false,
+                )
+                .await;
+            });
+        }
+
+        while let Some(join_res) = set.join_next().await {
+            if let Err(e) = join_res {
+                if !e.is_cancelled() {
+                    warn!("cron job task join error: {}", e);
+                }
+            }
         }
     }
 
@@ -767,6 +826,11 @@ impl CronScheduler {
         match cmd {
             CronCommand::Add(mut job) => {
                 info!("Adding job: {} ({})", job.name, job.id);
+
+                // Surface unsupported schedule fields exactly once per job
+                // registration so contract violations don't disappear into
+                // a silent loop.
+                job.schedule.warn_unsupported_fields(&job.name);
 
                 // Calculate initial next run
                 if job.state.next_run_at.is_none() {
@@ -872,6 +936,19 @@ impl CronScheduler {
                 return;
             }
 
+            // Even when `force=true`, refuse to double-execute a job that is
+            // already running. Without this guard, two concurrent
+            // `execute_job` calls would both clear and rewrite
+            // `running_at_ms`, run the underlying work twice, and corrupt
+            // `run_count` / `consecutive_errors`.
+            if job.state.running_at_ms.is_some() {
+                warn!(
+                    "Trigger ignored: cron job '{}' is already running (running_at_ms={:?})",
+                    job.name, job.state.running_at_ms
+                );
+                return;
+            }
+
             // Mark as running
             job.state.running_at_ms = Some(now.timestamp_millis());
             job.clone()
@@ -883,31 +960,63 @@ impl CronScheduler {
 
         // Execute based on target type. Each path is wrapped in a hard
         // timeout — without it a hung process or stalled agent keeps
-        // running_at_ms set forever, making the job permanently un-runnable.
+        // `running_at_ms` set forever, making the job permanently
+        // un-runnable. The shell path relies on `kill_on_drop(true)` inside
+        // `execute_shell` so the child process is reaped when the future
+        // is cancelled. The agent path spawns into a separate task and
+        // uses `abort_handle()` so that on timeout we propagate
+        // cancellation to the next `.await` point inside the agent —
+        // dropping the future alone would not.
         let result = match &job.target {
             ExecutionTarget::Shell { command } => {
                 match tokio::time::timeout(SHELL_EXEC_TIMEOUT, Self::execute_shell(command)).await {
                     Ok(r) => r,
-                    Err(_) => Err(SyscityError::Internal(format!(
-                        "Shell command timed out after {:?}",
-                        SHELL_EXEC_TIMEOUT
-                    ))),
+                    Err(_) => {
+                        // The future is dropped here; `kill_on_drop` on
+                        // the child Child handle inside execute_shell
+                        // sends SIGKILL to the underlying `sh` process.
+                        Err(SyscityError::Internal(format!(
+                            "Shell command timed out after {:?}",
+                            SHELL_EXEC_TIMEOUT
+                        )))
+                    }
                 }
             }
             ExecutionTarget::Agent { prompt, agent_id, .. } => {
-                let agent_guard = agent.read().await;
-                if let Some(ref agent_ref) = *agent_guard {
-                    match tokio::time::timeout(
-                        AGENT_EXEC_TIMEOUT,
-                        Self::execute_agent(agent_ref, &job, prompt, agent_id.as_deref()),
-                    )
-                    .await
-                    {
-                        Ok(r) => r,
-                        Err(_) => Err(SyscityError::Internal(format!(
-                            "Agent task timed out after {:?}",
-                            AGENT_EXEC_TIMEOUT
-                        ))),
+                let agent_clone = {
+                    let agent_guard = agent.read().await;
+                    agent_guard.as_ref().map(Arc::clone)
+                };
+                if let Some(agent_ref) = agent_clone {
+                    let job_clone = job.clone();
+                    let prompt_owned = prompt.clone();
+                    let agent_id_owned = agent_id.clone();
+                    let handle = tokio::spawn(async move {
+                        Self::execute_agent(
+                            &agent_ref,
+                            &job_clone,
+                            &prompt_owned,
+                            agent_id_owned.as_deref(),
+                        )
+                        .await
+                    });
+                    let abort_handle = handle.abort_handle();
+                    match tokio::time::timeout(AGENT_EXEC_TIMEOUT, handle).await {
+                        Ok(Ok(r)) => r,
+                        Ok(Err(e)) => {
+                            Err(SyscityError::Internal(format!("Agent task join error: {}", e)))
+                        }
+                        Err(_) => {
+                            // Explicitly abort so cancellation actually
+                            // reaches the agent at its next `.await`,
+                            // rather than letting the task continue
+                            // detached after we give up waiting.
+                            abort_handle.abort();
+                            Err(SyscityError::Internal(format!(
+                                "Agent task timed out after {:?}",
+                                AGENT_EXEC_TIMEOUT
+                            )))
+                        }
                     }
                 } else {
                     Err(SyscityError::Internal("No agent configured for cron job".to_string()))
@@ -917,8 +1026,13 @@ impl CronScheduler {
 
         let completed_at = Utc::now();
 
-        // Update job state
-        {
+        // Update job state. We update everything that requires the write
+        // lock here, but defer the actual delivery (which can `.await` for
+        // up to ~90s on webhook retries) until after the lock is released.
+        // Holding the write lock across delivery would serialise every
+        // other scheduler operation (Add/Remove/Trigger/timer) behind one
+        // slow HTTP call.
+        let delivery_intent = {
             let mut jobs_lock = jobs.write().await;
             if let Some(j) = jobs_lock.get_mut(job_id) {
                 j.state.running_at_ms = None;
@@ -956,14 +1070,17 @@ impl CronScheduler {
                     }
                 };
 
-                // Deliver result if configured
-                if !matches!(j.delivery, DeliveryMode::None) {
+                // Capture what delivery needs so we can `.await` it outside
+                // the lock. Cloning is cheap relative to the alternative of
+                // freezing the whole scheduler for the duration of an HTTP
+                // round-trip.
+                let intent = if matches!(j.delivery, DeliveryMode::None) {
+                    None
+                } else {
                     let message = serde_json::to_string(&delivery_payload)
                         .unwrap_or_else(|_| delivery_payload.to_string());
-                    if let Err(e) = Self::deliver_result(&j.delivery, &message, announce_tx).await {
-                        warn!("Delivery failed for job '{}': {}", j.name, e);
-                    }
-                }
+                    Some((j.delivery.clone(), message, j.name.clone()))
+                };
 
                 // Update next run (or schedule retry on error).
                 //
@@ -1000,6 +1117,21 @@ impl CronScheduler {
                     info!("Removing one-shot job: {}", j.name);
                     jobs_lock.remove(job_id);
                 }
+
+                intent
+            } else {
+                None
+            }
+        };
+
+        // Deliver result OUTSIDE the write lock. The delivery channel can
+        // be a webhook with up to ~30s × 3 retries; under the old
+        // structure that would have frozen the whole scheduler. With the
+        // lock released, concurrent Add/Remove/Trigger and the timer
+        // continue to make progress.
+        if let Some((delivery, message, job_name)) = delivery_intent {
+            if let Err(e) = Self::deliver_result(&delivery, &message, announce_tx).await {
+                warn!("Delivery failed for job '{}': {}", job_name, e);
             }
         }
 
@@ -1043,20 +1175,96 @@ impl CronScheduler {
     }
 
     /// Execute shell command
+    ///
+    /// Spawn is used (rather than `output()`) for two correctness reasons:
+    ///
+    /// 1. `kill_on_drop(true)` guarantees that if our caller's
+    ///    `tokio::time::timeout` fires, the underlying `sh` process is
+    ///    SIGKILL'd as the `Child` is dropped. Without this, the timeout
+    ///    only stops *us* waiting; the child keeps running, holds FDs,
+    ///    and may spawn even more work.
+    /// 2. stdout/stderr are drained on background tasks but only the
+    ///    first `MAX_SHELL_OUTPUT_BYTES` are retained. Bytes past the cap
+    ///    are read and discarded so the child can keep writing without
+    ///    blocking on a full pipe buffer (which would otherwise cause
+    ///    SIGPIPE / non-zero exit on downstream tools in a pipeline, or
+    ///    hang the child indefinitely). The retained buffer cannot OOM
+    ///    the gateway because it is capped.
     async fn execute_shell(command: &str) -> Result<String> {
-        let output = tokio::process::Command::new("sh")
+        use tokio::io::AsyncReadExt;
+
+        let mut child = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(command)
-            .output()
-            .await
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
             .map_err(|e| SyscityError::Internal(format!("Failed to execute shell: {}", e)))?;
 
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            Ok(stdout.to_string())
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| SyscityError::Internal("shell child has no stdout pipe".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| SyscityError::Internal("shell child has no stderr pipe".to_string()))?;
+
+        /// Drain `reader` to EOF, returning at most `MAX_SHELL_OUTPUT_BYTES`
+        /// of the head of the stream. Bytes past the cap are discarded but
+        /// still read from the pipe so the child does not block on a full
+        /// OS pipe buffer.
+        async fn drain_capped<R: AsyncReadExt + Unpin>(
+            mut reader: R,
+            stream_name: &str,
+        ) -> Vec<u8> {
+            let mut buf: Vec<u8> = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                match reader.read(&mut chunk).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if buf.len() < MAX_SHELL_OUTPUT_BYTES {
+                            let remaining = MAX_SHELL_OUTPUT_BYTES - buf.len();
+                            let take = n.min(remaining);
+                            buf.extend_from_slice(&chunk[..take]);
+                        }
+                        // Anything past the cap is intentionally discarded
+                        // but the pipe has already been drained.
+                    }
+                    Err(e) => {
+                        warn!("error reading cron shell {}: {}", stream_name, e);
+                        break;
+                    }
+                }
+            }
+            buf
+        }
+
+        let stdout_task = tokio::spawn(drain_capped(stdout, "stdout"));
+        let stderr_task = tokio::spawn(drain_capped(stderr, "stderr"));
+
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| SyscityError::Internal(format!("Failed to wait on shell: {}", e)))?;
+
+        let stdout_bytes = stdout_task.await.unwrap_or_default();
+        let stderr_bytes = stderr_task.await.unwrap_or_default();
+
+        if stdout_bytes.len() >= MAX_SHELL_OUTPUT_BYTES {
+            warn!(
+                "cron shell stdout truncated at {} bytes (job may be producing unbounded output)",
+                MAX_SHELL_OUTPUT_BYTES
+            );
+        }
+
+        if status.success() {
+            Ok(String::from_utf8_lossy(&stdout_bytes).to_string())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(SyscityError::Internal(format!("Shell error: {}", stderr)))
+            let stderr_str = String::from_utf8_lossy(&stderr_bytes);
+            Err(SyscityError::Internal(format!("Shell error: {}", stderr_str)))
         }
     }
 
@@ -1252,6 +1460,11 @@ impl CronScheduler {
                 job.state.running_at_ms = None;
                 job.state.last_error = Some("Recovered from crash".to_string());
             }
+
+            // Surface any unsupported schedule fields on reload so the
+            // operator sees the limitation in the startup log rather than
+            // discovering it silently months later.
+            job.schedule.warn_unsupported_fields(&job.name);
 
             jobs_lock.insert(job.id.clone(), job);
         }
@@ -2040,5 +2253,182 @@ mod tests {
         );
         assert_eq!(updated.state.run_count, 1, "run_count should be incremented after execution");
         assert!(updated.state.last_error.is_none(), "no error for successful shell execution");
+    }
+
+    // ── Regression tests for H1 / H2 / M1 / M2 / M3 / M4 fixes ────────────
+
+    /// M1: a force-trigger must NOT double-execute a job that is already
+    /// running. Previously, `force=true` bypassed the running_at_ms check
+    /// entirely and would overwrite `running_at_ms` with a fresh
+    /// timestamp, leaving two concurrent execution paths.
+    #[tokio::test]
+    async fn test_force_trigger_respects_running_at_ms() {
+        let mut map: HashMap<String, CronJob> = HashMap::new();
+        let mut job = CronJob::new(
+            "running-job",
+            "Running",
+            Schedule::At {
+                timestamp: Utc::now() + ChronoDuration::hours(1),
+            },
+            ExecutionTarget::shell("echo hi"),
+        );
+        // Simulate the job already being in flight.
+        job.state.running_at_ms = Some(Utc::now().timestamp_millis());
+        map.insert(job.id.clone(), job);
+        let jobs: Arc<RwLock<HashMap<String, CronJob>>> = Arc::new(RwLock::new(map));
+        let agent: Arc<RwLock<Option<Arc<Agent>>>> = Arc::new(RwLock::new(None));
+
+        let before = jobs.read().await.get("running-job").unwrap().state.clone();
+
+        // Force-trigger should be refused; run_count must not advance and
+        // running_at_ms must not change.
+        CronScheduler::execute_job(
+            &jobs,
+            "running-job",
+            &agent,
+            &None,
+            &None,
+            &None,
+            true, // force
+        )
+        .await;
+
+        let after = jobs.read().await.get("running-job").unwrap().state.clone();
+        assert_eq!(before.running_at_ms, after.running_at_ms, "running_at_ms preserved");
+        assert_eq!(
+            before.run_count, after.run_count,
+            "run_count must not advance on refused trigger"
+        );
+    }
+
+    /// M4: shell stdout is bounded — a job that emits unbounded output
+    /// must not load gigabytes into memory; the captured output should be
+    /// at most MAX_SHELL_OUTPUT_BYTES.
+    #[tokio::test]
+    async fn test_execute_shell_caps_unbounded_stdout() {
+        // `yes` produces an infinite stream of "y\n". With our cap the
+        // process either blocks on its pipe (and is killed when this test
+        // ends and the parent process drops the child) or completes
+        // quickly when the OS pipe buffer fills. Either way, the output
+        // we observe must not exceed the cap.
+        //
+        // Wrap in a timeout so a buggy implementation fails fast rather
+        // than hanging the test suite.
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            CronScheduler::execute_shell("yes | head -c 5242880"), // 5 MiB
+        )
+        .await
+        .expect("execute_shell should complete within timeout");
+
+        let out = result.expect("shell command should succeed");
+        assert!(
+            out.len() <= MAX_SHELL_OUTPUT_BYTES,
+            "captured stdout {} bytes must not exceed cap {}",
+            out.len(),
+            MAX_SHELL_OUTPUT_BYTES
+        );
+    }
+
+    /// H2: the shell timeout path must reap the child process via
+    /// `kill_on_drop`. We confirm correctness indirectly by verifying
+    /// that timeouts actually return — without `kill_on_drop`, the child
+    /// would keep the pipe FDs alive and `wait_with_output`'s drop
+    /// could leak. A simpler invariant we can check: a long-running
+    /// command, wrapped in a short timeout, must come back as a timeout
+    /// error in well under SHELL_EXEC_TIMEOUT.
+    #[tokio::test]
+    async fn test_shell_timeout_returns_promptly() {
+        // 100ms timeout against a 30s sleep — must return as Err quickly,
+        // i.e. the timeout actually unblocks the future.
+        let start = tokio::time::Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            CronScheduler::execute_shell("sleep 30"),
+        )
+        .await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "expected timeout, got {:?}", result);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "timeout should return promptly (within ~2s) but took {:?}",
+            elapsed
+        );
+    }
+
+    /// M2: a Cron schedule with a `timezone` field must emit a warning
+    /// via `warn_unsupported_fields` so the limitation is visible. The
+    /// warning is a side-effect we can't capture from inside the test,
+    /// but we can at least verify the method does not panic for
+    /// supported and unsupported variants.
+    #[test]
+    fn test_warn_unsupported_fields_does_not_panic() {
+        let s1 = Schedule::Cron {
+            expression: "0 * * * *".to_string(),
+            timezone: Some("America/Los_Angeles".to_string()),
+            stagger_ms: None,
+        };
+        s1.warn_unsupported_fields("test-job");
+
+        let s2 = Schedule::Cron {
+            expression: "0 * * * *".to_string(),
+            timezone: None,
+            stagger_ms: None,
+        };
+        s2.warn_unsupported_fields("test-job");
+
+        let s3 = Schedule::At { timestamp: Utc::now() };
+        s3.warn_unsupported_fields("test-job");
+    }
+
+    /// M3: run_due_jobs dispatches due jobs concurrently. We check this
+    /// by registering N shell jobs that each sleep 500ms and verifying
+    /// the whole batch finishes in under N * 500ms wall clock. Serial
+    /// execution would take N * 500ms; concurrent execution finishes in
+    /// roughly 500ms regardless of N.
+    #[tokio::test]
+    async fn test_run_due_jobs_executes_concurrently() {
+        let mut map: HashMap<String, CronJob> = HashMap::new();
+        let now = Utc::now();
+        for i in 0..4 {
+            let mut job = CronJob::new(
+                format!("concurrent-{}", i),
+                format!("Concurrent {}", i),
+                Schedule::At {
+                    timestamp: now + ChronoDuration::hours(1),
+                },
+                ExecutionTarget::shell("sleep 0.5"),
+            );
+            // Make should_run() true: due now, not yet running.
+            job.state.next_run_at = Some(now - ChronoDuration::seconds(1));
+            job.state.running_at_ms = None;
+            map.insert(job.id.clone(), job);
+        }
+        let jobs: Arc<RwLock<HashMap<String, CronJob>>> = Arc::new(RwLock::new(map));
+        let agent: Arc<RwLock<Option<Arc<Agent>>>> = Arc::new(RwLock::new(None));
+
+        let start = tokio::time::Instant::now();
+        CronScheduler::run_due_jobs(&jobs, &agent, &None, &None, &None).await;
+        let elapsed = start.elapsed();
+
+        // Serial: ~2.0s (4 × 500ms). Concurrent: ~0.5s. Use 1.5s as a
+        // safe upper bound that fails serial but tolerates CI jitter.
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "4 due jobs each sleeping 500ms must run concurrently; \
+             actual elapsed: {:?}",
+            elapsed
+        );
+
+        // Sanity: all jobs ran (one-shot, so they are removed by
+        // execute_job after running).
+        let remaining = jobs.read().await;
+        assert!(
+            remaining.is_empty(),
+            "all one-shot jobs should have been removed after execution; \
+             remaining: {:?}",
+            remaining.keys().collect::<Vec<_>>()
+        );
     }
 }
