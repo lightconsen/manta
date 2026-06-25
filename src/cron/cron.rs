@@ -512,8 +512,11 @@ pub struct CronScheduler {
     /// - `execute_job` spawns the agent inner future (so timeout aborts
     ///   propagate to the next `.await` inside the agent).
     ///
-    /// On `shutdown()` we abort every entry so neither survives the
-    /// scheduler.
+    /// Each push first reaps finished handles via `push_inflight`, so the
+    /// vector stays bounded by the count of currently in-flight tasks
+    /// rather than growing once per job execution over the scheduler's
+    /// lifetime. On `shutdown()` we abort every remaining entry so neither
+    /// survives the scheduler.
     inflight: Arc<TokioMutex<Vec<AbortHandle>>>,
 }
 
@@ -922,7 +925,7 @@ impl CronScheduler {
                     )
                     .await;
                 });
-                inflight.lock().await.push(handle.abort_handle());
+                Self::push_inflight(inflight, handle.abort_handle()).await;
             }
             CronCommand::GetNextRun(id, tx) => {
                 let jobs_lock = jobs.read().await;
@@ -940,6 +943,15 @@ impl CronScheduler {
                 let _ = tx.send(job);
             }
         }
+    }
+
+    /// Push an abort handle into the in-flight tracker, reaping any
+    /// already-finished entries first so the list stays bounded by the
+    /// count of currently-running tasks rather than total spawn count.
+    async fn push_inflight(inflight: &Arc<TokioMutex<Vec<AbortHandle>>>, handle: AbortHandle) {
+        let mut guard = inflight.lock().await;
+        guard.retain(|h| !h.is_finished());
+        guard.push(handle);
     }
 
     /// Execute a job
@@ -1042,7 +1054,7 @@ impl CronScheduler {
                     // Register the agent inner spawn so `shutdown()` can
                     // abort it. Without this, the inner task would survive
                     // the scheduler.
-                    inflight.lock().await.push(abort_handle.clone());
+                    Self::push_inflight(inflight, abort_handle.clone()).await;
                     match tokio::time::timeout(AGENT_EXEC_TIMEOUT, handle).await {
                         Ok(Ok(r)) => r,
                         Ok(Err(e)) => {
@@ -2613,5 +2625,63 @@ mod tests {
             "delivery_status must reflect the caller-supplied outcome, \
              not be synthesised from execution result"
         );
+    }
+
+    /// `push_inflight` must reap finished abort handles instead of letting
+    /// the in-flight vector grow once per spawn forever. Without pruning,
+    /// a long-running scheduler accumulates one entry per job execution
+    /// across its lifetime.
+    #[tokio::test]
+    async fn test_push_inflight_reaps_finished_handles() {
+        let inflight = Arc::new(TokioMutex::new(Vec::new()));
+
+        // Push 5 handles whose tasks have already completed.
+        for _ in 0..5 {
+            let handle = tokio::spawn(async {});
+            // Let it run to completion.
+            handle.await.expect("task ran");
+            // Spawn a no-op specifically to get an already-finished
+            // abort_handle. The simpler path: spawn, await, then
+            // capture the AbortHandle from a fresh handle that we
+            // know is done.
+            let done = tokio::spawn(async {});
+            done.await.expect("ran");
+            let h = tokio::spawn(async {});
+            let abort = h.abort_handle();
+            h.await.expect("ran");
+            // `abort` now refers to a finished task.
+            CronScheduler::push_inflight(&inflight, abort).await;
+        }
+
+        // The vector contains 5 finished handles plus possibly the last
+        // one we just pushed. Before the next push, all 5 should be
+        // reaped, and then the new handle is appended — never more than
+        // one finished tail + one live entry.
+        let len_before_live = inflight.lock().await.len();
+        assert!(
+            len_before_live <= 5,
+            "list should not have grown unboundedly: {}",
+            len_before_live
+        );
+
+        // Now push a live, never-completing task and verify reap drops
+        // the finished tail.
+        let live = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+        let live_abort = live.abort_handle();
+        CronScheduler::push_inflight(&inflight, live_abort).await;
+
+        // After this push, all the previously-finished handles should
+        // have been reaped, leaving only the live one.
+        let final_len = inflight.lock().await.len();
+        assert_eq!(
+            final_len, 1,
+            "push_inflight should retain only the unfinished live handle, got {}",
+            final_len
+        );
+
+        // Cleanup
+        live.abort();
     }
 }
