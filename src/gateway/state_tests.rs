@@ -668,9 +668,7 @@ impl crate::inbound::InboundPipeline for TrackedInboundPipeline {
 #[tokio::test]
 async fn test_drain_path_invokes_pipeline() {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let pipeline = TrackedInboundPipeline {
-        call_count: call_count.clone(),
-    };
+    let pipeline = TrackedInboundPipeline { call_count: call_count.clone() };
 
     let mut state = make_test_state(GatewayConfig::default()).await;
     state.pipelines.inbound = Arc::new(pipeline);
@@ -720,9 +718,7 @@ async fn test_drain_path_invokes_pipeline() {
 #[tokio::test]
 async fn test_drain_path_absorbs_message() {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let pipeline = TrackedInboundPipeline {
-        call_count: call_count.clone(),
-    };
+    let pipeline = TrackedInboundPipeline { call_count: call_count.clone() };
 
     let mut state = make_test_state(GatewayConfig::default()).await;
     state.pipelines.inbound = Arc::new(pipeline);
@@ -800,8 +796,5 @@ async fn test_log_tx_no_receivers_does_not_panic() {
     let state = make_test_state(config).await;
     // make_test_state drops the log_tx receiver immediately.
     let result = state.events.log_tx.send("test log line".into());
-    assert!(
-        result.is_err(),
-        "send to closed log channel should return error"
-    );
+    assert!(result.is_err(), "send to closed log channel should return error");
 }

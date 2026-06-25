@@ -19,26 +19,19 @@ use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 
 #[allow(clippy::unwrap_used)]
-static RE_BOLD_STAR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\*\*(.+?)\*\*").unwrap());
+static RE_BOLD_STAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*\*(.+?)\*\*").unwrap());
 #[allow(clippy::unwrap_used)]
-static RE_BOLD_UNDERSCORE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"__(.+?)__").unwrap());
+static RE_BOLD_UNDERSCORE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"__(.+?)__").unwrap());
 #[allow(clippy::unwrap_used)]
-static RE_ITALIC_STAR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\*(.+?)\*").unwrap());
+static RE_ITALIC_STAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*(.+?)\*").unwrap());
 #[allow(clippy::unwrap_used)]
-static RE_STRIKETHROUGH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"~~(.+?)~~").unwrap());
+static RE_STRIKETHROUGH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"~~(.+?)~~").unwrap());
 #[allow(clippy::unwrap_used)]
-static RE_LINK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+static RE_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
 #[allow(clippy::unwrap_used)]
-static RE_UNDERSCORE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"_(.+?)_").unwrap());
+static RE_UNDERSCORE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"_(.+?)_").unwrap());
 #[allow(clippy::unwrap_used)]
-static RE_CODE_INLINE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
+static RE_CODE_INLINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
 
 /// Slack channel configuration
 #[derive(Debug, Clone)]

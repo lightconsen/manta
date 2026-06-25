@@ -1047,22 +1047,19 @@ pub mod secrets {
             // Generic patterns
             SecretPattern {
                 name: "Generic API Key",
-                regex: Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[a-zA-Z0-9_-]{16,}")
-                    .unwrap(),
+                regex: Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[a-zA-Z0-9_-]{16,}").unwrap(),
                 severity: Severity::Medium,
                 description: "Potential API key detected",
             },
             SecretPattern {
                 name: "Generic Secret",
-                regex: Regex::new(r"(?i)(secret|password|passwd|pwd)\s*[=:]\s*[^\s]{8,}")
-                    .unwrap(),
+                regex: Regex::new(r"(?i)(secret|password|passwd|pwd)\s*[=:]\s*[^\s]{8,}").unwrap(),
                 severity: Severity::Medium,
                 description: "Potential password/secret detected",
             },
             SecretPattern {
                 name: "JWT Token",
-                regex: Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*")
-                    .unwrap(),
+                regex: Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*").unwrap(),
                 severity: Severity::High,
                 description: "JWT token detected",
             },

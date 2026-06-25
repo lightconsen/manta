@@ -436,9 +436,7 @@ impl PlainTextFormatter {
         let mut result = text.to_string();
 
         // Code blocks
-        result = PLAIN_RE_CODE_BLOCK
-            .replace_all(&result, "$1")
-            .to_string();
+        result = PLAIN_RE_CODE_BLOCK.replace_all(&result, "$1").to_string();
 
         // Bold
         result = PLAIN_RE_BOLD_DOUBLE_STAR
@@ -475,9 +473,7 @@ impl PlainTextFormatter {
             .to_string();
 
         // Now safe to process italic
-        result = PLAIN_RE_ITALIC_STAR
-            .replace_all(&result, "$1")
-            .to_string();
+        result = PLAIN_RE_ITALIC_STAR.replace_all(&result, "$1").to_string();
 
         result = PLAIN_RE_ITALIC_UNDERSCORE
             .replace_all(&result, "$1")
@@ -487,9 +483,7 @@ impl PlainTextFormatter {
         result = result.replace(bold_placeholder, "");
 
         // Inline code
-        result = PLAIN_RE_CODE_INLINE
-            .replace_all(&result, "$1")
-            .to_string();
+        result = PLAIN_RE_CODE_INLINE.replace_all(&result, "$1").to_string();
 
         // Strikethrough
         result = PLAIN_RE_STRIKETHROUGH
@@ -497,9 +491,7 @@ impl PlainTextFormatter {
             .to_string();
 
         // Links: keep text, add URL in parentheses
-        result = PLAIN_RE_LINK
-            .replace_all(&result, "$1 ($2)")
-            .to_string();
+        result = PLAIN_RE_LINK.replace_all(&result, "$1 ($2)").to_string();
 
         result
     }

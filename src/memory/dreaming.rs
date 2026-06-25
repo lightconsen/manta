@@ -845,13 +845,13 @@ impl DreamEngine {
                     None => continue,
                 };
                 let summary = Memory::new(user_id, summary_content, "dream_summary")
-                .with_importance_score(0.7)
-                .with_source("dream_deep")
-                .with_metadata(serde_json::json!({
-                    "dream_phase": "deep",
-                    "topic": topic,
-                    "source_memory_count": unique_memories.len(),
-                }));
+                    .with_importance_score(0.7)
+                    .with_source("dream_deep")
+                    .with_metadata(serde_json::json!({
+                        "dream_phase": "deep",
+                        "topic": topic,
+                        "source_memory_count": unique_memories.len(),
+                    }));
 
                 match store.store(summary).await {
                     Ok(id) => {
@@ -1610,9 +1610,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::memory::{
-        Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore, UnifiedStore,
-    };
+    use crate::memory::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore, UnifiedStore};
     use crate::SyscityError;
 
     #[tokio::test]

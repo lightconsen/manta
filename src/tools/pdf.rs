@@ -16,8 +16,7 @@ use tracing::{info, warn};
 use super::{Tool, ToolContext, ToolExecutionResult};
 
 #[allow(clippy::unwrap_used)]
-static RE_INLINE_CODE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
+static RE_INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
 
 /// PDF generation tool
 pub struct PdfTool;

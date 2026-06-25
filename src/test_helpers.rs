@@ -14,9 +14,7 @@
 //! - `assert_eventually`: poll a predicate with backoff until it
 //!   returns `true` or a timeout elapses.
 
-use crate::security::runtime_audit::{
-    AuditEntry, AuditEventType, AuditLogger, RuntimeAuditLog,
-};
+use crate::security::runtime_audit::{AuditEntry, AuditEventType, AuditLogger, RuntimeAuditLog};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -43,11 +41,7 @@ where
     }
     // One last try before failing.
     if !f().await {
-        panic!(
-            "assert_eventually failed after {:.1}s: {}",
-            start.elapsed().as_secs_f64(),
-            msg
-        );
+        panic!("assert_eventually failed after {:.1}s: {}", start.elapsed().as_secs_f64(), msg);
     }
 }
 

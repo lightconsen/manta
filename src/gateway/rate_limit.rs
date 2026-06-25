@@ -676,8 +676,7 @@ pub async fn multi_tier_rate_limit_middleware(
         MultiTierResult::Allowed { remaining } => {
             let mut response = next.run(req).await;
             let headers = response.headers_mut();
-            headers
-                .insert("X-RateLimit-Limit", HeaderValue::from_static("100"));
+            headers.insert("X-RateLimit-Limit", HeaderValue::from_static("100"));
             if let Ok(v) = HeaderValue::try_from(remaining.to_string()) {
                 headers.insert("X-RateLimit-Remaining", v);
             }

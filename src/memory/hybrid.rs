@@ -289,7 +289,9 @@ pub fn apply_temporal_decay(results: &mut [HybridSearchResult], config: &Tempora
 
     for result in results.iter_mut() {
         if let Some(date) = parse_date_from_citation(&result.citation) {
-            let Some(midnight) = date.and_hms_opt(0, 0, 0) else { continue };
+            let Some(midnight) = date.and_hms_opt(0, 0, 0) else {
+                continue;
+            };
             let age_days = (now - midnight.and_utc()).num_days() as f32;
             let decay = (-lambda * age_days.max(0.0)).exp();
             result.score *= decay;

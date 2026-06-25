@@ -16,8 +16,7 @@ use crate::secrets::SecretRef;
 
 #[allow(clippy::unwrap_used)]
 static RE_ENV_VAR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?P<full>\$\$(?P<escaped>[\w_]+)|\$\{(?P<braced>\w+)\}|\$(?P<plain>\w+))")
-        .unwrap()
+    Regex::new(r"(?P<full>\$\$(?P<escaped>[\w_]+)|\$\{(?P<braced>\w+)\}|\$(?P<plain>\w+))").unwrap()
 });
 
 #[allow(clippy::unwrap_used)]
@@ -1012,27 +1011,28 @@ impl Config {
     /// other env vars are **not** recursively resolved.
     fn interpolate_env_vars(input: &str) -> String {
         // Match both ${VAR} and $VAR — but not $$ (escaped dollar)
-        RE_ENV_VAR.replace_all(input, |caps: &regex::Captures<'_>| {
-            // $$VAR → literal $VAR (escape)
-            if let Some(escaped) = caps.name("escaped") {
-                return format!("${}", escaped.as_str());
-            }
-
-            let var_name = caps
-                .name("braced")
-                .or_else(|| caps.name("plain"))
-                .map(|m| m.as_str())
-                .unwrap_or_default();
-
-            match std::env::var(var_name) {
-                Ok(val) => val,
-                Err(_) => {
-                    warn!(var = %var_name, "Config env var not set, leaving as-is");
-                    caps["full"].to_string()
+        RE_ENV_VAR
+            .replace_all(input, |caps: &regex::Captures<'_>| {
+                // $$VAR → literal $VAR (escape)
+                if let Some(escaped) = caps.name("escaped") {
+                    return format!("${}", escaped.as_str());
                 }
-            }
-        })
-        .into_owned()
+
+                let var_name = caps
+                    .name("braced")
+                    .or_else(|| caps.name("plain"))
+                    .map(|m| m.as_str())
+                    .unwrap_or_default();
+
+                match std::env::var(var_name) {
+                    Ok(val) => val,
+                    Err(_) => {
+                        warn!(var = %var_name, "Config env var not set, leaving as-is");
+                        caps["full"].to_string()
+                    }
+                }
+            })
+            .into_owned()
     }
 
     /// Migrate configuration from an older schema version to the current one.

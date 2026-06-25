@@ -338,7 +338,8 @@ mod tests {
         let handlers = new_handler_registry();
 
         let Ok((ctrl_rt, handle)) =
-            init_control_runtime(registry.clone(), handlers, control_config(50)) else {
+            init_control_runtime(registry.clone(), handlers, control_config(50))
+        else {
             panic!("init_control_runtime should succeed");
         };
 

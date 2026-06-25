@@ -440,11 +440,9 @@ end tell"#,
                 let watcher = guard.as_mut().ok_or_else(|| {
                     ComputerError::Other("file watcher missing after init".to_string())
                 })?;
-                watcher
-                    .watch_directory(&path)
-                    .map_err(|e| {
-                        ComputerError::Other(format!("Failed to watch directory: {}", e))
-                    })?;
+                watcher.watch_directory(&path).map_err(|e| {
+                    ComputerError::Other(format!("Failed to watch directory: {}", e))
+                })?;
                 Ok(ActionResult::success(format!("Watching directory: {}", path)))
             }
             DesktopAction::UnwatchDirectory { path } => {

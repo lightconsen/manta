@@ -603,7 +603,8 @@ pub async fn rate_limit_middleware(
                 );
                 response.headers_mut().insert(
                     "X-RateLimit-Tier",
-                    tier.parse().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                    tier.parse()
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
                 );
                 Ok(response)
             }
@@ -749,10 +750,7 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
 
     headers.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
     headers.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
-    headers.insert(
-        "Referrer-Policy",
-        HeaderValue::from_static("strict-origin-when-cross-origin"),
-    );
+    headers.insert("Referrer-Policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
     headers.insert(
         "Permissions-Policy",
         HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),

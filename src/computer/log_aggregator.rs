@@ -53,16 +53,17 @@ static RE_ISO_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?\s*").unwrap()
 });
 #[allow(clippy::unwrap_used)]
-static RE_SYSLOG_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s*").unwrap()
-});
+static RE_SYSLOG_TIMESTAMP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s*").unwrap());
 #[allow(clippy::unwrap_used)]
 static RE_BRACKET_LEVEL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*\[(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)\]\s*(.*)$").unwrap()
+    Regex::new(r"(?i)^\s*\[(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)\]\s*(.*)$")
+        .unwrap()
 });
 #[allow(clippy::unwrap_used)]
 static RE_COLON_LEVEL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)[\s:=\-]+(.*)$").unwrap()
+    Regex::new(r"(?i)^\s*(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|CRIT|TRACE)[\s:=\-]+(.*)$")
+        .unwrap()
 });
 #[allow(clippy::unwrap_used)]
 static RE_PROCESS_INFO: LazyLock<Regex> =

@@ -290,7 +290,8 @@ fn spawn_summary_refresh_task(inner: Arc<Inner>, interval: Duration) -> JoinHand
                 Ok(summary) => {
                     let trimmed = summary.trim().to_string();
                     if !trimmed.is_empty() {
-                        *inner.last_summary.lock().unwrap_or_else(|e| e.into_inner()) = Some(trimmed);
+                        *inner.last_summary.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some(trimmed);
                     }
                 }
                 Err(e) => {
@@ -358,7 +359,11 @@ impl AgentPerceptionAdapter for MinimalAdapter {
     }
 
     async fn current_focus(&self) -> Focus {
-        self.inner.focus.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.inner
+            .focus
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn now(&self) -> Snapshot {
