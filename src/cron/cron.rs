@@ -456,6 +456,12 @@ const AGENT_EXEC_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// without letting a misconfigured `cat /dev/urandom` OOM the gateway.
 const MAX_SHELL_OUTPUT_BYTES: usize = 1024 * 1024;
 
+/// Maximum size for the runs.jsonl run-history file before new entries
+/// are silently dropped. Without this cap a long-running scheduler
+/// creates an unbounded file that eventually fills the disk.
+/// 10 MiB holds roughly 20k–50k run entries depending on payload size.
+const MAX_RUN_LOG_BYTES: u64 = 10 * 1024 * 1024;
+
 /// Commands for the scheduler
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
@@ -1563,6 +1569,25 @@ impl CronScheduler {
                 .open(&log_path)
                 .await
                 .map_err(|e| SyscityError::Internal(format!("Failed to open run log: {}", e)))?;
+
+            // Skip the write when the file exceeds the cap so a
+            // long-running scheduler does not fill the disk with
+            // run-history JSONL. Operators should rotate or archive
+            // the file periodically.
+            let too_big = file
+                .metadata()
+                .await
+                .map(|m| m.len() >= MAX_RUN_LOG_BYTES)
+                .unwrap_or(false);
+            if too_big {
+                warn!(
+                    "Run log {} exceeds {} bytes, skipping entry",
+                    log_path.display(),
+                    MAX_RUN_LOG_BYTES
+                );
+                return Ok(());
+            }
+
             use tokio::io::AsyncWriteExt;
             file.write_all(line.as_bytes())
                 .await
