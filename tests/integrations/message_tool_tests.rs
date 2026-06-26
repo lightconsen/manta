@@ -5,7 +5,7 @@
 //! - Capability checks reject unsupported actions
 //! - Missing required arguments produce validation errors
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -123,6 +123,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         },
         agents: syscity::gateway::state::AgentState {
             agents: Arc::new(RwLock::new(HashMap::new())),
+            pending_spawns: Arc::new(std::sync::Mutex::new(HashSet::new())),
             router: Arc::new(syscity::inbound::AgentRouter::new(
                 syscity::inbound::AgentRouterConfig::default(),
             )),
@@ -211,6 +212,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         control_init: tokio::sync::RwLock::new(None),
         summarizer: tokio::sync::OnceCell::new(),
         task_registry: Arc::new(syscity::gateway::task_registry::TaskRegistry::new()),
+        shutdown_token: tokio_util::sync::CancellationToken::new(),
     }
 }
 
