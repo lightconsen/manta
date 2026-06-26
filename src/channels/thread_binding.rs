@@ -6,12 +6,13 @@
 //! - Placement hint (current/child) — new thread or reuse existing
 //! - Spawn support (subagent/acp) — what to spawn when new thread needed
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tracing::info;
 
 /// Where to place the next message in a thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -384,6 +385,80 @@ impl ThreadBindingManager {
         children.retain(|_, child_list| !child_list.is_empty());
 
         before - after
+    }
+
+    /// Clean up orphaned thread bindings.
+    ///
+    /// Removes child bindings whose parent session no longer exists and cleans
+    /// up stale references in the parent-child hierarchy. Scans are limited to
+    /// a maximum batch of 1000 orphans per call to prevent unbounded processing.
+    ///
+    /// Returns the number of orphaned bindings removed.
+    pub async fn cleanup_orphans(&self) -> usize {
+        const MAX_BATCH: usize = 1000;
+
+        // Phase 1: Identify orphaned children (sessions whose parent no longer
+        // exists) and stale child references in the children map.
+        let orphans = {
+            let active: HashSet<String> = {
+                let bindings = self.bindings.read().await;
+                bindings.keys().cloned().collect()
+            };
+
+            let children = self.children.read().await;
+            let mut orphans: Vec<String> = Vec::new();
+
+            for (parent_id, child_list) in children.iter() {
+                if !active.contains(parent_id.as_str()) {
+                    // Parent binding is gone — all its children are orphans.
+                    orphans.extend(child_list.iter().cloned());
+                }
+                for child_id in child_list {
+                    if !active.contains(child_id.as_str()) {
+                        // Child binding is gone but still referenced.
+                        orphans.push(child_id.clone());
+                    }
+                }
+            }
+            orphans
+        };
+
+        if orphans.is_empty() {
+            return 0;
+        }
+
+        // Apply batch limit
+        let batch: Vec<String> = if orphans.len() > MAX_BATCH {
+            info!(
+                "cleanup_orphans: hit batch limit of {}, truncating from {} orphans",
+                MAX_BATCH,
+                orphans.len()
+            );
+            orphans.into_iter().take(MAX_BATCH).collect()
+        } else {
+            orphans
+        };
+
+        let removed = batch.len();
+
+        // Phase 2: Remove orphan bindings
+        {
+            let mut bindings = self.bindings.write().await;
+            for id in &batch {
+                bindings.remove(id);
+            }
+        }
+
+        // Phase 3: Clean up children map
+        {
+            let mut children = self.children.write().await;
+            for child_list in children.values_mut() {
+                child_list.retain(|id| !batch.contains(id));
+            }
+            children.retain(|_, child_list| !child_list.is_empty());
+        }
+
+        removed
     }
 
     /// Get a clone of the policy Arc for reading or updating.

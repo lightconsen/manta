@@ -448,7 +448,7 @@ impl Channel for SignalChannel {
     }
 
     async fn edit_message(&self, _message_id: Id, _new_content: String) -> crate::Result<()> {
-        // Signal does not support editing messages
+        warn!("edit_message called but Signal does not support message editing");
         Err(crate::error::SyscityError::Internal(
             "Signal does not support message editing".to_string(),
         ))

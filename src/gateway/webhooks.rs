@@ -167,8 +167,19 @@ async fn whatsapp_webhook_handler(
         for entry in entries {
             if let Some(changes) = entry.get("changes").and_then(|c| c.as_array()) {
                 for change in changes {
-                    if let Some(messages) = change
-                        .get("value")
+                    let value = change.get("value");
+
+                    // Log and acknowledge statuses events (delivered, read, failed)
+                    // instead of silently dropping them.
+                    if let Some(v) = &value {
+                        if let Some(statuses) = v.get("statuses") {
+                            crate::channels::whatsapp::WhatsappChannel::handle_statuses_event(
+                                statuses,
+                            );
+                        }
+                    }
+
+                    if let Some(messages) = value
                         .and_then(|v| v.get("messages"))
                         .and_then(|m| m.as_array())
                     {

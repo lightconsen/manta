@@ -293,6 +293,31 @@ impl WhatsappChannel {
         }
     }
 
+    /// Handle a WhatsApp statuses webhook event.
+    ///
+    /// WhatsApp sends `statuses` events (delivered, read, failed, etc.)
+    /// alongside message events in the same webhook payload. This function
+    /// logs the status at debug level so status updates are acknowledged
+    /// instead of silently dropped.
+    pub fn handle_statuses_event(statuses: &serde_json::Value) {
+        if let Some(status_array) = statuses.as_array() {
+            for status in status_array {
+                let status_type = status
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let recipient = status
+                    .get("recipient_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                debug!(
+                    "WhatsApp status update: status={} recipient={}",
+                    status_type, recipient
+                );
+            }
+        }
+    }
+
     /// Check if phone number is allowed
     fn is_number_allowed(&self, number: &str) -> bool {
         if self.config.allowed_numbers.is_empty() {
@@ -585,27 +610,45 @@ impl Channel for WhatsappChannel {
             crate::error::SyscityError::Validation(format!("Failed to serialize message: {}", e))
         })?;
 
-        // Send message
-        let response: WhatsappResponse = self.api_request("messages", Some(json_payload)).await?;
-
-        // Check for errors
-        if let Some(error) = response.error {
-            return Err(crate::error::SyscityError::ExternalService {
-                source: format!("WhatsApp API error: {} (code: {})", error.message, error.code),
-                cause: None,
-            });
-        }
-
-        // Track message ID if available
-        if let Some(messages) = response.messages {
-            if let Some(first) = messages.first() {
-                let mut context = self.message_context.write().await;
-                context.insert(first.id.clone(), formatted_number);
+        // Send message with exponential backoff (start 1s, multiply by 2, max 30s, 3 retries)
+        let mut last_err = None;
+        let mut delay = std::time::Duration::from_secs(1);
+        for attempt in 0..3 {
+            match self.api_request::<WhatsappResponse>("messages", Some(json_payload.clone())).await
+            {
+                Ok(response) => {
+                    if let Some(error) = response.error {
+                        return Err(crate::error::SyscityError::ExternalService {
+                            source: format!("WhatsApp API error: {} (code: {})", error.message, error.code),
+                            cause: None,
+                        });
+                    }
+                    // Track message ID if available
+                    if let Some(messages) = response.messages {
+                        if let Some(first) = messages.first() {
+                            let mut context = self.message_context.write().await;
+                            context.insert(first.id.clone(), formatted_number);
+                        }
+                    }
+                    debug!("WhatsApp message sent to {}", phone_number);
+                    return Ok(Id::new());
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt < 2 {
+                        warn!("WhatsApp send attempt {} failed, retrying in {:?}", attempt + 1, delay);
+                        tokio::time::sleep(delay).await;
+                        delay = (delay * 2).min(std::time::Duration::from_secs(30));
+                    }
+                }
             }
         }
 
-        debug!("WhatsApp message sent to {}", phone_number);
-        Ok(Id::new())
+        Err(last_err.unwrap_or_else(|| {
+            crate::error::SyscityError::Internal(
+                "WhatsApp send failed after 3 retries".to_string(),
+            )
+        }))
     }
 
     async fn send_typing(&self, _conversation_id: &ConversationId) -> crate::Result<()> {

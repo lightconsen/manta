@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
+use tracing::warn;
 
 /// Context for rendering a reply prefix template.
 #[derive(Debug, Clone, Default)]
@@ -147,6 +148,10 @@ impl ReplyPrefixTemplate {
                 if let Some(next) = chars.next() {
                     result.push(next);
                 } else {
+                    warn!(
+                        "reply_prefix: trailing backslash at end of template — unescape \
+                         failed, original character '\\' passed through"
+                    );
                     result.push(c);
                 }
             } else if c == '{' && chars.peek() == Some(&'{') {

@@ -458,21 +458,37 @@ impl Channel for SlackChannel {
                 _ => Self::markdown_to_mrkdwn(&message.content),
             };
 
-            // Send message using reqwest
+            // Send message using reqwest with basic retry
             let client = reqwest::Client::new();
-            let resp = client
-                .post("https://slack.com/api/chat.postMessage")
-                .header("Authorization", format!("Bearer {}", self.config.bot_token))
-                .header("Content-Type", "application/json")
-                .json(&serde_json::json!({
-                    "channel": channel_id,
-                    "text": content,
-                }))
-                .send()
-                .await
-                .map_err(|e| {
-                    crate::error::SyscityError::Internal(format!("Slack send failed: {}", e))
-                })?;
+            let attempt_send = || async {
+                client
+                    .post("https://slack.com/api/chat.postMessage")
+                    .header("Authorization", format!("Bearer {}", self.config.bot_token))
+                    .header("Content-Type", "application/json")
+                    .json(&serde_json::json!({
+                        "channel": &channel_id,
+                        "text": &content,
+                    }))
+                    .send()
+                    .await
+            };
+
+            let resp = match attempt_send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("Slack send failed (will retry once): {}", e);
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    match attempt_send().await {
+                        Ok(r) => r,
+                        Err(e2) => {
+                            return Err(crate::error::SyscityError::Internal(format!(
+                                "Slack send failed after retry: {}",
+                                e2
+                            )));
+                        }
+                    }
+                }
+            };
 
             let resp_status = resp.status();
             let resp_json: serde_json::Value = resp.json().await.unwrap_or_default();
@@ -695,12 +711,24 @@ async fn connect_and_listen(
 ) -> crate::Result<()> {
     use tokio_tungstenite::connect_async;
 
-    let (ws_stream, _) = connect_async(ws_url).await.map_err(|e| {
+    let ws_stream = tokio::time::timeout(
+        tokio::time::Duration::from_secs(5),
+        connect_async(ws_url),
+    )
+    .await
+    .map_err(|_| {
+        crate::error::SyscityError::Internal(
+            "Slack Socket Mode WebSocket connection timed out after 5s".to_string(),
+        )
+    })?
+    .map_err(|e| {
         crate::error::SyscityError::Internal(format!(
             "Slack Socket Mode WebSocket connection failed: {}",
             e
         ))
     })?;
+
+    let (ws_stream, _) = ws_stream;
 
     info!("Slack Socket Mode: WebSocket connected");
 

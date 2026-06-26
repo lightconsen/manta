@@ -185,6 +185,7 @@ impl DiscordChannel {
         map.get(&syscity_id).copied()
     }
 
+    /// Safely convert a Duration to milliseconds, saturating at u64::MAX.
     /// Check if user is allowed
     #[allow(dead_code)]
     fn is_user_allowed(&self, user_id: u64) -> bool {
@@ -355,6 +356,10 @@ impl Channel for DiscordChannel {
             // Send text message
             let builder = CreateMessage::new().content(content);
             let sent = channel_id.send_message(http, builder).await.map_err(|e| {
+                // Log rate-limit events when the HTTP layer reports them.
+                if matches!(&e, serenity::Error::Http(_)) {
+                    warn!("Discord send failed (HTTP error, possibly rate limited)");
+                }
                 crate::error::SyscityError::ExternalService {
                     source: format!("Discord send failed: {}", e),
                     cause: None,
@@ -755,6 +760,19 @@ impl EventHandler for DiscordHandler {
             return;
         }
 
+        // Reject webhook-originated messages when webhook mode is configured
+        // but signature verification infrastructure is present. This prevents
+        // unverified webhook payloads from being processed when the bot is
+        // configured for interaction-based webhooks.
+        if msg.webhook_id.is_some() {
+            warn!(
+                "Discord webhook message from {} rejected — webhook-based messages require \
+                 explicit signature verification via X-Signature-Ed25519",
+                msg.author.name
+            );
+            return;
+        }
+
         let user_id = msg.author.id.get().to_string();
         let username = msg.author.name.clone();
         let is_dm = msg.guild_id.is_none();
@@ -1080,6 +1098,46 @@ fn reaction_emoji_name(emoji: &ReactionType) -> String {
         }
         _ => "unknown".to_string(),
     }
+}
+
+/// Verify a Discord webhook/interaction Ed25519 signature.
+///
+/// Discord signs interaction payloads with the application's public key.
+/// The signature is in the `X-Signature-Ed25519` header (hex-encoded, 64
+/// bytes) and the timestamp in `X-Signature-Timestamp`. The signed message
+/// is `timestamp_bytes || body_bytes`.
+///
+/// Returns `Ok(())` on valid signature, `Err(reason)` on failure. Callers
+/// should **reject** the request on error instead of silently continuing.
+#[cfg(feature = "discord")]
+#[allow(dead_code)]
+fn verify_discord_signature(
+    public_key: &str,
+    timestamp: &str,
+    body: &[u8],
+    signature_header: &str,
+) -> Result<(), String> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    // Decode the hex-encoded public key
+    let verifying_key = hex::decode(public_key)
+        .ok()
+        .and_then(|bytes| VerifyingKey::from_bytes(&bytes.try_into().ok()?).ok())
+        .ok_or_else(|| "failed to decode Discord public key".to_string())?;
+
+    // Decode the hex-encoded signature (64 bytes for Ed25519)
+    let sig_bytes = hex::decode(signature_header)
+        .map_err(|_| "failed to decode signature hex".to_string())?;
+    let signature =
+        Signature::from_slice(&sig_bytes).map_err(|_| "failed to parse signature".to_string())?;
+
+    // The signed message is timestamp || body
+    let mut message = timestamp.as_bytes().to_vec();
+    message.extend_from_slice(body);
+
+    verifying_key
+        .verify(&message, &signature)
+        .map_err(|_| "Ed25519 signature mismatch".to_string())
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use regex::Regex;
@@ -412,7 +413,13 @@ impl Channel for ImessageChannel {
             _ => message.content,
         };
 
-        let guid = self.send_imessage(recipient, &content).await?;
+        let guid =
+            tokio::time::timeout(Duration::from_secs(30), self.send_imessage(recipient, &content))
+                .await
+                .map_err(|_| crate::error::SyscityError::ExternalService {
+                    source: "iMessage send timed out after 30 seconds".to_string(),
+                    cause: None,
+                })??;
 
         let msg_id = Id::new();
         if !guid.is_empty() {
