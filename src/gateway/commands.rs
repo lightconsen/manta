@@ -721,7 +721,7 @@ async fn handle_reset(
     if let Some(sid) = session_id {
         {
             let mut mgr = state.agents.manager.write().await;
-            mgr.terminate_session(&sid);
+            mgr.terminate_session(&sid).await;
             mgr.create_session(sid.clone());
         }
         // Clear persisted history so the session truly resets

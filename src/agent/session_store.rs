@@ -508,7 +508,6 @@ impl SessionStore {
                 last_activity = excluded.last_activity,
                 is_active = excluded.is_active,
                 state_json = excluded.state_json,
-                message_count = excluded.message_count,
                 name = excluded.name,
                 bound_agent_id = excluded.bound_agent_id,
                 transcript_id = excluded.transcript_id
@@ -714,6 +713,10 @@ impl SessionStore {
         .bind(now)
         .execute(&self.pool)
         .await
+        .map_err(|e| {
+            warn!("Failed to auto-create session row for {}: {}", params.session_id, e);
+            e
+        })
         .ok();
 
         let result = sqlx::query(
@@ -746,8 +749,10 @@ impl SessionStore {
         .bind(params.session_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| warn!("failed to increment session message_count: {e}"))
-        .ok();
+        .map_err(|e| SyscityError::Storage {
+            context: format!("Failed to increment session message_count for {}", params.session_id),
+            details: e.to_string(),
+        })?;
 
         Ok(result.last_insert_rowid())
     }
@@ -1004,8 +1009,10 @@ impl SessionStore {
         .bind(session_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| warn!("failed to update session message_count (+2): {e}"))
-        .ok();
+        .map_err(|e| SyscityError::Storage {
+            context: format!("Failed to increment session message_count (+2) for {}", session_id),
+            details: e.to_string(),
+        })?;
 
         debug!("Turn appended: {}/{} index={}", session_id, thread_id, turn_index);
         Ok(())
@@ -1114,8 +1121,10 @@ impl SessionStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| warn!("failed to decrement session message_count: {e}"))
-            .ok();
+            .map_err(|e| SyscityError::Storage {
+                context: format!("Failed to decrement session message_count for {}", session_id),
+                details: e.to_string(),
+            })?;
 
         debug!("Deleted turn {}/{}/{}: {} rows", session_id, thread_id, turn_index, affected);
         Ok(())
@@ -1126,22 +1135,34 @@ impl SessionStore {
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
             .fetch_one(&self.pool)
             .await
-            .unwrap_or(0);
+            .map_err(|e| SyscityError::Storage {
+                context: "Failed to count sessions".to_string(),
+                details: e.to_string(),
+            })?;
 
         let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE is_active = 1")
             .fetch_one(&self.pool)
             .await
-            .unwrap_or(0);
+            .map_err(|e| SyscityError::Storage {
+                context: "Failed to count active sessions".to_string(),
+                details: e.to_string(),
+            })?;
 
         let messages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_messages")
             .fetch_one(&self.pool)
             .await
-            .unwrap_or(0);
+            .map_err(|e| SyscityError::Storage {
+                context: "Failed to count messages".to_string(),
+                details: e.to_string(),
+            })?;
 
         let subagent_runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM subagent_runs")
             .fetch_one(&self.pool)
             .await
-            .unwrap_or(0);
+            .map_err(|e| SyscityError::Storage {
+                context: "Failed to count subagent runs".to_string(),
+                details: e.to_string(),
+            })?;
 
         Ok(SessionStats {
             total_sessions: total,

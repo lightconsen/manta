@@ -1248,7 +1248,7 @@ async fn handle_sessions_delete(
 
     {
         let mut mgr = state.agents.manager.write().await;
-        mgr.terminate_session(&params.session_id);
+        mgr.terminate_session(&params.session_id).await;
     }
 
     if let Some(ref store) = state.agents.store {

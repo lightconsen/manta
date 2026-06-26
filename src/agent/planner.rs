@@ -411,6 +411,7 @@ If changes are needed, provide a JSON object with:
         if let Ok(json_str) = Self::extract_json(content) {
             if let Ok(changes) = serde_json::from_str::<serde_json::Value>(&json_str) {
                 // Apply updates
+                let _ = &changes; // suppress unused warning if no fields matched
                 if let Some(updates) = changes["updates"].as_array() {
                     for update in updates {
                         if let (Some(task_id), Some(new_desc)) =
@@ -425,7 +426,11 @@ If changes are needed, provide a JSON object with:
 
                 // Note: Additions and removals would require more complex logic
                 // to maintain task dependencies and ordering
+            } else {
+                warn!("refine_plan: LLM returned unparseable JSON — {}", &json_str);
             }
+        } else {
+            warn!("refine_plan: failed to extract JSON block from LLM output");
         }
 
         Ok(())

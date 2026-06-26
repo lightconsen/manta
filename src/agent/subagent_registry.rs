@@ -10,6 +10,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tokio::sync::Notify;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
@@ -144,6 +145,7 @@ pub struct RunRecord {
 pub struct SubagentRegistry {
     runs: RwLock<HashMap<String, SubagentRun>>,
     metrics: RwLock<SubagentMetrics>,
+    notify: Notify,
     max_depth: u32,
     max_concurrent: usize,
 }
@@ -159,6 +161,7 @@ impl SubagentRegistry {
         Self {
             runs: RwLock::new(HashMap::new()),
             metrics: RwLock::new(SubagentMetrics::default()),
+            notify: Notify::new(),
             max_depth,
             max_concurrent,
         }
@@ -262,6 +265,8 @@ impl SubagentRegistry {
                 }
             }
         }
+
+        self.notify.notify_one();
     }
 
     // ------------------------------------------------------------------ //
@@ -276,27 +281,44 @@ impl SubagentRegistry {
     ) -> crate::Result<String> {
         let deadline = Instant::now() + timeout;
 
+        // Fast check before entering the notification loop.
+        if let Some(result) = self.check_run(run_id).await {
+            return result;
+        }
+
         loop {
-            if Instant::now() >= deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 return Err(SyscityError::SubagentTimeout);
             }
 
-            {
-                let runs = self.runs.read().await;
-                match runs.get(run_id) {
-                    None => return Err(SyscityError::SubagentNotFound),
-                    Some(run) => match &run.status {
-                        SubagentStatus::Completed(out) => return Ok(out.clone()),
-                        SubagentStatus::Failed(err) => {
-                            return Err(SyscityError::SubagentFailed(err.clone()))
-                        }
-                        SubagentStatus::Killed => return Err(SyscityError::SubagentKilled),
-                        SubagentStatus::Running => {}
-                    },
+            tokio::select! {
+                _ = self.notify.notified() => {
+                    if let Some(result) = self.check_run(run_id).await {
+                        return result;
+                    }
+                    // Spurious wakeup — loop and wait again.
+                }
+                _ = tokio::time::sleep(remaining) => {
+                    return Err(SyscityError::SubagentTimeout);
                 }
             }
+        }
+    }
 
-            tokio::time::sleep(Duration::from_millis(50)).await;
+    /// Check the run status without blocking. Returns `None` if still running.
+    async fn check_run(&self, run_id: &str) -> Option<crate::Result<String>> {
+        let runs = self.runs.read().await;
+        match runs.get(run_id) {
+            None => Some(Err(SyscityError::SubagentNotFound)),
+            Some(run) => match &run.status {
+                SubagentStatus::Completed(out) => Some(Ok(out.clone())),
+                SubagentStatus::Failed(err) => {
+                    Some(Err(SyscityError::SubagentFailed(err.clone())))
+                }
+                SubagentStatus::Killed => Some(Err(SyscityError::SubagentKilled)),
+                SubagentStatus::Running => None,
+            },
         }
     }
 

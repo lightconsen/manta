@@ -384,7 +384,12 @@ pub struct TranscriptStore {
     root_dir: PathBuf,
     /// In-memory buffer of active transcripts (session_id -> Transcript).
     active: std::sync::Mutex<HashMap<String, Transcript>>,
+    /// Max active sessions before LRU eviction.
+    max_sessions: usize,
 }
+
+/// Default max active sessions to prevent unbounded memory growth.
+const DEFAULT_MAX_SESSIONS: usize = 1000;
 
 impl TranscriptStore {
     /// Create a new transcript store.
@@ -393,7 +398,13 @@ impl TranscriptStore {
         Self {
             root_dir,
             active: std::sync::Mutex::new(HashMap::new()),
+            max_sessions: DEFAULT_MAX_SESSIONS,
         }
+    }
+
+    /// Set the max active sessions cap.
+    pub fn set_max_sessions(&mut self, max: usize) {
+        self.max_sessions = max;
     }
 
     /// Initialize the store (create directories).
@@ -404,6 +415,8 @@ impl TranscriptStore {
     }
 
     /// Get or create a transcript for a session.
+    ///
+    /// Evicts the least-recently-updated session when at capacity.
     pub fn get_or_create(
         &self,
         session_id: impl Into<String>,
@@ -413,9 +426,21 @@ impl TranscriptStore {
     ) -> std::sync::MutexGuard<'_, HashMap<String, Transcript>> {
         let session_id = session_id.into();
         let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        let is_new = !active.contains_key(&session_id);
         active
             .entry(session_id.clone())
             .or_insert_with(|| Transcript::new(session_id, channel, peer, scope));
+
+        // Evict the LRU session if we're over capacity.
+        if is_new && active.len() > self.max_sessions {
+            let oldest = active
+                .iter()
+                .min_by_key(|(_, t)| t.updated_at)
+                .map(|(id, _)| id.clone());
+            if let Some(oldest_id) = oldest {
+                active.remove(&oldest_id);
+            }
+        }
         active
     }
 

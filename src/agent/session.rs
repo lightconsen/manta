@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 pub use crate::acp::ThreadBinding;
@@ -378,7 +378,7 @@ impl MultiAgentSession {
 pub struct SessionManager {
     /// Active sessions (Arc-wrapped so the background processing task can
     /// access them)
-    sessions: HashMap<String, Arc<std::sync::Mutex<MultiAgentSession>>>,
+    sessions: HashMap<String, Arc<Mutex<MultiAgentSession>>>,
     /// Session timeout
     timeout: std::time::Duration,
     /// Optional persistent session store for unified session model
@@ -405,7 +405,7 @@ impl SessionManager {
     pub fn create_session(&mut self, session_id: String) -> mpsc::Sender<SessionMessage> {
         let (session, message_rx) = MultiAgentSession::new(session_id.clone());
         let sender = session.sender();
-        let session_arc = Arc::new(std::sync::Mutex::new(session));
+        let session_arc = Arc::new(Mutex::new(session));
 
         // Spawn session processing task, passing a shared handle to the session
         tokio::spawn(session_processing_task(
@@ -435,7 +435,7 @@ impl SessionManager {
     pub fn get_session(
         &self,
         session_id: &str,
-    ) -> Option<Arc<std::sync::Mutex<MultiAgentSession>>> {
+    ) -> Option<Arc<Mutex<MultiAgentSession>>> {
         self.sessions.get(session_id).cloned()
     }
 
@@ -450,12 +450,11 @@ impl SessionManager {
     }
 
     /// Terminate a session. Also updates SessionStore when available.
-    pub fn terminate_session(&mut self, session_id: &str) {
+    pub async fn terminate_session(&mut self, session_id: &str) {
         if let Some(arc) = self.sessions.get(session_id) {
-            if let Ok(mut session) = arc.lock() {
-                for agent_id in session.get_agents().keys().cloned().collect::<Vec<_>>() {
-                    session.terminate_agent(&agent_id);
-                }
+            let mut session = arc.lock().await;
+            for agent_id in session.get_agents().keys().cloned().collect::<Vec<_>>() {
+                session.terminate_agent(&agent_id);
             }
         }
         self.sessions.remove(session_id);
@@ -475,21 +474,18 @@ impl SessionManager {
     }
 
     /// Cleanup timed out sessions
-    pub fn cleanup_timed_out(&mut self) {
-        let timed_out: Vec<String> = self
-            .sessions
-            .iter()
-            .filter(|(_, arc)| {
-                arc.lock()
-                    .map(|s| s.is_timed_out(self.timeout))
-                    .unwrap_or(false)
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
+    pub async fn cleanup_timed_out(&mut self) {
+        let mut timed_out = Vec::new();
+        for (id, arc) in &self.sessions {
+            let session = arc.lock().await;
+            if session.is_timed_out(self.timeout) {
+                timed_out.push(id.clone());
+            }
+        }
 
         for session_id in timed_out {
             info!("Session '{}' timed out, terminating", session_id);
-            self.terminate_session(&session_id);
+            self.terminate_session(&session_id).await;
         }
     }
 
@@ -520,7 +516,7 @@ impl SessionManager {
 async fn session_processing_task(
     session_id: String,
     mut message_rx: mpsc::Receiver<SessionMessage>,
-    session: Arc<std::sync::Mutex<MultiAgentSession>>,
+    session: Arc<Mutex<MultiAgentSession>>,
 ) {
     info!("Session processing task started for {}", session_id);
 
@@ -528,37 +524,25 @@ async fn session_processing_task(
         match msg {
             // ── Status query ────────────────────────────────────────────────
             SessionMessage::GetStatus { respond_to } => {
-                let status =
-                    session
-                        .lock()
-                        .map(|s| s.get_status())
-                        .unwrap_or_else(|_| SessionStatus {
-                            session_id: session_id.clone(),
-                            agent_count: 0,
-                            active_agents: vec![],
-                            thread_count: 0,
-                        });
+                let status = {
+                    let s = session.lock().await;
+                    s.get_status()
+                };
                 let _ = respond_to.send(status);
             }
 
             // ── Spawn a new agent in the session ────────────────────────────
             SessionMessage::SpawnAgent { agent_id, personality, binding } => {
-                if let Ok(mut s) = session.lock() {
-                    s.spawn_agent(agent_id.clone(), personality, binding);
-                    info!("Session {}: spawned agent {}", session_id, agent_id);
-                } else {
-                    error!("Session {}: mutex poisoned on SpawnAgent", session_id);
-                }
+                let mut s = session.lock().await;
+                s.spawn_agent(agent_id.clone(), personality, binding);
+                info!("Session {}: spawned agent {}", session_id, agent_id);
             }
 
             // ── Terminate an agent ──────────────────────────────────────────
             SessionMessage::TerminateAgent { agent_id } => {
-                if let Ok(mut s) = session.lock() {
-                    s.terminate_agent(&agent_id);
-                    info!("Session {}: terminated agent {}", session_id, agent_id);
-                } else {
-                    error!("Session {}: mutex poisoned on TerminateAgent", session_id);
-                }
+                let mut s = session.lock().await;
+                s.terminate_agent(&agent_id);
+                info!("Session {}: terminated agent {}", session_id, agent_id);
             }
 
             // ── Route a message to a specific agent ─────────────────────────
@@ -566,45 +550,43 @@ async fn session_processing_task(
             // it busy and log. Callers that need actual agent execution should
             // use `Agent::process_message_with_progress` directly.
             SessionMessage::RouteToAgent { agent_id, message } => {
-                if let Ok(mut s) = session.lock() {
-                    if let Some(agent) = s.get_agent_mut(&agent_id) {
-                        agent.mark_busy();
-                        debug!(
-                            "Session {}: routed {} char message to agent {}",
-                            session_id,
-                            message.content.len(),
-                            agent_id
-                        );
-                    } else {
-                        warn!(
-                            "Session {}: RouteToAgent — agent {} not found",
-                            session_id, agent_id
-                        );
-                    }
+                let mut s = session.lock().await;
+                if let Some(agent) = s.get_agent_mut(&agent_id) {
+                    agent.mark_busy();
+                    debug!(
+                        "Session {}: routed {} char message to agent {}",
+                        session_id,
+                        message.content.len(),
+                        agent_id
+                    );
+                } else {
+                    warn!(
+                        "Session {}: RouteToAgent — agent {} not found",
+                        session_id, agent_id
+                    );
                 }
             }
 
             // ── Broadcast a message to all (non-excluded) agents ────────────
             SessionMessage::Broadcast { message, exclude_agent } => {
-                if let Ok(mut s) = session.lock() {
-                    let targets: Vec<String> = s
-                        .get_active_agents()
-                        .iter()
-                        .filter(|a| exclude_agent.as_deref() != Some(&a.id))
-                        .map(|a| a.id.clone())
-                        .collect();
+                let mut s = session.lock().await;
+                let targets: Vec<String> = s
+                    .get_active_agents()
+                    .iter()
+                    .filter(|a| exclude_agent.as_deref() != Some(&a.id))
+                    .map(|a| a.id.clone())
+                    .collect();
 
-                    debug!(
-                        "Session {}: broadcast {} char message to {} agents",
-                        session_id,
-                        message.content.len(),
-                        targets.len()
-                    );
+                debug!(
+                    "Session {}: broadcast {} char message to {} agents",
+                    session_id,
+                    message.content.len(),
+                    targets.len()
+                );
 
-                    for agent_id in targets {
-                        if let Some(agent) = s.get_agent_mut(&agent_id) {
-                            agent.mark_busy();
-                        }
+                for agent_id in targets {
+                    if let Some(agent) = s.get_agent_mut(&agent_id) {
+                        agent.mark_busy();
                     }
                 }
             }
@@ -987,7 +969,7 @@ mod tests {
         let mut manager = SessionManager::new();
         manager.create_session("sess1".to_string());
         assert_eq!(manager.list_sessions().await.len(), 1);
-        manager.terminate_session("sess1");
+        manager.terminate_session("sess1").await;
         assert!(manager.list_sessions().await.is_empty());
         assert!(manager.get_session("sess1").is_none());
     }
@@ -1001,7 +983,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         assert_eq!(manager.list_sessions().await.len(), 1);
-        manager.cleanup_timed_out();
+        manager.cleanup_timed_out().await;
         assert!(manager.list_sessions().await.is_empty());
     }
 

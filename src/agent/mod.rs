@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -844,6 +844,65 @@ pub struct Agent {
     /// access to filtered perception events, sensor snapshots, and
     /// LLM-generated environment summaries.
     perception_adapter: Option<Arc<dyn crate::perception::AgentPerceptionAdapter>>,
+    /// Per-conversation concurrency guards to prevent reentrant processing
+    /// of the same conversation_id.
+    concurrency_guards: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+}
+
+/// RAII guard that reinserts a Thread into `thread_map` on drop.
+///
+/// Prevents thread loss if processing panics between take-out and reinsertion.
+struct ThreadGuard {
+    map: Arc<Mutex<HashMap<String, Thread>>>,
+    key: String,
+    thread: Option<Thread>,
+}
+
+impl ThreadGuard {
+    /// Take a thread from the map by key.
+    async fn take(map: &Arc<Mutex<HashMap<String, Thread>>>, key: &str) -> Self {
+        let mut guard = map.lock().await;
+        let thread = guard.remove(key);
+        ThreadGuard {
+            map: map.clone(),
+            key: key.to_string(),
+            thread,
+        }
+    }
+
+    /// Get a mutable reference to the held thread.
+    #[allow(clippy::expect_used)]
+    fn get_mut(&mut self) -> &mut Thread {
+        self.thread
+            .as_mut()
+            .expect("ThreadGuard: thread already consumed")
+    }
+
+    /// Consume the guard and return the thread for explicit reinsertion.
+    /// Drop will NOT reinsert since the thread is moved out.
+    #[allow(clippy::expect_used)]
+    fn into_thread(mut self) -> Thread {
+        self.thread
+            .take()
+            .expect("ThreadGuard: thread already consumed")
+    }
+}
+
+impl Drop for ThreadGuard {
+    fn drop(&mut self) {
+        // On the normal path, `into_thread()` or `discard()` sets
+        // `self.thread = None` before this guard is dropped, so nothing
+        // happens here. On panic the thread is still present and we spawn
+        // a task to reinsert it — the brief gap is acceptable for recovery.
+        if let Some(thread) = self.thread.take() {
+            let map = self.map.clone();
+            let key = self.key.clone();
+            tokio::spawn(async move {
+                let mut guard = map.lock().await;
+                guard.insert(key, thread);
+            });
+        }
+    }
 }
 
 impl Agent {
@@ -887,6 +946,7 @@ impl Agent {
             goal_planner: None,
             thread_binding_manager: None,
             perception_adapter: None,
+            concurrency_guards: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -1822,41 +1882,56 @@ Your response:"#,
             }
         }
 
-        // ── Thread take-out ───────────────────────────────────────────────────
-        // Acquire the Thread for this conversation (or create a new one).
-        // The lock is dropped before the LLM call to avoid holding it during
-        // a long-running async operation.
-        let mut thread = {
-            let mut map = self.thread_map.lock().await;
-            match map.remove(&conversation_id) {
-                Some(t) => t,
-                None => {
-                    // First message for this conversation — build initial Context.
-                    let ctx = self
-                        .build_fresh_context(&conversation_id, &user_id, &content)
-                        .await;
-                    let thread_id = format!("thread-{}", &conversation_id);
-                    // Persist the new thread record (fire-and-forget).
-                    if let (Some(store), Some(sid)) =
-                        (self.session_store.clone(), self.session_id.clone())
-                    {
-                        let tid = thread_id.clone();
-                        let label = conversation_id.clone();
-                        tokio::spawn(async move {
-                            let _ = store
-                                .save_thread(
-                                    &sid,
-                                    &tid,
-                                    &label,
-                                    chrono::Utc::now().timestamp_millis(),
-                                )
-                                .await;
-                        });
-                    }
-                    Thread::from_context(thread_id, &conversation_id, ctx)
-                }
-            }
+        // ── Per-conversation concurrency guard ──────────────────────────────
+        // Prevents reentrant processing: if a second message arrives for the
+        // same conversation_id while one is in-flight, it waits here.
+        let sem = {
+            let mut guards = self.concurrency_guards.lock().await;
+            guards
+                .entry(conversation_id.clone())
+                .or_insert_with(|| Arc::new(Semaphore::new(1)))
+                .clone()
         };
+        let _permit = sem.acquire().await.unwrap_or_else(|_| {
+            // Semaphore is only closed if the Arc is dropped, which shouldn't
+            // happen while we hold a clone. The permit is a RAII guard.
+            unreachable!("concurrency semaphore unexpectedly closed")
+        });
+
+        // ── Thread take-out (panic-safe via ThreadGuard) ────────────────────
+        // ThreadGuard reinserts the thread into thread_map on Drop, preventing
+        // thread loss if processing panics between take-out and reinsertion.
+        let mut guard = ThreadGuard::take(&self.thread_map, &conversation_id).await;
+        if guard.thread.is_none() {
+            // First message for this conversation — build initial Context.
+            let ctx = self
+                .build_fresh_context(&conversation_id, &user_id, &content)
+                .await;
+            let thread_id = format!("thread-{}", &conversation_id);
+            // Persist the new thread record (fire-and-forget).
+            if let (Some(store), Some(sid)) =
+                (self.session_store.clone(), self.session_id.clone())
+            {
+                let tid = thread_id.clone();
+                let label = conversation_id.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = store
+                        .save_thread(
+                            &sid,
+                            &tid,
+                            &label,
+                            chrono::Utc::now().timestamp_millis(),
+                        )
+                        .await
+                    {
+                        warn!("Failed to persist thread {} for session {}: {}", tid, sid, e);
+                    }
+                });
+            }
+            guard.thread = Some(Thread::from_context(thread_id, &conversation_id, ctx));
+        }
+        let thread = guard.get_mut();
+        // Safe: from here on, guard.thread is always Some until into_thread().
 
         // Apply ACP max iteration override for existing threads
         let override_opt = *self.max_tool_iterations_override.read().await;
@@ -1906,9 +1981,12 @@ Your response:"#,
                     let user_c = content.clone();
                     let t_idx = turn_idx as i64;
                     tokio::spawn(async move {
-                        let _ = store
+                        if let Err(e) = store
                             .append_turn(&sid, &tid, t_idx, &user_c, &asst_text, "complete")
-                            .await;
+                            .await
+                        {
+                            warn!("Failed to persist turn {} for session {}: {}", t_idx, sid, e);
+                        }
                     });
                 }
                 Ok(resp)
@@ -1925,7 +2003,7 @@ Your response:"#,
         // ── Put thread back ───────────────────────────────────────────────────
         {
             let mut map = self.thread_map.lock().await;
-            map.insert(conversation_id.clone(), thread);
+            map.insert(conversation_id.clone(), guard.into_thread());
         }
 
         let response = llm_result?;
@@ -2248,36 +2326,49 @@ Your response:"#,
             }
         }
 
-        // ── Thread take-out (same pattern as process_message) ────────────────
-        let mut thread = {
-            let mut map = self.thread_map.lock().await;
-            match map.remove(&conversation_id) {
-                Some(t) => t,
-                None => {
-                    let ctx = self
-                        .build_fresh_context(&conversation_id, &user_id, &content)
-                        .await;
-                    let thread_id = format!("thread-{}", &conversation_id);
-                    if let (Some(store), Some(sid)) =
-                        (self.session_store.clone(), self.session_id.clone())
-                    {
-                        let tid = thread_id.clone();
-                        let label = conversation_id.clone();
-                        tokio::spawn(async move {
-                            let _ = store
-                                .save_thread(
-                                    &sid,
-                                    &tid,
-                                    &label,
-                                    chrono::Utc::now().timestamp_millis(),
-                                )
-                                .await;
-                        });
-                    }
-                    Thread::from_context(thread_id, &conversation_id, ctx)
-                }
-            }
+        // ── Per-conversation concurrency guard ──────────────────────────────
+        let sem = {
+            let mut guards = self.concurrency_guards.lock().await;
+            guards
+                .entry(conversation_id.clone())
+                .or_insert_with(|| Arc::new(Semaphore::new(1)))
+                .clone()
         };
+        let _permit = sem.acquire().await.unwrap_or_else(|_| {
+            // Semaphore is only closed if the Arc is dropped, which shouldn't
+            // happen while we hold a clone. The permit is a RAII guard.
+            unreachable!("concurrency semaphore unexpectedly closed")
+        });
+
+        // ── Thread take-out (panic-safe via ThreadGuard) ────────────────────
+        let mut guard = ThreadGuard::take(&self.thread_map, &conversation_id).await;
+        if guard.thread.is_none() {
+            let ctx = self
+                .build_fresh_context(&conversation_id, &user_id, &content)
+                .await;
+            let thread_id = format!("thread-{}", &conversation_id);
+            if let (Some(store), Some(sid)) =
+                (self.session_store.clone(), self.session_id.clone())
+            {
+                let tid = thread_id.clone();
+                let label = conversation_id.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = store
+                        .save_thread(
+                            &sid,
+                            &tid,
+                            &label,
+                            chrono::Utc::now().timestamp_millis(),
+                        )
+                        .await
+                    {
+                        warn!("Failed to persist thread {} for session {}: {}", tid, sid, e);
+                    }
+                });
+            }
+            guard.thread = Some(Thread::from_context(thread_id, &conversation_id, ctx));
+        }
+        let thread = guard.get_mut();
 
         // Apply ACP max iteration override for existing threads
         let override_opt = *self.max_tool_iterations_override.read().await;
@@ -2316,9 +2407,12 @@ Your response:"#,
                     let user_c = content.clone();
                     let t_idx = turn_idx as i64;
                     tokio::spawn(async move {
-                        let _ = store
+                        if let Err(e) = store
                             .append_turn(&sid, &tid, t_idx, &user_c, &asst_text, "complete")
-                            .await;
+                            .await
+                        {
+                            warn!("Failed to persist turn {} for session {}: {}", t_idx, sid, e);
+                        }
                     });
                 }
                 Ok(resp)
@@ -2334,7 +2428,7 @@ Your response:"#,
         // ── Put thread back ───────────────────────────────────────────────────
         {
             let mut map = self.thread_map.lock().await;
-            map.insert(conversation_id.clone(), thread);
+            map.insert(conversation_id.clone(), guard.into_thread());
         }
 
         let response = llm_result?;
@@ -3459,7 +3553,9 @@ Your response:"#,
                 {
                     let tid = thread.id.clone();
                     tokio::spawn(async move {
-                        let _ = store.delete_turn(&sid, &tid, last_idx).await;
+                        if let Err(e) = store.delete_turn(&sid, &tid, last_idx).await {
+                            warn!("Failed to delete turn {} for session {}: {}", last_idx, sid, e);
+                        }
                     });
                 }
             }

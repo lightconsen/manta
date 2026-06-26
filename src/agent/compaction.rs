@@ -3,6 +3,7 @@
 //! Triggers a silent agent turn before compaction to store durable memories.
 
 use sha2::{Digest, Sha256};
+use tracing::warn;
 
 /// Default soft token threshold - flush triggers when session nears compaction
 pub const DEFAULT_MEMORY_FLUSH_SOFT_TOKENS: usize = 4000;
@@ -88,13 +89,26 @@ pub fn compute_context_hash(messages: &[(String, String)]) -> String {
         "{}:{}",
         messages.len(),
         tail.iter()
-            .map(|(role, content)| format!("[{}:{}]", role, content.len()))
+            .map(|(role, content)| {
+                let truncated: &str = if content.len() > 200 {
+                    warn!(
+                        "compute_context_hash: truncating long {} message ({} bytes)",
+                        role,
+                        content.len()
+                    );
+                    &content[..200]
+                } else {
+                    content
+                };
+                format!("[{}:{}]", role, truncated)
+            })
             .collect::<Vec<_>>()
             .join("\x00")
     );
     let hash = Sha256::digest(payload.as_bytes());
+    let hex = format!("{:x}", hash);
     // Truncate to 16 hex chars (collision-resistant enough for dedup)
-    format!("{:x}", hash)[..16].to_string()
+    hex.get(..16).unwrap_or(&hex).to_string()
 }
 
 /// Check if flush already ran for current compaction cycle

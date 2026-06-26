@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Type of artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,7 +214,13 @@ impl Artifact {
             return Some(content.clone());
         }
         if let Some(ref path) = self.file_path {
-            return tokio::fs::read_to_string(path).await.ok();
+            return match tokio::fs::read_to_string(path).await {
+                Ok(content) => Some(content),
+                Err(e) => {
+                    warn!("Failed to read artifact file {}: {}", path, e);
+                    None
+                }
+            };
         }
         None
     }
@@ -261,7 +267,14 @@ pub struct ArtifactStore {
     artifacts: std::sync::Mutex<HashMap<String, Vec<Artifact>>>,
     /// Root directory for file-backed artifacts.
     root_dir: PathBuf,
+    /// Max sessions before LRU eviction.
+    max_sessions: usize,
+    /// Timestamp of last access per session (for LRU eviction).
+    last_accessed: std::sync::Mutex<HashMap<String, DateTime<Utc>>>,
 }
+
+/// Default max active artifact sessions to prevent unbounded memory growth.
+const DEFAULT_MAX_SESSIONS: usize = 1000;
 
 impl ArtifactStore {
     /// Create a new artifact store.
@@ -269,6 +282,38 @@ impl ArtifactStore {
         Self {
             artifacts: std::sync::Mutex::new(HashMap::new()),
             root_dir: root_dir.into(),
+            max_sessions: DEFAULT_MAX_SESSIONS,
+            last_accessed: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Set the max sessions cap.
+    pub fn set_max_sessions(&mut self, max: usize) {
+        self.max_sessions = max;
+    }
+
+    /// Mark a session as recently accessed.
+    fn touch_session(&self, session_id: &str) {
+        if let Ok(mut last) = self.last_accessed.lock() {
+            last.insert(session_id.to_string(), Utc::now());
+        }
+    }
+
+    /// Evict the LRU session if we're at capacity (caller must hold `artifacts`).
+    fn evict_lru(&self, artifacts: &mut HashMap<String, Vec<Artifact>>, new_session_id: &str) {
+        if artifacts.len() <= self.max_sessions {
+            return;
+        }
+        let oldest = self
+            .last_accessed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(id, _)| *id != new_session_id)
+            .min_by_key(|(_, ts)| **ts)
+            .map(|(id, _)| id.clone());
+        if let Some(oldest_id) = oldest {
+            artifacts.remove(&oldest_id);
         }
     }
 
@@ -284,23 +329,32 @@ impl ArtifactStore {
         let mut artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         let id = artifact.id.clone();
         let session_id = artifact.session_id.clone();
+        let is_new = !artifacts.contains_key(&session_id);
         let list = artifacts.entry(session_id.clone()).or_default();
         list.push(artifact);
+        self.touch_session(&session_id);
+        if is_new {
+            self.evict_lru(&mut artifacts, &session_id);
+        }
         debug!("Added artifact '{}' to session {}", id, session_id);
     }
 
     /// Get all artifacts for a session.
     pub fn get_for_session(&self, session_id: &str) -> Vec<Artifact> {
         let artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
-        artifacts.get(session_id).cloned().unwrap_or_default()
+        let result = artifacts.get(session_id).cloned().unwrap_or_default();
+        self.touch_session(session_id);
+        result
     }
 
     /// Get a specific artifact by ID.
     pub fn get(&self, session_id: &str, artifact_id: &str) -> Option<Artifact> {
         let artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
-        artifacts
+        let result = artifacts
             .get(session_id)
-            .and_then(|list| list.iter().find(|a| a.id == artifact_id).cloned())
+            .and_then(|list| list.iter().find(|a| a.id == artifact_id).cloned());
+        self.touch_session(session_id);
+        result
     }
 
     /// List all artifacts across all sessions.
@@ -312,10 +366,12 @@ impl ArtifactStore {
     /// List artifact IDs for a session.
     pub fn list_session(&self, session_id: &str) -> Vec<String> {
         let artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
-        artifacts
+        let result = artifacts
             .get(session_id)
             .map(|list| list.iter().map(|a| a.id.clone()).collect())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        self.touch_session(session_id);
+        result
     }
 
     /// Remove a specific artifact.
@@ -327,6 +383,7 @@ impl ArtifactStore {
                 return Some(list.remove(pos));
             }
         }
+        self.touch_session(session_id);
         None
     }
 
@@ -334,6 +391,9 @@ impl ArtifactStore {
     pub fn clear_session(&self, session_id: &str) -> Vec<Artifact> {
         let mut artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         let removed = artifacts.remove(session_id).unwrap_or_default();
+        if let Ok(mut last) = self.last_accessed.lock() {
+            last.remove(session_id);
+        }
         info!("Cleared {} artifacts for session {}", removed.len(), session_id);
         removed
     }
