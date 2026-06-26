@@ -169,16 +169,6 @@ impl ReplyPrefixTemplate {
                 }
                 let rendered = self.render_placeholder(placeholder.trim(), ctx);
                 result.push_str(&rendered);
-            } else if c == '\\' && chars.peek() == Some(&'{') {
-                // Escaped {{
-                chars.next(); // consume {
-                if chars.peek() == Some(&'{') {
-                    chars.next(); // consume second {
-                    result.push_str("{{");
-                } else {
-                    result.push('\\');
-                    result.push('{');
-                }
             } else {
                 result.push(c);
             }

@@ -195,7 +195,7 @@ impl SessionEnvelopeManager {
         contexts.retain(|_, ctx| {
             ctx.previous_timestamp
                 .map(|ts| now - ts <= timeout)
-                .unwrap_or(true)
+                .unwrap_or(false)
         });
         before - contexts.len()
     }
@@ -332,9 +332,12 @@ mod tests {
         manager.get_or_create("active").await;
         manager.get_or_create("idle").await;
 
-        // Set idle conv to be idle
+        // Set timestamps: active = recent, idle = old
         {
             let mut contexts = manager.contexts.write().await;
+            if let Some(ctx) = contexts.get_mut("active") {
+                ctx.previous_timestamp = Some(Utc::now());
+            }
             if let Some(ctx) = contexts.get_mut("idle") {
                 ctx.previous_timestamp = Some(Utc::now() - chrono::Duration::hours(2));
             }

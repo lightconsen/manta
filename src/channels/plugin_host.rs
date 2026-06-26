@@ -268,9 +268,9 @@ impl PluginChannel {
                                 Ok(json) => match serde_json::from_str::<serde_json::Value>(&json) {
                                     Ok(msg) => {
                                         // Send to host's message channel
-                                        if let Some(tx) = caller.data().message_tx.clone().into() {
-                                            // Parse incoming message from JSON
-                                            let incoming = IncomingMessage {
+                                        let tx = caller.data().message_tx.clone();
+                                        // Parse incoming message from JSON
+                                        let incoming = IncomingMessage {
                                                 id: Id::new(),
                                                 user_id: UserId::new(
                                                     msg.get("user_id")
@@ -295,9 +295,8 @@ impl PluginChannel {
                                                 },
                                                 mention: crate::channels::MentionState::DirectMessage,
                                             };
-                                            if let Err(e) = tx.send(incoming) {
-                                                eprintln!("[WARN] Plugin receive_message: failed to send: {}", e);
-                                            }
+                                        if let Err(e) = tx.send(incoming) {
+                                            eprintln!("[WARN] Plugin receive_message: failed to send: {}", e);
                                         }
                                     }
                                     Err(e) => eprintln!("[WARN] Plugin receive_message: invalid JSON: {}", e),
@@ -892,8 +891,8 @@ impl PluginChannelRegistry {
             (config.unwrap_or_else(|| serde_json::json!({})), None)
         };
 
-        let plugin = PluginChannel::load(&wasm_path, config, self.message_tx.clone()).await?;
-        let _ = plugin.init(&serde_json::json!({})).await?;
+        let plugin = PluginChannel::load(&wasm_path, config.clone(), self.message_tx.clone()).await?;
+        let _ = plugin.init(&config).await?;
 
         let plugin = Arc::new(plugin);
 

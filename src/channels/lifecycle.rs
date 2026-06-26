@@ -219,12 +219,26 @@ impl ChannelLifecycle {
 
     /// Wait for the channel to stop
     async fn wait_for_stop(&self) {
-        // Poll health check until it fails or stop is requested
+        // Poll health check until it fails or stop is requested.
+        // Max wait 30s to prevent infinite loop on channels whose
+        // health_check always returns true (e.g. webhook-based).
+        let start = tokio::time::Instant::now();
+        let max_wait = Duration::from_secs(30);
+
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
             // Check if stop was requested
             if self.state.read().await.should_stop {
+                break;
+            }
+
+            // Don't wait forever for channels that always report healthy
+            if start.elapsed() >= max_wait {
+                warn!(
+                    "Channel {} did not stop within {:?}, forcing stop",
+                    self.name, max_wait
+                );
                 break;
             }
 

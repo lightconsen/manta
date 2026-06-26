@@ -194,7 +194,7 @@ impl TrackedThreadBinding {
 #[derive(Debug, Clone)]
 pub struct ThreadBindingManager {
     /// Policy governing thread binding behavior.
-    policy: ThreadBindingPolicy,
+    policy: Arc<RwLock<ThreadBindingPolicy>>,
     /// Active thread bindings: session_id -> binding.
     bindings: Arc<RwLock<HashMap<String, TrackedThreadBinding>>>,
     /// Parent -> children mapping for hierarchy tracking.
@@ -205,7 +205,7 @@ impl ThreadBindingManager {
     /// Create a new manager with the given policy.
     pub fn new(policy: ThreadBindingPolicy) -> Self {
         Self {
-            policy,
+            policy: Arc::new(RwLock::new(policy)),
             bindings: Arc::new(RwLock::new(HashMap::new())),
             children: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -279,9 +279,10 @@ impl ThreadBindingManager {
     pub async fn is_valid(&self, session_id: &str) -> bool {
         let bindings = self.bindings.read().await;
         match bindings.get(session_id) {
-            Some(binding) => self
-                .policy
-                .is_valid(&binding.last_activity, &binding.created_at),
+            Some(binding) => {
+                let policy = self.policy.read().await;
+                policy.is_valid(&binding.last_activity, &binding.created_at)
+            }
             None => false,
         }
     }
@@ -300,8 +301,12 @@ impl ThreadBindingManager {
 
     /// Check if a parent can spawn another child based on max_children policy.
     pub async fn can_spawn_child(&self, parent_id: &str) -> bool {
-        match self.policy.max_children {
-            Some(max) => self.child_count(parent_id).await < max,
+        let policy = self.policy.read().await;
+        match policy.max_children {
+            Some(max) => {
+                drop(policy);
+                self.child_count(parent_id).await < max
+            }
             None => true,
         }
     }
@@ -316,29 +321,35 @@ impl ThreadBindingManager {
             None => return PlacementDecision::CreateNew,
         };
 
+        let policy = self.policy.read().await;
         // Check validity
-        if !self
-            .policy
-            .is_valid(&binding.last_activity, &binding.created_at)
-        {
+        if !policy.is_valid(&binding.last_activity, &binding.created_at) {
             return PlacementDecision::CreateNew;
         }
 
-        match self.policy.placement_hint {
+        match policy.placement_hint {
             PlacementHint::Current => PlacementDecision::UseCurrent,
             PlacementHint::Child => {
-                if self.policy.max_children.is_none_or(|_max| {
-                    // Runtime check on child count would need to be done in
-                    // a separate step since we hold the read lock here
-                    true
-                }) {
-                    PlacementDecision::SpawnChild {
-                        // Check if we can actually spawn
+                match policy.max_children {
+                    None => PlacementDecision::SpawnChild {
                         can_spawn: true,
-                        spawn_target: self.policy.spawn_target,
+                        spawn_target: policy.spawn_target,
+                    },
+                    Some(max) => {
+                        let children = self.children.read().await;
+                        let count = children
+                            .get(session_id)
+                            .map(|c| c.len() as u32)
+                            .unwrap_or(0);
+                        if count < max {
+                            PlacementDecision::SpawnChild {
+                                can_spawn: true,
+                                spawn_target: policy.spawn_target,
+                            }
+                        } else {
+                            PlacementDecision::UseCurrent
+                        }
                     }
-                } else {
-                    PlacementDecision::UseCurrent
                 }
             }
         }
@@ -350,8 +361,10 @@ impl ThreadBindingManager {
     pub async fn reap(&self) -> usize {
         let mut bindings = self.bindings.write().await;
         let now = Utc::now();
-        let idle_timeout = self.policy.idle_timeout;
-        let max_age = self.policy.max_age;
+        let policy = self.policy.read().await;
+        let idle_timeout = policy.idle_timeout;
+        let max_age = policy.max_age;
+        drop(policy);
 
         let before = bindings.len();
         bindings.retain(|_, binding| {
@@ -359,32 +372,28 @@ impl ThreadBindingManager {
         });
         let after = bindings.len();
 
-        // Also clean up stale parent-child relationships
+        // Collect active keys while holding bindings lock, then use them
+        // to clean up parent-child relationships without blocking reads.
+        let active_keys: Vec<String> = bindings.keys().cloned().collect();
         drop(bindings);
+
         let mut children = self.children.write().await;
-        children.retain(|_, child_list| {
-            child_list.retain(|child_id| {
-                let bindings = self.bindings.blocking_read();
-                bindings.contains_key(child_id)
-            });
-            !child_list.is_empty()
-        });
+        for child_list in children.values_mut() {
+            child_list.retain(|child_id| active_keys.contains(child_id));
+        }
+        children.retain(|_, child_list| !child_list.is_empty());
 
         before - after
     }
 
-    /// Get a reference to the policy.
-    pub fn policy(&self) -> &ThreadBindingPolicy {
-        &self.policy
+    /// Get a clone of the policy Arc for reading or updating.
+    pub fn policy_arc(&self) -> Arc<RwLock<ThreadBindingPolicy>> {
+        self.policy.clone()
     }
 
-    /// Update the policy.
-    pub async fn set_policy(&self, policy: ThreadBindingPolicy) {
-        // We can't directly assign to an Arc<RwLock<>> field since we use
-        // an immutable reference. Instead, we'd need to store the policy
-        // behind a RwLock itself. For now, this is a placeholder.
-        // The policy is set at construction time.
-        let _ = policy;
+    /// Update the policy at runtime.
+    pub async fn set_policy(&self, new_policy: ThreadBindingPolicy) {
+        *self.policy.write().await = new_policy;
     }
 }
 
