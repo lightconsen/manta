@@ -435,6 +435,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
+        .map_err(|e| warn!("Failed to create index idx_messages_thread: {}", e))
         .ok();
 
         // ── Subagent run records ──────────────────────────────────────────────
@@ -473,6 +474,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
+        .map_err(|e| warn!("Failed to create index idx_subagent_runs_session: {}", e))
         .ok();
 
         sqlx::query(
@@ -480,6 +482,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
+        .map_err(|e| warn!("Failed to create index idx_subagent_runs_subagent: {}", e))
         .ok();
 
         // ── ACP session records ───────────────────────────────────────────────
@@ -506,6 +509,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
+        .map_err(|e| warn!("Failed to create index idx_acp_sessions_parent: {}", e))
         .ok();
 
         info!("Session storage schema initialized");

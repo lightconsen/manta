@@ -3756,6 +3756,12 @@ Your response:"#,
             budget.clear_session(conversation_id);
         }
 
+        // Remove the active plan for this conversation to prevent memory leak
+        {
+            let mut plans = self.active_plans.write().await;
+            plans.remove(conversation_id);
+        }
+
         // Determine if compaction is needed
         let age_secs = thread.created_at.elapsed().unwrap_or_default().as_secs();
         let too_old = age_secs > MAX_AGE_DAYS * 86_400;
