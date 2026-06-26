@@ -199,13 +199,26 @@ impl ChannelAcpBridge {
     }
 
     /// Remove binding by ACP session ID.
+    ///
+    /// Acquires locks in the same order as `remove_binding` (bindings first,
+    /// then session_to_channel) to avoid ABBA deadlock.
     pub async fn remove_by_session(&self, acp_session_id: &str) {
+        // Peek at session_to_channel to find the conv_id without holding locks
+        let conv_id = {
+            let session_map = self.session_to_channel.read().await;
+            session_map.get(acp_session_id).cloned()
+        };
+
+        let Some(conv_id) = conv_id else {
+            return;
+        };
+
+        // Acquire locks in the same order as remove_binding
+        let mut bindings = self.bindings.write().await;
+        bindings.remove(&conv_id);
         let mut session_map = self.session_to_channel.write().await;
-        if let Some(conv_id) = session_map.remove(acp_session_id) {
-            let mut bindings = self.bindings.write().await;
-            bindings.remove(&conv_id);
-            info!("Removed ACP binding for session {}", acp_session_id);
-        }
+        session_map.remove(acp_session_id);
+        info!("Removed ACP binding for session {}", acp_session_id);
     }
 
     /// List all active bindings.

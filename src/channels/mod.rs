@@ -920,6 +920,16 @@ pub mod validation {
                     .collect();
             }
 
+            // Escape HTML if configured
+            if self.sanitize_html {
+                sanitized = sanitized
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;")
+                    .replace('"', "&quot;")
+                    .replace('\'', "&#39;");
+            }
+
             // Trim leading/trailing whitespace
             sanitized = sanitized.trim().to_string();
 
@@ -1007,14 +1017,14 @@ impl ExtendedChannelRegistry {
     }
 
     /// Get a channel by name (checks native first, then plugin channels)
-    pub fn get(&self, name: &str) -> Option<SharedChannel> {
+    pub async fn get(&self, name: &str) -> Option<SharedChannel> {
         // Check native channels first
         if let Some(channel) = self.native.get(name) {
             return Some(channel);
         }
 
-        // Check plugin channels (blocking read — small, fast map)
-        let pc = self.plugin_channels.blocking_read();
+        // Check plugin channels
+        let pc = self.plugin_channels.read().await;
         if let Some(channel) = pc.get(name).cloned() {
             return Some(channel as SharedChannel);
         }
@@ -1126,7 +1136,14 @@ impl ExtendedChannelRegistry {
 #[cfg(feature = "plugins")]
 impl Default for ExtendedChannelRegistry {
     fn default() -> Self {
-        let (message_tx, _) = mpsc::unbounded_channel();
+        let (message_tx, mut message_rx) = mpsc::unbounded_channel();
+        // Drain the receiver in a background task so the channel stays open
+        // and plugin channels can send messages without getting a disconnected
+        // error. Without this, dropping `message_rx` immediately closes the
+        // channel.
+        tokio::spawn(async move {
+            while message_rx.recv().await.is_some() {}
+        });
         Self::new(message_tx)
     }
 }

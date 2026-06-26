@@ -350,14 +350,12 @@ impl QqChannel {
         Ok(result)
     }
 
-    /// Send message to channel (guild) or user (direct message)
+    /// Send message to channel (guild) or user (direct message).
+    ///
+    /// QQ Guild API uses `/channels/{channel_id}/messages` for both guild
+    /// channels and DM channels (after a DM session is opened).  The Discord
+    /// `/dms/{guild_id}/messages` endpoint does not exist in QQ Guild API.
     async fn send_message(&self, req: QqMessageRequest) -> crate::Result<String> {
-        let endpoint = if req.guild_id.is_some() {
-            "/channels/{channel_id}/messages"
-        } else {
-            "/dms/{guild_id}/messages"
-        };
-
         let channel_id = req
             .channel_id
             .as_ref()
@@ -368,7 +366,7 @@ impl QqChannel {
                 )
             })?;
 
-        let endpoint = endpoint.replace("{channel_id}", channel_id);
+        let endpoint = format!("/channels/{}/messages", channel_id);
 
         let response: QqResponse<serde_json::Value> = self
             .api_request(

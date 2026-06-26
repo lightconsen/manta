@@ -588,38 +588,89 @@ impl Channel for WebchatChannel {
 async fn handle_websocket(
     mut socket: axum::extract::ws::WebSocket,
     connections: Arc<RwLock<HashMap<String, WebchatConnection>>>,
-    _message_tx: Arc<RwLock<Option<mpsc::UnboundedSender<IncomingMessage>>>>,
+    message_tx: Arc<RwLock<Option<mpsc::UnboundedSender<IncomingMessage>>>>,
     _running: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    let (_tx, mut rx) = mpsc::unbounded_channel::<String>();
-    let session_id = String::new();
+    use axum::extract::ws::Message;
 
-    // Send task: forward messages from channel to WebSocket
-    let send_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if socket
-                .send(axum::extract::ws::Message::Text(msg))
-                .await
-                .is_err()
-            {
-                break;
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
+
+    // Register this connection for outbound messages
+    {
+        let mut conns = connections.write().await;
+        conns.insert(
+            session_id.clone(),
+            WebchatConnection {
+                session_id: session_id.clone(),
+                sender: outbound_tx,
+            },
+        );
+    }
+
+    // Send a Ready message to acknowledge the connection
+    if let Ok(json) = serde_json::to_string(&WebchatMessage::Ready {
+        session_id: session_id.clone(),
+    }) {
+        let _ = socket.send(Message::Text(json)).await;
+    }
+
+    // Main loop: handle incoming WS messages and outbound channel messages
+    loop {
+        tokio::select! {
+            // Outbound: forward messages from the channel to this WebSocket
+            msg = outbound_rx.recv() => {
+                match msg {
+                    Some(text) => {
+                        if socket.send(Message::Text(text)).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+            // Inbound: read messages from WebSocket and route to agent
+            ws_msg = socket.recv() => {
+                match ws_msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(WebchatMessage::Chat { content, .. }) =
+                            serde_json::from_str(&text)
+                        {
+                            if !content.trim().is_empty() {
+                                let tx_guard = message_tx.read().await;
+                                if let Some(ref tx) = *tx_guard {
+                                    let msg = IncomingMessage::new(
+                                        &session_id,
+                                        &session_id,
+                                        content,
+                                    )
+                                    .with_provenance(
+                                        crate::channels::InputProvenance::ExternalUser {
+                                            channel: "webchat".to_string(),
+                                            is_direct: true,
+                                        },
+                                    );
+                                    if tx.send(msg).is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(e)) => {
+                        warn!("WebChat WS recv error: {e}");
+                        break;
+                    }
+                    _ => {}
+                }
             }
         }
-    });
-
-    // In a real implementation, we'd use a select loop here
-    // For simplicity, we handle messages through the channel's send method
-    // and register this connection for outbound messages
-
-    // This is a simplified placeholder - full implementation would
-    // read incoming WebSocket messages and route them via message_tx
+    }
 
     // Clean up on disconnect
-    if !session_id.is_empty() {
-        let mut conns = connections.write().await;
-        conns.remove(&session_id);
-    }
-    send_task.abort();
+    let mut conns = connections.write().await;
+    conns.remove(&session_id);
 }
 
 #[cfg(test)]
