@@ -150,12 +150,25 @@ impl Task {
 }
 
 /// Store for managing tasks
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoStore {
     /// Tasks stored by ID
     tasks: HashMap<String, Task>,
     /// Task order for display
     order: Vec<String>,
+    /// Monotonically increasing counter for auto-generated IDs
+    #[serde(default = "default_next_id")]
+    next_id: u64,
+}
+
+fn default_next_id() -> u64 {
+    1
+}
+
+impl Default for TodoStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TodoStore {
@@ -164,12 +177,14 @@ impl TodoStore {
         Self {
             tasks: HashMap::new(),
             order: Vec::new(),
+            next_id: 1,
         }
     }
 
     /// Create a new task with auto-generated ID
     pub fn create_task(&mut self, content: impl Into<String>) -> Task {
-        let id = format!("task_{}", self.tasks.len() + 1);
+        let id = format!("task_{}", self.next_id);
+        self.next_id += 1;
         let task = Task::new(&id, content);
         self.tasks.insert(id.clone(), task.clone());
         self.order.push(id);

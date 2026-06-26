@@ -1826,12 +1826,14 @@ Your response:"#,
             // Track transcript size in disk budget
             if let Some(ref budget) = self.disk_budget {
                 let transcript_size = content.len();
-                let _ = budget.track_item(
+                if let Err(e) = budget.track_item(
                     &conversation_id,
                     format!("transcript-user-{}", message_id),
                     BudgetCategory::Transcript,
                     transcript_size,
-                );
+                ) {
+                    warn!("Failed to track user transcript in disk budget: {}", e);
+                }
             }
         }
 
@@ -1895,11 +1897,14 @@ Your response:"#,
                 .or_insert_with(|| Arc::new(Semaphore::new(1)))
                 .clone()
         };
-        let _permit = sem.acquire().await.unwrap_or_else(|_| {
-            // Semaphore is only closed if the Arc is dropped, which shouldn't
-            // happen while we hold a clone. The permit is a RAII guard.
-            unreachable!("concurrency semaphore unexpectedly closed")
-        });
+        let _permit = match sem.acquire().await {
+            Ok(p) => p,
+            Err(_) => {
+                return Err(crate::error::SyscityError::Internal(
+                    "concurrency semaphore closed".into(),
+                ));
+            }
+        };
 
         // ── Thread take-out (panic-safe via ThreadGuard) ────────────────────
         // ThreadGuard reinserts the thread into thread_map on Drop, preventing
@@ -1963,7 +1968,9 @@ Your response:"#,
         }
 
         // Get response from LLM (lock NOT held during this await).
-        let llm_result = self.get_completion(&mut thread.context).await;
+        let llm_result = self
+            .get_completion(&mut thread.context, &message.user_id.0)
+            .await;
 
         // Complete or interrupt the turn based on result.
         let llm_result = match llm_result {
@@ -2029,12 +2036,14 @@ Your response:"#,
             // Track transcript size in disk budget
             if let Some(ref budget) = self.disk_budget {
                 let transcript_size = response.message.content.len();
-                let _ = budget.track_item(
+                if let Err(e) = budget.track_item(
                     &conversation_id,
                     format!("transcript-assistant-{}", assistant_message_id),
                     BudgetCategory::Transcript,
                     transcript_size,
-                );
+                ) {
+                    warn!("Failed to track assistant transcript in disk budget: {}", e);
+                }
             }
         }
 
@@ -2324,12 +2333,14 @@ Your response:"#,
                 TranscriptMessage::new("user", &content),
             );
             if let Some(ref budget) = self.disk_budget {
-                let _ = budget.track_item(
+                if let Err(e) = budget.track_item(
                     &conversation_id,
                     format!("transcript-user-{}", message_id),
                     BudgetCategory::Transcript,
                     content.len(),
-                );
+                ) {
+                    warn!("Failed to track user transcript in disk budget: {}", e);
+                }
             }
         }
 
@@ -2341,11 +2352,14 @@ Your response:"#,
                 .or_insert_with(|| Arc::new(Semaphore::new(1)))
                 .clone()
         };
-        let _permit = sem.acquire().await.unwrap_or_else(|_| {
-            // Semaphore is only closed if the Arc is dropped, which shouldn't
-            // happen while we hold a clone. The permit is a RAII guard.
-            unreachable!("concurrency semaphore unexpectedly closed")
-        });
+        let _permit = match sem.acquire().await {
+            Ok(p) => p,
+            Err(_) => {
+                return Err(crate::error::SyscityError::Internal(
+                    "concurrency semaphore closed".into(),
+                ));
+            }
+        };
 
         // ── Thread take-out (panic-safe via ThreadGuard) ────────────────────
         let mut guard = ThreadGuard::take(&self.thread_map, &conversation_id).await;
@@ -2393,7 +2407,11 @@ Your response:"#,
 
         // Get response from LLM with progress (lock NOT held).
         let llm_result = self
-            .get_completion_with_progress(&mut thread.context, progress_cb.clone())
+            .get_completion_with_progress(
+                &mut thread.context,
+                progress_cb.clone(),
+                &message.user_id.0,
+            )
             .await;
 
         // Complete or interrupt the turn.
@@ -2447,12 +2465,14 @@ Your response:"#,
                 TranscriptMessage::new("assistant", &response.message.content),
             );
             if let Some(ref budget) = self.disk_budget {
-                let _ = budget.track_item(
+                if let Err(e) = budget.track_item(
                     &conversation_id,
                     format!("transcript-assistant-{}", assistant_message_id),
                     BudgetCategory::Transcript,
                     response.message.content.len(),
-                );
+                ) {
+                    warn!("Failed to track assistant transcript in disk budget: {}", e);
+                }
             }
         }
 
@@ -2794,6 +2814,7 @@ Your response:"#,
     async fn get_completion(
         &self,
         context: &mut Context,
+        user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
         // If the context is over-budget, try to reduce it before sending.
         if context.needs_pruning() {
@@ -2823,7 +2844,7 @@ Your response:"#,
         let messages = context.to_messages();
 
         // Get available tools
-        let tool_context = self.build_tool_context("user", context.id());
+        let tool_context = self.build_tool_context(user_id, context.id());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -2894,7 +2915,9 @@ Your response:"#,
         if let Some(tool_calls) = &response.message.tool_calls {
             if !tool_calls.is_empty() {
                 debug!("Processing {} tool calls", tool_calls.len());
-                return self.handle_tool_calls(context, &response, tool_calls).await;
+                return self
+                    .handle_tool_calls(context, &response, tool_calls, user_id)
+                    .await;
             }
         }
 
@@ -2910,6 +2933,7 @@ Your response:"#,
         context: &mut Context,
         original_response: &crate::providers::CompletionResponse,
         tool_calls: &[ToolCall],
+        user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
         // Check iteration limit before processing
         if !context.increment_tool_iteration() {
@@ -2944,7 +2968,7 @@ Your response:"#,
 
         // Execute tools concurrently (up to limit)
         let tool_context = self
-            .build_tool_context("user", context.id())
+            .build_tool_context(user_id, context.id())
             .with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
@@ -3038,7 +3062,7 @@ Your response:"#,
         }
 
         // Get final response (boxed to avoid recursive async issue)
-        Box::pin(self.get_completion(context)).await
+        Box::pin(self.get_completion(context, user_id)).await
     }
 
     /// Get a completion from the LLM with progress callbacks
@@ -3046,11 +3070,12 @@ Your response:"#,
         &self,
         context: &mut Context,
         progress_cb: ProgressCallback,
+        user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
         let messages = context.to_messages();
 
         // Get available tools
-        let tool_context = self.build_tool_context("user", context.id());
+        let tool_context = self.build_tool_context(user_id, context.id());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -3220,7 +3245,13 @@ Your response:"#,
             if !tool_calls.is_empty() {
                 debug!("Processing {} tool calls with progress", tool_calls.len());
                 return self
-                    .handle_tool_calls_with_progress(context, &response, tool_calls, progress_cb)
+                    .handle_tool_calls_with_progress(
+                        context,
+                        &response,
+                        tool_calls,
+                        progress_cb,
+                        user_id,
+                    )
                     .await;
             }
         }
@@ -3238,6 +3269,7 @@ Your response:"#,
         original_response: &crate::providers::CompletionResponse,
         tool_calls: &[ToolCall],
         progress_cb: ProgressCallback,
+        user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
         // Check iteration limit before processing
         if !context.increment_tool_iteration() {
@@ -3282,7 +3314,7 @@ Your response:"#,
 
         // Execute tools with progress
         let tool_context = self
-            .build_tool_context("user", context.id())
+            .build_tool_context(user_id, context.id())
             .with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
@@ -3385,7 +3417,7 @@ Your response:"#,
 
         // Get final response with progress
         let mut final_response =
-            Box::pin(self.get_completion_with_progress(context, progress_cb)).await?;
+            Box::pin(self.get_completion_with_progress(context, progress_cb, user_id)).await?;
 
         // Preserve tool calls from the original assistant message so that
         // downstream consumers (session_store, etc.) can see what tools were invoked.
@@ -3673,7 +3705,15 @@ Your response:"#,
                 .or_insert_with(|| Arc::new(Semaphore::new(1)))
                 .clone()
         };
-        let _permit = semaphore.try_acquire().ok();
+        // Acquire the per-conversation semaphore to wait for any in-flight
+        // process_message to complete before we remove the thread.
+        let _permit = match semaphore.acquire().await {
+            Ok(p) => p,
+            Err(_) => {
+                warn!("close_conversation: semaphore closed for {}", conversation_id);
+                return;
+            }
+        };
 
         // Remove the concurrency guard entry (cleanup leak)
         {
@@ -3799,12 +3839,14 @@ Your response:"#,
             artifact_store.add(artifact);
             // Track in disk budget
             if let Some(ref budget) = self.disk_budget {
-                let _ = budget.track_item(
+                if let Err(e) = budget.track_item(
                     session_id,
                     format!("artifact-{}-code-{}", tool_name, idx),
                     BudgetCategory::Artifact,
                     size,
-                );
+                ) {
+                    warn!("Failed to track code artifact in disk budget: {}", e);
+                }
             }
         }
 
@@ -3823,12 +3865,14 @@ Your response:"#,
             let size = artifact.size_bytes;
             artifact_store.add(artifact);
             if let Some(ref budget) = self.disk_budget {
-                let _ = budget.track_item(
+                if let Err(e) = budget.track_item(
                     session_id,
                     format!("artifact-{}-link-{}", tool_name, idx),
                     BudgetCategory::Artifact,
                     size,
-                );
+                ) {
+                    warn!("Failed to track link artifact in disk budget: {}", e);
+                }
             }
         }
     }

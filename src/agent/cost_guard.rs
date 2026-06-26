@@ -116,7 +116,10 @@ impl CostGuard {
     /// Reset daily / hourly counters if the window has elapsed.
     fn maybe_reset(&self) {
         // Daily reset
-        let mut last_daily = self.last_daily_reset.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last_daily = self
+            .last_daily_reset
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Ok(elapsed) = last_daily.elapsed() {
             if elapsed >= Duration::from_secs(86_400) {
                 self.daily_cents.store(0, Ordering::Release);
@@ -130,7 +133,10 @@ impl CostGuard {
         drop(last_daily);
 
         // Hourly reset
-        let mut last_hourly = self.last_hourly_reset.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last_hourly = self
+            .last_hourly_reset
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if last_hourly.elapsed() >= Duration::from_secs(3_600) {
             self.hourly_actions.store(0, Ordering::Release);
             // Re-check whether the daily limit is still exceeded.

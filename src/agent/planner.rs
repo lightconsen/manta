@@ -90,6 +90,9 @@ impl TaskPlan {
 
     /// Format plan for display
     pub fn format_summary(&self) -> String {
+        if self.tasks.is_empty() {
+            return format!("🎯 Goal: {}\n📋 No tasks defined", self.goal);
+        }
         let mut lines = vec![
             format!("🎯 Goal: {}", self.goal),
             format!("📋 Tasks: {}/{}", self.current_task_index + 1, self.tasks.len()),
