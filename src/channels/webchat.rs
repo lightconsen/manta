@@ -609,9 +609,9 @@ async fn handle_websocket(
     }
 
     // Send a Ready message to acknowledge the connection
-    if let Ok(json) = serde_json::to_string(&WebchatMessage::Ready {
-        session_id: session_id.clone(),
-    }) {
+    if let Ok(json) =
+        serde_json::to_string(&WebchatMessage::Ready { session_id: session_id.clone() })
+    {
         let _ = socket.send(Message::Text(json)).await;
     }
 

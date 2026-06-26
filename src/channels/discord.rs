@@ -1126,8 +1126,8 @@ fn verify_discord_signature(
         .ok_or_else(|| "failed to decode Discord public key".to_string())?;
 
     // Decode the hex-encoded signature (64 bytes for Ed25519)
-    let sig_bytes = hex::decode(signature_header)
-        .map_err(|_| "failed to decode signature hex".to_string())?;
+    let sig_bytes =
+        hex::decode(signature_header).map_err(|_| "failed to decode signature hex".to_string())?;
     let signature =
         Signature::from_slice(&sig_bytes).map_err(|_| "failed to parse signature".to_string())?;
 

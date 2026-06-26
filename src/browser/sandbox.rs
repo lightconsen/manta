@@ -80,8 +80,9 @@ fn validate_docker_arg(value: &str) -> crate::Result<()> {
     if value.is_empty()
         || value.contains(' ')
         || value.contains(char::is_control)
-        || value.chars().any(|c| !c.is_ascii_alphanumeric()
-            && c != '-' && c != '_' && c != '.' && c != '/' && c != ':')
+        || value.chars().any(|c| {
+            !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.' && c != '/' && c != ':'
+        })
     {
         return Err(crate::error::SyscityError::Validation(format!(
             "Invalid Docker argument: '{}'",
@@ -200,10 +201,7 @@ impl BrowserSandbox {
         }
         if !ready {
             return Err(crate::error::SyscityError::ExternalService {
-                source: format!(
-                    "Chrome CDP port {} did not become ready within 30s",
-                    cdp_port
-                ),
+                source: format!("Chrome CDP port {} did not become ready within 30s", cdp_port),
                 cause: None,
             });
         }

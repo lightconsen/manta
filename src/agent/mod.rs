@@ -704,7 +704,10 @@ impl AgentConfig {
         let result = match crate::memory::PersonalityMemory::new().await {
             Ok(memory) => {
                 // Initialize default files if they don't exist
-                let _ = memory.initialize_defaults().await;
+                match memory.initialize_defaults().await {
+                    Ok(_) => {}
+                    Err(e) => warn!("Failed to initialize personality memory defaults: {}", e),
+                }
 
                 // Try structured SOUL.md first
                 let soul_enhanced = match memory.read_soul().await {
@@ -1668,7 +1671,7 @@ Your response:"#,
                 manager.remove(&conversation_id).await;
             }
             // Reap any idle bindings periodically (best-effort)
-            let _ = manager.reap().await;
+            let _reaped = manager.reap().await;
         }
 
         // Check cache for identical prompt (only for non-follow-up, non-time-sensitive
@@ -1909,19 +1912,13 @@ Your response:"#,
                 .await;
             let thread_id = format!("thread-{}", &conversation_id);
             // Persist the new thread record (fire-and-forget).
-            if let (Some(store), Some(sid)) =
-                (self.session_store.clone(), self.session_id.clone())
+            if let (Some(store), Some(sid)) = (self.session_store.clone(), self.session_id.clone())
             {
                 let tid = thread_id.clone();
                 let label = conversation_id.clone();
                 tokio::spawn(async move {
                     if let Err(e) = store
-                        .save_thread(
-                            &sid,
-                            &tid,
-                            &label,
-                            chrono::Utc::now().timestamp_millis(),
-                        )
+                        .save_thread(&sid, &tid, &label, chrono::Utc::now().timestamp_millis())
                         .await
                     {
                         warn!("Failed to persist thread {} for session {}: {}", tid, sid, e);
@@ -2281,6 +2278,16 @@ Your response:"#,
             }
         }
 
+        // Persist user message via MemoryManager (episodic memory)
+        if let Some(ref mm) = self.memory_manager {
+            if let Err(e) = mm
+                .remember_message(&user_id, &conversation_id, "user", &content)
+                .await
+            {
+                warn!("MemoryManager: failed to store user message: {}", e);
+            }
+        }
+
         // Store user message in chat history and index for search
         let message_id = uuid::Uuid::new_v4().to_string();
         if let Some(ref store) = self.chat_history {
@@ -2347,19 +2354,13 @@ Your response:"#,
                 .build_fresh_context(&conversation_id, &user_id, &content)
                 .await;
             let thread_id = format!("thread-{}", &conversation_id);
-            if let (Some(store), Some(sid)) =
-                (self.session_store.clone(), self.session_id.clone())
+            if let (Some(store), Some(sid)) = (self.session_store.clone(), self.session_id.clone())
             {
                 let tid = thread_id.clone();
                 let label = conversation_id.clone();
                 tokio::spawn(async move {
                     if let Err(e) = store
-                        .save_thread(
-                            &sid,
-                            &tid,
-                            &label,
-                            chrono::Utc::now().timestamp_millis(),
-                        )
+                        .save_thread(&sid, &tid, &label, chrono::Utc::now().timestamp_millis())
                         .await
                     {
                         warn!("Failed to persist thread {} for session {}: {}", tid, sid, e);
@@ -2452,6 +2453,21 @@ Your response:"#,
                     BudgetCategory::Transcript,
                     response.message.content.len(),
                 );
+            }
+        }
+
+        // Persist assistant response via MemoryManager (episodic memory)
+        if let Some(ref mm) = self.memory_manager {
+            if let Err(e) = mm
+                .remember_message(
+                    &user_id,
+                    &conversation_id,
+                    "assistant",
+                    &response.message.content,
+                )
+                .await
+            {
+                warn!("MemoryManager: failed to store assistant message: {}", e);
             }
         }
 
@@ -3647,6 +3663,23 @@ Your response:"#,
     pub async fn close_conversation(&self, conversation_id: &str) {
         const MAX_TURNS_BEFORE_COMPACT: usize = 50;
         const MAX_AGE_DAYS: u64 = 7;
+
+        // Acquire the concurrency guard to prevent concurrent processing
+        // while we remove the thread. Also cleans up the guard afterward.
+        let semaphore = {
+            let mut guards = self.concurrency_guards.lock().await;
+            guards
+                .entry(conversation_id.to_string())
+                .or_insert_with(|| Arc::new(Semaphore::new(1)))
+                .clone()
+        };
+        let _permit = semaphore.try_acquire().ok();
+
+        // Remove the concurrency guard entry (cleanup leak)
+        {
+            let mut guards = self.concurrency_guards.lock().await;
+            guards.remove(conversation_id);
+        }
 
         // Remove the thread from the map
         let thread_opt = {

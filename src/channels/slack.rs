@@ -711,22 +711,20 @@ async fn connect_and_listen(
 ) -> crate::Result<()> {
     use tokio_tungstenite::connect_async;
 
-    let ws_stream = tokio::time::timeout(
-        tokio::time::Duration::from_secs(5),
-        connect_async(ws_url),
-    )
-    .await
-    .map_err(|_| {
-        crate::error::SyscityError::Internal(
-            "Slack Socket Mode WebSocket connection timed out after 5s".to_string(),
-        )
-    })?
-    .map_err(|e| {
-        crate::error::SyscityError::Internal(format!(
-            "Slack Socket Mode WebSocket connection failed: {}",
-            e
-        ))
-    })?;
+    let ws_stream =
+        tokio::time::timeout(tokio::time::Duration::from_secs(5), connect_async(ws_url))
+            .await
+            .map_err(|_| {
+                crate::error::SyscityError::Internal(
+                    "Slack Socket Mode WebSocket connection timed out after 5s".to_string(),
+                )
+            })?
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!(
+                    "Slack Socket Mode WebSocket connection failed: {}",
+                    e
+                ))
+            })?;
 
     let (ws_stream, _) = ws_stream;
 

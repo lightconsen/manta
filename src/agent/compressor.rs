@@ -57,8 +57,8 @@ impl PrioritizedMessage {
 
     /// Calculate priority based on message content and position
     fn calculate_priority(message: &Message, index: usize) -> MessagePriority {
-        // Recent messages (last 6) are high priority
-        if index >= 6 {
+        // Recent messages (last 4) are high priority
+        if index >= 4 {
             return MessagePriority::High;
         }
 

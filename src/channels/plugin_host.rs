@@ -891,7 +891,8 @@ impl PluginChannelRegistry {
             (config.unwrap_or_else(|| serde_json::json!({})), None)
         };
 
-        let plugin = PluginChannel::load(&wasm_path, config.clone(), self.message_tx.clone()).await?;
+        let plugin =
+            PluginChannel::load(&wasm_path, config.clone(), self.message_tx.clone()).await?;
         let _ = plugin.init(&config).await?;
 
         let plugin = Arc::new(plugin);

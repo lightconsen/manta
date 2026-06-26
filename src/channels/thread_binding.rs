@@ -330,29 +330,27 @@ impl ThreadBindingManager {
 
         match policy.placement_hint {
             PlacementHint::Current => PlacementDecision::UseCurrent,
-            PlacementHint::Child => {
-                match policy.max_children {
-                    None => PlacementDecision::SpawnChild {
-                        can_spawn: true,
-                        spawn_target: policy.spawn_target,
-                    },
-                    Some(max) => {
-                        let children = self.children.read().await;
-                        let count = children
-                            .get(session_id)
-                            .map(|c| c.len() as u32)
-                            .unwrap_or(0);
-                        if count < max {
-                            PlacementDecision::SpawnChild {
-                                can_spawn: true,
-                                spawn_target: policy.spawn_target,
-                            }
-                        } else {
-                            PlacementDecision::UseCurrent
+            PlacementHint::Child => match policy.max_children {
+                None => PlacementDecision::SpawnChild {
+                    can_spawn: true,
+                    spawn_target: policy.spawn_target,
+                },
+                Some(max) => {
+                    let children = self.children.read().await;
+                    let count = children
+                        .get(session_id)
+                        .map(|c| c.len() as u32)
+                        .unwrap_or(0);
+                    if count < max {
+                        PlacementDecision::SpawnChild {
+                            can_spawn: true,
+                            spawn_target: policy.spawn_target,
                         }
+                    } else {
+                        PlacementDecision::UseCurrent
                     }
                 }
-            }
+            },
         }
     }
 

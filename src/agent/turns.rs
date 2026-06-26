@@ -249,7 +249,6 @@ impl Thread {
         use super::compaction::compute_context_hash;
 
         let total_tokens = self.context.token_count();
-        let transcript_bytes = self.context.history().iter().map(|m| m.content.len()).sum();
 
         let current_messages: Vec<(String, String)> = self
             .context
@@ -261,7 +260,8 @@ impl Thread {
 
         super::compaction::should_run_memory_flush(
             total_tokens,
-            transcript_bytes,
+            // Use the token-based context_window, not transcript_bytes (bytes != tokens)
+            self.context.max_context_tokens(),
             config,
             &self.compaction_state,
             &context_hash,
@@ -296,12 +296,14 @@ impl Thread {
     /// Remove the last occurrence of a user message with `content` from the
     /// context, along with everything that followed it (assistant reply, tool
     /// calls, tool results).
-    fn remove_turn_from_context(&mut self, user_content: &str) {
+    fn remove_turn_from_context(&mut self, _user_content: &str) {
         let history: &[Message] = self.context.history();
-        // Find the last user message that matches.
+        // Find the last user message position (the one being undone).
+        // We use position rather than content matching to avoid matching
+        // the wrong turn when text is duplicated after compaction.
         let Some(pos) = history
             .iter()
-            .rposition(|m| m.role == crate::providers::Role::User && m.content == user_content)
+            .rposition(|m| m.role == crate::providers::Role::User)
         else {
             return;
         };

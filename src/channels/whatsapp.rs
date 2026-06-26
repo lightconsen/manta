@@ -310,10 +310,7 @@ impl WhatsappChannel {
                     .get("recipient_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                debug!(
-                    "WhatsApp status update: status={} recipient={}",
-                    status_type, recipient
-                );
+                debug!("WhatsApp status update: status={} recipient={}", status_type, recipient);
             }
         }
     }
@@ -614,12 +611,17 @@ impl Channel for WhatsappChannel {
         let mut last_err = None;
         let mut delay = std::time::Duration::from_secs(1);
         for attempt in 0..3 {
-            match self.api_request::<WhatsappResponse>("messages", Some(json_payload.clone())).await
+            match self
+                .api_request::<WhatsappResponse>("messages", Some(json_payload.clone()))
+                .await
             {
                 Ok(response) => {
                     if let Some(error) = response.error {
                         return Err(crate::error::SyscityError::ExternalService {
-                            source: format!("WhatsApp API error: {} (code: {})", error.message, error.code),
+                            source: format!(
+                                "WhatsApp API error: {} (code: {})",
+                                error.message, error.code
+                            ),
                             cause: None,
                         });
                     }
@@ -636,7 +638,11 @@ impl Channel for WhatsappChannel {
                 Err(e) => {
                     last_err = Some(e);
                     if attempt < 2 {
-                        warn!("WhatsApp send attempt {} failed, retrying in {:?}", attempt + 1, delay);
+                        warn!(
+                            "WhatsApp send attempt {} failed, retrying in {:?}",
+                            attempt + 1,
+                            delay
+                        );
                         tokio::time::sleep(delay).await;
                         delay = (delay * 2).min(std::time::Duration::from_secs(30));
                     }
@@ -645,9 +651,7 @@ impl Channel for WhatsappChannel {
         }
 
         Err(last_err.unwrap_or_else(|| {
-            crate::error::SyscityError::Internal(
-                "WhatsApp send failed after 3 retries".to_string(),
-            )
+            crate::error::SyscityError::Internal("WhatsApp send failed after 3 retries".to_string())
         }))
     }
 

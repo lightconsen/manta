@@ -99,10 +99,7 @@ impl ApiClient {
             match std::env::var(inner) {
                 Ok(val) => return Some(val),
                 Err(_) => {
-                    tracing::warn!(
-                        "API key env var ${{{}}} not set, using literal string",
-                        inner
-                    );
+                    tracing::warn!("API key env var ${{{}}} not set, using literal string", inner);
                     return Some(s.clone());
                 }
             }
@@ -113,7 +110,9 @@ impl ApiClient {
             // Validate it looks like an env var name to avoid misinterpreting
             // literal keys that happen to start with $
             let is_valid_name = !var_name.is_empty()
-                && var_name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+                && var_name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_');
             if is_valid_name {
                 match std::env::var(var_name) {
                     Ok(val) => return Some(val),

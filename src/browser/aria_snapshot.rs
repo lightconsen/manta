@@ -388,8 +388,7 @@ pub async fn act_by_ref(
                     }}
                     return {{ error: "Element is not an input" }};
                 }}"#,
-                selector,
-                escaped,
+                selector, escaped,
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
                 crate::error::SyscityError::ExternalService {
@@ -450,8 +449,7 @@ pub async fn act_by_ref(
                     }}
                     return {{ error: "Element is not an input" }};
                 }}"#,
-                selector,
-                escaped,
+                selector, escaped,
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
                 crate::error::SyscityError::ExternalService {

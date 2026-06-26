@@ -294,9 +294,8 @@ impl ArtifactStore {
 
     /// Mark a session as recently accessed.
     fn touch_session(&self, session_id: &str) {
-        if let Ok(mut last) = self.last_accessed.lock() {
-            last.insert(session_id.to_string(), Utc::now());
-        }
+        let mut last = self.last_accessed.lock().unwrap_or_else(|e| e.into_inner());
+        last.insert(session_id.to_string(), Utc::now());
     }
 
     /// Evict the LRU session if we're at capacity (caller must hold `artifacts`).

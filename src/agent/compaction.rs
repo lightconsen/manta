@@ -90,17 +90,17 @@ pub fn compute_context_hash(messages: &[(String, String)]) -> String {
         messages.len(),
         tail.iter()
             .map(|(role, content)| {
-                let truncated: &str = if content.len() > 200 {
+                let truncated: String = if content.len() > 200 {
                     warn!(
                         "compute_context_hash: truncating long {} message ({} bytes)",
                         role,
                         content.len()
                     );
-                    &content[..200]
+                    content.chars().take(200).collect()
                 } else {
-                    content
+                    content.clone()
                 };
-                format!("[{}:{}]", role, truncated)
+                format!("[{}:{}]", role, truncated.as_str())
             })
             .collect::<Vec<_>>()
             .join("\x00")

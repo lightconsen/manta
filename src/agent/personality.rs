@@ -252,25 +252,60 @@ impl AgentPersonality {
     async fn load_file(&self, filename: &str) -> String {
         let file_path = self.path.join(filename);
 
-        if !file_path.exists() {
-            return String::new();
-        }
-
-        match fs::read_to_string(&file_path).await {
-            Ok(content) => {
-                // Truncate if too large
-                if content.len() > DEFAULT_MAX_FILE_SIZE {
-                    debug!(
-                        "Personality file {} for agent {} exceeds {} bytes, truncating",
-                        filename, self.id, DEFAULT_MAX_FILE_SIZE
-                    );
-                    content.chars().take(DEFAULT_MAX_FILE_SIZE).collect()
-                } else {
-                    content
+        // Check metadata first to avoid OOM from large files
+        match fs::metadata(&file_path).await {
+            Ok(meta) if meta.len() > DEFAULT_MAX_FILE_SIZE as u64 => {
+                debug!(
+                    "Personality file {} for agent {} is {} bytes, exceeding {} byte limit, \
+                     reading truncated",
+                    filename,
+                    self.id,
+                    meta.len(),
+                    DEFAULT_MAX_FILE_SIZE
+                );
+                // Read only the first DEFAULT_MAX_FILE_SIZE bytes
+                match tokio::io::AsyncReadExt::read_to_end(
+                    &mut tokio::io::BufReader::new(match tokio::fs::File::open(&file_path).await {
+                        Ok(f) => f,
+                        Err(e) => {
+                            warn!("Failed to open {} for agent {}: {}", filename, self.id, e);
+                            return String::new();
+                        }
+                    }),
+                    &mut Vec::with_capacity(DEFAULT_MAX_FILE_SIZE),
+                )
+                .await
+                {
+                    Ok(n) if n > 0 => {
+                        // Re-read up to the limit, respecting char boundaries
+                        let mut buf = vec![0u8; DEFAULT_MAX_FILE_SIZE];
+                        use tokio::io::AsyncReadExt;
+                        let mut file = match tokio::fs::File::open(&file_path).await {
+                            Ok(f) => f,
+                            Err(e) => {
+                                warn!("Failed to open {} for agent {}: {}", filename, self.id, e);
+                                return String::new();
+                            }
+                        };
+                        let n = file.read(&mut buf).await.unwrap_or(0);
+                        let s = String::from_utf8_lossy(&buf[..n]);
+                        s.chars().take(DEFAULT_MAX_FILE_SIZE).collect()
+                    }
+                    _ => String::new(),
+                }
+            }
+            Ok(_) => {
+                // File is within size limits, read normally
+                match fs::read_to_string(&file_path).await {
+                    Ok(content) => content,
+                    Err(e) => {
+                        warn!("Failed to read {} for agent {}: {}", filename, self.id, e);
+                        String::new()
+                    }
                 }
             }
             Err(e) => {
-                warn!("Failed to read {} for agent {}: {}", filename, self.id, e);
+                warn!("Failed to stat {} for agent {}: {}", filename, self.id, e);
                 String::new()
             }
         }

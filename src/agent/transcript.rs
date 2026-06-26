@@ -414,10 +414,12 @@ impl TranscriptStore {
         Ok(())
     }
 
-    /// Get or create a transcript for a session.
+    /// Internal: get or create a transcript for a session.
     ///
-    /// Evicts the least-recently-updated session when at capacity.
-    pub fn get_or_create(
+    /// Returns a `MutexGuard` — callers must not re-enter any `&self` method
+    /// on this store while the guard is held.
+    #[doc(hidden)]
+    fn get_or_create_inner(
         &self,
         session_id: impl Into<String>,
         channel: impl Into<String>,
@@ -444,6 +446,26 @@ impl TranscriptStore {
         active
     }
 
+    /// Get or create a transcript for a session.
+    ///
+    /// Returns the transcript cloned from the store — the caller receives an
+    /// owned copy rather than a live lock reference.
+    pub fn get_or_create(
+        &self,
+        session_id: impl Into<String>,
+        channel: impl Into<String>,
+        peer: impl Into<String>,
+        scope: impl Into<String>,
+    ) -> Transcript {
+        let session_id = session_id.into();
+        self.get(&session_id).unwrap_or_else(|| {
+            let t = Transcript::new(session_id.clone(), channel, peer, scope);
+            let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
+            active.entry(session_id).or_insert_with(|| t.clone());
+            t
+        })
+    }
+
     /// Append a message to a session's transcript.
     pub fn append(
         &self,
@@ -453,7 +475,7 @@ impl TranscriptStore {
         scope: impl Into<String>,
         msg: TranscriptMessage,
     ) {
-        let mut active = self.get_or_create(session_id, channel, peer, scope);
+        let mut active = self.get_or_create_inner(session_id, channel, peer, scope);
         if let Some(transcript) = active.get_mut(session_id) {
             transcript.append(msg);
         }

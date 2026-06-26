@@ -160,6 +160,7 @@ impl GroupSession {
         display_name: impl Into<String>,
         role: GroupRole,
     ) -> Result<(), GroupSessionError> {
+        self.check_not_archived()?;
         let user_id = user_id.into();
         if self.members.contains_key(&user_id) {
             return Err(GroupSessionError::MemberAlreadyExists(user_id));
@@ -174,6 +175,7 @@ impl GroupSession {
 
     /// Remove a member from the group.
     pub fn remove_member(&mut self, user_id: &str) -> Result<(), GroupSessionError> {
+        self.check_not_archived()?;
         if user_id == self.owner_id {
             return Err(GroupSessionError::CannotRemoveOwner);
         }
@@ -193,6 +195,7 @@ impl GroupSession {
         user_id: &str,
         new_role: GroupRole,
     ) -> Result<(), GroupSessionError> {
+        self.check_not_archived()?;
         if user_id == self.owner_id && new_role != GroupRole::Owner {
             return Err(GroupSessionError::CannotDemoteOwner);
         }
@@ -254,6 +257,15 @@ impl GroupSession {
     pub fn archive(&mut self) {
         self.is_archived = true;
         info!("Archived group session {}", self.id);
+    }
+
+    /// Check if this session is archived (helper for guarded operations).
+    pub fn check_not_archived(&self) -> Result<(), GroupSessionError> {
+        if self.is_archived {
+            Err(GroupSessionError::InsufficientPermissions)
+        } else {
+            Ok(())
+        }
     }
 
     /// Check if the session has timed out.
@@ -356,6 +368,10 @@ impl GroupSessionManager {
             for user_id in members {
                 if let Some(groups) = self.user_index.get_mut(&user_id) {
                     groups.retain(|g| g != group_id);
+                    // Prune empty entries to prevent stale user_index growth
+                    if groups.is_empty() {
+                        self.user_index.remove(&user_id);
+                    }
                 }
             }
             info!("Removed group session {}", group_id);
@@ -407,6 +423,10 @@ impl GroupSessionManager {
 
         if let Some(groups) = self.user_index.get_mut(user_id) {
             groups.retain(|g| g != group_id);
+            // Prune empty entries to prevent stale user_index growth
+            if groups.is_empty() {
+                self.user_index.remove(user_id);
+            }
         }
 
         Ok(())

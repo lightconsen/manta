@@ -227,19 +227,34 @@ impl SessionStore {
         })?;
 
         // Migrate: add name column if it doesn't exist (for existing databases)
-        let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN name TEXT")
+        if let Err(e) = sqlx::query("ALTER TABLE sessions ADD COLUMN name TEXT")
             .execute(&self.pool)
-            .await;
+            .await
+        {
+            if !e.to_string().contains("duplicate column name") {
+                warn!("Failed to add name column to sessions: {}", e);
+            }
+        }
 
         // Migrate: add bound_agent_id column if it doesn't exist
-        let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN bound_agent_id TEXT")
+        if let Err(e) = sqlx::query("ALTER TABLE sessions ADD COLUMN bound_agent_id TEXT")
             .execute(&self.pool)
-            .await;
+            .await
+        {
+            if !e.to_string().contains("duplicate column name") {
+                warn!("Failed to add bound_agent_id column to sessions: {}", e);
+            }
+        }
 
         // Migrate: add transcript_id column if it doesn't exist
-        let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN transcript_id TEXT")
+        if let Err(e) = sqlx::query("ALTER TABLE sessions ADD COLUMN transcript_id TEXT")
             .execute(&self.pool)
-            .await;
+            .await
+        {
+            if !e.to_string().contains("duplicate column name") {
+                warn!("Failed to add transcript_id column to sessions: {}", e);
+            }
+        }
 
         // Session messages table - stores conversation history
         sqlx::query(
@@ -342,13 +357,19 @@ impl SessionStore {
         // turn_state columns if they are not already present.
         // SQLite does not support ADD COLUMN IF NOT EXISTS, so we check
         // pragma_table_info first.
-        let has_thread_id: bool = sqlx::query_scalar::<_, i64>(
+        let has_thread_id: bool = match sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM pragma_table_info('session_messages') WHERE name='thread_id'",
         )
         .fetch_one(&self.pool)
         .await
-        .unwrap_or(0)
-            > 0;
+        {
+            Ok(count) => count > 0,
+            Err(e) => {
+                warn!("Failed to check pragma_table_info for thread_id: {}", e);
+                // Default to true (already migrated) to avoid double ALTER
+                true
+            }
+        };
 
         if !has_thread_id {
             sqlx::query("ALTER TABLE session_messages ADD COLUMN thread_id   TEXT")
@@ -376,14 +397,19 @@ impl SessionStore {
         }
 
         // Migrate: add reasoning_content and tool_calls_json columns if missing
-        let has_reasoning: bool = sqlx::query_scalar::<_, i64>(
+        let has_reasoning: bool = match sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM pragma_table_info('session_messages') WHERE \
              name='reasoning_content'",
         )
         .fetch_one(&self.pool)
         .await
-        .unwrap_or(0)
-            > 0;
+        {
+            Ok(count) => count > 0,
+            Err(e) => {
+                warn!("Failed to check pragma_table_info for reasoning_content: {}", e);
+                true
+            }
+        };
 
         if !has_reasoning {
             sqlx::query("ALTER TABLE session_messages ADD COLUMN reasoning_content TEXT")
@@ -715,7 +741,6 @@ impl SessionStore {
         .await
         .map_err(|e| {
             warn!("Failed to auto-create session row for {}: {}", params.session_id, e);
-            e
         })
         .ok();
 

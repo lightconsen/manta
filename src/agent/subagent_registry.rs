@@ -9,8 +9,8 @@ use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tokio::sync::Notify;
+use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
@@ -189,35 +189,45 @@ impl SubagentRegistry {
         F: FnOnce(String, String) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        // ── depth check ──────────────────────────────────────────────────
-        let current_depth = self.get_depth(parent_session).await;
-        if current_depth >= self.max_depth {
-            return Err(SyscityError::MaxSpawnDepth(self.max_depth));
-        }
-
-        // ── concurrency check ────────────────────────────────────────────
-        let active = self.active_count().await;
-        if active >= self.max_concurrent {
-            return Err(SyscityError::MaxConcurrentSubagents(self.max_concurrent));
-        }
-
-        // ── register run ─────────────────────────────────────────────────
         let run_id = Uuid::new_v4().to_string();
         let child_session = format!("{}:subagent:{}", parent_session, &run_id[..8]);
 
-        let run = SubagentRun {
-            run_id: run_id.clone(),
-            parent_session: parent_session.to_string(),
-            child_session: child_session.clone(),
-            target_agent: target_agent.to_string(),
-            status: SubagentStatus::Running,
-            spawn_depth: current_depth + 1,
-            started_at: Instant::now(),
-            completed_at: None,
-        };
-
+        // ── atomic depth + concurrency check + insert ────────────────────
+        let spawn_depth;
         {
             let mut runs = self.runs.write().await;
+
+            // Depth check: find parent session's depth
+            let current_depth = runs
+                .values()
+                .find(|r| r.child_session == parent_session)
+                .map(|r| r.spawn_depth)
+                .unwrap_or(0);
+            if current_depth >= self.max_depth {
+                return Err(SyscityError::MaxSpawnDepth(self.max_depth));
+            }
+            spawn_depth = current_depth + 1;
+
+            // Concurrency check
+            let active = runs
+                .values()
+                .filter(|r| matches!(r.status, SubagentStatus::Running))
+                .count();
+            if active >= self.max_concurrent {
+                return Err(SyscityError::MaxConcurrentSubagents(self.max_concurrent));
+            }
+
+            // Register the run
+            let run = SubagentRun {
+                run_id: run_id.clone(),
+                parent_session: parent_session.to_string(),
+                child_session: child_session.clone(),
+                target_agent: target_agent.to_string(),
+                status: SubagentStatus::Running,
+                spawn_depth,
+                started_at: Instant::now(),
+                completed_at: None,
+            };
             runs.insert(run_id.clone(), run);
         }
         {
@@ -229,7 +239,7 @@ impl SubagentRegistry {
             run_id = %run_id,
             parent_session = %parent_session,
             target_agent = %target_agent,
-            depth = current_depth + 1,
+            depth = spawn_depth,
             "Subagent spawned"
         );
 
@@ -313,9 +323,7 @@ impl SubagentRegistry {
             None => Some(Err(SyscityError::SubagentNotFound)),
             Some(run) => match &run.status {
                 SubagentStatus::Completed(out) => Some(Ok(out.clone())),
-                SubagentStatus::Failed(err) => {
-                    Some(Err(SyscityError::SubagentFailed(err.clone())))
-                }
+                SubagentStatus::Failed(err) => Some(Err(SyscityError::SubagentFailed(err.clone()))),
                 SubagentStatus::Killed => Some(Err(SyscityError::SubagentKilled)),
                 SubagentStatus::Running => None,
             },

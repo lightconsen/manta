@@ -432,10 +432,7 @@ impl SessionManager {
     }
 
     /// Get a shared handle to a session
-    pub fn get_session(
-        &self,
-        session_id: &str,
-    ) -> Option<Arc<Mutex<MultiAgentSession>>> {
+    pub fn get_session(&self, session_id: &str) -> Option<Arc<Mutex<MultiAgentSession>>> {
         self.sessions.get(session_id).cloned()
     }
 
@@ -560,10 +557,7 @@ async fn session_processing_task(
                         agent_id
                     );
                 } else {
-                    warn!(
-                        "Session {}: RouteToAgent — agent {} not found",
-                        session_id, agent_id
-                    );
+                    warn!("Session {}: RouteToAgent — agent {} not found", session_id, agent_id);
                 }
             }
 

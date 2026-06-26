@@ -1141,9 +1141,7 @@ impl Default for ExtendedChannelRegistry {
         // and plugin channels can send messages without getting a disconnected
         // error. Without this, dropping `message_rx` immediately closes the
         // channel.
-        tokio::spawn(async move {
-            while message_rx.recv().await.is_some() {}
-        });
+        tokio::spawn(async move { while message_rx.recv().await.is_some() {} });
         Self::new(message_tx)
     }
 }

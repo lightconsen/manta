@@ -845,7 +845,6 @@ impl CronScheduler {
         }
     }
 
-
     /// Handle scheduler commands
     #[allow(clippy::too_many_arguments)]
     async fn handle_command(
@@ -995,10 +994,7 @@ impl CronScheduler {
     /// their handles from the tracker. Called when a job is removed so
     /// the orphan task does not continue running and writing back to a
     /// state record that no longer exists.
-    async fn abort_job(
-        inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
-        job_id: &str,
-    ) {
+    async fn abort_job(inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>, job_id: &str) {
         let mut guard = inflight.lock().await;
         guard.retain(|(id, h)| {
             if id == job_id {
@@ -1113,12 +1109,10 @@ impl CronScheduler {
                     Self::push_inflight(inflight, job_id.to_string(), abort_handle.clone()).await;
                     match tokio::time::timeout(AGENT_EXEC_TIMEOUT, handle).await {
                         Ok(Ok(r)) => r,
-                        Ok(Err(e)) => {
-                            Err(SyscityError::Internal(format!(
-                                "Agent task join error for job '{}' (id={}): {}",
-                                job.name, job_id, e
-                            )))
-                        }
+                        Ok(Err(e)) => Err(SyscityError::Internal(format!(
+                            "Agent task join error for job '{}' (id={}): {}",
+                            job.name, job_id, e
+                        ))),
                         Err(_) => {
                             // Explicitly abort so cancellation actually
                             // reaches the agent at its next `.await`,

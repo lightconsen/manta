@@ -235,10 +235,7 @@ impl ChannelLifecycle {
 
             // Don't wait forever for channels that always report healthy
             if start.elapsed() >= max_wait {
-                warn!(
-                    "Channel {} did not stop within {:?}, forcing stop",
-                    self.name, max_wait
-                );
+                warn!("Channel {} did not stop within {:?}, forcing stop", self.name, max_wait);
                 break;
             }
 

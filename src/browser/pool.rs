@@ -316,8 +316,11 @@ impl BrowserPool {
             .insert(config.default_profile.clone(), BrowserProfile::new(&config.default_profile));
         let profiles = Arc::new(RwLock::new(profiles_map));
 
-        let cleanup_handle =
-            Self::spawn_cleanup(instances.clone(), config.idle_timeout_secs, config.cleanup_interval_secs);
+        let cleanup_handle = Self::spawn_cleanup(
+            instances.clone(),
+            config.idle_timeout_secs,
+            config.cleanup_interval_secs,
+        );
 
         Self {
             instances,
@@ -339,8 +342,11 @@ impl BrowserPool {
         let instances: Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
-        let cleanup_handle =
-            Self::spawn_cleanup(instances.clone(), config.idle_timeout_secs, config.cleanup_interval_secs);
+        let cleanup_handle = Self::spawn_cleanup(
+            instances.clone(),
+            config.idle_timeout_secs,
+            config.cleanup_interval_secs,
+        );
 
         Self {
             instances,

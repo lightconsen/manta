@@ -124,13 +124,23 @@ impl SessionBudget {
         // Compute evictions if over budget
         let mut to_evict = Vec::new();
         while self.used_bytes > self.limit_bytes && !self.items.is_empty() {
-            let victim = self.select_victim();
-            if let Some(idx) = victim {
-                let item = self.items.remove(idx);
-                self.used_bytes -= item.size_bytes;
-                to_evict.push(item.id);
-            } else {
-                break;
+            match self.eviction {
+                EvictionStrategy::Reject => {
+                    // Reject strategy: undo the insertion and return an error
+                    self.items.pop();
+                    self.used_bytes = self.used_bytes.saturating_sub(size_bytes);
+                    return Err(DiskBudgetError::BudgetExceeded);
+                }
+                _ => {
+                    let victim = self.select_victim();
+                    if let Some(idx) = victim {
+                        let item = self.items.remove(idx);
+                        self.used_bytes -= item.size_bytes;
+                        to_evict.push(item.id);
+                    } else {
+                        break;
+                    }
+                }
             }
         }
 
@@ -388,11 +398,9 @@ mod tests {
         let mut budget = SessionBudget::new(100).with_eviction(EvictionStrategy::Reject);
         budget.add_item("a1", BudgetCategory::Artifact, 60).unwrap();
         let result = budget.add_item("a2", BudgetCategory::Artifact, 60);
-        // Reject strategy returns None from select_victim, so while loop won't evict
-        // used_bytes stays at 120 > 100 but no panic. In practice Reject is handled
-        // differently.
-        assert!(result.is_ok()); // doesn't reject on add, just doesn't evict
-        assert!(budget.used_bytes > budget.limit_bytes);
+        // Reject strategy returns BudgetExceeded immediately
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DiskBudgetError::BudgetExceeded)));
     }
 
     #[test]
