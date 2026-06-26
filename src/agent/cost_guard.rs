@@ -116,31 +116,30 @@ impl CostGuard {
     /// Reset daily / hourly counters if the window has elapsed.
     fn maybe_reset(&self) {
         // Daily reset
-        if let Ok(mut last) = self.last_daily_reset.lock() {
-            if let Ok(elapsed) = last.elapsed() {
-                if elapsed >= Duration::from_secs(86_400) {
-                    self.daily_cents.store(0, Ordering::Release);
-                    // Only clear the flag if no hourly limit is also tripped.
-                    if self.hourly_action_limit == 0 {
-                        self.budget_exceeded.store(false, Ordering::Release);
-                    }
-                    *last = SystemTime::now();
-                }
-            }
-        }
-
-        // Hourly reset
-        if let Ok(mut last) = self.last_hourly_reset.lock() {
-            if last.elapsed() >= Duration::from_secs(3_600) {
-                self.hourly_actions.store(0, Ordering::Release);
-                // Re-check whether the daily limit is still exceeded.
-                let daily_ok = self.daily_limit_cents == 0
-                    || self.daily_cents.load(Ordering::Acquire) < self.daily_limit_cents;
-                if daily_ok {
+        let mut last_daily = self.last_daily_reset.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(elapsed) = last_daily.elapsed() {
+            if elapsed >= Duration::from_secs(86_400) {
+                self.daily_cents.store(0, Ordering::Release);
+                // Only clear the flag if no hourly limit is also tripped.
+                if self.hourly_action_limit == 0 {
                     self.budget_exceeded.store(false, Ordering::Release);
                 }
-                *last = Instant::now();
+                *last_daily = SystemTime::now();
             }
+        }
+        drop(last_daily);
+
+        // Hourly reset
+        let mut last_hourly = self.last_hourly_reset.lock().unwrap_or_else(|e| e.into_inner());
+        if last_hourly.elapsed() >= Duration::from_secs(3_600) {
+            self.hourly_actions.store(0, Ordering::Release);
+            // Re-check whether the daily limit is still exceeded.
+            let daily_ok = self.daily_limit_cents == 0
+                || self.daily_cents.load(Ordering::Acquire) < self.daily_limit_cents;
+            if daily_ok {
+                self.budget_exceeded.store(false, Ordering::Release);
+            }
+            *last_hourly = Instant::now();
         }
     }
 

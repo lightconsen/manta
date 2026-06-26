@@ -458,12 +458,13 @@ impl TranscriptStore {
         scope: impl Into<String>,
     ) -> Transcript {
         let session_id = session_id.into();
-        self.get(&session_id).unwrap_or_else(|| {
-            let t = Transcript::new(session_id.clone(), channel, peer, scope);
-            let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
-            active.entry(session_id).or_insert_with(|| t.clone());
-            t
-        })
+        // Lock once, then check — prevents TOCTOU where another thread
+        // inserts between the check and the insert.
+        let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        active
+            .entry(session_id.clone())
+            .or_insert_with(|| Transcript::new(session_id, channel, peer, scope))
+            .clone()
     }
 
     /// Append a message to a session's transcript.

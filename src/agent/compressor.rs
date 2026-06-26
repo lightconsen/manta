@@ -45,8 +45,8 @@ pub struct PrioritizedMessage {
 
 impl PrioritizedMessage {
     /// Create a new prioritized message
-    pub fn new(message: Message, index: usize) -> Self {
-        let priority = Self::calculate_priority(&message, index);
+    pub fn new(message: Message, index: usize, total: usize) -> Self {
+        let priority = Self::calculate_priority(&message, index, total);
         Self {
             message,
             priority,
@@ -55,10 +55,14 @@ impl PrioritizedMessage {
         }
     }
 
-    /// Calculate priority based on message content and position
-    fn calculate_priority(message: &Message, index: usize) -> MessagePriority {
-        // Recent messages (last 4) are high priority
-        if index >= 4 {
+    /// Calculate priority based on message content and position.
+    ///
+    /// The last `RECENT_THRESHOLD` messages are always High priority.
+    const RECENT_THRESHOLD: usize = 4;
+
+    fn calculate_priority(message: &Message, index: usize, total: usize) -> MessagePriority {
+        // Recent messages (last RECENT_THRESHOLD) are high priority
+        if index >= total.saturating_sub(Self::RECENT_THRESHOLD) {
             return MessagePriority::High;
         }
 
@@ -75,7 +79,7 @@ impl PrioritizedMessage {
             }
             Role::User => {
                 // Recent user messages are high priority
-                if index >= 4 {
+                if index >= total.saturating_sub(Self::RECENT_THRESHOLD) {
                     MessagePriority::High
                 } else {
                     MessagePriority::Low
@@ -171,7 +175,7 @@ impl ContextCompressor {
         let mut prioritized: Vec<PrioritizedMessage> = messages
             .iter()
             .enumerate()
-            .map(|(i, m)| PrioritizedMessage::new(m.clone(), i))
+            .map(|(i, m)| PrioritizedMessage::new(m.clone(), i, messages.len()))
             .collect();
 
         // Sort by priority (desc) then index (desc) to keep recent high-priority
@@ -539,63 +543,63 @@ mod tests {
 
     #[test]
     fn test_prioritized_message_system_priority() {
-        let pm = PrioritizedMessage::new(msg(Role::System, "sys"), 0);
+        let pm = PrioritizedMessage::new(msg(Role::System, "sys"), 0, 10);
         assert_eq!(pm.priority, MessagePriority::Critical);
     }
 
     #[test]
     fn test_prioritized_message_tool_priority() {
-        let pm = PrioritizedMessage::new(msg(Role::Tool, "tool result"), 0);
+        let pm = PrioritizedMessage::new(msg(Role::Tool, "tool result"), 0, 10);
         assert_eq!(pm.priority, MessagePriority::High);
     }
 
     #[test]
     fn test_prioritized_message_assistant_with_task() {
-        let pm = PrioritizedMessage::new(msg(Role::Assistant, "Task: do something"), 0);
+        let pm = PrioritizedMessage::new(msg(Role::Assistant, "Task: do something"), 0, 10);
         assert_eq!(pm.priority, MessagePriority::High);
     }
 
     #[test]
     fn test_prioritized_message_assistant_with_todo() {
-        let pm = PrioritizedMessage::new(msg(Role::Assistant, "Add a todo item"), 0);
+        let pm = PrioritizedMessage::new(msg(Role::Assistant, "Add a todo item"), 0, 10);
         assert_eq!(pm.priority, MessagePriority::High);
     }
 
     #[test]
     fn test_prioritized_message_assistant_normal() {
-        let pm = PrioritizedMessage::new(msg(Role::Assistant, "Hello there"), 0);
+        let pm = PrioritizedMessage::new(msg(Role::Assistant, "Hello there"), 0, 10);
         assert_eq!(pm.priority, MessagePriority::Normal);
     }
 
     #[test]
     fn test_prioritized_message_user_old() {
-        let pm = PrioritizedMessage::new(msg(Role::User, "old"), 3);
+        let pm = PrioritizedMessage::new(msg(Role::User, "old"), 3, 10);
         assert_eq!(pm.priority, MessagePriority::Low);
     }
 
     #[test]
     fn test_prioritized_message_user_recent() {
-        let pm = PrioritizedMessage::new(msg(Role::User, "recent"), 4);
+        let pm = PrioritizedMessage::new(msg(Role::User, "recent"), 4, 5);
         assert_eq!(pm.priority, MessagePriority::High);
     }
 
     #[test]
     fn test_prioritized_message_high_by_index() {
-        // Any role with index >= 6 gets High priority
-        let pm = PrioritizedMessage::new(msg(Role::User, "msg"), 7);
+        // Any role with index in the last RECENT_THRESHOLD gets High priority
+        let pm = PrioritizedMessage::new(msg(Role::User, "msg"), 7, 10);
         assert_eq!(pm.priority, MessagePriority::High);
     }
 
     #[test]
     fn test_prioritized_message_estimated_tokens() {
-        let pm = PrioritizedMessage::new(msg(Role::User, "a".repeat(100)), 0);
+        let pm = PrioritizedMessage::new(msg(Role::User, "a".repeat(100)), 0, 10);
         // 100 chars * 0.25 = 25, + 4 = 29
         assert_eq!(pm.estimated_tokens(), 29);
     }
 
     #[test]
     fn test_prioritized_message_estimated_tokens_empty() {
-        let pm = PrioritizedMessage::new(msg(Role::User, ""), 0);
+        let pm = PrioritizedMessage::new(msg(Role::User, ""), 0, 10);
         // 0 chars * 0.25 = 0, + 4 = 4
         assert_eq!(pm.estimated_tokens(), 4);
     }
@@ -603,7 +607,7 @@ mod tests {
     #[test]
     fn test_prioritized_message_fields() {
         let m = msg(Role::User, "hello");
-        let pm = PrioritizedMessage::new(m.clone(), 5);
+        let pm = PrioritizedMessage::new(m.clone(), 5, 10);
         assert_eq!(pm.index, 5);
         assert!(!pm.summarized);
         assert_eq!(pm.message.content, "hello");

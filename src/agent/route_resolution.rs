@@ -257,8 +257,22 @@ impl BindingCache {
                 .map(|(k, _)| k)
                 .take(self.max_size / 2)
                 .collect();
-            for k in keys_to_remove {
-                entries.remove(&k);
+
+            if keys_to_remove.is_empty() {
+                // Nothing old enough — force-evict the oldest half to
+                // prevent unbounded growth beyond max_size.
+                let mut age_entries: Vec<(String, Instant)> = entries
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.inserted_at))
+                    .collect();
+                age_entries.sort_by_key(|(_, t)| *t);
+                for (k, _) in age_entries.into_iter().take(self.max_size / 2) {
+                    entries.remove(&k);
+                }
+            } else {
+                for k in keys_to_remove {
+                    entries.remove(&k);
+                }
             }
         }
         entries.insert(

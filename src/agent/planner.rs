@@ -455,11 +455,22 @@ If changes are needed, provide a JSON object with:
             }
         }
 
-        // Look for JSON object/array directly
+        // Look for JSON object/array directly.
+        // Use brace-depth counting from the first '{' to find the matching
+        // closing '}', rather than text.rfind('}') which would concatenate
+        // multiple JSON objects into one invalid blob.
         if let Some(start) = text.find('{') {
-            if let Some(end) = text.rfind('}') {
-                if end > start {
-                    return Ok(text[start..=end].to_string());
+            let mut depth = 0u32;
+            for (i, c) in text[start..].char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Ok(text[start..start + i + 1].to_string());
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

@@ -741,8 +741,11 @@ impl SessionStore {
         .await
         .map_err(|e| {
             warn!("Failed to auto-create session row for {}: {}", params.session_id, e);
-        })
-        .ok();
+            SyscityError::Storage {
+                context: "Failed to auto-create session row".to_string(),
+                details: e.to_string(),
+            }
+        })?;
 
         let result = sqlx::query(
             r#"

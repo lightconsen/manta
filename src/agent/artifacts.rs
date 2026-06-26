@@ -390,9 +390,8 @@ impl ArtifactStore {
     pub fn clear_session(&self, session_id: &str) -> Vec<Artifact> {
         let mut artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         let removed = artifacts.remove(session_id).unwrap_or_default();
-        if let Ok(mut last) = self.last_accessed.lock() {
-            last.remove(session_id);
-        }
+        let mut last = self.last_accessed.lock().unwrap_or_else(|e| e.into_inner());
+        last.remove(session_id);
         info!("Cleared {} artifacts for session {}", removed.len(), session_id);
         removed
     }

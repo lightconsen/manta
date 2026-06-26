@@ -264,35 +264,26 @@ impl AgentPersonality {
                     DEFAULT_MAX_FILE_SIZE
                 );
                 // Read only the first DEFAULT_MAX_FILE_SIZE bytes
-                match tokio::io::AsyncReadExt::read_to_end(
-                    &mut tokio::io::BufReader::new(match tokio::fs::File::open(&file_path).await {
-                        Ok(f) => f,
-                        Err(e) => {
-                            warn!("Failed to open {} for agent {}: {}", filename, self.id, e);
-                            return String::new();
-                        }
-                    }),
-                    &mut Vec::with_capacity(DEFAULT_MAX_FILE_SIZE),
-                )
-                .await
-                {
-                    Ok(n) if n > 0 => {
-                        // Re-read up to the limit, respecting char boundaries
-                        let mut buf = vec![0u8; DEFAULT_MAX_FILE_SIZE];
-                        use tokio::io::AsyncReadExt;
-                        let mut file = match tokio::fs::File::open(&file_path).await {
-                            Ok(f) => f,
-                            Err(e) => {
-                                warn!("Failed to open {} for agent {}: {}", filename, self.id, e);
-                                return String::new();
-                            }
-                        };
-                        let n = file.read(&mut buf).await.unwrap_or(0);
-                        let s = String::from_utf8_lossy(&buf[..n]);
-                        s.chars().take(DEFAULT_MAX_FILE_SIZE).collect()
+                // using a fixed-size buffer (NOT read_to_end, which ignores
+                // Vec::with_capacity and reads until EOF).
+                let mut buf = vec![0u8; DEFAULT_MAX_FILE_SIZE];
+                use tokio::io::AsyncReadExt;
+                let mut file = match tokio::fs::File::open(&file_path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        warn!("Failed to open {} for agent {}: {}", filename, self.id, e);
+                        return String::new();
                     }
-                    _ => String::new(),
-                }
+                };
+                let n = match file.read(&mut buf).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        warn!("Failed to read {} for agent {}: {}", filename, self.id, e);
+                        return String::new();
+                    }
+                };
+                let s = String::from_utf8_lossy(&buf[..n]);
+                s.chars().take(DEFAULT_MAX_FILE_SIZE).collect()
             }
             Ok(_) => {
                 // File is within size limits, read normally

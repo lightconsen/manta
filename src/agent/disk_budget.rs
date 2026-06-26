@@ -122,6 +122,8 @@ impl SessionBudget {
         );
 
         // Compute evictions if over budget
+        // Protect the just-inserted item (last index) from self-eviction.
+        let protected_idx = self.items.len() - 1;
         let mut to_evict = Vec::new();
         while self.used_bytes > self.limit_bytes && !self.items.is_empty() {
             match self.eviction {
@@ -132,7 +134,7 @@ impl SessionBudget {
                     return Err(DiskBudgetError::BudgetExceeded);
                 }
                 _ => {
-                    let victim = self.select_victim();
+                    let victim = self.select_victim(protected_idx);
                     if let Some(idx) = victim {
                         let item = self.items.remove(idx);
                         self.used_bytes -= item.size_bytes;
@@ -188,24 +190,28 @@ impl SessionBudget {
     }
 
     /// Select the index of the victim item to evict based on the strategy.
-    fn select_victim(&self) -> Option<usize> {
+    /// Skips the `protected` index (the item that was just inserted).
+    fn select_victim(&self, protected: usize) -> Option<usize> {
         match self.eviction {
             EvictionStrategy::OldestFirst => self
                 .items
                 .iter()
                 .enumerate()
+                .filter(|(i, _)| *i != protected)
                 .min_by_key(|(_, i)| i.created_at)
                 .map(|(i, _)| i),
             EvictionStrategy::Lru => self
                 .items
                 .iter()
                 .enumerate()
+                .filter(|(i, _)| *i != protected)
                 .min_by_key(|(_, i)| i.last_accessed)
                 .map(|(i, _)| i),
             EvictionStrategy::LargestFirst => self
                 .items
                 .iter()
                 .enumerate()
+                .filter(|(i, _)| *i != protected)
                 .max_by_key(|(_, i)| i.size_bytes)
                 .map(|(i, _)| i),
             EvictionStrategy::Reject => None,
@@ -272,12 +278,11 @@ impl DiskBudgetManager {
         category: BudgetCategory,
         size_bytes: usize,
     ) -> Result<Vec<String>, DiskBudgetError> {
-        let mut budgets = self.get_or_create(session_id);
-        if let Some(budget) = budgets.get_mut(session_id) {
-            budget.add_item(item_id, category, size_bytes)
-        } else {
-            Ok(Vec::new())
-        }
+        let mut budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
+        let budget = budgets
+            .entry(session_id.to_string())
+            .or_insert_with(|| SessionBudget::new(self.default_limit));
+        budget.add_item(item_id, category, size_bytes)
     }
 
     /// Remove a tracked item.
