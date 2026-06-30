@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 
 use super::{
     cosine_similarity, ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats,
@@ -317,16 +317,23 @@ impl DatabaseStore {
 
     /// Add new columns to databases created before this migration (idempotent)
     async fn migrate_schema(&self) -> crate::Result<()> {
-        // Errors are intentionally ignored — they fire when the column already exists
-        let _ = sqlx::query(
-            "ALTER TABLE memories ADD COLUMN importance_score REAL NOT NULL DEFAULT 0.5",
-        )
-        .execute(&self.pool)
-        .await;
-
-        let _ = sqlx::query("ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'")
-            .execute(&self.pool)
-            .await;
+        // ALTER TABLE ADD COLUMN errors are expected when the column already
+        // exists (SQLite has no IF NOT EXISTS for columns).  Log other errors
+        // so disk-full / corruption is detectable.
+        for (column, stmt) in [
+            (
+                "importance_score",
+                "ALTER TABLE memories ADD COLUMN importance_score REAL NOT NULL DEFAULT 0.5",
+            ),
+            ("source", "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'"),
+        ] {
+            if let Err(e) = sqlx::query(stmt).execute(&self.pool).await {
+                let msg = e.to_string();
+                if !msg.contains("duplicate column") && !msg.contains("already exists") {
+                    warn!("Schema migration for {column} failed: {e}");
+                }
+            }
+        }
 
         Ok(())
     }
@@ -496,7 +503,9 @@ impl MemoryStore for DatabaseStore {
         let metadata_str = memory
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m).unwrap_or_default());
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(crate::error::SyscityError::Serialization)?;
 
         sqlx::query(
             r#"
@@ -545,16 +554,19 @@ impl MemoryStore for DatabaseStore {
 
         match row {
             Some(row) => {
-                // Update access tracking (best-effort)
+                // Update access tracking (best-effort, but log failures for observability)
                 let now = Self::system_time_to_secs(SystemTime::now());
-                let _ = sqlx::query(
+                if let Err(e) = sqlx::query(
                     "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE \
                      id = ?",
                 )
                 .bind(now)
                 .bind(&id.0)
                 .execute(&self.pool)
-                .await;
+                .await
+                {
+                    warn!("Failed to update access tracking for memory {}: {}", id, e);
+                }
 
                 let memory = Self::build_memory(MemoryRow {
                     id: row.try_get("id").map_err(|e| col_err("id", e))?,
@@ -613,7 +625,9 @@ impl MemoryStore for DatabaseStore {
         let metadata_str = memory
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m).unwrap_or_default());
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(crate::error::SyscityError::Serialization)?;
 
         let result = sqlx::query(
             r#"
@@ -770,15 +784,19 @@ impl MemoryStore for DatabaseStore {
             memories.push(memory);
         }
 
-        // Semantic re-ranking when an embedding query is provided
+        // Semantic re-ranking when an embedding query is provided.
+        // Memories without embeddings get a score of 0.0 so they still
+        // appear in results (below any embedding match).
         if let Some(query_emb) = &query.embedding {
             let mut scored: Vec<(Memory, f32)> = memories
                 .into_iter()
-                .filter_map(|m| {
-                    m.embedding.clone().map(|e| {
-                        let score = cosine_similarity(query_emb, &e);
-                        (m, score)
-                    })
+                .map(|m| {
+                    let score = m
+                        .embedding
+                        .as_ref()
+                        .map(|e| cosine_similarity(query_emb, e))
+                        .unwrap_or(0.0);
+                    (m, score)
                 })
                 .collect();
             scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

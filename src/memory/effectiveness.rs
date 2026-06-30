@@ -305,10 +305,12 @@ impl EffectivenessTracker {
         for event in events {
             stats.record(event.hit, event.rank);
         }
-        drop(events_guard);
 
-        // Update cache
+        // Acquire the cache write lock while still holding events_guard to
+        // prevent a concurrent `record_recall` from invalidating the cache
+        // between dropping events_guard and acquiring the cache lock.
         let mut cache = self.memory_stats_cache.write().await;
+        drop(events_guard);
 
         // Merge tier migration counters into stats.
         {

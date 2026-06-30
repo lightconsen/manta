@@ -443,16 +443,17 @@ impl SessionSearch {
         lines: usize,
     ) -> crate::Result<Vec<String>> {
         // Get the timestamp of the target message for context ordering
-        let timestamp: chrono::DateTime<chrono::Utc> =
-            sqlx::query_scalar("SELECT created_at FROM messages WHERE id = ?1 AND conversation_id = ?2")
-                .bind(message_id)
-                .bind(conversation_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| crate::error::SyscityError::Storage {
-                    context: "Failed to get message timestamp".to_string(),
-                    details: e.to_string(),
-                })?;
+        let timestamp: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+            "SELECT created_at FROM messages WHERE id = ?1 AND conversation_id = ?2",
+        )
+        .bind(message_id)
+        .bind(conversation_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to get message timestamp".to_string(),
+            details: e.to_string(),
+        })?;
 
         // Get context before
         let before: Vec<String> = sqlx::query_scalar(
@@ -625,7 +626,12 @@ from all indexed conversations."#
 
             let limit = args["limit"].as_u64().unwrap_or(5) as usize;
 
-            let search_query = SessionSearchQuery::new(query).limit(limit);
+            let mut search_query = SessionSearchQuery::new(query).limit(limit);
+            if let Some(conv_id) = args["conversation_id"].as_str() {
+                if !conv_id.is_empty() {
+                    search_query = search_query.for_conversation(conv_id);
+                }
+            }
 
             let results = self.search.search(search_query).await?;
 

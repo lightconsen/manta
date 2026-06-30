@@ -694,7 +694,7 @@ impl PersonalityMemory {
     fn scan_for_threats(&self, content: &str) -> Option<String> {
         // List of suspicious patterns
         let patterns = [
-            ("system_prompt_injection", r"(?i)(system|assistant|user)\s*:\s*"),
+            ("system_prompt_injection", r"(?i)(?:^|\n)\s*(system|assistant|user)\s*:\s*"),
             ("command_injection", r"(?i)(;|\|\||&&|`|<\(|>\$)\s*[a-z]+"),
             ("path_traversal", r"\.\./|\.\.\\"),
             ("exfiltration", r"(?i)(curl|wget|fetch)\s+.*http"),

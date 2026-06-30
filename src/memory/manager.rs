@@ -1022,7 +1022,10 @@ impl MemoryManager {
             };
             if (current.importance_score - old_score).abs() > 0.001 {
                 // Memory was modified concurrently; skip to avoid lost update.
-                debug!("Skipping effectiveness update for {}: concurrent modification detected", memory_id);
+                debug!(
+                    "Skipping effectiveness update for {}: concurrent modification detected",
+                    memory_id
+                );
                 continue;
             }
 
@@ -1043,8 +1046,11 @@ impl MemoryManager {
             // Closed-loop tier migration: if the store is tiered, re-evaluate
             // using effectiveness statistics and migrate when the evaluator
             // recommends a direct promotion/demotion based on hit rate.
-            if let Some(tiered_store) = self.store.as_tiered_store() {
-                let Some(tiered) = tiered_store.tier_index().get(&memory_id) else {
+            if let Some(ref tier_index) = self.tier_index {
+                let Some(tiered) = tier_index.get(&memory_id) else {
+                    continue;
+                };
+                let Some(tiered_store) = self.store.as_tiered_store() else {
                     continue;
                 };
                 let Some(stats) = effectiveness.memory_stats(&memory_id).await else {

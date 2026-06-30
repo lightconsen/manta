@@ -1016,16 +1016,10 @@ impl DreamEngine {
                     let mut edges = Vec::new();
 
                     for entity in &parsed.entities {
+                        let pattern = entity.label.to_lowercase();
                         let memory_ids: Vec<String> = memories
                             .iter()
-                            .filter(|m| {
-                                let pattern = entity.label.to_lowercase();
-                                let content = m.content.to_lowercase();
-                                content.split_whitespace().any(|w| {
-                                    w.trim_matches(|c: char| !c.is_alphanumeric())
-                                        == pattern.as_str()
-                                })
-                            })
+                            .filter(|m| m.content.to_lowercase().contains(&pattern))
                             .map(|m| m.id.to_string())
                             .collect();
                         if !memory_ids.is_empty() {
@@ -1091,11 +1085,19 @@ impl DreamEngine {
         let edge_count = edges.len();
         let processed = memories.len();
 
-        // Store knowledge graph
-        let mut graph = self.knowledge_graph.write().await;
-        graph.nodes = nodes;
-        graph.edges = edges;
-        drop(graph);
+        // Store knowledge graph — merge, don't replace, so previous cycles'
+        // entities and relationships are preserved.
+        {
+            let mut graph = self.knowledge_graph.write().await;
+            let existing_labels: std::collections::HashSet<String> =
+                graph.nodes.iter().map(|n| n.label.clone()).collect();
+            for node in nodes {
+                if !existing_labels.contains(&node.label) {
+                    graph.nodes.push(node);
+                }
+            }
+            graph.edges.extend(edges);
+        }
         self.save_knowledge_graph().await;
 
         // Create pattern memory from the graph
@@ -1421,65 +1423,106 @@ impl DreamReviewQueue {
     ) -> crate::Result<usize> {
         let mut applied = 0;
         let mut items = self.items.write().await;
-        // Use index-based iteration to avoid borrow issues
         for i in 0..items.len() {
             if items[i].status != ReviewStatus::Approved {
                 continue;
             }
-            // Mark as applied so we don't re-apply
-            items[i].status = ReviewStatus::Rejected; // reuse Rejected as "applied"
-            match &items[i].action {
+            let action_applied = match &items[i].action {
                 DreamAction::Delete { memory_id, .. } => {
-                    if let Err(e) = store.delete(&crate::memory::MemoryId::new(memory_id)).await {
-                        warn!("Dream apply: failed to delete memory {}: {e}", memory_id);
-                        continue;
-                    } else {
-                        tier_index.remove(memory_id);
-                    }
-                    applied += 1;
-                }
-                DreamAction::Merge { memory_ids, summary } => {
-                    // Delete source memories and store the summary
-                    let mut ok = true;
-                    for id in memory_ids {
-                        if let Err(e) = store.delete(&crate::memory::MemoryId::new(id)).await {
-                            warn!("Dream apply: failed to delete memory {} during merge: {e}", id);
-                            ok = false;
-                        } else {
-                            tier_index.remove(id);
+                    match store.delete(&crate::memory::MemoryId::new(memory_id)).await {
+                        Ok(_) => {
+                            tier_index.remove(memory_id);
+                            true
+                        }
+                        Err(e) => {
+                            warn!("Dream apply: failed to delete memory {}: {e}", memory_id);
+                            false
                         }
                     }
-                    if !ok {
-                        continue;
+                }
+                DreamAction::Merge { memory_ids, summary } => {
+                    // Try all deletes first; only remove from tier_index if *all* succeed.
+                    let mut success_ids: Vec<&str> = Vec::new();
+                    let mut failed = false;
+                    for id in memory_ids {
+                        match store.delete(&crate::memory::MemoryId::new(id)).await {
+                            Ok(_) => success_ids.push(id),
+                            Err(e) => {
+                                warn!(
+                                    "Dream apply: failed to delete memory {} during merge: {e}",
+                                    id
+                                );
+                                failed = true;
+                            }
+                        }
                     }
-                    let mem = crate::memory::Memory::new("system", summary.clone(), "dream_merge")
-                        .with_importance_score(0.7)
-                        .with_source("dream_review");
-                    if let Ok(_id) = store.store(mem).await {
-                        tier_index
-                            .insert(_id.to_string(), crate::memory::tier::MemoryTier::LongTerm);
+                    if failed {
+                        // Data loss: some sources were successfully deleted but the merge
+                        // cannot complete.  Log IDs so the operator can investigate.
+                        if !success_ids.is_empty() {
+                            warn!(
+                                "Dream apply: partial merge failure — {} memories deleted but \
+                                 summary not stored. Deleted: {:?}",
+                                success_ids.len(),
+                                success_ids
+                            );
+                        }
+                        false
+                    } else {
+                        // All deletes succeeded — remove from tier index and store summary.
+                        for id in &success_ids {
+                            tier_index.remove(id);
+                        }
+                        let mem =
+                            crate::memory::Memory::new("system", summary.clone(), "dream_merge")
+                                .with_importance_score(0.7)
+                                .with_source("dream_review");
+                        match store.store(mem).await {
+                            Ok(_id) => {
+                                tier_index.insert(
+                                    _id.to_string(),
+                                    crate::memory::tier::MemoryTier::LongTerm,
+                                );
+                                true
+                            }
+                            Err(e) => {
+                                warn!("Dream apply: failed to store merge summary: {e}");
+                                false
+                            }
+                        }
                     }
-                    applied += 1;
                 }
                 DreamAction::Promote { memory_id, to_tier, .. } => {
-                    if let Ok(tier) = crate::memory::tier::MemoryTier::from_label(to_tier) {
-                        tier_index.update_tier(memory_id, tier);
+                    match crate::memory::tier::MemoryTier::from_label(to_tier) {
+                        Ok(tier) => {
+                            tier_index.update_tier(memory_id, tier);
+                            true
+                        }
+                        Err(_) => false,
                     }
-                    applied += 1;
                 }
                 DreamAction::Demote { memory_id, to_tier, .. } => {
-                    if let Ok(tier) = crate::memory::tier::MemoryTier::from_label(to_tier) {
-                        tier_index.update_tier(memory_id, tier);
+                    match crate::memory::tier::MemoryTier::from_label(to_tier) {
+                        Ok(tier) => {
+                            tier_index.update_tier(memory_id, tier);
+                            true
+                        }
+                        Err(_) => false,
                     }
-                    applied += 1;
                 }
-                DreamAction::Create { memory } => {
-                    if let Err(e) = store.store(memory.clone()).await {
+                DreamAction::Create { memory } => match store.store(memory.clone()).await {
+                    Ok(_) => true,
+                    Err(e) => {
                         warn!("Dream apply: failed to create memory: {e}");
-                        continue;
+                        false
                     }
-                    applied += 1;
-                }
+                },
+            };
+            // Only flip status after the action has been applied successfully,
+            // so a failed action can be retried on the next call.
+            if action_applied {
+                items[i].status = ReviewStatus::Rejected; // reuse Rejected as "applied"
+                applied += 1;
             }
         }
         // Trim completed items to prevent unbounded growth.

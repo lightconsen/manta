@@ -377,27 +377,28 @@ impl MultimodalStore {
     fn resolve_path(&self, relative_path: &Path) -> crate::Result<PathBuf> {
         // If the user-supplied path is absolute, Path::join discards the base.
         // Canonicalise the base and verify the resolved path is contained within it.
-        let base = std::path::absolute(&self.workspace_dir).map_err(|e| {
+        let base = std::fs::canonicalize(&self.workspace_dir).map_err(|e| {
             crate::error::SyscityError::Storage {
                 context: "Failed to canonicalise workspace dir".to_string(),
                 details: e.to_string(),
             }
         })?;
         let resolved = base.join(relative_path);
-        // Strip ".." and symlinks by canonicalising if the path exists.
+        // Canonicalise to resolve "..", symlinks, and other path tricks.
+        // If the resolved path doesn't exist yet, normalise by removing ".."
+        // components manually.
         let canonical = if resolved.exists() {
-            std::path::absolute(&resolved).map_err(|e| {
-                crate::error::SyscityError::Storage {
-                    context: format!("Failed to resolve path: {:?}", resolved),
-                    details: e.to_string(),
-                }
+            std::fs::canonicalize(&resolved).map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to canonicalise path: {:?}", resolved),
+                details: e.to_string(),
             })?
         } else {
-            // For non-existent paths, just normalise by removing ".." segments.
             let mut normalised = base.clone();
             for component in relative_path.components() {
                 match component {
-                    std::path::Component::ParentDir => { normalised.pop(); }
+                    std::path::Component::ParentDir => {
+                        normalised.pop();
+                    }
                     std::path::Component::CurDir => {}
                     other => normalised.push(other.as_os_str()),
                 }

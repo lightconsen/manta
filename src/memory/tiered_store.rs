@@ -302,8 +302,10 @@ impl MemoryStore for TieredStore {
                     super::tier::TierAction::Evict => {
                         self.backend_for(current_tier).delete(&id).await?;
                         self.index.remove(&id.0);
-                        info!("Memory {} evicted from {}", id, current_tier);
-                        return Ok(());
+                        info!("Memory {} evicted from {} via update", id, current_tier);
+                        return Err(crate::error::SyscityError::NotFound {
+                            resource: format!("Memory {} was evicted during update", id),
+                        });
                     }
                 }
             }

@@ -215,7 +215,31 @@ impl CompressedJsonlStore {
         Ok(memories)
     }
 
+    /// Clean up orphaned `.tmp.*` files left by crashed processes.
+    ///
+    /// Should be called once at application startup.
+    pub async fn cleanup_orphan_temps(&self) {
+        let Ok(mut read_dir) = fs::read_dir(&self.dir).await else {
+            return;
+        };
+        while let Ok(Some(entry)) = read_dir.next_entry().await {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with('.') && name_str.contains(".tmp.") {
+                if let Err(e) = fs::remove_file(entry.path()).await {
+                    warn!("Failed to remove orphan temp file {:?}: {}", entry.path(), e);
+                } else {
+                    debug!("Cleaned up orphan temp file {:?}", entry.path());
+                }
+            }
+        }
+    }
+
     /// Rewrite all shards with the given memories (used by delete/update).
+    ///
+    /// Uses a two-phase commit: all temp files are written first, then
+    /// renamed atomically.  This minimises the window for partial updates
+    /// on crash.
     async fn rewrite_all(&self, memories: Vec<Memory>) -> crate::Result<()> {
         // Group by shard date based on created_at
         let mut by_date: HashMap<String, Vec<Memory>> = HashMap::new();
@@ -229,8 +253,11 @@ impl CompressedJsonlStore {
         // List old shards before we touch anything.
         let old_shards = self.list_shards().await;
 
-        // Write new shards to temp files first, then rename atomically.
-        let mut new_shards: Vec<PathBuf> = Vec::new();
+        // Clean up any orphaned temp files before starting.
+        self.cleanup_orphan_temps().await;
+
+        // Phase 1: write ALL temp files.
+        let mut pending: Vec<(PathBuf, PathBuf)> = Vec::new(); // (tmp_path, final_path)
         for (date, mems) in &by_date {
             let shard = self.dir.join(format!("{}.jsonl.gz", date));
             let lines: Vec<String> = mems
@@ -256,13 +283,19 @@ impl CompressedJsonlStore {
                     details: e.to_string(),
                 }
             })?;
-            fs::rename(&tmp_path, &shard).await.map_err(|e| {
-                crate::error::SyscityError::Storage {
+            pending.push((tmp_path, shard));
+        }
+
+        // Phase 2: rename ALL temp files to their final names.
+        let mut new_shards: Vec<PathBuf> = Vec::with_capacity(pending.len());
+        for (tmp_path, shard) in &pending {
+            fs::rename(tmp_path, shard)
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: format!("Failed to rename temp shard to {:?}", shard),
                     details: e.to_string(),
-                }
-            })?;
-            new_shards.push(shard);
+                })?;
+            new_shards.push(shard.clone());
         }
 
         // Remove old shards that were not rewritten.
