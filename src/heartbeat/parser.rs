@@ -156,6 +156,13 @@ impl TaskDedupTracker {
     pub fn mark_executed(&mut self, task_name: &str) {
         self.last_run.insert(task_name.to_string(), Instant::now());
     }
+
+    /// Remove entries for tasks that are no longer in the current task set.
+    /// Call this after parsing the latest HEARTBEAT.md to prevent unbounded
+    /// growth when tasks are renamed or removed over time.
+    pub fn retain_active(&mut self, active_names: &std::collections::HashSet<String>) {
+        self.last_run.retain(|name, _| active_names.contains(name));
+    }
 }
 
 #[cfg(test)]

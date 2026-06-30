@@ -291,7 +291,9 @@ impl HeartbeatRunner {
             };
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                let _ = wake_tx.send(req).await;
+                if let Err(e) = wake_tx.send(req).await {
+                    warn!("Heartbeat wake retry send failed: {}", e);
+                }
             });
             return;
         }
@@ -432,6 +434,10 @@ impl HeartbeatRunner {
                     if !response.content.contains("HEARTBEAT_OK") && !tasks.is_empty() {
                         let mut states = self.agent_states.write().await;
                         if let Some(agent_state) = states.get_mut(agent_id) {
+                            // Prune stale task entries to prevent unbounded HashMap growth
+                            let active: std::collections::HashSet<String> =
+                                tasks.iter().map(|t| t.name.clone()).collect();
+                            agent_state.dedup.retain_active(&active);
                             for task in &tasks {
                                 agent_state.dedup.mark_executed(&task.name);
                             }
@@ -507,7 +513,12 @@ impl HeartbeatRunner {
     }
 
     fn _emit_event(&self, event: HeartbeatEvent) {
-        let _ = self.event_tx.send(event);
+        if self.event_tx.receiver_count() == 0 {
+            return; // No subscribers, nothing to emit
+        }
+        if let Err(e) = self.event_tx.send(event) {
+            debug!("Heartbeat event send failed (no subscribers): {}", e);
+        }
     }
 }
 
