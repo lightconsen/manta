@@ -90,7 +90,15 @@ impl CompressedJsonlStore {
         // Read existing content if file exists
         let mut existing = Vec::new();
         if shard.exists() {
-            existing = fs::read(&shard).await.unwrap_or_default();
+            match fs::read(&shard).await {
+                Ok(data) => existing = data,
+                Err(e) => {
+                    warn!(
+                        "Failed to read archival shard {:?}, treating as empty: {}",
+                        shard, e
+                    );
+                }
+            }
         }
 
         // Decompress existing, append line, recompress
@@ -241,7 +249,9 @@ impl CompressedJsonlStore {
         // Remove old shards that were not rewritten.
         for old in &old_shards {
             if !new_shards.contains(old) {
-                let _ = fs::remove_file(old).await;
+                if let Err(e) = fs::remove_file(old).await {
+                    warn!("Failed to remove stale archival shard {:?}: {}", old, e);
+                }
             }
         }
 

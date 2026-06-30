@@ -14,6 +14,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tracing::debug;
 
 /// A single recall event tracked for effectiveness analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +91,22 @@ pub struct EffectivenessConfig {
     pub promote_directly_threshold: f32,
     /// Hit rate threshold for direct tier demotion (e.g., 0.1 = 10%).
     pub demote_directly_threshold: f32,
+    /// Maximum recall events to retain per memory ID before pruning oldest.
+    /// Prevents unbounded HashMap growth in the effectiveness tracker.
+    #[serde(default = "default_max_events_per_memory")]
+    pub max_events_per_memory: usize,
+    /// Maximum number of distinct memory IDs to track across all internal maps.
+    /// When exceeded, the least recently accessed memories are pruned.
+    #[serde(default = "default_max_tracked_memories")]
+    pub max_tracked_memories: usize,
+}
+
+fn default_max_events_per_memory() -> usize {
+    1000
+}
+
+fn default_max_tracked_memories() -> usize {
+    50_000
 }
 
 impl Default for EffectivenessConfig {
@@ -105,6 +122,8 @@ impl Default for EffectivenessConfig {
             min_importance: 0.0,
             promote_directly_threshold: 0.9,
             demote_directly_threshold: 0.1,
+            max_events_per_memory: 1000,
+            max_tracked_memories: 50_000,
         }
     }
 }
@@ -179,22 +198,49 @@ impl EffectivenessTracker {
             rank,
         };
 
-        // Store event
-        let mut events_guard = self.events.write().await;
-        let events = events_guard.entry(memory_id.clone()).or_default();
-        let index = events.len();
-        events.push(event);
-        drop(events_guard);
+        // Acquire events lock, push, prune oldest if over cap, then compute
+        // the final index (which may shift after pruning from the front).
+        let (final_index, pruned_ids) = {
+            let mut events_guard = self.events.write().await;
+            let events = events_guard.entry(memory_id.clone()).or_default();
+            events.push(event);
 
-        // Update O(1) recall index
-        let mut index_guard = self.recall_index.write().await;
-        index_guard.insert(recall_id.to_string(), (memory_id.clone(), index));
-        drop(index_guard);
+            let mut pruned_ids = Vec::new();
+            if events.len() > self.config.max_events_per_memory {
+                let excess = events.len() - self.config.max_events_per_memory;
+                let removed: Vec<RecallEvent> = events.drain(..excess).collect();
+                pruned_ids = removed.into_iter().map(|e| e.recall_id).collect();
+            }
 
-        // Invalidate cache for this memory
-        let mut cache_guard = self.memory_stats_cache.write().await;
-        cache_guard.remove(&memory_id);
-        drop(cache_guard);
+            // After pruning from the front, the new event is always the last element.
+            let final_index = events.len() - 1;
+            (final_index, pruned_ids)
+            // events_guard dropped here
+        };
+
+        // Remove pruned entries from recall_index, insert the current entry
+        {
+            let mut index_guard = self.recall_index.write().await;
+            for rid in &pruned_ids {
+                index_guard.remove(rid);
+            }
+            index_guard.insert(recall_id, (memory_id.clone(), final_index));
+        }
+
+        // Invalidate stats cache for this memory
+        {
+            let mut cache_guard = self.memory_stats_cache.write().await;
+            cache_guard.remove(&memory_id);
+        }
+
+        // Enforce total tracked memories limit (lazy: only checks periodically)
+        {
+            let events_guard = self.events.read().await;
+            if events_guard.len() > self.config.max_tracked_memories {
+                drop(events_guard);
+                self.prune_overflow_memories().await;
+            }
+        }
     }
 
     /// Mark a recall as a "hit" (the memory was useful in the response).
@@ -418,6 +464,63 @@ impl EffectivenessTracker {
         let events_guard = self.events.read().await;
         events_guard.values().map(|v| v.len()).sum()
     }
+
+    /// Prune the least-recently-referenced memories when the total tracked
+    /// count exceeds `max_tracked_memories`. Removes entire memory entries
+    /// (events, recall_index, stats cache, promotion counters) for the
+    /// memories with the fewest events until under the limit.
+    async fn prune_overflow_memories(&self) {
+        let target = self.config.max_tracked_memories / 2; // prune down to 50%
+
+        let victims: Vec<String> = {
+            let events_guard = self.events.read().await;
+            if events_guard.len() <= target {
+                return;
+            }
+            let mut by_count: Vec<(String, usize)> = events_guard
+                .iter()
+                .map(|(id, evts)| (id.clone(), evts.len()))
+                .collect();
+            drop(events_guard);
+
+            by_count.sort_by_key(|(_, count)| *count);
+
+            let to_remove = by_count.len() - target;
+            by_count.into_iter().take(to_remove).map(|(id, _)| id).collect()
+        };
+
+        if victims.is_empty() {
+            return;
+        }
+
+        let victim_count = victims.len();
+
+        // Remove events
+        {
+            let mut events_guard = self.events.write().await;
+            for id in &victims {
+                // Collect recall_ids to remove from recall_index
+                if let Some(evts) = events_guard.remove(id) {
+                    let mut index_guard = self.recall_index.write().await;
+                    for evt in evts {
+                        index_guard.remove(&evt.recall_id);
+                    }
+                }
+            }
+        }
+
+        // Remove from stats cache and promotion counters
+        {
+            let mut cache_guard = self.memory_stats_cache.write().await;
+            let mut counters_guard = self.promotion_counters.write().await;
+            for id in &victims {
+                cache_guard.remove(id);
+                counters_guard.remove(id);
+            }
+        }
+
+        debug!("Pruned {} overflow memory entries from effectiveness tracker", victim_count);
+    }
 }
 
 #[cfg(test)]
@@ -469,6 +572,8 @@ mod tests {
             min_importance: 0.0,
             promote_directly_threshold: 0.9,
             demote_directly_threshold: 0.1,
+            max_events_per_memory: 1000,
+            max_tracked_memories: 50_000,
         };
         let tracker = EffectivenessTracker::new(config);
 

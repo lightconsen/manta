@@ -66,6 +66,12 @@ impl Default for MemoryManagerConfig {
 /// Maximum number of recent recalls to track per session before LRU eviction.
 const MAX_RECENT_RECALLS_PER_SESSION: usize = 100;
 
+/// Maximum number of distinct sessions to track in recent_recalls before
+/// evicting the least recently accessed session.  Prevents unbounded
+/// HashMap growth when sessions accumulate without calling
+/// `evaluate_response_hits`.
+const MAX_RECENT_RECALL_SESSIONS: usize = 1000;
+
 /// Tracks a recent recall so it can be evaluated for a hit after the LLM
 /// responds.
 #[derive(Debug, Clone)]
@@ -510,6 +516,26 @@ impl MemoryManager {
                 // Enforce per-session bound to prevent unbounded growth
                 if recalls.len() > MAX_RECENT_RECALLS_PER_SESSION {
                     recalls.remove(0);
+                }
+                // Enforce total-session bound to prevent unbounded HashMap growth.
+                // Evict the oldest-inserted session when the cap is exceeded.
+                if recent_guard.len() > MAX_RECENT_RECALL_SESSIONS {
+                    // Remove the session key that first appears in iteration order.
+                    // HashMap iteration is deterministic within a single-threaded
+                    // context, so this is a stable (if arbitrary) victim selection.
+                    if let Some(victim) = recent_guard.keys().next().cloned() {
+                        if victim != session_key {
+                            recent_guard.remove(&victim);
+                        } else {
+                            // Don't evict the session we just inserted into;
+                            // pick the next key instead.
+                            let mut keys: Vec<_> = recent_guard.keys().cloned().collect();
+                            keys.sort();
+                            if let Some(victim) = keys.into_iter().find(|k| k != &session_key) {
+                                recent_guard.remove(&victim);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1560,6 +1586,8 @@ mod tests {
             min_importance: 0.0,
             promote_directly_threshold: 0.9,
             demote_directly_threshold: 0.1,
+            max_events_per_memory: 1000,
+            max_tracked_memories: 50_000,
         };
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
         let tracker = Arc::new(EffectivenessTracker::new(config));
@@ -1622,6 +1650,8 @@ mod tests {
             min_importance: 0.0,
             promote_directly_threshold: 0.9,
             demote_directly_threshold: 0.1,
+            max_events_per_memory: 1000,
+            max_tracked_memories: 50_000,
         };
 
         let tracker = Arc::new(EffectivenessTracker::new(config));
