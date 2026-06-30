@@ -70,7 +70,8 @@ impl ModelSource {
             // otherwise treat as HF reference.
             let parts: Vec<&str> = source.split('/').collect();
             let last = parts.last().copied().unwrap_or("");
-            let has_extension = last.contains('.') && last.split('.').next_back().is_some_and(|e| !e.is_empty());
+            let has_extension =
+                last.contains('.') && last.split('.').next_back().is_some_and(|e| !e.is_empty());
             if has_extension && parts.len() == 2 {
                 // e.g. "models/file.gguf" → local
                 ModelSource::Local(PathBuf::from(source))
