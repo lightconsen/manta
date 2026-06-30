@@ -89,7 +89,8 @@ fn normalise(pairs: &[(f32, String)]) -> HashMap<String, f32> {
         .map(|(s, _)| *s)
         .fold(f32::NEG_INFINITY, f32::max);
 
-    if max <= 0.0 {
+    // Handle NaN: if any input is NaN, fold propagates it.
+    if max.is_nan() || max <= 0.0 {
         return pairs.iter().map(|(_, k)| (k.clone(), 0.0)).collect();
     }
 
@@ -460,8 +461,18 @@ fn jaccard_similarity(a: &str, b: &str) -> f32 {
 /// Returns `None` for evergreen files that carry no date.
 fn parse_date_from_citation(citation: &str) -> Option<NaiveDate> {
     // Scan for a 10-char substring matching `YYYY-MM-DD`.
-    for i in 0..citation.len().saturating_sub(9) {
-        let slice = &citation[i..i + 10];
+    // Use char_indices to safely handle multi-byte UTF-8 characters.
+    let indices: Vec<usize> = citation.char_indices().map(|(i, _)| i).collect();
+    if indices.len() < 10 {
+        return None;
+    }
+    for i in 0..=indices.len().saturating_sub(10) {
+        let start = indices[i];
+        let end = indices[i + 9]; // 9 chars later = 10-char slice start..end+1
+        if end + 1 > citation.len() {
+            break;
+        }
+        let slice = &citation[start..=end];
         if let Ok(date) = NaiveDate::parse_from_str(slice, "%Y-%m-%d") {
             return Some(date);
         }

@@ -352,7 +352,7 @@ impl MultimodalStore {
 
     /// Read a stored file's bytes.
     pub async fn read_file(&self, relative_path: impl AsRef<Path>) -> crate::Result<Vec<u8>> {
-        let path = self.workspace_dir.join(relative_path.as_ref());
+        let path = self.resolve_path(relative_path.as_ref())?;
         fs::read(&path)
             .await
             .map_err(|e| crate::error::SyscityError::Storage {
@@ -363,13 +363,55 @@ impl MultimodalStore {
 
     /// Delete a stored file.
     pub async fn delete_file(&self, relative_path: impl AsRef<Path>) -> crate::Result<()> {
-        let path = self.workspace_dir.join(relative_path.as_ref());
+        let path = self.resolve_path(relative_path.as_ref())?;
         fs::remove_file(&path)
             .await
             .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to delete multimodal file: {:?}", path),
                 details: e.to_string(),
             })
+    }
+
+    /// Resolve a relative path within the workspace, preventing path traversal
+    /// outside the workspace directory.
+    fn resolve_path(&self, relative_path: &Path) -> crate::Result<PathBuf> {
+        // If the user-supplied path is absolute, Path::join discards the base.
+        // Canonicalise the base and verify the resolved path is contained within it.
+        let base = std::path::absolute(&self.workspace_dir).map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: "Failed to canonicalise workspace dir".to_string(),
+                details: e.to_string(),
+            }
+        })?;
+        let resolved = base.join(relative_path);
+        // Strip ".." and symlinks by canonicalising if the path exists.
+        let canonical = if resolved.exists() {
+            std::path::absolute(&resolved).map_err(|e| {
+                crate::error::SyscityError::Storage {
+                    context: format!("Failed to resolve path: {:?}", resolved),
+                    details: e.to_string(),
+                }
+            })?
+        } else {
+            // For non-existent paths, just normalise by removing ".." segments.
+            let mut normalised = base.clone();
+            for component in relative_path.components() {
+                match component {
+                    std::path::Component::ParentDir => { normalised.pop(); }
+                    std::path::Component::CurDir => {}
+                    other => normalised.push(other.as_os_str()),
+                }
+            }
+            normalised
+        };
+        if canonical.starts_with(&base) {
+            Ok(canonical)
+        } else {
+            Err(crate::error::SyscityError::Storage {
+                context: "Path traversal detected".to_string(),
+                details: format!("{:?} escapes workspace {:?}", relative_path, self.workspace_dir),
+            })
+        }
     }
 }
 

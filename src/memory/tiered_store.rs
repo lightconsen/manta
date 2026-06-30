@@ -289,9 +289,9 @@ impl MemoryStore for TieredStore {
                     }
                     super::tier::TierAction::Promote(target)
                     | super::tier::TierAction::Demote(target) => {
-                        // Migrate: delete from old backend, store in new backend
-                        self.backend_for(current_tier).delete(&id).await?;
+                        // Migrate: store in new backend first, then delete from old
                         self.backend_for(target).store(memory).await?;
+                        self.backend_for(current_tier).delete(&id).await?;
                         self.index.update_tier(&id.0, target);
                         info!(
                             "Memory {} migrated from {} to {} (importance={:.2}, access_count={})",
@@ -337,8 +337,8 @@ impl MemoryStore for TieredStore {
                     }
                     super::tier::TierAction::Promote(target)
                     | super::tier::TierAction::Demote(target) => {
-                        self.backend_for(tier).delete(&id).await?;
                         self.backend_for(target).store(memory).await?;
+                        self.backend_for(tier).delete(&id).await?;
                         self.index.insert(&id.0, target);
                         info!(
                             "Memory {} migrated from {} to {} during fallback scan",

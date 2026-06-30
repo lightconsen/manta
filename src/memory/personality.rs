@@ -335,7 +335,7 @@ impl PersonalityMemory {
     pub async fn write(&self, mem_type: MemoryType, content: &str) -> crate::Result<()> {
         // Apply head/tail truncation (preserves beginning + end of large files).
         let content_owned;
-        let content = if content.len() > self.max_size {
+        let content = if content.chars().count() > self.max_size {
             warn!(
                 "Memory content exceeds max size ({} > {}), applying head/tail truncation",
                 content.len(),
@@ -625,7 +625,7 @@ impl PersonalityMemory {
                 let c = truncate_with_head_tail($content.trim(), self.max_size);
                 if !c.is_empty() {
                     let section = format!("## {}\n{}\n", $label, c);
-                    total_chars += section.len();
+                    total_chars += section.chars().count();
                     if total_chars <= self.total_max_size {
                         sections.push(section);
                     } else {
@@ -672,7 +672,7 @@ impl PersonalityMemory {
                 let c = truncate_with_head_tail(content.trim(), self.max_size);
                 if !c.is_empty() {
                     let part = format!("### {}\n{}\n", name, c);
-                    total_chars += part.len();
+                    total_chars += part.chars().count();
                     if total_chars <= self.total_max_size {
                         frag_parts.push(part);
                     }

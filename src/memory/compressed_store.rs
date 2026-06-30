@@ -235,8 +235,14 @@ impl CompressedJsonlStore {
             let shard = self.dir.join(format!("{}.jsonl.gz", date));
             let lines: Vec<String> = mems
                 .iter()
-                .filter_map(|m| serde_json::to_string(m).ok())
-                .collect();
+                .map(|m| {
+                    serde_json::to_string(m).map_err(|e| {
+                        warn!("Failed to serialize memory {} during rewrite: {}", m.id, e);
+                        e
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(crate::error::SyscityError::Serialization)?;
             let compressed = Self::compress_lines(&lines)?;
 
             let tmp_path = self.dir.join(format!(

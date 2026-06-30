@@ -346,9 +346,15 @@ impl MemoryManager {
 
         // Register in tier index if enabled
         if let Some(ref tier_index) = self.tier_index {
-            let entry_tier = super::tier::TierEvaluator::new(TierSystemConfig::default())
-                .entry_tier(importance, 0);
-            tier_index.insert(id.to_string(), entry_tier);
+            if let Some(tiered_store) = self.store.as_tiered_store() {
+                // Use the tiered store's evaluator for consistency
+                let entry_tier = tiered_store.evaluator().entry_tier(importance, 0);
+                tier_index.insert(id.to_string(), entry_tier);
+            } else {
+                let entry_tier = super::tier::TierEvaluator::new(TierSystemConfig::default())
+                    .entry_tier(importance, 0);
+                tier_index.insert(id.to_string(), entry_tier);
+            }
         }
 
         info!("Memory observed: {}", id);
@@ -1005,8 +1011,23 @@ impl MemoryManager {
                 continue;
             }
 
+            // Re-read the memory before updating to detect concurrent modifications
+            // (TOCTOU guard: if importance_score changed, someone else modified it).
+            let Ok(Some(current)) = self
+                .store
+                .get(&crate::memory::MemoryId::new(&memory_id))
+                .await
+            else {
+                continue;
+            };
+            if (current.importance_score - old_score).abs() > 0.001 {
+                // Memory was modified concurrently; skip to avoid lost update.
+                debug!("Skipping effectiveness update for {}: concurrent modification detected", memory_id);
+                continue;
+            }
+
             // Update the memory with new importance score
-            let mut updated = memory;
+            let mut updated = current;
             updated.importance_score = new_score;
             if let Err(e) = self.store.update(updated.clone()).await {
                 warn!("Failed to update memory effectiveness for {}: {}", memory_id, e);

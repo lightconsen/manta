@@ -597,6 +597,13 @@ impl MemoryStore for DatabaseStore {
     async fn update(&self, memory: Memory) -> crate::Result<()> {
         debug!("Updating memory: {}", memory.id);
 
+        // Reject updates to expired memories
+        if memory.is_expired() {
+            return Err(crate::error::SyscityError::NotFound {
+                resource: format!("Memory with id {} has expired", memory.id),
+            });
+        }
+
         let embedding_bytes = memory
             .embedding
             .as_ref()

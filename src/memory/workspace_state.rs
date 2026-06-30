@@ -173,12 +173,14 @@ impl WorkspaceState {
 
         match fs::write(&tmp_path, format!("{}\n", payload)).await {
             Ok(()) => {
-                fs::rename(&tmp_path, state_path).await.map_err(|e| {
-                    crate::error::SyscityError::Storage {
+                if let Err(e) = fs::rename(&tmp_path, state_path).await {
+                    // Clean up temp file if rename fails
+                    let _ = fs::remove_file(&tmp_path).await;
+                    return Err(crate::error::SyscityError::Storage {
                         context: format!("Failed to rename state file: {:?}", tmp_path),
                         details: e.to_string(),
-                    }
-                })?;
+                    });
+                }
                 Ok(())
             }
             Err(e) => {

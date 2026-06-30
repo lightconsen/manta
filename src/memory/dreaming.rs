@@ -338,7 +338,12 @@ fn extract_entities_heuristic(memories: &[Memory]) -> (Vec<KnowledgeNode>, Vec<K
                 node_type: "concept".to_string(),
                 memory_ids: memories
                     .iter()
-                    .filter(|m| m.content.contains(word))
+                    .filter(|m| {
+                        let pattern = word.to_lowercase();
+                        m.content.to_lowercase().split_whitespace().any(|w| {
+                            w.trim_matches(|c: char| !c.is_alphanumeric()) == pattern.as_str()
+                        })
+                    })
                     .map(|m| m.id.to_string())
                     .collect(),
                 confidence: (*count as f32 / processed as f32).min(1.0),
@@ -608,8 +613,8 @@ impl DreamEngine {
             }
         }
 
-        for id in removed_ids {
-            if let Err(e) = store.delete(&id).await {
+        for id in &removed_ids {
+            if let Err(e) = store.delete(id).await {
                 errors.push(format!("Failed to delete duplicate {}: {}", id, e));
             } else {
                 removed += 1;
@@ -618,8 +623,12 @@ impl DreamEngine {
         }
 
         // Tier maintenance — also moves data between backends via as_tiered_store().
+        // Skip memories that were deduplicated and removed.
         let tiered_store = store.as_tiered_store();
         for mem in &memories {
+            if removed_ids.contains(&mem.id) {
+                continue;
+            }
             processed += 1;
             if let Some(tiered) = tier_index.get(&mem.id.to_string()) {
                 let old_tier = tiered.tier;
@@ -1010,9 +1019,12 @@ impl DreamEngine {
                         let memory_ids: Vec<String> = memories
                             .iter()
                             .filter(|m| {
-                                m.content
-                                    .to_lowercase()
-                                    .contains(&entity.label.to_lowercase())
+                                let pattern = entity.label.to_lowercase();
+                                let content = m.content.to_lowercase();
+                                content.split_whitespace().any(|w| {
+                                    w.trim_matches(|c: char| !c.is_alphanumeric())
+                                        == pattern.as_str()
+                                })
                             })
                             .map(|m| m.id.to_string())
                             .collect();
@@ -1401,6 +1413,7 @@ impl DreamReviewQueue {
     /// Apply all approved actions to the memory store and tier index.
     ///
     /// This executes the actual changes that were approved by the reviewer.
+    /// Returns the number of actions that successfully mutated the store.
     pub async fn apply_approved(
         &self,
         store: &dyn super::MemoryStore,
@@ -1419,6 +1432,7 @@ impl DreamReviewQueue {
                 DreamAction::Delete { memory_id, .. } => {
                     if let Err(e) = store.delete(&crate::memory::MemoryId::new(memory_id)).await {
                         warn!("Dream apply: failed to delete memory {}: {e}", memory_id);
+                        continue;
                     } else {
                         tier_index.remove(memory_id);
                     }
@@ -1426,12 +1440,17 @@ impl DreamReviewQueue {
                 }
                 DreamAction::Merge { memory_ids, summary } => {
                     // Delete source memories and store the summary
+                    let mut ok = true;
                     for id in memory_ids {
                         if let Err(e) = store.delete(&crate::memory::MemoryId::new(id)).await {
                             warn!("Dream apply: failed to delete memory {} during merge: {e}", id);
+                            ok = false;
                         } else {
                             tier_index.remove(id);
                         }
+                    }
+                    if !ok {
+                        continue;
                     }
                     let mem = crate::memory::Memory::new("system", summary.clone(), "dream_merge")
                         .with_importance_score(0.7)
@@ -1455,9 +1474,9 @@ impl DreamReviewQueue {
                     applied += 1;
                 }
                 DreamAction::Create { memory } => {
-                    if let Ok(id) = store.store(memory.clone()).await {
-                        tier_index
-                            .insert(id.to_string(), crate::memory::tier::MemoryTier::LongTerm);
+                    if let Err(e) = store.store(memory.clone()).await {
+                        warn!("Dream apply: failed to create memory: {e}");
+                        continue;
                     }
                     applied += 1;
                 }
@@ -1664,7 +1683,13 @@ mod tests {
 
         let result = engine.run_light(store.as_ref(), &tier_index).await.unwrap();
         assert_eq!(result.phase, DreamPhase::Light);
-        assert!(result.memories_processed >= 5);
+        // Removed duplicates are not counted in processed
+        // 5 memories with 2 unique contents → 2 duplicates removed → 3 remaining
+        // but further tier evaluation may evict some, so just check it's less than 5
+        assert!(
+            result.memories_processed < 5,
+            "duplicates should be excluded from processed count"
+        );
         // Some duplicates should be removed
     }
 
@@ -1764,7 +1789,11 @@ mod tests {
         let result = engine.run_light(store.as_ref(), &tier_index).await.unwrap();
         assert_eq!(result.phase, DreamPhase::Light);
         assert!(result.peak_memory_mb.is_some());
-        assert!(result.memories_processed >= 5);
+        // Removed duplicates are not counted in processed
+        assert!(
+            result.memories_processed < 5,
+            "duplicates should be excluded from processed count"
+        );
 
         let metrics = engine.metrics();
         assert_eq!(
@@ -1940,9 +1969,9 @@ mod tests {
         assert_eq!(pending.len(), 1);
         queue.approve(&pending[0].id).await;
 
-        // Apply — delete will fail but should not panic
+        // Apply — delete will fail, should not count as applied
         let applied = queue.apply_approved(&store, &tier_index).await.unwrap();
-        assert_eq!(applied, 1, "should count as applied even when delete fails");
+        assert_eq!(applied, 0, "delete failure should not count as applied");
 
         // tier_index must still contain the memory_id (delete failed)
         assert!(
@@ -1976,9 +2005,9 @@ mod tests {
         assert_eq!(pending.len(), 1);
         queue.approve(&pending[0].id).await;
 
-        // Apply — deletes will fail but should not panic
+        // Apply — deletes will fail, should not count as applied
         let applied = queue.apply_approved(&store, &tier_index).await.unwrap();
-        assert_eq!(applied, 1, "should count as applied even when deletes fail");
+        assert_eq!(applied, 0, "delete failures should not count as applied");
 
         // tier_index must still contain both memory_ids (deletes failed)
         assert!(

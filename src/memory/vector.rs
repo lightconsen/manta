@@ -383,6 +383,13 @@ impl<P: EmbeddingProvider + Send + Sync> EmbeddingProvider for CachedEmbeddingPr
         }
 
         // Merge fetched embeddings back into result.
+        if fetched.len() != miss_indices.len() {
+            return Err(crate::error::SyscityError::Validation(format!(
+                "Embedding provider returned {} embeddings for {} texts",
+                fetched.len(),
+                miss_indices.len()
+            )));
+        }
         for (local_idx, global_idx) in miss_indices.into_iter().enumerate() {
             result[global_idx] = Some(fetched[local_idx].clone());
         }

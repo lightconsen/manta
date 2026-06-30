@@ -400,7 +400,9 @@ impl SessionSearch {
         for row in rows {
             let score: f64 = row.try_get("score").unwrap_or(0.0);
 
-            if score < query.min_score {
+            // FTS5 bm25: lower scores = better matches (0.0 = perfect).
+            // Filter: keep only results AT LEAST as good as min_score.
+            if score > query.min_score {
                 continue;
             }
 
@@ -440,31 +442,29 @@ impl SessionSearch {
         message_id: &str,
         lines: usize,
     ) -> crate::Result<Vec<String>> {
-        // Get the rowid of the target message
-        let row: (i64,) =
-            sqlx::query_as("SELECT rowid FROM messages WHERE id = ?1 AND conversation_id = ?2")
+        // Get the timestamp of the target message for context ordering
+        let timestamp: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT created_at FROM messages WHERE id = ?1 AND conversation_id = ?2")
                 .bind(message_id)
                 .bind(conversation_id)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| crate::error::SyscityError::Storage {
-                    context: "Failed to get message rowid".to_string(),
+                    context: "Failed to get message timestamp".to_string(),
                     details: e.to_string(),
                 })?;
-
-        let rowid = row.0;
 
         // Get context before
         let before: Vec<String> = sqlx::query_scalar(
             r#"
             SELECT content FROM messages
-            WHERE conversation_id = ?1 AND rowid < ?2
-            ORDER BY rowid DESC
+            WHERE conversation_id = ?1 AND created_at < ?2
+            ORDER BY created_at DESC
             LIMIT ?3
             "#,
         )
         .bind(conversation_id)
-        .bind(rowid)
+        .bind(timestamp)
         .bind(lines as i64)
         .fetch_all(&self.pool)
         .await
@@ -477,13 +477,13 @@ impl SessionSearch {
         let after: Vec<String> = sqlx::query_scalar(
             r#"
             SELECT content FROM messages
-            WHERE conversation_id = ?1 AND rowid > ?2
-            ORDER BY rowid ASC
+            WHERE conversation_id = ?1 AND created_at > ?2
+            ORDER BY created_at ASC
             LIMIT ?3
             "#,
         )
         .bind(conversation_id)
-        .bind(rowid)
+        .bind(timestamp)
         .bind(lines as i64)
         .fetch_all(&self.pool)
         .await

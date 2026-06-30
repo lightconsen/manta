@@ -65,8 +65,19 @@ impl ModelSource {
                 .unwrap_or(source);
             Self::parse_hf_format(path)
         } else if source.contains('/') && !source.starts_with("./") && !source.starts_with("/") {
-            // Likely HF format: org/model/filename.gguf
-            Self::parse_hf_format(source)
+            // Ambiguous: could be HF (org/model) or relative path (dir/file.gguf).
+            // If the last component has a file extension, treat as local path;
+            // otherwise treat as HF reference.
+            let parts: Vec<&str> = source.split('/').collect();
+            let last = parts.last().copied().unwrap_or("");
+            let has_extension = last.contains('.') && last.split('.').next_back().is_some_and(|e| !e.is_empty());
+            if has_extension && parts.len() == 2 {
+                // e.g. "models/file.gguf" → local
+                ModelSource::Local(PathBuf::from(source))
+            } else {
+                // e.g. "org/model" or "org/model/file.gguf" → HF
+                Self::parse_hf_format(source)
+            }
         } else {
             // Local path
             ModelSource::Local(PathBuf::from(source))
