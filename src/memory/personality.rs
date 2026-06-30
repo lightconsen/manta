@@ -66,19 +66,33 @@ pub const DEFAULT_TOTAL_MAX_SIZE: usize = 150_000;
 ///
 /// If the content fits within `max_chars` it is returned unchanged.
 pub fn truncate_with_head_tail(content: &str, max_chars: usize) -> String {
-    if content.len() <= max_chars {
+    if content.chars().count() <= max_chars {
         return content.to_string();
     }
-    let head = (max_chars as f64 * 0.70) as usize;
-    let tail = (max_chars as f64 * 0.20) as usize;
-    // Clamp to valid char boundaries.
-    let head = head.min(content.len());
-    let tail_start = content.len().saturating_sub(tail);
-    let tail_start = tail_start.max(head);
-    let truncated = content.len().saturating_sub(head).saturating_sub(tail);
+    // Use char boundaries to avoid panicking on multi-byte UTF-8.
+    let total_chars = content.chars().count();
+    let head_chars = (max_chars as f64 * 0.70) as usize;
+    let tail_chars = (max_chars as f64 * 0.20) as usize;
+    let head_chars = head_chars.min(total_chars);
+    let tail_start_chars = total_chars.saturating_sub(tail_chars).max(head_chars);
+
+    let head_end = content
+        .char_indices()
+        .nth(head_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(content.len());
+    let tail_start = content
+        .char_indices()
+        .nth(tail_start_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(content.len());
+
+    let truncated = total_chars
+        .saturating_sub(head_chars)
+        .saturating_sub(tail_chars);
     format!(
         "{}\n\n[... {} chars truncated ...]\n\n{}",
-        &content[..head],
+        &content[..head_end],
         truncated,
         &content[tail_start..]
     )

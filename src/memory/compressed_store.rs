@@ -13,9 +13,11 @@
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::fs;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore};
@@ -24,12 +26,25 @@ use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore};
 pub const ARCHIVAL_DIR_NAME: &str = "archival";
 
 /// Gzip-compressed JSONL memory store for cold archival storage.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CompressedJsonlStore {
     /// Base directory (e.g. `{workspace}/memory/archival/`)
     dir: PathBuf,
     /// Maximum memories per shard before rotating to next day.
     max_per_shard: usize,
+    /// Mutex for synchronising write operations (store, update, delete, cleanup).
+    /// Prevents concurrent read-modify-write cycles from silently losing data.
+    write_lock: Arc<Mutex<()>>,
+}
+
+impl Clone for CompressedJsonlStore {
+    fn clone(&self) -> Self {
+        Self {
+            dir: self.dir.clone(),
+            max_per_shard: self.max_per_shard,
+            write_lock: Arc::clone(&self.write_lock),
+        }
+    }
 }
 
 impl CompressedJsonlStore {
@@ -38,6 +53,7 @@ impl CompressedJsonlStore {
         Self {
             dir: base_dir.as_ref().join(ARCHIVAL_DIR_NAME),
             max_per_shard: 10_000,
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -93,10 +109,7 @@ impl CompressedJsonlStore {
             match fs::read(&shard).await {
                 Ok(data) => existing = data,
                 Err(e) => {
-                    warn!(
-                        "Failed to read archival shard {:?}, treating as empty: {}",
-                        shard, e
-                    );
+                    warn!("Failed to read archival shard {:?}, treating as empty: {}", shard, e);
                 }
             }
         }
@@ -263,7 +276,9 @@ impl CompressedJsonlStore {
 impl MemoryStore for CompressedJsonlStore {
     async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
         let id = memory.id.clone();
+        let _guard = self.write_lock.lock().await;
         self.append_one(&memory).await?;
+        drop(_guard);
         debug!("Archived memory: {}", id);
         Ok(id)
     }
@@ -274,6 +289,7 @@ impl MemoryStore for CompressedJsonlStore {
     }
 
     async fn update(&self, memory: Memory) -> crate::Result<()> {
+        let _guard = self.write_lock.lock().await;
         let mut all = self.load_all().await?;
         let mut found = false;
         for m in &mut all {
@@ -292,6 +308,7 @@ impl MemoryStore for CompressedJsonlStore {
     }
 
     async fn delete(&self, id: &MemoryId) -> crate::Result<bool> {
+        let _guard = self.write_lock.lock().await;
         let mut all = self.load_all().await?;
         let before = all.len();
         all.retain(|m| m.id != *id);
@@ -346,6 +363,7 @@ impl MemoryStore for CompressedJsonlStore {
     }
 
     async fn cleanup_expired(&self) -> crate::Result<usize> {
+        let _guard = self.write_lock.lock().await;
         let mut all = self.load_all().await?;
         let before = all.len();
         all.retain(|m| !m.is_expired());

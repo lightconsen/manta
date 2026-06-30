@@ -245,7 +245,11 @@ impl SessionSearch {
         )
         .bind(&conversation_id)
         .bind(&user_id)
-        .bind(&content[..content.len().min(50)]) // Use first 50 chars as title
+        .bind(&content[..content
+            .char_indices()
+            .nth(50)
+            .map(|(i, _)| i)
+            .unwrap_or(content.len())]) // Use first 50 chars as title, safe for UTF-8
         .execute(&self.pool)
         .await
         .map_err(|e| crate::error::SyscityError::Storage {
@@ -636,7 +640,12 @@ from all indexed conversations."#
                         "[{}] {}: {} (score: {:.2})",
                         r.timestamp.format("%Y-%m-%d %H:%M"),
                         r.user_id,
-                        &r.content[..r.content.len().min(100)],
+                        &r.content[..r
+                            .content
+                            .char_indices()
+                            .nth(100)
+                            .map(|(i, _)| i)
+                            .unwrap_or(r.content.len())],
                         r.score
                     )
                 })

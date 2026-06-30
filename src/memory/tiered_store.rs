@@ -173,13 +173,13 @@ impl TieredStore {
             return Ok(());
         }
 
-        // Clone the memory for insertion into the new backend
+        // Store in new backend FIRST, then delete from old backend.
+        // This prevents data loss if the process crashes mid-migration:
+        // a crash after store creates a harmless duplicate; a crash after
+        // delete is equivalent to a successful migration.
         let memory_clone = memory.clone();
-
-        // Delete from old backend
-        self.backend_for(current_tier).delete(id).await?;
-        // Store in new backend
         self.backend_for(target_tier).store(memory_clone).await?;
+        self.backend_for(current_tier).delete(id).await?;
         // Update index
         self.index.update_tier(&id.0, target_tier);
 
@@ -320,11 +320,13 @@ impl MemoryStore for TieredStore {
         ] {
             if let Some(existing) = self.backend_for(tier).get(&id).await? {
                 // Check if the memory should migrate based on its new state
+                let existing_access_count =
+                    self.index.get(&id.0).map(|t| t.access_count).unwrap_or(1); // Default to 1 so promotion isn't blocked
                 let tiered = super::tier::TieredMemory {
                     id: id.0.clone(),
                     tier,
                     tier_entered_at: std::time::SystemTime::now(),
-                    access_count: 0,
+                    access_count: existing_access_count,
                     last_accessed: None,
                     relevance_score: existing.importance_score,
                 };
@@ -402,7 +404,29 @@ impl MemoryStore for TieredStore {
                 }
             }
         }
-        // Stale index entries are lazily cleaned on next access.
+        // Remove stale index entries: entries that point to backends where
+        // the memory no longer exists (cleaned up by the backend but the
+        // index was not updated).
+        let stale_ids: Vec<String> = {
+            let ids_by_tier = self.index.counts_by_tier();
+            let mut stale = Vec::new();
+            for (tier, _count) in ids_by_tier {
+                for mem_id in self.index.ids_in_tier(tier) {
+                    let mid = MemoryId::new(&mem_id);
+                    if self.backend_for(tier).get(&mid).await?.is_none() {
+                        stale.push(mem_id);
+                    }
+                }
+            }
+            stale
+        };
+        for id in &stale_ids {
+            self.index.remove(id);
+        }
+        if !stale_ids.is_empty() {
+            debug!("Cleaned {} stale index entries from cleanup_expired", stale_ids.len());
+        }
+
         info!("Cleaned up {} expired memories across all tiers", total);
         Ok(total)
     }

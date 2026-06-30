@@ -8,7 +8,7 @@
 //!
 //! Triggered via cron scheduling (`DEFAULT_MEMORY_DREAMING_FREQUENCY`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -25,7 +25,7 @@ use tracing::{debug, info, warn};
 
 use super::events::{MemoryEventBuilder, MemoryEventLog};
 use super::tier::{MemoryTier, TierAction, TierEvaluator, TierIndex, TierSystemConfig};
-use super::{Memory, MemoryQuery};
+use super::{Memory, MemoryId, MemoryQuery};
 
 /// Async callback for LLM-based entity extraction in REM dreams.
 /// Takes a prompt string and returns the LLM's response text.
@@ -566,7 +566,7 @@ impl DreamEngine {
         let evaluator = TierEvaluator::new(self.tier_config.clone());
 
         // Deduplication: compare embedding cosine similarity; fall back to text hash
-        let mut removed_ids = Vec::new();
+        let mut removed_ids: HashSet<MemoryId> = HashSet::new();
         for (i, mem_i) in memories.iter().enumerate() {
             if removed_ids.contains(&mem_i.id) {
                 continue;
@@ -599,9 +599,9 @@ impl DreamEngine {
                 };
                 if similar {
                     if mem_i.importance_score >= mem_j.importance_score {
-                        removed_ids.push(mem_j.id.clone());
+                        removed_ids.insert(mem_j.id.clone());
                     } else {
-                        removed_ids.push(mem_i.id.clone());
+                        removed_ids.insert(mem_i.id.clone());
                         break;
                     }
                 }
@@ -617,14 +617,24 @@ impl DreamEngine {
             }
         }
 
-        // Tier maintenance
+        // Tier maintenance — also moves data between backends via as_tiered_store().
+        let tiered_store = store.as_tiered_store();
         for mem in &memories {
             processed += 1;
             if let Some(tiered) = tier_index.get(&mem.id.to_string()) {
                 let old_tier = tiered.tier;
                 match evaluator.evaluate(mem, &tiered, None) {
                     TierAction::Promote(new_tier) => {
-                        tier_index.update_tier(&mem.id.to_string(), new_tier);
+                        // Actually move data between backends when a tiered store is available.
+                        if let Some(ts) = tiered_store {
+                            if let Err(e) = ts.migrate_memory(mem, new_tier).await {
+                                errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
+                                continue;
+                            }
+                        } else {
+                            // Fallback: update index only (data stays in original backend).
+                            tier_index.update_tier(&mem.id.to_string(), new_tier);
+                        }
                         promoted += 1;
                         if let Some(ref event_log) = self.event_log {
                             let event = MemoryEventBuilder::new().promotion(
@@ -640,7 +650,16 @@ impl DreamEngine {
                         }
                     }
                     TierAction::Demote(new_tier) => {
-                        tier_index.update_tier(&mem.id.to_string(), new_tier);
+                        // Actually move data between backends when a tiered store is available.
+                        if let Some(ts) = tiered_store {
+                            if let Err(e) = ts.migrate_memory(mem, new_tier).await {
+                                errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
+                                continue;
+                            }
+                        } else {
+                            // Fallback: update index only (data stays in original backend).
+                            tier_index.update_tier(&mem.id.to_string(), new_tier);
+                        }
                         demoted += 1;
                         if let Some(ref event_log) = self.event_log {
                             let event = MemoryEventBuilder::new().promotion(
@@ -1313,6 +1332,10 @@ pub struct DreamReviewQueue {
     items: RwLock<Vec<DreamReviewItem>>,
 }
 
+/// Maximum number of completed (approved/rejected) items retained before
+/// automatic cleanup.
+const MAX_COMPLETED_REVIEW_ITEMS: usize = 1000;
+
 impl DreamReviewQueue {
     /// Create a new empty review queue.
     pub fn new() -> Self {
@@ -1438,6 +1461,16 @@ impl DreamReviewQueue {
                     }
                     applied += 1;
                 }
+            }
+        }
+        // Trim completed items to prevent unbounded growth.
+        if items.len() > MAX_COMPLETED_REVIEW_ITEMS {
+            let completed_count = items
+                .iter()
+                .filter(|i| i.status != ReviewStatus::Pending)
+                .count();
+            if completed_count > MAX_COMPLETED_REVIEW_ITEMS / 2 {
+                items.retain(|i| i.status == ReviewStatus::Pending);
             }
         }
         Ok(applied)

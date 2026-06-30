@@ -229,7 +229,14 @@ impl MultimodalStore {
             })?;
 
         let id = uuid::Uuid::new_v4().to_string();
-        let stored_name = format!("{}_{}", id, filename);
+        // Sanitize filename to prevent path traversal attacks.
+        let normalized = filename.replace('\\', "/");
+        let sanitized = normalized
+            .trim_start_matches('/')
+            .split('/')
+            .rfind(|p| !p.is_empty() && p != &".." && p != &".")
+            .unwrap_or("unnamed");
+        let stored_name = format!("{}_{}", id, sanitized);
         let stored_path = dir.join(&stored_name);
 
         fs::write(&stored_path, data)

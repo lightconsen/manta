@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use sha2::{Digest, Sha256};
+use tracing::warn;
 
 use super::{
     session_search::{SessionSearch, SessionSearchQuery},
@@ -97,7 +98,13 @@ fn normalise(pairs: &[(f32, String)]) -> HashMap<String, f32> {
 
 /// SHA-256 fingerprint of the first 512 chars of `text` used for dedup.
 fn content_key(text: &str) -> String {
-    let sample = &text[..text.len().min(512)];
+    // Use char_indices to safely handle multi-byte UTF-8 characters.
+    let end = text
+        .char_indices()
+        .nth(512)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len());
+    let sample = &text[..end];
     let hash = Sha256::digest(sample.as_bytes());
     format!("{:x}", hash)
 }
@@ -150,8 +157,20 @@ pub async fn hybrid_search(
 
     // Save owned results so they can be iterated twice (once for normalisation
     // key extraction, once for entry population) without re-issuing queries.
-    let vector_chunks = vector_res.unwrap_or_default();
-    let fts_results = fts_res.unwrap_or_default();
+    let vector_chunks = match vector_res {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Vector search failed in hybrid_search: {}", e);
+            Vec::new()
+        }
+    };
+    let fts_results = match fts_res {
+        Ok(f) => f,
+        Err(e) => {
+            warn!("FTS search failed in hybrid_search: {}", e);
+            Vec::new()
+        }
+    };
 
     // ── Collect raw scores ────────────────────────────────────────────────────
     let vector_pairs: Vec<(f32, String)> = vector_chunks

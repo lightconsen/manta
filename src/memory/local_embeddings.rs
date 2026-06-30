@@ -276,13 +276,21 @@ impl LazyEmbeddingModel {
         self.dimension
     }
 
-    /// Check if the model is available (locally or can be downloaded)
+    /// Check if the model is available (locally or cached from HuggingFace Hub)
     pub async fn is_available(&self) -> bool {
         match &self.source {
             ModelSource::Local(path) => path.exists(),
-            ModelSource::HuggingFace { .. } => {
-                // Try to download and see if it succeeds
-                self.source.resolve().await.is_ok()
+            ModelSource::HuggingFace { repo_id, filename } => {
+                // Only check the local cache — do NOT trigger a download.
+                let cache_dir = dirs::home_dir()
+                    .map(|h| h.join(HF_CACHE_DIR))
+                    .unwrap_or_else(|| PathBuf::from(HF_CACHE_DIR));
+                // hf-hub stores models under: cache_dir/models--repo_id/filename
+                let safe_id = repo_id.replace('/', "--");
+                let cached_path = cache_dir
+                    .join(format!("models--{}", safe_id))
+                    .join(filename);
+                cached_path.exists()
             }
         }
     }

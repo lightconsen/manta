@@ -198,31 +198,43 @@ impl EffectivenessTracker {
             rank,
         };
 
-        // Acquire events lock, push, prune oldest if over cap, then compute
-        // the final index (which may shift after pruning from the front).
-        let (final_index, pruned_ids) = {
+        // Acquire events lock, push, prune oldest if over cap.
+        let (final_index, pruned_ids, excess) = {
             let mut events_guard = self.events.write().await;
             let events = events_guard.entry(memory_id.clone()).or_default();
             events.push(event);
 
             let mut pruned_ids = Vec::new();
-            if events.len() > self.config.max_events_per_memory {
+            let excess = if events.len() > self.config.max_events_per_memory {
                 let excess = events.len() - self.config.max_events_per_memory;
                 let removed: Vec<RecallEvent> = events.drain(..excess).collect();
                 pruned_ids = removed.into_iter().map(|e| e.recall_id).collect();
-            }
+                excess
+            } else {
+                0
+            };
 
             // After pruning from the front, the new event is always the last element.
             let final_index = events.len() - 1;
-            (final_index, pruned_ids)
+            (final_index, pruned_ids, excess)
             // events_guard dropped here
         };
 
-        // Remove pruned entries from recall_index, insert the current entry
+        // Remove pruned entries from recall_index and fix existing indices
+        // that shifted due to front-pruning.
         {
             let mut index_guard = self.recall_index.write().await;
             for rid in &pruned_ids {
                 index_guard.remove(rid);
+            }
+            // Update existing entries: front-pruning shifted all remaining events
+            // by `excess` positions toward index 0.
+            if excess > 0 {
+                for (_, (mem_id, idx)) in index_guard.iter_mut() {
+                    if *mem_id == memory_id {
+                        *idx = idx.saturating_sub(excess);
+                    }
+                }
             }
             index_guard.insert(recall_id, (memory_id.clone(), final_index));
         }
@@ -486,7 +498,11 @@ impl EffectivenessTracker {
             by_count.sort_by_key(|(_, count)| *count);
 
             let to_remove = by_count.len() - target;
-            by_count.into_iter().take(to_remove).map(|(id, _)| id).collect()
+            by_count
+                .into_iter()
+                .take(to_remove)
+                .map(|(id, _)| id)
+                .collect()
         };
 
         if victims.is_empty() {

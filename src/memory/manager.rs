@@ -834,11 +834,19 @@ impl MemoryManager {
 
             if let Some(content) = content {
                 if content.len() >= 5 {
-                    if let Ok(id) = self
+                    match self
                         .observe(user_id, content, memory_type, importance)
                         .await
                     {
-                        stored_ids.push(id);
+                        Ok(id) => {
+                            stored_ids.push(id);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to persist LLM-extracted memory in compact_with_llm: {}",
+                                e
+                            );
+                        }
                     }
                 }
             }
