@@ -303,6 +303,43 @@ impl KnowledgeGraph {
             details: e.to_string(),
         })
     }
+
+    /// Maximum number of nodes before eviction kicks in.
+    const MAX_NODES: usize = 10_000;
+    /// Maximum number of edges before eviction kicks in.
+    const MAX_EDGES: usize = 50_000;
+
+    /// Cap the graph size by evicting lowest-confidence entries when limits
+    /// are exceeded.  This prevents unbounded memory growth across REM cycles.
+    pub fn cap_size(&mut self) {
+        if self.nodes.len() > Self::MAX_NODES {
+            self.nodes.sort_by(|a, b| {
+                a.confidence
+                    .partial_cmp(&b.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            self.nodes.truncate(Self::MAX_NODES);
+            // Re-sort by confidence descending for normal usage.
+            self.nodes.sort_by(|a, b| {
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+        if self.edges.len() > Self::MAX_EDGES {
+            self.edges.sort_by(|a, b| {
+                a.confidence
+                    .partial_cmp(&b.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            self.edges.truncate(Self::MAX_EDGES);
+            self.edges.sort_by(|a, b| {
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
 }
 
 /// Heuristic entity extraction fallback when LLM is unavailable.
@@ -1086,7 +1123,8 @@ impl DreamEngine {
         let processed = memories.len();
 
         // Store knowledge graph — merge, don't replace, so previous cycles'
-        // entities and relationships are preserved.
+        // entities and relationships are preserved. Cap size to prevent
+        // unbounded memory growth across REM cycles.
         {
             let mut graph = self.knowledge_graph.write().await;
             let existing_labels: std::collections::HashSet<String> =
@@ -1097,6 +1135,7 @@ impl DreamEngine {
                 }
             }
             graph.edges.extend(edges);
+            graph.cap_size();
         }
         self.save_knowledge_graph().await;
 

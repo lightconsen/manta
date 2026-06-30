@@ -406,13 +406,17 @@ impl MemoryStore for TieredStore {
                 }
             }
         }
-        // Remove stale index entries: entries that point to backends where
-        // the memory no longer exists (cleaned up by the backend but the
-        // index was not updated).
+        // Remove stale index entries for indexed backends only.
+        // Skip Archival tier because CompressedJsonlStore.get() decompresses
+        // ALL shards — O(n) per call — making a per-memory loop O(n²).
+        let stale_tiers = [
+            MemoryTier::Working,
+            MemoryTier::ShortTerm,
+            MemoryTier::LongTerm,
+        ];
         let stale_ids: Vec<String> = {
-            let ids_by_tier = self.index.counts_by_tier();
             let mut stale = Vec::new();
-            for (tier, _count) in ids_by_tier {
+            for tier in stale_tiers {
                 for mem_id in self.index.ids_in_tier(tier) {
                     let mid = MemoryId::new(&mem_id);
                     if self.backend_for(tier).get(&mid).await?.is_none() {
@@ -426,7 +430,10 @@ impl MemoryStore for TieredStore {
             self.index.remove(id);
         }
         if !stale_ids.is_empty() {
-            debug!("Cleaned {} stale index entries from cleanup_expired", stale_ids.len());
+            debug!(
+                "Cleaned {} stale index entries from cleanup_expired (skipped Archival tier)",
+                stale_ids.len()
+            );
         }
 
         info!("Cleaned up {} expired memories across all tiers", total);

@@ -904,7 +904,9 @@ impl ChatHistoryStore for DatabaseStore {
         let metadata_str = message
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m).unwrap_or_default());
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(crate::error::SyscityError::Serialization)?;
 
         sqlx::query(
             r#"

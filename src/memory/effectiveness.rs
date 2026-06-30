@@ -259,17 +259,24 @@ impl EffectivenessTracker {
     pub async fn mark_hit(&self, recall_id: impl AsRef<str>) {
         let recall_id = recall_id.as_ref();
 
-        // Use O(1) index lookup
+        // Acquire events write-lock FIRST to match the lock order in
+        // prune_overflow_memories (events → recall_index), preventing deadlock.
+        // Then re-read the recall_index while holding the events lock to
+        // avoid TOCTOU races with concurrent record_recall calls (which may
+        // shift indices by pruning from the front).
+        let mut events_guard = self.events.write().await;
         let (memory_id, index) = {
             let index_guard = self.recall_index.read().await;
             match index_guard.get(recall_id) {
                 Some(entry) => entry.clone(),
-                None => return, // Recall ID not found; skip
+                None => {
+                    drop(events_guard);
+                    return; // Recall ID not found; skip
+                }
             }
         };
 
         // Update the specific event directly
-        let mut events_guard = self.events.write().await;
         if let Some(events) = events_guard.get_mut(&memory_id) {
             if let Some(event) = events.get_mut(index) {
                 event.hit = true;

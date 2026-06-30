@@ -6,7 +6,7 @@
 //! - Semantic similarity search with cosine similarity
 //! - Batch processing for efficient embedding generation
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -442,13 +442,25 @@ pub struct VectorStoreStats {
 pub struct MemoryVectorStore {
     chunks: RwLock<HashMap<String, EmbeddedChunk>>,
     dimension: usize,
+    /// Maximum number of chunks before oldest entries are evicted.
+    max_chunks: usize,
+    /// Insertion order for FIFO eviction.
+    order: RwLock<VecDeque<String>>,
 }
 
 impl MemoryVectorStore {
+    /// Create a new in-memory store with the default max of 100,000 chunks.
     pub fn new(dimension: usize) -> Self {
+        Self::with_max(dimension, 100_000)
+    }
+
+    /// Create a new in-memory store with a specific cap.
+    pub fn with_max(dimension: usize, max_chunks: usize) -> Self {
         Self {
             chunks: RwLock::new(HashMap::new()),
             dimension,
+            max_chunks,
+            order: RwLock::new(std::collections::VecDeque::new()),
         }
     }
 }
@@ -457,7 +469,27 @@ impl MemoryVectorStore {
 impl VectorStore for MemoryVectorStore {
     async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
         let mut chunks = self.chunks.write().await;
-        chunks.insert(chunk.id.clone(), chunk);
+        let mut order = self.order.write().await;
+
+        let chunk_id = chunk.id.clone();
+
+        // If the chunk already exists, update in place and move to back.
+        if chunks.contains_key(&chunk_id) {
+            order.retain(|id| id != &chunk_id);
+        }
+
+        chunks.insert(chunk_id.clone(), chunk);
+        order.push_back(chunk_id);
+
+        // Evict oldest chunks when over capacity.
+        while chunks.len() > self.max_chunks {
+            if let Some(oldest_id) = order.pop_front() {
+                chunks.remove(&oldest_id);
+            } else {
+                break;
+            }
+        }
+
         Ok(())
     }
 
@@ -591,10 +623,14 @@ impl SqliteVectorStore {
         limit: usize,
         threshold: f32,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
+        // Fetch extra rows to compensate for threshold filtering below.
+        // A multiplier of 4x is generous — most applications see <50% filtered.
+        let fetch_size = (limit as i64).saturating_mul(4).max(100);
         let rows = sqlx::query(
             "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM \
-             vector_chunks",
+             vector_chunks LIMIT ?",
         )
+        .bind(fetch_size)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| crate::error::SyscityError::Storage {

@@ -103,22 +103,32 @@ impl CompressedJsonlStore {
         let line =
             serde_json::to_string(memory).map_err(crate::error::SyscityError::Serialization)?;
 
-        // Read existing content if file exists
-        let mut existing = Vec::new();
-        if shard.exists() {
-            match fs::read(&shard).await {
-                Ok(data) => existing = data,
-                Err(e) => {
-                    warn!("Failed to read archival shard {:?}, treating as empty: {}", shard, e);
-                }
-            }
-        }
+        // Read existing content if file exists.
+        // Propagate IO errors so we never silently replace a shard with empty data.
+        let existing = if shard.exists() {
+            Some(
+                fs::read(&shard)
+                    .await
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: format!("Failed to read archival shard: {:?}", shard),
+                        details: e.to_string(),
+                    })?,
+            )
+        } else {
+            None
+        };
 
         // Decompress existing, append line, recompress
-        let mut all_lines: Vec<String> = if existing.is_empty() {
-            Vec::new()
-        } else {
-            Self::decompress_lines(&existing)?
+        let mut all_lines: Vec<String> = match existing {
+            Some(data) => {
+                let lines = Self::decompress_lines(&data)?;
+                if lines.is_empty() && !data.is_empty() {
+                    // Decompression produced no lines from non-empty data: warn but continue.
+                    warn!("Archival shard {:?} decompressed to empty (corrupt?), appending", shard);
+                }
+                lines
+            }
+            None => Vec::new(),
         };
 
         all_lines.push(line);
@@ -287,22 +297,58 @@ impl CompressedJsonlStore {
         }
 
         // Phase 2: rename ALL temp files to their final names.
-        let mut new_shards: Vec<PathBuf> = Vec::with_capacity(pending.len());
+        // Track renames so we can roll back on failure.
+        let mut renamed: Vec<(PathBuf, PathBuf)> = Vec::new(); // (final_path, original_tmp_path)
         for (tmp_path, shard) in &pending {
-            fs::rename(tmp_path, shard)
-                .await
-                .map_err(|e| crate::error::SyscityError::Storage {
-                    context: format!("Failed to rename temp shard to {:?}", shard),
-                    details: e.to_string(),
-                })?;
-            new_shards.push(shard.clone());
+            match fs::rename(tmp_path, shard).await {
+                Ok(_) => renamed.push((shard.clone(), tmp_path.clone())),
+                Err(e) => {
+                    // Rename failed — roll back already-renamed files to their temp names.
+                    for (done_shard, done_tmp) in &renamed {
+                        if let Err(rb) = fs::rename(done_shard, done_tmp).await {
+                            warn!(
+                                "Rollback failed for {:?} -> {:?}: {}. Data may be inconsistent.",
+                                done_shard, done_tmp, rb
+                            );
+                        }
+                    }
+                    return Err(crate::error::SyscityError::Storage {
+                        context: format!(
+                            "Failed to rename temp shard to {:?} (rolled back {} previous)",
+                            shard,
+                            renamed.len()
+                        ),
+                        details: e.to_string(),
+                    });
+                }
+            }
         }
 
         // Remove old shards that were not rewritten.
         for old in &old_shards {
-            if !new_shards.contains(old) {
-                if let Err(e) = fs::remove_file(old).await {
-                    warn!("Failed to remove stale archival shard {:?}: {}", old, e);
+            if !renamed.iter().any(|(shard, _)| shard == old) {
+                // Retry up to 3 times with backoff.
+                let mut last_err = None;
+                for attempt in 1..=3 {
+                    match fs::remove_file(old).await {
+                        Ok(_) => {
+                            last_err = None;
+                            break;
+                        }
+                        Err(e) => {
+                            last_err = Some(e);
+                            if attempt < 3 {
+                                tokio::time::sleep(std::time::Duration::from_millis(50 * attempt))
+                                    .await;
+                            }
+                        }
+                    }
+                }
+                if let Some(e) = last_err {
+                    warn!(
+                        "Failed to remove stale archival shard {:?} after 3 attempts: {}",
+                        old, e
+                    );
                 }
             }
         }

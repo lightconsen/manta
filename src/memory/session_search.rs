@@ -505,18 +505,27 @@ impl SessionSearch {
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
             .fetch_one(&self.pool)
             .await
-            .unwrap_or(0);
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to count messages".to_string(),
+                details: e.to_string(),
+            })?;
 
         let conversations: i64 =
             sqlx::query_scalar("SELECT COUNT(DISTINCT conversation_id) FROM messages")
                 .fetch_one(&self.pool)
                 .await
-                .unwrap_or(0);
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: "Failed to count distinct conversations".to_string(),
+                    details: e.to_string(),
+                })?;
 
         let indexed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages_fts")
             .fetch_one(&self.pool)
             .await
-            .unwrap_or(0);
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to count indexed messages".to_string(),
+                details: e.to_string(),
+            })?;
 
         Ok(SessionStats {
             total_messages: total as usize,
