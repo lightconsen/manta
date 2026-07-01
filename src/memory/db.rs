@@ -872,6 +872,14 @@ impl MemoryStore for DatabaseStore {
         Ok(deleted)
     }
 
+    /// Search memories.
+    ///
+    /// The embedding path performs a filtered full-table scan followed by
+    /// in-memory cosine re-ranking. It does **not** use a vector index, so it
+    /// is suitable for small-to-medium corpora or as a fallback when a
+    /// dedicated vector backend (`sqlite-vec`, `pgvector`) is not configured.
+    /// Production deployments with large memory stores should route semantic
+    /// search through a vector-indexed backend.
     async fn search(&self, query: MemoryQuery) -> crate::Result<Vec<Memory>> {
         debug!("Searching memories");
 
@@ -967,6 +975,7 @@ impl MemoryStore for DatabaseStore {
         // Memories without embeddings get a score of 0.0 so they still
         // appear in results (below any embedding match).
         if let Some(query_emb) = &query.embedding {
+            let min_similarity = query.min_similarity.unwrap_or(0.0);
             let mut scored: Vec<(Memory, f32)> = memories
                 .into_iter()
                 .map(|m| {
@@ -977,6 +986,7 @@ impl MemoryStore for DatabaseStore {
                         .unwrap_or(0.0);
                     (m, score)
                 })
+                .filter(|(_, score)| *score >= min_similarity)
                 .collect();
             scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             scored.truncate(query.limit);
@@ -1501,5 +1511,50 @@ mod tests {
         store.delete_conversation("conv1").await.unwrap();
         let history = store.get_conversation_history("conv1", 10).await.unwrap();
         assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_database_store_search_embedding_min_similarity() {
+        let store = DatabaseStore::new_in_memory().await.unwrap();
+
+        let query_embedding = vec![1.0_f32, 0.0];
+        let close_embedding = vec![1.0_f32, 0.0];
+        let orthogonal_embedding = vec![0.0_f32, 1.0];
+
+        let close = Memory::new("user1", "close match", "fact")
+            .with_embedding(close_embedding)
+            .with_importance_score(0.5);
+        let orthogonal = Memory::new("user1", "orthogonal match", "fact")
+            .with_embedding(orthogonal_embedding)
+            .with_importance_score(0.5);
+
+        store.store(close).await.unwrap();
+        store.store(orthogonal).await.unwrap();
+
+        // Without threshold, both results are returned (orthogonal scores 0.0).
+        let results = store
+            .search(
+                MemoryQuery::new()
+                    .for_user("user1")
+                    .with_embedding(query_embedding.clone())
+                    .limit(10),
+            )
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+
+        // With a threshold just above 0, the orthogonal result is filtered out.
+        let results = store
+            .search(
+                MemoryQuery::new()
+                    .for_user("user1")
+                    .with_embedding(query_embedding)
+                    .with_min_similarity(0.5)
+                    .limit(10),
+            )
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "close match");
     }
 }
