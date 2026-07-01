@@ -63,6 +63,10 @@ pub struct HybridSearchResult {
     /// Which backend provided this result: `"vector"`, `"fts"`, or
     /// `"combined"`.
     pub source: String,
+    /// Memory type to report for this result: `"semantic"`, `"session"`, or
+    /// `"hybrid"`. Derived from `source` so downstream statistics can
+    /// distinguish vector-only, FTS-only, and merged results.
+    pub memory_type: String,
     /// Human-readable citation, e.g. `"session:abc123#L5-L12"`.
     pub citation: String,
 }
@@ -241,10 +245,17 @@ pub async fn hybrid_search(
                 _ => "fts",
             };
 
+            let memory_type = match source {
+                "vector" => "semantic",
+                "fts" => "session",
+                _ => "hybrid",
+            };
+
             Some(HybridSearchResult {
                 content: e.content,
                 score: combined,
                 source: source.to_string(),
+                memory_type: memory_type.to_string(),
                 citation: e.citation,
             })
         })
@@ -384,18 +395,21 @@ impl Default for MmrConfig {
 ///         content: "Rust ownership model".into(),
 ///         score: 0.9,
 ///         source: "vector".into(),
+///         memory_type: "semantic".into(),
 ///         citation: "doc:1".into(),
 ///     },
 ///     HybridSearchResult {
 ///         content: "Rust borrowing rules".into(),
 ///         score: 0.85,
 ///         source: "fts".into(),
+///         memory_type: "session".into(),
 ///         citation: "doc:2".into(),
 ///     },
 ///     HybridSearchResult {
 ///         content: "Python async programming".into(),
 ///         score: 0.7,
 ///         source: "vector".into(),
+///         memory_type: "semantic".into(),
 ///         citation: "doc:3".into(),
 ///     },
 /// ];
@@ -550,6 +564,7 @@ mod tests {
             content: "old content".to_string(),
             score: 0.8,
             source: "vector".to_string(),
+            memory_type: "semantic".to_string(),
             citation: "vector:memory/2020-01-01.md".to_string(),
         }];
 
@@ -569,6 +584,7 @@ mod tests {
             content: "old content".to_string(),
             score: 1.0,
             source: "vector".to_string(),
+            memory_type: "semantic".to_string(),
             citation: "vector:memory/2000-01-01.md".to_string(),
         }];
 
@@ -587,6 +603,7 @@ mod tests {
             content: "evergreen content".to_string(),
             score: 0.9,
             source: "vector".to_string(),
+            memory_type: "semantic".to_string(),
             // No date in citation → evergreen.
             citation: "vector:MEMORY.md".to_string(),
         }];
@@ -612,12 +629,14 @@ mod tests {
                 content: "old".to_string(),
                 score: 0.9,
                 source: "fts".to_string(),
+                memory_type: "session".to_string(),
                 citation: format!("vector:memory/2000-01-01.md"),
             },
             HybridSearchResult {
                 content: "fresh".to_string(),
                 score: 0.7,
                 source: "vector".to_string(),
+                memory_type: "semantic".to_string(),
                 citation: format!("vector:memory/{}.md", fresh_date),
             },
         ];
@@ -657,6 +676,7 @@ mod tests {
             content: content.to_string(),
             score,
             source: "vector".to_string(),
+            memory_type: "semantic".to_string(),
             citation: format!("doc:{}", content),
         }
     }
@@ -775,12 +795,14 @@ mod tests {
                 content: "first".to_string(),
                 score: 0.9,
                 source: "vector".to_string(),
+                memory_type: "semantic".to_string(),
                 citation: format!("vector:memory/{}.md", today),
             },
             HybridSearchResult {
                 content: "second".to_string(),
                 score: 0.7,
                 source: "vector".to_string(),
+                memory_type: "semantic".to_string(),
                 citation: format!("vector:memory/{}.md", today),
             },
         ];
@@ -814,6 +836,7 @@ mod tests {
             content: "old".to_string(),
             score: 1.0,
             source: "vector".to_string(),
+            memory_type: "semantic".to_string(),
             citation: format!("vector:memory/{}.md", old_date),
         }];
 
@@ -842,6 +865,7 @@ mod tests {
             content: "very old".to_string(),
             score: 1.0,
             source: "vector".to_string(),
+            memory_type: "semantic".to_string(),
             citation: format!("vector:memory/{}.md", old_date),
         }];
 
@@ -879,5 +903,37 @@ mod tests {
         // Second should be diverse (Python) not the similar rust one
         let has_diverse = reranked.iter().any(|r| r.content.contains("python"));
         assert!(has_diverse, "Should pick diverse Python result with lambda=0");
+    }
+
+    #[test]
+    fn test_hybrid_search_result_memory_type() {
+        // The memory_type field must be derivable from source so that
+        // downstream statistics can distinguish vector-only, FTS-only and
+        // merged results.
+        let semantic = HybridSearchResult {
+            content: "vector result".into(),
+            score: 0.9,
+            source: "vector".into(),
+            memory_type: "semantic".into(),
+            citation: "vector:abc".into(),
+        };
+        let session = HybridSearchResult {
+            content: "fts result".into(),
+            score: 0.8,
+            source: "fts".into(),
+            memory_type: "session".into(),
+            citation: "session:abc#1".into(),
+        };
+        let hybrid = HybridSearchResult {
+            content: "combined result".into(),
+            score: 0.85,
+            source: "combined".into(),
+            memory_type: "hybrid".into(),
+            citation: "hybrid:abc".into(),
+        };
+
+        assert_eq!(semantic.memory_type, "semantic");
+        assert_eq!(session.memory_type, "session");
+        assert_eq!(hybrid.memory_type, "hybrid");
     }
 }

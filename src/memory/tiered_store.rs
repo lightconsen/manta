@@ -11,7 +11,8 @@
 //! `TierEvaluator::entry_tier()`.  Search results are merged and re-sorted by
 //! importance.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -33,6 +34,11 @@ pub struct TieredStore {
     evaluator: Arc<TierEvaluator>,
     index: Arc<TierIndex>,
     last_stale_sweep: std::sync::atomic::AtomicU64,
+    /// Fixed-size async lock pool used to serialize mutating operations on the
+    /// same memory id across tiers. This eliminates duplicate-data races
+    /// between concurrent migrate/update/delete calls without unbounded lock
+    /// growth.
+    memory_locks: Arc<[tokio::sync::Mutex<()>; 256]>,
 }
 
 impl Clone for TieredStore {
@@ -48,12 +54,29 @@ impl Clone for TieredStore {
                 self.last_stale_sweep
                     .load(std::sync::atomic::Ordering::Relaxed),
             ),
+            memory_locks: Arc::clone(&self.memory_locks),
         }
     }
 }
 
 /// Minimum interval between stale index sweeps in `cleanup_expired`.
 const STALE_SWEEP_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Number of slots in the per-memory mutation lock pool.
+const MEMORY_LOCK_POOL_SIZE: usize = 256;
+
+/// Create a fixed-size pool of tokio mutexes used to serialize mutating
+/// operations on the same memory id.
+fn new_memory_lock_pool() -> Arc<[tokio::sync::Mutex<()>; MEMORY_LOCK_POOL_SIZE]> {
+    Arc::new(std::array::from_fn(|_| tokio::sync::Mutex::new(())))
+}
+
+/// Map a memory id to a lock-pool index.
+fn memory_lock_index(id: &str) -> usize {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut hasher);
+    (hasher.finish() as usize) % MEMORY_LOCK_POOL_SIZE
+}
 
 impl TieredStore {
     /// Create a new tiered store with on-disk backends under `base_dir`.
@@ -83,6 +106,7 @@ impl TieredStore {
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
             last_stale_sweep: std::sync::atomic::AtomicU64::new(0),
+            memory_locks: new_memory_lock_pool(),
         })
     }
 
@@ -100,6 +124,7 @@ impl TieredStore {
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
             last_stale_sweep: std::sync::atomic::AtomicU64::new(0),
+            memory_locks: new_memory_lock_pool(),
         })
     }
 
@@ -118,6 +143,7 @@ impl TieredStore {
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
             last_stale_sweep: std::sync::atomic::AtomicU64::new(0),
+            memory_locks: new_memory_lock_pool(),
         }
     }
 
@@ -165,6 +191,7 @@ impl TieredStore {
         target_tier: MemoryTier,
     ) -> crate::Result<()> {
         let id = &memory.id;
+        let _guard = self.memory_locks[memory_lock_index(&id.0)].lock().await;
 
         // Find current tier
         let current_tier = if let Some(t) = self.index.get_tier(&id.0) {
@@ -238,15 +265,31 @@ impl TieredStore {
         unlimited.limit = per_tier;
         unlimited.offset = 0;
 
+        // Query all tiers concurrently. Each backend is independent, so this
+        // reduces latency from sum(tier_latency) to max(tier_latency).
+        let (working, short_term, long_term, archival) = tokio::join!(
+            self.working.search(unlimited.clone()),
+            self.short_term.search(unlimited.clone()),
+            self.long_term.search(unlimited.clone()),
+            self.archival.search(unlimited.clone()),
+        );
+
         let mut all = Vec::new();
-        for tier in [
-            MemoryTier::Working,
-            MemoryTier::ShortTerm,
-            MemoryTier::LongTerm,
-            MemoryTier::Archival,
+        let mut seen = HashSet::new();
+        for (tier, result) in [
+            (MemoryTier::Working, working),
+            (MemoryTier::ShortTerm, short_term),
+            (MemoryTier::LongTerm, long_term),
+            (MemoryTier::Archival, archival),
         ] {
-            match self.backend_for(tier).search(unlimited.clone()).await {
-                Ok(mut results) => all.append(&mut results),
+            match result {
+                Ok(results) => {
+                    for mem in results {
+                        if seen.insert(mem.id.0.clone()) {
+                            all.push(mem);
+                        }
+                    }
+                }
                 Err(e) => {
                     return Err(crate::error::SyscityError::Storage {
                         context: format!("Tier {:?} search failed", tier),
@@ -315,6 +358,7 @@ impl MemoryStore for TieredStore {
 
     async fn update(&self, memory: Memory) -> crate::Result<()> {
         let id = memory.id.clone();
+        let _guard = self.memory_locks[memory_lock_index(&id.0)].lock().await;
 
         // Fast path: known tier — check if migration is needed
         if let Some(current_tier) = self.index.get_tier(&id.0) {
@@ -404,6 +448,8 @@ impl MemoryStore for TieredStore {
         id: &MemoryId,
         new_score: f32,
     ) -> crate::Result<Option<Memory>> {
+        let _guard = self.memory_locks[memory_lock_index(&id.0)].lock().await;
+
         // Fast path: known tier — update in place without triggering migration.
         if let Some(tier) = self.index.get_tier(&id.0) {
             return self
@@ -433,6 +479,8 @@ impl MemoryStore for TieredStore {
     }
 
     async fn delete(&self, id: &MemoryId) -> crate::Result<bool> {
+        let _guard = self.memory_locks[memory_lock_index(&id.0)].lock().await;
+
         if let Some(tier) = self.index.get_tier(&id.0) {
             let deleted = self.backend_for(tier).delete(id).await?;
             if deleted {
@@ -496,28 +544,39 @@ impl MemoryStore for TieredStore {
             MemoryTier::ShortTerm,
             MemoryTier::LongTerm,
         ];
-        let stale_ids: Vec<String> = {
-            let mut stale = Vec::new();
-            for tier in stale_tiers {
-                for mem_id in self.index.ids_in_tier(tier) {
-                    let mid = MemoryId::new(&mem_id);
-                    if self.backend_for(tier).get(&mid).await?.is_none() {
-                        stale.push(mem_id);
-                    }
+        let mut stale: Vec<String> = Vec::new();
+        for tier in stale_tiers {
+            for mem_id in self.index.ids_in_tier(tier) {
+                let mid = MemoryId::new(&mem_id);
+                if self.backend_for(tier).get(&mid).await?.is_none() {
+                    stale.push(mem_id);
                 }
             }
-            stale
-        };
+        }
+
+        // Archival stale-index sweep: bulk-load all ids once to avoid O(n²)
+        // per-get decompression. The sweep is throttled, so the occasional
+        // full scan is acceptable for cold storage.
+        let archival_ids: HashSet<String> = self
+            .archival
+            .search(MemoryQuery::new().limit(usize::MAX))
+            .await?
+            .into_iter()
+            .map(|m| m.id.0)
+            .collect();
+        for mem_id in self.index.ids_in_tier(MemoryTier::Archival) {
+            if !archival_ids.contains(&mem_id) {
+                stale.push(mem_id);
+            }
+        }
+
         self.last_stale_sweep
             .store(now_secs, std::sync::atomic::Ordering::Relaxed);
-        for id in &stale_ids {
+        for id in &stale {
             self.index.remove(id);
         }
-        if !stale_ids.is_empty() {
-            debug!(
-                "Cleaned {} stale index entries from cleanup_expired (skipped Archival tier)",
-                stale_ids.len()
-            );
+        if !stale.is_empty() {
+            debug!("Cleaned {} stale index entries from cleanup_expired", stale.len());
         }
 
         info!("Cleaned up {} expired memories across all tiers", total);
@@ -777,5 +836,127 @@ mod tests {
 
         let fetched = store.get(&id).await.unwrap().unwrap();
         assert_eq!(fetched.content, "Explicit move");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_migrate_no_duplicate() {
+        let store = TieredStore::new_in_memory().await.unwrap();
+
+        let mem = Memory::new("u1", "Race me", "fact").with_importance_score(0.5);
+        let id = store.store(mem.clone()).await.unwrap();
+
+        let store_a = store.clone();
+        let store_b = store.clone();
+        let mem_a = mem.clone();
+        let mem_b = mem.clone();
+        let id_a = id.clone();
+        let _id_b = id.clone();
+
+        let (res_a, res_b) = tokio::join!(
+            async move { store_a.migrate_memory(&mem_a, MemoryTier::LongTerm).await },
+            async move { store_b.migrate_memory(&mem_b, MemoryTier::Archival).await },
+        );
+
+        // At least one migration should succeed; the lock serializes them.
+        assert!(res_a.is_ok() || res_b.is_ok());
+
+        // The memory must exist in exactly one tier.
+        let mut count = 0usize;
+        for tier in [
+            MemoryTier::Working,
+            MemoryTier::ShortTerm,
+            MemoryTier::LongTerm,
+            MemoryTier::Archival,
+        ] {
+            let backend: &dyn MemoryStore = match tier {
+                MemoryTier::Working => &store.working,
+                MemoryTier::ShortTerm => &store.short_term,
+                MemoryTier::LongTerm => &store.long_term,
+                MemoryTier::Archival => &store.archival,
+            };
+            if backend.get(&id_a).await.unwrap().is_some() {
+                count += 1;
+            }
+        }
+
+        assert_eq!(
+            count, 1,
+            "memory should exist in exactly one backend after concurrent migrations"
+        );
+
+        // Search must return exactly one copy.
+        let results = store
+            .search(MemoryQuery::new().for_user("u1").limit(10))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_search_all_tiers_dedup() {
+        let store = TieredStore::new_in_memory().await.unwrap();
+
+        let mem = Memory::new("u1", "Duplicate", "fact").with_importance_score(0.5);
+        let id = mem.id.clone();
+
+        // Store the same memory in two backends directly to simulate a
+        // crash that left a duplicate behind.
+        store.working.store(mem.clone()).await.unwrap();
+        store.short_term.store(mem.clone()).await.unwrap();
+        store.index.insert(&id.0, MemoryTier::Working);
+
+        let results = store
+            .search(MemoryQuery::new().for_user("u1").limit(10))
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1, "duplicate memories should be deduplicated");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_removes_archival_stale_index() {
+        let store = TieredStore::new_in_memory().await.unwrap();
+
+        let mem = Memory::new("u1", "Stale archival", "fact").with_importance_score(0.1);
+        let id = store.store(mem.clone()).await.unwrap();
+
+        // Migrate to Archival, then delete from Archival behind the index's back.
+        store
+            .migrate_memory(&mem, MemoryTier::Archival)
+            .await
+            .unwrap();
+        assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::Archival));
+        store.archival.delete(&id).await.unwrap();
+
+        // cleanup_expired should remove the stale Archival index entry.
+        store.cleanup_expired().await.unwrap();
+        assert!(store.index.get_tier(&id.0).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_search_all_tiers_concurrent() {
+        let store = TieredStore::new_in_memory().await.unwrap();
+
+        store
+            .store(Memory::new("u1", "Working memory", "fact").with_importance_score(0.1))
+            .await
+            .unwrap();
+        store
+            .store(Memory::new("u1", "Short term note", "note").with_importance_score(0.4))
+            .await
+            .unwrap();
+        store
+            .store(Memory::new("u1", "Long term fact", "fact").with_importance_score(0.8))
+            .await
+            .unwrap();
+
+        let results = store
+            .search(MemoryQuery::new().for_user("u1").limit(10))
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert!(results[0].importance_score >= results[1].importance_score);
+        assert!(results[1].importance_score >= results[2].importance_score);
     }
 }

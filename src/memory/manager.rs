@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
@@ -31,6 +32,24 @@ use super::{
     TieredStore, UnifiedStore,
 };
 use crate::providers::{CompletionRequest, Message, Provider};
+
+/// Compute a stable id for effectiveness tracking.
+///
+/// Hybrid and QMD results are constructed with synthetic `MemoryId`s, so using
+/// `mem.id` for effectiveness tracking creates a new record on every recall.
+/// For those sources we fall back to a content hash (scoped by user) so the
+/// same recalled content aggregates into one effectiveness record.
+fn effectiveness_tracking_id(mem: &Memory, user_id: &str) -> String {
+    const SYNTHETIC_TYPES: &[&str] = &["semantic", "session", "hybrid", "qmd"];
+    if SYNTHETIC_TYPES.contains(&mem.memory_type.as_str()) {
+        let mut hasher = Sha256::new();
+        hasher.update(user_id.as_bytes());
+        hasher.update(mem.content.as_bytes());
+        format!("recall-content-{}", hex::encode(hasher.finalize()))
+    } else {
+        mem.id.to_string()
+    }
+}
 
 /// Configuration for the MemoryManager.
 #[derive(Debug, Clone)]
@@ -407,7 +426,7 @@ impl MemoryManager {
             memories = hybrid_results
                 .into_iter()
                 .map(|r| {
-                    Memory::new(user_id, r.content, "hybrid")
+                    Memory::new(user_id, r.content, &r.memory_type)
                         .with_importance_score(r.score)
                         .with_source(&r.source)
                         .with_metadata(serde_json::json!({
@@ -506,9 +525,11 @@ impl MemoryManager {
             .unwrap_or_else(|| user_id.to_string());
 
         for (rank, mem) in memories.iter().enumerate() {
+            let tracking_id = effectiveness_tracking_id(mem, user_id);
+
             // Record access in tier index
             if let Some(ref tier_index) = self.tier_index {
-                tier_index.record_access(&mem.id.to_string());
+                tier_index.record_access(&tracking_id);
             }
 
             // Track effectiveness
@@ -517,7 +538,7 @@ impl MemoryManager {
                 effectiveness
                     .record_recall(
                         recall_id.clone(),
-                        &mem.id.to_string(),
+                        &tracking_id,
                         &session_key,
                         &mem.memory_type,
                         mem.importance_score,
@@ -1060,16 +1081,30 @@ impl MemoryManager {
                 continue;
             }
 
-            let Some(updated) = self
+            let updated = match self
                 .store
                 .update_importance_score(&crate::memory::MemoryId::new(&memory_id), new_score)
                 .await
-                .unwrap_or_else(|e| {
+            {
+                Ok(Some(updated)) => updated,
+                Ok(None) => {
+                    debug!(
+                        "Skipping effectiveness update for {}: memory removed concurrently",
+                        memory_id
+                    );
+                    continue;
+                }
+                Err(crate::error::SyscityError::NotFound { .. }) => {
+                    debug!(
+                        "Skipping effectiveness update for {}: memory no longer exists",
+                        memory_id
+                    );
+                    continue;
+                }
+                Err(e) => {
                     warn!("Failed to update importance score for {}: {}", memory_id, e);
-                    None
-                })
-            else {
-                continue;
+                    continue;
+                }
             };
 
             info!(
@@ -1337,6 +1372,8 @@ impl MemoryManagerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[tokio::test]
     async fn test_memory_manager_observe_and_retrieve() {
@@ -1788,5 +1825,183 @@ mod tests {
 
         let stats = tracker.memory_stats(&id.0).await.unwrap();
         assert_eq!(stats.promotions, 1);
+    }
+
+    #[tokio::test]
+    async fn test_manager_retrieve_hybrid_tracking_id() {
+        use crate::memory::effectiveness::{EffectivenessConfig, EffectivenessTracker};
+        use crate::memory::session_search::SessionSearch;
+        use crate::memory::vector::{
+            EmbeddingConfig, EmbeddingProvider, MemoryVectorStore, VectorMemoryService, VectorStore,
+        };
+        use sqlx::sqlite::SqlitePool;
+
+        struct FixedEmbeddingProvider;
+        #[async_trait]
+        impl EmbeddingProvider for FixedEmbeddingProvider {
+            fn model_name(&self) -> &str {
+                "fixed"
+            }
+            fn dimension(&self) -> usize {
+                2
+            }
+            async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+                Ok(texts.iter().map(|t| vec![t.len() as f32, 0.0]).collect())
+            }
+        }
+
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+
+        // Vector backend: add content so hybrid_search returns a semantic result.
+        let provider = Arc::new(FixedEmbeddingProvider) as Arc<dyn EmbeddingProvider>;
+        let vector_store = Arc::new(MemoryVectorStore::new(2)) as Arc<dyn VectorStore>;
+        let vector_service =
+            Arc::new(VectorMemoryService::new(provider, vector_store, &EmbeddingConfig::default()));
+        vector_service
+            .add_to_collection("I love sushi", None, "default")
+            .await
+            .unwrap();
+
+        // FTS backend: empty but initialized.
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let session_search = Arc::new(SessionSearch::new(pool));
+        session_search.initialize().await.unwrap();
+
+        let tracker = Arc::new(EffectivenessTracker::new(EffectivenessConfig::default()));
+
+        let mut mm_config = MemoryManagerConfig::default();
+        mm_config.hybrid_config.min_score = 0.0;
+
+        let mm = MemoryManager::new(store.clone(), store, mm_config)
+            .with_vector_service(vector_service)
+            .with_session_search(session_search)
+            .with_effectiveness_tracker(tracker.clone());
+
+        let results = mm
+            .retrieve("user1", None::<&str>, "sushi", Some(5))
+            .await
+            .unwrap();
+
+        assert!(
+            results.iter().any(|m| m.content.contains("sushi")),
+            "Expected hybrid search to find sushi memory"
+        );
+
+        // The synthetic hybrid result should have been tracked by a stable
+        // content hash, not its random MemoryId.
+        let mem = results
+            .iter()
+            .find(|m| m.content.contains("sushi"))
+            .unwrap();
+        let tracking_id = effectiveness_tracking_id(mem, "user1");
+        assert_ne!(tracking_id, mem.id.to_string());
+
+        let stats = tracker.memory_stats(&tracking_id).await.unwrap();
+        assert_eq!(stats.total_recalls, 1);
+    }
+
+    #[tokio::test]
+    async fn test_apply_effectiveness_adjustments_handles_storage_error() {
+        use crate::memory::effectiveness::{EffectivenessConfig, EffectivenessTracker};
+
+        let tracker = Arc::new(EffectivenessTracker::new(EffectivenessConfig {
+            auto_adjust: true,
+            promotion_threshold: 0.7,
+            demotion_threshold: 0.2,
+            min_recalls_for_adjustment: 1,
+            importance_boost: 0.1,
+            importance_penalty: 0.1,
+            max_importance: 1.0,
+            min_importance: 0.0,
+            promote_directly_threshold: 0.9,
+            demote_directly_threshold: 0.1,
+            max_events_per_memory: 1000,
+            max_tracked_memories: 50_000,
+        }));
+
+        let memory = Memory::new("u1", "test fact", "fact").with_importance_score(0.6);
+        let memory_id = memory.id.clone();
+        let update_calls = Arc::new(AtomicUsize::new(0));
+
+        let chat_history = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let store = Arc::new(FailingImportanceStore {
+            memory,
+            update_calls: update_calls.clone(),
+        });
+
+        let mm = MemoryManager::new(store, chat_history, MemoryManagerConfig::default())
+            .with_effectiveness_tracker(tracker.clone());
+
+        // Record enough under-performing recalls to trigger an adjustment.
+        for i in 0..3 {
+            tracker
+                .record_recall(&format!("recall-{i}"), &memory_id.0, "u1:conv1", "fact", 0.6, i)
+                .await;
+        }
+
+        // Should not panic; it should log the storage error and continue.
+        mm.apply_effectiveness_adjustments().await;
+
+        assert_eq!(
+            update_calls.load(Ordering::SeqCst),
+            1,
+            "update_importance_score should have been called once"
+        );
+    }
+
+    struct FailingImportanceStore {
+        memory: Memory,
+        update_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl MemoryStore for FailingImportanceStore {
+        async fn store(&self, _memory: Memory) -> crate::Result<MemoryId> {
+            unimplemented!()
+        }
+
+        async fn get(&self, id: &MemoryId) -> crate::Result<Option<Memory>> {
+            if id.0 == self.memory.id.0 {
+                Ok(Some(self.memory.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+
+        async fn update(&self, _memory: Memory) -> crate::Result<()> {
+            unimplemented!()
+        }
+
+        async fn delete(&self, _id: &MemoryId) -> crate::Result<bool> {
+            unimplemented!()
+        }
+
+        async fn search(&self, _query: MemoryQuery) -> crate::Result<Vec<Memory>> {
+            unimplemented!()
+        }
+
+        async fn cleanup_expired(&self) -> crate::Result<usize> {
+            Ok(0)
+        }
+
+        async fn stats(&self) -> crate::Result<MemoryStats> {
+            Ok(MemoryStats::default())
+        }
+
+        async fn close(&self) -> crate::Result<()> {
+            Ok(())
+        }
+
+        async fn update_importance_score(
+            &self,
+            _id: &MemoryId,
+            _new_score: f32,
+        ) -> crate::Result<Option<Memory>> {
+            self.update_calls.fetch_add(1, Ordering::SeqCst);
+            Err(crate::error::SyscityError::Storage {
+                context: "simulated storage failure".to_string(),
+                details: "test".to_string(),
+            })
+        }
     }
 }
