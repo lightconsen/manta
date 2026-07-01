@@ -10,6 +10,7 @@
 //! - Dream: when a dreaming cycle completes
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -297,6 +298,9 @@ pub async fn read_memory_events(
 #[derive(Debug, Clone)]
 pub struct MemoryEventLog {
     workspace_dir: PathBuf,
+    /// Serialize concurrent appends so rotation and the append write are not
+    /// interleaved with another writer on the same path.
+    write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl MemoryEventLog {
@@ -304,11 +308,13 @@ impl MemoryEventLog {
     pub fn new(workspace_dir: impl Into<PathBuf>) -> Self {
         Self {
             workspace_dir: workspace_dir.into(),
+            write_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
     /// Append an event.
     pub async fn append(&self, event: &MemoryEvent) -> crate::Result<()> {
+        let _guard = self.write_lock.lock().await;
         append_memory_event(&self.workspace_dir, event).await
     }
 
@@ -378,5 +384,42 @@ mod tests {
         assert_eq!(format!("{}", DreamPhase::Light), "light");
         assert_eq!(format!("{}", DreamPhase::Deep), "deep");
         assert_eq!(format!("{}", DreamPhase::Rem), "rem");
+    }
+
+    #[tokio::test]
+    async fn test_event_log_concurrent_appends_no_corruption() {
+        let dir = tempdir().unwrap();
+        let log = MemoryEventLog::new(dir.path());
+
+        let mut set = tokio::task::JoinSet::new();
+        for i in 0..50 {
+            let log_clone = log.clone();
+            set.spawn(async move {
+                let event = MemoryEventBuilder::new().recall(
+                    "session:1",
+                    format!("r{}", i),
+                    "hybrid_search",
+                    format!("content {}", i),
+                );
+                log_clone.append(&event).await.unwrap();
+            });
+        }
+
+        while set.join_next().await.is_some() {}
+
+        let content = fs::read_to_string(dir.path().join(MEMORY_EVENT_LOG_RELATIVE_PATH))
+            .await
+            .unwrap();
+
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 50, "all 50 concurrent appends should produce exactly 50 lines");
+
+        for line in &lines {
+            let parsed = serde_json::from_str::<MemoryEvent>(line);
+            assert!(parsed.is_ok(), "every line must be valid JSON: {}", line);
+        }
+
+        let events = log.read_all().await.unwrap();
+        assert_eq!(events.len(), 50);
     }
 }
