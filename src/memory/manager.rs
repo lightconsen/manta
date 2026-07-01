@@ -172,8 +172,11 @@ impl MemoryManager {
         config: MemoryManagerConfig,
     ) -> Self {
         let event_log = config.workspace_dir.as_ref().map(MemoryEventLog::new);
+        // Share the TieredStore's index when possible to prevent the manager
+        // and store from maintaining two independent indices that silently diverge.
         let tier_index = if config.enable_tiers {
-            Some(Arc::new(TierIndex::new()))
+            let store_index = store.as_tiered_store().map(|ts| ts.tier_index().clone());
+            Some(store_index.unwrap_or_else(|| Arc::new(TierIndex::new())))
         } else {
             None
         };
@@ -674,7 +677,12 @@ impl MemoryManager {
 
     /// Forget (delete) a memory by ID.
     pub async fn forget(&self, id: &MemoryId) -> crate::Result<bool> {
-        self.store.delete(id).await
+        let deleted = self.store.delete(id).await?;
+        // Clean up tier index to prevent stale entries from accumulating.
+        if let Some(ref tier_index) = self.tier_index {
+            tier_index.remove(&id.to_string());
+        }
+        Ok(deleted)
     }
 
     /// Compact a session: extract key facts from old messages into semantic
@@ -1011,31 +1019,46 @@ impl MemoryManager {
                 continue;
             }
 
-            // Re-read the memory before updating to detect concurrent modifications
-            // (TOCTOU guard: if importance_score changed, someone else modified it).
-            let Ok(Some(current)) = self
-                .store
-                .get(&crate::memory::MemoryId::new(&memory_id))
-                .await
-            else {
-                continue;
+            // Optimistic retry loop: re-read + update with TOCTOU guard.
+            // The window between re-read and update is small (~few µs), and
+            // effectiveness runs at most once per 5 minutes per memory, so
+            // contention is extremely rare.  A single retry covers it.
+            let mut retried = false;
+            let updated = loop {
+                let Ok(Some(current)) = self
+                    .store
+                    .get(&crate::memory::MemoryId::new(&memory_id))
+                    .await
+                else {
+                    break None;
+                };
+                if (current.importance_score - old_score).abs() > 0.001 {
+                    // Memory was modified concurrently; skip to avoid lost update.
+                    debug!(
+                        "Skipping effectiveness update for {}: concurrent modification detected",
+                        memory_id
+                    );
+                    break None;
+                }
+                let mut updated = current;
+                updated.importance_score = new_score;
+                match self.store.update(updated.clone()).await {
+                    Ok(_) => break Some(updated),
+                    Err(e) => {
+                        if retried {
+                            warn!("Failed to update memory effectiveness for {} after retry: {}", memory_id, e);
+                            break None;
+                        }
+                        retried = true;
+                        // Retry once: the error may have been transient.
+                        continue;
+                    }
+                }
             };
-            if (current.importance_score - old_score).abs() > 0.001 {
-                // Memory was modified concurrently; skip to avoid lost update.
-                debug!(
-                    "Skipping effectiveness update for {}: concurrent modification detected",
-                    memory_id
-                );
-                continue;
-            }
-
-            // Update the memory with new importance score
-            let mut updated = current;
-            updated.importance_score = new_score;
-            if let Err(e) = self.store.update(updated.clone()).await {
-                warn!("Failed to update memory effectiveness for {}: {}", memory_id, e);
-                continue;
-            }
+            let updated = match updated {
+                Some(u) => u,
+                None => continue,
+            };
 
             info!(
                 "Effectiveness adjustment: memory {} importance {:.3} -> {:.3}",

@@ -84,17 +84,30 @@ struct Entry {
 /// Normalise a slice of (score, key) pairs so that the maximum score maps to
 /// 1.0. Returns a `HashMap<key, normalised_score>`.
 fn normalise(pairs: &[(f32, String)]) -> HashMap<String, f32> {
+    if pairs.is_empty() {
+        return HashMap::new();
+    }
+
+    let min = pairs
+        .iter()
+        .map(|(s, _)| *s)
+        .fold(f32::INFINITY, f32::min);
     let max = pairs
         .iter()
         .map(|(s, _)| *s)
         .fold(f32::NEG_INFINITY, f32::max);
 
-    // Handle NaN: if any input is NaN, fold propagates it.
-    if max.is_nan() || max <= 0.0 {
+    // Handle NaN or flat input.
+    if max.is_nan() || min.is_nan() || max <= min {
         return pairs.iter().map(|(_, k)| (k.clone(), 0.0)).collect();
     }
 
-    pairs.iter().map(|(s, k)| (k.clone(), s / max)).collect()
+    // Min-max normalization to [0, 1] — caller inverts for FTS5 (lower = better).
+    let range = max - min;
+    pairs
+        .iter()
+        .map(|(s, k)| (k.clone(), (s - min) / range))
+        .collect()
 }
 
 /// SHA-256 fingerprint of the first 512 chars of `text` used for dedup.
@@ -219,7 +232,7 @@ pub async fn hybrid_search(
         .filter_map(|e| {
             let vs = e.vector_score.unwrap_or(0.0);
             let fs = e.fts_score.unwrap_or(0.0);
-            let combined = config.vector_weight * vs + config.text_weight * fs;
+            let combined = config.vector_weight * vs + config.text_weight * (1.0 - fs);
 
             if combined < config.min_score || e.content.is_empty() {
                 return None;

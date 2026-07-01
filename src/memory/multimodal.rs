@@ -319,8 +319,11 @@ impl MultimodalStore {
                             .to_string_lossy()
                             .to_string();
 
+                        // Use the relative path as a stable identifier so repeated scans
+                        // of the same file produce the same ID instead of a new UUID every call.
+                        let stable_id = format!("{}::{}", modality, relative_path);
                         entries.push(MultimodalFileEntry {
-                            id: uuid::Uuid::new_v4().to_string(),
+                            id: stable_id,
                             filename: original.clone(),
                             relative_path,
                             size: metadata.len(),
@@ -374,6 +377,10 @@ impl MultimodalStore {
 
     /// Resolve a relative path within the workspace, preventing path traversal
     /// outside the workspace directory.
+    ///
+    /// Uses `canonicalize` to resolve symlinks and `..` components.  When the
+    /// path does not yet exist (e.g. for a new write), falls back to lexical
+    /// normalization without a TOCTOU-vulnerable `exists()` check.
     fn resolve_path(&self, relative_path: &Path) -> crate::Result<PathBuf> {
         // If the user-supplied path is absolute, Path::join discards the base.
         // Canonicalise the base and verify the resolved path is contained within it.
@@ -384,26 +391,33 @@ impl MultimodalStore {
             }
         })?;
         let resolved = base.join(relative_path);
-        // Canonicalise to resolve "..", symlinks, and other path tricks.
-        // If the resolved path doesn't exist yet, normalise by removing ".."
-        // components manually.
-        let canonical = if resolved.exists() {
-            std::fs::canonicalize(&resolved).map_err(|e| crate::error::SyscityError::Storage {
-                context: format!("Failed to canonicalise path: {:?}", resolved),
-                details: e.to_string(),
-            })?
-        } else {
-            let mut normalised = base.clone();
-            for component in relative_path.components() {
-                match component {
-                    std::path::Component::ParentDir => {
-                        normalised.pop();
+        // Try canonicalize first. If it fails (path doesn't exist), fall back
+        // to lexical normalization — no TOCTOU from a prior exists() check.
+        let canonical = match std::fs::canonicalize(&resolved) {
+            Ok(c) => c,
+            Err(_) => {
+                let mut normalised = base.clone();
+                for component in relative_path.components() {
+                    match component {
+                        std::path::Component::ParentDir => {
+                            normalised.pop();
+                        }
+                        std::path::Component::CurDir => {}
+                        other => normalised.push(other.as_os_str()),
                     }
-                    std::path::Component::CurDir => {}
-                    other => normalised.push(other.as_os_str()),
                 }
+                // Verify the manually-normalised path hasn't escaped the base.
+                if !normalised.starts_with(&base) {
+                    return Err(crate::error::SyscityError::Storage {
+                        context: "Path traversal detected".to_string(),
+                        details: format!(
+                            "{:?} escapes workspace {:?}",
+                            relative_path, self.workspace_dir
+                        ),
+                    });
+                }
+                normalised
             }
-            normalised
         };
         if canonical.starts_with(&base) {
             Ok(canonical)

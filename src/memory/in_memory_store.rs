@@ -13,17 +13,30 @@ use tracing::{debug, info};
 
 use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore};
 
+/// Default maximum number of entries in the in-memory store.
+const DEFAULT_MAX_CAPACITY: usize = 10_000;
+
 /// Ephemeral in-memory memory store.
 #[derive(Debug, Clone)]
 pub struct InMemoryStore {
     entries: Arc<RwLock<HashMap<String, Memory>>>,
+    max_capacity: usize,
 }
 
 impl InMemoryStore {
-    /// Create a new empty in-memory store.
+    /// Create a new empty in-memory store with default capacity.
     pub fn new() -> Self {
         Self {
             entries: Arc::new(RwLock::new(HashMap::new())),
+            max_capacity: DEFAULT_MAX_CAPACITY,
+        }
+    }
+
+    /// Create a new empty in-memory store with a specific max capacity.
+    pub fn with_capacity(max_capacity: usize) -> Self {
+        Self {
+            entries: Arc::new(RwLock::new(HashMap::new())),
+            max_capacity,
         }
     }
 
@@ -49,6 +62,17 @@ impl MemoryStore for InMemoryStore {
     async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
         let id = memory.id.clone();
         let mut guard = self.entries.write().await;
+        // Evict lowest-importance entry when at capacity to bound memory growth.
+        if guard.len() >= self.max_capacity && !guard.contains_key(&id.to_string()) {
+            if let Some(min_key) = guard.iter().min_by(|a, b| {
+                a.1.importance_score
+                    .partial_cmp(&b.1.importance_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }).map(|(k, _)| k.clone()) {
+                guard.remove(&min_key);
+                debug!("Evicted memory {} from working tier (capacity reached)", min_key);
+            }
+        }
         guard.insert(id.to_string(), memory);
         debug!("Stored memory in working tier: {}", id);
         Ok(id)

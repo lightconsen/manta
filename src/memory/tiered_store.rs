@@ -24,7 +24,7 @@ use super::{
 };
 
 /// Aggregate store that routes each memory to its tier-specific backend.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TieredStore {
     working: InMemoryStore,
     short_term: DatabaseStore,
@@ -32,7 +32,27 @@ pub struct TieredStore {
     archival: CompressedJsonlStore,
     evaluator: Arc<TierEvaluator>,
     index: Arc<TierIndex>,
+    last_stale_sweep: std::sync::atomic::AtomicU64,
 }
+
+impl Clone for TieredStore {
+    fn clone(&self) -> Self {
+        Self {
+            working: self.working.clone(),
+            short_term: self.short_term.clone(),
+            long_term: self.long_term.clone(),
+            archival: self.archival.clone(),
+            evaluator: self.evaluator.clone(),
+            index: self.index.clone(),
+            last_stale_sweep: std::sync::atomic::AtomicU64::new(
+                self.last_stale_sweep.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        }
+    }
+}
+
+/// Minimum interval between stale index sweeps in `cleanup_expired`.
+const STALE_SWEEP_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl TieredStore {
     /// Create a new tiered store with on-disk backends under `base_dir`.
@@ -61,6 +81,7 @@ impl TieredStore {
             archival: CompressedJsonlStore::new(base),
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
+            last_stale_sweep: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -77,6 +98,7 @@ impl TieredStore {
             ),
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
+            last_stale_sweep: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -94,6 +116,7 @@ impl TieredStore {
             archival,
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
+            last_stale_sweep: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -406,6 +429,16 @@ impl MemoryStore for TieredStore {
                 }
             }
         }
+        // Throttle stale index sweep to avoid O(n) per-tier SQL queries on every call.
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let last = self.last_stale_sweep.load(std::sync::atomic::Ordering::Relaxed);
+        if now_secs.saturating_sub(last) < STALE_SWEEP_COOLDOWN.as_secs() {
+            return Ok(total);
+        }
+
         // Remove stale index entries for indexed backends only.
         // Skip Archival tier because CompressedJsonlStore.get() decompresses
         // ALL shards — O(n) per call — making a per-memory loop O(n²).
@@ -426,6 +459,7 @@ impl MemoryStore for TieredStore {
             }
             stale
         };
+        self.last_stale_sweep.store(now_secs, std::sync::atomic::Ordering::Relaxed);
         for id in &stale_ids {
             self.index.remove(id);
         }

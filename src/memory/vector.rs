@@ -529,8 +529,13 @@ impl VectorStore for MemoryVectorStore {
             .collect();
 
         let count = to_remove.len();
-        for id in to_remove {
-            chunks.remove(&id);
+        for id in &to_remove {
+            chunks.remove(id);
+        }
+        // Clean up the FIFO order queue to prevent orphaned entries from accumulating.
+        if !to_remove.is_empty() {
+            let mut order = self.order.write().await;
+            order.retain(|id| !to_remove.contains(id));
         }
 
         Ok(count)
@@ -551,6 +556,8 @@ impl VectorStore for MemoryVectorStore {
     async fn clear(&self) -> crate::Result<()> {
         let mut chunks = self.chunks.write().await;
         chunks.clear();
+        let mut order = self.order.write().await;
+        order.clear();
         Ok(())
     }
 }
@@ -628,7 +635,7 @@ impl SqliteVectorStore {
         let fetch_size = (limit as i64).saturating_mul(4).max(100);
         let rows = sqlx::query(
             "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM \
-             vector_chunks LIMIT ?",
+             vector_chunks ORDER BY id LIMIT ?",
         )
         .bind(fetch_size)
         .fetch_all(&self.pool)

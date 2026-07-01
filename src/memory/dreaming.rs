@@ -311,7 +311,22 @@ impl KnowledgeGraph {
 
     /// Cap the graph size by evicting lowest-confidence entries when limits
     /// are exceeded.  This prevents unbounded memory growth across REM cycles.
+    ///
+    /// NaN confidence values are replaced with 0.0 so they are evicted first
+    /// rather than making sort order non-deterministic.
     pub fn cap_size(&mut self) {
+        // Normalize NaN confidence values before sorting.
+        for node in &mut self.nodes {
+            if node.confidence.is_nan() {
+                node.confidence = 0.0;
+            }
+        }
+        for edge in &mut self.edges {
+            if edge.confidence.is_nan() {
+                edge.confidence = 0.0;
+            }
+        }
+
         if self.nodes.len() > Self::MAX_NODES {
             self.nodes.sort_by(|a, b| {
                 a.confidence
@@ -333,6 +348,7 @@ impl KnowledgeGraph {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             self.edges.truncate(Self::MAX_EDGES);
+            // Re-sort by confidence descending for normal usage.
             self.edges.sort_by(|a, b| {
                 b.confidence
                     .partial_cmp(&a.confidence)
@@ -677,6 +693,8 @@ impl DreamEngine {
                                 errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
                                 continue;
                             }
+                            // Keep the outer tier_index in sync with the actual data location.
+                            tier_index.update_tier(&mem.id.to_string(), new_tier);
                         } else {
                             // Fallback: update index only (data stays in original backend).
                             tier_index.update_tier(&mem.id.to_string(), new_tier);
@@ -702,6 +720,8 @@ impl DreamEngine {
                                 errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
                                 continue;
                             }
+                            // Keep the outer tier_index in sync with the actual data location.
+                            tier_index.update_tier(&mem.id.to_string(), new_tier);
                         } else {
                             // Fallback: update index only (data stays in original backend).
                             tier_index.update_tier(&mem.id.to_string(), new_tier);
@@ -1480,56 +1500,49 @@ impl DreamReviewQueue {
                     }
                 }
                 DreamAction::Merge { memory_ids, summary } => {
-                    // Try all deletes first; only remove from tier_index if *all* succeed.
-                    let mut success_ids: Vec<&str> = Vec::new();
-                    let mut failed = false;
-                    for id in memory_ids {
-                        match store.delete(&crate::memory::MemoryId::new(id)).await {
-                            Ok(_) => success_ids.push(id),
-                            Err(e) => {
+                    // Store summary FIRST so data is never lost on failure.
+                    let mem =
+                        crate::memory::Memory::new("system", summary.clone(), "dream_merge")
+                            .with_importance_score(0.7)
+                            .with_source("dream_review");
+                    let merge_applied = match store.store(mem).await {
+                        Ok(summary_id) => {
+                            // Summary stored — now delete source memories.
+                            // A partial delete failure leaves the summary intact.
+                            let mut delete_ok = true;
+                            for id in memory_ids {
+                                match store.delete(&crate::memory::MemoryId::new(id)).await {
+                                    Ok(_) => {
+                                        tier_index.remove(id);
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Dream apply: failed to delete memory {} during merge: {e}",
+                                            id
+                                        );
+                                        delete_ok = false;
+                                    }
+                                }
+                            }
+                            if !delete_ok {
                                 warn!(
-                                    "Dream apply: failed to delete memory {} during merge: {e}",
-                                    id
+                                    "Dream apply: merge partially complete — summary stored as {} \
+                                     but some source memories could not be deleted",
+                                    summary_id
                                 );
-                                failed = true;
                             }
-                        }
-                    }
-                    if failed {
-                        // Data loss: some sources were successfully deleted but the merge
-                        // cannot complete.  Log IDs so the operator can investigate.
-                        if !success_ids.is_empty() {
-                            warn!(
-                                "Dream apply: partial merge failure — {} memories deleted but \
-                                 summary not stored. Deleted: {:?}",
-                                success_ids.len(),
-                                success_ids
+                            tier_index.insert(
+                                summary_id.to_string(),
+                                crate::memory::tier::MemoryTier::LongTerm,
                             );
+                            delete_ok
                         }
-                        false
-                    } else {
-                        // All deletes succeeded — remove from tier index and store summary.
-                        for id in &success_ids {
-                            tier_index.remove(id);
+                        Err(e) => {
+                            warn!("Dream apply: failed to store merge summary: {e}");
+                            false
                         }
-                        let mem =
-                            crate::memory::Memory::new("system", summary.clone(), "dream_merge")
-                                .with_importance_score(0.7)
-                                .with_source("dream_review");
-                        match store.store(mem).await {
-                            Ok(_id) => {
-                                tier_index.insert(
-                                    _id.to_string(),
-                                    crate::memory::tier::MemoryTier::LongTerm,
-                                );
-                                true
-                            }
-                            Err(e) => {
-                                warn!("Dream apply: failed to store merge summary: {e}");
-                                false
-                            }
-                        }
-                    }
+                    };
+                    merge_applied
                 }
                 DreamAction::Promote { memory_id, to_tier, .. } => {
                     match crate::memory::tier::MemoryTier::from_label(to_tier) {

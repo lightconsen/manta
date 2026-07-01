@@ -164,7 +164,15 @@ impl Default for MemoryEventBuilder {
     }
 }
 
+/// Maximum event log file size (10 MiB) before rotation is triggered.
+const MAX_EVENT_LOG_SIZE: u64 = 10 * 1024 * 1024;
+
 /// Append a memory event to the JSONL log.
+///
+/// Combines the serialized event and newline into a single write to prevent
+/// concurrent writers from interleaving partial lines. If the log file exceeds
+/// [`MAX_EVENT_LOG_SIZE`], it is truncated from the beginning to keep file
+/// growth bounded.
 pub async fn append_memory_event(
     workspace_dir: impl AsRef<std::path::Path>,
     event: &MemoryEvent,
@@ -179,11 +187,25 @@ pub async fn append_memory_event(
             })?;
     }
 
+    // Rotate file if it exceeds the size limit by keeping only the last ~5 MiB.
+    if let Ok(meta) = fs::metadata(&path).await {
+        if meta.len() > MAX_EVENT_LOG_SIZE {
+            let content = fs::read_to_string(&path).await.unwrap_or_default();
+            let keep_bytes = (MAX_EVENT_LOG_SIZE / 2) as usize;
+            // Drop chars from the front until we're at the target size.
+            let tail: String = content.chars().rev().take(keep_bytes).collect::<String>().chars().rev().collect();
+            // Drop the potentially-fragmented first line.
+            let trimmed = tail.lines().skip(1).collect::<Vec<_>>().join("\n");
+            let _ = fs::write(&path, &trimmed).await;
+        }
+    }
+
     let line = serde_json::to_string(event).map_err(|e| crate::error::SyscityError::Storage {
         context: "Failed to serialize memory event".to_string(),
         details: e.to_string(),
     })?;
 
+    // Single write to avoid interleaving from concurrent append calls.
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -194,16 +216,10 @@ pub async fn append_memory_event(
             details: e.to_string(),
         })?;
 
-    file.write_all(line.as_bytes())
+    file.write_all(format!("{}\n", line).as_bytes())
         .await
         .map_err(|e| crate::error::SyscityError::Storage {
             context: format!("Failed to write event log: {:?}", path),
-            details: e.to_string(),
-        })?;
-    file.write_all(b"\n")
-        .await
-        .map_err(|e| crate::error::SyscityError::Storage {
-            context: format!("Failed to write newline to event log: {:?}", path),
             details: e.to_string(),
         })?;
 

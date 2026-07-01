@@ -100,6 +100,13 @@ fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
     embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
 
+fn bytes_to_embedding(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
 #[async_trait]
 impl VectorStore for SqliteVecStore {
     async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
@@ -145,7 +152,7 @@ impl VectorStore for SqliteVecStore {
         let max_distance = 1.0f64 - threshold as f64;
 
         let rows = sqlx::query(
-            "SELECT rowid, id, source_id, text, position, total_chunks, metadata, distance
+            "SELECT rowid, id, source_id, text, embedding, position, total_chunks, metadata, distance
              FROM vec_chunks
              WHERE embedding MATCH ? AND distance <= ?
              ORDER BY distance
@@ -189,7 +196,15 @@ impl VectorStore for SqliteVecStore {
                         context: "Failed to read sqlite-vec text".to_string(),
                         details: e.to_string(),
                     })?,
-                embedding: Vec::new(),
+                embedding: {
+                    let blob: Vec<u8> = row.try_get("embedding").map_err(|e| {
+                        crate::error::SyscityError::Storage {
+                            context: "Failed to read sqlite-vec embedding".to_string(),
+                            details: e.to_string(),
+                        }
+                    })?;
+                    bytes_to_embedding(&blob)
+                },
                 position: row.try_get::<i64, _>("position").map_err(|e| {
                     crate::error::SyscityError::Storage {
                         context: "Failed to read sqlite-vec position".to_string(),

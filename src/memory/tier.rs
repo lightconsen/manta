@@ -362,7 +362,7 @@ impl TierIndex {
     pub fn record_access(&self, id: &str) {
         let mut guard = self.entries.write().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = guard.get_mut(id) {
-            entry.access_count += 1;
+            entry.access_count = entry.access_count.saturating_add(1);
             entry.last_accessed = Some(SystemTime::now());
         }
     }

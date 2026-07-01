@@ -380,10 +380,12 @@ impl DatabaseStore {
     }
 
     fn secs_to_system_time(secs: i64) -> Option<SystemTime> {
-        if secs <= 0 {
-            None
-        } else {
+        if secs >= 0 {
             Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs as u64))
+        } else {
+            // Pre-epoch timestamp: subtract the absolute value from UNIX_EPOCH.
+            let dur = Duration::from_secs(secs.unsigned_abs());
+            Some(SystemTime::UNIX_EPOCH.checked_sub(dur).unwrap_or(SystemTime::UNIX_EPOCH))
         }
     }
 

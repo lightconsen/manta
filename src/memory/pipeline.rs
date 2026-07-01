@@ -7,6 +7,7 @@
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use tracing::warn;
 
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info};
@@ -203,8 +204,25 @@ async fn process_batch<P: PipelineEmbeddingProvider>(provider: &Arc<P>, batch: V
 
     match provider.embed_batch(texts).await {
         Ok(embeddings) => {
-            for (job, emb) in batch.into_iter().zip(embeddings) {
-                let _ = job.response_tx.send(Ok(emb));
+            let mut jobs_iter = batch.into_iter();
+            for emb in embeddings {
+                match jobs_iter.next() {
+                    Some(job) => {
+                        let _ = job.response_tx.send(Ok(emb));
+                    }
+                    None => {
+                        warn!("Embedding provider returned more results than jobs; \
+                               extra results discarded.");
+                        break;
+                    }
+                }
+            }
+            // Send errors to orphaned jobs when embed_batch returned fewer results than expected.
+            for job in jobs_iter {
+                warn!("Orphaned embedding job — provider returned insufficient results");
+                let _ = job.response_tx.send(Err(
+                    "Embedding provider returned insufficient results".to_string()
+                ));
             }
         }
         Err(e) => {
@@ -225,15 +243,11 @@ use super::vector::EmbeddingProvider;
 #[async_trait::async_trait]
 impl PipelineEmbeddingProvider for dyn EmbeddingProvider {
     async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>, String> {
-        // Fall back to sequential embedding if the provider doesn't support batch
-        let mut results = Vec::with_capacity(texts.len());
-        for text in texts {
-            match self.embed(&text).await {
-                Ok(emb) => results.push(emb),
-                Err(e) => return Err(format!("Embedding failed: {}", e)),
-            }
-        }
-        Ok(results)
+        // Delegate to the provider's native batch support instead of calling
+        // embed() sequentially, which defeats batching for API providers.
+        self.embed_batch(&texts)
+            .await
+            .map_err(|e| format!("Embedding batch failed: {}", e))
     }
 }
 

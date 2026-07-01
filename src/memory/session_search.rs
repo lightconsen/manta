@@ -286,9 +286,20 @@ impl SessionSearch {
             return Ok(Vec::new());
         }
 
-        // Build the FTS5 query
+        // Build the FTS5 query — sanitize tokens to prevent FTS5 syntax errors
+        // from special characters in user input (parentheses, quotes, operators).
+        let sanitize_token = |token: &str| -> String {
+            if token.contains(|c: char| c.is_ascii_punctuation() && c != '_') {
+                // Quote the token to escape all special FTS5 characters.
+                // Escape any embedded double quotes by doubling them (FTS5 escape).
+                format!("\"{}\"", token.replace('"', "\"\""))
+            } else {
+                token.to_string()
+            }
+        };
         let fts_query = query_str
             .split_whitespace()
+            .map(sanitize_token)
             .collect::<Vec<_>>()
             .join(" OR ");
 
@@ -398,7 +409,10 @@ impl SessionSearch {
         let mut results = Vec::new();
 
         for row in rows {
-            let score: f64 = row.try_get("score").unwrap_or(0.0);
+            let score: f64 = row.try_get("score").unwrap_or_else(|e| {
+                tracing::warn!("FTS search: missing 'score' column: {e}");
+                0.0
+            });
 
             // FTS5 bm25: lower scores = better matches (0.0 = perfect).
             // Filter: keep only results AT LEAST as good as min_score.
@@ -406,26 +420,44 @@ impl SessionSearch {
                 continue;
             }
 
-            let conversation_id: String = row.try_get("conversation_id").unwrap_or_default();
-            let message_id: String = row.try_get("message_id").unwrap_or_default();
+            let conversation_id: String = row.try_get("conversation_id").unwrap_or_else(|e| {
+                tracing::warn!("FTS search: missing 'conversation_id' column: {e}");
+                String::new()
+            });
+            let message_id: String = row.try_get("message_id").unwrap_or_else(|e| {
+                tracing::warn!("FTS search: missing 'message_id' column: {e}");
+                String::new()
+            });
 
             // Get context if requested
             let context = if query.context_lines > 0 {
                 self.get_context(&conversation_id, &message_id, query.context_lines)
                     .await
-                    .unwrap_or_default()
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("FTS search: context retrieval failed: {e}");
+                        Vec::new()
+                    })
             } else {
                 Vec::new()
             };
 
             results.push(SearchResult {
-                conversation_id: conversation_id.clone(),
-                message_id: message_id.clone(),
-                user_id: row.try_get("user_id").unwrap_or_default(),
-                content: row.try_get("content").unwrap_or_default(),
+                conversation_id,
+                message_id,
+                user_id: row.try_get("user_id").unwrap_or_else(|e| {
+                    tracing::warn!("FTS search: missing 'user_id' column: {e}");
+                    String::new()
+                }),
+                content: row.try_get("content").unwrap_or_else(|e| {
+                    tracing::warn!("FTS search: missing 'content' column: {e}");
+                    String::new()
+                }),
                 timestamp: row
                     .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-                    .unwrap_or_else(|_| chrono::Utc::now()),
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("FTS search: missing 'created_at' column: {e}");
+                        chrono::Utc::now()
+                    }),
                 score,
                 context,
             });
