@@ -408,7 +408,7 @@ impl MemoryManager {
         let limit = limit.unwrap_or(self.config.max_context_memories);
 
         debug!(
-            "Retrieving memories: user={} query_len={} hybrid={}",
+            "Retrieving memories: user={} query_len={} hybrid={} fallback=keyword",
             user_id,
             query_text.len(),
             self.vector_service.is_some() && self.session_search.is_some(),
@@ -436,32 +436,16 @@ impl MemoryManager {
                 })
                 .collect();
         } else {
-            // ── Fallback: DatabaseStore path ──────────────────────────────────────
-
-            // Embed the query if pipeline available
-            let query_embedding = if let Some(ref pipeline) = self.pipeline {
-                match pipeline.embed(&query_text).await {
-                    Ok(emb) => Some(emb),
-                    Err(e) => {
-                        warn!("Query embedding failed: {}", e);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            // Build and execute query
-            let mut mq = MemoryQuery::new().for_user(user_id).limit(limit);
+            // ── Fallback: keyword search via the primary store ────────────────────
+            // DatabaseStore no longer handles embedding-based search; semantic
+            // recall requires the hybrid vector+FTS path configured above.
+            let mut mq = MemoryQuery::new()
+                .for_user(user_id)
+                .with_content(&query_text)
+                .limit(limit);
 
             if let Some(conv_id) = conversation_id {
                 mq = mq.for_conversation(conv_id);
-            }
-
-            if let Some(ref embedding) = query_embedding {
-                mq = mq.with_embedding(embedding.clone());
-            } else {
-                mq = mq.with_content(&query_text);
             }
 
             memories = self.store.search(mq).await?;

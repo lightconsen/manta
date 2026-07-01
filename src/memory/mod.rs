@@ -229,11 +229,6 @@ pub struct MemoryQuery {
     pub memory_type: Option<String>,
     /// Search query for content matching
     pub content_query: Option<String>,
-    /// Embedding for semantic search
-    pub embedding: Option<Vec<f32>>,
-    /// Minimum cosine similarity for embedding results (0.0 - 1.0).
-    /// Only applied when `embedding` is set.
-    pub min_similarity: Option<f32>,
     /// Maximum number of results
     pub limit: usize,
     /// Offset for pagination
@@ -272,19 +267,6 @@ impl MemoryQuery {
     /// Search by content
     pub fn with_content(mut self, query: impl Into<String>) -> Self {
         self.content_query = Some(query.into());
-        self
-    }
-
-    /// Search by semantic similarity
-    pub fn with_embedding(mut self, embedding: Vec<f32>) -> Self {
-        self.embedding = Some(embedding);
-        self
-    }
-
-    /// Minimum cosine similarity threshold for embedding search.
-    /// Has no effect unless `with_embedding` is also called.
-    pub fn with_min_similarity(mut self, min: f32) -> Self {
-        self.min_similarity = Some(min);
         self
     }
 

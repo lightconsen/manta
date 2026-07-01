@@ -16,8 +16,7 @@ use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tracing::{debug, info, instrument, warn};
 
 use super::{
-    cosine_similarity, ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats,
-    MemoryStore,
+    ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
 };
 
 /// Unified database store with WAL, FTS5, and access tracking
@@ -878,16 +877,14 @@ impl MemoryStore for DatabaseStore {
 
     /// Search memories.
     ///
-    /// The embedding path performs a filtered full-table scan followed by
-    /// in-memory cosine re-ranking. It does **not** use a vector index, so it
-    /// is suitable for small-to-medium corpora or as a fallback when a
-    /// dedicated vector backend (`sqlite-vec`, `pgvector`) is not configured.
-    /// Production deployments with large memory stores should route semantic
-    /// search through a vector-indexed backend.
+    /// This implementation performs keyword/FTS filtering and orders results by
+    /// `importance_score DESC, created_at DESC`. It does **not** perform
+    /// semantic/embedding search: there is no vector index on the `embedding`
+    /// column, so any embedding-based recall would degrade into a full-table
+    /// scan followed by in-memory re-ranking.
     ///
-    /// The embedding path pre-filters by the existing `user_id` / `importance`
-    /// index, caps the candidate set, and treats dimension mismatches as a
-    /// similarity of 0.0 instead of failing.
+    /// For semantic search, use `VectorMemoryService`/`HybridSearch` with a
+    /// vector-indexed backend such as `SqliteVecStore` or `PgVectorStore`.
     async fn search(&self, query: MemoryQuery) -> crate::Result<Vec<Memory>> {
         debug!("Searching memories");
 
@@ -912,11 +909,6 @@ impl MemoryStore for DatabaseStore {
             sql.push_str(" AND (expires_at IS NULL OR expires_at > ?)");
         }
 
-        let fetch_limit = if query.embedding.is_some() {
-            (query.limit * 4).clamp(20, 1000)
-        } else {
-            query.limit
-        };
         sql.push_str(" ORDER BY importance_score DESC, created_at DESC LIMIT ? OFFSET ?");
 
         let mut db_query = sqlx::query(&sql);
@@ -937,7 +929,7 @@ impl MemoryStore for DatabaseStore {
             let now = Self::system_time_to_secs(SystemTime::now());
             db_query = db_query.bind(now);
         }
-        db_query = db_query.bind(fetch_limit as i64);
+        db_query = db_query.bind(query.limit as i64);
         db_query = db_query.bind(query.offset as i64);
 
         let rows = db_query.fetch_all(&self.pool).await.map_err(|e| {
@@ -977,35 +969,6 @@ impl MemoryStore for DatabaseStore {
                 source: row.try_get("source").map_err(|e| col_err("source", e))?,
             })?;
             memories.push(memory);
-        }
-
-        // Semantic re-ranking when an embedding query is provided.
-        // Memories without embeddings get a score of 0.0 so they still
-        // appear in results (below any embedding match).
-        if let Some(query_emb) = &query.embedding {
-            let min_similarity = query.min_similarity.unwrap_or(0.0);
-            let query_dim = query_emb.len();
-            let mut scored: Vec<(Memory, f32)> = memories
-                .into_iter()
-                .map(|m| {
-                    let score = m
-                        .embedding
-                        .as_ref()
-                        .and_then(|e| {
-                            if e.len() == query_dim {
-                                Some(cosine_similarity(query_emb, e))
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(0.0);
-                    (m, score)
-                })
-                .filter(|(_, score)| *score >= min_similarity)
-                .collect();
-            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            scored.truncate(query.limit);
-            memories = scored.into_iter().map(|(m, _)| m).collect();
         }
 
         Ok(memories)
@@ -1529,76 +1492,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_database_store_search_embedding_min_similarity() {
+    async fn test_database_store_search_ignores_embedding() {
         let store = DatabaseStore::new_in_memory().await.unwrap();
 
-        let query_embedding = vec![1.0_f32, 0.0];
-        let close_embedding = vec![1.0_f32, 0.0];
-        let orthogonal_embedding = vec![0.0_f32, 1.0];
-
-        let close = Memory::new("user1", "close match", "fact")
-            .with_embedding(close_embedding)
+        let with_embedding = Memory::new("user1", "alpha content", "fact")
+            .with_embedding(vec![1.0_f32, 0.0])
             .with_importance_score(0.5);
-        let orthogonal = Memory::new("user1", "orthogonal match", "fact")
-            .with_embedding(orthogonal_embedding)
-            .with_importance_score(0.5);
+        let without_embedding =
+            Memory::new("user1", "beta content", "fact").with_importance_score(0.6);
 
-        store.store(close).await.unwrap();
-        store.store(orthogonal).await.unwrap();
+        store.store(with_embedding).await.unwrap();
+        store.store(without_embedding).await.unwrap();
 
-        // Without threshold, both results are returned (orthogonal scores 0.0).
+        // A keyword search should match by content, regardless of whether the
+        // stored memory has an embedding. DatabaseStore no longer interprets
+        // query embeddings for semantic re-ranking.
         let results = store
             .search(
                 MemoryQuery::new()
                     .for_user("user1")
-                    .with_embedding(query_embedding.clone())
-                    .limit(10),
-            )
-            .await
-            .unwrap();
-        assert_eq!(results.len(), 2);
-
-        // With a threshold just above 0, the orthogonal result is filtered out.
-        let results = store
-            .search(
-                MemoryQuery::new()
-                    .for_user("user1")
-                    .with_embedding(query_embedding)
-                    .with_min_similarity(0.5)
+                    .with_content("alpha")
                     .limit(10),
             )
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].content, "close match");
-    }
+        assert_eq!(results[0].content, "alpha content");
 
-    #[tokio::test]
-    async fn test_database_store_search_embedding_dimension_mismatch() {
-        let store = DatabaseStore::new_in_memory().await.unwrap();
-
-        let query_embedding = vec![1.0_f32, 0.0, 0.0];
-        let mismatched_embedding = vec![1.0_f32, 0.0];
-
-        let mismatched = Memory::new("user1", "dimension mismatch", "fact")
-            .with_embedding(mismatched_embedding)
-            .with_importance_score(0.5);
-        store.store(mismatched).await.unwrap();
-
+        // Without a content_query, results are ordered by importance_score DESC.
         let results = store
-            .search(
-                MemoryQuery::new()
-                    .for_user("user1")
-                    .with_embedding(query_embedding)
-                    .with_min_similarity(0.1)
-                    .limit(10),
-            )
+            .search(MemoryQuery::new().for_user("user1").limit(10))
             .await
             .unwrap();
-
-        assert!(
-            results.is_empty(),
-            "mismatched-dimension embedding should be treated as non-matching"
-        );
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].content, "beta content");
+        assert_eq!(results[1].content, "alpha content");
     }
 }
