@@ -104,7 +104,7 @@ impl WorkspaceState {
     pub async fn load(state_path: &Path) -> crate::Result<Self> {
         match fs::read_to_string(state_path).await {
             Ok(raw) => match Self::parse(&raw) {
-                Some(state) => {
+                Ok(state) => {
                     // Migrate legacy onboarding_completed_at to setup_completed_at
                     if raw.contains("\"onboarding_completed_at\"")
                         && !raw.contains("\"setup_completed_at\"")
@@ -114,8 +114,8 @@ impl WorkspaceState {
                     }
                     Ok(state)
                 }
-                None => {
-                    warn!("Invalid workspace state format, using defaults");
+                Err(e) => {
+                    warn!("Invalid workspace state format, using defaults: {}", e);
                     Ok(Self::default())
                 }
             },
@@ -134,8 +134,8 @@ impl WorkspaceState {
     }
 
     /// Parse state from JSON string
-    fn parse(raw: &str) -> Option<Self> {
-        serde_json::from_str::<Self>(raw).ok()
+    fn parse(raw: &str) -> crate::Result<Self> {
+        serde_json::from_str::<Self>(raw).map_err(crate::error::SyscityError::Serialization)
     }
 
     /// Save state to file atomically
@@ -175,7 +175,9 @@ impl WorkspaceState {
             Ok(()) => {
                 if let Err(e) = fs::rename(&tmp_path, state_path).await {
                     // Clean up temp file if rename fails
-                    let _ = fs::remove_file(&tmp_path).await;
+                    if let Err(rm) = fs::remove_file(&tmp_path).await {
+                        warn!("Failed to clean up temp state file {:?}: {}", tmp_path, rm);
+                    }
                     return Err(crate::error::SyscityError::Storage {
                         context: format!("Failed to rename state file: {:?}", tmp_path),
                         details: e.to_string(),
@@ -184,7 +186,9 @@ impl WorkspaceState {
                 Ok(())
             }
             Err(e) => {
-                let _ = fs::remove_file(&tmp_path).await;
+                if let Err(rm) = fs::remove_file(&tmp_path).await {
+                    warn!("Failed to clean up temp state file {:?}: {}", tmp_path, rm);
+                }
                 Err(crate::error::SyscityError::Storage {
                     context: format!("Failed to write state file: {:?}", tmp_path),
                     details: e.to_string(),

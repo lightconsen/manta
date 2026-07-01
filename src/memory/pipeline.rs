@@ -112,7 +112,9 @@ impl EmbeddingPipelineHandle {
             response_tx,
         };
 
-        let _ = self.tx.send(job).await;
+        if let Err(e) = self.tx.send(job).await {
+            warn!("Embedding pipeline submit failed: channel closed ({:?})", e);
+        }
     }
 }
 
@@ -211,8 +213,10 @@ async fn process_batch<P: PipelineEmbeddingProvider>(provider: &Arc<P>, batch: V
                         let _ = job.response_tx.send(Ok(emb));
                     }
                     None => {
-                        warn!("Embedding provider returned more results than jobs; \
-                               extra results discarded.");
+                        warn!(
+                            "Embedding provider returned more results than jobs; \
+                               extra results discarded."
+                        );
                         break;
                     }
                 }
@@ -220,9 +224,9 @@ async fn process_batch<P: PipelineEmbeddingProvider>(provider: &Arc<P>, batch: V
             // Send errors to orphaned jobs when embed_batch returned fewer results than expected.
             for job in jobs_iter {
                 warn!("Orphaned embedding job — provider returned insufficient results");
-                let _ = job.response_tx.send(Err(
-                    "Embedding provider returned insufficient results".to_string()
-                ));
+                let _ = job
+                    .response_tx
+                    .send(Err("Embedding provider returned insufficient results".to_string()));
             }
         }
         Err(e) => {

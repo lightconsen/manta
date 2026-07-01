@@ -385,7 +385,11 @@ impl DatabaseStore {
         } else {
             // Pre-epoch timestamp: subtract the absolute value from UNIX_EPOCH.
             let dur = Duration::from_secs(secs.unsigned_abs());
-            Some(SystemTime::UNIX_EPOCH.checked_sub(dur).unwrap_or(SystemTime::UNIX_EPOCH))
+            Some(
+                SystemTime::UNIX_EPOCH
+                    .checked_sub(dur)
+                    .unwrap_or(SystemTime::UNIX_EPOCH),
+            )
         }
     }
 
@@ -394,7 +398,14 @@ impl DatabaseStore {
         let created_at =
             Self::secs_to_system_time(row.created_at_secs).unwrap_or_else(SystemTime::now);
         let expires_at = row.expires_at_secs.and_then(Self::secs_to_system_time);
-        let metadata = row.metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+        let metadata = row
+            .metadata_str
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to deserialize memory metadata".to_string(),
+                details: e.to_string(),
+            })?;
 
         Ok(Memory {
             id: MemoryId::new(row.id),
@@ -978,7 +989,13 @@ impl ChatHistoryStore for DatabaseStore {
                 content: row.try_get("content").map_err(|e| col_err("content", e))?,
                 created_at: Self::secs_to_system_time(created_at_secs)
                     .unwrap_or_else(SystemTime::now),
-                metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
+                metadata: metadata_str
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: "Failed to deserialize chat message metadata".to_string(),
+                        details: e.to_string(),
+                    })?,
             });
         }
 

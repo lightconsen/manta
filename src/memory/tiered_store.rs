@@ -45,7 +45,8 @@ impl Clone for TieredStore {
             evaluator: self.evaluator.clone(),
             index: self.index.clone(),
             last_stale_sweep: std::sync::atomic::AtomicU64::new(
-                self.last_stale_sweep.load(std::sync::atomic::Ordering::Relaxed),
+                self.last_stale_sweep
+                    .load(std::sync::atomic::Ordering::Relaxed),
             ),
         }
     }
@@ -434,7 +435,9 @@ impl MemoryStore for TieredStore {
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let last = self.last_stale_sweep.load(std::sync::atomic::Ordering::Relaxed);
+        let last = self
+            .last_stale_sweep
+            .load(std::sync::atomic::Ordering::Relaxed);
         if now_secs.saturating_sub(last) < STALE_SWEEP_COOLDOWN.as_secs() {
             return Ok(total);
         }
@@ -459,7 +462,8 @@ impl MemoryStore for TieredStore {
             }
             stale
         };
-        self.last_stale_sweep.store(now_secs, std::sync::atomic::Ordering::Relaxed);
+        self.last_stale_sweep
+            .store(now_secs, std::sync::atomic::Ordering::Relaxed);
         for id in &stale_ids {
             self.index.remove(id);
         }

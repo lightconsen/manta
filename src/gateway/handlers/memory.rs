@@ -86,7 +86,7 @@ pub async fn list_memory_collections_handler(
 ) -> impl IntoResponse {
     match state.memory.vector.read().await.clone() {
         Some(vm) => {
-            let collections = vm.list_collections();
+            let collections = vm.list_collections().await;
             Json(serde_json::json!({
                 "collections": collections,
                 "count": collections.len(),

@@ -161,7 +161,12 @@ impl VectorStore for PgVectorStore {
                         context: "Failed to read pgvector embedding".to_string(),
                         details: e.to_string(),
                     })?;
-            let metadata: Option<String> = row.try_get("metadata").ok();
+            let metadata: Option<String> =
+                row.try_get("metadata")
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: "Failed to read pgvector metadata column".to_string(),
+                        details: e.to_string(),
+                    })?;
             let chunk = EmbeddedChunk {
                 id: row
                     .try_get("id")
@@ -194,7 +199,13 @@ impl VectorStore for PgVectorStore {
                         details: e.to_string(),
                     }
                 })? as usize,
-                metadata: metadata.and_then(|m| serde_json::from_str(&m).ok()),
+                metadata: metadata
+                    .map(|m| serde_json::from_str(&m))
+                    .transpose()
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: "Failed to deserialize pgvector metadata".to_string(),
+                        details: e.to_string(),
+                    })?,
             };
             results.push((chunk, (1.0f64 - distance) as f32));
         }
@@ -277,7 +288,7 @@ mod tests {
             return Ok(());
         };
         let store = PgVectorStore::new(pool, 3, "test_pgvector_chunks").await?;
-        store.clear().await.ok();
+        store.clear().await?;
 
         let chunk = EmbeddedChunk {
             id: "c1".to_string(),
@@ -298,7 +309,7 @@ mod tests {
         let results = store.search_similar(&[0.0, 1.0, 0.0], 5, 0.5).await?;
         assert!(results.is_empty());
 
-        store.clear().await.ok();
+        store.clear().await?;
         Ok(())
     }
 
@@ -308,7 +319,7 @@ mod tests {
             return Ok(());
         };
         let store = PgVectorStore::new(pool, 2, "test_pgvector_delete").await?;
-        store.clear().await.ok();
+        store.clear().await?;
 
         store
             .store_chunk(EmbeddedChunk {
@@ -349,7 +360,7 @@ mod tests {
 
         let stats = store.stats().await?;
         assert_eq!(stats.total_vectors, 1);
-        store.clear().await.ok();
+        store.clear().await?;
         Ok(())
     }
 }

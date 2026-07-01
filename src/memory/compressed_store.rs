@@ -18,6 +18,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::fs;
 use tokio::sync::Mutex;
+use tokio::task::spawn_blocking;
 use tracing::{debug, info, warn};
 
 use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore};
@@ -121,8 +122,9 @@ impl CompressedJsonlStore {
         // Decompress existing, append line, recompress
         let mut all_lines: Vec<String> = match existing {
             Some(data) => {
-                let lines = Self::decompress_lines(&data)?;
-                if lines.is_empty() && !data.is_empty() {
+                let data_was_empty = data.is_empty();
+                let lines = Self::decompress_lines(data).await?;
+                if lines.is_empty() && !data_was_empty {
                     // Decompression produced no lines from non-empty data: warn but continue.
                     warn!("Archival shard {:?} decompressed to empty (corrupt?), appending", shard);
                 }
@@ -141,7 +143,7 @@ impl CompressedJsonlStore {
             );
         }
 
-        let compressed = Self::compress_lines(&all_lines)?;
+        let compressed = Self::compress_lines(all_lines).await?;
 
         // Atomic write: write to temp file, then rename.
         let tmp_path = self.dir.join(format!(
@@ -166,39 +168,51 @@ impl CompressedJsonlStore {
     }
 
     /// Decompress gzip bytes into lines.
-    fn decompress_lines(data: &[u8]) -> crate::Result<Vec<String>> {
-        let decoder = flate2::read::GzDecoder::new(data);
-        let reader = std::io::BufReader::new(decoder);
-        let mut lines = Vec::new();
-        for line in reader.lines() {
-            let line = line.map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to read line from archival shard".to_string(),
-                details: e.to_string(),
-            })?;
-            if !line.trim().is_empty() {
-                lines.push(line);
+    async fn decompress_lines(data: Vec<u8>) -> crate::Result<Vec<String>> {
+        spawn_blocking(move || {
+            let decoder = flate2::read::GzDecoder::new(data.as_slice());
+            let reader = std::io::BufReader::new(decoder);
+            let mut lines = Vec::new();
+            for line in reader.lines() {
+                let line = line.map_err(|e| crate::error::SyscityError::Storage {
+                    context: "Failed to read line from archival shard".to_string(),
+                    details: e.to_string(),
+                })?;
+                if !line.trim().is_empty() {
+                    lines.push(line);
+                }
             }
-        }
-        Ok(lines)
+            Ok(lines)
+        })
+        .await
+        .map_err(|e| {
+            crate::error::SyscityError::Validation(format!("decompress task panicked: {}", e))
+        })?
     }
 
     /// Compress lines into gzip bytes.
-    fn compress_lines(lines: &[String]) -> crate::Result<Vec<u8>> {
-        use flate2::write::GzEncoder;
-        use flate2::Compression;
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        for line in lines {
-            writeln!(encoder, "{}", line).map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to write line to archival shard".to_string(),
-                details: e.to_string(),
-            })?;
-        }
-        encoder
-            .finish()
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to finish gzip compression".to_string(),
-                details: e.to_string(),
-            })
+    async fn compress_lines(lines: Vec<String>) -> crate::Result<Vec<u8>> {
+        spawn_blocking(move || {
+            use flate2::write::GzEncoder;
+            use flate2::Compression;
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            for line in lines {
+                writeln!(encoder, "{}", line).map_err(|e| crate::error::SyscityError::Storage {
+                    context: "Failed to write line to archival shard".to_string(),
+                    details: e.to_string(),
+                })?;
+            }
+            encoder
+                .finish()
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: "Failed to finish gzip compression".to_string(),
+                    details: e.to_string(),
+                })
+        })
+        .await
+        .map_err(|e| {
+            crate::error::SyscityError::Validation(format!("compress task panicked: {}", e))
+        })?
     }
 
     /// Load all memories from all shards.
@@ -212,7 +226,7 @@ impl CompressedJsonlStore {
                     context: format!("Failed to read archival shard: {:?}", shard),
                     details: e.to_string(),
                 })?;
-            let lines = Self::decompress_lines(&data)?;
+            let lines = Self::decompress_lines(data).await?;
             for line in lines {
                 match serde_json::from_str::<Memory>(&line) {
                     Ok(mem) => memories.push(mem),
@@ -280,7 +294,7 @@ impl CompressedJsonlStore {
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(crate::error::SyscityError::Serialization)?;
-            let compressed = Self::compress_lines(&lines)?;
+            let compressed = Self::compress_lines(lines).await?;
 
             let tmp_path = self.dir.join(format!(
                 ".{}.tmp.{}",

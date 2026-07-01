@@ -1046,7 +1046,10 @@ impl MemoryManager {
                     Ok(_) => break Some(updated),
                     Err(e) => {
                         if retried {
-                            warn!("Failed to update memory effectiveness for {} after retry: {}", memory_id, e);
+                            warn!(
+                                "Failed to update memory effectiveness for {} after retry: {}",
+                                memory_id, e
+                            );
                             break None;
                         }
                         retried = true;

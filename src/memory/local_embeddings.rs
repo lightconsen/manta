@@ -4,7 +4,7 @@
 //! with HuggingFace Hub auto-download support.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
@@ -119,7 +119,9 @@ async fn download_from_hf(repo_id: &str, filename: &str) -> crate::Result<PathBu
         .map(|h| h.join(HF_CACHE_DIR))
         .unwrap_or_else(|| PathBuf::from(HF_CACHE_DIR));
 
-    std::fs::create_dir_all(&cache_dir).map_err(crate::error::SyscityError::Io)?;
+    tokio::fs::create_dir_all(&cache_dir)
+        .await
+        .map_err(crate::error::SyscityError::Io)?;
 
     // Use hf-hub for download
     let api = hf_hub::api::tokio::Api::new().map_err(|e| {
@@ -142,7 +144,7 @@ pub struct LazyEmbeddingModel {
     model_name: String,
     dimension: usize,
     /// The actual model (initialized on first use)
-    inner: tokio::sync::OnceCell<EmbeddingModelInner>,
+    inner: tokio::sync::OnceCell<Arc<EmbeddingModelInner>>,
 }
 
 /// Inner model struct (initialized lazily)
@@ -175,31 +177,39 @@ impl LazyEmbeddingModel {
     }
 
     /// Get or initialize the model
-    async fn get_model(&self) -> crate::Result<&EmbeddingModelInner> {
+    async fn get_model(&self) -> crate::Result<Arc<EmbeddingModelInner>> {
         self.inner
             .get_or_try_init(|| async {
                 let path = self.source.resolve().await?;
                 info!("Initializing GGUF model from: {:?}", path);
 
                 let backend = get_backend()?;
-
-                let model_params = LlamaModelParams::default();
-
-                let model =
+                let path = path.clone();
+                let model = tokio::task::spawn_blocking(move || {
+                    let model_params = LlamaModelParams::default();
                     LlamaModel::load_from_file(backend, &path, &model_params).map_err(|e| {
                         crate::error::SyscityError::Validation(format!(
                             "Failed to load model: {}",
                             e
                         ))
-                    })?;
+                    })
+                })
+                .await
+                .map_err(|e| {
+                    crate::error::SyscityError::Validation(format!(
+                        "Model loading task panicked: {}",
+                        e
+                    ))
+                })??;
 
                 let context_params = LlamaContextParams::default().with_n_batch(512);
 
                 info!("GGUF model loaded successfully");
 
-                Ok(EmbeddingModelInner { model, context_params, backend })
+                Ok(Arc::new(EmbeddingModelInner { model, context_params, backend }))
             })
             .await
+            .cloned()
     }
 
     /// Generate embeddings for a batch of texts
@@ -209,20 +219,29 @@ impl LazyEmbeddingModel {
         let mut embeddings = Vec::with_capacity(texts.len());
 
         for text in texts {
-            let embedding = self.embed_single(inner, text).await?;
+            let inner = Arc::clone(&inner);
+            let text = text.clone();
+            let embedding =
+                tokio::task::spawn_blocking(move || Self::embed_single_blocking(inner, text))
+                    .await
+                    .map_err(|e| {
+                        crate::error::SyscityError::Validation(format!(
+                            "Embedding task panicked: {}",
+                            e
+                        ))
+                    })??;
             embeddings.push(embedding);
         }
 
         Ok(embeddings)
     }
 
-    async fn embed_single(
-        &self,
-        inner: &EmbeddingModelInner,
-        text: &str,
+    fn embed_single_blocking(
+        inner: Arc<EmbeddingModelInner>,
+        text: String,
     ) -> crate::Result<Vec<f32>> {
         // Tokenize the input
-        let tokens = self.tokenize(inner, text)?;
+        let tokens = Self::tokenize(&inner, &text)?;
 
         // Create a context for inference
         let mut ctx = inner
@@ -264,7 +283,7 @@ impl LazyEmbeddingModel {
         Ok(vec)
     }
 
-    fn tokenize(&self, inner: &EmbeddingModelInner, text: &str) -> crate::Result<Vec<LlamaToken>> {
+    fn tokenize(inner: &EmbeddingModelInner, text: &str) -> crate::Result<Vec<LlamaToken>> {
         // Simple tokenization using the model's tokenizer
         // Use add_bos=true for embeddings (helps with sentence representation)
         use llama_cpp_2::model::AddBos;

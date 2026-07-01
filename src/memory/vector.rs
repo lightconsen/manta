@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 
 use super::{Memory, MemoryId};
 
@@ -656,9 +656,26 @@ impl SqliteVectorStore {
                 let total_chunks: i64 = row.get("total_chunks");
                 let metadata: Option<String> = row.get("metadata");
 
-                let embedding: Vec<f32> = serde_json::from_str(&embedding_json).ok()?;
-                let metadata_value: Option<serde_json::Value> =
-                    metadata.and_then(|j| serde_json::from_str(&j).ok());
+                let embedding: Vec<f32> = match serde_json::from_str(&embedding_json) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        warn!("Skipping vector row with malformed embedding for {}: {}", id, e);
+                        return None;
+                    }
+                };
+                let metadata_value: Option<serde_json::Value> = match metadata {
+                    Some(json) => match serde_json::from_str(&json) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            warn!(
+                                "Skipping vector metadata for {}: failed to deserialize: {}",
+                                id, e
+                            );
+                            None
+                        }
+                    },
+                    None => None,
+                };
 
                 let chunk = EmbeddedChunk {
                     id,
@@ -912,7 +929,7 @@ pub struct VectorMemoryService {
     chunker: TextChunker,
     batch_processor: BatchEmbeddingProcessor,
     /// Tracks the set of collections that have been written to
-    collections: std::sync::RwLock<std::collections::HashSet<String>>,
+    collections: tokio::sync::RwLock<std::collections::HashSet<String>>,
 }
 
 impl VectorMemoryService {
@@ -937,7 +954,7 @@ impl VectorMemoryService {
             vector_store,
             chunker,
             batch_processor,
-            collections: std::sync::RwLock::new(initial_collections),
+            collections: tokio::sync::RwLock::new(initial_collections),
         }
     }
 
@@ -1048,23 +1065,20 @@ impl VectorMemoryService {
         self.vector_store.store_chunks(embedded_chunks).await?;
 
         // Record the collection name so list_collections() returns it
-        if let Ok(mut cols) = self.collections.write() {
-            cols.insert(collection.to_string());
-        }
+        self.collections
+            .write()
+            .await
+            .insert(collection.to_string());
 
         Ok(doc_id)
     }
 
     /// List available collections
-    pub fn list_collections(&self) -> Vec<String> {
-        self.collections
-            .read()
-            .map(|cols| {
-                let mut v: Vec<String> = cols.iter().cloned().collect();
-                v.sort();
-                v
-            })
-            .unwrap_or_else(|_| vec!["default".to_string()])
+    pub async fn list_collections(&self) -> Vec<String> {
+        let cols = self.collections.read().await;
+        let mut v: Vec<String> = cols.iter().cloned().collect();
+        v.sort();
+        v
     }
 }
 
@@ -1481,7 +1495,7 @@ mod tests {
             .unwrap();
         assert!(!doc_id.is_empty());
 
-        let collections = service.list_collections();
+        let collections = service.list_collections().await;
         assert!(collections.contains(&"test-col".to_string()));
         assert!(collections.contains(&"default".to_string()));
     }

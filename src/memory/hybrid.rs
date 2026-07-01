@@ -88,10 +88,7 @@ fn normalise(pairs: &[(f32, String)]) -> HashMap<String, f32> {
         return HashMap::new();
     }
 
-    let min = pairs
-        .iter()
-        .map(|(s, _)| *s)
-        .fold(f32::INFINITY, f32::min);
+    let min = pairs.iter().map(|(s, _)| *s).fold(f32::INFINITY, f32::min);
     let max = pairs
         .iter()
         .map(|(s, _)| *s)

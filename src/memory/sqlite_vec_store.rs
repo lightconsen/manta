@@ -176,7 +176,12 @@ impl VectorStore for SqliteVecStore {
                         context: "Failed to read sqlite-vec distance".to_string(),
                         details: e.to_string(),
                     })?;
-            let metadata: Option<String> = row.try_get("metadata").ok();
+            let metadata: Option<String> =
+                row.try_get("metadata")
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: "Failed to read sqlite-vec metadata column".to_string(),
+                        details: e.to_string(),
+                    })?;
             let chunk = EmbeddedChunk {
                 id: row
                     .try_get("id")
@@ -217,7 +222,13 @@ impl VectorStore for SqliteVecStore {
                         details: e.to_string(),
                     }
                 })? as usize,
-                metadata: metadata.and_then(|m| serde_json::from_str(&m).ok()),
+                metadata: metadata
+                    .map(|m| serde_json::from_str(&m))
+                    .transpose()
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: "Failed to deserialize sqlite-vec metadata".to_string(),
+                        details: e.to_string(),
+                    })?,
             };
             results.push((chunk, (1.0f64 - distance) as f32));
         }

@@ -64,11 +64,15 @@ impl MemoryStore for InMemoryStore {
         let mut guard = self.entries.write().await;
         // Evict lowest-importance entry when at capacity to bound memory growth.
         if guard.len() >= self.max_capacity && !guard.contains_key(&id.to_string()) {
-            if let Some(min_key) = guard.iter().min_by(|a, b| {
-                a.1.importance_score
-                    .partial_cmp(&b.1.importance_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }).map(|(k, _)| k.clone()) {
+            if let Some(min_key) = guard
+                .iter()
+                .min_by(|a, b| {
+                    a.1.importance_score
+                        .partial_cmp(&b.1.importance_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(k, _)| k.clone())
+            {
                 guard.remove(&min_key);
                 debug!("Evicted memory {} from working tier (capacity reached)", min_key);
             }

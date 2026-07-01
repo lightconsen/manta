@@ -1501,10 +1501,9 @@ impl DreamReviewQueue {
                 }
                 DreamAction::Merge { memory_ids, summary } => {
                     // Store summary FIRST so data is never lost on failure.
-                    let mem =
-                        crate::memory::Memory::new("system", summary.clone(), "dream_merge")
-                            .with_importance_score(0.7)
-                            .with_source("dream_review");
+                    let mem = crate::memory::Memory::new("system", summary.clone(), "dream_merge")
+                        .with_importance_score(0.7)
+                        .with_source("dream_review");
                     let merge_applied = match store.store(mem).await {
                         Ok(summary_id) => {
                             // Summary stored — now delete source memories.
@@ -1594,7 +1593,12 @@ impl DreamReviewQueue {
     pub async fn persist_to(&self, path: impl AsRef<std::path::Path>) -> crate::Result<()> {
         let path = path.as_ref();
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.ok();
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                crate::error::SyscityError::Storage {
+                    context: format!("Failed to create review queue directory: {:?}", parent),
+                    details: e.to_string(),
+                }
+            })?;
         }
         let items = self.items.read().await;
         let json = serde_json::to_string_pretty(&*items).map_err(|e| {
@@ -1742,7 +1746,9 @@ impl DreamScheduler {
     /// Stop the background scheduler.
     pub async fn stop(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(()).await;
+            if let Err(e) = tx.send(()).await {
+                warn!("Failed to send dream scheduler shutdown signal: {:?}", e);
+            }
         }
     }
 

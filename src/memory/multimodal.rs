@@ -355,7 +355,7 @@ impl MultimodalStore {
 
     /// Read a stored file's bytes.
     pub async fn read_file(&self, relative_path: impl AsRef<Path>) -> crate::Result<Vec<u8>> {
-        let path = self.resolve_path(relative_path.as_ref())?;
+        let path = self.resolve_path(relative_path.as_ref()).await?;
         fs::read(&path)
             .await
             .map_err(|e| crate::error::SyscityError::Storage {
@@ -366,7 +366,7 @@ impl MultimodalStore {
 
     /// Delete a stored file.
     pub async fn delete_file(&self, relative_path: impl AsRef<Path>) -> crate::Result<()> {
-        let path = self.resolve_path(relative_path.as_ref())?;
+        let path = self.resolve_path(relative_path.as_ref()).await?;
         fs::remove_file(&path)
             .await
             .map_err(|e| crate::error::SyscityError::Storage {
@@ -381,10 +381,10 @@ impl MultimodalStore {
     /// Uses `canonicalize` to resolve symlinks and `..` components.  When the
     /// path does not yet exist (e.g. for a new write), falls back to lexical
     /// normalization without a TOCTOU-vulnerable `exists()` check.
-    fn resolve_path(&self, relative_path: &Path) -> crate::Result<PathBuf> {
+    async fn resolve_path(&self, relative_path: &Path) -> crate::Result<PathBuf> {
         // If the user-supplied path is absolute, Path::join discards the base.
         // Canonicalise the base and verify the resolved path is contained within it.
-        let base = std::fs::canonicalize(&self.workspace_dir).map_err(|e| {
+        let base = fs::canonicalize(&self.workspace_dir).await.map_err(|e| {
             crate::error::SyscityError::Storage {
                 context: "Failed to canonicalise workspace dir".to_string(),
                 details: e.to_string(),
@@ -393,7 +393,7 @@ impl MultimodalStore {
         let resolved = base.join(relative_path);
         // Try canonicalize first. If it fails (path doesn't exist), fall back
         // to lexical normalization — no TOCTOU from a prior exists() check.
-        let canonical = match std::fs::canonicalize(&resolved) {
+        let canonical = match fs::canonicalize(&resolved).await {
             Ok(c) => c,
             Err(_) => {
                 let mut normalised = base.clone();
