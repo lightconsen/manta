@@ -238,7 +238,10 @@ impl TieredStore {
             match self.backend_for(tier).search(unlimited.clone()).await {
                 Ok(mut results) => all.append(&mut results),
                 Err(e) => {
-                    warn!("Tier {:?} search failed: {}", tier, e);
+                    return Err(crate::error::SyscityError::Storage {
+                        context: format!("Tier {:?} search failed", tier),
+                        details: e.to_string(),
+                    });
                 }
             }
         }

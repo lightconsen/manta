@@ -848,20 +848,10 @@ impl MemoryManager {
 
             if let Some(content) = content {
                 if content.len() >= 5 {
-                    match self
+                    let id = self
                         .observe(user_id, content, memory_type, importance)
-                        .await
-                    {
-                        Ok(id) => {
-                            stored_ids.push(id);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to persist LLM-extracted memory in compact_with_llm: {}",
-                                e
-                            );
-                        }
-                    }
+                        .await?;
+                    stored_ids.push(id);
                 }
             }
         }
@@ -974,14 +964,18 @@ impl MemoryManager {
             None => return,
         };
 
-        // Rate limit: skip if adjustments were applied within the last 5 minutes
+        // Rate limit: skip if adjustments were applied within the last 5 minutes.
+        // Acquire a write lock and update the timestamp before doing any work so
+        // concurrent callers cannot all pass the check and run adjustments in
+        // parallel.
         {
-            let guard = self.last_adjustment.read().await;
+            let mut guard = self.last_adjustment.write().await;
             if let Some(last) = *guard {
                 if last.elapsed().as_secs() < 300 {
                     return;
                 }
             }
+            *guard = Some(std::time::Instant::now());
         }
 
         // Collect memory IDs that have been tracked by effectiveness
@@ -1134,9 +1128,6 @@ impl MemoryManager {
         if migrated > 0 {
             info!("Migrated {} memories based on effectiveness", migrated);
         }
-
-        // Update last adjustment time
-        *self.last_adjustment.write().await = Some(std::time::Instant::now());
     }
 
     /// Collect memory IDs that have been tracked by the effectiveness system.

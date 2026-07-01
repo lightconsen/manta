@@ -374,9 +374,10 @@ impl DatabaseStore {
     // -------------------------------------------------------------------------
 
     fn system_time_to_secs(time: SystemTime) -> i64 {
-        time.duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64
+        match time.duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(d) => d.as_secs() as i64,
+            Err(e) => -(e.duration().as_secs() as i64),
+        }
     }
 
     fn secs_to_system_time(secs: i64) -> Option<SystemTime> {

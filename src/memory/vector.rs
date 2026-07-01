@@ -8,11 +8,13 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tokio::sync::RwLock;
+use tokio::task::spawn_blocking;
 use tracing::{info, warn};
 
 use super::{Memory, MemoryId};
@@ -191,8 +193,18 @@ impl EmbeddingProvider for LocalGgufEmbeddingProvider {
 impl ApiEmbeddingProvider {
     /// Create a new API embedding provider
     pub fn new(api_key: String, model: String, dimension: usize) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(120))
+            .build()
+            .unwrap_or_else(|_| {
+                // A reqwest client only fails to build if the TLS backend or a
+                // user-provided connector is invalid; fallback to the default
+                // client so the provider is still usable.
+                reqwest::Client::new()
+            });
         Self {
-            client: reqwest::Client::new(),
+            client,
             api_key,
             base_url: "https://api.openai.com/v1".to_string(),
             model,
@@ -630,14 +642,14 @@ impl SqliteVectorStore {
         limit: usize,
         threshold: f32,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
-        // Fetch extra rows to compensate for threshold filtering below.
-        // A multiplier of 4x is generous — most applications see <50% filtered.
-        let fetch_size = (limit as i64).saturating_mul(4).max(100);
+        // Without a vector index we must scan all rows to compute cosine
+        // similarity and return the true top-k results. ORDER BY id LIMIT
+        // would return an arbitrary subset, silently omitting better matches
+        // once the table grows beyond the fetch size.
         let rows = sqlx::query(
             "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM \
-             vector_chunks ORDER BY id LIMIT ?",
+             vector_chunks",
         )
-        .bind(fetch_size)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| crate::error::SyscityError::Storage {
@@ -833,6 +845,18 @@ impl TextChunker {
         Self { chunk_size, chunk_overlap }
     }
 
+    /// Chunk text asynchronously, offloading the CPU-bound work to the
+    /// blocking pool so large documents do not stall the Tokio runtime.
+    pub async fn chunk_async(&self, text: impl Into<String>) -> crate::Result<Vec<String>> {
+        let chunker = self.clone();
+        let text = text.into();
+        spawn_blocking(move || chunker.chunk(&text))
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::Validation(format!("chunking panicked: {}", e))
+            })
+    }
+
     /// Chunk text into overlapping segments
     pub fn chunk(&self, text: &str) -> Vec<String> {
         let words: Vec<&str> = text.split_whitespace().collect();
@@ -881,7 +905,7 @@ impl BatchEmbeddingProcessor {
 
         // Chunk all documents
         for (doc_id, content) in &documents {
-            let chunks = self.chunker.chunk(content);
+            let chunks = self.chunker.chunk_async(content).await?;
             let total = chunks.len();
 
             for (pos, text) in chunks.into_iter().enumerate() {
@@ -896,6 +920,14 @@ impl BatchEmbeddingProcessor {
         for (batch_idx, batch) in all_chunks.chunks(self.batch_size).enumerate() {
             let texts: Vec<String> = batch.iter().map(|(_, text, _, _)| text.clone()).collect();
             let embeddings = self.provider.embed_batch(&texts).await?;
+
+            if embeddings.len() != batch.len() {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Embedding provider returned {} embeddings for {} chunks",
+                    embeddings.len(),
+                    batch.len()
+                )));
+            }
 
             for (idx, (doc_id, text, pos, total)) in batch.iter().enumerate() {
                 if let Some(embedding) = embeddings.get(idx) {
@@ -960,7 +992,7 @@ impl VectorMemoryService {
 
     /// Store a memory with automatic chunking and embedding
     pub async fn store_memory(&self, memory: &Memory) -> crate::Result<Vec<EmbeddedChunk>> {
-        let chunks = self.chunker.chunk(&memory.content);
+        let chunks = self.chunker.chunk_async(&memory.content).await?;
         let total = chunks.len();
 
         let mut embedded_chunks = Vec::new();
@@ -1042,7 +1074,7 @@ impl VectorMemoryService {
         collection: &str,
     ) -> crate::Result<String> {
         let doc_id = uuid::Uuid::new_v4().to_string();
-        let chunks = self.chunker.chunk(content);
+        let chunks = self.chunker.chunk_async(content).await?;
         let total = chunks.len();
 
         let embeddings = self.embedding_provider.embed_batch(&chunks).await?;

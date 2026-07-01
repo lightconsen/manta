@@ -40,8 +40,7 @@ mod sqlite_vec_ext {
     /// multiple threads concurrently; callers rely on the `OnceLock` wrapper in
     /// [`register()`].
     unsafe fn register_vec_extension() -> Result<(), String> {
-        let init: AutoExtension =
-            std::mem::transmute(sqlite_vec::sqlite3_vec_init as *const ());
+        let init: AutoExtension = std::mem::transmute(sqlite_vec::sqlite3_vec_init as *const ());
         let rc = libsqlite3_sys::sqlite3_auto_extension(Some(init));
         if rc == libsqlite3_sys::SQLITE_OK {
             Ok(())
@@ -111,16 +110,36 @@ fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
     embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
 
-fn bytes_to_embedding(bytes: &[u8]) -> Vec<f32> {
-    bytes
+fn bytes_to_embedding(bytes: &[u8]) -> crate::Result<Vec<f32>> {
+    if !bytes.len().is_multiple_of(4) {
+        return Err(crate::error::SyscityError::Storage {
+            context: "Invalid sqlite-vec embedding blob".to_string(),
+            details: format!(
+                "Embedding blob length {} is not a multiple of 4 (f32 size)",
+                bytes.len()
+            ),
+        });
+    }
+    Ok(bytes
         .chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
+        .collect())
 }
 
 #[async_trait]
 impl VectorStore for SqliteVecStore {
     async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
+        if chunk.embedding.len() != self.dimension {
+            return Err(crate::error::SyscityError::Storage {
+                context: "Embedding dimension mismatch".to_string(),
+                details: format!(
+                    "expected dimension {}, got {}",
+                    self.dimension,
+                    chunk.embedding.len()
+                ),
+            });
+        }
+
         let embedding_bytes = embedding_to_bytes(&chunk.embedding);
         let metadata_json = chunk
             .metadata
@@ -159,6 +178,17 @@ impl VectorStore for SqliteVecStore {
         limit: usize,
         threshold: f32,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
+        if query_embedding.len() != self.dimension {
+            return Err(crate::error::SyscityError::Storage {
+                context: "Query embedding dimension mismatch".to_string(),
+                details: format!(
+                    "expected dimension {}, got {}",
+                    self.dimension,
+                    query_embedding.len()
+                ),
+            });
+        }
+
         let query_bytes = embedding_to_bytes(query_embedding);
         let max_distance = 1.0f64 - threshold as f64;
 
@@ -219,7 +249,18 @@ impl VectorStore for SqliteVecStore {
                             details: e.to_string(),
                         }
                     })?;
-                    bytes_to_embedding(&blob)
+                    let embedding = bytes_to_embedding(&blob)?;
+                    if embedding.len() != self.dimension {
+                        return Err(crate::error::SyscityError::Storage {
+                            context: "sqlite-vec embedding dimension mismatch".to_string(),
+                            details: format!(
+                                "expected dimension {}, got {}",
+                                self.dimension,
+                                embedding.len()
+                            ),
+                        });
+                    }
+                    embedding
                 },
                 position: row.try_get::<i64, _>("position").map_err(|e| {
                     crate::error::SyscityError::Storage {

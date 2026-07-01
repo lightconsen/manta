@@ -2,16 +2,17 @@
 //!
 //! Provides a LanceDB-based implementation of the `VectorStore` trait
 //! for large-scale vector similarity search (>100K vectors).
+//!
+//! NOTE: This backend is currently a placeholder. All data-access methods
+//! return an error until a real LanceDB integration is implemented.
 
 // When lancedb feature is enabled, use the real lancedb crate
 #[cfg(feature = "vector-db")]
 mod inner {
     use std::path::PathBuf;
-    use std::sync::Arc;
 
     use async_trait::async_trait;
-    use tokio::sync::RwLock;
-    use tracing::{debug, info};
+    use tracing::info;
 
     use crate::error::{Result, SyscityError};
     use crate::memory::vector::{EmbeddedChunk, VectorStore, VectorStoreStats};
@@ -21,9 +22,16 @@ mod inner {
         uri: PathBuf,
         table_name: String,
         _num_partitions: usize,
-        // Store dimension and count for stats (LanceDB manages the actual data)
-        dimension: usize,
-        vector_count: Arc<RwLock<usize>>,
+        _dimension: usize,
+    }
+
+    fn not_implemented() -> SyscityError {
+        SyscityError::Storage {
+            context: "LanceDB vector backend is not implemented".to_string(),
+            details: "The LanceDbVectorStore is a placeholder and cannot store or retrieve data. \
+                      Use an enabled backend such as SqliteVectorStore or MemoryVectorStore."
+                .to_string(),
+        }
     }
 
     impl LanceDbVectorStore {
@@ -33,8 +41,7 @@ mod inner {
                 uri,
                 table_name,
                 _num_partitions: 256,
-                dimension,
-                vector_count: Arc::new(RwLock::new(0)),
+                _dimension: dimension,
             }
         }
 
@@ -59,62 +66,33 @@ mod inner {
 
     #[async_trait]
     impl VectorStore for LanceDbVectorStore {
-        async fn store_chunk(&self, chunk: EmbeddedChunk) -> Result<()> {
-            // In a full implementation, this would use lancedb::Table::add()
-            // For now, log the operation
-            debug!(
-                "LanceDB: store chunk {} (dim={}, pos={})",
-                chunk.id,
-                chunk.embedding.len(),
-                chunk.position
-            );
-            let mut count = self.vector_count.write().await;
-            *count += 1;
-            Ok(())
+        async fn store_chunk(&self, _chunk: EmbeddedChunk) -> Result<()> {
+            Err(not_implemented())
         }
 
-        async fn store_chunks(&self, chunks: Vec<EmbeddedChunk>) -> Result<()> {
-            for chunk in chunks {
-                self.store_chunk(chunk).await?;
-            }
-            Ok(())
+        async fn store_chunks(&self, _chunks: Vec<EmbeddedChunk>) -> Result<()> {
+            Err(not_implemented())
         }
 
         async fn search_similar(
             &self,
-            query_embedding: &[f32],
-            limit: usize,
-            threshold: f32,
+            _query_embedding: &[f32],
+            _limit: usize,
+            _threshold: f32,
         ) -> Result<Vec<(EmbeddedChunk, f32)>> {
-            debug!(
-                "LanceDB: search_similar(query_dim={}, limit={}, threshold={})",
-                query_embedding.len(),
-                limit,
-                threshold
-            );
-            // Full implementation would use lancedb::Table::search()
-            Ok(Vec::new())
+            Err(not_implemented())
         }
 
-        async fn delete_by_source(&self, source_id: &str) -> Result<usize> {
-            debug!("LanceDB: delete_by_source({})", source_id);
-            Ok(0)
+        async fn delete_by_source(&self, _source_id: &str) -> Result<usize> {
+            Err(not_implemented())
         }
 
         async fn stats(&self) -> Result<VectorStoreStats> {
-            let count = *self.vector_count.read().await;
-            Ok(VectorStoreStats {
-                total_vectors: count,
-                total_sources: count, // approximate
-                dimension: self.dimension,
-            })
+            Err(not_implemented())
         }
 
         async fn clear(&self) -> Result<()> {
-            let mut count = self.vector_count.write().await;
-            *count = 0;
-            info!("LanceDB store cleared");
-            Ok(())
+            Err(not_implemented())
         }
     }
 }
@@ -126,8 +104,16 @@ mod inner {
 
     use async_trait::async_trait;
 
-    use crate::error::Result;
+    use crate::error::{Result, SyscityError};
     use crate::memory::vector::{EmbeddedChunk, VectorStore, VectorStoreStats};
+
+    fn not_implemented() -> SyscityError {
+        SyscityError::Storage {
+            context: "LanceDB vector backend is not enabled".to_string(),
+            details: "The 'vector-db' feature is not enabled. Use a different VectorBackend."
+                .to_string(),
+        }
+    }
 
     pub struct LanceDbVectorStore;
 
@@ -146,10 +132,10 @@ mod inner {
     #[async_trait]
     impl VectorStore for LanceDbVectorStore {
         async fn store_chunk(&self, _chunk: EmbeddedChunk) -> Result<()> {
-            Ok(())
+            Err(not_implemented())
         }
         async fn store_chunks(&self, _chunks: Vec<EmbeddedChunk>) -> Result<()> {
-            Ok(())
+            Err(not_implemented())
         }
         async fn search_similar(
             &self,
@@ -157,16 +143,16 @@ mod inner {
             _limit: usize,
             _threshold: f32,
         ) -> Result<Vec<(EmbeddedChunk, f32)>> {
-            Ok(vec![])
+            Err(not_implemented())
         }
         async fn delete_by_source(&self, _source_id: &str) -> Result<usize> {
-            Ok(0)
+            Err(not_implemented())
         }
         async fn stats(&self) -> Result<VectorStoreStats> {
-            Ok(VectorStoreStats::default())
+            Err(not_implemented())
         }
         async fn clear(&self) -> Result<()> {
-            Ok(())
+            Err(not_implemented())
         }
     }
 }

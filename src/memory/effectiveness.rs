@@ -493,8 +493,12 @@ impl EffectivenessTracker {
     async fn prune_overflow_memories(&self) {
         let target = self.config.max_tracked_memories / 2; // prune down to 50%
 
+        // Compute and remove victims while holding the events write lock so
+        // the capacity check and the prune action are atomic. This prevents a
+        // read-check/write-act race where concurrent record_recall calls could
+        // push the map over the limit between the check and the prune.
         let victims: Vec<String> = {
-            let events_guard = self.events.read().await;
+            let events_guard = self.events.write().await;
             if events_guard.len() <= target {
                 return;
             }
@@ -502,8 +506,6 @@ impl EffectivenessTracker {
                 .iter()
                 .map(|(id, evts)| (id.clone(), evts.len()))
                 .collect();
-            drop(events_guard);
-
             by_count.sort_by_key(|(_, count)| *count);
 
             let to_remove = by_count.len() - target;
@@ -520,13 +522,12 @@ impl EffectivenessTracker {
 
         let victim_count = victims.len();
 
-        // Remove events
+        // Remove events and their recall_index entries together.
         {
             let mut events_guard = self.events.write().await;
+            let mut index_guard = self.recall_index.write().await;
             for id in &victims {
-                // Collect recall_ids to remove from recall_index
                 if let Some(evts) = events_guard.remove(id) {
-                    let mut index_guard = self.recall_index.write().await;
                     for evt in evts {
                         index_guard.remove(&evt.recall_id);
                     }

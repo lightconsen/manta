@@ -14,7 +14,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use tracing::warn;
 
 /// Event log relative path within workspace.
 pub const MEMORY_EVENT_LOG_RELATIVE_PATH: &str = "memory/.dreams/events.jsonl";
@@ -191,7 +190,7 @@ pub async fn append_memory_event(
     // Rotate file if it exceeds the size limit by keeping only the last ~5 MiB.
     if let Ok(meta) = fs::metadata(&path).await {
         if meta.len() > MAX_EVENT_LOG_SIZE {
-            match fs::read_to_string(&path).await {
+            let rotated = match fs::read_to_string(&path).await {
                 Ok(content) => {
                     let keep_bytes = (MAX_EVENT_LOG_SIZE / 2) as usize;
                     // Drop chars from the front until we're at the target size.
@@ -205,20 +204,19 @@ pub async fn append_memory_event(
                         .collect();
                     // Drop the potentially-fragmented first line.
                     let trimmed = tail.lines().skip(1).collect::<Vec<_>>().join("\n");
-                    if let Err(e) = fs::write(&path, &trimmed).await {
-                        warn!(
-                            "Failed to rotate oversized event log {:?}: {}. Continuing with append.",
-                            path, e
-                        );
-                    }
+                    fs::write(&path, &trimmed).await.map_err(|e| {
+                        crate::error::SyscityError::Storage {
+                            context: format!("Failed to rotate oversized event log {:?}", path),
+                            details: e.to_string(),
+                        }
+                    })
                 }
-                Err(e) => {
-                    warn!(
-                        "Failed to read oversized event log {:?} for rotation: {}. Continuing with append.",
-                        path, e
-                    );
-                }
-            }
+                Err(e) => Err(crate::error::SyscityError::Storage {
+                    context: format!("Failed to read oversized event log {:?} for rotation", path),
+                    details: e.to_string(),
+                }),
+            };
+            rotated?;
         }
     }
 

@@ -29,9 +29,8 @@ use crate::error::SyscityError;
 use crate::memory::soul::SoulAnalysis;
 
 #[allow(clippy::expect_used)]
-static RE_CODE_FENCE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"```(\w+)").expect("hard-coded code-fence regex is valid")
-});
+static RE_CODE_FENCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"```(\w+)").expect("hard-coded code-fence regex is valid"));
 #[allow(clippy::expect_used)]
 static RE_WORD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[a-zA-Z]{4,}").expect("hard-coded word regex is valid"));
@@ -181,6 +180,9 @@ pub struct PersonalityMemory {
     total_max_size: usize,
     /// In-process file cache (invalidated on mtime/size change)
     cache: FileCache,
+    /// Serializes append operations so concurrent append calls do not lose
+    /// data through read-modify-write races.
+    append_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl PersonalityMemory {
@@ -245,6 +247,7 @@ impl PersonalityMemory {
             max_size: DEFAULT_MAX_MEMORY_SIZE,
             total_max_size: DEFAULT_TOTAL_MAX_SIZE,
             cache: Arc::new(RwLock::new(HashMap::new())),
+            append_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -381,6 +384,7 @@ impl PersonalityMemory {
 
     /// Append to memory content (with size limit)
     pub async fn append(&self, mem_type: MemoryType, addition: &str) -> crate::Result<()> {
+        let _guard = self.append_lock.lock().await;
         let current = self.read(mem_type).await?;
         let new_content = format!("{}\n{}", current, addition);
         self.write(mem_type, &new_content).await
