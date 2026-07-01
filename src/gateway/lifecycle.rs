@@ -220,7 +220,11 @@ pub(crate) async fn start_gateway(
                 engine.initialize().await;
                 let engine = Arc::new(engine);
                 let mut scheduler = crate::memory::DreamScheduler::new(engine);
-                scheduler.start(mm.store(), tier_index);
+                let handle = scheduler.start(mm.store(), tier_index);
+                state
+                    .task_registry
+                    .insert_join("dream_scheduler", handle)
+                    .await;
                 info!("Dream scheduler started");
                 *state.memory.dream_scheduler.write().await = Some(scheduler);
             }
@@ -440,7 +444,14 @@ pub(crate) async fn start_gateway(
     // Stop dream scheduler on shutdown
     if let Some(mut scheduler) = state.memory.dream_scheduler.read().await.clone() {
         scheduler.stop().await;
-        info!("Dream scheduler stopped");
+        if let Some(handle) = state.task_registry.remove_join_or_abort("dream_scheduler").await {
+            match timeout(Duration::from_secs(5), handle).await {
+                Ok(_) => info!("Dream scheduler stopped"),
+                Err(_) => warn!("Dream scheduler did not stop within timeout"),
+            }
+        } else {
+            info!("Dream scheduler stopped");
+        }
     }
 
     // Stop standing orders manager on shutdown
@@ -540,7 +551,14 @@ pub(crate) async fn stop_gateway(
     // 6. Dream scheduler.
     if let Some(mut scheduler) = state.memory.dream_scheduler.read().await.clone() {
         scheduler.stop().await;
-        info!("Dream scheduler stopped");
+        if let Some(handle) = state.task_registry.remove_join_or_abort("dream_scheduler").await {
+            match timeout(Duration::from_secs(5), handle).await {
+                Ok(_) => info!("Dream scheduler stopped"),
+                Err(_) => warn!("Dream scheduler did not stop within timeout"),
+            }
+        } else {
+            info!("Dream scheduler stopped");
+        }
     }
 
     // 7. Standing orders manager.

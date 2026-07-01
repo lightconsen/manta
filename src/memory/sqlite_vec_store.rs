@@ -30,19 +30,30 @@ mod sqlite_vec_ext {
         *const libsqlite3_sys::sqlite3_api_routines,
     ) -> c_int;
 
+    /// Register the sqlite-vec extension as a SQLite auto-extension.
+    ///
+    /// # Safety
+    /// This calls `sqlite3_auto_extension` with a function pointer transmuted
+    /// from `sqlite_vec::sqlite3_vec_init`. The transmute is only sound because
+    /// sqlite-vec's init routine has the exact SQLite auto-extension ABI that
+    /// `sqlite3_auto_extension` expects. This function must not be called from
+    /// multiple threads concurrently; callers rely on the `OnceLock` wrapper in
+    /// [`register()`].
+    unsafe fn register_vec_extension() -> Result<(), String> {
+        let init: AutoExtension =
+            std::mem::transmute(sqlite_vec::sqlite3_vec_init as *const ());
+        let rc = libsqlite3_sys::sqlite3_auto_extension(Some(init));
+        if rc == libsqlite3_sys::SQLITE_OK {
+            Ok(())
+        } else {
+            Err(format!("sqlite3_auto_extension returned error code {}", rc))
+        }
+    }
+
     fn register() -> Result<(), String> {
         static RESULT: OnceLock<Result<(), String>> = OnceLock::new();
         RESULT
-            .get_or_init(|| {
-                let init: AutoExtension =
-                    unsafe { std::mem::transmute(sqlite_vec::sqlite3_vec_init as *const ()) };
-                let rc = unsafe { libsqlite3_sys::sqlite3_auto_extension(Some(init)) };
-                if rc == libsqlite3_sys::SQLITE_OK {
-                    Ok(())
-                } else {
-                    Err(format!("sqlite3_auto_extension returned error code {}", rc))
-                }
-            })
+            .get_or_init(|| unsafe { register_vec_extension() })
             .clone()
     }
 

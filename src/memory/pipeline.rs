@@ -210,7 +210,9 @@ async fn process_batch<P: PipelineEmbeddingProvider>(provider: &Arc<P>, batch: V
             for emb in embeddings {
                 match jobs_iter.next() {
                     Some(job) => {
-                        let _ = job.response_tx.send(Ok(emb));
+                        if job.response_tx.send(Ok(emb)).is_err() {
+                            warn!("Failed to send embedding result: receiver dropped");
+                        }
                     }
                     None => {
                         warn!(
@@ -224,15 +226,21 @@ async fn process_batch<P: PipelineEmbeddingProvider>(provider: &Arc<P>, batch: V
             // Send errors to orphaned jobs when embed_batch returned fewer results than expected.
             for job in jobs_iter {
                 warn!("Orphaned embedding job — provider returned insufficient results");
-                let _ = job
+                if job
                     .response_tx
-                    .send(Err("Embedding provider returned insufficient results".to_string()));
+                    .send(Err("Embedding provider returned insufficient results".to_string()))
+                    .is_err()
+                {
+                    warn!("Failed to send orphaned embedding error: receiver dropped");
+                }
             }
         }
         Err(e) => {
             error!("Embedding batch failed: {}", e);
             for job in batch {
-                let _ = job.response_tx.send(Err(e.clone()));
+                if job.response_tx.send(Err(e.clone())).is_err() {
+                    warn!("Failed to send embedding batch error to job: receiver dropped");
+                }
             }
         }
     }

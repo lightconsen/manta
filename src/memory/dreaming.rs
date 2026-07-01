@@ -1678,10 +1678,16 @@ impl DreamScheduler {
     ///
     /// Spawns a tokio task that sleeps until the next cron tick, runs the
     /// appropriate dream phase(s), then re-arms.  Call [`stop()`] to shut down.
-    pub fn start(&mut self, store: Arc<dyn super::MemoryStore>, tier_index: Arc<TierIndex>) {
+    /// Returns the spawned task handle so the caller can register it with a
+    /// [`TaskRegistry`] and await graceful shutdown.
+    pub fn start(
+        &mut self,
+        store: Arc<dyn super::MemoryStore>,
+        tier_index: Arc<TierIndex>,
+    ) -> tokio::task::JoinHandle<()> {
         if !self.engine.config.enabled {
             info!("Dreaming is disabled; scheduler not started");
-            return;
+            return tokio::spawn(async {});
         }
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -1740,7 +1746,7 @@ impl DreamScheduler {
                     }
                 }
             }
-        });
+        })
     }
 
     /// Stop the background scheduler.

@@ -28,16 +28,19 @@ use tracing::{debug, info, warn};
 use crate::error::SyscityError;
 use crate::memory::soul::SoulAnalysis;
 
-#[allow(clippy::unwrap_used)]
-static RE_CODE_FENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"```(\w+)").unwrap());
-#[allow(clippy::unwrap_used)]
-static RE_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-zA-Z]{4,}").unwrap());
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::expect_used)]
+static RE_CODE_FENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"```(\w+)").expect("hard-coded code-fence regex is valid")
+});
+#[allow(clippy::expect_used)]
+static RE_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[a-zA-Z]{4,}").expect("hard-coded word regex is valid"));
+#[allow(clippy::expect_used)]
 static RE_PREFERENCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)(?:i\s+(?:prefer|like|want|need)|please\s+use|always\s+use|use)\s+([^.]{3,80})",
     )
-    .unwrap()
+    .expect("hard-coded preference regex is valid")
 });
 
 /// Controls which memory files are included in the system prompt.
