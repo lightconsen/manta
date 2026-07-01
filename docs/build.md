@@ -63,7 +63,7 @@ all channels plus browser, vision, local embeddings, and device I/O.
 | `hot-reload` | ✓ | Config/plugin hot-reload via file watching |
 | `serialport` / `hidapi` / `gpio` | ✓ / ✓ / — | Hardware device drivers |
 | `tailscale` | — | Tailscale serve / funnel networking |
-| `vector-db` / `pgvector` / `sqlite-vec` | — | Vector memory backends |
+| `vector-db` / `pgvector` / `sqlite-vec` | — / — / ✓ | Vector memory backends (`sqlite-vec` is the default persistent backend) |
 
 Build with a custom feature set:
 ```bash

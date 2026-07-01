@@ -29,7 +29,7 @@ mod inner {
         SyscityError::Storage {
             context: "LanceDB vector backend is not implemented".to_string(),
             details: "The LanceDbVectorStore is a placeholder and cannot store or retrieve data. \
-                      Use an enabled backend such as SqliteVectorStore or MemoryVectorStore."
+                      Use an enabled backend such as SqliteVecStore or MemoryVectorStore."
                 .to_string(),
         }
     }
@@ -110,7 +110,8 @@ mod inner {
     fn not_implemented() -> SyscityError {
         SyscityError::Storage {
             context: "LanceDB vector backend is not enabled".to_string(),
-            details: "The 'vector-db' feature is not enabled. Use a different VectorBackend."
+            details: "The 'vector-db' feature is not enabled. Use a different VectorBackend such \
+                      as SqliteVecStore or MemoryVectorStore."
                 .to_string(),
         }
     }

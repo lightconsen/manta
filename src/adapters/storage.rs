@@ -16,8 +16,7 @@ use crate::core::models::{Entity, Id};
 use crate::error::SyscityError;
 // Re-export memory types for unified storage
 pub use crate::memory::{
-    ChatHistoryStore, ChatMessage, EmbeddedChunk, Memory, MemoryId, MemoryQuery, MemoryStats,
-    MemoryStore, VectorStore, VectorStoreStats,
+    ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
 };
 
 /// Errors that can occur during storage operations
@@ -365,34 +364,6 @@ impl SqliteStorage {
             .await
             .map_err(|e| StorageError::Backend(format!("Failed to create index: {}", e)))?;
 
-        // Vector chunks table for semantic search
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS vector_chunks (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                text TEXT NOT NULL,
-                embedding BLOB NOT NULL,  -- Serialized f32 array
-                position INTEGER NOT NULL,
-                total_chunks INTEGER NOT NULL,
-                metadata TEXT,  -- JSON
-                created_at TEXT NOT NULL
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            StorageError::Backend(format!("Failed to create vector_chunks table: {}", e))
-        })?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_vector_chunks_source ON vector_chunks(source_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| StorageError::Backend(format!("Failed to create vector index: {}", e)))?;
-
         // Chat messages table for conversation history
         sqlx::query(
             r#"
@@ -725,156 +696,6 @@ fn secs_to_system_time(secs: i64) -> Option<std::time::SystemTime> {
         None
     } else {
         Some(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64))
-    }
-}
-
-#[async_trait]
-impl VectorStore for SqliteStorage {
-    async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
-        let metadata_json = chunk
-            .metadata
-            .as_ref()
-            .map(|m| serde_json::to_string(m).unwrap_or_default())
-            .unwrap_or_default();
-
-        sqlx::query(
-            r#"
-            INSERT OR REPLACE INTO vector_chunks
-            (id, source_id, text, embedding, position, total_chunks, metadata, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            "#,
-        )
-        .bind(&chunk.id)
-        .bind(&chunk.source_id)
-        .bind(&chunk.text)
-        .bind(serialize_embedding(&chunk.embedding))
-        .bind(chunk.position as i64)
-        .bind(chunk.total_chunks as i64)
-        .bind(metadata_json)
-        .bind(system_time_to_secs(std::time::SystemTime::now()))
-        .execute(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Failed to store vector chunk".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
-
-        Ok(())
-    }
-
-    async fn search_similar(
-        &self,
-        query_embedding: &[f32],
-        limit: usize,
-        threshold: f32,
-    ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
-        // Load all chunks and compute similarity in Rust
-        // For large datasets, this should use sqlite-vec extension or similar
-        let rows = sqlx::query(
-            "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM \
-             vector_chunks",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Failed to search vectors".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
-
-        let mut results: Vec<(EmbeddedChunk, f32)> = rows
-            .into_iter()
-            .filter_map(|row| {
-                let embedding_bytes: Vec<u8> = row.get("embedding");
-                let chunk_embedding = deserialize_embedding(&embedding_bytes);
-                let similarity =
-                    crate::memory::cosine_similarity(query_embedding, &chunk_embedding);
-
-                if similarity >= threshold {
-                    let metadata: Option<String> = row.get("metadata");
-                    let metadata = metadata.and_then(|m| serde_json::from_str(&m).ok());
-
-                    let chunk = EmbeddedChunk {
-                        id: row.get("id"),
-                        source_id: row.get("source_id"),
-                        text: row.get("text"),
-                        embedding: chunk_embedding,
-                        position: row.get::<i64, _>("position") as usize,
-                        total_chunks: row.get::<i64, _>("total_chunks") as usize,
-                        metadata,
-                    };
-                    Some((chunk, similarity))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Sort by similarity descending
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        results.truncate(limit);
-
-        Ok(results)
-    }
-
-    async fn delete_by_source(&self, source_id: &str) -> crate::Result<usize> {
-        let result = sqlx::query("DELETE FROM vector_chunks WHERE source_id = ?1")
-            .bind(source_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: "Failed to delete vector chunks".to_string(),
-                cause: Some(Box::new(e)),
-            })?;
-
-        Ok(result.rows_affected() as usize)
-    }
-
-    async fn stats(&self) -> crate::Result<VectorStoreStats> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as total, COUNT(DISTINCT source_id) as sources FROM vector_chunks",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Failed to get vector stats".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
-
-        let total_vectors: i64 = row.get("total");
-        let total_sources: i64 = row.get("sources");
-
-        // Get dimension from first chunk
-        let first_chunk = sqlx::query("SELECT embedding FROM vector_chunks LIMIT 1")
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: "Failed to get vector dimension".to_string(),
-                cause: Some(Box::new(e)),
-            })?;
-
-        let dimension = first_chunk
-            .map(|row| {
-                let bytes: Vec<u8> = row.get("embedding");
-                bytes.len() / 4 // 4 bytes per f32
-            })
-            .unwrap_or(0);
-
-        Ok(VectorStoreStats {
-            total_vectors: total_vectors as usize,
-            total_sources: total_sources as usize,
-            dimension,
-        })
-    }
-
-    async fn clear(&self) -> crate::Result<()> {
-        sqlx::query("DELETE FROM vector_chunks")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: "Failed to clear vectors".to_string(),
-                cause: Some(Box::new(e)),
-            })?;
-        Ok(())
     }
 }
 

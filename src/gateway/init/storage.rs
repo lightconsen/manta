@@ -12,6 +12,8 @@ use crate::adapters::{FileStorage, InMemoryStorage, SqliteStorage, Storage};
 use crate::agent::session_store::SessionStore;
 use crate::error::SyscityError;
 use crate::gateway::GatewayConfig;
+#[cfg(feature = "sqlite-vec")]
+use crate::memory::SqliteVecStore;
 use crate::memory::VectorStore;
 use crate::security::persistent_audit::PersistentAuditLog;
 use crate::security::runtime_audit::AuditLogger;
@@ -34,49 +36,67 @@ pub async fn init_storage(config: &GatewayConfig) -> crate::Result<StorageInit> 
         Arc<RwLock<dyn Storage>>,
         Option<Arc<dyn VectorStore>>,
         Option<sqlx::SqlitePool>,
-    ) = match config.storage.storage_type.as_str() {
-        "sqlite" => {
-            let db_path = config
-                .storage
-                .database_url
-                .as_ref()
-                .map(|s| std::path::PathBuf::from(s.strip_prefix("sqlite:").unwrap_or(s)))
-                .unwrap_or_else(|| crate::dirs::syscity_dir().join("data").join("syscity.db"));
-            if let Some(parent) = db_path.parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    warn!("Failed to create SQLite directory {:?}: {}", parent, e);
+    ) =
+        match config.storage.storage_type.as_str() {
+            "sqlite" => {
+                let db_path = config
+                    .storage
+                    .database_url
+                    .as_ref()
+                    .map(|s| std::path::PathBuf::from(s.strip_prefix("sqlite:").unwrap_or(s)))
+                    .unwrap_or_else(|| crate::dirs::syscity_dir().join("data").join("syscity.db"));
+                if let Some(parent) = db_path.parent() {
+                    if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                        warn!("Failed to create SQLite directory {:?}: {}", parent, e);
+                    }
                 }
-            }
-            if !db_path.exists() {
-                if let Err(e) = tokio::fs::File::create(&db_path).await {
-                    warn!("Failed to create SQLite file {:?}: {}", db_path, e);
+                if !db_path.exists() {
+                    if let Err(e) = tokio::fs::File::create(&db_path).await {
+                        warn!("Failed to create SQLite file {:?}: {}", db_path, e);
+                    }
                 }
-            }
-            let db_url = format!("sqlite:///{}", db_path.display());
-            info!("Connecting to SQLite storage at: {}", db_url);
-            let pool =
-                sqlx::SqlitePool::connect(&db_url)
-                    .await
-                    .map_err(|e| SyscityError::Storage {
+                let db_url = format!("sqlite:///{}", db_path.display());
+                info!("Connecting to SQLite storage at: {}", db_url);
+                let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e| {
+                    SyscityError::Storage {
                         context: "Failed to connect to SQLite".into(),
                         details: e.to_string(),
-                    })?;
-            let sqlite_storage = Arc::new(SqliteStorage::new(pool.clone()));
-            let vector_store: Arc<dyn VectorStore> = sqlite_storage.clone();
-            let storage: Arc<RwLock<dyn Storage>> =
-                Arc::new(RwLock::new(SqliteStorage::new(pool.clone())));
-            (storage, Some(vector_store), Some(pool))
-        }
-        "file" => {
-            let base_path = config.storage.base_path.as_deref().unwrap_or("./data");
-            let storage = Arc::new(RwLock::new(FileStorage::new(base_path)?));
-            (storage, None, None)
-        }
-        _ => {
-            let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
-            (storage, None, None)
-        }
-    };
+                    }
+                })?;
+                let sqlite_storage = SqliteStorage::new(pool.clone());
+                #[cfg(feature = "sqlite-vec")]
+                let vector_store: Option<Arc<dyn VectorStore>> =
+                    match SqliteVecStore::new(&db_url, config.vector_memory.embedding_dimension)
+                        .await
+                    {
+                        Ok(store) => {
+                            info!("Using sqlite-vec vector store at {}", db_url);
+                            Some(Arc::new(store))
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to initialize sqlite-vec vector store: {}. \
+                             Falling back to in-memory vector store.",
+                                e
+                            );
+                            None
+                        }
+                    };
+                #[cfg(not(feature = "sqlite-vec"))]
+                let vector_store: Option<Arc<dyn VectorStore>> = None;
+                let storage: Arc<RwLock<dyn Storage>> = Arc::new(RwLock::new(sqlite_storage));
+                (storage, vector_store, Some(pool))
+            }
+            "file" => {
+                let base_path = config.storage.base_path.as_deref().unwrap_or("./data");
+                let storage = Arc::new(RwLock::new(FileStorage::new(base_path)?));
+                (storage, None, None)
+            }
+            _ => {
+                let storage = Arc::new(RwLock::new(InMemoryStorage::new()));
+                (storage, None, None)
+            }
+        };
 
     let session_store: Option<Arc<SessionStore>> = if let Some(ref pool) = sqlite_pool {
         match SessionStore::from_pool(pool.clone()).await {

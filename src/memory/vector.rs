@@ -2,7 +2,7 @@
 //!
 //! Provides semantic search capabilities:
 //! - Embedding generation using fastembed (local) or API providers
-//! - Vector storage with SQLite vec extension or in-memory
+//! - Vector storage with the sqlite-vec extension or in-memory
 //! - Semantic similarity search with cosine similarity
 //! - Batch processing for efficient embedding generation
 
@@ -12,27 +12,47 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tokio::sync::RwLock;
 use tokio::task::spawn_blocking;
-use tracing::{info, warn};
+use tracing::info;
 
 use super::{Memory, MemoryId};
 
 /// Configuration for vector database backend
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VectorBackend {
-    /// SQLite with JSON embeddings and Rust-side similarity
-    Sqlite { path: String },
-    /// SQLite with the sqlite-vec extension (native vector search)
+    /// SQLite with the sqlite-vec extension (native vector search).
+    /// This is the default persistent backend.
     #[cfg(feature = "sqlite-vec")]
     SqliteVec { path: String },
     /// In-memory storage (for testing/small datasets)
-    #[default]
     Memory,
     /// PostgreSQL with pgvector
     #[cfg(feature = "pgvector")]
     Postgres { url: String, table: String },
+}
+
+fn default_vector_db_path() -> String {
+    format!(
+        "sqlite:///{}",
+        crate::dirs::syscity_dir()
+            .join("data")
+            .join("syscity.db")
+            .display()
+    )
+}
+
+impl Default for VectorBackend {
+    fn default() -> Self {
+        #[cfg(feature = "sqlite-vec")]
+        {
+            VectorBackend::SqliteVec { path: default_vector_db_path() }
+        }
+        #[cfg(not(feature = "sqlite-vec"))]
+        {
+            VectorBackend::Memory
+        }
+    }
 }
 
 /// Configuration for embedding model
@@ -574,248 +594,6 @@ impl VectorStore for MemoryVectorStore {
     }
 }
 
-/// SQLite-backed vector store for production-scale persistence.
-///
-/// Stores embeddings as serialized JSON arrays in a SQLite table.
-/// Similarity computation runs in Rust after loading candidates from SQLite,
-/// providing persistence and SQLite-based filtering (by source_id, metadata,
-/// etc.).
-pub struct SqliteVectorStore {
-    pool: Pool<Sqlite>,
-    dimension: usize,
-}
-
-impl SqliteVectorStore {
-    /// Create a new SQLite vector store. Creates the table if it doesn't exist.
-    pub async fn new(path: &str, dimension: usize) -> crate::Result<Self> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect(path)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: format!("Failed to connect to SQLite at {}", path),
-                details: e.to_string(),
-            })?;
-
-        // Create the vector chunks table
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS vector_chunks (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                text TEXT NOT NULL,
-                embedding TEXT NOT NULL,
-                position INTEGER NOT NULL,
-                total_chunks INTEGER NOT NULL,
-                metadata TEXT
-            )",
-        )
-        .execute(&pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::Storage {
-            context: "Failed to create vector_chunks table".to_string(),
-            details: e.to_string(),
-        })?;
-
-        // Create index for source_id lookups
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_source_id ON vector_chunks(source_id)")
-            .execute(&pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to create index on vector_chunks".to_string(),
-                details: e.to_string(),
-            })?;
-
-        info!("SqliteVectorStore initialized at {} (dim={})", path, dimension);
-        Ok(Self { pool, dimension })
-    }
-
-    /// Create an in-memory SQLite vector store (for testing).
-    pub async fn new_in_memory(dimension: usize) -> crate::Result<Self> {
-        Self::new("sqlite::memory:", dimension).await
-    }
-
-    /// Load all chunks and compute cosine similarity in Rust.
-    /// This is the pragmatic fallback when vec0 extension is unavailable.
-    async fn search_in_rust(
-        &self,
-        query_embedding: &[f32],
-        limit: usize,
-        threshold: f32,
-    ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
-        // Without a vector index we must scan all rows to compute cosine
-        // similarity and return the true top-k results. ORDER BY id LIMIT
-        // would return an arbitrary subset, silently omitting better matches
-        // once the table grows beyond the fetch size.
-        let rows = sqlx::query(
-            "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM \
-             vector_chunks",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::Storage {
-            context: "Failed to query vector_chunks".to_string(),
-            details: e.to_string(),
-        })?;
-
-        let mut results: Vec<(EmbeddedChunk, f32)> = rows
-            .into_iter()
-            .filter_map(|row| {
-                let id: String = row.get("id");
-                let source_id: String = row.get("source_id");
-                let text: String = row.get("text");
-                let embedding_json: String = row.get("embedding");
-                let position: i64 = row.get("position");
-                let total_chunks: i64 = row.get("total_chunks");
-                let metadata: Option<String> = row.get("metadata");
-
-                let embedding: Vec<f32> = match serde_json::from_str(&embedding_json) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        warn!("Skipping vector row with malformed embedding for {}: {}", id, e);
-                        return None;
-                    }
-                };
-                let metadata_value: Option<serde_json::Value> = match metadata {
-                    Some(json) => match serde_json::from_str(&json) {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            warn!(
-                                "Skipping vector metadata for {}: failed to deserialize: {}",
-                                id, e
-                            );
-                            None
-                        }
-                    },
-                    None => None,
-                };
-
-                let chunk = EmbeddedChunk {
-                    id,
-                    source_id,
-                    text,
-                    embedding,
-                    position: position as usize,
-                    total_chunks: total_chunks as usize,
-                    metadata: metadata_value,
-                };
-
-                let similarity = cosine_similarity(query_embedding, &chunk.embedding);
-                if similarity >= threshold {
-                    Some((chunk, similarity))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Sort by similarity descending
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        results.truncate(limit);
-
-        Ok(results)
-    }
-}
-
-#[async_trait]
-impl VectorStore for SqliteVectorStore {
-    async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
-        let embedding_json = serde_json::to_string(&chunk.embedding).map_err(|e| {
-            crate::error::SyscityError::Storage {
-                context: "Failed to serialize embedding".to_string(),
-                details: e.to_string(),
-            }
-        })?;
-        let metadata_json = chunk
-            .metadata
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to serialize metadata".to_string(),
-                details: e.to_string(),
-            })?;
-
-        sqlx::query(
-            "INSERT OR REPLACE INTO vector_chunks (id, source_id, text, embedding, position, \
-             total_chunks, metadata)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&chunk.id)
-        .bind(&chunk.source_id)
-        .bind(&chunk.text)
-        .bind(&embedding_json)
-        .bind(chunk.position as i64)
-        .bind(chunk.total_chunks as i64)
-        .bind(metadata_json)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::Storage {
-            context: "Failed to store vector chunk".to_string(),
-            details: e.to_string(),
-        })?;
-
-        Ok(())
-    }
-
-    async fn search_similar(
-        &self,
-        query_embedding: &[f32],
-        limit: usize,
-        threshold: f32,
-    ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
-        self.search_in_rust(query_embedding, limit, threshold).await
-    }
-
-    async fn delete_by_source(&self, source_id: &str) -> crate::Result<usize> {
-        let result = sqlx::query("DELETE FROM vector_chunks WHERE source_id = ?")
-            .bind(source_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to delete by source".to_string(),
-                details: e.to_string(),
-            })?;
-
-        Ok(result.rows_affected() as usize)
-    }
-
-    async fn stats(&self) -> crate::Result<VectorStoreStats> {
-        let total_vectors: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM vector_chunks")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to count vectors".to_string(),
-                details: e.to_string(),
-            })?;
-
-        let total_sources: (i64,) =
-            sqlx::query_as("SELECT COUNT(DISTINCT source_id) FROM vector_chunks")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| crate::error::SyscityError::Storage {
-                    context: "Failed to count sources".to_string(),
-                    details: e.to_string(),
-                })?;
-
-        Ok(VectorStoreStats {
-            total_vectors: total_vectors.0 as usize,
-            total_sources: total_sources.0 as usize,
-            dimension: self.dimension,
-        })
-    }
-
-    async fn clear(&self) -> crate::Result<()> {
-        sqlx::query("DELETE FROM vector_chunks")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to clear vector_chunks".to_string(),
-                details: e.to_string(),
-            })?;
-        Ok(())
-    }
-}
-
 /// Calculate cosine similarity between two vectors
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
@@ -1274,6 +1052,9 @@ mod tests {
 
     #[test]
     fn test_vector_backend_default() {
+        #[cfg(feature = "sqlite-vec")]
+        assert!(matches!(VectorBackend::default(), VectorBackend::SqliteVec { .. }));
+        #[cfg(not(feature = "sqlite-vec"))]
         assert!(matches!(VectorBackend::default(), VectorBackend::Memory));
     }
 
@@ -1530,137 +1311,5 @@ mod tests {
         let collections = service.list_collections().await;
         assert!(collections.contains(&"test-col".to_string()));
         assert!(collections.contains(&"default".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_sqlite_vector_store_store_and_search() {
-        let store = SqliteVectorStore::new_in_memory(3).await.unwrap();
-        let chunk = EmbeddedChunk {
-            id: "c1".to_string(),
-            source_id: "doc1".to_string(),
-            text: "hello world".to_string(),
-            embedding: vec![1.0, 0.0, 0.0],
-            position: 0,
-            total_chunks: 1,
-            metadata: None,
-        };
-        store.store_chunk(chunk.clone()).await.unwrap();
-
-        let results = store
-            .search_similar(&[1.0, 0.0, 0.0], 5, 0.0)
-            .await
-            .unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0.id, "c1");
-        assert!((results[0].1 - 1.0).abs() < 0.001);
-
-        // Orthogonal vector should not match above threshold
-        let results = store
-            .search_similar(&[0.0, 1.0, 0.0], 5, 0.5)
-            .await
-            .unwrap();
-        assert!(results.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_sqlite_vector_store_delete_by_source() {
-        let store = SqliteVectorStore::new_in_memory(2).await.unwrap();
-        store
-            .store_chunk(EmbeddedChunk {
-                id: "c1".to_string(),
-                source_id: "doc-a".to_string(),
-                text: "a".to_string(),
-                embedding: vec![1.0, 0.0],
-                position: 0,
-                total_chunks: 2,
-                metadata: None,
-            })
-            .await
-            .unwrap();
-        store
-            .store_chunk(EmbeddedChunk {
-                id: "c2".to_string(),
-                source_id: "doc-a".to_string(),
-                text: "b".to_string(),
-                embedding: vec![0.0, 1.0],
-                position: 1,
-                total_chunks: 2,
-                metadata: None,
-            })
-            .await
-            .unwrap();
-        store
-            .store_chunk(EmbeddedChunk {
-                id: "c3".to_string(),
-                source_id: "doc-b".to_string(),
-                text: "c".to_string(),
-                embedding: vec![1.0, 1.0],
-                position: 0,
-                total_chunks: 1,
-                metadata: None,
-            })
-            .await
-            .unwrap();
-
-        let deleted = store.delete_by_source("doc-a").await.unwrap();
-        assert_eq!(deleted, 2);
-
-        let stats = store.stats().await.unwrap();
-        assert_eq!(stats.total_vectors, 1);
-    }
-
-    #[tokio::test]
-    async fn test_sqlite_vector_store_stats() {
-        let store = SqliteVectorStore::new_in_memory(4).await.unwrap();
-        store
-            .store_chunk(EmbeddedChunk {
-                id: "c1".to_string(),
-                source_id: "s1".to_string(),
-                text: "a".to_string(),
-                embedding: vec![0.0; 4],
-                position: 0,
-                total_chunks: 1,
-                metadata: None,
-            })
-            .await
-            .unwrap();
-        store
-            .store_chunk(EmbeddedChunk {
-                id: "c2".to_string(),
-                source_id: "s2".to_string(),
-                text: "b".to_string(),
-                embedding: vec![0.0; 4],
-                position: 0,
-                total_chunks: 1,
-                metadata: None,
-            })
-            .await
-            .unwrap();
-
-        let stats = store.stats().await.unwrap();
-        assert_eq!(stats.total_vectors, 2);
-        assert_eq!(stats.total_sources, 2);
-        assert_eq!(stats.dimension, 4);
-    }
-
-    #[tokio::test]
-    async fn test_sqlite_vector_store_clear() {
-        let store = SqliteVectorStore::new_in_memory(2).await.unwrap();
-        store
-            .store_chunk(EmbeddedChunk {
-                id: "c1".to_string(),
-                source_id: "s1".to_string(),
-                text: "a".to_string(),
-                embedding: vec![1.0, 0.0],
-                position: 0,
-                total_chunks: 1,
-                metadata: None,
-            })
-            .await
-            .unwrap();
-
-        store.clear().await.unwrap();
-        let stats = store.stats().await.unwrap();
-        assert_eq!(stats.total_vectors, 0);
     }
 }

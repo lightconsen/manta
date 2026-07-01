@@ -125,7 +125,7 @@ GoalPlanner::achieve()
 
 1. **Trait-based abstractions** — `Channel`, `Provider`, `MemoryStore`, `Tool`, `ComputerAdapter`, `CapabilitySet` are traits, enabling pluggable implementations.
 2. **`Arc<dyn ...>` for shared state** — Runtime backend selection (unified SQLite vs. tiered memory, multiple LLM providers).
-3. **Feature-gated channels and tools** — Cargo features keep binaries small; optional vision, pgvector, sqlite-vec, tailscale.
+3. **Feature-gated channels and tools** — Cargo features keep binaries small; optional vision, pgvector, and tailscale, with sqlite-vec enabled by default.
 4. **Tiered memory** — Working (in-memory), ShortTerm/LongTerm (SQLite), Archival (compressed JSONL) with `TierEvaluator` promotion/demotion.
 5. **CapabilitySet + ToolRegistry** — OS-specific tools are grouped by platform/environment, runtime-detected, and exported individually into `ToolRegistry`.
 6. **Security-first execution** — Path/command validation, sandboxed resource limits, approval levels, RBAC, content filtering, audit logging.

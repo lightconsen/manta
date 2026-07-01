@@ -88,9 +88,8 @@ pub use tier::{
 pub use tiered_store::TieredStore;
 pub use vector::{
     ApiEmbeddingProvider, BatchEmbeddingProcessor, CachedEmbeddingProvider, EmbeddedChunk,
-    EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore,
-    SqliteVectorStore, TextChunker, VectorBackend, VectorMemoryService, VectorStore,
-    VectorStoreStats,
+    EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker,
+    VectorBackend, VectorMemoryService, VectorStore, VectorStoreStats,
 };
 pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 

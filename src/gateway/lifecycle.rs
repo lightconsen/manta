@@ -444,7 +444,11 @@ pub(crate) async fn start_gateway(
     // Stop dream scheduler on shutdown
     if let Some(mut scheduler) = state.memory.dream_scheduler.read().await.clone() {
         scheduler.stop().await;
-        if let Some(handle) = state.task_registry.remove_join_or_abort("dream_scheduler").await {
+        if let Some(handle) = state
+            .task_registry
+            .remove_join_or_abort("dream_scheduler")
+            .await
+        {
             match timeout(Duration::from_secs(5), handle).await {
                 Ok(_) => info!("Dream scheduler stopped"),
                 Err(_) => warn!("Dream scheduler did not stop within timeout"),
@@ -551,7 +555,11 @@ pub(crate) async fn stop_gateway(
     // 6. Dream scheduler.
     if let Some(mut scheduler) = state.memory.dream_scheduler.read().await.clone() {
         scheduler.stop().await;
-        if let Some(handle) = state.task_registry.remove_join_or_abort("dream_scheduler").await {
+        if let Some(handle) = state
+            .task_registry
+            .remove_join_or_abort("dream_scheduler")
+            .await
+        {
             match timeout(Duration::from_secs(5), handle).await {
                 Ok(_) => info!("Dream scheduler stopped"),
                 Err(_) => warn!("Dream scheduler did not stop within timeout"),
