@@ -185,6 +185,10 @@ impl TieredStore {
     ///
     /// Used by the effectiveness feedback loop and dream scheduler
     /// to move memories between tiers based on importance/access changes.
+    ///
+    /// The operation is idempotent: if the memory already exists in the target
+    /// tier (e.g., after a crash left a duplicate), the source copy is removed
+    /// and the index is reconciled.
     pub async fn migrate_memory(
         &self,
         memory: &Memory,
@@ -192,6 +196,22 @@ impl TieredStore {
     ) -> crate::Result<()> {
         let id = &memory.id;
         let _guard = self.memory_locks[memory_lock_index(&id.0)].lock().await;
+        self.migrate_memory_unlocked(memory, target_tier).await
+    }
+
+    /// Migrate a memory to a target tier without acquiring the per-memory lock.
+    ///
+    /// # Safety
+    ///
+    /// The caller must already hold the per-memory lock for `memory.id` so the
+    /// migration is atomic with respect to other mutating operations on the
+    /// same memory id.
+    pub(crate) async fn migrate_memory_unlocked(
+        &self,
+        memory: &Memory,
+        target_tier: MemoryTier,
+    ) -> crate::Result<()> {
+        let id = &memory.id;
 
         // Find current tier
         let current_tier = if let Some(t) = self.index.get_tier(&id.0) {
@@ -224,6 +244,18 @@ impl TieredStore {
             return Ok(());
         }
 
+        // Idempotency: if a previous crash already copied the memory to the
+        // target tier, just remove the source copy and update the index.
+        if self.backend_for(target_tier).get(id).await?.is_some() {
+            self.backend_for(current_tier).delete(id).await?;
+            self.index.update_tier(&id.0, target_tier);
+            info!(
+                "Memory {} migrated from {} to {} (idempotent: target already held the memory)",
+                id, current_tier, target_tier
+            );
+            return Ok(());
+        }
+
         // Store in new backend FIRST, then delete from old backend.
         // This prevents data loss if the process crashes mid-migration:
         // a crash after store creates a harmless duplicate; a crash after
@@ -236,6 +268,56 @@ impl TieredStore {
 
         info!("Memory {} explicitly migrated from {} to {}", id, current_tier, target_tier);
         Ok(())
+    }
+
+    /// Acquire the per-memory mutation lock for `id`.
+    ///
+    /// Callers (e.g. `MemoryManager`) can hold this guard across a sequence of
+    /// get/evaluate/update/migrate operations so they appear atomic with
+    /// respect to other mutating operations on the same memory id.
+    pub(crate) async fn lock_memory(&self, id: &str) -> tokio::sync::MutexGuard<'_, ()> {
+        self.memory_locks[memory_lock_index(id)].lock().await
+    }
+
+    /// Update a memory's importance score without acquiring the per-memory
+    /// lock.
+    ///
+    /// # Safety
+    ///
+    /// The caller must already hold the per-memory lock for `id` (e.g. via
+    /// [`Self::lock_memory`]) so the read/update pair is atomic with respect to
+    /// other mutating operations on the same memory id.
+    pub(crate) async fn update_importance_score_unlocked(
+        &self,
+        id: &MemoryId,
+        new_score: f32,
+    ) -> crate::Result<Option<Memory>> {
+        // Fast path: known tier — update in place without triggering migration.
+        if let Some(tier) = self.index.get_tier(&id.0) {
+            return self
+                .backend_for(tier)
+                .update_importance_score(id, new_score)
+                .await;
+        }
+
+        // Fallback: scan all backends and update the first match.
+        for tier in [
+            MemoryTier::Working,
+            MemoryTier::ShortTerm,
+            MemoryTier::LongTerm,
+            MemoryTier::Archival,
+        ] {
+            if let Some(updated) = self
+                .backend_for(tier)
+                .update_importance_score(id, new_score)
+                .await?
+            {
+                self.index.insert(&id.0, tier);
+                return Ok(Some(updated));
+            }
+        }
+
+        Ok(None)
     }
 
     /// Return the backend responsible for the given tier.
@@ -317,6 +399,11 @@ impl MemoryStore for TieredStore {
     async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
         let tier = self.evaluator.entry_tier(memory.importance_score, 0);
         let id = memory.id.clone();
+
+        // Serialize mutations for the same memory id, even on initial store,
+        // so callers that supply deterministic or externally chosen ids cannot
+        // create duplicate tier entries.
+        let _guard = self.memory_locks[memory_lock_index(&id.0)].lock().await;
 
         self.backend_for(tier).store(memory).await?;
         self.index.insert(&id.0, tier);
@@ -449,33 +536,7 @@ impl MemoryStore for TieredStore {
         new_score: f32,
     ) -> crate::Result<Option<Memory>> {
         let _guard = self.memory_locks[memory_lock_index(&id.0)].lock().await;
-
-        // Fast path: known tier — update in place without triggering migration.
-        if let Some(tier) = self.index.get_tier(&id.0) {
-            return self
-                .backend_for(tier)
-                .update_importance_score(id, new_score)
-                .await;
-        }
-
-        // Fallback: scan all backends and update the first match.
-        for tier in [
-            MemoryTier::Working,
-            MemoryTier::ShortTerm,
-            MemoryTier::LongTerm,
-            MemoryTier::Archival,
-        ] {
-            if let Some(updated) = self
-                .backend_for(tier)
-                .update_importance_score(id, new_score)
-                .await?
-            {
-                self.index.insert(&id.0, tier);
-                return Ok(Some(updated));
-            }
-        }
-
-        Ok(None)
+        self.update_importance_score_unlocked(id, new_score).await
     }
 
     async fn delete(&self, id: &MemoryId) -> crate::Result<bool> {
@@ -839,6 +900,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_migrate_memory_idempotent() {
+        let store = TieredStore::new_in_memory().await.unwrap();
+
+        let mem = Memory::new("u1", "Crash survivor", "fact").with_importance_score(0.5);
+        let id = store.store(mem.clone()).await.unwrap();
+        assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::ShortTerm));
+
+        // Simulate a previous crash that already copied the memory to the
+        // target tier while the index still points at the source tier.
+        store.long_term.store(mem.clone()).await.unwrap();
+
+        // The migration must detect the duplicate and reconcile the index.
+        store
+            .migrate_memory(&mem, MemoryTier::LongTerm)
+            .await
+            .unwrap();
+
+        assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::LongTerm));
+
+        // The memory must exist in exactly one tier.
+        let mut count = 0usize;
+        for tier in [
+            MemoryTier::Working,
+            MemoryTier::ShortTerm,
+            MemoryTier::LongTerm,
+            MemoryTier::Archival,
+        ] {
+            let backend: &dyn MemoryStore = match tier {
+                MemoryTier::Working => &store.working,
+                MemoryTier::ShortTerm => &store.short_term,
+                MemoryTier::LongTerm => &store.long_term,
+                MemoryTier::Archival => &store.archival,
+            };
+            if backend.get(&id).await.unwrap().is_some() {
+                count += 1;
+            }
+        }
+        assert_eq!(
+            count, 1,
+            "memory should exist in exactly one backend after idempotent migration"
+        );
+
+        let fetched = store.get(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.content, "Crash survivor");
+    }
+
+    #[tokio::test]
     async fn test_concurrent_migrate_no_duplicate() {
         let store = TieredStore::new_in_memory().await.unwrap();
 
@@ -934,29 +1042,80 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_search_all_tiers_concurrent() {
+    async fn test_store_acquires_memory_lock() {
         let store = TieredStore::new_in_memory().await.unwrap();
 
-        store
-            .store(Memory::new("u1", "Working memory", "fact").with_importance_score(0.1))
-            .await
-            .unwrap();
-        store
-            .store(Memory::new("u1", "Short term note", "note").with_importance_score(0.4))
-            .await
-            .unwrap();
-        store
-            .store(Memory::new("u1", "Long term fact", "fact").with_importance_score(0.8))
-            .await
-            .unwrap();
+        // Use a deterministic id so two concurrent stores target the same key.
+        let id = MemoryId::new("deterministic-shared-id");
+        let mem_a = Memory {
+            id: id.clone(),
+            user_id: "u1".to_string(),
+            conversation_id: None,
+            content: "A".to_string(),
+            memory_type: "fact".to_string(),
+            embedding: None,
+            created_at: std::time::SystemTime::now(),
+            expires_at: None,
+            metadata: None,
+            importance_score: 0.5,
+            source: "agent".to_string(),
+        };
+        let mem_b = Memory {
+            id: id.clone(),
+            user_id: "u1".to_string(),
+            conversation_id: None,
+            content: "B".to_string(),
+            memory_type: "fact".to_string(),
+            embedding: None,
+            created_at: std::time::SystemTime::now(),
+            expires_at: None,
+            metadata: None,
+            importance_score: 0.5,
+            source: "agent".to_string(),
+        };
 
+        let store_a = store.clone();
+        let store_b = store.clone();
+
+        let (res_a, res_b) = tokio::join!(async move { store_a.store(mem_a).await }, async move {
+            store_b.store(mem_b).await
+        },);
+
+        // The lock serializes the two stores. The underlying backend treats the
+        // second store as a duplicate id, so at least one must succeed and the
+        // memory must end up in exactly one tier.
+        assert!(
+            res_a.is_ok() || res_b.is_ok(),
+            "at least one concurrent store should succeed: {:?}, {:?}",
+            res_a,
+            res_b
+        );
+
+        // The memory must exist in exactly one tier.
+        let mut count = 0usize;
+        for tier in [
+            MemoryTier::Working,
+            MemoryTier::ShortTerm,
+            MemoryTier::LongTerm,
+            MemoryTier::Archival,
+        ] {
+            let backend: &dyn MemoryStore = match tier {
+                MemoryTier::Working => &store.working,
+                MemoryTier::ShortTerm => &store.short_term,
+                MemoryTier::LongTerm => &store.long_term,
+                MemoryTier::Archival => &store.archival,
+            };
+            if backend.get(&id).await.unwrap().is_some() {
+                count += 1;
+            }
+        }
+        assert_eq!(count, 1, "memory should exist in exactly one backend after concurrent stores");
+
+        // Search must return exactly one copy.
         let results = store
             .search(MemoryQuery::new().for_user("u1").limit(10))
             .await
             .unwrap();
-
-        assert_eq!(results.len(), 3);
-        assert!(results[0].importance_score >= results[1].importance_score);
-        assert!(results[1].importance_score >= results[2].importance_score);
+        assert_eq!(results.len(), 1);
     }
 }

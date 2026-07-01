@@ -1059,116 +1059,25 @@ impl MemoryManager {
         let mut migrated = 0usize;
 
         for memory_id in memory_ids {
-            // Get current memory to read importance score
-            let Ok(Some(memory)) = self
-                .store
-                .get(&crate::memory::MemoryId::new(&memory_id))
-                .await
-            else {
-                continue;
+            // Hold an independent clone of the store Arc so the tiered-store
+            // reference and its per-memory lock guard do not borrow `self`.
+            let store_arc = Arc::clone(&self.store);
+            let tiered_store = store_arc.as_tiered_store();
+
+            let (was_adjusted, was_migrated) = if let Some(tiered) = tiered_store {
+                let _guard = tiered.lock_memory(&memory_id).await;
+                self.apply_adjustment_for_memory(&memory_id, &effectiveness, Some(tiered))
+                    .await
+            } else {
+                self.apply_adjustment_for_memory(&memory_id, &effectiveness, None)
+                    .await
             };
 
-            let action = effectiveness
-                .evaluate(&memory_id, memory.importance_score)
-                .await;
-            if action == crate::memory::effectiveness::EffectivenessAction::NoOp {
-                continue;
+            if was_adjusted {
+                adjusted += 1;
             }
-
-            let old_score = memory.importance_score;
-            let new_score = effectiveness.apply_action(action, old_score);
-            if (new_score - old_score).abs() < 0.001 {
-                continue;
-            }
-
-            let updated = match self
-                .store
-                .update_importance_score(&crate::memory::MemoryId::new(&memory_id), new_score)
-                .await
-            {
-                Ok(Some(updated)) => updated,
-                Ok(None) => {
-                    debug!(
-                        "Skipping effectiveness update for {}: memory removed concurrently",
-                        memory_id
-                    );
-                    continue;
-                }
-                Err(crate::error::SyscityError::NotFound { .. }) => {
-                    debug!(
-                        "Skipping effectiveness update for {}: memory no longer exists",
-                        memory_id
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    warn!("Failed to update importance score for {}: {}", memory_id, e);
-                    continue;
-                }
-            };
-
-            info!(
-                "Effectiveness adjustment: memory {} importance {:.3} -> {:.3}",
-                memory_id, old_score, new_score
-            );
-            adjusted += 1;
-
-            // Closed-loop tier migration: if the store is tiered, re-evaluate
-            // using effectiveness statistics and migrate when the evaluator
-            // recommends a direct promotion/demotion based on hit rate.
-            if let Some(ref tier_index) = self.tier_index {
-                let Some(tiered) = tier_index.get(&memory_id) else {
-                    continue;
-                };
-                let Some(tiered_store) = self.store.as_tiered_store() else {
-                    continue;
-                };
-                let Some(stats) = effectiveness.memory_stats(&memory_id).await else {
-                    continue;
-                };
-
-                let tier_action =
-                    tiered_store
-                        .evaluator()
-                        .evaluate(&updated, &tiered, Some(&stats));
-
-                if let TierAction::Promote(target) | TierAction::Demote(target) = tier_action {
-                    if let Err(e) = tiered_store.migrate_memory(&updated, target).await {
-                        warn!(
-                            "Effectiveness-driven migration failed for {} to {}: {}",
-                            memory_id, target, e
-                        );
-                        continue;
-                    }
-
-                    let from_level = tiered.tier.to_string();
-                    let to_level = target.to_string();
-                    info!(
-                        "Effectiveness migration: memory {} {} -> {}",
-                        memory_id, from_level, to_level
-                    );
-
-                    if matches!(tier_action, TierAction::Promote(_)) {
-                        effectiveness.record_promotion(&memory_id).await;
-                    } else {
-                        effectiveness.record_demotion(&memory_id).await;
-                    }
-
-                    if let Some(ref event_log) = self.event_log {
-                        let event = MemoryEventBuilder::new().promotion(
-                            "effectiveness",
-                            format!("promo-{}", uuid::Uuid::new_v4()),
-                            from_level,
-                            to_level,
-                            "effectiveness",
-                        );
-                        if let Err(e) = event_log.append(&event).await {
-                            warn!("Failed to append promotion event: {}", e);
-                        }
-                    }
-
-                    migrated += 1;
-                }
+            if was_migrated {
+                migrated += 1;
             }
         }
 
@@ -1178,6 +1087,134 @@ impl MemoryManager {
         if migrated > 0 {
             info!("Migrated {} memories based on effectiveness", migrated);
         }
+    }
+
+    /// Apply a single effectiveness adjustment atomically.
+    ///
+    /// If `tiered_store` is provided, the caller must already hold the
+    /// per-memory lock so the get/evaluate/update/migrate sequence cannot be
+    /// interleaved with other mutating operations on the same memory.
+    async fn apply_adjustment_for_memory(
+        &self,
+        memory_id: &str,
+        effectiveness: &Arc<EffectivenessTracker>,
+        tiered_store: Option<&TieredStore>,
+    ) -> (bool, bool) {
+        // Get current memory to read importance score
+        let Ok(Some(memory)) = self
+            .store
+            .get(&crate::memory::MemoryId::new(memory_id))
+            .await
+        else {
+            return (false, false);
+        };
+
+        let action = effectiveness
+            .evaluate(memory_id, memory.importance_score)
+            .await;
+        if action == crate::memory::effectiveness::EffectivenessAction::NoOp {
+            return (false, false);
+        }
+
+        let old_score = memory.importance_score;
+        let new_score = effectiveness.apply_action(action, old_score);
+        if (new_score - old_score).abs() < 0.001 {
+            return (false, false);
+        }
+
+        let updated_result = if let Some(tiered) = tiered_store {
+            tiered
+                .update_importance_score_unlocked(
+                    &crate::memory::MemoryId::new(memory_id),
+                    new_score,
+                )
+                .await
+        } else {
+            self.store
+                .update_importance_score(&crate::memory::MemoryId::new(memory_id), new_score)
+                .await
+        };
+
+        let updated = match updated_result {
+            Ok(Some(updated)) => updated,
+            Ok(None) => {
+                debug!(
+                    "Skipping effectiveness update for {}: memory removed concurrently",
+                    memory_id
+                );
+                return (false, false);
+            }
+            Err(crate::error::SyscityError::NotFound { .. }) => {
+                debug!("Skipping effectiveness update for {}: memory no longer exists", memory_id);
+                return (false, false);
+            }
+            Err(e) => {
+                warn!("Failed to update importance score for {}: {}", memory_id, e);
+                return (false, false);
+            }
+        };
+
+        info!(
+            "Effectiveness adjustment: memory {} importance {:.3} -> {:.3}",
+            memory_id, old_score, new_score
+        );
+
+        // Closed-loop tier migration: if the store is tiered, re-evaluate
+        // using effectiveness statistics and migrate when the evaluator
+        // recommends a direct promotion/demotion based on hit rate.
+        let mut was_migrated = false;
+        if let (Some(ref tier_index), Some(tiered)) = (&self.tier_index, tiered_store) {
+            let Some(tiered_meta) = tier_index.get(memory_id) else {
+                return (true, false);
+            };
+            let Some(stats) = effectiveness.memory_stats(memory_id).await else {
+                return (true, false);
+            };
+
+            let tier_action = tiered
+                .evaluator()
+                .evaluate(&updated, &tiered_meta, Some(&stats));
+
+            if let TierAction::Promote(target) | TierAction::Demote(target) = tier_action {
+                if let Err(e) = tiered.migrate_memory_unlocked(&updated, target).await {
+                    warn!(
+                        "Effectiveness-driven migration failed for {} to {}: {}",
+                        memory_id, target, e
+                    );
+                    return (true, false);
+                }
+
+                let from_level = tiered_meta.tier.to_string();
+                let to_level = target.to_string();
+                info!(
+                    "Effectiveness migration: memory {} {} -> {}",
+                    memory_id, from_level, to_level
+                );
+
+                if matches!(tier_action, TierAction::Promote(_)) {
+                    effectiveness.record_promotion(memory_id).await;
+                } else {
+                    effectiveness.record_demotion(memory_id).await;
+                }
+
+                if let Some(ref event_log) = self.event_log {
+                    let event = MemoryEventBuilder::new().promotion(
+                        "effectiveness",
+                        format!("promo-{}", uuid::Uuid::new_v4()),
+                        from_level,
+                        to_level,
+                        "effectiveness",
+                    );
+                    if let Err(e) = event_log.append(&event).await {
+                        warn!("Failed to append promotion event: {}", e);
+                    }
+                }
+
+                was_migrated = true;
+            }
+        }
+
+        (true, was_migrated)
     }
 
     /// Collect memory IDs that have been tracked by the effectiveness system.
