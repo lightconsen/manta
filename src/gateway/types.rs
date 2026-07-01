@@ -141,6 +141,10 @@ fn default_memory_limit() -> usize {
     10
 }
 
+fn default_memory_threshold() -> f32 {
+    0.7
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MemorySearchRequest {
     pub query: String,
@@ -148,6 +152,8 @@ pub struct MemorySearchRequest {
     pub limit: usize,
     #[serde(default)]
     pub collection: String,
+    #[serde(default = "default_memory_threshold")]
+    pub threshold: f32,
 }
 
 #[derive(Debug, Deserialize)]

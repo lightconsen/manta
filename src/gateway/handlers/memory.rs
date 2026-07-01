@@ -17,7 +17,7 @@ pub async fn memory_search_handler(
     match state.memory.vector.read().await.clone() {
         Some(vm) => {
             match vm
-                .search_collection(&body.query, body.limit, &body.collection)
+                .search_collection(&body.query, body.limit, &body.collection, body.threshold)
                 .await
             {
                 Ok(results) => {

@@ -111,16 +111,12 @@ fn normalise(pairs: &[(f32, String)]) -> HashMap<String, f32> {
         .collect()
 }
 
-/// SHA-256 fingerprint of the first 512 chars of `text` used for dedup.
+/// SHA-256 fingerprint of `text` used for dedup.
+///
+/// The entire string is hashed so that two long texts sharing an early prefix
+/// do not collide.
 fn content_key(text: &str) -> String {
-    // Use char_indices to safely handle multi-byte UTF-8 characters.
-    let end = text
-        .char_indices()
-        .nth(512)
-        .map(|(i, _)| i)
-        .unwrap_or(text.len());
-    let sample = &text[..end];
-    let hash = Sha256::digest(sample.as_bytes());
+    let hash = Sha256::digest(text.as_bytes());
     format!("{:x}", hash)
 }
 
@@ -541,6 +537,18 @@ mod tests {
         let k1 = content_key("hello");
         let k2 = content_key("world");
         assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn test_content_key_no_512_truncation() {
+        let prefix = "a".repeat(512);
+        let a = format!("{}-alpha", prefix);
+        let b = format!("{}-beta", prefix);
+        assert_ne!(
+            content_key(&a),
+            content_key(&b),
+            "two strings with identical 512-char prefixes must not share a content key"
+        );
     }
 
     #[test]

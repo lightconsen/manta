@@ -825,16 +825,19 @@ impl VectorMemoryService {
         &self,
         query: &str,
         limit: usize,
-        _collection: &str,
+        collection: &str,
+        threshold: f32,
     ) -> crate::Result<Vec<SearchResult>> {
         let query_embedding = self.embedding_provider.embed(query).await?;
         let results = self
             .vector_store
-            .search_similar(&query_embedding, limit, 0.7)
+            .search_similar(&query_embedding, limit, threshold)
             .await?;
 
+        let collection_marker = format!("-{}-", collection);
         Ok(results
             .into_iter()
+            .filter(|(chunk, _score)| chunk.id.contains(&collection_marker))
             .map(|(chunk, score)| SearchResult {
                 id: chunk.id,
                 content: chunk.text,
@@ -1311,5 +1314,60 @@ mod tests {
         let collections = service.list_collections().await;
         assert!(collections.contains(&"test-col".to_string()));
         assert!(collections.contains(&"default".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_vector_memory_service_search_collection_respects_collection() {
+        struct FixedEmbeddingProvider;
+        #[async_trait]
+        impl EmbeddingProvider for FixedEmbeddingProvider {
+            fn model_name(&self) -> &str {
+                "fixed"
+            }
+            fn dimension(&self) -> usize {
+                2
+            }
+            async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+                Ok(texts.iter().map(|t| vec![t.len() as f32, 0.0]).collect())
+            }
+        }
+
+        let provider = Arc::new(FixedEmbeddingProvider) as Arc<dyn EmbeddingProvider>;
+        let store = Arc::new(MemoryVectorStore::new(2)) as Arc<dyn VectorStore>;
+        let config = EmbeddingConfig::default();
+        let service = VectorMemoryService::new(provider, store, &config);
+
+        service
+            .add_to_collection("alpha content", None, "col-a")
+            .await
+            .unwrap();
+        service
+            .add_to_collection("beta content", None, "col-b")
+            .await
+            .unwrap();
+
+        // Query "alpha content" (length 13) matches both embeddings closely,
+        // but only results from the requested collection should be returned.
+        let results = service
+            .search_collection("alpha content", 10, "col-a", 0.5)
+            .await
+            .unwrap();
+
+        assert!(!results.is_empty(), "querying col-a should return results");
+        assert!(
+            results.iter().all(|r| r.id.contains("-col-a-")),
+            "all results must belong to the requested collection"
+        );
+        assert!(
+            results.iter().all(|r| !r.id.contains("-col-b-")),
+            "results must not leak from another collection"
+        );
+
+        let results_b = service
+            .search_collection("beta content", 10, "col-b", 0.5)
+            .await
+            .unwrap();
+        assert!(!results_b.is_empty());
+        assert!(results_b.iter().all(|r| r.id.contains("-col-b-")));
     }
 }

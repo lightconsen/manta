@@ -234,6 +234,10 @@ impl DatabaseStore {
                 "CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score)",
             ),
             (
+                "idx_memories_user_importance_created",
+                "CREATE INDEX IF NOT EXISTS idx_memories_user_importance_created ON memories(user_id, importance_score DESC, created_at DESC)",
+            ),
+            (
                 "idx_chat_conv",
                 "CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_messages(conversation_id)",
             ),
@@ -880,6 +884,10 @@ impl MemoryStore for DatabaseStore {
     /// dedicated vector backend (`sqlite-vec`, `pgvector`) is not configured.
     /// Production deployments with large memory stores should route semantic
     /// search through a vector-indexed backend.
+    ///
+    /// The embedding path pre-filters by the existing `user_id` / `importance`
+    /// index, caps the candidate set, and treats dimension mismatches as a
+    /// similarity of 0.0 instead of failing.
     async fn search(&self, query: MemoryQuery) -> crate::Result<Vec<Memory>> {
         debug!("Searching memories");
 
@@ -905,7 +913,7 @@ impl MemoryStore for DatabaseStore {
         }
 
         let fetch_limit = if query.embedding.is_some() {
-            query.limit * 10
+            (query.limit * 4).clamp(20, 1000)
         } else {
             query.limit
         };
@@ -976,13 +984,20 @@ impl MemoryStore for DatabaseStore {
         // appear in results (below any embedding match).
         if let Some(query_emb) = &query.embedding {
             let min_similarity = query.min_similarity.unwrap_or(0.0);
+            let query_dim = query_emb.len();
             let mut scored: Vec<(Memory, f32)> = memories
                 .into_iter()
                 .map(|m| {
                     let score = m
                         .embedding
                         .as_ref()
-                        .map(|e| cosine_similarity(query_emb, e))
+                        .and_then(|e| {
+                            if e.len() == query_dim {
+                                Some(cosine_similarity(query_emb, e))
+                            } else {
+                                None
+                            }
+                        })
                         .unwrap_or(0.0);
                     (m, score)
                 })
@@ -1556,5 +1571,34 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].content, "close match");
+    }
+
+    #[tokio::test]
+    async fn test_database_store_search_embedding_dimension_mismatch() {
+        let store = DatabaseStore::new_in_memory().await.unwrap();
+
+        let query_embedding = vec![1.0_f32, 0.0, 0.0];
+        let mismatched_embedding = vec![1.0_f32, 0.0];
+
+        let mismatched = Memory::new("user1", "dimension mismatch", "fact")
+            .with_embedding(mismatched_embedding)
+            .with_importance_score(0.5);
+        store.store(mismatched).await.unwrap();
+
+        let results = store
+            .search(
+                MemoryQuery::new()
+                    .for_user("user1")
+                    .with_embedding(query_embedding)
+                    .with_min_similarity(0.1)
+                    .limit(10),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            results.is_empty(),
+            "mismatched-dimension embedding should be treated as non-matching"
+        );
     }
 }
