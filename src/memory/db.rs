@@ -589,18 +589,42 @@ impl MemoryStore for DatabaseStore {
 
         match row {
             Some(row) => {
-                // Update access tracking (best-effort, but log failures for observability)
+                // Access-count update is best-effort: transient DB errors do not
+                // fail the caller's `get()`. To reduce the chance that a single
+                // hiccup silently biases tier-eviction decisions, we retry once
+                // after a short backoff before logging.
                 let now = Self::system_time_to_secs(SystemTime::now());
-                if let Err(e) = sqlx::query(
-                    "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE \
-                     id = ?",
-                )
-                .bind(now)
-                .bind(&id.0)
-                .execute(&self.pool)
-                .await
-                {
-                    warn!("Failed to update access tracking for memory {}: {}", id, e);
+                let mut last_err: Option<sqlx::Error> = None;
+                for attempt in 0..2 {
+                    match sqlx::query(
+                        "UPDATE memories SET access_count = access_count + 1, last_accessed = ? \
+                         WHERE id = ?",
+                    )
+                    .bind(now)
+                    .bind(&id.0)
+                    .execute(&self.pool)
+                    .await
+                    {
+                        Ok(_) => {
+                            last_err = None;
+                            break;
+                        }
+                        Err(e) => {
+                            last_err = Some(e);
+                            if attempt == 0 {
+                                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                            }
+                        }
+                    }
+                }
+                if let Some(e) = last_err {
+                    // Emit under a dedicated target so operators can alert on
+                    // sustained failures (which would drift tier decisions).
+                    warn!(
+                        target: "memory::access_tracking",
+                        "Failed to update access tracking for memory {} after retry: {}",
+                        id, e
+                    );
                 }
 
                 let memory = Self::build_memory(MemoryRow {
@@ -639,6 +663,127 @@ impl MemoryStore for DatabaseStore {
             }
             None => Ok(None),
         }
+    }
+
+    async fn update_importance_score(
+        &self,
+        id: &MemoryId,
+        new_score: f32,
+    ) -> crate::Result<Option<Memory>> {
+        debug!("Updating importance score for {} to {}", id, new_score);
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to begin importance-score update transaction".to_string(),
+                details: e.to_string(),
+            })?;
+
+        let row = sqlx::query(
+            "SELECT id, user_id, conversation_id, content, memory_type, embedding, created_at, \
+             expires_at, metadata, importance_score, source FROM memories WHERE id = ?",
+        )
+        .bind(&id.0)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to read memory for importance-score update".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let Some(row) = row else {
+            if let Err(e) = tx.rollback().await {
+                warn!(
+                    target: "memory::importance_score",
+                    "Rollback failed after missing memory {}: {}",
+                    id, e
+                );
+            }
+            return Ok(None);
+        };
+
+        let memory = Self::build_memory(MemoryRow {
+            id: row.try_get("id").map_err(|e| col_err("id", e))?,
+            user_id: row.try_get("user_id").map_err(|e| col_err("user_id", e))?,
+            conversation_id: row
+                .try_get("conversation_id")
+                .map_err(|e| col_err("conversation_id", e))?,
+            content: row.try_get("content").map_err(|e| col_err("content", e))?,
+            memory_type: row
+                .try_get("memory_type")
+                .map_err(|e| col_err("memory_type", e))?,
+            embedding_bytes: row
+                .try_get("embedding")
+                .map_err(|e| col_err("embedding", e))?,
+            created_at_secs: row
+                .try_get("created_at")
+                .map_err(|e| col_err("created_at", e))?,
+            expires_at_secs: row
+                .try_get("expires_at")
+                .map_err(|e| col_err("expires_at", e))?,
+            metadata_str: row
+                .try_get("metadata")
+                .map_err(|e| col_err("metadata", e))?,
+            importance_score: row
+                .try_get("importance_score")
+                .map_err(|e| col_err("importance_score", e))?,
+            source: row.try_get("source").map_err(|e| col_err("source", e))?,
+        })?;
+
+        if memory.is_expired() {
+            if let Err(e) = tx.rollback().await {
+                warn!(
+                    target: "memory::importance_score",
+                    "Rollback failed for expired memory {}: {}",
+                    id, e
+                );
+            }
+            return Ok(None);
+        }
+
+        if (memory.importance_score - new_score).abs() < 0.001 {
+            tx.commit()
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: "Failed to commit importance-score update transaction".to_string(),
+                    details: e.to_string(),
+                })?;
+            return Ok(Some(memory));
+        }
+
+        let result = sqlx::query("UPDATE memories SET importance_score = ? WHERE id = ?")
+            .bind(new_score)
+            .bind(&id.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to update importance score".to_string(),
+                details: e.to_string(),
+            })?;
+
+        if result.rows_affected() == 0 {
+            if let Err(e) = tx.rollback().await {
+                warn!(
+                    target: "memory::importance_score",
+                    "Rollback failed after no rows updated for memory {}: {}",
+                    id, e
+                );
+            }
+            return Ok(None);
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to commit importance-score update transaction".to_string(),
+                details: e.to_string(),
+            })?;
+
+        let mut updated = memory;
+        updated.importance_score = new_score;
+        Ok(Some(updated))
     }
 
     async fn update(&self, memory: Memory) -> crate::Result<()> {

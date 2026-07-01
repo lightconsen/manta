@@ -764,6 +764,25 @@ impl MemoryStore for CompressedJsonlStore {
         self.rewrite_all(all).await
     }
 
+    async fn update_importance_score(
+        &self,
+        id: &MemoryId,
+        new_score: f32,
+    ) -> crate::Result<Option<Memory>> {
+        let _guard = self.write_lock.lock().await;
+        let mut all = self.load_all().await?;
+        let Some(idx) = all.iter().position(|m| m.id == *id) else {
+            return Ok(None);
+        };
+        if (all[idx].importance_score - new_score).abs() >= 0.001 {
+            all[idx].importance_score = new_score;
+            let updated = all[idx].clone();
+            self.rewrite_all(all).await?;
+            return Ok(Some(updated));
+        }
+        Ok(Some(all[idx].clone()))
+    }
+
     async fn delete(&self, id: &MemoryId) -> crate::Result<bool> {
         let _guard = self.write_lock.lock().await;
         let mut all = self.load_all().await?;

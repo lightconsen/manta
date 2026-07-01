@@ -188,28 +188,41 @@ pub async fn append_memory_event(
     }
 
     // Rotate file if it exceeds the size limit by keeping only the last ~5 MiB.
+    //
+    // Rotation is byte-based (not char-based) and line-boundary aware:
+    //   1. Read the file as raw bytes (no UTF-8 requirement — corrupted logs
+    //      still rotate cleanly).
+    //   2. Keep the trailing `keep_bytes` bytes.
+    //   3. Drop up to and including the first `\n` in that window so we never
+    //      resurrect a truncated JSONL line.
+    //   4. Re-validate remaining bytes as UTF-8 and drop the leading bytes if
+    //      the trim landed inside a multi-byte codepoint.
     if let Ok(meta) = fs::metadata(&path).await {
         if meta.len() > MAX_EVENT_LOG_SIZE {
-            let rotated = match fs::read_to_string(&path).await {
-                Ok(content) => {
+            let rotated: crate::Result<()> = match fs::read(&path).await {
+                Ok(bytes) => {
                     let keep_bytes = (MAX_EVENT_LOG_SIZE / 2) as usize;
-                    // Drop chars from the front until we're at the target size.
-                    let tail: String = content
-                        .chars()
-                        .rev()
-                        .take(keep_bytes)
-                        .collect::<String>()
-                        .chars()
-                        .rev()
-                        .collect();
-                    // Drop the potentially-fragmented first line.
-                    let trimmed = tail.lines().skip(1).collect::<Vec<_>>().join("\n");
-                    fs::write(&path, &trimmed).await.map_err(|e| {
-                        crate::error::SyscityError::Storage {
+                    let start = bytes.len().saturating_sub(keep_bytes);
+                    let window = &bytes[start..];
+                    // Drop the partial first line: find first `\n` and skip past it.
+                    let after_newline = window
+                        .iter()
+                        .position(|b| *b == b'\n')
+                        .map(|idx| &window[idx + 1..])
+                        .unwrap_or(&[]);
+                    // If the trim landed mid-codepoint, walk forward to the next
+                    // valid UTF-8 boundary. This handles the rare case where the
+                    // first newline is preceded by a multi-byte scalar.
+                    let mut safe = after_newline;
+                    while !safe.is_empty() && std::str::from_utf8(safe).is_err() {
+                        safe = &safe[1..];
+                    }
+                    fs::write(&path, safe)
+                        .await
+                        .map_err(|e| crate::error::SyscityError::Storage {
                             context: format!("Failed to rotate oversized event log {:?}", path),
                             details: e.to_string(),
-                        }
-                    })
+                        })
                 }
                 Err(e) => Err(crate::error::SyscityError::Storage {
                     context: format!("Failed to read oversized event log {:?} for rotation", path),

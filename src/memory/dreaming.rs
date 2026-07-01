@@ -583,14 +583,6 @@ impl DreamEngine {
         dot / (norm_a * norm_b)
     }
 
-    /// Compute the centroid of two vectors by averaging.
-    fn merge_centroids(a: &[f32], b: &[f32]) -> Vec<f32> {
-        if a.len() != b.len() || a.is_empty() {
-            return Vec::new();
-        }
-        a.iter().zip(b.iter()).map(|(x, y)| (x + y) / 2.0).collect()
-    }
-
     /// Run a Light Dream: deduplication, expiry cleanup, basic tier
     /// maintenance.
     ///
@@ -825,69 +817,51 @@ impl DreamEngine {
 
         let mut clusters: HashMap<String, Vec<&Memory>> = HashMap::new();
 
-        // Cluster memories with embeddings using simple agglomerative clustering
+        // Cluster memories with embeddings using single-pass threshold merging
+        // via union-find. Every centroid pair whose cosine similarity exceeds
+        // the threshold is unioned in one O(n²) pass; each connected component
+        // becomes a cluster. This trades adaptive centroid recomputation for
+        // asymptotic speed: the original iterative loop was O(n³) because it
+        // rescanned all pairs after each single merge.
         if !with_embeddings.is_empty() {
-            // Each memory starts as its own cluster
-            let mut cluster_centroids: Vec<(String, Vec<f32>)> = with_embeddings
+            let n = with_embeddings.len();
+            let embeddings: Vec<&Vec<f32>> = with_embeddings
                 .iter()
-                .filter_map(|m| {
-                    m.embedding
-                        .as_ref()
-                        .map(|emb| (m.id.0.clone(), emb.clone()))
-                })
+                .filter_map(|m| m.embedding.as_ref())
                 .collect();
-
-            let mut assignments: Vec<String> =
-                with_embeddings.iter().map(|m| m.id.0.clone()).collect();
-
-            // Merge clusters when centroid cosine similarity > 0.7
             let merge_threshold = 0.7;
-            let mut changed = true;
-            while changed {
-                changed = false;
-                let mut to_merge: Option<(usize, usize)> = None;
-                for i in 0..cluster_centroids.len() {
-                    if cluster_centroids[i].0.is_empty() {
-                        continue; // already merged
-                    }
-                    for j in (i + 1)..cluster_centroids.len() {
-                        if cluster_centroids[j].0.is_empty() {
-                            continue;
-                        }
-                        let sim = Self::cosine_similarity(
-                            &cluster_centroids[i].1,
-                            &cluster_centroids[j].1,
-                        );
-                        if sim > merge_threshold {
-                            to_merge = Some((i, j));
-                            break;
-                        }
-                    }
-                    if to_merge.is_some() {
-                        break;
-                    }
+
+            // Union-find over memory indices.
+            let mut parent: Vec<usize> = (0..n).collect();
+            fn find(parent: &mut [usize], mut x: usize) -> usize {
+                while parent[x] != x {
+                    parent[x] = parent[parent[x]]; // path compression
+                    x = parent[x];
                 }
-                if let Some((i, j)) = to_merge {
-                    // Merge j into i
-                    let new_centroid =
-                        Self::merge_centroids(&cluster_centroids[i].1, &cluster_centroids[j].1);
-                    cluster_centroids[i].1 = new_centroid;
-                    // Update assignments
-                    let target_id = cluster_centroids[i].0.clone();
-                    let source_id = cluster_centroids[j].0.clone();
-                    cluster_centroids[j].0.clear(); // mark as merged
-                    for aid in &mut assignments {
-                        if *aid == source_id {
-                            *aid = target_id.clone();
+                x
+            }
+
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    if embeddings[i].len() != embeddings[j].len() {
+                        continue;
+                    }
+                    let sim = Self::cosine_similarity(embeddings[i], embeddings[j]);
+                    if sim > merge_threshold {
+                        let ri = find(&mut parent, i);
+                        let rj = find(&mut parent, j);
+                        if ri != rj {
+                            parent[ri] = rj;
                         }
                     }
-                    changed = true;
                 }
             }
 
-            // Group memories by cluster assignment
-            for (mem, assigned_id) in with_embeddings.iter().zip(assignments.iter()) {
-                clusters.entry(assigned_id.clone()).or_default().push(mem);
+            // Group memories by their union-find root.
+            for i in 0..n {
+                let root = find(&mut parent, i);
+                let key = with_embeddings[root].id.0.clone();
+                clusters.entry(key).or_default().push(with_embeddings[i]);
             }
         }
 

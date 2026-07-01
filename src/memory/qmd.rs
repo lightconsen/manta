@@ -138,15 +138,22 @@ impl QmdExecutor {
 
     /// Run a QMD query with optional scope filtering.
     ///
-    /// If `qmd` is not available, falls back to an empty result set.
+    /// Returns `SyscityError::ExternalService` with source
+    /// `"qmd binary not available in PATH"` when the CLI is missing, so
+    /// callers can distinguish "qmd not installed" from actual query failures
+    /// via the error's `source` field. The default caller in
+    /// `MemoryManager::retrieve` treats both cases as warn-and-continue.
     pub async fn query(
         &self,
         query: impl AsRef<str>,
         scope: Option<&QmdScope>,
     ) -> crate::Result<Vec<QmdQueryResult>> {
         if !self.is_available().await {
-            tracing::warn!("qmd CLI not available in PATH; returning empty results");
-            return Ok(Vec::new());
+            tracing::debug!("qmd CLI not available in PATH; skipping QMD query");
+            return Err(crate::error::SyscityError::ExternalService {
+                source: "qmd binary not available in PATH".to_string(),
+                cause: None,
+            });
         }
 
         let mut cmd = tokio::process::Command::new("qmd");

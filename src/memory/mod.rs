@@ -329,6 +329,28 @@ pub trait MemoryStore: Send + Sync {
     /// Close the store (clean up resources)
     async fn close(&self) -> crate::Result<()>;
 
+    /// Atomically update a memory's importance score and return the updated memory.
+    ///
+    /// The default implementation is **not** atomic: it reads the memory, sets
+    /// the new score, and calls [`Self::update`]. Backends that support atomic
+    /// read-modify-write should override this to avoid lost updates under
+    /// concurrency.
+    async fn update_importance_score(
+        &self,
+        id: &MemoryId,
+        new_score: f32,
+    ) -> crate::Result<Option<Memory>> {
+        let Some(mut memory) = self.get(id).await? else {
+            return Ok(None);
+        };
+        if (memory.importance_score - new_score).abs() < 0.001 {
+            return Ok(Some(memory));
+        }
+        memory.importance_score = new_score;
+        self.update(memory.clone()).await?;
+        Ok(Some(memory))
+    }
+
     /// Return the concrete store as a [`TieredStore`] if it is one.
     ///
     /// Used by the effectiveness feedback loop to trigger explicit tier

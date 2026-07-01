@@ -93,6 +93,21 @@ impl MemoryStore for InMemoryStore {
         Ok(())
     }
 
+    async fn update_importance_score(
+        &self,
+        id: &MemoryId,
+        new_score: f32,
+    ) -> crate::Result<Option<Memory>> {
+        let mut guard = self.entries.write().await;
+        let Some(memory) = guard.get_mut(&id.to_string()) else {
+            return Ok(None);
+        };
+        if (memory.importance_score - new_score).abs() >= 0.001 {
+            memory.importance_score = new_score;
+        }
+        Ok(Some(memory.clone()))
+    }
+
     async fn delete(&self, id: &MemoryId) -> crate::Result<bool> {
         let mut guard = self.entries.write().await;
         Ok(guard.remove(&id.to_string()).is_some())

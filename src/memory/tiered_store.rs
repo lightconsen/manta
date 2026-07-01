@@ -399,6 +399,39 @@ impl MemoryStore for TieredStore {
         })
     }
 
+    async fn update_importance_score(
+        &self,
+        id: &MemoryId,
+        new_score: f32,
+    ) -> crate::Result<Option<Memory>> {
+        // Fast path: known tier — update in place without triggering migration.
+        if let Some(tier) = self.index.get_tier(&id.0) {
+            return self
+                .backend_for(tier)
+                .update_importance_score(id, new_score)
+                .await;
+        }
+
+        // Fallback: scan all backends and update the first match.
+        for tier in [
+            MemoryTier::Working,
+            MemoryTier::ShortTerm,
+            MemoryTier::LongTerm,
+            MemoryTier::Archival,
+        ] {
+            if let Some(updated) = self
+                .backend_for(tier)
+                .update_importance_score(id, new_score)
+                .await?
+            {
+                self.index.insert(&id.0, tier);
+                return Ok(Some(updated));
+            }
+        }
+
+        Ok(None)
+    }
+
     async fn delete(&self, id: &MemoryId) -> crate::Result<bool> {
         if let Some(tier) = self.index.get_tier(&id.0) {
             let deleted = self.backend_for(tier).delete(id).await?;

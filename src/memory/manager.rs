@@ -476,7 +476,14 @@ impl MemoryManager {
                     memories.truncate(limit);
                 }
                 Err(e) => {
-                    warn!("QMD query failed: {}", e);
+                    // "qmd not installed" is a common, benign case — log at debug!
+                    // level. Genuine query failures still surface as warn!.
+                    let msg = e.to_string();
+                    if msg.contains("qmd binary not available") {
+                        tracing::debug!("QMD skipped: {msg}");
+                    } else {
+                        warn!("QMD query failed: {msg}");
+                    }
                 }
             }
         }
@@ -1053,48 +1060,16 @@ impl MemoryManager {
                 continue;
             }
 
-            // Optimistic retry loop: re-read + update with TOCTOU guard.
-            // The window between re-read and update is small (~few µs), and
-            // effectiveness runs at most once per 5 minutes per memory, so
-            // contention is extremely rare.  A single retry covers it.
-            let mut retried = false;
-            let updated = loop {
-                let Ok(Some(current)) = self
-                    .store
-                    .get(&crate::memory::MemoryId::new(&memory_id))
-                    .await
-                else {
-                    break None;
-                };
-                if (current.importance_score - old_score).abs() > 0.001 {
-                    // Memory was modified concurrently; skip to avoid lost update.
-                    debug!(
-                        "Skipping effectiveness update for {}: concurrent modification detected",
-                        memory_id
-                    );
-                    break None;
-                }
-                let mut updated = current;
-                updated.importance_score = new_score;
-                match self.store.update(updated.clone()).await {
-                    Ok(_) => break Some(updated),
-                    Err(e) => {
-                        if retried {
-                            warn!(
-                                "Failed to update memory effectiveness for {} after retry: {}",
-                                memory_id, e
-                            );
-                            break None;
-                        }
-                        retried = true;
-                        // Retry once: the error may have been transient.
-                        continue;
-                    }
-                }
-            };
-            let updated = match updated {
-                Some(u) => u,
-                None => continue,
+            let Some(updated) = self
+                .store
+                .update_importance_score(&crate::memory::MemoryId::new(&memory_id), new_score)
+                .await
+                .unwrap_or_else(|e| {
+                    warn!("Failed to update importance score for {}: {}", memory_id, e);
+                    None
+                })
+            else {
+                continue;
             };
 
             info!(
