@@ -22,6 +22,7 @@ use tracing::{debug, info, warn};
 use super::{
     CompressedJsonlStore, DatabaseStore, EffectivenessConfig, InMemoryStore, Memory, MemoryId,
     MemoryQuery, MemoryStats, MemoryStore, MemoryTier, TierEvaluator, TierIndex, TierSystemConfig,
+    TIER_INDEX_FILE_NAME,
 };
 
 /// Aggregate store that routes each memory to its tier-specific backend.
@@ -33,7 +34,9 @@ pub struct TieredStore {
     archival: CompressedJsonlStore,
     evaluator: Arc<TierEvaluator>,
     index: Arc<TierIndex>,
+    index_path: std::path::PathBuf,
     last_stale_sweep: std::sync::atomic::AtomicU64,
+    expected_embedding_dim: Option<usize>,
     /// Fixed-size async lock pool used to serialize mutating operations on the
     /// same memory id across tiers. This eliminates duplicate-data races
     /// between concurrent migrate/update/delete calls without unbounded lock
@@ -50,10 +53,12 @@ impl Clone for TieredStore {
             archival: self.archival.clone(),
             evaluator: self.evaluator.clone(),
             index: self.index.clone(),
+            index_path: self.index_path.clone(),
             last_stale_sweep: std::sync::atomic::AtomicU64::new(
                 self.last_stale_sweep
                     .load(std::sync::atomic::Ordering::Relaxed),
             ),
+            expected_embedding_dim: self.expected_embedding_dim,
             memory_locks: Arc::clone(&self.memory_locks),
         }
     }
@@ -90,13 +95,29 @@ impl TieredStore {
                 details: e.to_string(),
             })?;
 
+        let default_dim = 384;
+
         let short_term =
             DatabaseStore::new(&format!("sqlite://{}/short_term.db", base.to_string_lossy()))
-                .await?;
+                .await?
+                .with_embedding_dimension(default_dim);
 
         let long_term =
             DatabaseStore::new(&format!("sqlite://{}/long_term.db", base.to_string_lossy()))
-                .await?;
+                .await?
+                .with_embedding_dimension(default_dim);
+
+        let index_path = base.join(TIER_INDEX_FILE_NAME);
+        let index = match TierIndex::load(&index_path) {
+            Ok(idx) => Arc::new(idx),
+            Err(e) => {
+                warn!(
+                    "Failed to load tier index from {:?}: {}. Starting with empty index.",
+                    index_path, e
+                );
+                Arc::new(TierIndex::new())
+            }
+        };
 
         Ok(Self {
             working: InMemoryStore::new(),
@@ -104,26 +125,38 @@ impl TieredStore {
             long_term,
             archival: CompressedJsonlStore::new(base),
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
-            index: Arc::new(TierIndex::new()),
+            index,
+            index_path,
             last_stale_sweep: std::sync::atomic::AtomicU64::new(0),
+            expected_embedding_dim: Some(default_dim),
             memory_locks: new_memory_lock_pool(),
         })
+    }
+
+    /// Set expected embedding dimension for validation
+    pub fn with_embedding_dimension(mut self, dimension: usize) -> Self {
+        self.expected_embedding_dim = Some(dimension);
+        self.short_term = self.short_term.with_embedding_dimension(dimension);
+        self.long_term = self.long_term.with_embedding_dimension(dimension);
+        self
     }
 
     /// Create a tiered store backed entirely by in-memory / temporary storage.
     /// Useful for tests.
     pub async fn new_in_memory() -> crate::Result<Self> {
+        let temp_dir = std::env::temp_dir()
+            .join(format!("syscity_archival_test_{}", uuid::Uuid::new_v4()));
+        let default_dim = 384;
         Ok(Self {
             working: InMemoryStore::new(),
-            short_term: DatabaseStore::new_in_memory().await?,
-            long_term: DatabaseStore::new_in_memory().await?,
-            archival: CompressedJsonlStore::new(
-                std::env::temp_dir()
-                    .join(format!("syscity_archival_test_{}", uuid::Uuid::new_v4())),
-            ),
+            short_term: DatabaseStore::new_in_memory().await?.with_embedding_dimension(default_dim),
+            long_term: DatabaseStore::new_in_memory().await?.with_embedding_dimension(default_dim),
+            archival: CompressedJsonlStore::new(&temp_dir),
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
+            index_path: temp_dir.join(TIER_INDEX_FILE_NAME),
             last_stale_sweep: std::sync::atomic::AtomicU64::new(0),
+            expected_embedding_dim: Some(default_dim),
             memory_locks: new_memory_lock_pool(),
         })
     }
@@ -142,7 +175,9 @@ impl TieredStore {
             archival,
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
+            index_path: std::env::temp_dir().join(TIER_INDEX_FILE_NAME),
             last_stale_sweep: std::sync::atomic::AtomicU64::new(0),
+            expected_embedding_dim: None,
             memory_locks: new_memory_lock_pool(),
         }
     }
@@ -169,6 +204,14 @@ impl TieredStore {
             TierEvaluator::new(TierSystemConfig::default()).with_effectiveness_config(config);
         self.evaluator = Arc::new(evaluator);
         self
+    }
+
+    /// Persist the tier index to disk. Errors are logged but not propagated
+    /// so that index persistence never breaks the primary storage operation.
+    async fn persist_index(&self) {
+        if let Err(e) = self.index.save(&self.index_path).await {
+            warn!("Failed to persist tier index to {:?}: {}", self.index_path, e);
+        }
     }
 
     /// Access the tier index (for testing and diagnostics).
@@ -249,6 +292,7 @@ impl TieredStore {
         if self.backend_for(target_tier).get(id).await?.is_some() {
             self.backend_for(current_tier).delete(id).await?;
             self.index.update_tier(&id.0, target_tier);
+            self.persist_index().await;
             info!(
                 "Memory {} migrated from {} to {} (idempotent: target already held the memory)",
                 id, current_tier, target_tier
@@ -265,6 +309,7 @@ impl TieredStore {
         self.backend_for(current_tier).delete(id).await?;
         // Update index
         self.index.update_tier(&id.0, target_tier);
+        self.persist_index().await;
 
         info!("Memory {} explicitly migrated from {} to {}", id, current_tier, target_tier);
         Ok(())
@@ -407,6 +452,7 @@ impl MemoryStore for TieredStore {
 
         self.backend_for(tier).store(memory).await?;
         self.index.insert(&id.0, tier);
+        self.persist_index().await;
 
         debug!("Stored memory {} in {:?} tier", id, tier);
         Ok(id)
@@ -453,7 +499,9 @@ impl MemoryStore for TieredStore {
                 match self.evaluator.evaluate(&memory, &tiered, None) {
                     super::tier::TierAction::Keep => {
                         // Same tier, just update in place
-                        return self.backend_for(current_tier).update(memory).await;
+                        self.backend_for(current_tier).update(memory).await?;
+                        self.persist_index().await;
+                        return Ok(());
                     }
                     super::tier::TierAction::Promote(target)
                     | super::tier::TierAction::Demote(target) => {
@@ -461,6 +509,7 @@ impl MemoryStore for TieredStore {
                         self.backend_for(target).store(memory).await?;
                         self.backend_for(current_tier).delete(&id).await?;
                         self.index.update_tier(&id.0, target);
+                        self.persist_index().await;
                         info!(
                             "Memory {} migrated from {} to {} (importance={:.2}, access_count={})",
                             id, current_tier, target, tiered.relevance_score, tiered.access_count
@@ -470,6 +519,7 @@ impl MemoryStore for TieredStore {
                     super::tier::TierAction::Evict => {
                         self.backend_for(current_tier).delete(&id).await?;
                         self.index.remove(&id.0);
+                        self.persist_index().await;
                         info!("Memory {} evicted from {} via update", id, current_tier);
                         return Err(crate::error::SyscityError::NotFound {
                             resource: format!("Memory {} was evicted during update", id),
@@ -504,12 +554,14 @@ impl MemoryStore for TieredStore {
                     super::tier::TierAction::Keep => {
                         self.backend_for(tier).update(memory).await?;
                         self.index.insert(&id.0, tier);
+                        self.persist_index().await;
                     }
                     super::tier::TierAction::Promote(target)
                     | super::tier::TierAction::Demote(target) => {
                         self.backend_for(target).store(memory).await?;
                         self.backend_for(tier).delete(&id).await?;
                         self.index.insert(&id.0, target);
+                        self.persist_index().await;
                         info!(
                             "Memory {} migrated from {} to {} during fallback scan",
                             id, tier, target
@@ -518,6 +570,7 @@ impl MemoryStore for TieredStore {
                     super::tier::TierAction::Evict => {
                         self.backend_for(tier).delete(&id).await?;
                         // Do not re-insert into index
+                        self.persist_index().await;
                         info!("Memory {} evicted during fallback scan", id);
                     }
                 }
@@ -546,6 +599,7 @@ impl MemoryStore for TieredStore {
             let deleted = self.backend_for(tier).delete(id).await?;
             if deleted {
                 self.index.remove(&id.0);
+                self.persist_index().await;
             }
             return Ok(deleted);
         }
@@ -559,6 +613,7 @@ impl MemoryStore for TieredStore {
         ] {
             if self.backend_for(tier).delete(id).await? {
                 self.index.remove(&id.0);
+                self.persist_index().await;
                 return Ok(true);
             }
         }
@@ -641,6 +696,7 @@ impl MemoryStore for TieredStore {
         }
 
         info!("Cleaned up {} expired memories across all tiers", total);
+        self.persist_index().await;
         Ok(total)
     }
 
@@ -677,6 +733,7 @@ impl MemoryStore for TieredStore {
     }
 
     async fn close(&self) -> crate::Result<()> {
+        self.persist_index().await;
         self.working.close().await?;
         self.short_term.close().await?;
         self.long_term.close().await?;

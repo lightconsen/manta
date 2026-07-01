@@ -1,7 +1,7 @@
 //! Memory Event Log System
 //!
-//! Provides JSONL-based event logging for memory operations.
-//! Events are appended to `{workspace}/memory/.dreams/events.jsonl`.
+//! Provides JSONL-based event logging for memory operations with date-partitioned storage.
+//! Events are appended to `{workspace}/memory/.dreams/events-YYYY-MM-DD.jsonl`.
 //!
 //! Event types:
 //! - Recall: when memories are recalled into context
@@ -16,7 +16,14 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-/// Event log relative path within workspace.
+/// Event log directory within workspace.
+pub const MEMORY_EVENT_LOG_DIR: &str = "memory/.dreams";
+
+/// Legacy single event log file (for backward compatibility).
+pub const LEGACY_MEMORY_EVENT_LOG_RELATIVE_PATH: &str = "memory/.dreams/events.jsonl";
+
+/// Deprecated: use date-partitioned logs instead.
+/// Kept for backward compatibility.
 pub const MEMORY_EVENT_LOG_RELATIVE_PATH: &str = "memory/.dreams/events.jsonl";
 
 /// All memory event variants.
@@ -165,20 +172,86 @@ impl Default for MemoryEventBuilder {
     }
 }
 
-/// Maximum event log file size (10 MiB) before rotation is triggered.
-const MAX_EVENT_LOG_SIZE: u64 = 10 * 1024 * 1024;
+/// Helper to get event log file path for a given timestamp (in seconds since Unix epoch).
+fn event_log_path_for_timestamp(
+    workspace_dir: impl AsRef<std::path::Path>,
+    timestamp_secs: u64,
+) -> PathBuf {
+    // Convert timestamp to DateTime<Utc>
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(timestamp_secs as i64, 0)
+        .unwrap_or_else(chrono::Utc::now);
+    let date_str = dt.format("%Y-%m-%d").to_string();
+    workspace_dir
+        .as_ref()
+        .join(MEMORY_EVENT_LOG_DIR)
+        .join(format!("events-{}.jsonl", date_str))
+}
 
-/// Append a memory event to the JSONL log.
+/// Helper to get all event log files in the directory (sorted by date, oldest first).
+async fn list_event_log_files(workspace_dir: impl AsRef<std::path::Path>) -> Vec<PathBuf> {
+    let dir = workspace_dir.as_ref().join(MEMORY_EVENT_LOG_DIR);
+    let mut files = Vec::new();
+
+    // First add legacy file if it exists (for backward compatibility)
+    let legacy_path = workspace_dir.as_ref().join(LEGACY_MEMORY_EVENT_LOG_RELATIVE_PATH);
+    if legacy_path.exists() {
+        files.push(legacy_path);
+    }
+
+    // Then add date-based files
+    if let Ok(mut read_dir) = fs::read_dir(&dir).await {
+        while let Ok(Some(entry)) = read_dir.next_entry().await {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                    if filename.starts_with("events-") && filename.ends_with(".jsonl") {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort files lexicographically (which works for ISO dates: events-2024-01-01.jsonl)
+    files.sort();
+    files
+}
+
+/// Helper to parse events from a single file.
+async fn read_events_from_file(path: &PathBuf) -> Vec<MemoryEvent> {
+    let mut events = Vec::new();
+    if let Ok(content) = fs::read_to_string(path).await {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<MemoryEvent>(line) {
+                Ok(event) => events.push(event),
+                Err(e) => {
+                    tracing::warn!("Skipping malformed memory event line in {:?}: {}", path, e);
+                }
+            }
+        }
+    }
+    events
+}
+
+/// Append a memory event to the appropriate date-based JSONL log.
 ///
 /// Combines the serialized event and newline into a single write to prevent
-/// concurrent writers from interleaving partial lines. If the log file exceeds
-/// [`MAX_EVENT_LOG_SIZE`], it is truncated from the beginning to keep file
-/// growth bounded.
+/// concurrent writers from interleaving partial lines.
 pub async fn append_memory_event(
     workspace_dir: impl AsRef<std::path::Path>,
     event: &MemoryEvent,
 ) -> crate::Result<()> {
-    let path = workspace_dir.as_ref().join(MEMORY_EVENT_LOG_RELATIVE_PATH);
+    // Get event's timestamp (or current time if missing)
+    let timestamp_secs = event.timestamp();
+
+    // Compute path for this date
+    let path = event_log_path_for_timestamp(&workspace_dir, timestamp_secs);
+
+    // Create directory if needed
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .await
@@ -186,52 +259,6 @@ pub async fn append_memory_event(
                 context: format!("Failed to create event log directory: {:?}", parent),
                 details: e.to_string(),
             })?;
-    }
-
-    // Rotate file if it exceeds the size limit by keeping only the last ~5 MiB.
-    //
-    // Rotation is byte-based (not char-based) and line-boundary aware:
-    //   1. Read the file as raw bytes (no UTF-8 requirement — corrupted logs
-    //      still rotate cleanly).
-    //   2. Keep the trailing `keep_bytes` bytes.
-    //   3. Drop up to and including the first `\n` in that window so we never
-    //      resurrect a truncated JSONL line.
-    //   4. Re-validate remaining bytes as UTF-8 and drop the leading bytes if
-    //      the trim landed inside a multi-byte codepoint.
-    if let Ok(meta) = fs::metadata(&path).await {
-        if meta.len() > MAX_EVENT_LOG_SIZE {
-            let rotated: crate::Result<()> = match fs::read(&path).await {
-                Ok(bytes) => {
-                    let keep_bytes = (MAX_EVENT_LOG_SIZE / 2) as usize;
-                    let start = bytes.len().saturating_sub(keep_bytes);
-                    let window = &bytes[start..];
-                    // Drop the partial first line: find first `\n` and skip past it.
-                    let after_newline = window
-                        .iter()
-                        .position(|b| *b == b'\n')
-                        .map(|idx| &window[idx + 1..])
-                        .unwrap_or(&[]);
-                    // If the trim landed mid-codepoint, walk forward to the next
-                    // valid UTF-8 boundary. This handles the rare case where the
-                    // first newline is preceded by a multi-byte scalar.
-                    let mut safe = after_newline;
-                    while !safe.is_empty() && std::str::from_utf8(safe).is_err() {
-                        safe = &safe[1..];
-                    }
-                    fs::write(&path, safe)
-                        .await
-                        .map_err(|e| crate::error::SyscityError::Storage {
-                            context: format!("Failed to rotate oversized event log {:?}", path),
-                            details: e.to_string(),
-                        })
-                }
-                Err(e) => Err(crate::error::SyscityError::Storage {
-                    context: format!("Failed to read oversized event log {:?} for rotation", path),
-                    details: e.to_string(),
-                }),
-            };
-            rotated?;
-        }
     }
 
     let line = serde_json::to_string(event).map_err(|e| crate::error::SyscityError::Storage {
@@ -260,38 +287,33 @@ pub async fn append_memory_event(
     Ok(())
 }
 
-/// Read all memory events from the JSONL log.
+/// Read all memory events from all JSONL log files (including legacy), sorted by timestamp.
 pub async fn read_memory_events(
     workspace_dir: impl AsRef<std::path::Path>,
 ) -> crate::Result<Vec<MemoryEvent>> {
-    let path = workspace_dir.as_ref().join(MEMORY_EVENT_LOG_RELATIVE_PATH);
-    if !path.exists() {
-        return Ok(Vec::new());
+    let files = list_event_log_files(&workspace_dir).await;
+
+    let mut all_events = Vec::new();
+    for file in files {
+        all_events.extend(read_events_from_file(&file).await);
     }
 
-    let content =
-        fs::read_to_string(&path)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: format!("Failed to read event log: {:?}", path),
-                details: e.to_string(),
-            })?;
+    // Sort all events by timestamp
+    all_events.sort_by_key(|e| e.timestamp());
 
-    let mut events = Vec::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<MemoryEvent>(line) {
-            Ok(event) => events.push(event),
-            Err(e) => {
-                tracing::warn!("Skipping malformed memory event line: {}", e);
-            }
+    Ok(all_events)
+}
+
+impl MemoryEvent {
+    /// Return the timestamp of this event in seconds since Unix epoch.
+    pub fn timestamp(&self) -> u64 {
+        match self {
+            MemoryEvent::RecallRecorded { timestamp, .. } => *timestamp,
+            MemoryEvent::PromotionApplied { timestamp, .. } => *timestamp,
+            MemoryEvent::CompactCompleted { timestamp, .. } => *timestamp,
+            MemoryEvent::DreamCompleted { timestamp, .. } => *timestamp,
         }
     }
-
-    Ok(events)
 }
 
 /// Event log service wrapper.
@@ -407,19 +429,18 @@ mod tests {
 
         while set.join_next().await.is_some() {}
 
-        let content = fs::read_to_string(dir.path().join(MEMORY_EVENT_LOG_RELATIVE_PATH))
-            .await
-            .unwrap();
-
-        let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines.len(), 50, "all 50 concurrent appends should produce exactly 50 lines");
-
-        for line in &lines {
-            let parsed = serde_json::from_str::<MemoryEvent>(line);
-            assert!(parsed.is_ok(), "every line must be valid JSON: {}", line);
-        }
-
         let events = log.read_all().await.unwrap();
-        assert_eq!(events.len(), 50);
+        assert_eq!(events.len(), 50, "all 50 concurrent appends should produce exactly 50 events");
+
+        // Verify we can deserialize all events and they have the expected content
+        for (i, event) in events.iter().enumerate() {
+            match event {
+                MemoryEvent::RecallRecorded { recall_id, content_summary, .. } => {
+                    assert_eq!(recall_id, &format!("r{}", i));
+                    assert_eq!(content_summary, &format!("content {}", i));
+                }
+                _ => panic!("Unexpected event type"),
+            }
+        }
     }
 }

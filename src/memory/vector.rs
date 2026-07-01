@@ -94,6 +94,8 @@ pub struct EmbeddedChunk {
     pub position: usize,
     /// Total chunks for this source
     pub total_chunks: usize,
+    /// Optional collection this chunk belongs to.
+    pub collection: Option<String>,
     /// Metadata
     pub metadata: Option<serde_json::Value>,
 }
@@ -444,12 +446,17 @@ pub trait VectorStore: Send + Sync {
         Ok(())
     }
 
-    /// Search for similar chunks
+    /// Search for similar chunks.
+    ///
+    /// `collection` filters results to a single collection when provided. The
+    /// backend should apply the filter as early as possible (ideally in the
+    /// index/query) rather than fetching all results and filtering in memory.
     async fn search_similar(
         &self,
         query_embedding: &[f32],
         limit: usize,
         threshold: f32,
+        collection: Option<&str>,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>>;
 
     /// Delete chunks by source ID
@@ -500,6 +507,14 @@ impl MemoryVectorStore {
 #[async_trait]
 impl VectorStore for MemoryVectorStore {
     async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
+        if chunk.embedding.len() != self.dimension {
+            return Err(crate::error::SyscityError::Validation(format!(
+                "Embedding dimension mismatch: expected {}, got {}",
+                self.dimension,
+                chunk.embedding.len()
+            )));
+        }
+
         let mut chunks = self.chunks.write().await;
         let mut order = self.order.write().await;
 
@@ -530,12 +545,18 @@ impl VectorStore for MemoryVectorStore {
         query_embedding: &[f32],
         limit: usize,
         threshold: f32,
+        collection: Option<&str>,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
         let chunks = self.chunks.read().await;
 
         let mut results: Vec<(EmbeddedChunk, f32)> = chunks
             .values()
             .filter_map(|chunk| {
+                if let Some(coll) = collection {
+                    if chunk.collection.as_deref() != Some(coll) {
+                        return None;
+                    }
+                }
                 let similarity = cosine_similarity(query_embedding, &chunk.embedding);
                 if similarity >= threshold {
                     Some((chunk.clone(), similarity))
@@ -716,6 +737,7 @@ impl BatchEmbeddingProcessor {
                         embedding: embedding.clone(),
                         position: *pos,
                         total_chunks: *total,
+                        collection: None,
                         metadata: None,
                     });
                 }
@@ -784,6 +806,7 @@ impl VectorMemoryService {
                 embedding,
                 position: pos,
                 total_chunks: total,
+                collection: None,
                 metadata: memory.metadata.clone(),
             });
         }
@@ -804,7 +827,7 @@ impl VectorMemoryService {
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
         let query_embedding = self.embedding_provider.embed(query).await?;
         self.vector_store
-            .search_similar(&query_embedding, limit, threshold)
+            .search_similar(&query_embedding, limit, threshold, None)
             .await
     }
 
@@ -831,13 +854,11 @@ impl VectorMemoryService {
         let query_embedding = self.embedding_provider.embed(query).await?;
         let results = self
             .vector_store
-            .search_similar(&query_embedding, limit, threshold)
+            .search_similar(&query_embedding, limit, threshold, Some(collection))
             .await?;
 
-        let collection_marker = format!("-{}-", collection);
         Ok(results
             .into_iter()
-            .filter(|(chunk, _score)| chunk.id.contains(&collection_marker))
             .map(|(chunk, score)| SearchResult {
                 id: chunk.id,
                 content: chunk.text,
@@ -871,6 +892,7 @@ impl VectorMemoryService {
                 embedding,
                 position: pos,
                 total_chunks: total,
+                collection: Some(collection.to_string()),
                 metadata: metadata.clone(),
             })
             .collect();
@@ -1096,12 +1118,13 @@ mod tests {
             embedding: vec![1.0, 0.0, 0.0],
             position: 0,
             total_chunks: 1,
+            collection: None,
             metadata: None,
         };
         store.store_chunk(chunk.clone()).await.unwrap();
 
         let results = store
-            .search_similar(&[1.0, 0.0, 0.0], 5, 0.0)
+            .search_similar(&[1.0, 0.0, 0.0], 5, 0.0, None)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -1110,7 +1133,7 @@ mod tests {
 
         // Orthogonal vector should not match above threshold
         let results = store
-            .search_similar(&[0.0, 1.0, 0.0], 5, 0.5)
+            .search_similar(&[0.0, 1.0, 0.0], 5, 0.5, None)
             .await
             .unwrap();
         assert!(results.is_empty());
@@ -1127,6 +1150,7 @@ mod tests {
                 embedding: vec![1.0, 0.0],
                 position: 0,
                 total_chunks: 2,
+                collection: None,
                 metadata: None,
             })
             .await
@@ -1139,6 +1163,7 @@ mod tests {
                 embedding: vec![0.0, 1.0],
                 position: 1,
                 total_chunks: 2,
+                collection: None,
                 metadata: None,
             })
             .await
@@ -1151,6 +1176,7 @@ mod tests {
                 embedding: vec![1.0, 1.0],
                 position: 0,
                 total_chunks: 1,
+                collection: None,
                 metadata: None,
             })
             .await
@@ -1174,6 +1200,7 @@ mod tests {
                 embedding: vec![0.0; 4],
                 position: 0,
                 total_chunks: 1,
+                collection: None,
                 metadata: None,
             })
             .await
@@ -1186,6 +1213,7 @@ mod tests {
                 embedding: vec![0.0; 4],
                 position: 0,
                 total_chunks: 1,
+                collection: None,
                 metadata: None,
             })
             .await
@@ -1208,6 +1236,7 @@ mod tests {
                 embedding: vec![1.0, 0.0],
                 position: 0,
                 total_chunks: 1,
+                collection: None,
                 metadata: None,
             })
             .await
@@ -1235,6 +1264,7 @@ mod tests {
             embedding: vec![0.1, 0.2],
             position: 3,
             total_chunks: 5,
+            collection: None,
             metadata: Some(serde_json::json!({"key": "val"})),
         };
         assert_eq!(chunk.id, "id1");

@@ -43,6 +43,7 @@ impl PgVectorStore {
                 embedding vector({}) NOT NULL,
                 position INTEGER NOT NULL,
                 total_chunks INTEGER NOT NULL,
+                collection TEXT,
                 metadata TEXT
             )",
             quoted, dimension
@@ -90,14 +91,15 @@ impl VectorStore for PgVectorStore {
             })?;
 
         let sql = format!(
-            "INSERT INTO {} (id, source_id, text, embedding, position, total_chunks, metadata)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "INSERT INTO {} (id, source_id, text, embedding, position, total_chunks, collection, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT (id) DO UPDATE SET
                  source_id = EXCLUDED.source_id,
                  text = EXCLUDED.text,
                  embedding = EXCLUDED.embedding,
                  position = EXCLUDED.position,
                  total_chunks = EXCLUDED.total_chunks,
+                 collection = EXCLUDED.collection,
                  metadata = EXCLUDED.metadata",
             Self::quote_identifier(&self.table)
         );
@@ -108,6 +110,7 @@ impl VectorStore for PgVectorStore {
             .bind(embedding)
             .bind(chunk.position as i64)
             .bind(chunk.total_chunks as i64)
+            .bind(&chunk.collection)
             .bind(metadata_json)
             .execute(&self.pool)
             .await
@@ -123,15 +126,17 @@ impl VectorStore for PgVectorStore {
         query_embedding: &[f32],
         limit: usize,
         threshold: f32,
+        collection: Option<&str>,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
         let embedding = pgvector::Vector::from(query_embedding.to_vec());
         let max_distance = 1.0f64 - threshold as f64;
 
         let sql = format!(
-            "SELECT id, source_id, text, embedding, position, total_chunks, metadata,
+            "SELECT id, source_id, text, embedding, position, total_chunks, collection, metadata,
                     embedding <=> $1 AS distance
              FROM {}
              WHERE embedding <=> $1 <= $2
+               AND ($4::text IS NULL OR collection = $4)
              ORDER BY embedding <=> $1
              LIMIT $3",
             Self::quote_identifier(&self.table)
@@ -140,6 +145,7 @@ impl VectorStore for PgVectorStore {
             .bind(embedding)
             .bind(max_distance)
             .bind(limit as i64)
+            .bind(collection)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| crate::error::SyscityError::Storage {
@@ -165,6 +171,12 @@ impl VectorStore for PgVectorStore {
                 row.try_get("metadata")
                     .map_err(|e| crate::error::SyscityError::Storage {
                         context: "Failed to read pgvector metadata column".to_string(),
+                        details: e.to_string(),
+                    })?;
+            let collection: Option<String> =
+                row.try_get("collection")
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: "Failed to read pgvector collection column".to_string(),
                         details: e.to_string(),
                     })?;
             let chunk = EmbeddedChunk {
@@ -199,6 +211,7 @@ impl VectorStore for PgVectorStore {
                         details: e.to_string(),
                     }
                 })? as usize,
+                collection,
                 metadata: metadata
                     .map(|m| serde_json::from_str(&m))
                     .transpose()
@@ -297,16 +310,17 @@ mod tests {
             embedding: vec![1.0, 0.0, 0.0],
             position: 0,
             total_chunks: 1,
+            collection: None,
             metadata: None,
         };
         store.store_chunk(chunk).await?;
 
-        let results = store.search_similar(&[1.0, 0.0, 0.0], 5, 0.0).await?;
+        let results = store.search_similar(&[1.0, 0.0, 0.0], 5, 0.0, None).await?;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, "c1");
         assert!((results[0].1 - 1.0).abs() < 0.001);
 
-        let results = store.search_similar(&[0.0, 1.0, 0.0], 5, 0.5).await?;
+        let results = store.search_similar(&[0.0, 1.0, 0.0], 5, 0.5, None).await?;
         assert!(results.is_empty());
 
         store.clear().await?;
@@ -329,6 +343,7 @@ mod tests {
                 embedding: vec![1.0, 0.0],
                 position: 0,
                 total_chunks: 2,
+                collection: None,
                 metadata: None,
             })
             .await?;
@@ -340,6 +355,7 @@ mod tests {
                 embedding: vec![0.0, 1.0],
                 position: 1,
                 total_chunks: 2,
+                collection: None,
                 metadata: None,
             })
             .await?;
@@ -351,6 +367,7 @@ mod tests {
                 embedding: vec![1.0, 1.0],
                 position: 0,
                 total_chunks: 1,
+                collection: None,
                 metadata: None,
             })
             .await?;

@@ -96,6 +96,20 @@ impl SqliteVecStore {
             }
         })?;
 
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS vec_chunk_collections (
+                chunk_id TEXT NOT NULL,
+                collection TEXT NOT NULL,
+                PRIMARY KEY (chunk_id, collection)
+            )"
+        )
+        .execute(&pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to create sqlite-vec collection table".to_string(),
+            details: e.to_string(),
+        })?;
+
         info!("SqliteVecStore initialized at {} (dim={})", path, dimension);
         Ok(Self { pool, dimension })
     }
@@ -169,6 +183,21 @@ impl VectorStore for SqliteVecStore {
             context: "Failed to store sqlite-vec chunk".to_string(),
             details: e.to_string(),
         })?;
+
+        if let Some(collection) = &chunk.collection {
+            sqlx::query(
+                "INSERT OR REPLACE INTO vec_chunk_collections (chunk_id, collection) VALUES (?, ?)"
+            )
+            .bind(&chunk.id)
+            .bind(collection)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to store sqlite-vec collection".to_string(),
+                details: e.to_string(),
+            })?;
+        }
+
         Ok(())
     }
 
@@ -177,6 +206,7 @@ impl VectorStore for SqliteVecStore {
         query_embedding: &[f32],
         limit: usize,
         threshold: f32,
+        collection: Option<&str>,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
         if query_embedding.len() != self.dimension {
             return Err(crate::error::SyscityError::Storage {
@@ -192,22 +222,44 @@ impl VectorStore for SqliteVecStore {
         let query_bytes = embedding_to_bytes(query_embedding);
         let max_distance = 1.0f64 - threshold as f64;
 
-        let rows = sqlx::query(
-            "SELECT rowid, id, source_id, text, embedding, position, total_chunks, metadata, distance
-             FROM vec_chunks
-             WHERE embedding MATCH ? AND distance <= ?
-             ORDER BY distance
-             LIMIT ?",
-        )
-        .bind(&query_bytes)
-        .bind(max_distance)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::Storage {
-            context: "Failed to search sqlite-vec".to_string(),
-            details: e.to_string(),
-        })?;
+        let rows = if let Some(collection) = collection {
+            sqlx::query(
+                "SELECT v.rowid, v.id, v.source_id, v.text, v.embedding, v.position,
+                        v.total_chunks, v.metadata, v.distance
+                 FROM vec_chunks v
+                 JOIN vec_chunk_collections c ON v.id = c.chunk_id
+                 WHERE v.embedding MATCH ? AND v.distance <= ? AND c.collection = ?
+                 ORDER BY v.distance
+                 LIMIT ?",
+            )
+            .bind(&query_bytes)
+            .bind(max_distance)
+            .bind(collection)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to search sqlite-vec".to_string(),
+                details: e.to_string(),
+            })?
+        } else {
+            sqlx::query(
+                "SELECT rowid, id, source_id, text, embedding, position, total_chunks, metadata, distance
+                 FROM vec_chunks
+                 WHERE embedding MATCH ? AND distance <= ?
+                 ORDER BY distance
+                 LIMIT ?",
+            )
+            .bind(&query_bytes)
+            .bind(max_distance)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to search sqlite-vec".to_string(),
+                details: e.to_string(),
+            })?
+        };
 
         let mut results = Vec::new();
         for row in rows {
@@ -274,6 +326,7 @@ impl VectorStore for SqliteVecStore {
                         details: e.to_string(),
                     }
                 })? as usize,
+                collection: None,
                 metadata: metadata
                     .map(|m| serde_json::from_str(&m))
                     .transpose()
@@ -349,16 +402,17 @@ mod tests {
             embedding: vec![1.0, 0.0, 0.0],
             position: 0,
             total_chunks: 1,
+            collection: None,
             metadata: None,
         };
         store.store_chunk(chunk).await?;
 
-        let results = store.search_similar(&[1.0, 0.0, 0.0], 5, 0.0).await?;
+        let results = store.search_similar(&[1.0, 0.0, 0.0], 5, 0.0, None).await?;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, "c1");
         assert!((results[0].1 - 1.0).abs() < 0.001);
 
-        let results = store.search_similar(&[0.0, 1.0, 0.0], 5, 0.5).await?;
+        let results = store.search_similar(&[0.0, 1.0, 0.0], 5, 0.5, None).await?;
         assert!(results.is_empty());
         Ok(())
     }
@@ -374,6 +428,7 @@ mod tests {
                 embedding: vec![1.0, 0.0],
                 position: 0,
                 total_chunks: 2,
+                collection: None,
                 metadata: None,
             })
             .await?;
@@ -385,6 +440,7 @@ mod tests {
                 embedding: vec![0.0, 1.0],
                 position: 1,
                 total_chunks: 2,
+                collection: None,
                 metadata: None,
             })
             .await?;
@@ -396,6 +452,7 @@ mod tests {
                 embedding: vec![1.0, 1.0],
                 position: 0,
                 total_chunks: 1,
+                collection: None,
                 metadata: None,
             })
             .await?;
@@ -419,6 +476,7 @@ mod tests {
                 embedding: vec![0.0; 4],
                 position: 0,
                 total_chunks: 1,
+                collection: None,
                 metadata: None,
             })
             .await?;
@@ -430,6 +488,7 @@ mod tests {
                 embedding: vec![0.0; 4],
                 position: 0,
                 total_chunks: 1,
+                collection: None,
                 metadata: None,
             })
             .await?;

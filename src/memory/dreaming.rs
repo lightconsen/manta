@@ -19,13 +19,16 @@ use chrono::Utc;
 use cron::Schedule as CronSchedule;
 use serde::{Deserialize, Serialize};
 use sysinfo::{RefreshKind, System};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tokio::time::{sleep_until, Instant as TokioInstant};
 use tracing::{debug, info, warn};
 
 use super::events::{MemoryEventBuilder, MemoryEventLog};
 use super::tier::{MemoryTier, TierAction, TierEvaluator, TierIndex, TierSystemConfig};
 use super::{Memory, MemoryId, MemoryQuery};
+
+/// Cancel signal receiver for interrupting dream phases mid-execution.
+pub type CancelSignal = watch::Receiver<bool>;
 
 /// Async callback for LLM-based entity extraction in REM dreams.
 /// Takes a prompt string and returns the LLM's response text.
@@ -154,6 +157,8 @@ pub struct DreamResult {
     pub summary: String,
     /// Errors encountered (non-fatal).
     pub errors: Vec<String>,
+    /// Whether the dream was cancelled mid-execution.
+    pub cancelled: bool,
 }
 
 /// Observability counters for dream activity.
@@ -593,6 +598,7 @@ impl DreamEngine {
         &self,
         store: &dyn super::MemoryStore,
         tier_index: &TierIndex,
+        cancel: CancelSignal,
     ) -> crate::Result<DreamResult> {
         let started_at = SystemTime::now();
         let dream_id = format!("dream-light-{}", uuid::Uuid::new_v4());
@@ -606,11 +612,21 @@ impl DreamEngine {
         let mut demoted = 0;
         let mut processed = 0;
         let mut errors = Vec::new();
+        let mut cancelled = false;
+
+        // Check for cancellation before starting
+        if *cancel.borrow() {
+            cancelled = true;
+        }
 
         // Fetch all memories
-        let memories = store
-            .search(MemoryQuery::new().limit(self.config.max_memories_per_cycle))
-            .await?;
+        let memories = if !cancelled {
+            store
+                .search(MemoryQuery::new().limit(self.config.max_memories_per_cycle))
+                .await?
+        } else {
+            Vec::new()
+        };
         info!("Light Dream: processing {} memories", memories.len());
 
         let evaluator = TierEvaluator::new(self.tier_config.clone());
@@ -619,126 +635,149 @@ impl DreamEngine {
         // time, then confirm with exact cosine similarity. Memories without
         // embeddings fall back to prefix-hash bucketing.
         let mut removed_ids: HashSet<MemoryId> = HashSet::new();
-        let dedup_threshold = self.config.dedup_similarity_threshold;
-        let candidate_pairs = build_dedup_candidate_pairs(&memories);
-        for (i, j) in candidate_pairs {
-            let mem_i = &memories[i];
-            let mem_j = &memories[j];
-            if removed_ids.contains(&mem_i.id) || removed_ids.contains(&mem_j.id) {
-                continue;
+        if !cancelled {
+            let dedup_threshold = self.config.dedup_similarity_threshold;
+            let candidate_pairs = build_dedup_candidate_pairs(&memories);
+            for (i, j) in candidate_pairs {
+                // Check cancellation periodically
+                if *cancel.borrow() {
+                    cancelled = true;
+                    break;
+                }
+                let mem_i = &memories[i];
+                let mem_j = &memories[j];
+                if removed_ids.contains(&mem_i.id) || removed_ids.contains(&mem_j.id) {
+                    continue;
+                }
+                let similar = match (&mem_i.embedding, &mem_j.embedding) {
+                    (Some(emb_i), Some(emb_j)) => {
+                        Self::cosine_similarity(emb_i, emb_j) > dedup_threshold
+                    }
+                    _ => {
+                        let key_i = mem_i
+                            .content
+                            .to_lowercase()
+                            .chars()
+                            .take(50)
+                            .collect::<String>();
+                        let key_j = mem_j
+                            .content
+                            .to_lowercase()
+                            .chars()
+                            .take(50)
+                            .collect::<String>();
+                        key_i == key_j
+                    }
+                };
+                if similar {
+                    if mem_i.importance_score >= mem_j.importance_score {
+                        removed_ids.insert(mem_j.id.clone());
+                    } else {
+                        removed_ids.insert(mem_i.id.clone());
+                    }
+                }
             }
-            let similar = match (&mem_i.embedding, &mem_j.embedding) {
-                (Some(emb_i), Some(emb_j)) => {
-                    Self::cosine_similarity(emb_i, emb_j) > dedup_threshold
+        }
+
+        // Delete duplicates if not cancelled
+        if !cancelled {
+            for id in &removed_ids {
+                // Check cancellation periodically
+                if *cancel.borrow() {
+                    cancelled = true;
+                    break;
                 }
-                _ => {
-                    let key_i = mem_i
-                        .content
-                        .to_lowercase()
-                        .chars()
-                        .take(50)
-                        .collect::<String>();
-                    let key_j = mem_j
-                        .content
-                        .to_lowercase()
-                        .chars()
-                        .take(50)
-                        .collect::<String>();
-                    key_i == key_j
-                }
-            };
-            if similar {
-                if mem_i.importance_score >= mem_j.importance_score {
-                    removed_ids.insert(mem_j.id.clone());
+                if let Err(e) = store.delete(id).await {
+                    errors.push(format!("Failed to delete duplicate {}: {}", id, e));
                 } else {
-                    removed_ids.insert(mem_i.id.clone());
+                    removed += 1;
+                    tier_index.remove(&id.to_string());
                 }
             }
         }
 
-        for id in &removed_ids {
-            if let Err(e) = store.delete(id).await {
-                errors.push(format!("Failed to delete duplicate {}: {}", id, e));
-            } else {
-                removed += 1;
-                tier_index.remove(&id.to_string());
-            }
-        }
-
-        // Tier maintenance — also moves data between backends via as_tiered_store().
-        // Skip memories that were deduplicated and removed.
-        let tiered_store = store.as_tiered_store();
-        for mem in &memories {
-            if removed_ids.contains(&mem.id) {
-                continue;
-            }
-            processed += 1;
-            if let Some(tiered) = tier_index.get(&mem.id.to_string()) {
-                let old_tier = tiered.tier;
-                match evaluator.evaluate(mem, &tiered, None) {
-                    TierAction::Promote(new_tier) => {
-                        // Actually move data between backends when a tiered store is available.
-                        if let Some(ts) = tiered_store {
-                            if let Err(e) = ts.migrate_memory(mem, new_tier).await {
-                                errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
-                                continue;
+        // Tier maintenance if not cancelled
+        if !cancelled {
+            // Tier maintenance — also moves data between backends via as_tiered_store().
+            // Skip memories that were deduplicated and removed.
+            let tiered_store = store.as_tiered_store();
+            for mem in &memories {
+                // Check cancellation periodically
+                if *cancel.borrow() {
+                    cancelled = true;
+                    break;
+                }
+                if removed_ids.contains(&mem.id) {
+                    continue;
+                }
+                processed += 1;
+                if let Some(tiered) = tier_index.get(&mem.id.to_string()) {
+                    let old_tier = tiered.tier;
+                    match evaluator.evaluate(mem, &tiered, None) {
+                        TierAction::Promote(new_tier) => {
+                            // Actually move data between backends when a tiered store is available.
+                            if let Some(ts) = tiered_store {
+                                if let Err(e) = ts.migrate_memory(mem, new_tier).await {
+                                    errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
+                                    continue;
+                                }
+                                // Keep the outer tier_index in sync with the actual data location.
+                                tier_index.update_tier(&mem.id.to_string(), new_tier);
+                            } else {
+                                // Fallback: update index only (data stays in original backend).
+                                tier_index.update_tier(&mem.id.to_string(), new_tier);
                             }
-                            // Keep the outer tier_index in sync with the actual data location.
-                            tier_index.update_tier(&mem.id.to_string(), new_tier);
-                        } else {
-                            // Fallback: update index only (data stays in original backend).
-                            tier_index.update_tier(&mem.id.to_string(), new_tier);
-                        }
-                        promoted += 1;
-                        if let Some(ref event_log) = self.event_log {
-                            let event = MemoryEventBuilder::new().promotion(
-                                format!("{}:dream", mem.user_id),
-                                format!("promote-{}", uuid::Uuid::new_v4()),
-                                old_tier.label(),
-                                new_tier.label(),
-                                "Dream tier evaluation",
-                            );
-                            if let Err(e) = event_log.append(&event).await {
-                                warn!("Failed to append promotion event: {}", e);
+                            promoted += 1;
+                            if let Some(ref event_log) = self.event_log {
+                                let event = MemoryEventBuilder::new().promotion(
+                                    format!("{}:dream", mem.user_id),
+                                    format!("promote-{}", uuid::Uuid::new_v4()),
+                                    old_tier.label(),
+                                    new_tier.label(),
+                                    "Dream tier evaluation",
+                                );
+                                if let Err(e) = event_log.append(&event).await {
+                                    warn!("Failed to append promotion event: {}", e);
+                                }
                             }
                         }
+                        TierAction::Demote(new_tier) => {
+                            // Actually move data between backends when a tiered store is available.
+                            if let Some(ts) = tiered_store {
+                                if let Err(e) = ts.migrate_memory(mem, new_tier).await {
+                                    errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
+                                    continue;
+                                }
+                                // Keep the outer tier_index in sync with the actual data location.
+                                tier_index.update_tier(&mem.id.to_string(), new_tier);
+                            } else {
+                                // Fallback: update index only (data stays in original backend).
+                                tier_index.update_tier(&mem.id.to_string(), new_tier);
+                            }
+                            demoted += 1;
+                            if let Some(ref event_log) = self.event_log {
+                                let event = MemoryEventBuilder::new().promotion(
+                                    format!("{}:dream", mem.user_id),
+                                    format!("demote-{}", uuid::Uuid::new_v4()),
+                                    old_tier.label(),
+                                    new_tier.label(),
+                                    "Dream tier evaluation",
+                                );
+                                if let Err(e) = event_log.append(&event).await {
+                                    warn!("Failed to append promotion event: {}", e);
+                                }
+                            }
+                        }
+                        TierAction::Evict => {
+                            if let Err(e) = store.delete(&mem.id).await {
+                                errors.push(format!("Failed to evict {}: {}", mem.id, e));
+                            } else {
+                                removed += 1;
+                                tier_index.remove(&mem.id.to_string());
+                            }
+                        }
+                        TierAction::Keep => {}
                     }
-                    TierAction::Demote(new_tier) => {
-                        // Actually move data between backends when a tiered store is available.
-                        if let Some(ts) = tiered_store {
-                            if let Err(e) = ts.migrate_memory(mem, new_tier).await {
-                                errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
-                                continue;
-                            }
-                            // Keep the outer tier_index in sync with the actual data location.
-                            tier_index.update_tier(&mem.id.to_string(), new_tier);
-                        } else {
-                            // Fallback: update index only (data stays in original backend).
-                            tier_index.update_tier(&mem.id.to_string(), new_tier);
-                        }
-                        demoted += 1;
-                        if let Some(ref event_log) = self.event_log {
-                            let event = MemoryEventBuilder::new().promotion(
-                                format!("{}:dream", mem.user_id),
-                                format!("demote-{}", uuid::Uuid::new_v4()),
-                                old_tier.label(),
-                                new_tier.label(),
-                                "Dream tier evaluation",
-                            );
-                            if let Err(e) = event_log.append(&event).await {
-                                warn!("Failed to append promotion event: {}", e);
-                            }
-                        }
-                    }
-                    TierAction::Evict => {
-                        if let Err(e) = store.delete(&mem.id).await {
-                            errors.push(format!("Failed to evict {}: {}", mem.id, e));
-                        } else {
-                            removed += 1;
-                            tier_index.remove(&mem.id.to_string());
-                        }
-                    }
-                    TierAction::Keep => {}
                 }
             }
         }
@@ -765,12 +804,21 @@ impl DreamEngine {
             peak_memory_mb,
             llm_tokens_input: ctx.input_tokens,
             llm_tokens_output: ctx.output_tokens,
-            summary: format!(
-                "Light Dream: processed {} memories, removed {} duplicates/expired, promoted {}, \
-                 demoted {}",
-                processed, removed, promoted, demoted
-            ),
+            summary: if cancelled {
+                format!(
+                    "Light Dream: cancelled after processing {} memories, removed {} duplicates/expired, promoted {}, \
+                     demoted {}",
+                    processed, removed, promoted, demoted
+                )
+            } else {
+                format!(
+                    "Light Dream: processed {} memories, removed {} duplicates/expired, promoted {}, \
+                     demoted {}",
+                    processed, removed, promoted, demoted
+                )
+            },
             errors,
+            cancelled,
         };
 
         *self.checkpoint.write().await = DreamCheckpoint {
@@ -793,6 +841,7 @@ impl DreamEngine {
         &self,
         store: &dyn super::MemoryStore,
         tier_index: &TierIndex,
+        cancel: CancelSignal,
     ) -> crate::Result<DreamResult> {
         let started_at = SystemTime::now();
         let dream_id = format!("dream-deep-{}", uuid::Uuid::new_v4());
@@ -803,120 +852,149 @@ impl DreamEngine {
 
         let mut created = 0;
         let mut errors = Vec::new();
+        let mut cancelled = false;
 
-        let memories = store
-            .search(MemoryQuery::new().limit(self.config.max_memories_per_cycle))
-            .await?;
+        // Check for cancellation before starting
+        if *cancel.borrow() {
+            cancelled = true;
+        }
+
+        let memories = if !cancelled {
+            store
+                .search(MemoryQuery::new().limit(self.config.max_memories_per_cycle))
+                .await?
+        } else {
+            Vec::new()
+        };
         info!("Deep Dream: processing {} memories", memories.len());
-
-        // Agglomerative clustering by embedding cosine similarity.
-        // Memories with embeddings are clustered using cosine similarity;
-        // memories without embeddings fall back to word-based grouping.
-        let (with_embeddings, without_embeddings): (Vec<&Memory>, Vec<&Memory>) =
-            memories.iter().partition(|m| m.embedding.is_some());
 
         let mut clusters: HashMap<String, Vec<&Memory>> = HashMap::new();
 
-        // Cluster memories with embeddings using single-pass threshold merging
-        // via union-find. Every centroid pair whose cosine similarity exceeds
-        // the threshold is unioned in one O(n²) pass; each connected component
-        // becomes a cluster. This trades adaptive centroid recomputation for
-        // asymptotic speed: the original iterative loop was O(n³) because it
-        // rescanned all pairs after each single merge.
-        if !with_embeddings.is_empty() {
-            let n = with_embeddings.len();
-            let embeddings: Vec<&Vec<f32>> = with_embeddings
-                .iter()
-                .filter_map(|m| m.embedding.as_ref())
-                .collect();
-            let merge_threshold = 0.7;
+        // Agglomerative clustering by embedding cosine similarity if not cancelled
+        if !cancelled {
+            // Memories with embeddings are clustered using cosine similarity;
+            // memories without embeddings fall back to word-based grouping.
+            let (with_embeddings, without_embeddings): (Vec<&Memory>, Vec<&Memory>) =
+                memories.iter().partition(|m| m.embedding.is_some());
 
-            // Union-find over memory indices.
-            let mut parent: Vec<usize> = (0..n).collect();
-            fn find(parent: &mut [usize], mut x: usize) -> usize {
-                while parent[x] != x {
-                    parent[x] = parent[parent[x]]; // path compression
-                    x = parent[x];
-                }
-                x
-            }
+            // Cluster memories with embeddings using single-pass threshold merging
+            // via union-find if not cancelled
+            if !with_embeddings.is_empty() && !cancelled {
+                let n = with_embeddings.len();
+                let embeddings: Vec<&Vec<f32>> = with_embeddings
+                    .iter()
+                    .filter_map(|m| m.embedding.as_ref())
+                    .collect();
+                let merge_threshold = 0.7;
 
-            for i in 0..n {
-                for j in (i + 1)..n {
-                    if embeddings[i].len() != embeddings[j].len() {
-                        continue;
+                // Union-find over memory indices.
+                let mut parent: Vec<usize> = (0..n).collect();
+                fn find(parent: &mut [usize], mut x: usize) -> usize {
+                    while parent[x] != x {
+                        parent[x] = parent[parent[x]]; // path compression
+                        x = parent[x];
                     }
-                    let sim = Self::cosine_similarity(embeddings[i], embeddings[j]);
-                    if sim > merge_threshold {
-                        let ri = find(&mut parent, i);
-                        let rj = find(&mut parent, j);
-                        if ri != rj {
-                            parent[ri] = rj;
+                    x
+                }
+
+                for i in 0..n {
+                    // Check cancellation periodically
+                    if *cancel.borrow() {
+                        cancelled = true;
+                        break;
+                    }
+                    for j in (i + 1)..n {
+                        if embeddings[i].len() != embeddings[j].len() {
+                            continue;
+                        }
+                        let sim = Self::cosine_similarity(embeddings[i], embeddings[j]);
+                        if sim > merge_threshold {
+                            let ri = find(&mut parent, i);
+                            let rj = find(&mut parent, j);
+                            if ri != rj {
+                                parent[ri] = rj;
+                            }
                         }
                     }
                 }
-            }
 
-            // Group memories by their union-find root.
-            for i in 0..n {
-                let root = find(&mut parent, i);
-                let key = with_embeddings[root].id.0.clone();
-                clusters.entry(key).or_default().push(with_embeddings[i]);
-            }
-        }
-
-        // Fall back to word-based clustering for memories without embeddings
-        for mem in &without_embeddings {
-            let words: Vec<String> = mem
-                .content
-                .split_whitespace()
-                .filter(|w| w.len() > 4)
-                .map(|w| {
-                    w.to_lowercase()
-                        .trim_matches(|c: char| !c.is_alphanumeric())
-                        .to_string()
-                })
-                .filter(|w| !w.is_empty())
-                .collect();
-
-            for word in words.iter().take(3) {
-                clusters.entry(word.clone()).or_default().push(mem);
-            }
-        }
-
-        // Generate summary memories for clusters with >= 3 members
-        for (topic, cluster) in clusters {
-            let mut unique_memories: Vec<&Memory> = cluster;
-            unique_memories.sort_by_key(|m| &m.id.0);
-            unique_memories.dedup_by(|a, b| a.id.0 == b.id.0);
-            if unique_memories.len() >= 3 {
-                let summaries: Vec<String> = unique_memories
-                    .iter()
-                    .map(|m| m.content.chars().take(80).collect::<String>())
-                    .collect();
-
-                let summary_content = format!("Topic '{}': {}", topic, summaries.join("; "));
-
-                let user_id = match unique_memories.first() {
-                    Some(m) => m.user_id.clone(),
-                    None => continue,
-                };
-                let summary = Memory::new(user_id, summary_content, "dream_summary")
-                    .with_importance_score(0.7)
-                    .with_source("dream_deep")
-                    .with_metadata(serde_json::json!({
-                        "dream_phase": "deep",
-                        "topic": topic,
-                        "source_memory_count": unique_memories.len(),
-                    }));
-
-                match store.store(summary).await {
-                    Ok(id) => {
-                        tier_index.insert(id.to_string(), MemoryTier::LongTerm);
-                        created += 1;
+                if !cancelled {
+                    // Group memories by their union-find root.
+                    for i in 0..n {
+                        let root = find(&mut parent, i);
+                        let key = with_embeddings[root].id.0.clone();
+                        clusters.entry(key).or_default().push(with_embeddings[i]);
                     }
-                    Err(e) => {
-                        errors.push(format!("Failed to store summary: {}", e));
+                }
+            }
+
+            if !cancelled {
+                // Fall back to word-based clustering for memories without embeddings
+                for mem in &without_embeddings {
+                    // Check cancellation periodically
+                    if *cancel.borrow() {
+                        cancelled = true;
+                        break;
+                    }
+                    let words: Vec<String> = mem
+                        .content
+                        .split_whitespace()
+                        .filter(|w| w.len() > 4)
+                        .map(|w| {
+                            w.to_lowercase()
+                                .trim_matches(|c: char| !c.is_alphanumeric())
+                                .to_string()
+                        })
+                        .filter(|w| !w.is_empty())
+                        .collect();
+
+                    for word in words.iter().take(3) {
+                        clusters.entry(word.clone()).or_default().push(mem);
+                    }
+                }
+            }
+        }
+
+        // Generate summary memories for clusters with >= 3 members if not cancelled
+        if !cancelled {
+            for (topic, cluster) in clusters {
+                // Check cancellation periodically
+                if *cancel.borrow() {
+                    cancelled = true;
+                    break;
+                }
+                let mut unique_memories: Vec<&Memory> = cluster;
+                unique_memories.sort_by_key(|m| &m.id.0);
+                unique_memories.dedup_by(|a, b| a.id.0 == b.id.0);
+                if unique_memories.len() >= 3 {
+                    let summaries: Vec<String> = unique_memories
+                        .iter()
+                        .map(|m| m.content.chars().take(80).collect::<String>())
+                        .collect();
+
+                    let summary_content = format!("Topic '{}': {}", topic, summaries.join("; "));
+
+                    let user_id = match unique_memories.first() {
+                        Some(m) => m.user_id.clone(),
+                        None => continue,
+                    };
+                    let summary = Memory::new(user_id, summary_content, "dream_summary")
+                        .with_importance_score(0.7)
+                        .with_source("dream_deep")
+                        .with_metadata(serde_json::json!({
+                            "dream_phase": "deep",
+                            "topic": topic,
+                            "source_memory_count": unique_memories.len(),
+                        }));
+
+                    match store.store(summary).await {
+                        Ok(id) => {
+                            tier_index.insert(id.to_string(), MemoryTier::LongTerm);
+                            created += 1;
+                        }
+                        Err(e) => {
+                            errors.push(format!("Failed to store summary: {}", e));
+                        }
                     }
                 }
             }
@@ -945,11 +1023,19 @@ impl DreamEngine {
             peak_memory_mb,
             llm_tokens_input: ctx.input_tokens,
             llm_tokens_output: ctx.output_tokens,
-            summary: format!(
-                "Deep Dream: processed {} memories, created {} topic summaries",
-                processed, created
-            ),
+            summary: if cancelled {
+                format!(
+                    "Deep Dream: cancelled after processing {} memories, created {} topic summaries",
+                    processed, created
+                )
+            } else {
+                format!(
+                    "Deep Dream: processed {} memories, created {} topic summaries",
+                    processed, created
+                )
+            },
             errors,
+            cancelled,
         };
 
         *self.checkpoint.write().await = DreamCheckpoint {
@@ -974,6 +1060,7 @@ impl DreamEngine {
         store: &dyn super::MemoryStore,
         _tier_index: &TierIndex,
         llm_callback: Option<&LlmCallback>,
+        cancel: CancelSignal,
     ) -> crate::Result<DreamResult> {
         let started_at = SystemTime::now();
         let dream_id = format!("dream-rem-{}", uuid::Uuid::new_v4());
@@ -984,155 +1071,194 @@ impl DreamEngine {
 
         let mut created = 0;
         let mut errors = Vec::new();
+        let mut cancelled = false;
 
-        let memories = store
-            .search(MemoryQuery::new().limit(self.config.max_memories_per_cycle))
-            .await?;
+        // Check for cancellation before starting
+        if *cancel.borrow() {
+            cancelled = true;
+        }
+
+        let memories = if !cancelled {
+            store
+                .search(MemoryQuery::new().limit(self.config.max_memories_per_cycle))
+                .await?
+        } else {
+            Vec::new()
+        };
+        let processed = memories.len();
         info!("REM Dream: processing {} memories", memories.len());
 
-        // LLM-based entity extraction when callback is available
-        let (nodes, edges) = if let Some(llm) = llm_callback {
-            // Build combined content for NER
-            let combined_content: Vec<String> =
-                memories.iter().map(|m| m.content.clone()).collect();
-            let content_for_prompt = combined_content.join("\n---\n");
+        let (mut nodes, mut edges) = (Vec::new(), Vec::new());
 
-            let prompt = format!(
-                "Extract entities (people, places, organizations, concepts) and their \
-                 relationships from the following memory content. Each memory is separated by \
-                 '---'.\n\nReturn ONLY a JSON object with this schema:\n{{\n  \"entities\": \
-                 [{{\"label\": \"name\", \"type\": \"person|place|organization|concept\", \
-                 \"confidence\": 0.9}}],\n  \"relationships\": [{{\"from\": \"entity_label\", \
-                 \"to\": \"entity_label\", \"relation\": \"verb_phrase\", \"confidence\": \
-                 0.8}}]\n}}\n\nMemory content:\n{}\n\nJSON:",
-                content_for_prompt.chars().take(8000).collect::<String>()
-            );
+        // LLM-based entity extraction when callback is available and not cancelled
+        if !cancelled {
+            if let Some(llm) = llm_callback {
+                // Check for cancellation before LLM call
+                if *cancel.borrow() {
+                    cancelled = true;
+                } else {
+                    // Build combined content for NER
+                    let combined_content: Vec<String> =
+                        memories.iter().map(|m| m.content.clone()).collect();
+                    let content_for_prompt = combined_content.join("\n---\n");
 
-            ctx.track_prompt(&prompt);
-            let response = llm(prompt).await;
-            ctx.track_response(&response);
+                    let prompt = format!(
+                        "Extract entities (people, places, organizations, concepts) and their \
+                         relationships from the following memory content. Each memory is separated by \
+                         '---'.\n\nReturn ONLY a JSON object with this schema:\n{{\n  \"entities\": \
+                         [{{\"label\": \"name\", \"type\": \"person|place|organization|concept\", \
+                         \"confidence\": 0.9}}],\n  \"relationships\": [{{\"from\": \"entity_label\", \
+                         \"to\": \"entity_label\", \"relation\": \"verb_phrase\", \"confidence\": \
+                         0.8}}]\n}}\n\nMemory content:\n{}\n\nJSON:",
+                        content_for_prompt.chars().take(8000).collect::<String>()
+                    );
 
-            // Parse JSON response
-            #[derive(Deserialize)]
-            struct NerResponse {
-                entities: Vec<NerEntity>,
-                #[serde(default)]
-                relationships: Vec<NerRelationship>,
-            }
-            #[derive(Deserialize)]
-            struct NerEntity {
-                label: String,
-                #[serde(rename = "type")]
-                entity_type: String,
-                #[serde(default = "default_confidence")]
-                confidence: f32,
-            }
-            #[derive(Deserialize)]
-            struct NerRelationship {
-                from: String,
-                to: String,
-                relation: String,
-                #[serde(default = "default_confidence")]
-                confidence: f32,
-            }
-            fn default_confidence() -> f32 {
-                0.5
-            }
+                    ctx.track_prompt(&prompt);
+                    let response = llm(prompt).await;
+                    ctx.track_response(&response);
 
-            match serde_json::from_str::<NerResponse>(&response) {
-                Ok(parsed) => {
-                    let mut nodes = Vec::new();
-                    let mut edges = Vec::new();
-
-                    for entity in &parsed.entities {
-                        let pattern = entity.label.to_lowercase();
-                        let memory_ids: Vec<String> = memories
-                            .iter()
-                            .filter(|m| m.content.to_lowercase().contains(&pattern))
-                            .map(|m| m.id.to_string())
-                            .collect();
-                        if !memory_ids.is_empty() {
-                            nodes.push(KnowledgeNode {
-                                label: entity.label.clone(),
-                                node_type: entity.entity_type.clone(),
-                                memory_ids,
-                                confidence: entity.confidence,
-                            });
+                    // Check for cancellation after LLM call
+                    if *cancel.borrow() {
+                        cancelled = true;
+                    } else {
+                        // Parse JSON response
+                        #[derive(Deserialize)]
+                        struct NerResponse {
+                            entities: Vec<NerEntity>,
+                            #[serde(default)]
+                            relationships: Vec<NerRelationship>,
                         }
-                    }
+                        #[derive(Deserialize)]
+                        struct NerEntity {
+                            label: String,
+                            #[serde(rename = "type")]
+                            entity_type: String,
+                            #[serde(default = "default_confidence")]
+                            confidence: f32,
+                        }
+                        #[derive(Deserialize)]
+                        struct NerRelationship {
+                            from: String,
+                            to: String,
+                            relation: String,
+                            #[serde(default = "default_confidence")]
+                            confidence: f32,
+                        }
+                        fn default_confidence() -> f32 {
+                            0.5
+                        }
 
-                    for rel in parsed.relationships {
-                        edges.push(KnowledgeEdge {
-                            from: rel.from,
-                            to: rel.to,
-                            relation: rel.relation,
-                            confidence: rel.confidence,
-                        });
-                    }
+                        match serde_json::from_str::<NerResponse>(&response) {
+                            Ok(parsed) => {
+                                for entity in &parsed.entities {
+                                    // Check for cancellation periodically
+                                    if *cancel.borrow() {
+                                        cancelled = true;
+                                        break;
+                                    }
+                                    let pattern = entity.label.to_lowercase();
+                                    let memory_ids: Vec<String> = memories
+                                        .iter()
+                                        .filter(|m| m.content.to_lowercase().contains(&pattern))
+                                        .map(|m| m.id.to_string())
+                                        .collect();
+                                    if !memory_ids.is_empty() {
+                                        nodes.push(KnowledgeNode {
+                                            label: entity.label.clone(),
+                                            node_type: entity.entity_type.clone(),
+                                            memory_ids,
+                                            confidence: entity.confidence,
+                                        });
+                                    }
+                                }
 
-                    // Fall back to co-occurrence edges if LLM didn't provide relationships
-                    if edges.is_empty() {
-                        for (i, n1) in nodes.iter().enumerate() {
-                            for n2 in nodes.iter().skip(i + 1) {
-                                let shared: Vec<_> = n1
-                                    .memory_ids
-                                    .iter()
-                                    .filter(|id| n2.memory_ids.contains(id))
-                                    .collect();
-                                if !shared.is_empty() {
-                                    edges.push(KnowledgeEdge {
-                                        from: n1.label.clone(),
-                                        to: n2.label.clone(),
-                                        relation: "co_occurs".to_string(),
-                                        confidence: (shared.len() as f32
-                                            / n1.memory_ids.len().max(n2.memory_ids.len()) as f32)
-                                            .min(1.0),
-                                    });
+                                if !cancelled {
+                                    for rel in parsed.relationships {
+                                        edges.push(KnowledgeEdge {
+                                            from: rel.from,
+                                            to: rel.to,
+                                            relation: rel.relation,
+                                            confidence: rel.confidence,
+                                        });
+                                    }
+
+                                    // Fall back to co-occurrence edges if LLM didn't provide relationships
+                                    if edges.is_empty() {
+                                        for (i, n1) in nodes.iter().enumerate() {
+                                            for n2 in nodes.iter().skip(i + 1) {
+                                                let shared: Vec<_> = n1
+                                                    .memory_ids
+                                                    .iter()
+                                                    .filter(|id| n2.memory_ids.contains(id))
+                                                    .collect();
+                                                if !shared.is_empty() {
+                                                    edges.push(KnowledgeEdge {
+                                                        from: n1.label.clone(),
+                                                        to: n2.label.clone(),
+                                                        relation: "co_occurs".to_string(),
+                                                        confidence: (shared.len() as f32
+                                                            / n1.memory_ids.len().max(n2.memory_ids.len()) as f32)
+                                                            .min(1.0),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                errors.push(format!("Failed to parse LLM NER response: {}", e));
+                                debug!(
+                                    "LLM NER response (first 500 chars): {}",
+                                    response.chars().take(500).collect::<String>()
+                                );
+                                // Fall back to heuristic extraction
+                                if !cancelled {
+                                    (nodes, edges) = extract_entities_heuristic(&memories);
                                 }
                             }
                         }
                     }
-
-                    (nodes, edges)
                 }
-                Err(e) => {
-                    errors.push(format!("Failed to parse LLM NER response: {}", e));
-                    debug!(
-                        "LLM NER response (first 500 chars): {}",
-                        response.chars().take(500).collect::<String>()
-                    );
-                    // Fall back to heuristic extraction
-                    extract_entities_heuristic(&memories)
-                }
+            } else if !cancelled {
+                // No LLM callback: use heuristic extraction
+                (nodes, edges) = extract_entities_heuristic(&memories);
             }
-        } else {
-            // No LLM callback: use heuristic extraction
-            extract_entities_heuristic(&memories)
-        };
+        }
 
         let node_count = nodes.len();
         let edge_count = edges.len();
-        let processed = memories.len();
 
         // Store knowledge graph — merge, don't replace, so previous cycles'
         // entities and relationships are preserved. Cap size to prevent
         // unbounded memory growth across REM cycles.
-        {
-            let mut graph = self.knowledge_graph.write().await;
-            let existing_labels: std::collections::HashSet<String> =
-                graph.nodes.iter().map(|n| n.label.clone()).collect();
-            for node in nodes {
-                if !existing_labels.contains(&node.label) {
-                    graph.nodes.push(node);
+        if !cancelled {
+            {
+                let mut graph = self.knowledge_graph.write().await;
+                let existing_labels: std::collections::HashSet<String> =
+                    graph.nodes.iter().map(|n| n.label.clone()).collect();
+                for node in nodes {
+                    // Check for cancellation periodically
+                    if *cancel.borrow() {
+                        cancelled = true;
+                        break;
+                    }
+                    if !existing_labels.contains(&node.label) {
+                        graph.nodes.push(node);
+                    }
+                }
+                if !cancelled {
+                    graph.edges.extend(edges);
+                    graph.cap_size();
                 }
             }
-            graph.edges.extend(edges);
-            graph.cap_size();
+            if !cancelled {
+                self.save_knowledge_graph().await;
+            }
         }
-        self.save_knowledge_graph().await;
 
-        // Create pattern memory from the graph
-        if node_count > 0 {
+        // Create pattern memory from the graph if not cancelled
+        if !cancelled && node_count > 0 {
             let pattern_mem = Memory::new(
                 "system",
                 format!(
@@ -1181,12 +1307,21 @@ impl DreamEngine {
             peak_memory_mb,
             llm_tokens_input: ctx.input_tokens,
             llm_tokens_output: ctx.output_tokens,
-            summary: format!(
-                "REM Dream: processed {} memories, discovered {} entities, {} relations, created \
-                 {} patterns",
-                processed, node_count, edge_count, created
-            ),
+            summary: if cancelled {
+                format!(
+                    "REM Dream: cancelled after processing {} memories, discovered {} entities, {} relations, created \
+                     {} patterns",
+                    processed, node_count, edge_count, created
+                )
+            } else {
+                format!(
+                    "REM Dream: processed {} memories, discovered {} entities, {} relations, created \
+                     {} patterns",
+                    processed, node_count, edge_count, created
+                )
+            },
             errors,
+            cancelled,
         };
 
         *self.checkpoint.write().await = DreamCheckpoint {
@@ -1215,6 +1350,7 @@ impl DreamEngine {
         tier_index: &TierIndex,
         include_rem: bool,
         llm_callback: Option<&LlmCallback>,
+        cancel: CancelSignal,
     ) -> crate::Result<Vec<DreamResult>> {
         if !self.config.enabled {
             return Ok(Vec::new());
@@ -1222,8 +1358,13 @@ impl DreamEngine {
 
         let mut results = Vec::new();
 
+        // Check for cancellation before starting
+        if *cancel.borrow() {
+            return Ok(results);
+        }
+
         // Light dream always runs
-        match self.run_light(store, tier_index).await {
+        match self.run_light(store, tier_index, cancel.clone()).await {
             Ok(r) => {
                 self.metrics.record(&r, false);
                 if let Some(ref event_log) = self.event_log {
@@ -1247,8 +1388,13 @@ impl DreamEngine {
             }
         }
 
+        // Check for cancellation before deep dream
+        if *cancel.borrow() {
+            return Ok(results);
+        }
+
         // Deep dream runs on balanced/slow or if enough memories
-        match self.run_deep(store, tier_index).await {
+        match self.run_deep(store, tier_index, cancel.clone()).await {
             Ok(r) => {
                 self.metrics.record(&r, false);
                 if let Some(ref event_log) = self.event_log {
@@ -1272,9 +1418,9 @@ impl DreamEngine {
             }
         }
 
-        // REM dream runs only if requested and budget allows
-        if include_rem && self.config.budget == DreamBudget::Expensive {
-            match self.run_rem(store, tier_index, llm_callback).await {
+        // REM dream runs only if requested and budget allows and not cancelled
+        if include_rem && self.config.budget == DreamBudget::Expensive && !*cancel.borrow() {
+            match self.run_rem(store, tier_index, llm_callback, cancel.clone()).await {
                 Ok(r) => {
                     self.metrics.record(&r, false);
                     if let Some(ref event_log) = self.event_log {
@@ -1620,12 +1766,18 @@ pub struct DreamScheduler {
     engine: Arc<DreamEngine>,
     /// Handle to the background scheduling task (for cancellation)
     shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
+    /// Cancel signal sender for stopping in-progress dream cycles
+    cancel_tx: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 impl DreamScheduler {
     /// Create a new scheduler around the given engine.
     pub fn new(engine: Arc<DreamEngine>) -> Self {
-        Self { engine, shutdown_tx: None }
+        Self {
+            engine,
+            shutdown_tx: None,
+            cancel_tx: None,
+        }
     }
 
     /// Run a one-off dream cycle immediately.
@@ -1636,8 +1788,10 @@ impl DreamScheduler {
         include_rem: bool,
         llm_callback: Option<&LlmCallback>,
     ) -> crate::Result<Vec<DreamResult>> {
+        // Create a cancel signal that never cancels
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         self.engine
-            .run_full_cycle(store, tier_index, include_rem, llm_callback)
+            .run_full_cycle(store, tier_index, include_rem, llm_callback, cancel_rx)
             .await
     }
 
@@ -1663,7 +1817,9 @@ impl DreamScheduler {
         }
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         self.shutdown_tx = Some(shutdown_tx);
+        self.cancel_tx = Some(cancel_tx);
 
         let engine = Arc::clone(&self.engine);
         let frequency = self.engine.config.frequency.clone();
@@ -1701,7 +1857,8 @@ impl DreamScheduler {
                     _ = sleep_until(sleep_deadline) => {
                         info!("Running scheduled dream cycle");
                         let include_rem = engine.config.budget == DreamBudget::Expensive;
-                        match engine.run_full_cycle(store.as_ref(), tier_index.as_ref(), include_rem, None).await {
+                        let cancel = cancel_rx.clone();
+                        match engine.run_full_cycle(store.as_ref(), tier_index.as_ref(), include_rem, None, cancel).await {
                             Ok(results) => {
                                 for r in &results {
                                     info!("Dream result: {}", r.summary);
@@ -1721,8 +1878,14 @@ impl DreamScheduler {
         })
     }
 
-    /// Stop the background scheduler.
+    /// Stop the background scheduler and cancel any in-progress dream cycles.
     pub async fn stop(&mut self) {
+        // First send cancellation signal to any in-progress dream
+        if let Some(tx) = self.cancel_tx.take() {
+            // Ignore send error - receiver may already be dropped
+            let _ = tx.send(true);
+        }
+        // Then send shutdown signal to the scheduler loop
         if let Some(tx) = self.shutdown_tx.take() {
             if let Err(e) = tx.send(()).await {
                 warn!("Failed to send dream scheduler shutdown signal: {:?}", e);
@@ -1944,8 +2107,11 @@ mod tests {
             tier_index.insert(id.to_string(), MemoryTier::ShortTerm);
         }
 
-        let result = engine.run_light(store.as_ref(), &tier_index).await.unwrap();
+        // Create a cancel signal that never cancels
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let result = engine.run_light(store.as_ref(), &tier_index, cancel_rx).await.unwrap();
         assert_eq!(result.phase, DreamPhase::Light);
+        assert!(!result.cancelled);
         // Removed duplicates are not counted in processed
         // 5 memories with 2 unique contents → 2 duplicates removed → 3 remaining
         // but further tier evaluation may evict some, so just check it's less than 5
@@ -1972,8 +2138,11 @@ mod tests {
             tier_index.insert(id.to_string(), MemoryTier::ShortTerm);
         }
 
-        let result = engine.run_deep(store.as_ref(), &tier_index).await.unwrap();
+        // Create a cancel signal that never cancels
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let result = engine.run_deep(store.as_ref(), &tier_index, cancel_rx).await.unwrap();
         assert_eq!(result.phase, DreamPhase::Deep);
+        assert!(!result.cancelled);
         assert!(result.memories_processed >= 5);
         // Should create at least one summary
         assert!(result.memories_created > 0);
@@ -2001,15 +2170,42 @@ mod tests {
             tier_index.insert(id.to_string(), MemoryTier::LongTerm);
         }
 
+        // Create a cancel signal that never cancels
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let result = engine
-            .run_rem(store.as_ref(), &tier_index, None)
+            .run_rem(store.as_ref(), &tier_index, None, cancel_rx)
             .await
             .unwrap();
         assert_eq!(result.phase, DreamPhase::Rem);
+        assert!(!result.cancelled);
         assert!(result.memories_processed >= 5);
 
         let graph = engine.knowledge_graph().await;
         assert!(!graph.nodes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_dream_cancel() {
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let config = DreamConfig::default();
+        let tier_config = TierSystemConfig::default();
+        let engine = DreamEngine::new(config, tier_config);
+        let tier_index = TierIndex::new();
+
+        // Seed a lot of memories so that we can cancel mid-processing
+        for i in 0..100 {
+            let mem = Memory::new("u1", format!("Content {}", i), "fact")
+                .with_importance_score(0.5);
+            let id = store.store(mem).await.unwrap();
+            tier_index.insert(id.to_string(), MemoryTier::ShortTerm);
+        }
+
+        // Create a cancel signal that cancels immediately
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(true);
+        let result = engine.run_light(store.as_ref(), &tier_index, cancel_rx).await.unwrap();
+        assert_eq!(result.phase, DreamPhase::Light);
+        assert!(result.cancelled);
+        drop(cancel_tx);
     }
 
     #[test]
@@ -2049,7 +2245,9 @@ mod tests {
             tier_index.insert(id.to_string(), MemoryTier::ShortTerm);
         }
 
-        let result = engine.run_light(store.as_ref(), &tier_index).await.unwrap();
+        // Create a cancel signal that never cancels
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let result = engine.run_light(store.as_ref(), &tier_index, cancel_rx).await.unwrap();
         assert_eq!(result.phase, DreamPhase::Light);
         assert!(result.peak_memory_mb.is_some());
         // Removed duplicates are not counted in processed
@@ -2081,8 +2279,10 @@ mod tests {
             tier_index.insert(id.to_string(), MemoryTier::ShortTerm);
         }
 
+        // Create a cancel signal that never cancels
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let results = engine
-            .run_full_cycle(store.as_ref(), &tier_index, false, None)
+            .run_full_cycle(store.as_ref(), &tier_index, false, None, cancel_rx)
             .await
             .unwrap();
         assert!(!results.is_empty());
@@ -2131,11 +2331,14 @@ mod tests {
             })
         });
 
+        // Create a cancel signal that never cancels
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let result = engine
-            .run_rem(store.as_ref(), &tier_index, Some(&llm))
+            .run_rem(store.as_ref(), &tier_index, Some(&llm), cancel_rx)
             .await
             .unwrap();
         assert_eq!(result.phase, DreamPhase::Rem);
+        assert!(!result.cancelled);
         assert!(result.peak_memory_mb.is_some());
         assert!(result.llm_tokens_input > 0);
         assert!(result.llm_tokens_output > 0);
@@ -2160,6 +2363,7 @@ mod tests {
             llm_tokens_output: 50,
             summary: "test".to_string(),
             errors: vec![],
+            cancelled: false,
         };
         metrics.record(&result, true);
         assert_eq!(metrics.dreams_total.load(Ordering::Relaxed), 1);

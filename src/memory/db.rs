@@ -24,6 +24,7 @@ use super::{
 pub struct DatabaseStore {
     pool: Pool<Sqlite>,
     batch_size: usize,
+    expected_embedding_dim: Option<usize>,
 }
 
 /// Raw database row values for constructing a `Memory`.
@@ -87,7 +88,7 @@ impl DatabaseStore {
                 details: e.to_string(),
             })?;
 
-        let store = Self { pool, batch_size: 100 };
+        let store = Self { pool, batch_size: 100, expected_embedding_dim: None };
 
         store.optimize().await?;
         store.init_schema().await?;
@@ -95,6 +96,12 @@ impl DatabaseStore {
 
         info!("Unified database store initialized");
         Ok(store)
+    }
+
+    /// Set expected embedding dimension for validation
+    pub fn with_embedding_dimension(mut self, dimension: usize) -> Self {
+        self.expected_embedding_dim = Some(dimension);
+        self
     }
 
     /// Create an in-memory store (for testing)
@@ -107,7 +114,7 @@ impl DatabaseStore {
     pub async fn new_with_pool(pool: Pool<Sqlite>) -> crate::Result<Self> {
         info!("Initializing unified database store from existing pool");
 
-        let store = Self { pool, batch_size: 100 };
+        let store = Self { pool, batch_size: 100, expected_embedding_dim: None };
 
         store.optimize().await?;
         store.init_schema().await?;
@@ -532,6 +539,15 @@ impl MemoryStore for DatabaseStore {
     async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
         debug!("Storing memory: {}", memory.id);
 
+        if let (Some(dim), Some(emb)) = (self.expected_embedding_dim, &memory.embedding) {
+            if emb.len() != dim {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Embedding dimension mismatch: expected {}, got {}",
+                    dim, emb.len()
+                )));
+            }
+        }
+
         let embedding_bytes = memory
             .embedding
             .as_ref()
@@ -797,6 +813,15 @@ impl MemoryStore for DatabaseStore {
             return Err(crate::error::SyscityError::NotFound {
                 resource: format!("Memory with id {} has expired", memory.id),
             });
+        }
+
+        if let (Some(dim), Some(emb)) = (self.expected_embedding_dim, &memory.embedding) {
+            if emb.len() != dim {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Embedding dimension mismatch: expected {}, got {}",
+                    dim, emb.len()
+                )));
+            }
         }
 
         let embedding_bytes = memory

@@ -39,7 +39,8 @@ pub const ARCHIVAL_DIR_NAME: &str = "archival";
 /// Filename for the side index (uncompressed JSONL, one entry per line).
 const INDEX_FILE_NAME: &str = "_index.jsonl";
 
-/// Side-index entry mapping a memory id to its location in a shard.
+/// Side-index entry mapping a memory id to its location in a shard,
+/// plus filterable metadata to avoid loading all shards for searches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IndexEntry {
     /// Memory id (string form of `MemoryId`).
@@ -50,6 +51,14 @@ struct IndexEntry {
     offset: u64,
     /// Byte length of this entry's gzip member.
     len: u64,
+    /// User id for filtering (avoids loading shard if mismatch).
+    user_id: String,
+    /// Memory type for filtering (avoids loading shard if mismatch).
+    memory_type: String,
+    /// Creation time for reference.
+    created_at_secs: i64,
+    /// Expiration time for filtering (None = never expires).
+    expires_at_secs: Option<i64>,
 }
 
 /// Gzip-compressed JSONL memory store for cold archival storage.
@@ -229,8 +238,25 @@ impl CompressedJsonlStore {
         Ok(())
     }
 
+    /// Convert SystemTime to seconds since Unix epoch for index storage.
+    fn system_time_to_secs(t: std::time::SystemTime) -> i64 {
+        t.duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    }
+
+    /// Check if a memory (represented by index entry) is expired.
+    fn is_expired(entry: &IndexEntry) -> bool {
+        if let Some(exp_secs) = entry.expires_at_secs {
+            let now_secs = Self::system_time_to_secs(std::time::SystemTime::now());
+            now_secs > exp_secs
+        } else {
+            false
+        }
+    }
+
     /// Rebuild the index by scanning every shard, decompressing each member,
-    /// and recording (id, shard, offset, len) for each entry.
+    /// and recording (id, shard, offset, len) for each entry, plus filterable metadata.
     ///
     /// Used when the index file is missing (legacy data) or after a rewrite.
     /// The rebuilt index is written atomically to `_index.jsonl`.
@@ -270,6 +296,10 @@ impl CompressedJsonlStore {
                                 shard: shard_name.clone(),
                                 offset,
                                 len,
+                                user_id: mem.user_id.clone(),
+                                memory_type: mem.memory_type.clone(),
+                                created_at_secs: Self::system_time_to_secs(mem.created_at),
+                                expires_at_secs: mem.expires_at.map(Self::system_time_to_secs),
                             },
                         );
                     }
@@ -434,6 +464,10 @@ impl CompressedJsonlStore {
             shard: shard_name,
             offset,
             len,
+            user_id: memory.user_id.clone(),
+            memory_type: memory.memory_type.clone(),
+            created_at_secs: Self::system_time_to_secs(memory.created_at),
+            expires_at_secs: memory.expires_at.map(Self::system_time_to_secs),
         })
         .await?;
 
@@ -599,6 +633,10 @@ impl CompressedJsonlStore {
                         shard: shard_name.clone(),
                         offset,
                         len,
+                        user_id: m.user_id.clone(),
+                        memory_type: m.memory_type.clone(),
+                        created_at_secs: Self::system_time_to_secs(m.created_at),
+                        expires_at_secs: m.expires_at.map(Self::system_time_to_secs),
                     },
                 );
             }
@@ -795,23 +833,72 @@ impl MemoryStore for CompressedJsonlStore {
         Ok(removed > 0)
     }
 
+    /// Search for memories using the index to avoid loading all shards.
     async fn search(&self, query: MemoryQuery) -> crate::Result<Vec<Memory>> {
-        let all = self.load_all().await?;
-        let mut results: Vec<Memory> = all
-            .into_iter()
-            .filter(|m| {
+        // First filter index entries in memory to avoid loading irrelevant shards.
+        let index = self.load_index().await?;
+        let filtered_index_entries: Vec<&IndexEntry> = index
+            .values()
+            .filter(|entry| {
+                // Apply filters that use index metadata first.
                 if let Some(ref user_id) = query.user_id {
-                    if m.user_id != *user_id {
-                        return false;
-                    }
-                }
-                if let Some(ref conv_id) = query.conversation_id {
-                    if m.conversation_id.as_ref() != Some(conv_id) {
+                    if entry.user_id != *user_id {
                         return false;
                     }
                 }
                 if let Some(ref mem_type) = query.memory_type {
-                    if m.memory_type != *mem_type {
+                    if entry.memory_type != *mem_type {
+                        return false;
+                    }
+                }
+                if !query.include_expired && Self::is_expired(entry) {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        // Group entries by shard to load each shard at most once.
+        let mut by_shard: HashMap<&str, Vec<&IndexEntry>> = HashMap::new();
+        for entry in filtered_index_entries {
+            by_shard.entry(&entry.shard).or_default().push(entry);
+        }
+
+        // Load only relevant entries from relevant shards.
+        let mut candidates = Vec::new();
+        for (shard_name, entries) in by_shard {
+            let shard_path = self.dir.join(shard_name);
+            if !shard_path.exists() {
+                continue;
+            }
+            for entry in entries {
+                match Self::read_range(&shard_path, entry.offset, entry.len).await {
+                    Ok(bytes) => {
+                        if let Ok(lines) = Self::decompress_bytes(bytes).await {
+                            if let Some(line) = lines.first() {
+                                if let Ok(mem) = serde_json::from_str::<Memory>(line) {
+                                    candidates.push(mem);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to read archival entry {} from {}: {}",
+                            entry.id, shard_name, e
+                        );
+                    }
+                }
+            }
+        }
+
+        // Apply remaining filters (content_query and conversation_id, which aren't in index),
+        // plus double-check include_expired in case system time changed.
+        let mut results: Vec<Memory> = candidates
+            .into_iter()
+            .filter(|m| {
+                if let Some(ref conv_id) = query.conversation_id {
+                    if m.conversation_id.as_ref() != Some(conv_id) {
                         return false;
                     }
                 }
@@ -827,6 +914,7 @@ impl MemoryStore for CompressedJsonlStore {
             })
             .collect();
 
+        // Sort by importance descending, apply offset/limit.
         results.sort_by(|a, b| {
             b.importance_score
                 .partial_cmp(&a.importance_score)

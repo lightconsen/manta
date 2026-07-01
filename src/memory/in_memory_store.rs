@@ -241,28 +241,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_in_memory_cleanup_expired() {
-        let store = InMemoryStore::new();
+    async fn test_in_memory_store_respects_capacity() {
+        let store = InMemoryStore::with_capacity(3);
+
+        // Insert memories with strictly increasing importance scores.
+        for (idx, score) in [0.1_f32, 0.3, 0.5, 0.7, 0.9].iter().enumerate() {
+            let mem = Memory::new("u1", format!("content-{}", idx), "fact")
+                .with_importance_score(*score);
+            store.store(mem).await.unwrap();
+        }
+
+        assert_eq!(store.len().await, 3);
+
+        let remaining: Vec<f32> = store
+            .search(MemoryQuery::new().for_user("u1").limit(10))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| m.importance_score)
+            .collect();
+        assert_eq!(remaining, vec![0.9_f32, 0.7, 0.5]);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_capacity_boundary() {
+        let store = InMemoryStore::with_capacity(2);
+
+        for (idx, score) in [0.4_f32, 0.6].iter().enumerate() {
+            let mem = Memory::new("u1", format!("content-{}", idx), "fact")
+                .with_importance_score(*score);
+            store.store(mem).await.unwrap();
+        }
+        assert_eq!(store.len().await, 2);
+
+        // Adding a third memory should evict the lowest-importance entry.
         store
-            .store(Memory::new("u1", "old", "fact").with_ttl(1))
+            .store(
+                Memory::new("u1", "content-2", "fact").with_importance_score(0.8),
+            )
             .await
             .unwrap();
-        store
-            .store(Memory::new("u1", "new", "fact").with_ttl(3600))
+        assert_eq!(store.len().await, 2);
+
+        let remaining: Vec<f32> = store
+            .search(MemoryQuery::new().for_user("u1").limit(10))
             .await
-            .unwrap();
-
-        // Should not be expired yet
-        let stats = store.stats().await.unwrap();
-        assert_eq!(stats.total_count, 2);
-
-        // Wait for first to expire
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        let removed = store.cleanup_expired().await.unwrap();
-        assert_eq!(removed, 1);
-
-        let stats = store.stats().await.unwrap();
-        assert_eq!(stats.total_count, 1);
+            .unwrap()
+            .into_iter()
+            .map(|m| m.importance_score)
+            .collect();
+        assert_eq!(remaining, vec![0.8_f32, 0.6]);
     }
 }

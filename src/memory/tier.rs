@@ -10,10 +10,12 @@
 //! and age. Each tier has capacity limits and retention rules.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tokio::fs;
+use tracing::{info, warn};
 
 use super::effectiveness::{EffectivenessConfig, EffectivenessStats};
 
@@ -331,6 +333,9 @@ impl TierEvaluator {
     }
 }
 
+/// On-disk tier index file name.
+pub const TIER_INDEX_FILE_NAME: &str = "tier_index.json";
+
 /// In-memory tier index for fast tier-based queries.
 #[derive(Debug, Default)]
 pub struct TierIndex {
@@ -342,6 +347,75 @@ impl TierIndex {
     /// Create a new empty tier index.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Persist the index to `path` atomically (temp file + rename).
+    pub async fn save(&self, path: impl AsRef<Path>) -> crate::Result<()> {
+        let path = path.as_ref();
+        let serialized = {
+            let guard = self.read_guard();
+            serde_json::to_vec_pretty(&*guard).map_err(|e| {
+                crate::error::SyscityError::Storage {
+                    context: "Failed to serialize tier index".to_string(),
+                    details: e.to_string(),
+                }
+            })?
+        };
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await.map_err(|e| {
+                crate::error::SyscityError::Storage {
+                    context: format!("Failed to create tier index directory: {:?}", parent),
+                    details: e.to_string(),
+                }
+            })?;
+        }
+
+        let temp_path = path.with_extension("json.tmp");
+        fs::write(&temp_path, serialized).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to write tier index temp file: {:?}", temp_path),
+                details: e.to_string(),
+            }
+        })?;
+
+        fs::rename(&temp_path, path).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to rename tier index file to {:?}", path),
+                details: e.to_string(),
+            }
+        })?;
+
+        info!("Persisted tier index to {:?}", path);
+        Ok(())
+    }
+
+    /// Load the index from `path`. Returns an empty index if the file does not exist.
+    pub fn load(path: impl AsRef<Path>) -> crate::Result<Self> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Ok(Self::new());
+        }
+
+        let bytes = std::fs::read(path).map_err(|e| crate::error::SyscityError::Storage {
+            context: format!("Failed to read tier index: {:?}", path),
+            details: e.to_string(),
+        })?;
+
+        if bytes.is_empty() {
+            return Ok(Self::new());
+        }
+
+        let entries: HashMap<String, TieredMemory> =
+            serde_json::from_slice(&bytes).map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to deserialize tier index: {:?}", path),
+                details: e.to_string(),
+            })?;
+
+        info!("Loaded tier index with {} entries from {:?}", entries.len(), path);
+        Ok(Self {
+            entries: std::sync::RwLock::new(entries),
+        })
     }
 
     fn read_guard(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, TieredMemory>> {
@@ -443,6 +517,8 @@ impl TierIndex {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::tempdir;
+
     use super::*;
 
     #[test]
@@ -619,5 +695,32 @@ mod tests {
 
         let long_term_ids = index.ids_in_tier(MemoryTier::LongTerm);
         assert_eq!(long_term_ids.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_tier_index_save_and_load_roundtrip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(TIER_INDEX_FILE_NAME);
+
+        let index = TierIndex::new();
+        index.insert("m1", MemoryTier::ShortTerm);
+        index.insert("m2", MemoryTier::LongTerm);
+        index.record_access("m1");
+
+        index.save(&path).await.unwrap();
+        assert!(path.exists());
+
+        let loaded = TierIndex::load(&path).unwrap();
+        assert_eq!(loaded.get_tier("m1"), Some(MemoryTier::ShortTerm));
+        assert_eq!(loaded.get_tier("m2"), Some(MemoryTier::LongTerm));
+        assert_eq!(loaded.get("m1").unwrap().access_count, 1);
+    }
+
+    #[test]
+    fn test_tier_index_load_missing_returns_empty() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(TIER_INDEX_FILE_NAME);
+        let index = TierIndex::load(&path).unwrap();
+        assert!(index.is_empty());
     }
 }

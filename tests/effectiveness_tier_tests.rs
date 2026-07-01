@@ -340,3 +340,150 @@ async fn effectiveness_data_consistency_across_backends() {
     let found = results.iter().any(|m| m.id.0 == id.0);
     assert!(found, "search should still find migrated memory");
 }
+
+#[tokio::test]
+async fn tiered_store_survives_process_restart() {
+    let temp_dir = std::env::temp_dir().join(format!("syscity_tier_crash_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    // Create some memories in persistent tiers (Working tier uses InMemoryStore and won't persist)
+    let memory_ids = {
+        let store = TieredStore::new(&temp_dir).await.unwrap();
+
+        // ShortTerm tier (persistent)
+        let mem1 = Memory::new("u1", "Should be in ShortTerm", "fact").with_importance_score(0.3);
+        let id1 = store.store(mem1).await.unwrap();
+
+        // ShortTerm tier (another)
+        let mem2 = Memory::new("u1", "Should also be in ShortTerm", "fact").with_importance_score(0.5);
+        let id2 = store.store(mem2).await.unwrap();
+
+        // LongTerm tier
+        let mem3 = Memory::new("u1", "Should be in LongTerm", "fact").with_importance_score(0.8);
+        let id3 = store.store(mem3).await.unwrap();
+
+        // LongTerm tier (another)
+        let mem4 = Memory::new("u1", "Should also be in LongTerm", "fact").with_importance_score(0.9);
+        let id4 = store.store(mem4).await.unwrap();
+
+        store.close().await.unwrap();
+
+        (id1, id2, id3, id4)
+    };
+
+    // Simulate process restart: create a new store instance with the same base directory
+    let store2 = TieredStore::new(&temp_dir).await.unwrap();
+
+    // Verify all memories are retrievable
+    let fetched1 = store2.get(&memory_ids.0).await.unwrap().unwrap();
+    assert_eq!(fetched1.content, "Should be in ShortTerm");
+
+    let fetched2 = store2.get(&memory_ids.1).await.unwrap().unwrap();
+    assert_eq!(fetched2.content, "Should also be in ShortTerm");
+
+    let fetched3 = store2.get(&memory_ids.2).await.unwrap().unwrap();
+    assert_eq!(fetched3.content, "Should be in LongTerm");
+
+    let fetched4 = store2.get(&memory_ids.3).await.unwrap().unwrap();
+    assert_eq!(fetched4.content, "Should also be in LongTerm");
+
+    // Verify search still works
+    let results = store2
+        .search(syscity::memory::MemoryQuery::new().for_user("u1").limit(10))
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 4, "search should find all 4 memories");
+
+    // Cleanup
+    store2.close().await.unwrap();
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn tiered_store_recovers_from_crash_duplicates() {
+    let temp_dir = std::env::temp_dir().join(format!("syscity_tier_crash2_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    // First, create a store with a memory in ShortTerm
+    let id = {
+        let store = TieredStore::new(&temp_dir).await.unwrap();
+
+        // Store in ShortTerm
+        let mem = Memory::new("u1", "Memory that gets duplicated", "fact").with_importance_score(0.4);
+        let id = store.store(mem).await.unwrap();
+
+        store.close().await.unwrap();
+        id
+    };
+
+    // Now, let's create a new store, get the memory, and manually store it in LongTerm too using the DatabaseStore directly
+    let stored_mem = {
+        let store2 = TieredStore::new(&temp_dir).await.unwrap();
+        let mem = store2.get(&id).await.unwrap().unwrap();
+
+        // Create a new DatabaseStore for long_term.db directly and store it there too
+        let long_term_db_path = temp_dir.join("long_term.db");
+        let long_term_store = syscity::memory::DatabaseStore::new(&format!("sqlite://{}", long_term_db_path.to_string_lossy())).await.unwrap();
+        long_term_store.store(mem.clone()).await.unwrap();
+
+        store2.close().await.unwrap();
+        mem
+    };
+
+    // Now create a new store instance — it should recover from the duplicate when migrate_memory is called
+    let store3 = TieredStore::new(&temp_dir).await.unwrap();
+
+    // Verify memory is retrievable
+    let fetched = store3.get(&id).await.unwrap().unwrap();
+    assert_eq!(fetched.content, "Memory that gets duplicated");
+
+    // Now explicitly migrate it to trigger the idempotent recovery path
+    store3.migrate_memory(&stored_mem, MemoryTier::LongTerm).await.unwrap();
+
+    // Verify it's now in LongTerm
+    let current_tier = store3.tier_index().get_tier(&id.0).unwrap();
+    assert_eq!(current_tier, MemoryTier::LongTerm, "memory should be in LongTerm");
+
+    // Cleanup
+    store3.close().await.unwrap();
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn tiered_store_recovers_missing_index() {
+    let temp_dir = std::env::temp_dir().join(format!("syscity_tier_crash3_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    // Store a memory, then delete the index to simulate index loss
+    let id = {
+        let store = TieredStore::new(&temp_dir).await.unwrap();
+
+        let mem = Memory::new("u1", "Memory that survives index loss", "fact").with_importance_score(0.5);
+        let id = store.store(mem).await.unwrap();
+
+        store.close().await.unwrap();
+
+        // Delete the index file
+        std::fs::remove_file(&temp_dir.join(syscity::memory::TIER_INDEX_FILE_NAME)).unwrap();
+
+        id
+    };
+
+    // Create new store instance - it should fall back to empty index but still find the memory via scan
+    let store2 = TieredStore::new(&temp_dir).await.unwrap();
+
+    // Memory should still be retrievable (via fallback scan when index misses)
+    let fetched = store2.get(&id).await.unwrap().unwrap();
+    assert_eq!(fetched.content, "Memory that survives index loss");
+
+    // And after get(), index should be updated
+    assert_eq!(
+        store2.tier_index().get_tier(&id.0),
+        Some(MemoryTier::ShortTerm),
+        "index should be rebuilt after get()"
+    );
+
+    // Cleanup
+    store2.close().await.unwrap();
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

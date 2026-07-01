@@ -80,6 +80,8 @@ struct Entry {
     fts_score: Option<f32>,
     content: String,
     citation: String,
+    vector_source_id: Option<String>,
+    fts_message_id: Option<String>,
 }
 
 // ── Normalisation
@@ -113,11 +115,28 @@ fn normalise(pairs: &[(f32, String)]) -> HashMap<String, f32> {
 
 /// SHA-256 fingerprint of `text` used for dedup.
 ///
-/// The entire string is hashed so that two long texts sharing an early prefix
-/// do not collide.
-fn content_key(text: &str) -> String {
-    let hash = Sha256::digest(text.as_bytes());
+/// The text is normalised (lowercase, whitespace collapsed) before hashing so
+/// that semantically identical results that differ only in case or spacing are
+/// merged. The original text is preserved in the returned result for display.
+fn normalized_content_key(text: &str) -> String {
+    let normalized = text
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let hash = Sha256::digest(normalized.as_bytes());
     format!("{:x}", hash)
+}
+
+/// Build a source-id based key for secondary deduplication when a vector chunk
+/// and an FTS session message originate from the same underlying document.
+fn _source_match_key(source_id: Option<&str>, message_id: Option<&str>) -> Option<String> {
+    match (source_id, message_id) {
+        (Some(s), Some(m)) if !s.is_empty() && !m.is_empty() && s == m => {
+            Some(format!("src:{}", s))
+        }
+        _ => None,
+    }
 }
 
 // ── Public search function
@@ -186,12 +205,12 @@ pub async fn hybrid_search(
     // ── Collect raw scores ────────────────────────────────────────────────────
     let vector_pairs: Vec<(f32, String)> = vector_chunks
         .iter()
-        .map(|(chunk, score)| (*score, content_key(&chunk.text)))
+        .map(|(chunk, score)| (*score, normalized_content_key(&chunk.text)))
         .collect();
 
     let fts_pairs: Vec<(f32, String)> = fts_results
         .iter()
-        .map(|r| (r.score as f32, content_key(&r.content)))
+        .map(|r| (r.score as f32, normalized_content_key(&r.content)))
         .collect();
 
     // ── Normalise independently ───────────────────────────────────────────────
@@ -202,24 +221,61 @@ pub async fn hybrid_search(
     let mut entries: HashMap<String, Entry> = HashMap::new();
 
     for (chunk, _raw_score) in vector_chunks {
-        let key = content_key(&chunk.text);
+        let key = normalized_content_key(&chunk.text);
         let norm = *vector_norm.get(&key).unwrap_or(&0.0);
         let e = entries.entry(key.clone()).or_default();
         e.vector_score = Some(norm);
         if e.content.is_empty() {
             e.content = chunk.text.clone();
             e.citation = format!("vector:{}", &chunk.id);
+            e.vector_source_id = Some(chunk.source_id.clone());
         }
     }
 
     for r in fts_results {
-        let key = content_key(&r.content);
+        let key = normalized_content_key(&r.content);
         let norm = *fts_norm.get(&key).unwrap_or(&0.0);
         let e = entries.entry(key.clone()).or_default();
         e.fts_score = Some(norm);
         if e.content.is_empty() {
             e.content = r.content.clone();
             e.citation = format!("session:{}#{}", r.conversation_id, r.message_id);
+            e.fts_message_id = Some(r.message_id.clone());
+        }
+    }
+
+    // ── Secondary source-id deduplication ─────────────────────────────────────
+    // If a vector chunk and an FTS result share the same source/message id,
+    // merge the FTS entry into the vector entry even if their text differs.
+    let mut source_key_to_content_key: HashMap<String, String> = HashMap::new();
+    for (content_key, entry) in &entries {
+        if let Some(ref src) = entry.vector_source_id {
+            source_key_to_content_key.insert(format!("src:{}", src), content_key.clone());
+        }
+    }
+    let mut merges: Vec<(String, String)> = Vec::new(); // (fts_content_key, vector_content_key)
+    for (content_key, entry) in &entries {
+        if entry.vector_score.is_some() {
+            continue; // only merge FTS-only entries
+        }
+        if let Some(ref msg_id) = entry.fts_message_id {
+            if let Some(vector_key) = source_key_to_content_key.get(&format!("src:{}", msg_id)) {
+                if vector_key != content_key {
+                    merges.push((content_key.clone(), vector_key.clone()));
+                }
+            }
+        }
+    }
+    for (fts_key, vector_key) in merges {
+        if let Some(fts_entry) = entries.remove(&fts_key) {
+            let vector_entry = entries.get_mut(&vector_key).unwrap();
+            if vector_entry.fts_score.is_none() {
+                vector_entry.fts_score = fts_entry.fts_score;
+            } else if let Some(fts_score) = fts_entry.fts_score {
+                if fts_score > vector_entry.fts_score.unwrap_or(0.0) {
+                    vector_entry.fts_score = Some(fts_score);
+                }
+            }
         }
     }
 
@@ -527,15 +583,15 @@ mod tests {
 
     #[test]
     fn test_content_key_is_deterministic() {
-        let k1 = content_key("hello world");
-        let k2 = content_key("hello world");
+        let k1 = normalized_content_key("hello world");
+        let k2 = normalized_content_key("hello world");
         assert_eq!(k1, k2);
     }
 
     #[test]
     fn test_content_key_differs_for_different_text() {
-        let k1 = content_key("hello");
-        let k2 = content_key("world");
+        let k1 = normalized_content_key("hello");
+        let k2 = normalized_content_key("world");
         assert_ne!(k1, k2);
     }
 
@@ -545,10 +601,17 @@ mod tests {
         let a = format!("{}-alpha", prefix);
         let b = format!("{}-beta", prefix);
         assert_ne!(
-            content_key(&a),
-            content_key(&b),
+            normalized_content_key(&a),
+            normalized_content_key(&b),
             "two strings with identical 512-char prefixes must not share a content key"
         );
+    }
+
+    #[test]
+    fn test_content_key_normalizes_case_and_whitespace() {
+        let k1 = normalized_content_key("Hello   World");
+        let k2 = normalized_content_key("hello world");
+        assert_eq!(k1, k2, "case and whitespace differences should produce the same key");
     }
 
     #[test]

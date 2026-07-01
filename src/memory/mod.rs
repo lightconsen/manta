@@ -82,6 +82,7 @@ pub use sqlite::SqliteMemoryStore;
 pub use sqlite_vec_store::SqliteVecStore;
 pub use tier::{
     MemoryTier, TierAction, TierConfig, TierEvaluator, TierIndex, TierSystemConfig, TieredMemory,
+    TIER_INDEX_FILE_NAME,
 };
 pub use tiered_store::TieredStore;
 pub use vector::{
