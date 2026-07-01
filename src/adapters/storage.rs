@@ -14,10 +14,8 @@ use tracing::warn;
 
 use crate::core::models::{Entity, Id};
 use crate::error::SyscityError;
-// Re-export memory types for unified storage
-pub use crate::memory::{
-    ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
-};
+// Re-export ChatMessage for users of the adapters crate
+pub use crate::memory::ChatMessage;
 
 /// Errors that can occur during storage operations
 #[derive(Error, Debug)]
@@ -630,18 +628,62 @@ impl Storage for SqliteStorage {
         conversation_id: &str,
         limit: usize,
     ) -> Result<Vec<ChatMessage>, StorageError> {
-        // Delegate to ChatHistoryStore implementation
-        ChatHistoryStore::get_conversation_history(self, conversation_id, limit)
-            .await
-            .map_err(|e| StorageError::Backend(e.to_string()))
+        let rows = sqlx::query(
+            r#"
+            SELECT id, conversation_id, user_id, role, content, created_at, metadata
+            FROM chat_messages
+            WHERE conversation_id = ?1
+            ORDER BY created_at DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::Backend(format!("Failed to get conversation history: {}", e))
+        })?;
+
+        let messages: Vec<ChatMessage> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let created_at_secs: i64 = row.get("created_at");
+                let created_at = secs_to_system_time(created_at_secs)?;
+                let metadata: Option<String> = row.get("metadata");
+                let metadata = metadata.and_then(|m| serde_json::from_str(&m).ok());
+                Some(ChatMessage {
+                    id: row.get("id"),
+                    conversation_id: row.get("conversation_id"),
+                    user_id: row.get("user_id"),
+                    role: row.get("role"),
+                    content: row.get("content"),
+                    created_at,
+                    metadata,
+                })
+            })
+            .rev()
+            .collect();
+
+        Ok(messages)
     }
 
     /// Override to provide actual last conversation lookup from SQLite
     async fn get_last_conversation(&self, user_id: &str) -> Result<Option<String>, StorageError> {
-        // Delegate to ChatHistoryStore implementation
-        ChatHistoryStore::get_last_conversation(self, user_id)
-            .await
-            .map_err(|e| StorageError::Backend(e.to_string()))
+        let row: Option<(String,)> = sqlx::query_as(
+            r#"
+            SELECT conversation_id FROM chat_messages
+            WHERE user_id = ?1
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        Ok(row.map(|r| r.0))
     }
 
     /// Override to provide actual conversation list from SQLite
@@ -650,20 +692,36 @@ impl Storage for SqliteStorage {
         user_id: &str,
         limit: usize,
     ) -> Result<Vec<String>, StorageError> {
-        // Delegate to ChatHistoryStore implementation
-        ChatHistoryStore::get_user_conversations(self, user_id, limit)
-            .await
-            .map_err(|e| StorageError::Backend(e.to_string()))
+        let rows: Vec<(String,)> = sqlx::query_as(
+            r#"
+            SELECT conversation_id
+            FROM chat_messages
+            WHERE user_id = ?1
+            GROUP BY conversation_id
+            ORDER BY MAX(created_at) DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(user_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|r| r.0).collect())
     }
 }
 
-// ============== UNIFIED STORAGE TRAIT IMPLEMENTATIONS ==============
-
+// =============================================================================
 // Helper functions for serialization
+// =============================================================================
+
+#[allow(dead_code)]
 fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
     embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
 
+#[allow(dead_code)]
 fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(4)
@@ -683,8 +741,7 @@ fn rfc3339_to_system_time(s: &str) -> Option<std::time::SystemTime> {
         .map(|dt| dt.with_timezone(&chrono::Utc).into())
 }
 
-// Helper functions for INTEGER timestamp (Unix epoch seconds) - compatible with
-// db.rs
+#[allow(dead_code)]
 fn system_time_to_secs(time: std::time::SystemTime) -> i64 {
     time.duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
@@ -699,402 +756,9 @@ fn secs_to_system_time(secs: i64) -> Option<std::time::SystemTime> {
     }
 }
 
-#[async_trait]
-impl ChatHistoryStore for SqliteStorage {
-    async fn store_message(&self, message: ChatMessage) -> crate::Result<()> {
-        let metadata_json = message
-            .metadata
-            .as_ref()
-            .map(|m| serde_json::to_string(m).unwrap_or_default())
-            .unwrap_or_default();
-
-        sqlx::query(
-            r#"
-            INSERT INTO chat_messages
-            (id, conversation_id, user_id, role, content, created_at, metadata)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            "#,
-        )
-        .bind(&message.id)
-        .bind(&message.conversation_id)
-        .bind(&message.user_id)
-        .bind(&message.role)
-        .bind(&message.content)
-        .bind(system_time_to_secs(message.created_at))
-        .bind(metadata_json)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Failed to store chat message".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
-
-        Ok(())
-    }
-
-    async fn get_conversation_history(
-        &self,
-        conversation_id: &str,
-        limit: usize,
-    ) -> crate::Result<Vec<ChatMessage>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, conversation_id, user_id, role, content, created_at, metadata
-            FROM chat_messages
-            WHERE conversation_id = ?1
-            ORDER BY created_at DESC
-            LIMIT ?2
-            "#,
-        )
-        .bind(conversation_id)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Failed to get conversation history".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
-
-        let messages: Vec<ChatMessage> = rows
-            .into_iter()
-            .filter_map(|row| {
-                let created_at_secs: i64 = row.get("created_at");
-                let created_at = secs_to_system_time(created_at_secs)?;
-
-                let metadata: Option<String> = row.get("metadata");
-                let metadata = metadata.and_then(|m| serde_json::from_str(&m).ok());
-
-                Some(ChatMessage {
-                    id: row.get("id"),
-                    conversation_id: row.get("conversation_id"),
-                    user_id: row.get("user_id"),
-                    role: row.get("role"),
-                    content: row.get("content"),
-                    created_at,
-                    metadata,
-                })
-            })
-            .rev()  // Reverse to get chronological order
-            .collect();
-
-        Ok(messages)
-    }
-
-    async fn get_user_conversations(
-        &self,
-        user_id: &str,
-        limit: usize,
-    ) -> crate::Result<Vec<String>> {
-        // Use GROUP BY to get each conversation once, ordered by most recent
-        // message
-        let rows = sqlx::query(
-            r#"
-            SELECT conversation_id
-            FROM chat_messages
-            WHERE user_id = ?1
-            GROUP BY conversation_id
-            ORDER BY MAX(created_at) DESC
-            LIMIT ?2
-            "#,
-        )
-        .bind(user_id)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Failed to get user conversations".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
-
-        let conversations: Vec<String> = rows
-            .into_iter()
-            .map(|row| row.get("conversation_id"))
-            .collect();
-
-        Ok(conversations)
-    }
-
-    async fn delete_conversation(&self, conversation_id: &str) -> crate::Result<()> {
-        sqlx::query("DELETE FROM chat_messages WHERE conversation_id = ?1")
-            .bind(conversation_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: "Failed to delete conversation".to_string(),
-                cause: Some(Box::new(e)),
-            })?;
-        Ok(())
-    }
-
-    async fn get_last_conversation(&self, user_id: &str) -> crate::Result<Option<String>> {
-        let row = sqlx::query(
-            r#"
-            SELECT conversation_id FROM chat_messages
-            WHERE user_id = ?1
-            ORDER BY created_at DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Failed to get last conversation".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
-
-        Ok(row.map(|r| r.get("conversation_id")))
-    }
-}
-
-#[async_trait]
-impl MemoryStore for SqliteStorage {
-    async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
-        let metadata_json = memory
-            .metadata
-            .as_ref()
-            .map(|m| serde_json::to_string(m).unwrap_or_default())
-            .unwrap_or_default();
-
-        let embedding_bytes = memory.embedding.as_ref().map(|e| serialize_embedding(e));
-
-        let expires_at = memory.expires_at.map(system_time_to_secs);
-
-        sqlx::query(
-            r#"
-            INSERT OR REPLACE INTO memories
-            (id, user_id, conversation_id, content, memory_type, embedding, created_at, expires_at, metadata, importance_score, source)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-            "#,
-        )
-        .bind(memory.id.to_string())
-        .bind(&memory.user_id)
-        .bind(&memory.conversation_id)
-        .bind(&memory.content)
-        .bind(&memory.memory_type)
-        .bind(embedding_bytes)
-        .bind(system_time_to_secs(memory.created_at))
-        .bind(expires_at)
-        .bind(metadata_json)
-        .bind(memory.importance_score)
-        .bind(&memory.source)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Failed to store memory".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
-
-        Ok(memory.id)
-    }
-
-    async fn get(&self, id: &MemoryId) -> crate::Result<Option<Memory>> {
-        let row = sqlx::query("SELECT * FROM memories WHERE id = ?1")
-            .bind(id.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: "Failed to get memory".to_string(),
-                cause: Some(Box::new(e)),
-            })?;
-
-        match row {
-            Some(row) => {
-                let created_at_secs: i64 = row.get("created_at");
-                let created_at = secs_to_system_time(created_at_secs).ok_or_else(|| {
-                    crate::error::SyscityError::Internal("Invalid created_at".to_string())
-                })?;
-
-                let expires_at = row
-                    .get::<Option<i64>, _>("expires_at")
-                    .and_then(secs_to_system_time);
-
-                let embedding = row
-                    .get::<Option<Vec<u8>>, _>("embedding")
-                    .map(|b| deserialize_embedding(&b));
-
-                let metadata = row
-                    .get::<Option<String>, _>("metadata")
-                    .and_then(|m| serde_json::from_str(&m).ok());
-
-                Ok(Some(Memory {
-                    id: MemoryId::new(row.get::<String, _>("id")),
-                    user_id: row.get("user_id"),
-                    conversation_id: row.get("conversation_id"),
-                    content: row.get("content"),
-                    memory_type: row.get("memory_type"),
-                    embedding,
-                    created_at,
-                    expires_at,
-                    metadata,
-                    importance_score: row.get::<f64, _>("importance_score") as f32,
-                    source: row.get::<String, _>("source"),
-                }))
-            }
-            None => Ok(None),
-        }
-    }
-
-    async fn update(&self, memory: Memory) -> crate::Result<()> {
-        // Use store since it uses INSERT OR REPLACE
-        self.store(memory).await?;
-        Ok(())
-    }
-
-    async fn delete(&self, id: &MemoryId) -> crate::Result<bool> {
-        let result = sqlx::query("DELETE FROM memories WHERE id = ?1")
-            .bind(id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: "Failed to delete memory".to_string(),
-                cause: Some(Box::new(e)),
-            })?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
-    async fn search(&self, query: MemoryQuery) -> crate::Result<Vec<Memory>> {
-        use sqlx::QueryBuilder;
-
-        let mut builder: QueryBuilder<'_, sqlx::Sqlite> =
-            QueryBuilder::new("SELECT * FROM memories WHERE 1=1");
-
-        if let Some(user_id) = &query.user_id {
-            builder.push(" AND user_id = ").push_bind(user_id);
-        }
-
-        if let Some(conversation_id) = &query.conversation_id {
-            builder
-                .push(" AND conversation_id = ")
-                .push_bind(conversation_id);
-        }
-
-        if let Some(memory_type) = &query.memory_type {
-            builder.push(" AND memory_type = ").push_bind(memory_type);
-        }
-
-        if let Some(content_query) = &query.content_query {
-            builder
-                .push(" AND content LIKE ")
-                .push_bind(format!("%{}%", content_query));
-        }
-
-        if !query.include_expired {
-            builder.push(" AND (expires_at IS NULL OR expires_at > UNIXEPOCH())");
-        }
-
-        builder
-            .push(" ORDER BY created_at DESC LIMIT ")
-            .push_bind(query.limit as i64);
-
-        let rows = builder.build().fetch_all(&self.pool).await.map_err(|e| {
-            crate::error::SyscityError::ExternalService {
-                source: "Failed to search memories".to_string(),
-                cause: Some(Box::new(e)),
-            }
-        })?;
-
-        let memories: Vec<Memory> = rows
-            .into_iter()
-            .filter_map(|row| {
-                let created_at_secs: i64 = row.get("created_at");
-                let created_at = secs_to_system_time(created_at_secs)?;
-
-                let expires_at = row
-                    .get::<Option<i64>, _>("expires_at")
-                    .and_then(secs_to_system_time);
-
-                let embedding = row
-                    .get::<Option<Vec<u8>>, _>("embedding")
-                    .map(|b| deserialize_embedding(&b));
-
-                let metadata = row
-                    .get::<Option<String>, _>("metadata")
-                    .and_then(|m| serde_json::from_str(&m).ok());
-
-                Some(Memory {
-                    id: MemoryId::new(row.get::<String, _>("id")),
-                    user_id: row.get("user_id"),
-                    conversation_id: row.get("conversation_id"),
-                    content: row.get("content"),
-                    memory_type: row.get("memory_type"),
-                    embedding,
-                    created_at,
-                    expires_at,
-                    metadata,
-                    importance_score: row.get::<f64, _>("importance_score") as f32,
-                    source: row.get::<String, _>("source"),
-                })
-            })
-            .collect();
-
-        // If semantic search with embedding, sort by similarity
-        if let Some(query_embedding) = query.embedding {
-            let mut scored: Vec<(Memory, f32)> = memories
-                .into_iter()
-                .filter_map(|m| {
-                    m.embedding.clone().map(|e| {
-                        let similarity = crate::memory::cosine_similarity(&query_embedding, &e);
-                        (m, similarity)
-                    })
-                })
-                .collect();
-            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            return Ok(scored.into_iter().map(|(m, _)| m).collect());
-        }
-
-        Ok(memories)
-    }
-
-    async fn cleanup_expired(&self) -> crate::Result<usize> {
-        let now = system_time_to_secs(std::time::SystemTime::now());
-        let result =
-            sqlx::query("DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1")
-                .bind(now)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| crate::error::SyscityError::ExternalService {
-                    source: "Failed to cleanup expired memories".to_string(),
-                    cause: Some(Box::new(e)),
-                })?;
-
-        Ok(result.rows_affected() as usize)
-    }
-
-    async fn stats(&self) -> crate::Result<MemoryStats> {
-        let now = system_time_to_secs(std::time::SystemTime::now());
-        let row = sqlx::query(
-            r#"
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN expires_at IS NOT NULL AND expires_at < ?1 THEN 1 ELSE 0 END) as expired
-            FROM memories
-            "#,
-        )
-        .bind(now)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Failed to get memory stats".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
-
-        let total_count: i64 = row.get("total");
-        let expired_count: i64 = row.get("expired");
-
-        Ok(MemoryStats {
-            total_count: total_count as usize,
-            count_by_type: std::collections::HashMap::new(),
-            expired_count: expired_count as usize,
-        })
-    }
-
-    async fn close(&self) -> crate::Result<()> {
-        self.pool.close().await;
-        Ok(())
-    }
-}
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -347,6 +347,9 @@ impl MemoryManager {
 
         let id = self.store.store(memory.clone()).await?;
 
+        // Invalidate context cache (fix 2.4).
+        self.invalidate_cache().await;
+
         // Register in tier index if enabled
         if let Some(ref tier_index) = self.tier_index {
             if let Some(tiered_store) = self.store.as_tiered_store() {
@@ -661,8 +664,29 @@ impl MemoryManager {
         role: impl Into<String>,
         content: impl Into<String>,
     ) -> crate::Result<()> {
-        let msg = ChatMessage::new(conversation_id, user_id, role, content);
-        self.chat_history.store_message(msg).await
+        let user_id = user_id.into();
+        let conversation_id = conversation_id.into();
+        let role = role.into();
+        let content = content.into();
+        let msg = ChatMessage::new(&conversation_id, &user_id, &role, &content);
+        let msg_id = msg.id.clone();
+        self.chat_history.store_message(msg).await?;
+
+        // Index in session search FTS5 if available (fix 2.3).
+        if let Some(ref ss) = self.session_search {
+            if let Err(e) = ss
+                .index_message(&msg_id, &conversation_id, &user_id, &content, &role)
+                .await
+            {
+                warn!("Failed to index message in session search: {e}");
+            }
+        }
+
+        // Invalidate context cache so the next session_context
+        // picks up the new message (fix 2.4).
+        self.invalidate_cache().await;
+
+        Ok(())
     }
 
     /// Get the last conversation ID for a user.
@@ -682,7 +706,19 @@ impl MemoryManager {
         if let Some(ref tier_index) = self.tier_index {
             tier_index.remove(&id.to_string());
         }
+        // Invalidate context cache (fix 2.4).
+        self.invalidate_cache().await;
         Ok(deleted)
+    }
+
+    // -------------------------------------------------------------------------
+    // Cache invalidation (fix 2.4)
+    // -------------------------------------------------------------------------
+
+    /// Invalidate the context cache so the next call to `session_context` or
+    /// `retrieve` re-fetches from the store rather than serving stale data.
+    async fn invalidate_cache(&self) {
+        *self.context_cache.write().await = None;
     }
 
     /// Compact a session: extract key facts from old messages into semantic
@@ -743,6 +779,10 @@ impl MemoryManager {
 
             self.store.store(marker).await?;
         }
+
+        // Invalidate context cache so the next retrieval accounts for newly
+        // extracted facts (fix 2.4).
+        self.invalidate_cache().await;
 
         let session_key = format!("{}:{}", user_id, conversation_id);
 

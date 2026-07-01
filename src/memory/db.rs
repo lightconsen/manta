@@ -735,10 +735,7 @@ impl MemoryStore for DatabaseStore {
         } else {
             query.limit
         };
-        sql.push_str(&format!(
-            " ORDER BY importance_score DESC, created_at DESC LIMIT {} OFFSET {}",
-            fetch_limit, query.offset
-        ));
+        sql.push_str(" ORDER BY importance_score DESC, created_at DESC LIMIT ? OFFSET ?");
 
         let mut db_query = sqlx::query(&sql);
 
@@ -758,6 +755,8 @@ impl MemoryStore for DatabaseStore {
             let now = Self::system_time_to_secs(SystemTime::now());
             db_query = db_query.bind(now);
         }
+        db_query = db_query.bind(fetch_limit as i64);
+        db_query = db_query.bind(query.offset as i64);
 
         let rows = db_query.fetch_all(&self.pool).await.map_err(|e| {
             crate::error::SyscityError::Storage {

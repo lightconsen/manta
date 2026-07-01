@@ -221,11 +221,21 @@ impl TieredStore {
         }
     }
 
-    /// Search all tiers with an unlimited query, merge, sort, and apply
-    /// the original limit / offset.
+    /// Search all tiers with a bounded per-tier limit. Instead of pulling
+    /// 10_000 rows from every tier (which is unbounded for large stores),
+    /// each tier contributes at most `per_tier` rows.  Results are merged
+    /// and re-sorted by importance, then the original limit/offset is applied.
     async fn search_all_tiers(&self, query: &MemoryQuery) -> crate::Result<Vec<Memory>> {
+        if query.limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Pull enough per tier to cover the requested limit after merging
+        // and re-sorting, but cap each tier to avoid unbounded queries on
+        // large stores.  20 minimum ensures even tiny limits get diversity.
+        let per_tier = (query.limit * 4).max(20).min(2000);
         let mut unlimited = query.clone();
-        unlimited.limit = 10_000;
+        unlimited.limit = per_tier;
         unlimited.offset = 0;
 
         let mut all = Vec::new();
