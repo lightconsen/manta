@@ -1,14 +1,22 @@
 //! Compressed JSONL Store — cold archival memory backend
 //!
 //! Stores memories as gzip-compressed JSONL files on disk.
-//! Optimised for batch-append writes and infrequent reads.
+//! Optimised for append-only writes and infrequent point reads.
 //! Each file is a daily shard: `archival/YYYY-MM-DD.jsonl.gz`.
 //!
-//! # Design trade-offs
-//! - Fast append (lock-free via atomic rename)
-//! - Slow random access (must scan + decompress)
-//! - Compact on disk (~10x vs raw JSON)
-//! - Suitable for Archival tier: rarely accessed, read in bulk
+//! # Design
+//! - **Append-only writes**: each `store()` appends a single self-contained gzip
+//!   member to the current day's shard. No read-modify-write. Concatenated gzip
+//!   members are a valid gzip file per RFC 1952 and read transparently via
+//!   `MultiGzDecoder`.
+//! - **Side index** (`archival/_index.jsonl`): maps `memory_id →
+//!   (shard, byte_offset, byte_len)`. Allows `get()` to seek + decompress a
+//!   single member instead of loading all shards.
+//! - **`update()` / `delete()` / `cleanup_expired`** still trigger a full-shard
+//!   rewrite (each entry becomes its own gzip member) and rebuild the index.
+//!   These operations are rare on cold archival data.
+//! - **`search()` / `stats()`** still walk all shards. Archival full-text search
+//!   is intentionally slow; hybrid search should reach warmer tiers first.
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -16,8 +24,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tokio::sync::Mutex;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::spawn_blocking;
 use tracing::{debug, info, warn};
 
@@ -25,6 +35,22 @@ use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore};
 
 /// Directory name for archival shards.
 pub const ARCHIVAL_DIR_NAME: &str = "archival";
+
+/// Filename for the side index (uncompressed JSONL, one entry per line).
+const INDEX_FILE_NAME: &str = "_index.jsonl";
+
+/// Side-index entry mapping a memory id to its location in a shard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct IndexEntry {
+    /// Memory id (string form of `MemoryId`).
+    id: String,
+    /// Shard file name (e.g. `2026-07-01.jsonl.gz`).
+    shard: String,
+    /// Byte offset within the shard where this entry's gzip member begins.
+    offset: u64,
+    /// Byte length of this entry's gzip member.
+    len: u64,
+}
 
 /// Gzip-compressed JSONL memory store for cold archival storage.
 #[derive(Debug)]
@@ -36,6 +62,8 @@ pub struct CompressedJsonlStore {
     /// Mutex for synchronising write operations (store, update, delete, cleanup).
     /// Prevents concurrent read-modify-write cycles from silently losing data.
     write_lock: Arc<Mutex<()>>,
+    /// In-memory cache of the side index. `None` = not yet loaded.
+    index: Arc<RwLock<Option<HashMap<String, IndexEntry>>>>,
 }
 
 impl Clone for CompressedJsonlStore {
@@ -44,6 +72,7 @@ impl Clone for CompressedJsonlStore {
             dir: self.dir.clone(),
             max_per_shard: self.max_per_shard,
             write_lock: Arc::clone(&self.write_lock),
+            index: Arc::clone(&self.index),
         }
     }
 }
@@ -55,6 +84,7 @@ impl CompressedJsonlStore {
             dir: base_dir.as_ref().join(ARCHIVAL_DIR_NAME),
             max_per_shard: 10_000,
             write_lock: Arc::new(Mutex::new(())),
+            index: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -80,6 +110,10 @@ impl CompressedJsonlStore {
         self.dir.join(format!("{}.jsonl.gz", today))
     }
 
+    fn index_path(&self) -> PathBuf {
+        self.dir.join(INDEX_FILE_NAME)
+    }
+
     /// List all shard files, sorted oldest first.
     async fn list_shards(&self) -> Vec<PathBuf> {
         let mut shards = Vec::new();
@@ -96,81 +130,321 @@ impl CompressedJsonlStore {
         shards
     }
 
-    /// Append a single memory to the current shard.
+    /// Load (or return cached) side index.
+    ///
+    /// If the index file is missing but shards exist (legacy data written before
+    /// the index existed), it is rebuilt by scanning shard contents.
+    async fn load_index(&self) -> crate::Result<HashMap<String, IndexEntry>> {
+        {
+            let guard = self.index.read().await;
+            if let Some(idx) = guard.as_ref() {
+                return Ok(idx.clone());
+            }
+        }
+
+        let idx_path = self.index_path();
+        let map = if idx_path.exists() {
+            let text = fs::read_to_string(&idx_path).await.map_err(|e| {
+                crate::error::SyscityError::Storage {
+                    context: format!("Failed to read archival index: {:?}", idx_path),
+                    details: e.to_string(),
+                }
+            })?;
+            let mut map = HashMap::new();
+            for (line_no, line) in text.lines().enumerate() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<IndexEntry>(line) {
+                    Ok(entry) => {
+                        // Later entries overwrite earlier ones (last write wins).
+                        map.insert(entry.id.clone(), entry);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Skipping malformed index line {} in {:?}: {}",
+                            line_no + 1,
+                            idx_path,
+                            e
+                        );
+                    }
+                }
+            }
+            map
+        } else {
+            // Legacy: index missing. Rebuild by scanning shards. This is a one-off
+            // O(archive size) cost; subsequent calls will use the cache.
+            self.rebuild_index_from_shards().await?
+        };
+
+        let mut guard = self.index.write().await;
+        *guard = Some(map.clone());
+        Ok(map)
+    }
+
+    /// Invalidate cached index (call after external file changes).
+    async fn invalidate_index_cache(&self) {
+        *self.index.write().await = None;
+    }
+
+    /// Append one entry to the on-disk index file and update the in-memory cache.
+    async fn append_index_entry(&self, entry: IndexEntry) -> crate::Result<()> {
+        let idx_path = self.index_path();
+        let line =
+            serde_json::to_string(&entry).map_err(crate::error::SyscityError::Serialization)?;
+
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&idx_path)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to open archival index for append: {:?}", idx_path),
+                details: e.to_string(),
+            })?;
+        let mut bytes = line.into_bytes();
+        bytes.push(b'\n');
+        file.write_all(&bytes)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to write archival index: {:?}", idx_path),
+                details: e.to_string(),
+            })?;
+        file.sync_all()
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to fsync archival index: {:?}", idx_path),
+                details: e.to_string(),
+            })?;
+
+        // Update cache.
+        let mut guard = self.index.write().await;
+        if let Some(map) = guard.as_mut() {
+            map.insert(entry.id.clone(), entry);
+        } else {
+            let mut map = HashMap::new();
+            map.insert(entry.id.clone(), entry);
+            *guard = Some(map);
+        }
+        Ok(())
+    }
+
+    /// Rebuild the index by scanning every shard, decompressing each member,
+    /// and recording (id, shard, offset, len) for each entry.
+    ///
+    /// Used when the index file is missing (legacy data) or after a rewrite.
+    /// The rebuilt index is written atomically to `_index.jsonl`.
+    async fn rebuild_index_from_shards(&self) -> crate::Result<HashMap<String, IndexEntry>> {
+        let shards = self.list_shards().await;
+        let mut map: HashMap<String, IndexEntry> = HashMap::new();
+
+        if shards.is_empty() {
+            // No data yet — nothing to persist and no directory guaranteed to exist.
+            return Ok(map);
+        }
+
+        for shard in shards {
+            let shard_name = shard
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            let data = fs::read(&shard)
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: format!("Failed to read archival shard: {:?}", shard),
+                    details: e.to_string(),
+                })?;
+
+            let members = Self::split_gzip_members(data).await?;
+            let mut offset: u64 = 0;
+            for member in members {
+                let len = member.len() as u64;
+                let lines = Self::decompress_bytes(member).await?;
+                for line in lines {
+                    if let Ok(mem) = serde_json::from_str::<Memory>(&line) {
+                        map.insert(
+                            mem.id.0.clone(),
+                            IndexEntry {
+                                id: mem.id.0.clone(),
+                                shard: shard_name.clone(),
+                                offset,
+                                len,
+                            },
+                        );
+                    }
+                }
+                offset += len;
+            }
+        }
+
+        // Persist rebuilt index atomically. Ensure the directory exists first so
+        // this cannot fail on a fresh (never-written-to) archival dir.
+        self.ensure_dir().await?;
+        self.write_index_atomic(&map).await?;
+        Ok(map)
+    }
+
+    /// Write the entire index atomically (temp file + rename).
+    async fn write_index_atomic(&self, map: &HashMap<String, IndexEntry>) -> crate::Result<()> {
+        let idx_path = self.index_path();
+        let tmp_path = self
+            .dir
+            .join(format!(".{}.tmp.{}", INDEX_FILE_NAME, std::process::id()));
+
+        let mut buf = String::new();
+        for entry in map.values() {
+            let line =
+                serde_json::to_string(entry).map_err(crate::error::SyscityError::Serialization)?;
+            buf.push_str(&line);
+            buf.push('\n');
+        }
+        fs::write(&tmp_path, buf)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to write temp index: {:?}", tmp_path),
+                details: e.to_string(),
+            })?;
+        fs::rename(&tmp_path, &idx_path).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to rename temp index to {:?}", idx_path),
+                details: e.to_string(),
+            }
+        })?;
+        Ok(())
+    }
+
+    /// Split a gzip file (possibly containing multiple concatenated members)
+    /// into individual member byte slices.
+    ///
+    /// This is needed to compute per-member byte offsets when rebuilding the
+    /// index. The scan uses the gzip magic header (0x1F 0x8B) as the start of
+    /// each member.
+    async fn split_gzip_members(data: Vec<u8>) -> crate::Result<Vec<Vec<u8>>> {
+        spawn_blocking(move || {
+            let mut members = Vec::new();
+            if data.is_empty() {
+                return Ok(members);
+            }
+            // Locate all offsets where a gzip magic header starts.
+            let mut starts = Vec::new();
+            let mut i = 0;
+            while i + 1 < data.len() {
+                if data[i] == 0x1F && data[i + 1] == 0x8B {
+                    starts.push(i);
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if starts.is_empty() {
+                return Ok(members);
+            }
+            starts.push(data.len());
+            for pair in starts.windows(2) {
+                let start = pair[0];
+                let end = pair[1];
+                if end > start {
+                    members.push(data[start..end].to_vec());
+                }
+            }
+            Ok(members)
+        })
+        .await
+        .map_err(|e| {
+            crate::error::SyscityError::Validation(format!("split_gzip task panicked: {}", e))
+        })?
+    }
+
+    /// Compress a single JSON line into its own gzip member.
+    async fn compress_line(line: String) -> crate::Result<Vec<u8>> {
+        Self::compress_lines(vec![line]).await
+    }
+
+    /// Append a single memory to the current shard as its own gzip member,
+    /// updating the side index.
     async fn append_one(&self, memory: &Memory) -> crate::Result<()> {
         self.ensure_dir().await?;
 
         let shard = self.today_shard();
+        let shard_name = shard
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| crate::error::SyscityError::Storage {
+                context: "Invalid shard path".to_string(),
+                details: format!("{:?}", shard),
+            })?
+            .to_string();
+
         let line =
             serde_json::to_string(memory).map_err(crate::error::SyscityError::Serialization)?;
+        let compressed = Self::compress_line(line).await?;
+        let len = compressed.len() as u64;
 
-        // Read existing content if file exists.
-        // Propagate IO errors so we never silently replace a shard with empty data.
-        let existing = if shard.exists() {
-            Some(
-                fs::read(&shard)
-                    .await
-                    .map_err(|e| crate::error::SyscityError::Storage {
-                        context: format!("Failed to read archival shard: {:?}", shard),
-                        details: e.to_string(),
-                    })?,
-            )
-        } else {
-            None
-        };
+        // Open in append mode; O_APPEND guarantees writes land at end of file
+        // atomically (per POSIX), but we still hold `write_lock` for a
+        // consistent offset -> content mapping vs. the index update.
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&shard)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to open shard for append: {:?}", shard),
+                details: e.to_string(),
+            })?;
+        let offset = file
+            .metadata()
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to stat shard: {:?}", shard),
+                details: e.to_string(),
+            })?
+            .len();
+        file.write_all(&compressed)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to append to shard: {:?}", shard),
+                details: e.to_string(),
+            })?;
+        file.sync_all()
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to fsync shard: {:?}", shard),
+                details: e.to_string(),
+            })?;
 
-        // Decompress existing, append line, recompress
-        let mut all_lines: Vec<String> = match existing {
-            Some(data) => {
-                let data_was_empty = data.is_empty();
-                let lines = Self::decompress_lines(data).await?;
-                if lines.is_empty() && !data_was_empty {
-                    // Decompression produced no lines from non-empty data: warn but continue.
-                    warn!("Archival shard {:?} decompressed to empty (corrupt?), appending", shard);
-                }
-                lines
-            }
-            None => Vec::new(),
-        };
-
-        all_lines.push(line);
-
-        // Check shard size
-        if all_lines.len() > self.max_per_shard {
+        // Warn if shard is growing beyond soft limit; do not enforce.
+        let approx_entries = self
+            .load_index()
+            .await?
+            .values()
+            .filter(|e| e.shard == shard_name)
+            .count()
+            + 1;
+        if approx_entries > self.max_per_shard {
             warn!(
                 "Archival shard {:?} exceeded max_per_shard ({}); continuing anyway",
                 shard, self.max_per_shard
             );
         }
 
-        let compressed = Self::compress_lines(all_lines).await?;
-
-        // Atomic write: write to temp file, then rename.
-        let tmp_path = self.dir.join(format!(
-            ".{}.tmp.{}",
-            shard.file_name().unwrap_or_default().to_string_lossy(),
-            std::process::id()
-        ));
-        fs::write(&tmp_path, compressed).await.map_err(|e| {
-            crate::error::SyscityError::Storage {
-                context: format!("Failed to write temp shard: {:?}", tmp_path),
-                details: e.to_string(),
-            }
-        })?;
-        fs::rename(&tmp_path, &shard)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: format!("Failed to rename temp shard to {:?}", shard),
-                details: e.to_string(),
-            })?;
+        self.append_index_entry(IndexEntry {
+            id: memory.id.0.clone(),
+            shard: shard_name,
+            offset,
+            len,
+        })
+        .await?;
 
         Ok(())
     }
 
-    /// Decompress gzip bytes into lines.
-    async fn decompress_lines(data: Vec<u8>) -> crate::Result<Vec<String>> {
+    /// Decompress a byte slice that may contain one or more gzip members.
+    async fn decompress_bytes(data: Vec<u8>) -> crate::Result<Vec<String>> {
         spawn_blocking(move || {
-            let decoder = flate2::read::GzDecoder::new(data.as_slice());
+            use flate2::read::MultiGzDecoder;
+            let decoder = MultiGzDecoder::new(data.as_slice());
             let reader = std::io::BufReader::new(decoder);
             let mut lines = Vec::new();
             for line in reader.lines() {
@@ -190,7 +464,7 @@ impl CompressedJsonlStore {
         })?
     }
 
-    /// Compress lines into gzip bytes.
+    /// Compress lines as a single gzip member.
     async fn compress_lines(lines: Vec<String>) -> crate::Result<Vec<u8>> {
         spawn_blocking(move || {
             use flate2::write::GzEncoder;
@@ -215,7 +489,32 @@ impl CompressedJsonlStore {
         })?
     }
 
-    /// Load all memories from all shards.
+    /// Read `len` bytes at `offset` from a shard.
+    async fn read_range(path: &Path, offset: u64, len: u64) -> crate::Result<Vec<u8>> {
+        let mut file =
+            fs::File::open(path)
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: format!("Failed to open shard for read: {:?}", path),
+                    details: e.to_string(),
+                })?;
+        file.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to seek shard: {:?}", path),
+                details: e.to_string(),
+            })?;
+        let mut buf = vec![0u8; len as usize];
+        file.read_exact(&mut buf)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to read shard bytes: {:?}", path),
+                details: e.to_string(),
+            })?;
+        Ok(buf)
+    }
+
+    /// Load all memories from all shards (used by search/stats/rewrite).
     async fn load_all(&self) -> crate::Result<Vec<Memory>> {
         let shards = self.list_shards().await;
         let mut memories = Vec::new();
@@ -226,7 +525,7 @@ impl CompressedJsonlStore {
                     context: format!("Failed to read archival shard: {:?}", shard),
                     details: e.to_string(),
                 })?;
-            let lines = Self::decompress_lines(data).await?;
+            let lines = Self::decompress_bytes(data).await?;
             for line in lines {
                 match serde_json::from_str::<Memory>(&line) {
                     Ok(mem) => memories.push(mem),
@@ -261,11 +560,11 @@ impl CompressedJsonlStore {
 
     /// Rewrite all shards with the given memories (used by delete/update).
     ///
-    /// Uses a two-phase commit: all temp files are written first, then
-    /// renamed atomically.  This minimises the window for partial updates
-    /// on crash.
+    /// Each entry is written as its own gzip member so per-id offsets stay
+    /// meaningful. Uses a two-phase commit: all temp shards + the temp index
+    /// are written first, then renamed atomically.
     async fn rewrite_all(&self, memories: Vec<Memory>) -> crate::Result<()> {
-        // Group by shard date based on created_at
+        // Group by shard date based on created_at.
         let mut by_date: HashMap<String, Vec<Memory>> = HashMap::new();
         for mem in memories {
             let date = chrono::DateTime::<chrono::Utc>::from(mem.created_at)
@@ -274,50 +573,74 @@ impl CompressedJsonlStore {
             by_date.entry(date).or_default().push(mem);
         }
 
-        // List old shards before we touch anything.
         let old_shards = self.list_shards().await;
-
-        // Clean up any orphaned temp files before starting.
         self.cleanup_orphan_temps().await;
 
-        // Phase 1: write ALL temp files.
-        let mut pending: Vec<(PathBuf, PathBuf)> = Vec::new(); // (tmp_path, final_path)
+        // Phase 1: build compressed data for each shard, tracking per-entry offsets.
+        let mut pending: Vec<(PathBuf, PathBuf, Vec<u8>)> = Vec::new(); // (tmp, final, bytes)
+        let mut new_index: HashMap<String, IndexEntry> = HashMap::new();
+
         for (date, mems) in &by_date {
             let shard = self.dir.join(format!("{}.jsonl.gz", date));
-            let lines: Vec<String> = mems
-                .iter()
-                .map(|m| {
-                    serde_json::to_string(m).map_err(|e| {
-                        warn!("Failed to serialize memory {} during rewrite: {}", m.id, e);
-                        e
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(crate::error::SyscityError::Serialization)?;
-            let compressed = Self::compress_lines(lines).await?;
+            let shard_name = format!("{}.jsonl.gz", date);
+            let mut shard_bytes: Vec<u8> = Vec::new();
+
+            for m in mems {
+                let line =
+                    serde_json::to_string(m).map_err(crate::error::SyscityError::Serialization)?;
+                let member = Self::compress_line(line).await?;
+                let offset = shard_bytes.len() as u64;
+                let len = member.len() as u64;
+                shard_bytes.extend_from_slice(&member);
+                new_index.insert(
+                    m.id.0.clone(),
+                    IndexEntry {
+                        id: m.id.0.clone(),
+                        shard: shard_name.clone(),
+                        offset,
+                        len,
+                    },
+                );
+            }
 
             let tmp_path = self.dir.join(format!(
                 ".{}.tmp.{}",
                 shard.file_name().unwrap_or_default().to_string_lossy(),
                 std::process::id()
             ));
-            fs::write(&tmp_path, compressed).await.map_err(|e| {
+            fs::write(&tmp_path, &shard_bytes).await.map_err(|e| {
                 crate::error::SyscityError::Storage {
                     context: format!("Failed to write temp shard: {:?}", tmp_path),
                     details: e.to_string(),
                 }
             })?;
-            pending.push((tmp_path, shard));
+            pending.push((tmp_path, shard, shard_bytes));
         }
 
-        // Phase 2: rename ALL temp files to their final names.
-        // Track renames so we can roll back on failure.
-        let mut renamed: Vec<(PathBuf, PathBuf)> = Vec::new(); // (final_path, original_tmp_path)
-        for (tmp_path, shard) in &pending {
+        // Also stage the new index file.
+        let idx_tmp = self
+            .dir
+            .join(format!(".{}.tmp.{}", INDEX_FILE_NAME, std::process::id()));
+        let mut idx_buf = String::new();
+        for entry in new_index.values() {
+            let line =
+                serde_json::to_string(entry).map_err(crate::error::SyscityError::Serialization)?;
+            idx_buf.push_str(&line);
+            idx_buf.push('\n');
+        }
+        fs::write(&idx_tmp, idx_buf)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to write temp index: {:?}", idx_tmp),
+                details: e.to_string(),
+            })?;
+
+        // Phase 2: rename shard temp files.
+        let mut renamed: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for (tmp_path, shard, _) in &pending {
             match fs::rename(tmp_path, shard).await {
                 Ok(_) => renamed.push((shard.clone(), tmp_path.clone())),
                 Err(e) => {
-                    // Rename failed — roll back already-renamed files to their temp names.
                     for (done_shard, done_tmp) in &renamed {
                         if let Err(rb) = fs::rename(done_shard, done_tmp).await {
                             warn!(
@@ -326,6 +649,7 @@ impl CompressedJsonlStore {
                             );
                         }
                     }
+                    let _ = fs::remove_file(&idx_tmp).await;
                     return Err(crate::error::SyscityError::Storage {
                         context: format!(
                             "Failed to rename temp shard to {:?} (rolled back {} previous)",
@@ -338,10 +662,20 @@ impl CompressedJsonlStore {
             }
         }
 
+        // Rename index last so a partial rewrite still leaves a consistent index-vs-shards state.
+        if let Err(e) = fs::rename(&idx_tmp, self.index_path()).await {
+            warn!(
+                "Failed to install rebuilt index at {:?}: {}. Cache invalidated; next \
+                 load_index() will rebuild from shards.",
+                self.index_path(),
+                e
+            );
+            let _ = fs::remove_file(&idx_tmp).await;
+        }
+
         // Remove old shards that were not rewritten.
         for old in &old_shards {
             if !renamed.iter().any(|(shard, _)| shard == old) {
-                // Retry up to 3 times with backoff.
                 let mut last_err = None;
                 for attempt in 1..=3 {
                     match fs::remove_file(old).await {
@@ -367,6 +701,8 @@ impl CompressedJsonlStore {
             }
         }
 
+        // Refresh cache.
+        *self.index.write().await = Some(new_index);
         Ok(())
     }
 }
@@ -383,8 +719,30 @@ impl MemoryStore for CompressedJsonlStore {
     }
 
     async fn get(&self, id: &MemoryId) -> crate::Result<Option<Memory>> {
-        let all = self.load_all().await?;
-        Ok(all.into_iter().find(|m| m.id == *id))
+        let index = self.load_index().await?;
+        let Some(entry) = index.get(&id.0).cloned() else {
+            return Ok(None);
+        };
+        let shard_path = self.dir.join(&entry.shard);
+        let bytes = match Self::read_range(&shard_path, entry.offset, entry.len).await {
+            Ok(b) => b,
+            Err(e) => {
+                // Index points at a stale shard; drop cache and try scanning as fallback.
+                warn!(
+                    "Archival index miss for {}: {} — invalidating cache and scanning shards",
+                    id, e
+                );
+                self.invalidate_index_cache().await;
+                return Ok(self.load_all().await?.into_iter().find(|m| m.id == *id));
+            }
+        };
+        let lines = Self::decompress_bytes(bytes).await?;
+        if let Some(line) = lines.first() {
+            return Ok(Some(
+                serde_json::from_str(line).map_err(crate::error::SyscityError::Serialization)?,
+            ));
+        }
+        Ok(None)
     }
 
     async fn update(&self, memory: Memory) -> crate::Result<()> {
@@ -560,5 +918,53 @@ mod tests {
 
         let remaining = store.get(&id1).await.unwrap();
         assert!(remaining.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_append_only_multiple_writes() {
+        // After N appends, get() must find every id using the side index
+        // (i.e. without falling back to full scan).
+        let dir = tempdir().unwrap();
+        let store = CompressedJsonlStore::new(dir.path());
+
+        let mut ids = Vec::new();
+        for i in 0..20 {
+            let m = Memory::new("u1", format!("entry #{i}"), "fact");
+            ids.push(store.store(m).await.unwrap());
+        }
+
+        for (i, id) in ids.iter().enumerate() {
+            let m = store.get(id).await.unwrap();
+            assert!(m.is_some(), "missing entry {i}");
+            assert_eq!(m.unwrap().content, format!("entry #{i}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_index_rebuild_from_legacy_shards() {
+        // Simulate legacy data: shards exist but _index.jsonl is missing.
+        let dir = tempdir().unwrap();
+        let store = CompressedJsonlStore::new(dir.path());
+        let id1 = store
+            .store(Memory::new("u1", "first", "fact"))
+            .await
+            .unwrap();
+        let id2 = store
+            .store(Memory::new("u1", "second", "fact"))
+            .await
+            .unwrap();
+
+        // Delete the on-disk index to simulate legacy state.
+        let idx = store.index_path();
+        assert!(idx.exists());
+        std::fs::remove_file(&idx).unwrap();
+        store.invalidate_index_cache().await;
+
+        // Reads must still work; index gets rebuilt.
+        let m1 = store.get(&id1).await.unwrap();
+        assert!(m1.is_some(), "rebuild failed for id1");
+        let m2 = store.get(&id2).await.unwrap();
+        assert!(m2.is_some(), "rebuild failed for id2");
+        assert!(idx.exists(), "rebuild should recreate the index file");
     }
 }

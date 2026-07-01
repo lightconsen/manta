@@ -233,7 +233,7 @@ impl TieredStore {
         // Pull enough per tier to cover the requested limit after merging
         // and re-sorting, but cap each tier to avoid unbounded queries on
         // large stores.  20 minimum ensures even tiny limits get diversity.
-        let per_tier = (query.limit * 4).max(20).min(2000);
+        let per_tier = (query.limit * 4).clamp(20, 2000);
         let mut unlimited = query.clone();
         unlimited.limit = per_tier;
         unlimited.offset = 0;

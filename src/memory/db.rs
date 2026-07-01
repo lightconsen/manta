@@ -315,24 +315,45 @@ impl DatabaseStore {
         Ok(())
     }
 
-    /// Add new columns to databases created before this migration (idempotent)
+    /// Add new columns to databases created before this migration (idempotent).
+    ///
+    /// Uses `PRAGMA table_info(memories)` to detect existing columns instead of
+    /// relying on error message parsing. This avoids false positives when the
+    /// SQLite error text changes across versions or locales.
     async fn migrate_schema(&self) -> crate::Result<()> {
-        // ALTER TABLE ADD COLUMN errors are expected when the column already
-        // exists (SQLite has no IF NOT EXISTS for columns).  Log other errors
-        // so disk-full / corruption is detectable.
-        for (column, stmt) in [
+        // Discover which columns already exist on `memories`.
+        let existing: std::collections::HashSet<String> =
+            sqlx::query("PRAGMA table_info(memories)")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: "Failed to inspect memories schema".to_string(),
+                    details: e.to_string(),
+                })?
+                .into_iter()
+                .map(|row| row.get::<String, _>("name"))
+                .collect();
+
+        // (column_name, ALTER statement to add it). Only run when absent.
+        let migrations: &[(&str, &str)] = &[
             (
                 "importance_score",
                 "ALTER TABLE memories ADD COLUMN importance_score REAL NOT NULL DEFAULT 0.5",
             ),
             ("source", "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'"),
-        ] {
-            if let Err(e) = sqlx::query(stmt).execute(&self.pool).await {
-                let msg = e.to_string();
-                if !msg.contains("duplicate column") && !msg.contains("already exists") {
-                    warn!("Schema migration for {column} failed: {e}");
-                }
+        ];
+
+        for (column, stmt) in migrations {
+            if existing.contains(*column) {
+                continue;
             }
+            sqlx::query(stmt).execute(&self.pool).await.map_err(|e| {
+                crate::error::SyscityError::Storage {
+                    context: format!("Schema migration failed for column {column}"),
+                    details: e.to_string(),
+                }
+            })?;
+            debug!("Added column {column} to memories table");
         }
 
         Ok(())

@@ -641,9 +641,7 @@ impl Storage for SqliteStorage {
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| {
-            StorageError::Backend(format!("Failed to get conversation history: {}", e))
-        })?;
+        .map_err(|e| StorageError::Backend(format!("Failed to get conversation history: {}", e)))?;
 
         let messages: Vec<ChatMessage> = rows
             .into_iter()

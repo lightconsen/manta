@@ -16,7 +16,6 @@ pub mod events;
 pub mod flush;
 pub mod hybrid;
 pub mod in_memory_store;
-pub mod lancedb;
 pub mod manager;
 pub mod multimodal;
 pub mod personality;
@@ -62,7 +61,6 @@ pub use hybrid::{
     apply_temporal_decay, hybrid_search, mmr_rerank, HybridSearchConfig, HybridSearchResult,
     MmrConfig, TemporalDecayConfig,
 };
-pub use lancedb::LanceDbVectorStore;
 pub use manager::{MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext};
 pub use multimodal::{
     build_multimodal_glob, classify_multimodal_file, FileClassification, MemoryMultimodalConfig,

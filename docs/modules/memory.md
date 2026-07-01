@@ -88,7 +88,6 @@ Started in `Gateway::start()` with `event_log` and `workspace_dir` wired in.
 - **Local Embeddings** (`local_embeddings.rs`) — Local GGUF embedding model support (behind `local-embeddings` feature)
 - **PgVector** (`pgvector_store.rs`) — PostgreSQL pgvector backend (behind `pgvector` feature)
 - **SQLite-Vec** (`sqlite_vec_store.rs`) — SQLite vector extension backend (enabled by default via the `sqlite-vec` feature)
-- **LanceDB** (`lancedb.rs`) — LanceDB vector store backend
 
 ## Implemented Features
 
@@ -108,7 +107,7 @@ Started in `Gateway::start()` with `event_log` and `workspace_dir` wired in.
 - Dream observability dashboard with metrics and Prometheus export
 - Memory export/import for migration (JSON/JSONL)
 - Local embedding model support (GGUF)
-- Multiple vector backends (SQLite-vec default, PostgreSQL pgvector, in-memory, LanceDB)
+- Multiple vector backends (SQLite-vec default, PostgreSQL pgvector, in-memory)
 - Workspace state persistence
 - Embedding pipeline with background job processing
 
