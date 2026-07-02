@@ -1461,40 +1461,29 @@ impl ToolRegistry {
     ///
     /// # Policy and Approval Flow
     ///
-    /// 1. Run policy hooks — if any hook returns `Deny`, return error
-    ///    immediately
-    /// 2. If any hook returns `NeedsApproval` and approval_queue is configured,
-    ///    suspend execution and wait for human approval
-    /// 3. Run before-hooks
-    /// 4. Execute the tool
-    /// 5. Run after-hooks
-    pub async fn execute(
-        &self,
-        name: &str,
-        args: Value,
-        context: &ToolContext,
-    ) -> Option<crate::Result<ToolExecutionResult>> {
-        // Run policy hooks first
-        let mut policy_decision = self.active_hooks().run_policy(name, &args).await;
+    /// Run policy hooks and the built-in `requires_approval` fallback.
+    ///
+    /// If no explicit policy hooks are configured but the tool advertises
+    /// `requires_approval`, this synthesises a `NeedsApproval` decision
+    /// automatically so that high-risk tools (device access, etc.) are
+    /// never executed silently without the caller going through approval.
+    async fn evaluate_policy(&self, name: &str, args: &Value) -> ToolPolicyDecision {
+        let mut decision = self.active_hooks().run_policy(name, args).await;
 
-        // Fallback: if no policy hook was configured (hooks list empty), but
-        // the tool's capabilities advertise requires_approval, auto-generate a
-        // NeedsApproval decision. This catches device tools (requires_approval:
-        // true) and other high-risk tools registered without an explicit hook.
-        //
-        // When a policy hook IS configured and returns Allow, its decision is
-        // authoritative — the hook has made a conscious choice to allow the
-        // call, so we skip the fallback.
-        if matches!(policy_decision, ToolPolicyDecision::Allow)
+        // requires_approval fallback — only when no policy hook exists, so
+        // an explicitly-configured policy hook is always authoritative.
+        if matches!(decision, ToolPolicyDecision::Allow)
             && !self.active_hooks().has_policy_hooks()
         {
             let caps = self.get_capabilities(name);
             if caps.requires_approval {
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static APPROVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
-                let approval_id =
-                    format!("fallback-{:08x}", APPROVAL_COUNTER.fetch_add(1, Ordering::Relaxed));
-                policy_decision = ToolPolicyDecision::NeedsApproval {
+                let approval_id = format!(
+                    "fallback-{:08x}",
+                    APPROVAL_COUNTER.fetch_add(1, Ordering::Relaxed)
+                );
+                decision = ToolPolicyDecision::NeedsApproval {
                     approval_id,
                     tool_name: name.to_string(),
                     args: args.clone(),
@@ -1508,6 +1497,29 @@ impl ToolRegistry {
                 };
             }
         }
+
+        decision
+    }
+
+    /// Execute a tool by name with optional caching, hooks, and approval flow.
+    /// Checks both static and dynamic registries.
+    ///
+    /// # Policy and Approval Flow
+    ///
+    /// 1. Run policy hooks — if any hook returns `Deny`, return error
+    ///    immediately
+    /// 2. If any hook returns `NeedsApproval` and approval_queue is configured,
+    ///    suspend execution and wait for human approval
+    /// 3. Run before-hooks
+    /// 4. Execute the tool
+    /// 5. Run after-hooks
+    pub async fn execute(
+        &self,
+        name: &str,
+        args: Value,
+        context: &ToolContext,
+    ) -> Option<crate::Result<ToolExecutionResult>> {
+        let policy_decision = self.evaluate_policy(name, &args).await;
 
         match policy_decision {
             ToolPolicyDecision::Allow => {
@@ -1839,9 +1851,9 @@ impl ToolRegistry {
 
         let tool_name = call.name.clone();
 
-        // Run policy hooks first.
-        let policy_decision = self.active_hooks().run_policy(&tool_name, &args).await;
+        let policy_decision = self.evaluate_policy(&tool_name, &args).await;
         match policy_decision {
+            // Allow → proceed to execution below.
             ToolPolicyDecision::Allow => {}
             ToolPolicyDecision::Deny { reason } => {
                 return Err(crate::error::SyscityError::Validation(format!(
