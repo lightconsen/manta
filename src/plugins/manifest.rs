@@ -104,6 +104,20 @@ pub enum PluginCapability {
     },
 }
 
+impl PluginCapability {
+    /// Return the variant name as a &str (for use with `has_capability`).
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            PluginCapability::Tools { .. } => "tools",
+            PluginCapability::Channel { .. } => "channel",
+            PluginCapability::Hooks { .. } => "hooks",
+            PluginCapability::Commands { .. } => "commands",
+            PluginCapability::Models { .. } => "models",
+            PluginCapability::Provider { .. } => "provider",
+        }
+    }
+}
+
 /// A model entry declared by a plugin for dynamic model discovery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginModelEntry {
@@ -236,17 +250,9 @@ impl PluginManifest {
     /// Check if plugin has a specific capability
     pub fn has_capability(&self, capability_type: &str) -> bool {
         if let Some(ref capabilities) = self.capabilities {
-            capabilities.iter().any(|c| {
-                let t = match c {
-                    PluginCapability::Tools { .. } => "tools",
-                    PluginCapability::Channel { .. } => "channel",
-                    PluginCapability::Hooks { .. } => "hooks",
-                    PluginCapability::Commands { .. } => "commands",
-                    PluginCapability::Models { .. } => "models",
-                    PluginCapability::Provider { .. } => "provider",
-                };
-                t == capability_type
-            })
+            capabilities
+                .iter()
+                .any(|c| c.variant_name() == capability_type)
         } else {
             false
         }

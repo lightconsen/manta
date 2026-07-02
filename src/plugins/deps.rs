@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use sha2::Digest;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::plugins::manifest::PluginManifest;
 
@@ -133,27 +133,33 @@ impl DependencyResolver {
                 continue;
             }
 
-            if resource.required {
-                info!("Downloading external resource {} -> {:?}", resource.url, target_path);
-                if let Some(parent) = target_path.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-                let resp = self.http_client.get(&resource.url).send().await?;
-                let bytes = resp.bytes().await?;
-
-                if let Some(ref checksum) = resource.checksum_sha256 {
-                    let actual = hex::encode(sha2::Sha256::digest(&bytes));
-                    if actual != *checksum {
-                        return Err(crate::error::SyscityError::Internal(format!(
-                            "Checksum mismatch for downloaded resource {}",
-                            resource.url
-                        )));
-                    }
-                }
-
-                tokio::fs::write(&target_path, &bytes).await?;
-                info!("Downloaded {} -> {:?}", resource.url, target_path);
+            if !resource.required {
+                debug!(
+                    "Skipping optional resource {} (not required, target: {:?})",
+                    resource.url, target_path
+                );
+                continue;
             }
+
+            info!("Downloading external resource {} -> {:?}", resource.url, target_path);
+            if let Some(parent) = target_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            let resp = self.http_client.get(&resource.url).send().await?;
+            let bytes = resp.bytes().await?;
+
+            if let Some(ref checksum) = resource.checksum_sha256 {
+                let actual = hex::encode(sha2::Sha256::digest(&bytes));
+                if actual != *checksum {
+                    return Err(crate::error::SyscityError::Internal(format!(
+                        "Checksum mismatch for downloaded resource {}",
+                        resource.url
+                    )));
+                }
+            }
+
+            tokio::fs::write(&target_path, &bytes).await?;
+            info!("Downloaded {} -> {:?}", resource.url, target_path);
         }
         Ok(())
     }

@@ -1,6 +1,11 @@
 //! Plugin Runtime - WASM-based plugin execution
 //!
 //! Loads and executes plugins using Wasmtime for sandboxing.
+//!
+//! NOTE: This file is ~2270 lines and should be split into:
+//!   - `runtime/mod.rs` — PluginRuntime core (lifecycle, WASM loading)
+//!   - `runtime/host_functions.rs` — 16 host function definitions
+//!   - `runtime/memory.rs` — alloc/dealloc and memory management
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -1159,7 +1164,9 @@ impl PluginRuntime {
         if let Some(ref req_str) = manifest.syscity_version {
             match req_str.parse::<crate::skills::semver::VersionReq>() {
                 Ok(req) => {
-                    let syscity_ver = crate::skills::semver::Version::new(0, 1, 2);
+                    let syscity_ver =
+                        crate::skills::semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                            .unwrap_or_else(|_| crate::skills::semver::Version::new(0, 1, 2));
                     if !req.matches(&syscity_ver) {
                         warn!(
                             "Plugin '{}' requires syscity version '{}' but current is '{}'",
@@ -1213,6 +1220,19 @@ impl PluginRuntime {
         // Validate manifest version fields (non-fatal warnings)
         #[cfg(feature = "plugins")]
         Self::validate_manifest_version(&manifest);
+
+        // Verify manifest signature (reject invalid signatures)
+        #[cfg(feature = "plugins")]
+        {
+            let verification = crate::plugins::verification::verify_manifest(&manifest);
+            crate::plugins::verification::log_verification(&plugin_id, &verification);
+            if matches!(verification, crate::plugins::verification::VerificationResult::Invalid(_)) {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Plugin '{}' has an invalid manifest signature and cannot be loaded",
+                    plugin_id
+                )));
+            }
+        }
 
         info!("Loading plugin '{}' ({}) from {:?}", manifest.name, plugin_id, path);
 
@@ -1846,6 +1866,11 @@ impl PluginRuntime {
     }
 
     /// Low-level WASM provider invocation.
+    ///
+    /// Note: WASM linear memory allocated via `alloc` is reclaimed when the
+    /// store/instance is dropped (no explicit `dealloc` is needed — the WASM
+    /// linear memory is owned by the store). This is consistent with
+    /// `invoke_wasm_tool` which follows the same pattern.
     #[cfg(feature = "plugins")]
     fn invoke_wasm_provider(
         store: &mut wasmtime::Store<PluginState>,

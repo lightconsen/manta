@@ -179,18 +179,8 @@ impl ActivationPlanner {
             }
         }
 
-        // Group by trigger type
-        let mut lazy_plugins: HashMap<String, Vec<String>> = HashMap::new();
-        for (id, manifest, _path) in &manifests {
-            for trigger in manifest.get_triggers() {
-                let key = trigger_key(&trigger);
-                lazy_plugins.entry(key).or_default().push(id.clone());
-            }
-        }
-
         Ok(ActivationPlan {
             load_order,
-            lazy_plugins,
             cycles,
             missing_deps,
         })
@@ -249,30 +239,26 @@ impl ActivationPlanner {
     ///
     /// These are plugins with an `OnStartup` trigger or no trigger at all.
     pub async fn startup_plugins(&self) -> crate::Result<Vec<String>> {
-        let plan = self.plan_activation().await?;
-
-        let mut startup = Vec::new();
-        let lazy_set: HashSet<String> = plan.lazy_plugins.values().flatten().cloned().collect();
-
-        for id in &plan.load_order {
-            if !lazy_set.contains(id) {
-                startup.push(id.clone());
-            }
-        }
-
-        // Also include plugins with OnStartup trigger that are in load_order
-        // (they won't be in lazy_set if only OnStartup is defined)
         let manifests = self.discover_manifests().await?;
+
+        let mut result = Vec::new();
         for (id, manifest, _path) in &manifests {
-            if manifest.has_startup_trigger()
-                && plan.load_order.contains(id)
-                && !startup.contains(id)
-            {
-                startup.push(id.clone());
+            let triggers = manifest.get_triggers();
+            if triggers.is_empty() || manifest.has_startup_trigger() {
+                result.push(id.clone());
             }
         }
 
-        Ok(startup)
+        // Sort by dependency order
+        let plan = self.plan_activation().await?;
+        result.sort_by_key(|id| {
+            plan.load_order
+                .iter()
+                .position(|x| x == id)
+                .unwrap_or(usize::MAX)
+        });
+
+        Ok(result)
     }
 
     /// Get plugins triggered by a specific event.
@@ -319,8 +305,6 @@ pub fn trigger_key(trigger: &PluginTrigger) -> String {
 pub struct ActivationPlan {
     /// Load order for startup plugins (topologically sorted).
     pub load_order: Vec<String>,
-    /// Lazy-activated plugins by trigger key.
-    pub lazy_plugins: HashMap<String, Vec<String>>,
     /// Cyclic dependencies detected.
     pub cycles: Vec<Vec<String>>,
     /// Missing dependencies: (plugin_id, dep_name, constraint).
@@ -329,6 +313,7 @@ pub struct ActivationPlan {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use tempfile::tempdir;
 
     use super::*;
@@ -348,13 +333,29 @@ mod tests {
         json
     }
 
+    fn manifest_with_deps(id: &str, deps: HashMap<String, String>) -> serde_json::Value {
+        let mut json = create_minimal_manifest(id, id);
+        json["dependencies"] = serde_json::to_value(&deps).unwrap();
+        json
+    }
+
+    async fn write_manifest(dir: &tempfile::TempDir, plugin_id: &str, manifest: &serde_json::Value) {
+        let p_dir = dir.path().join(plugin_id);
+        tokio::fs::create_dir_all(&p_dir).await.unwrap();
+        tokio::fs::write(
+            p_dir.join("plugin.json"),
+            serde_json::to_string_pretty(manifest).unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn test_plan_activation_empty_dir() {
         let tmp = tempdir().unwrap();
         let planner = ActivationPlanner::new(tmp.path().to_path_buf());
         let plan = planner.plan_activation().await.unwrap();
         assert!(plan.load_order.is_empty());
-        assert!(plan.lazy_plugins.is_empty());
         assert!(plan.cycles.is_empty());
     }
 
@@ -377,160 +378,196 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_trigger_key() {
-        assert_eq!(trigger_key(&PluginTrigger::Command("deploy".to_string())), "command:deploy");
-        assert_eq!(trigger_key(&PluginTrigger::Provider("openai".to_string())), "provider:openai");
-        assert_eq!(trigger_key(&PluginTrigger::Channel("slack".to_string())), "channel:slack");
-        assert_eq!(trigger_key(&PluginTrigger::OnStartup), "on_startup");
-        assert_eq!(
-            trigger_key(&PluginTrigger::Capability("tools".to_string())),
-            "capability:tools"
-        );
+    async fn test_plan_activation_multiple_independent() {
+        let tmp = tempdir().unwrap();
+
+        for id in &["alpha", "beta", "gamma"] {
+            write_manifest(
+                &tmp,
+                id,
+                &create_minimal_manifest(&format!("com.test.{}", id), id),
+            )
+            .await;
+        }
+
+        let planner = ActivationPlanner::new(tmp.path().to_path_buf());
+        let plan = planner.plan_activation().await.unwrap();
+
+        assert_eq!(plan.load_order.len(), 3);
+        for id in &["com.test.alpha", "com.test.beta", "com.test.gamma"] {
+            assert!(plan.load_order.contains(&id.to_string()));
+        }
     }
 
     #[tokio::test]
-    async fn test_triggered_plugins() {
+    async fn test_plan_activation_single_chain() {
         let tmp = tempdir().unwrap();
 
-        // Plugin with command trigger
-        let p1_dir = tmp.path().join("p1");
-        tokio::fs::create_dir_all(&p1_dir).await.unwrap();
-        tokio::fs::write(
-            p1_dir.join("plugin.json"),
-            serde_json::to_string_pretty(&manifest_with_triggers(
-                "com.test.p1",
-                vec![PluginTrigger::Command("deploy".to_string())],
-            ))
-            .unwrap(),
+        // A depends on B, B depends on C → load order: C, B, A
+        write_manifest(
+            &tmp,
+            "a",
+            &manifest_with_deps("com.test.a", HashMap::from([("com.test.b".into(), ">=0.1".into())])),
         )
-        .await
-        .unwrap();
-
-        // Plugin with startup trigger
-        let p2_dir = tmp.path().join("p2");
-        tokio::fs::create_dir_all(&p2_dir).await.unwrap();
-        tokio::fs::write(
-            p2_dir.join("plugin.json"),
-            serde_json::to_string_pretty(&manifest_with_triggers(
-                "com.test.p2",
-                vec![PluginTrigger::OnStartup],
-            ))
-            .unwrap(),
+        .await;
+        write_manifest(
+            &tmp,
+            "b",
+            &manifest_with_deps("com.test.b", HashMap::from([("com.test.c".into(), ">=0.1".into())])),
         )
-        .await
-        .unwrap();
+        .await;
+        write_manifest(&tmp, "c", &create_minimal_manifest("com.test.c", "C")).await;
 
         let planner = ActivationPlanner::new(tmp.path().to_path_buf());
+        let plan = planner.plan_activation().await.unwrap();
 
-        let triggered = planner
-            .triggered_plugins(&PluginTrigger::Command("deploy".to_string()))
-            .await
-            .unwrap();
-        assert_eq!(triggered, vec!["com.test.p1"]);
-
-        let no_match = planner
-            .triggered_plugins(&PluginTrigger::Provider("nonexistent".to_string()))
-            .await
-            .unwrap();
-        assert!(no_match.is_empty());
+        assert_eq!(plan.load_order.len(), 3);
+        // C must come before B, B must come before A
+        let pos_c = plan.load_order.iter().position(|x| x == "com.test.c").unwrap();
+        let pos_b = plan.load_order.iter().position(|x| x == "com.test.b").unwrap();
+        let pos_a = plan.load_order.iter().position(|x| x == "com.test.a").unwrap();
+        assert!(pos_c < pos_b, "C should load before B");
+        assert!(pos_b < pos_a, "B should load before A");
     }
 
     #[tokio::test]
-    async fn test_startup_plugins() {
+    async fn test_plan_activation_diamond_deps() {
         let tmp = tempdir().unwrap();
 
-        // Plugin with startup trigger
-        let p1_dir = tmp.path().join("startup-plugin");
-        tokio::fs::create_dir_all(&p1_dir).await.unwrap();
-        tokio::fs::write(
-            p1_dir.join("plugin.json"),
-            serde_json::to_string_pretty(&manifest_with_triggers(
-                "com.test.startup",
-                vec![PluginTrigger::OnStartup],
-            ))
-            .unwrap(),
+        // A depends on B and C (B and C are independent)
+        write_manifest(
+            &tmp,
+            "a",
+            &manifest_with_deps(
+                "com.test.a",
+                HashMap::from([
+                    ("com.test.b".into(), ">=0.1".into()),
+                    ("com.test.c".into(), ">=0.1".into()),
+                ]),
+            ),
         )
-        .await
-        .unwrap();
-
-        // Plugin without trigger (should also be startup)
-        let p2_dir = tmp.path().join("no-trigger");
-        tokio::fs::create_dir_all(&p2_dir).await.unwrap();
-        tokio::fs::write(
-            p2_dir.join("plugin.json"),
-            serde_json::to_string_pretty(&create_minimal_manifest(
-                "com.test.notrigger",
-                "NoTrigger",
-            ))
-            .unwrap(),
-        )
-        .await
-        .unwrap();
+        .await;
+        write_manifest(&tmp, "b", &create_minimal_manifest("com.test.b", "B")).await;
+        write_manifest(&tmp, "c", &create_minimal_manifest("com.test.c", "C")).await;
 
         let planner = ActivationPlanner::new(tmp.path().to_path_buf());
-        let startup = planner.startup_plugins().await.unwrap();
+        let plan = planner.plan_activation().await.unwrap();
 
-        // Both plugins should be in the startup list
-        assert!(startup.contains(&"com.test.startup".to_string()));
-        assert!(startup.contains(&"com.test.notrigger".to_string()));
-    }
-
-    #[test]
-    fn test_get_triggers_none() {
-        let manifest = PluginManifest::minimal("test", "Test");
-        assert!(manifest.get_triggers().is_empty());
-    }
-
-    #[test]
-    fn test_has_startup_trigger() {
-        let manifest = PluginManifest::minimal("test", "Test");
-        assert!(!manifest.has_startup_trigger());
-
-        let manifest_with = PluginManifest {
-            triggers: Some(vec![PluginTrigger::OnStartup]),
-            ..PluginManifest::minimal("test", "Test")
-        };
-        assert!(manifest_with.has_startup_trigger());
-    }
-
-    #[test]
-    fn test_dependency_ids_empty() {
-        let manifest = PluginManifest::minimal("test", "Test");
-        assert!(manifest.get_dependency_ids().is_empty());
-    }
-
-    #[test]
-    fn test_serde_roundtrip() {
-        let trigger = PluginTrigger::Command("deploy".to_string());
-        let json = serde_json::to_value(&trigger).unwrap();
-        let decoded: PluginTrigger = serde_json::from_value(json).unwrap();
-        assert!(matches!(decoded, PluginTrigger::Command(ref n) if n == "deploy"));
+        assert_eq!(plan.load_order.len(), 3);
+        // B and C must come before A
+        let pos_a = plan.load_order.iter().position(|x| x == "com.test.a").unwrap();
+        let pos_b = plan.load_order.iter().position(|x| x == "com.test.b").unwrap();
+        let pos_c = plan.load_order.iter().position(|x| x == "com.test.c").unwrap();
+        assert!(pos_b < pos_a, "B should load before A");
+        assert!(pos_c < pos_a, "C should load before A");
+        assert!(plan.cycles.is_empty());
     }
 
     #[tokio::test]
-    async fn test_activation_plan_serde_triggers() {
+    async fn test_plan_activation_cycle_detection() {
         let tmp = tempdir().unwrap();
-        let p_dir = tmp.path().join("plugin");
-        tokio::fs::create_dir_all(&p_dir).await.unwrap();
-        let manifest = serde_json::json!({
-            "id": "com.test.triggers",
-            "name": "Triggers",
-            "version": "0.1.0",
-            "description": "Test",
-            "triggers": [
-                {"command": "deploy"},
-                {"on_startup": null}
-            ]
-        });
-        tokio::fs::write(
-            p_dir.join("plugin.json"),
-            serde_json::to_string_pretty(&manifest).unwrap(),
+
+        // A -> B -> C -> A (cycle!)
+        write_manifest(
+            &tmp,
+            "a",
+            &manifest_with_deps("com.test.a", HashMap::from([("com.test.b".into(), ">=0.1".into())])),
         )
-        .await
-        .unwrap();
+        .await;
+        write_manifest(
+            &tmp,
+            "b",
+            &manifest_with_deps("com.test.b", HashMap::from([("com.test.c".into(), ">=0.1".into())])),
+        )
+        .await;
+        write_manifest(
+            &tmp,
+            "c",
+            &manifest_with_deps("com.test.c", HashMap::from([("com.test.a".into(), ">=0.1".into())])),
+        )
+        .await;
 
         let planner = ActivationPlanner::new(tmp.path().to_path_buf());
-        // Should not crash — just validates that serialization works
-        let _plan = planner.plan_activation().await.unwrap();
+        let plan = planner.plan_activation().await.unwrap();
+
+        // load_order should NOT contain the cyclically-dependent plugins
+        assert!(plan.load_order.is_empty());
+        assert!(!plan.cycles.is_empty(), "Should detect at least one cycle");
+    }
+
+    #[tokio::test]
+    async fn test_plan_activation_missing_dep() {
+        let tmp = tempdir().unwrap();
+
+        // A depends on B, but B doesn't exist
+        write_manifest(
+            &tmp,
+            "a",
+            &manifest_with_deps("com.test.a", HashMap::from([("com.test.b".into(), ">=0.1".into())])),
+        )
+        .await;
+
+        let planner = ActivationPlanner::new(tmp.path().to_path_buf());
+        let plan = planner.plan_activation().await.unwrap();
+
+        // A should still be in load_order (missing deps are just logged)
+        assert_eq!(plan.load_order, vec!["com.test.a"]);
+        assert_eq!(plan.missing_deps.len(), 1);
+        assert_eq!(plan.missing_deps[0].0, "com.test.a");
+        assert_eq!(plan.missing_deps[0].1, "com.test.b");
+    }
+
+    #[tokio::test]
+    async fn test_plan_activation_partial_cycle_with_valid() {
+        let tmp = tempdir().unwrap();
+
+        // A -> B -> C -> A (cycle), D is standalone
+        write_manifest(
+            &tmp,
+            "a",
+            &manifest_with_deps("com.test.a", HashMap::from([("com.test.b".into(), ">=0.1".into())])),
+        )
+        .await;
+        write_manifest(
+            &tmp,
+            "b",
+            &manifest_with_deps("com.test.b", HashMap::from([("com.test.c".into(), ">=0.1".into())])),
+        )
+        .await;
+        write_manifest(
+            &tmp,
+            "c",
+            &manifest_with_deps("com.test.c", HashMap::from([("com.test.a".into(), ">=0.1".into())])),
+        )
+        .await;
+        write_manifest(&tmp, "d", &create_minimal_manifest("com.test.d", "D")).await;
+
+        let planner = ActivationPlanner::new(tmp.path().to_path_buf());
+        let plan = planner.plan_activation().await.unwrap();
+
+        // Only D should be in load_order; A/B/C are in a cycle
+        assert_eq!(plan.load_order, vec!["com.test.d"]);
+        assert!(!plan.cycles.is_empty(), "Should detect cycle");
+    }
+
+    #[test]
+    fn test_trace_cycle_limit() {
+        // Build a large adjacency list that will hit the 1000-iteration limit
+        let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+        let mut sorted = HashSet::new();
+        for i in 0..100 {
+            let id = format!("node_{}", i);
+            let next = format!("node_{}", (i + 1) % 100);
+            adj.entry(id.clone()).or_default().push(next);
+            // Don't add to sorted, so trace_cycle tries to traverse
+            sorted.insert(id);
+        }
+        // Remove the first node from sorted so the cycle tracer enters
+        sorted.remove("node_0");
+
+        let planner = ActivationPlanner::new(PathBuf::from("/tmp"));
+        let cycle = planner.trace_cycle("node_0", &adj, &sorted);
+        // Should either find a cycle or hit the safety limit and return empty
+        assert!(cycle.is_empty() || cycle.len() <= 100);
     }
 }

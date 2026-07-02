@@ -197,6 +197,7 @@ impl PluginManager {
 
         if let Some(plugin) = self.runtime.get_plugin(&plugin_id).await {
             self.register_plugin_tools(&plugin).await;
+            #[cfg(feature = "plugins")]
             self.register_plugin_providers(&plugin).await;
             #[cfg(feature = "plugins")]
             self.register_plugin_channels(&plugin).await;
@@ -219,6 +220,7 @@ impl PluginManager {
         self.deregister_plugin_tools(plugin_id).await;
         #[cfg(feature = "plugins")]
         self.deregister_plugin_channels(plugin_id).await;
+        #[cfg(feature = "plugins")]
         self.deregister_plugin_providers(plugin_id).await;
         self.hook_registry.unregister_plugin(plugin_id).await;
 
@@ -243,6 +245,7 @@ impl PluginManager {
         self.deregister_plugin_tools(plugin_id).await;
         #[cfg(feature = "plugins")]
         self.deregister_plugin_channels(plugin_id).await;
+        #[cfg(feature = "plugins")]
         self.deregister_plugin_providers(plugin_id).await;
         self.hook_registry.unregister_plugin(plugin_id).await;
 
@@ -252,6 +255,7 @@ impl PluginManager {
             self.register_plugin_tools(&plugin).await;
             #[cfg(feature = "plugins")]
             self.register_plugin_channels(&plugin).await;
+            #[cfg(feature = "plugins")]
             self.register_plugin_providers(&plugin).await;
         }
 
@@ -296,6 +300,7 @@ impl PluginManager {
     }
 
     /// Register a plugin's provider capabilities with the system.
+    #[cfg(feature = "plugins")]
     async fn register_plugin_providers(&self, plugin: &PluginInstance) {
         let register_fn = self.provider_register.read().await;
         if let Some(ref register) = *register_fn {
@@ -332,6 +337,7 @@ impl PluginManager {
     }
 
     /// Deregister a plugin's providers from the system.
+    #[cfg(feature = "plugins")]
     async fn deregister_plugin_providers(&self, plugin_id: &str) {
         let unregister_fn = self.provider_unregister.read().await;
         if let Some(ref unregister) = *unregister_fn {
@@ -458,7 +464,9 @@ impl PluginManager {
             if let Some(ref req_str) = plugin.manifest.syscity_version {
                 match req_str.parse::<crate::skills::semver::VersionReq>() {
                     Ok(req) => {
-                        let syscity_ver = crate::skills::semver::Version::new(0, 1, 2);
+                        let syscity_ver =
+                            crate::skills::semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                                .unwrap_or_else(|_| crate::skills::semver::Version::new(0, 1, 2));
                         if !req.matches(&syscity_ver) {
                             hints.push(DiagnosticHint {
                                 category: format!("plugin:{}", plugin.manifest.id),
