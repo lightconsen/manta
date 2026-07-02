@@ -2437,21 +2437,17 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
 async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     // Build model list from aliases (always available) rather than catalog
     // which may be empty if initialize() was never called.
-    let aliases = state.infra.model_router.list_aliases().await;
-    let entries: Vec<serde_json::Value> = {
-        let config = state.infra.model_router.config.read().await;
-        aliases
-            .iter()
-            .filter_map(|name| config.aliases.get(name))
-            .map(|alias| {
-                serde_json::json!({
-                    "id": alias.name,
-                    "name": format!("{} ({})", alias.name, alias.model),
-                    "provider": alias.provider,
-                })
+    let aliases = state.infra.model_router.aliases_with_configs().await;
+    let entries: Vec<serde_json::Value> = aliases
+        .iter()
+        .map(|(name, alias)| {
+            serde_json::json!({
+                "id": name,
+                "name": format!("{} ({})", name, alias.model),
+                "provider": alias.provider,
             })
-            .collect()
-    };
+        })
+        .collect();
     let default_model = state.infra.model_router.get_default_model().await;
     WsResponse::ok(
         &req.id,

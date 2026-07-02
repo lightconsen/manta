@@ -716,10 +716,22 @@ impl Default for ProviderHealth {
     }
 }
 
-/// Model router for multi-provider LLM routing
+/// Model router for multi-provider LLM routing.
+///
+/// # Lock ordering
+///
+/// To avoid deadlocks, acquire locks in this order and release them before
+/// any `.await` that does not strictly need the lock:
+///
+/// 1. `config`
+/// 2. `providers`
+/// 3. `health`
+/// 4. `usage_fetchers`
+///
+/// Write locks must never be held across an `.await`.
 pub struct ModelRouter {
     /// Configuration
-    pub config: RwLock<ModelRouterConfig>,
+    config: RwLock<ModelRouterConfig>,
     /// Provider instances
     providers: RwLock<HashMap<String, Arc<dyn Provider + Send + Sync>>>,
     /// Health tracking per provider
@@ -764,6 +776,27 @@ impl ModelRouter {
     pub fn with_db_pool(mut self, pool: sqlx::Pool<sqlx::Sqlite>) -> Self {
         self.db_pool = Some(pool);
         self
+    }
+
+    /// Return a clone of the current router configuration.
+    pub async fn router_config(&self) -> ModelRouterConfig {
+        self.config.read().await.clone()
+    }
+
+    /// Return a clone of a single alias configuration, if it exists.
+    pub async fn alias_config(&self, name: &str) -> Option<ModelAlias> {
+        self.config.read().await.aliases.get(name).cloned()
+    }
+
+    /// Return all aliases along with their configurations.
+    pub async fn aliases_with_configs(&self) -> Vec<(String, ModelAlias)> {
+        self.config
+            .read()
+            .await
+            .aliases
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// Initialize providers from config
@@ -2359,6 +2392,63 @@ mod tests {
         let config = ModelRouterConfig::default();
         assert!(config.aliases.is_empty());
         assert_eq!(config.default_model, "");
+    }
+
+    #[tokio::test]
+    async fn aliases_with_configs_returns_all_aliases() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        router
+            .set_alias(ModelAlias {
+                name: "fast".to_string(),
+                provider: "openai".to_string(),
+                model: "gpt-3.5".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+        router
+            .set_alias(ModelAlias {
+                name: "smart".to_string(),
+                provider: "anthropic".to_string(),
+                model: "claude-3".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+
+        let aliases = router.aliases_with_configs().await;
+        assert_eq!(aliases.len(), 2);
+        assert!(aliases.iter().any(|(n, _)| n == "fast"));
+        assert!(aliases.iter().any(|(n, _)| n == "smart"));
+    }
+
+    #[tokio::test]
+    async fn alias_config_returns_single_alias() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        router
+            .set_alias(ModelAlias {
+                name: "default".to_string(),
+                provider: "anthropic".to_string(),
+                model: "claude-3".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+
+        let alias = router.alias_config("default").await;
+        assert!(alias.is_some());
+        assert_eq!(alias.unwrap().provider, "anthropic");
+        assert!(router.alias_config("missing").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn router_config_returns_clone() {
+        let mut config = ModelRouterConfig::default();
+        config.default_model = "default".to_string();
+        let router = ModelRouter::new(config);
+
+        let snapshot = router.router_config().await;
+        assert_eq!(snapshot.default_model, "default");
     }
 
     #[tokio::test]
