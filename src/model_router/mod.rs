@@ -39,7 +39,10 @@ pub use oauth_flow::OAuthFlow;
 pub use pkce::{challenge_from_verifier, generate_verifier};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+
+use crate::gateway::task_registry::TaskRegistry;
 pub use usage_fetcher::{
     LocalBudgetFetcher, OpenAiUsageFetcher, UsageFetcher, UsageFetcherRegistry,
 };
@@ -748,6 +751,10 @@ pub struct ModelRouter {
     pub usage_fetchers: RwLock<UsageFetcherRegistry>,
     /// Optional SQLite pool for persisting auth profile state across restarts.
     db_pool: Option<sqlx::Pool<sqlx::Sqlite>>,
+    /// Optional task registry for tracking the health-check background task.
+    task_registry: Option<Arc<TaskRegistry>>,
+    /// Shutdown token for cancelling the health-check background task.
+    shutdown_token: CancellationToken,
 }
 
 impl Default for ModelRouter {
@@ -769,12 +776,26 @@ impl ModelRouter {
             model_catalog: ModelCatalog::new(),
             usage_fetchers: RwLock::new(UsageFetcherRegistry::default()),
             db_pool: None,
+            task_registry: None,
+            shutdown_token: CancellationToken::new(),
         }
     }
 
     /// Attach a SQLite connection pool for persisting auth profile state.
     pub fn with_db_pool(mut self, pool: sqlx::Pool<sqlx::Sqlite>) -> Self {
         self.db_pool = Some(pool);
+        self
+    }
+
+    /// Attach the task registry used to track background health checks.
+    pub fn with_task_registry(mut self, registry: Arc<TaskRegistry>) -> Self {
+        self.task_registry = Some(registry);
+        self
+    }
+
+    /// Attach the shutdown token used to cancel background health checks.
+    pub fn with_shutdown_token(mut self, token: CancellationToken) -> Self {
+        self.shutdown_token = token;
         self
     }
 
@@ -878,17 +899,34 @@ impl ModelRouter {
 
     /// Start the health check background task
     pub fn start_health_checks(self: Arc<Self>) {
-        tokio::spawn(async move {
+        let token = self.shutdown_token.clone();
+        let registry = self.task_registry.clone();
+        let handle = tokio::spawn(async move {
             let interval_secs = {
                 let config = self.config.read().await;
                 config.health_check_interval_secs
             };
             let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        info!("Model router health checks received shutdown signal, exiting");
+                        break;
+                    }
+                    _ = interval.tick() => {}
+                }
                 self.run_health_checks().await;
             }
         });
+
+        if let Some(registry) = registry {
+            tokio::spawn(async move {
+                registry
+                    .insert_join("model_router:health_check", handle)
+                    .await;
+            });
+        }
     }
 
     /// Create a provider instance from config
@@ -1749,9 +1787,14 @@ impl ModelRouter {
 
     /// Run periodic health checks
     async fn run_health_checks(&self) {
-        let providers = self.providers.read().await;
-        let provider_names: Vec<String> = providers.keys().cloned().collect();
-        drop(providers);
+        let provider_names: Vec<String> = {
+            let providers = self.providers.read().await;
+            providers.keys().cloned().collect()
+        };
+        let reset_secs = {
+            let config = self.config.read().await;
+            config.circuit_breaker_reset_secs
+        };
 
         for name in provider_names {
             // First handle circuit-breaker state transitions (Open → HalfOpen).
@@ -1763,8 +1806,7 @@ impl ModelRouter {
                     if h.state == CircuitState::Open {
                         if let Some(last_failure) = h.last_failure {
                             let elapsed = chrono::Utc::now() - last_failure;
-                            let config = self.config.read().await;
-                            if elapsed.num_seconds() >= config.circuit_breaker_reset_secs as i64 {
+                            if elapsed.num_seconds() >= reset_secs as i64 {
                                 info!("Circuit breaker half-open for provider: {}", name);
                                 h.state = CircuitState::HalfOpen;
                             }
@@ -1773,28 +1815,21 @@ impl ModelRouter {
                 }
             }
 
-            // Send a lightweight real request to check liveness.
+            // Use the provider's lightweight health check instead of a real
+            // completion so we do not consume tokens.
             let provider = {
                 let providers = self.providers.read().await;
                 providers.get(&name).cloned()
             };
 
             if let Some(provider) = provider {
-                let request = crate::providers::CompletionRequest {
-                    model: None,
-                    messages: vec![crate::providers::Message::user("ping")],
-                    temperature: Some(0.0),
-                    max_tokens: Some(1),
-                    stream: false,
-                    tools: None,
-                    stop: None,
-                    extra: None,
-                    ..Default::default()
-                };
-
                 let start = std::time::Instant::now();
-                match provider.complete(request).await {
-                    Ok(_) => self.record_success(&name, start.elapsed()).await,
+                match provider.health_check().await {
+                    Ok(true) => self.record_success(&name, start.elapsed()).await,
+                    Ok(false) => {
+                        debug!("Health probe reported unhealthy for {}", name);
+                        self.record_failure(&name, None).await;
+                    }
                     Err(e) => {
                         debug!("Health probe failed for {}: {}", name, e);
                         self.record_failure(&name, None).await;
@@ -2074,25 +2109,15 @@ impl ModelRouter {
         })?;
         drop(providers);
 
-        // Perform lightweight health check
-        // For now, just check if provider responds
-        let request = CompletionRequest {
-            model: None,
-            messages: vec![Message::system("Health check")],
-            temperature: Some(0.0),
-            max_tokens: Some(1),
-            stream: false,
-            tools: None,
-            stop: None,
-            extra: None,
-            ..Default::default()
-        };
-
         let start = std::time::Instant::now();
-        match provider.complete(request).await {
-            Ok(_) => {
+        match provider.health_check().await {
+            Ok(true) => {
                 self.record_success(name, start.elapsed()).await;
                 Ok(true)
+            }
+            Ok(false) => {
+                self.record_failure(name, None).await;
+                Ok(false)
             }
             Err(_) => {
                 self.record_failure(name, None).await;
@@ -2929,9 +2954,162 @@ mod tests {
         assert_eq!(router.get_daily_spend().await, 0.0);
     }
 
-    #[test]
-    fn cost_aware_budget_limit_none_by_default() {
-        let config = CostAwareConfig::default();
-        assert!(config.budget_limit_usd.is_none());
+    #[tokio::test]
+    async fn health_check_uses_health_check_not_complete() {
+        use crate::providers::{
+            CompletionRequest, CompletionResponse, CompletionStream, Message, Provider, Usage,
+        };
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct TrackingProvider {
+            complete_count: Arc<Mutex<usize>>,
+            health_check_count: Arc<Mutex<usize>>,
+        }
+
+        impl TrackingProvider {
+            fn new() -> Self {
+                Self {
+                    complete_count: Arc::new(Mutex::new(0)),
+                    health_check_count: Arc::new(Mutex::new(0)),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl Provider for TrackingProvider {
+            fn name(&self) -> &str {
+                "tracking"
+            }
+            fn default_model(&self) -> &str {
+                "tracking-model"
+            }
+            fn supports_tools(&self) -> bool {
+                false
+            }
+            fn max_context(&self) -> usize {
+                4096
+            }
+            async fn complete(
+                &self,
+                _request: CompletionRequest,
+            ) -> crate::Result<CompletionResponse> {
+                *self.complete_count.lock().unwrap() += 1;
+                Ok(CompletionResponse {
+                    message: Message::assistant("ok"),
+                    model: "tracking-model".to_string(),
+                    usage: Some(Usage::default()),
+                    finish_reason: Some("stop".to_string()),
+                })
+            }
+            async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
+                unimplemented!()
+            }
+            async fn health_check(&self) -> crate::Result<bool> {
+                *self.health_check_count.lock().unwrap() += 1;
+                Ok(true)
+            }
+        }
+
+        let mut config = ModelRouterConfig::default();
+        config.health_check_interval_secs = 1;
+        let registry = Arc::new(crate::gateway::task_registry::TaskRegistry::new());
+        let token = CancellationToken::new();
+        let router = Arc::new(
+            ModelRouter::new(config)
+                .with_task_registry(registry.clone())
+                .with_shutdown_token(token.clone()),
+        );
+
+        let provider = TrackingProvider::new();
+        router
+            .add_provider_instance("tracking", Arc::new(provider.clone()))
+            .await
+            .unwrap();
+
+        router.clone().start_health_checks();
+        tokio::time::sleep(tokio::time::Duration::from_millis(2500)).await;
+        token.cancel();
+
+        assert!(*provider.health_check_count.lock().unwrap() > 0);
+        assert_eq!(*provider.complete_count.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn health_check_task_respects_shutdown() {
+        use crate::providers::{
+            CompletionRequest, CompletionResponse, CompletionStream, Message, Provider, Usage,
+        };
+
+        #[derive(Clone)]
+        struct HealthyProvider;
+
+        #[async_trait]
+        impl Provider for HealthyProvider {
+            fn name(&self) -> &str {
+                "healthy"
+            }
+            fn default_model(&self) -> &str {
+                "healthy-model"
+            }
+            fn supports_tools(&self) -> bool {
+                false
+            }
+            fn max_context(&self) -> usize {
+                4096
+            }
+            async fn complete(
+                &self,
+                _request: CompletionRequest,
+            ) -> crate::Result<CompletionResponse> {
+                Ok(CompletionResponse {
+                    message: Message::assistant("ok"),
+                    model: "healthy-model".to_string(),
+                    usage: Some(Usage::default()),
+                    finish_reason: Some("stop".to_string()),
+                })
+            }
+            async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
+                unimplemented!()
+            }
+            async fn health_check(&self) -> crate::Result<bool> {
+                Ok(true)
+            }
+        }
+
+        let mut config = ModelRouterConfig::default();
+        config.health_check_interval_secs = 60;
+        let registry = Arc::new(crate::gateway::task_registry::TaskRegistry::new());
+        let token = CancellationToken::new();
+        let router = Arc::new(
+            ModelRouter::new(config)
+                .with_task_registry(registry.clone())
+                .with_shutdown_token(token.clone()),
+        );
+
+        router
+            .add_provider_instance("healthy", Arc::new(HealthyProvider))
+            .await
+            .unwrap();
+
+        router.clone().start_health_checks();
+
+        // Give the registration task a moment to run.
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        assert!(registry.contains("model_router:health_check").await);
+
+        token.cancel();
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let handle = registry
+            .remove_join_or_abort("model_router:health_check")
+            .await;
+        assert!(handle.is_some());
+        let result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(2),
+            handle.unwrap(),
+        )
+        .await;
+        assert!(result.is_ok());
     }
 }

@@ -6,11 +6,13 @@
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::acp::AcpControlPlane;
 use crate::agent::session_store::SessionStore;
 use crate::agent::{AgentBuilder, AgentRegistry, SessionManager};
+use crate::gateway::task_registry::TaskRegistry;
 use crate::gateway::GatewayConfig;
 use crate::model_router::{ModelAlias, ModelRouter, ModelRouterConfig};
 use crate::skills::SkillManager;
@@ -50,7 +52,11 @@ pub async fn init_acp(
 }
 
 /// Initialize the model router and configure default aliases.
-pub async fn init_model_router(config: &GatewayConfig) -> Arc<ModelRouter> {
+pub async fn init_model_router(
+    config: &GatewayConfig,
+    task_registry: Arc<TaskRegistry>,
+    shutdown_token: CancellationToken,
+) -> Arc<ModelRouter> {
     let mut model_router_config = ModelRouterConfig::default();
 
     if let Some(first_provider) = config.providers.keys().next() {
@@ -67,7 +73,11 @@ pub async fn init_model_router(config: &GatewayConfig) -> Arc<ModelRouter> {
         model_router_config.default_model = "default".to_string();
     }
 
-    let model_router = Arc::new(ModelRouter::new(model_router_config));
+    let model_router = Arc::new(
+        ModelRouter::new(model_router_config)
+            .with_task_registry(task_registry)
+            .with_shutdown_token(shutdown_token),
+    );
     for (name, provider_config) in &config.providers {
         info!("Configuring provider: {}", name);
         if let Err(e) = model_router
@@ -138,9 +148,11 @@ pub async fn init_agents(
     config: &GatewayConfig,
     session_store: Option<Arc<SessionStore>>,
     tool_registry: Arc<ToolRegistry>,
+    task_registry: Arc<crate::gateway::task_registry::TaskRegistry>,
+    shutdown_token: CancellationToken,
 ) -> crate::Result<AgentsInit> {
     let acp = init_acp(config, session_store).await;
-    let model_router = init_model_router(config).await;
+    let model_router = init_model_router(config, task_registry, shutdown_token).await;
     let (skills_manager, agent_registry, session_manager) = init_agent_state().await?;
 
     configure_acp_agent_builder(

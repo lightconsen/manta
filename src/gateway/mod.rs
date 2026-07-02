@@ -600,14 +600,22 @@ impl Gateway {
 
         // Initialize ACP control plane and model router
         let acp = init::agents::init_acp(&config, session_store.clone()).await;
-        let model_router = init::agents::init_model_router(&config).await;
+
+        // Central task registry must be created before subsystems that register
+        // background tasks (e.g. the model router health-check loop).
+        let task_registry = Arc::new(crate::gateway::task_registry::TaskRegistry::new());
+        let model_router = init::agents::init_model_router(
+            &config,
+            task_registry.clone(),
+            shutdown_token.clone(),
+        )
+        .await;
 
         // Initialize skill manager, agent registry, and session manager
         let (skills_manager, agent_registry, session_manager) =
             init::agents::init_agent_state().await?;
 
         // Assemble the domain-grouped GatewayState used by the rest of the system
-        let task_registry = Arc::new(crate::gateway::task_registry::TaskRegistry::new());
 
         // Initialize tool subsystem (registry, MCP, plugins, channels, computer
         // adapter)

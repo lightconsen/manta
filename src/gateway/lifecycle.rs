@@ -86,6 +86,10 @@ pub(crate) async fn start_gateway(
         }
     }
 
+    // Start model-router health checks. They are registered with the task
+    // registry and respect the gateway shutdown token.
+    state.infra.model_router.clone().start_health_checks();
+
     // Initialize hot reload if enabled
     let hot_reload = state.infra.hot_reload.read().await.clone();
     if let Some(ref hot_reload) = hot_reload {
