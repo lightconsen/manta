@@ -185,10 +185,7 @@ impl AnthropicProvider {
     /// key).
     pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
         let mut extra_headers = HeaderMap::new();
-        extra_headers.insert(
-            "anthropic-version",
-            HeaderValue::from_static("2023-06-01"),
-        );
+        extra_headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
         extra_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let gateway_client = std::sync::Arc::new(
@@ -234,7 +231,6 @@ impl AnthropicProvider {
     fn url(&self, path: &str) -> String {
         format!("{}/{}", self.base_url.trim_end_matches('/'), path.trim_start_matches('/'))
     }
-
 
     /// Convert internal messages to Anthropic format
     fn to_anthropic_messages(messages: &[Message]) -> (Option<String>, Vec<AnthropicMessage>) {
@@ -524,11 +520,12 @@ impl Provider for AnthropicProvider {
 
         debug!("Received response from Anthropic API");
 
-        let anthropic_response: AnthropicResponse = serde_json::from_str(&body)
-            .map_err(|e| crate::error::SyscityError::ExternalService {
+        let anthropic_response: AnthropicResponse = serde_json::from_str(&body).map_err(|e| {
+            crate::error::SyscityError::ExternalService {
                 source: format!("Failed to parse Anthropic response: {}", e),
                 cause: Some(Box::new(e)),
-            })?;
+            }
+        })?;
 
         Ok(Self::from_anthropic_response(anthropic_response))
     }
@@ -622,11 +619,7 @@ impl Provider for AnthropicProvider {
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
-                    error!(
-                        "HTTP stream request failed (attempt {}): {}",
-                        retries + 1,
-                        error_msg
-                    );
+                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
 
                     let is_retryable = error_msg.contains("connection closed")
                         || error_msg.contains("timeout")
@@ -637,8 +630,7 @@ impl Provider for AnthropicProvider {
 
                     if is_retryable && retries < max_retries {
                         retries += 1;
-                        let delay =
-                            std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
                         warn!(
                             "Retryable error detected, retrying after {:?}... (attempt {}/{})",
                             delay, retries, max_retries

@@ -418,11 +418,7 @@ impl Provider for OpenAiProvider {
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
-                    error!(
-                        "HTTP stream request failed (attempt {}): {}",
-                        retries + 1,
-                        error_msg
-                    );
+                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
 
                     let is_retryable = error_msg.contains("connection closed")
                         || error_msg.contains("timeout")
@@ -433,8 +429,7 @@ impl Provider for OpenAiProvider {
 
                     if is_retryable && retries < max_retries {
                         retries += 1;
-                        let delay =
-                            std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
                         warn!(
                             "Retryable stream error, retrying after {:?}... (attempt {}/{})",
                             delay, retries, max_retries

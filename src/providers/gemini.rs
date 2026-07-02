@@ -308,10 +308,8 @@ impl Provider for GeminiProvider {
 
         let request_url = self.url(&model, false);
 
-        let gemini_resp: GeminiResponse = self
-            .gateway_client
-            .post_json(&request_url, &body)
-            .await?;
+        let gemini_resp: GeminiResponse =
+            self.gateway_client.post_json(&request_url, &body).await?;
 
         info!("Successfully received completion from Gemini");
         self.parse_gemini_response(gemini_resp, &model)
@@ -393,11 +391,7 @@ impl Provider for GeminiProvider {
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
-                    error!(
-                        "HTTP stream request failed (attempt {}): {}",
-                        retries + 1,
-                        error_msg
-                    );
+                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
 
                     let is_retryable = error_msg.contains("connection closed")
                         || error_msg.contains("timeout")
@@ -406,8 +400,7 @@ impl Provider for GeminiProvider {
 
                     if is_retryable && retries < max_retries {
                         retries += 1;
-                        let delay =
-                            Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        let delay = Duration::from_secs(2_u64.pow(retries as u32 - 1));
                         warn!(
                             "Retryable stream error, retrying after {:?}... (attempt {}/{})",
                             delay, retries, max_retries

@@ -88,6 +88,9 @@ pub async fn init_model_router(
         }
     }
 
+    // Initialize fallback chains and model catalog from config.
+    model_router.init_catalog_and_chains().await;
+
     model_router
 }
 
