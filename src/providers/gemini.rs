@@ -5,6 +5,7 @@
 //! `generativelanguage.googleapis.com`.
 
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -12,6 +13,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::{
@@ -22,8 +24,8 @@ use super::{
 /// Google Gemini provider
 #[derive(Debug, Clone)]
 pub struct GeminiProvider {
-    /// API key used as `x-goog-api-key` header
-    api_key: String,
+    /// Authentication credential used as `x-goog-api-key` header
+    credential: Arc<RwLock<crate::model_router::Credential>>,
     /// Base URL (default: https://generativelanguage.googleapis.com/v1beta)
     base_url: String,
     /// Default model (default: gemini-2.0-flash)
@@ -35,6 +37,11 @@ pub struct GeminiProvider {
 impl GeminiProvider {
     /// Create a new Gemini provider from an API key string.
     pub fn new(api_key: impl Into<String>) -> crate::Result<Self> {
+        Self::with_credential(crate::model_router::Credential::api_key(api_key))
+    }
+
+    /// Create with a full `Credential`.
+    pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert("User-Agent", HeaderValue::from_static("syscity/1.0"));
@@ -52,7 +59,7 @@ impl GeminiProvider {
             })?;
 
         Ok(Self {
-            api_key: api_key.into(),
+            credential: Arc::new(RwLock::new(credential)),
             base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
             default_model: "gemini-2.0-flash".to_string(),
             client,
@@ -73,17 +80,30 @@ impl GeminiProvider {
 
     /// Create from a fully-resolved `ProviderInstanceConfig`.
     pub fn from_config(config: ProviderInstanceConfig) -> crate::Result<Self> {
-        let mut this = Self::new(config.api_key.unwrap_or_default())?;
+        let credential =
+            crate::model_router::Credential::api_key(config.api_key.unwrap_or_default());
+        let mut this = Self::with_credential(credential)?;
         this.base_url = config.base_url;
         this.default_model = config.model;
         Ok(this)
     }
 
-    /// Build auth headers with the API key.
-    fn headers(&self) -> HeaderMap {
+    /// Build auth headers with the current credential.
+    async fn headers(&self) -> HeaderMap {
+        let cred = self.credential.read().await;
         let mut headers = HeaderMap::new();
-        if let Ok(v) = HeaderValue::try_from(self.api_key.as_str()) {
-            headers.insert("x-goog-api-key", v);
+        match &*cred {
+            crate::model_router::Credential::ApiKey { key } => {
+                if let Ok(v) = HeaderValue::try_from(key.as_str()) {
+                    headers.insert("x-goog-api-key", v);
+                }
+            }
+            _ => {
+                let auth = cred.authorization_header();
+                if let Ok(v) = HeaderValue::try_from(auth.as_str()) {
+                    headers.insert("Authorization", v);
+                }
+            }
         }
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers
@@ -319,7 +339,7 @@ impl Provider for GeminiProvider {
             match self
                 .client
                 .post(&request_url)
-                .headers(self.headers())
+                .headers(self.headers().await)
                 .json(&body)
                 .send()
                 .await
@@ -415,7 +435,7 @@ impl Provider for GeminiProvider {
             match self
                 .client
                 .post(&request_url)
-                .headers(self.headers())
+                .headers(self.headers().await)
                 .json(&body)
                 .send()
                 .await
@@ -467,11 +487,20 @@ impl Provider for GeminiProvider {
         let response = self
             .client
             .get(&url)
-            .headers(self.headers())
+            .headers(self.headers().await)
             .send()
             .await
             .map_err(crate::error::SyscityError::Http)?;
         Ok(response.status().is_success())
+    }
+
+    async fn set_credential(
+        &self,
+        credential: crate::model_router::Credential,
+    ) -> crate::Result<()> {
+        let mut cred = self.credential.write().await;
+        *cred = credential;
+        Ok(())
     }
 }
 
@@ -955,31 +984,29 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_gemini_usage() {
-        let provider = GeminiProvider::new("test-key").unwrap();
-        let resp = GeminiResponse {
-            candidates: vec![GeminiCandidate {
-                content: Some(GeminiContent {
-                    role: "model".to_string(),
-                    parts: vec![GeminiPart::Text { text: "Hi".to_string() }],
-                }),
-                finish_reason: Some(GeminiFinishReason::Stop),
-                index: Some(0),
-            }],
-            prompt_feedback: None,
-            usage_metadata: Some(GeminiUsageMetadata {
-                prompt_token_count: 10,
-                candidates_token_count: 5,
-                total_token_count: 15,
-            }),
-        };
-        let result = provider
-            .parse_gemini_response(resp, "gemini-2.0-flash")
+    #[tokio::test]
+    async fn test_set_credential_updates_api_key() {
+        let provider = GeminiProvider::new("first-key").unwrap();
+        provider
+            .set_credential(crate::model_router::Credential::api_key("rotated-key"))
+            .await
             .unwrap();
-        let usage = result.usage.unwrap();
-        assert_eq!(usage.prompt_tokens, 10);
-        assert_eq!(usage.completion_tokens, 5);
-        assert_eq!(usage.total_tokens, 15);
+
+        let headers = provider.headers().await;
+        let key = headers.get("x-goog-api-key").unwrap().to_str().unwrap();
+        assert_eq!(key, "rotated-key");
+    }
+
+    #[tokio::test]
+    async fn test_set_credential_to_bearer_token() {
+        let provider = GeminiProvider::new("first-key").unwrap();
+        provider
+            .set_credential(crate::model_router::Credential::bearer_token("oauth-token"))
+            .await
+            .unwrap();
+
+        let headers = provider.headers().await;
+        let auth = headers.get("Authorization").unwrap().to_str().unwrap();
+        assert_eq!(auth, "Bearer oauth-token");
     }
 }

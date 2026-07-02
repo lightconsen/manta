@@ -3009,6 +3009,12 @@ mod tests {
                 *self.health_check_count.lock().unwrap() += 1;
                 Ok(true)
             }
+            async fn set_credential(
+                &self,
+                _credential: crate::model_router::Credential,
+            ) -> crate::Result<()> {
+                Ok(())
+            }
         }
 
         let mut config = ModelRouterConfig::default();
@@ -3075,6 +3081,12 @@ mod tests {
             async fn health_check(&self) -> crate::Result<bool> {
                 Ok(true)
             }
+            async fn set_credential(
+                &self,
+                _credential: crate::model_router::Credential,
+            ) -> crate::Result<()> {
+                Ok(())
+            }
         }
 
         let mut config = ModelRouterConfig::default();
@@ -3105,11 +3117,8 @@ mod tests {
             .remove_join_or_abort("model_router:health_check")
             .await;
         assert!(handle.is_some());
-        let result = tokio::time::timeout(
-            tokio::time::Duration::from_secs(2),
-            handle.unwrap(),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(tokio::time::Duration::from_secs(2), handle.unwrap()).await;
         assert!(result.is_ok());
     }
 }

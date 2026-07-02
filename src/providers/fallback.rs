@@ -148,6 +148,15 @@ impl Provider for FallbackProvider {
         }
         Ok(false)
     }
+
+    async fn set_credential(
+        &self,
+        _credential: crate::model_router::Credential,
+    ) -> crate::Result<()> {
+        // Fallback chains do not have a single credential; updates should be
+        // applied to each wrapped provider individually.
+        Ok(())
+    }
 }
 
 /// Builder for creating fallback chains
@@ -271,6 +280,13 @@ mod tests {
         }
         async fn health_check(&self) -> crate::Result<bool> {
             Ok(self.healthy)
+        }
+
+        async fn set_credential(
+            &self,
+            _credential: crate::model_router::Credential,
+        ) -> crate::Result<()> {
+            Ok(())
         }
     }
 

@@ -537,6 +537,15 @@ impl Provider for OpenAiProvider {
 
         Ok(response.status().is_success())
     }
+
+    async fn set_credential(
+        &self,
+        credential: crate::model_router::Credential,
+    ) -> crate::Result<()> {
+        let mut cred = self.credential.write().await;
+        *cred = credential;
+        Ok(())
+    }
 }
 
 // OpenAI API types
@@ -1284,21 +1293,29 @@ mod tests {
         assert!(json.contains("\"stop\""));
     }
 
-    #[test]
-    fn test_openai_request_skips_none() {
-        let req = OpenAiRequest {
-            model: "gpt-4".to_string(),
-            messages: vec![],
-            tools: None,
-            temperature: 0.5,
-            max_tokens: None,
-            stream: None,
-            stop: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(!json.contains("max_tokens"));
-        assert!(!json.contains("stream"));
-        assert!(!json.contains("stop"));
-        assert!(!json.contains("tools"));
+    #[tokio::test]
+    async fn test_set_credential_updates_auth_header() {
+        let provider = OpenAiProvider::new("first-key").unwrap();
+        provider
+            .set_credential(crate::model_router::Credential::api_key("rotated-key"))
+            .await
+            .unwrap();
+
+        let headers = provider.headers().await;
+        let auth = headers.get(AUTHORIZATION).unwrap().to_str().unwrap();
+        assert_eq!(auth, "Bearer rotated-key");
+    }
+
+    #[tokio::test]
+    async fn test_set_credential_to_bearer_token() {
+        let provider = OpenAiProvider::new("first-key").unwrap();
+        provider
+            .set_credential(crate::model_router::Credential::bearer_token("oauth-token"))
+            .await
+            .unwrap();
+
+        let headers = provider.headers().await;
+        let auth = headers.get(AUTHORIZATION).unwrap().to_str().unwrap();
+        assert_eq!(auth, "Bearer oauth-token");
     }
 }

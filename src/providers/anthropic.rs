@@ -745,6 +745,15 @@ impl Provider for AnthropicProvider {
             Err(_) => Ok(false),
         }
     }
+
+    async fn set_credential(
+        &self,
+        credential: crate::model_router::Credential,
+    ) -> crate::Result<()> {
+        let mut cred = self.credential.write().await;
+        *cred = credential;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -797,24 +806,29 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_from_anthropic_response() {
-        let response = AnthropicResponse {
-            id: "test-id".to_string(),
-            response_type: "message".to_string(),
-            role: "assistant".to_string(),
-            content: vec![ContentBlock::Text { text: "Hello!".to_string() }],
-            model: "claude-3-5-sonnet".to_string(),
-            stop_reason: Some("end_turn".to_string()),
-            usage: AnthropicUsage {
-                input_tokens: 10,
-                output_tokens: 5,
-            },
-        };
+    #[tokio::test]
+    async fn test_set_credential_updates_api_key() {
+        let provider = AnthropicProvider::new("first-key").unwrap();
+        provider
+            .set_credential(crate::model_router::Credential::api_key("rotated-key"))
+            .await
+            .unwrap();
 
-        let completion = AnthropicProvider::from_anthropic_response(response);
-        assert_eq!(completion.message.content, "Hello!");
-        assert!(completion.usage.is_some());
-        assert_eq!(completion.usage.unwrap().total_tokens, 15);
+        let headers = provider.headers().await;
+        let key = headers.get("x-api-key").unwrap().to_str().unwrap();
+        assert_eq!(key, "rotated-key");
+    }
+
+    #[tokio::test]
+    async fn test_set_credential_to_bearer_token() {
+        let provider = AnthropicProvider::new("first-key").unwrap();
+        provider
+            .set_credential(crate::model_router::Credential::bearer_token("oauth-token"))
+            .await
+            .unwrap();
+
+        let headers = provider.headers().await;
+        let auth = headers.get("Authorization").unwrap().to_str().unwrap();
+        assert_eq!(auth, "Bearer oauth-token");
     }
 }

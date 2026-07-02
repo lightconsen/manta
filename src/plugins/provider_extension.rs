@@ -134,6 +134,15 @@ impl Provider for PluginProvider {
             Err(_) => Ok(false),
         }
     }
+
+    async fn set_credential(
+        &self,
+        _credential: crate::model_router::Credential,
+    ) -> crate::Result<()> {
+        // Plugin providers manage credentials inside the plugin runtime; this
+        // provider adapter does not hold credentials directly.
+        Ok(())
+    }
 }
 
 /// Registry of plugin-backed providers.

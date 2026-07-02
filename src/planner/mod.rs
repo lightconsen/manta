@@ -552,6 +552,13 @@ impl Provider for DummyProvider {
     async fn health_check(&self) -> crate::Result<bool> {
         Ok(false)
     }
+
+    async fn set_credential(
+        &self,
+        _credential: crate::model_router::Credential,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

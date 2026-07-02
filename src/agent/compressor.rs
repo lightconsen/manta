@@ -882,6 +882,13 @@ mod tests {
         async fn health_check(&self) -> crate::Result<bool> {
             Ok(true)
         }
+
+        async fn set_credential(
+            &self,
+            _credential: crate::model_router::Credential,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
     }
 
     #[tokio::test]

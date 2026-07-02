@@ -439,6 +439,16 @@ pub trait Provider: Send + Sync {
 
     /// Check if the provider is healthy
     async fn health_check(&self) -> crate::Result<bool>;
+
+    /// Update the credential used by this provider at runtime.
+    ///
+    /// Implementations should replace the current credential with the supplied
+    /// one so that subsequent requests use the new credential without needing
+    /// to rebuild the provider or mutate the original `ProviderConfig`.
+    async fn set_credential(
+        &self,
+        credential: crate::model_router::Credential,
+    ) -> crate::Result<()>;
 }
 
 /// Registry of providers
@@ -865,6 +875,13 @@ mod tests {
         }
         async fn health_check(&self) -> crate::Result<bool> {
             Ok(true)
+        }
+
+        async fn set_credential(
+            &self,
+            _credential: crate::model_router::Credential,
+        ) -> crate::Result<()> {
+            Ok(())
         }
     }
 
