@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::model_router::Credential;
 
@@ -52,13 +52,6 @@ pub trait GatewayClient: Send + Sync {
 }
 
 /// HTTP-based `GatewayClient` using `reqwest`.
-///
-/// # TLS fingerprint
-///
-/// When `tls_fingerprint` is set the client will **log** the remote
-/// certificate digest on the first connection so operators can compare
-/// it against an expected value. Full enforcement requires a custom
-/// `reqwest` connector; the field acts as a configuration hook for now.
 pub struct HttpGatewayClient {
     inner: reqwest::Client,
     base_url: String,
@@ -66,10 +59,6 @@ pub struct HttpGatewayClient {
     timeout: RwLock<Duration>,
     max_retries: u32,
     retry_delay: Duration,
-    /// Expected SHA-256 fingerprint of the remote TLS certificate.
-    /// If `Some`, the client logs the observed fingerprint on first
-    /// use for operator comparison.
-    tls_fingerprint: Option<String>,
     /// Optional per-client token-bucket rate limiter.
     rate_limiter: Option<std::sync::Arc<crate::security::RateLimiter>>,
 }
@@ -79,7 +68,6 @@ impl std::fmt::Debug for HttpGatewayClient {
         f.debug_struct("HttpGatewayClient")
             .field("base_url", &self.base_url)
             .field("max_retries", &self.max_retries)
-            .field("tls_fingerprint", &self.tls_fingerprint.is_some())
             .field("rate_limiter", &self.rate_limiter.is_some())
             .finish()
     }
@@ -107,7 +95,6 @@ impl HttpGatewayClient {
             timeout: RwLock::new(timeout),
             max_retries: 3,
             retry_delay: Duration::from_millis(500),
-            tls_fingerprint: None,
             rate_limiter: None,
         })
     }
@@ -121,12 +108,6 @@ impl HttpGatewayClient {
     /// Builder: set retry delay.
     pub fn with_retry_delay(mut self, d: Duration) -> Self {
         self.retry_delay = d;
-        self
-    }
-
-    /// Builder: set TLS fingerprint for verification.
-    pub fn with_tls_fingerprint(mut self, fp: impl Into<String>) -> Self {
-        self.tls_fingerprint = Some(fp.into());
         self
     }
 
@@ -148,8 +129,10 @@ impl HttpGatewayClient {
         }
     }
 
-    /// Execute a request with auth, retry, and optional TLS-fingerprint
-    /// logging.
+    /// Execute a request with auth, retry, and timeout handling.
+    ///
+    /// Retries only on transient failures: network timeouts/connection errors
+    /// and 5xx server responses. 4xx client errors are returned immediately.
     async fn execute_with_retry<F, Fut>(&self, operation: F) -> crate::Result<reqwest::Response>
     where
         F: Fn() -> Fut + Send,
@@ -173,40 +156,41 @@ impl HttpGatewayClient {
 
         for attempt in 0..=self.max_retries {
             match operation().await {
+                Ok(resp) if resp.status().is_success() => return Ok(resp),
                 Ok(resp) => {
-                    // Log TLS fingerprint on first successful connection
-                    if attempt == 0 {
-                        if let Some(ref fp) = self.tls_fingerprint {
-                            // Note: reqwest doesn't expose peer certificate
-                            // digest without a custom connector. This is a
-                            // placeholder that logs the configured expectation.
-                            debug!(
-                                "TLS fingerprint configured for {}: expected={}",
-                                self.base_url, fp
-                            );
-                        }
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    let err = crate::error::SyscityError::ExternalService {
+                        source: format!("HTTP {}: {}", status, body),
+                        cause: None,
+                    };
+
+                    // 4xx client errors are not retried.
+                    if status.is_client_error() || attempt == self.max_retries {
+                        return Err(err);
                     }
-                    return Ok(resp);
+
+                    last_error = Some(err);
                 }
                 Err(e) => {
-                    let is_retryable = matches!(
-                        &e,
-                        crate::error::SyscityError::Http(_)
-                            | crate::error::SyscityError::ExternalService { .. }
-                    );
-                    if !is_retryable || attempt == self.max_retries {
+                    if !is_retryable_error(&e) || attempt == self.max_retries {
                         return Err(e);
                     }
+                    last_error = Some(e);
+                }
+            }
+
+            if attempt < self.max_retries {
+                if let Some(ref err) = last_error {
                     let delay = self.retry_delay * 2_u32.pow(attempt);
                     warn!(
                         "Request failed (attempt {}/{}), retrying in {:?}: {}",
                         attempt + 1,
                         self.max_retries + 1,
                         delay,
-                        e
+                        err
                     );
                     tokio::time::sleep(delay).await;
-                    last_error = Some(e);
                 }
             }
         }
@@ -215,6 +199,22 @@ impl HttpGatewayClient {
             source: "All retry attempts exhausted".to_string(),
             cause: None,
         }))
+    }
+}
+
+/// Whether an error is worth retrying.
+fn is_retryable_error(e: &crate::error::SyscityError) -> bool {
+    match e {
+        crate::error::SyscityError::Http(req_err) => req_err.is_timeout() || req_err.is_connect(),
+        crate::error::SyscityError::ExternalService { source, .. } => {
+            let s = source.to_lowercase();
+            s.contains("timeout")
+                || s.contains("timed out")
+                || s.contains("connection")
+                || s.contains("overloaded")
+                || s.contains("service unavailable")
+        }
+        _ => false,
     }
 }
 
@@ -228,6 +228,7 @@ impl GatewayClient for HttpGatewayClient {
         let url = self.url(path);
         let credential = self.credential.read().await.clone();
         let auth = credential.authorization_header();
+        let timeout = *self.timeout.read().await;
 
         let resp = self
             .execute_with_retry(|| {
@@ -235,6 +236,7 @@ impl GatewayClient for HttpGatewayClient {
                 async {
                     self.inner
                         .post(&url)
+                        .timeout(timeout)
                         .header("Authorization", auth)
                         .header("Content-Type", "application/json")
                         .json(body)
@@ -244,15 +246,6 @@ impl GatewayClient for HttpGatewayClient {
                 }
             })
             .await?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
-            return Err(crate::error::SyscityError::ExternalService {
-                source: format!("HTTP {}: {}", status, body_text),
-                cause: None,
-            });
-        }
 
         resp.json::<R>()
             .await
@@ -270,6 +263,7 @@ impl GatewayClient for HttpGatewayClient {
         let url = self.url(path);
         let credential = self.credential.read().await.clone();
         let auth = credential.authorization_header();
+        let timeout = *self.timeout.read().await;
 
         let resp = self
             .execute_with_retry(|| {
@@ -277,6 +271,7 @@ impl GatewayClient for HttpGatewayClient {
                 async {
                     self.inner
                         .post(&url)
+                        .timeout(timeout)
                         .header("Authorization", auth)
                         .header("Content-Type", "application/json")
                         .json(body)
@@ -286,15 +281,6 @@ impl GatewayClient for HttpGatewayClient {
                 }
             })
             .await?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
-            return Err(crate::error::SyscityError::ExternalService {
-                source: format!("HTTP {}: {}", status, body_text),
-                cause: None,
-            });
-        }
 
         resp.text()
             .await
@@ -322,6 +308,14 @@ impl GatewayClient for HttpGatewayClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Serialize;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[derive(Serialize)]
+    struct TestBody {
+        msg: String,
+    }
 
     #[test]
     fn test_url_building() {
@@ -344,11 +338,10 @@ mod tests {
         )
         .unwrap()
         .with_max_retries(5)
-        .with_retry_delay(Duration::from_secs(1))
-        .with_tls_fingerprint("abc123");
+        .with_retry_delay(Duration::from_secs(1));
 
         assert_eq!(client.max_retries, 5);
-        assert_eq!(client.tls_fingerprint, Some("abc123".to_string()));
+        assert_eq!(client.retry_delay, Duration::from_secs(1));
     }
 
     #[test]
@@ -363,5 +356,93 @@ mod tests {
         .with_rate_limiter(limiter);
 
         assert!(client.rate_limiter.is_some());
+    }
+
+    #[tokio::test]
+    async fn set_timeout_is_applied_to_requests() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/slow"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(200)))
+            .mount(&server)
+            .await;
+
+        let client = HttpGatewayClient::new(
+            server.uri(),
+            Credential::api_key("test"),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        client.set_timeout(Duration::from_millis(50)).await;
+
+        let result = client
+            .post_json::<TestBody, serde_json::Value>("/slow", &TestBody { msg: "hi".to_string() })
+            .await;
+
+        match result {
+            Err(crate::error::SyscityError::Http(e)) if e.is_timeout() => {}
+            other => panic!("expected timeout Http error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn client_error_is_not_retried() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("bad request"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = HttpGatewayClient::new(
+            server.uri(),
+            Credential::api_key("test"),
+            Duration::from_secs(30),
+        )
+        .unwrap()
+        .with_max_retries(3)
+        .with_retry_delay(Duration::from_millis(10));
+
+        let result = client
+            .post_json::<TestBody, serde_json::Value>("/chat", &TestBody { msg: "hi".to_string() })
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn server_error_is_retried() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "ok": true })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = HttpGatewayClient::new(
+            server.uri(),
+            Credential::api_key("test"),
+            Duration::from_secs(30),
+        )
+        .unwrap()
+        .with_max_retries(3)
+        .with_retry_delay(Duration::from_millis(10));
+
+        let result = client
+            .post_json::<TestBody, serde_json::Value>("/chat", &TestBody { msg: "hi".to_string() })
+            .await;
+
+        assert!(result.is_ok());
     }
 }
