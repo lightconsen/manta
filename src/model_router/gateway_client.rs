@@ -15,6 +15,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use reqwest::header::HeaderMap;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::RwLock;
 use tracing::warn;
@@ -53,14 +54,21 @@ pub trait GatewayClient: Send + Sync {
 
 /// HTTP-based `GatewayClient` using `reqwest`.
 pub struct HttpGatewayClient {
-    inner: reqwest::Client,
+    pub(crate) inner: reqwest::Client,
     base_url: String,
-    credential: Arc<RwLock<Credential>>,
+    pub(crate) credential: Arc<RwLock<Credential>>,
     timeout: RwLock<Duration>,
     max_retries: u32,
     retry_delay: Duration,
     /// Optional per-client token-bucket rate limiter.
     rate_limiter: Option<std::sync::Arc<crate::security::RateLimiter>>,
+    /// When `Some(name)`, `ApiKey` credentials use `{name}: {key}` instead of
+    /// `Authorization: Bearer {key}`. `BearerToken` / `OAuth2` always use
+    /// `Authorization: Bearer {token}`.
+    pub(crate) api_key_header: Option<String>,
+    /// Static headers injected on every request (User-Agent, version headers,
+    /// etc.).
+    pub(crate) extra_headers: HeaderMap,
 }
 
 impl std::fmt::Debug for HttpGatewayClient {
@@ -96,6 +104,8 @@ impl HttpGatewayClient {
             max_retries: 3,
             retry_delay: Duration::from_millis(500),
             rate_limiter: None,
+            api_key_header: None,
+            extra_headers: HeaderMap::new(),
         })
     }
 
@@ -118,6 +128,45 @@ impl HttpGatewayClient {
     ) -> Self {
         self.rate_limiter = Some(limiter);
         self
+    }
+
+    /// Builder: set a custom header name for ApiKey credentials.
+    ///
+    /// When set, `ApiKey` credentials produce `{name}: {key}` instead of
+    /// `Authorization: Bearer {key}`. Useful for providers like Anthropic
+    /// (`x-api-key`) and Gemini (`x-goog-api-key`).
+    pub fn with_api_key_header(mut self, name: impl Into<String>) -> Self {
+        self.api_key_header = Some(name.into());
+        self
+    }
+
+    /// Builder: set static extra headers injected on every request.
+    pub fn with_extra_headers(mut self, headers: HeaderMap) -> Self {
+        self.extra_headers = headers;
+        self
+    }
+
+    /// Expose the inner `reqwest::Client` for direct use (e.g. streaming).
+    pub(crate) fn inner_client(&self) -> &reqwest::Client {
+        &self.inner
+    }
+
+    /// Return the auth header name and value for a given credential.
+    ///
+    /// - `ApiKey` + `api_key_header` is `Some` ⇒ `({name}, {key})`
+    /// - Everything else ⇒ `("Authorization", "Bearer {token}")`
+    pub(crate) fn auth_for_credential(&self, credential: &Credential) -> (&str, String) {
+        match (credential, &self.api_key_header) {
+            (Credential::ApiKey { key }, Some(header_name)) => (header_name.as_str(), key.clone()),
+            _ => ("Authorization", credential.authorization_header()),
+        }
+    }
+
+    /// Refresh the credential if it's an OAuth2 token that is expired or
+    /// expiring soon.
+    pub(crate) async fn refresh_credential_if_needed(&self) -> crate::Result<()> {
+        let mut cred = self.credential.write().await;
+        cred.refresh_if_needed(&self.inner).await
     }
 
     /// Build the full URL for a path.
@@ -227,18 +276,28 @@ impl GatewayClient for HttpGatewayClient {
     ) -> crate::Result<R> {
         let url = self.url(path);
         let credential = self.credential.read().await.clone();
-        let auth = credential.authorization_header();
+        let (auth_name, auth_value) = self.auth_for_credential(&credential);
         let timeout = *self.timeout.read().await;
+        let extra = self.extra_headers.clone();
 
         let resp = self
             .execute_with_retry(|| {
-                let auth = auth.clone();
-                async {
-                    self.inner
+                let url = url.clone();
+                let auth_value = auth_value.clone();
+                let extra = extra.clone();
+                async move {
+                    let mut builder = self
+                        .inner
                         .post(&url)
                         .timeout(timeout)
-                        .header("Authorization", auth)
-                        .header("Content-Type", "application/json")
+                        .header(auth_name, auth_value)
+                        .header("Content-Type", "application/json");
+
+                    for (name, value) in extra.iter() {
+                        builder = builder.header(name, value);
+                    }
+
+                    builder
                         .json(body)
                         .send()
                         .await
@@ -262,18 +321,28 @@ impl GatewayClient for HttpGatewayClient {
     ) -> crate::Result<String> {
         let url = self.url(path);
         let credential = self.credential.read().await.clone();
-        let auth = credential.authorization_header();
+        let (auth_name, auth_value) = self.auth_for_credential(&credential);
         let timeout = *self.timeout.read().await;
+        let extra = self.extra_headers.clone();
 
         let resp = self
             .execute_with_retry(|| {
-                let auth = auth.clone();
-                async {
-                    self.inner
+                let url = url.clone();
+                let auth_value = auth_value.clone();
+                let extra = extra.clone();
+                async move {
+                    let mut builder = self
+                        .inner
                         .post(&url)
                         .timeout(timeout)
-                        .header("Authorization", auth)
-                        .header("Content-Type", "application/json")
+                        .header(auth_name, auth_value)
+                        .header("Content-Type", "application/json");
+
+                    for (name, value) in extra.iter() {
+                        builder = builder.header(name, value);
+                    }
+
+                    builder
                         .json(body)
                         .send()
                         .await

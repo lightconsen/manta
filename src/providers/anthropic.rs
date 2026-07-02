@@ -7,7 +7,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
 use super::{
     stream_wrappers::ProviderStreamFamily, CompletionChunk, CompletionRequest, CompletionResponse,
@@ -15,19 +15,18 @@ use super::{
     ToolCall, Usage,
 };
 
+use crate::model_router::gateway_client::GatewayClient;
+use crate::model_router::HttpGatewayClient;
+
 /// Anthropic API client
 #[derive(Debug, Clone)]
 pub struct AnthropicProvider {
-    /// Authentication credential (supports API key, Bearer token, OAuth2)
-    credential: std::sync::Arc<tokio::sync::RwLock<crate::model_router::Credential>>,
     /// Base URL
     base_url: String,
     /// Default model
     default_model: String,
-    /// API version
-    api_version: String,
-    /// HTTP client
-    client: reqwest::Client,
+    /// Unified HTTP client with retry/backoff, auth, and rate limiting
+    gateway_client: std::sync::Arc<HttpGatewayClient>,
     /// Optional stream family override (e.g. for Kimi Anthropic endpoint)
     stream_family_override: Option<ProviderStreamFamily>,
 }
@@ -185,19 +184,27 @@ impl AnthropicProvider {
     /// Create with a full `Credential` (supports OAuth2, Bearer token, API
     /// key).
     pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .build()
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
-            })?;
+        let mut extra_headers = HeaderMap::new();
+        extra_headers.insert(
+            "anthropic-version",
+            HeaderValue::from_static("2023-06-01"),
+        );
+        extra_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let gateway_client = std::sync::Arc::new(
+            HttpGatewayClient::new(
+                "https://api.anthropic.com",
+                credential,
+                Duration::from_secs(120),
+            )?
+            .with_api_key_header("x-api-key")
+            .with_extra_headers(extra_headers),
+        );
 
         Ok(Self {
-            credential: std::sync::Arc::new(tokio::sync::RwLock::new(credential)),
             base_url: "https://api.anthropic.com".to_string(),
             default_model: "claude-3-5-sonnet-20241022".to_string(),
-            api_version: "2023-06-01".to_string(),
-            client,
+            gateway_client,
             stream_family_override: None,
         })
     }
@@ -228,35 +235,6 @@ impl AnthropicProvider {
         format!("{}/{}", self.base_url.trim_end_matches('/'), path.trim_start_matches('/'))
     }
 
-    /// Refresh the credential if it is expired or expiring soon.
-    async fn refresh_auth(&self) -> crate::Result<()> {
-        let mut cred = self.credential.write().await;
-        cred.refresh_if_needed(&self.client).await
-    }
-
-    /// Build headers with authorization (async to read the RwLock).
-    async fn headers(&self) -> HeaderMap {
-        let cred = self.credential.read().await;
-        let mut headers = HeaderMap::new();
-        match &*cred {
-            crate::model_router::Credential::ApiKey { key } => {
-                if let Ok(v) = HeaderValue::try_from(key.as_str()) {
-                    headers.insert("x-api-key", v);
-                }
-            }
-            _ => {
-                let auth = cred.authorization_header();
-                if let Ok(v) = HeaderValue::try_from(auth.as_str()) {
-                    headers.insert("Authorization", v);
-                }
-            }
-        }
-        if let Ok(v) = HeaderValue::try_from(self.api_version.as_str()) {
-            headers.insert("anthropic-version", v);
-        }
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers
-    }
 
     /// Convert internal messages to Anthropic format
     fn to_anthropic_messages(messages: &[Message]) -> (Option<String>, Vec<AnthropicMessage>) {
@@ -502,7 +480,7 @@ impl Provider for AnthropicProvider {
 
     #[instrument(skip(self, request))]
     async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse> {
-        self.refresh_auth().await?;
+        self.gateway_client.refresh_credential_if_needed().await?;
 
         let (system, messages) = Self::to_anthropic_messages(&request.messages);
 
@@ -539,78 +517,24 @@ impl Provider for AnthropicProvider {
 
         let request_url = self.url("/v1/messages");
 
-        // Retry logic for transient errors
-        let mut retries = 0;
-        let max_retries = 3;
+        let body = self
+            .gateway_client
+            .post_json_text(&request_url, &body_value)
+            .await?;
 
-        loop {
-            info!("Sending HTTP request (attempt {})", retries + 1);
-            match self
-                .client
-                .post(&request_url)
-                .headers(self.headers().await)
-                .json(&body_value)
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    let status = response.status();
-                    if !status.is_success() {
-                        let text = response.text().await.unwrap_or_default();
-                        error!("Anthropic API error: {} - {}", status, text);
-                        return Err(crate::error::SyscityError::ExternalService {
-                            source: format!("Anthropic API error {}: {}", status, text),
-                            cause: None,
-                        });
-                    }
+        debug!("Received response from Anthropic API");
 
-                    let body = response
-                        .text()
-                        .await
-                        .map_err(crate::error::SyscityError::Http)?;
+        let anthropic_response: AnthropicResponse = serde_json::from_str(&body)
+            .map_err(|e| crate::error::SyscityError::ExternalService {
+                source: format!("Failed to parse Anthropic response: {}", e),
+                cause: Some(Box::new(e)),
+            })?;
 
-                    debug!("Received response from Anthropic API");
-
-                    let anthropic_response: AnthropicResponse = serde_json::from_str(&body)
-                        .map_err(|e| crate::error::SyscityError::ExternalService {
-                            source: format!("Failed to parse Anthropic response: {}", e),
-                            cause: Some(Box::new(e)),
-                        })?;
-
-                    return Ok(Self::from_anthropic_response(anthropic_response));
-                }
-                Err(e) => {
-                    let error_msg = e.to_string();
-                    error!("HTTP request failed (attempt {}): {}", retries + 1, error_msg);
-
-                    // Check if it's a retryable error
-                    let is_retryable = error_msg.contains("connection closed")
-                        || error_msg.contains("timeout")
-                        || error_msg.contains("reset")
-                        || error_msg.contains("broken pipe")
-                        || error_msg.contains("Connection reset")
-                        || error_msg.contains("unexpected EOF");
-
-                    if is_retryable && retries < max_retries {
-                        retries += 1;
-                        // Exponential backoff: 1s, 2s, 4s
-                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
-                        warn!(
-                            "Retryable error detected, retrying after {:?}... (attempt {}/{})",
-                            delay, retries, max_retries
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-
-                    return Err(crate::error::SyscityError::Http(e));
-                }
-            }
-        }
+        Ok(Self::from_anthropic_response(anthropic_response))
     }
 
     async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
-        self.refresh_auth().await?;
+        self.gateway_client.refresh_credential_if_needed().await?;
 
         let (system, messages) = Self::to_anthropic_messages(&request.messages);
 
@@ -643,19 +567,28 @@ impl Provider for AnthropicProvider {
 
         let request_url = format!("{}/v1/messages", self.base_url);
 
-        // Retry logic for transient errors
-        let mut retries = 0;
-        let max_retries = 3;
+        // Retry logic for transient errors (cannot use post_json_text because
+        // streaming needs the raw byte stream)
+        let mut retries: u32 = 0;
+        let max_retries: u32 = 3;
 
         loop {
-            match self
-                .client
+            let credential = self.gateway_client.credential.read().await.clone();
+            let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
+
+            let mut builder = self
+                .gateway_client
+                .inner_client()
                 .post(&request_url)
-                .headers(self.headers().await)
-                .json(&body_value)
-                .send()
-                .await
-            {
+                .header(auth_name, auth_value)
+                .header(CONTENT_TYPE, "application/json")
+                .json(&body_value);
+
+            for (name, value) in self.gateway_client.extra_headers.iter() {
+                builder = builder.header(name, value);
+            }
+
+            match builder.send().await {
                 Ok(response) => {
                     let status = response.status();
                     if !status.is_success() {
@@ -689,7 +622,11 @@ impl Provider for AnthropicProvider {
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
-                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
+                    error!(
+                        "HTTP stream request failed (attempt {}): {}",
+                        retries + 1,
+                        error_msg
+                    );
 
                     let is_retryable = error_msg.contains("connection closed")
                         || error_msg.contains("timeout")
@@ -700,7 +637,8 @@ impl Provider for AnthropicProvider {
 
                     if is_retryable && retries < max_retries {
                         retries += 1;
-                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        let delay =
+                            std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
                         warn!(
                             "Retryable error detected, retrying after {:?}... (attempt {}/{})",
                             delay, retries, max_retries
@@ -750,8 +688,7 @@ impl Provider for AnthropicProvider {
         &self,
         credential: crate::model_router::Credential,
     ) -> crate::Result<()> {
-        let mut cred = self.credential.write().await;
-        *cred = credential;
+        self.gateway_client.set_credential(credential).await;
         Ok(())
     }
 }
@@ -814,9 +751,10 @@ mod tests {
             .await
             .unwrap();
 
-        let headers = provider.headers().await;
-        let key = headers.get("x-api-key").unwrap().to_str().unwrap();
-        assert_eq!(key, "rotated-key");
+        let cred = provider.gateway_client.credential.read().await;
+        let (header_name, header_value) = provider.gateway_client.auth_for_credential(&cred);
+        assert_eq!(header_name, "x-api-key");
+        assert_eq!(header_value, "rotated-key");
     }
 
     #[tokio::test]
@@ -827,8 +765,9 @@ mod tests {
             .await
             .unwrap();
 
-        let headers = provider.headers().await;
-        let auth = headers.get("Authorization").unwrap().to_str().unwrap();
-        assert_eq!(auth, "Bearer oauth-token");
+        let cred = provider.gateway_client.credential.read().await;
+        let (header_name, header_value) = provider.gateway_client.auth_for_credential(&cred);
+        assert_eq!(header_name, "Authorization");
+        assert_eq!(header_value, "Bearer oauth-token");
     }
 }

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::Stream;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, instrument, warn};
 
@@ -18,17 +18,18 @@ use super::{
     ToolCall, Usage,
 };
 
+use crate::model_router::gateway_client::GatewayClient;
+use crate::model_router::HttpGatewayClient;
+
 /// OpenAI API client
 #[derive(Debug, Clone)]
 pub struct OpenAiProvider {
-    /// Authentication credential (supports API key, Bearer token, OAuth2)
-    credential: std::sync::Arc<tokio::sync::RwLock<crate::model_router::Credential>>,
     /// Base URL (default: https://api.openai.com/v1)
     base_url: String,
     /// Default model
     default_model: String,
-    /// HTTP client
-    client: reqwest::Client,
+    /// Unified HTTP client with retry/backoff, auth, and rate limiting
+    gateway_client: std::sync::Arc<HttpGatewayClient>,
     /// Optional stream family override (for protocol-variant vendors like
     /// Moonshot/Minimax)
     stream_family_override: Option<ProviderStreamFamily>,
@@ -55,28 +56,25 @@ impl OpenAiProvider {
     /// Create with a full `Credential` (supports OAuth2, Bearer token, API
     /// key).
     pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let mut extra_headers = HeaderMap::new();
+        extra_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         // Mimic curl's User-Agent to avoid API blocks
-        headers.insert("User-Agent", HeaderValue::from_static("curl/8.7.1"));
-        headers.insert("Accept", HeaderValue::from_static("application/json"));
+        extra_headers.insert("User-Agent", HeaderValue::from_static("curl/8.7.1"));
+        extra_headers.insert("Accept", HeaderValue::from_static("application/json"));
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(180)) // Increased to 3 minutes
-            .tcp_keepalive(Some(Duration::from_secs(30))) // Keep connection alive
-            .pool_idle_timeout(Duration::from_secs(300)) // Keep connections in pool longer
-            .pool_max_idle_per_host(10) // Allow more idle connections
-            .default_headers(headers)
-            .build()
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
-            })?;
+        let gateway_client = std::sync::Arc::new(
+            HttpGatewayClient::new(
+                "https://api.openai.com/v1",
+                credential,
+                Duration::from_secs(180),
+            )?
+            .with_extra_headers(extra_headers),
+        );
 
         Ok(Self {
-            credential: std::sync::Arc::new(tokio::sync::RwLock::new(credential)),
             base_url: "https://api.openai.com/v1".to_string(),
             default_model: "gpt-4o-mini".to_string(),
-            client,
+            gateway_client,
             stream_family_override: None,
         })
     }
@@ -115,39 +113,6 @@ impl OpenAiProvider {
     /// Get the base URL
     pub fn base_url(&self) -> &str {
         &self.base_url
-    }
-
-    /// Refresh the credential if it is expired or expiring soon.
-    async fn refresh_auth(&self) -> crate::Result<()> {
-        let mut cred = self.credential.write().await;
-        cred.refresh_if_needed(&self.client).await
-    }
-
-    /// Build headers with authorization (async to read the RwLock).
-    async fn headers(&self) -> HeaderMap {
-        let cred = self.credential.read().await;
-        let auth = cred.authorization_header();
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::try_from(auth.as_str()).unwrap_or_else(|_| HeaderValue::from_static("")),
-        );
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers
-    }
-
-    /// Build headers for streaming SSE requests (async to read the RwLock).
-    async fn stream_headers(&self) -> HeaderMap {
-        let cred = self.credential.read().await;
-        let auth = cred.authorization_header();
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::try_from(auth.as_str()).unwrap_or_else(|_| HeaderValue::from_static("")),
-        );
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert("Accept", HeaderValue::from_static("text/event-stream"));
-        headers
     }
 
     /// Convert internal message to OpenAI format
@@ -308,7 +273,7 @@ impl Provider for OpenAiProvider {
 
     #[instrument(skip(self, request))]
     async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse> {
-        self.refresh_auth().await?;
+        self.gateway_client.refresh_credential_if_needed().await?;
 
         let model = request
             .model
@@ -359,73 +324,17 @@ impl Provider for OpenAiProvider {
         let request_url = self.url("/chat/completions");
         info!("OpenAI API full URL: {}", request_url);
 
-        // Retry logic for transient errors
-        let mut retries = 0;
-        let max_retries = 3;
+        let openai_resp: OpenAiResponse = self
+            .gateway_client
+            .post_json(&request_url, &body_value)
+            .await?;
 
-        loop {
-            info!("Sending HTTP request (attempt {})", retries + 1);
-            match self
-                .client
-                .post(&request_url)
-                .headers(self.headers().await)
-                .json(&body_value)
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        let status = response.status();
-                        let text = response.text().await.unwrap_or_default();
-                        error!("OpenAI API error: {} - {}", status, text);
-                        return Err(crate::error::SyscityError::ExternalService {
-                            source: format!("OpenAI API error {}: {}", status, text),
-                            cause: None,
-                        });
-                    }
-
-                    let openai_resp: OpenAiResponse = response.json().await.map_err(|e| {
-                        crate::error::SyscityError::ExternalService {
-                            source: format!("Failed to parse OpenAI response: {}", e),
-                            cause: Some(Box::new(e)),
-                        }
-                    })?;
-
-                    info!("Successfully received completion from OpenAI");
-                    return self.from_openai_response(openai_resp);
-                }
-                Err(e) => {
-                    let error_msg = e.to_string();
-                    error!("HTTP request failed (attempt {}): {}", retries + 1, error_msg);
-
-                    // Check if it's a retryable error
-                    let is_retryable = error_msg.contains("connection closed")
-                        || error_msg.contains("timeout")
-                        || error_msg.contains("reset")
-                        || error_msg.contains("broken pipe")
-                        || error_msg.contains("Connection reset")
-                        || error_msg.contains("unexpected EOF");
-
-                    if is_retryable && retries < max_retries {
-                        retries += 1;
-                        // Exponential backoff: 1s, 2s, 4s
-                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
-                        warn!(
-                            "Retryable error detected, retrying after {:?}... (attempt {}/{})",
-                            delay, retries, max_retries
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-
-                    return Err(crate::error::SyscityError::Http(e));
-                }
-            }
-        }
+        info!("Successfully received completion from OpenAI");
+        self.from_openai_response(openai_resp)
     }
 
     async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
-        self.refresh_auth().await?;
+        self.gateway_client.refresh_credential_if_needed().await?;
 
         debug!("Starting streaming completion from OpenAI");
 
@@ -469,19 +378,29 @@ impl Provider for OpenAiProvider {
 
         let request_url = self.url("/chat/completions");
 
-        // Retry logic for transient errors (same as complete())
-        let mut retries = 0;
-        let max_retries = 3;
+        // Retry logic for transient errors (cannot use post_json_text because
+        // streaming needs the raw byte stream, not the full body as text)
+        let mut retries: u32 = 0;
+        let max_retries: u32 = 3;
 
         loop {
-            match self
-                .client
+            let credential = self.gateway_client.credential.read().await.clone();
+            let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
+
+            let mut builder = self
+                .gateway_client
+                .inner_client()
                 .post(&request_url)
-                .headers(self.stream_headers().await)
-                .json(&body_value)
-                .send()
-                .await
-            {
+                .header(auth_name, auth_value)
+                .header(CONTENT_TYPE, "application/json")
+                .header("Accept", "text/event-stream")
+                .json(&body_value);
+
+            for (name, value) in self.gateway_client.extra_headers.iter() {
+                builder = builder.header(name, value);
+            }
+
+            match builder.send().await {
                 Ok(response) => {
                     if !response.status().is_success() {
                         let status = response.status();
@@ -499,7 +418,11 @@ impl Provider for OpenAiProvider {
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
-                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
+                    error!(
+                        "HTTP stream request failed (attempt {}): {}",
+                        retries + 1,
+                        error_msg
+                    );
 
                     let is_retryable = error_msg.contains("connection closed")
                         || error_msg.contains("timeout")
@@ -510,7 +433,8 @@ impl Provider for OpenAiProvider {
 
                     if is_retryable && retries < max_retries {
                         retries += 1;
-                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        let delay =
+                            std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
                         warn!(
                             "Retryable stream error, retrying after {:?}... (attempt {}/{})",
                             delay, retries, max_retries
@@ -526,11 +450,20 @@ impl Provider for OpenAiProvider {
     }
 
     async fn health_check(&self) -> crate::Result<bool> {
-        // Simple check by listing models
-        let response = self
-            .client
+        let credential = self.gateway_client.credential.read().await.clone();
+        let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
+
+        let mut builder = self
+            .gateway_client
+            .inner_client()
             .get(self.url("/models"))
-            .headers(self.headers().await)
+            .header(auth_name, auth_value);
+
+        for (name, value) in self.gateway_client.extra_headers.iter() {
+            builder = builder.header(name, value);
+        }
+
+        let response = builder
             .send()
             .await
             .map_err(crate::error::SyscityError::Http)?;
@@ -542,8 +475,7 @@ impl Provider for OpenAiProvider {
         &self,
         credential: crate::model_router::Credential,
     ) -> crate::Result<()> {
-        let mut cred = self.credential.write().await;
-        *cred = credential;
+        self.gateway_client.set_credential(credential).await;
         Ok(())
     }
 }
@@ -1301,9 +1233,10 @@ mod tests {
             .await
             .unwrap();
 
-        let headers = provider.headers().await;
-        let auth = headers.get(AUTHORIZATION).unwrap().to_str().unwrap();
-        assert_eq!(auth, "Bearer rotated-key");
+        let cred = provider.gateway_client.credential.read().await;
+        let (header_name, header_value) = provider.gateway_client.auth_for_credential(&cred);
+        assert_eq!(header_name, "Authorization");
+        assert_eq!(header_value, "Bearer rotated-key");
     }
 
     #[tokio::test]
@@ -1314,8 +1247,9 @@ mod tests {
             .await
             .unwrap();
 
-        let headers = provider.headers().await;
-        let auth = headers.get(AUTHORIZATION).unwrap().to_str().unwrap();
-        assert_eq!(auth, "Bearer oauth-token");
+        let cred = provider.gateway_client.credential.read().await;
+        let (header_name, header_value) = provider.gateway_client.auth_for_credential(&cred);
+        assert_eq!(header_name, "Authorization");
+        assert_eq!(header_value, "Bearer oauth-token");
     }
 }

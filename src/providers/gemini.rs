@@ -5,7 +5,6 @@
 //! `generativelanguage.googleapis.com`.
 
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -13,7 +12,6 @@ use async_trait::async_trait;
 use futures::Stream;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::{
@@ -21,17 +19,18 @@ use super::{
     ProviderInstanceConfig, Role, ToolCall, Usage,
 };
 
+use crate::model_router::gateway_client::GatewayClient;
+use crate::model_router::HttpGatewayClient;
+
 /// Google Gemini provider
 #[derive(Debug, Clone)]
 pub struct GeminiProvider {
-    /// Authentication credential used as `x-goog-api-key` header
-    credential: Arc<RwLock<crate::model_router::Credential>>,
     /// Base URL (default: https://generativelanguage.googleapis.com/v1beta)
     base_url: String,
     /// Default model (default: gemini-2.0-flash)
     default_model: String,
-    /// HTTP client
-    client: reqwest::Client,
+    /// Unified HTTP client with retry/backoff, auth, and rate limiting
+    gateway_client: std::sync::Arc<HttpGatewayClient>,
 }
 
 impl GeminiProvider {
@@ -42,27 +41,25 @@ impl GeminiProvider {
 
     /// Create with a full `Credential`.
     pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert("User-Agent", HeaderValue::from_static("syscity/1.0"));
-        headers.insert("Accept", HeaderValue::from_static("application/json"));
+        let mut extra_headers = HeaderMap::new();
+        extra_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        extra_headers.insert("User-Agent", HeaderValue::from_static("syscity/1.0"));
+        extra_headers.insert("Accept", HeaderValue::from_static("application/json"));
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(180))
-            .tcp_keepalive(Some(Duration::from_secs(30)))
-            .pool_idle_timeout(Duration::from_secs(300))
-            .pool_max_idle_per_host(10)
-            .default_headers(headers)
-            .build()
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
-            })?;
+        let gateway_client = std::sync::Arc::new(
+            HttpGatewayClient::new(
+                "https://generativelanguage.googleapis.com/v1beta",
+                credential,
+                Duration::from_secs(180),
+            )?
+            .with_api_key_header("x-goog-api-key")
+            .with_extra_headers(extra_headers),
+        );
 
         Ok(Self {
-            credential: Arc::new(RwLock::new(credential)),
             base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
             default_model: "gemini-2.0-flash".to_string(),
-            client,
+            gateway_client,
         })
     }
 
@@ -86,27 +83,6 @@ impl GeminiProvider {
         this.base_url = config.base_url;
         this.default_model = config.model;
         Ok(this)
-    }
-
-    /// Build auth headers with the current credential.
-    async fn headers(&self) -> HeaderMap {
-        let cred = self.credential.read().await;
-        let mut headers = HeaderMap::new();
-        match &*cred {
-            crate::model_router::Credential::ApiKey { key } => {
-                if let Ok(v) = HeaderValue::try_from(key.as_str()) {
-                    headers.insert("x-goog-api-key", v);
-                }
-            }
-            _ => {
-                let auth = cred.authorization_header();
-                if let Ok(v) = HeaderValue::try_from(auth.as_str()) {
-                    headers.insert("Authorization", v);
-                }
-            }
-        }
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers
     }
 
     /// Convert internal messages to Gemini contents.
@@ -332,63 +308,13 @@ impl Provider for GeminiProvider {
 
         let request_url = self.url(&model, false);
 
-        let mut retries = 0;
-        let max_retries = 3;
+        let gemini_resp: GeminiResponse = self
+            .gateway_client
+            .post_json(&request_url, &body)
+            .await?;
 
-        loop {
-            match self
-                .client
-                .post(&request_url)
-                .headers(self.headers().await)
-                .json(&body)
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        let status = response.status();
-                        let text = response.text().await.unwrap_or_default();
-                        error!("Gemini API error: {} - {}", status, text);
-                        return Err(crate::error::SyscityError::ExternalService {
-                            source: format!("Gemini API error {}: {}", status, text),
-                            cause: None,
-                        });
-                    }
-
-                    let gemini_resp: GeminiResponse = response.json().await.map_err(|e| {
-                        crate::error::SyscityError::ExternalService {
-                            source: format!("Failed to parse Gemini response: {}", e),
-                            cause: Some(Box::new(e)),
-                        }
-                    })?;
-
-                    info!("Successfully received completion from Gemini");
-                    return self.parse_gemini_response(gemini_resp, &model);
-                }
-                Err(e) => {
-                    let error_msg = e.to_string();
-                    error!("HTTP request failed (attempt {}): {}", retries + 1, error_msg);
-
-                    let is_retryable = error_msg.contains("connection closed")
-                        || error_msg.contains("timeout")
-                        || error_msg.contains("reset")
-                        || error_msg.contains("broken pipe");
-
-                    if is_retryable && retries < max_retries {
-                        retries += 1;
-                        let delay = Duration::from_secs(2_u64.pow(retries as u32 - 1));
-                        warn!(
-                            "Retryable error, retrying after {:?}... (attempt {}/{})",
-                            delay, retries, max_retries
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-
-                    return Err(crate::error::SyscityError::Http(e));
-                }
-            }
-        }
+        info!("Successfully received completion from Gemini");
+        self.parse_gemini_response(gemini_resp, &model)
     }
 
     async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
@@ -428,18 +354,28 @@ impl Provider for GeminiProvider {
 
         let request_url = self.url(&model, true);
 
-        let mut retries = 0;
-        let max_retries = 3;
+        // Retry logic for transient errors (cannot use post_json because
+        // streaming needs the raw byte stream)
+        let mut retries: u32 = 0;
+        let max_retries: u32 = 3;
 
         loop {
-            match self
-                .client
+            let credential = self.gateway_client.credential.read().await.clone();
+            let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
+
+            let mut builder = self
+                .gateway_client
+                .inner_client()
                 .post(&request_url)
-                .headers(self.headers().await)
-                .json(&body)
-                .send()
-                .await
-            {
+                .header(auth_name, auth_value)
+                .header(CONTENT_TYPE, "application/json")
+                .json(&body);
+
+            for (name, value) in self.gateway_client.extra_headers.iter() {
+                builder = builder.header(name, value);
+            }
+
+            match builder.send().await {
                 Ok(response) => {
                     if !response.status().is_success() {
                         let status = response.status();
@@ -457,7 +393,11 @@ impl Provider for GeminiProvider {
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
-                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
+                    error!(
+                        "HTTP stream request failed (attempt {}): {}",
+                        retries + 1,
+                        error_msg
+                    );
 
                     let is_retryable = error_msg.contains("connection closed")
                         || error_msg.contains("timeout")
@@ -466,7 +406,8 @@ impl Provider for GeminiProvider {
 
                     if is_retryable && retries < max_retries {
                         retries += 1;
-                        let delay = Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        let delay =
+                            Duration::from_secs(2_u64.pow(retries as u32 - 1));
                         warn!(
                             "Retryable stream error, retrying after {:?}... (attempt {}/{})",
                             delay, retries, max_retries
@@ -482,15 +423,27 @@ impl Provider for GeminiProvider {
     }
 
     async fn health_check(&self) -> crate::Result<bool> {
+        let credential = self.gateway_client.credential.read().await.clone();
+        let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
+
         let model = &self.default_model;
-        let url = format!("{}/models/{}", self.base_url.trim_end_matches('/'), model,);
-        let response = self
-            .client
+        let url = format!("{}/models/{}", self.base_url.trim_end_matches('/'), model);
+
+        let mut builder = self
+            .gateway_client
+            .inner_client()
             .get(&url)
-            .headers(self.headers().await)
+            .header(auth_name, auth_value);
+
+        for (name, value) in self.gateway_client.extra_headers.iter() {
+            builder = builder.header(name, value);
+        }
+
+        let response = builder
             .send()
             .await
             .map_err(crate::error::SyscityError::Http)?;
+
         Ok(response.status().is_success())
     }
 
@@ -498,8 +451,7 @@ impl Provider for GeminiProvider {
         &self,
         credential: crate::model_router::Credential,
     ) -> crate::Result<()> {
-        let mut cred = self.credential.write().await;
-        *cred = credential;
+        self.gateway_client.set_credential(credential).await;
         Ok(())
     }
 }
@@ -992,9 +944,10 @@ mod tests {
             .await
             .unwrap();
 
-        let headers = provider.headers().await;
-        let key = headers.get("x-goog-api-key").unwrap().to_str().unwrap();
-        assert_eq!(key, "rotated-key");
+        let cred = provider.gateway_client.credential.read().await;
+        let (header_name, header_value) = provider.gateway_client.auth_for_credential(&cred);
+        assert_eq!(header_name, "x-goog-api-key");
+        assert_eq!(header_value, "rotated-key");
     }
 
     #[tokio::test]
@@ -1005,8 +958,9 @@ mod tests {
             .await
             .unwrap();
 
-        let headers = provider.headers().await;
-        let auth = headers.get("Authorization").unwrap().to_str().unwrap();
-        assert_eq!(auth, "Bearer oauth-token");
+        let cred = provider.gateway_client.credential.read().await;
+        let (header_name, header_value) = provider.gateway_client.auth_for_credential(&cred);
+        assert_eq!(header_name, "Authorization");
+        assert_eq!(header_value, "Bearer oauth-token");
     }
 }
