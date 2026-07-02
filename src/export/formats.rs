@@ -150,7 +150,7 @@ impl JsonLineMemory {
             user_id: memory.user_id.clone(),
             conversation_id: memory.conversation_id.clone(),
             content: memory.content.clone(),
-            memory_type: memory.memory_type.clone(),
+            memory_type: memory.memory_type.to_string(),
             created_at: humantime_timestamp(memory.created_at),
             expires_at: memory.expires_at.map(humantime_timestamp),
             importance_score: memory.importance_score,

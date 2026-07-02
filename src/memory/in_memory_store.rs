@@ -59,8 +59,10 @@ impl Default for InMemoryStore {
 
 #[async_trait]
 impl MemoryStore for InMemoryStore {
-    async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
+    async fn store(&self, mut memory: Memory) -> crate::Result<MemoryId> {
         let id = memory.id.clone();
+        // Record initial access on store
+        memory.record_access();
         let mut guard = self.entries.write().await;
         // Evict lowest-importance entry when at capacity to bound memory growth.
         if guard.len() >= self.max_capacity && !guard.contains_key(&id.to_string()) {
@@ -83,8 +85,15 @@ impl MemoryStore for InMemoryStore {
     }
 
     async fn get(&self, id: &MemoryId) -> crate::Result<Option<Memory>> {
-        let guard = self.entries.read().await;
-        Ok(guard.get(&id.to_string()).cloned())
+        let mut guard = self.entries.write().await;
+        if let Some(mut memory) = guard.get_mut(&id.to_string()).cloned() {
+            // Record access and update in place
+            memory.record_access();
+            guard.insert(id.to_string(), memory.clone());
+            Ok(Some(memory))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn update(&self, memory: Memory) -> crate::Result<()> {

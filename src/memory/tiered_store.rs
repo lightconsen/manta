@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
 use super::{
-    CompressedJsonlStore, DatabaseStore, EffectivenessConfig, InMemoryStore, Memory, MemoryId,
+    CompressedJsonlStore, DatabaseStore, EffectivenessConfig, InMemoryStore, Memory, MemoryEntryType, MemoryId,
     MemoryQuery, MemoryStats, MemoryStore, MemoryTier, TierEvaluator, TierIndex, TierSystemConfig,
     TIER_INDEX_FILE_NAME,
 };
@@ -702,7 +702,7 @@ impl MemoryStore for TieredStore {
 
     async fn stats(&self) -> crate::Result<MemoryStats> {
         let mut total_count = 0;
-        let mut count_by_type: HashMap<String, usize> = HashMap::new();
+        let mut count_by_type: HashMap<MemoryEntryType, usize> = HashMap::new();
         let mut expired_count = 0;
 
         for tier in [
@@ -1109,9 +1109,11 @@ mod tests {
             user_id: "u1".to_string(),
             conversation_id: None,
             content: "A".to_string(),
-            memory_type: "fact".to_string(),
+            memory_type: MemoryEntryType::Fact,
             embedding: None,
             created_at: std::time::SystemTime::now(),
+            last_accessed: std::time::SystemTime::now(),
+            access_count: 0,
             expires_at: None,
             metadata: None,
             importance_score: 0.5,
@@ -1122,9 +1124,11 @@ mod tests {
             user_id: "u1".to_string(),
             conversation_id: None,
             content: "B".to_string(),
-            memory_type: "fact".to_string(),
+            memory_type: MemoryEntryType::Fact,
             embedding: None,
             created_at: std::time::SystemTime::now(),
+            last_accessed: std::time::SystemTime::now(),
+            access_count: 0,
             expires_at: None,
             metadata: None,
             importance_score: 0.5,

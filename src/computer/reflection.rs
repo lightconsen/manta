@@ -16,7 +16,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 use crate::computer::{ActionResult, DesktopAction, VerificationCriteria};
-use crate::memory::{Memory, MemoryId, MemoryQuery, MemoryStore};
+use crate::memory::{Memory, MemoryEntryType, MemoryId, MemoryQuery, MemoryStore};
 
 /// Categorisation of why a desktop action or verification failed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -444,9 +444,11 @@ impl ReflectionEngine {
             user_id: "reflection".to_string(),
             conversation_id: None,
             content,
-            memory_type: "failure_experience".to_string(),
+            memory_type: MemoryEntryType::Custom("failure_experience".to_string()),
             embedding: None,
             created_at: SystemTime::now(),
+            last_accessed: SystemTime::now(),
+            access_count: 0,
             expires_at: None,
             metadata: Some(serde_json::json!({
                 "action_type": action_type,

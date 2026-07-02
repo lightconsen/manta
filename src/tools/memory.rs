@@ -15,7 +15,7 @@ use serde_json::Value;
 use tracing::{debug, info};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
-use crate::memory::{Memory, MemoryId, MemoryManager, MemoryQuery, MemoryStore, SqliteMemoryStore};
+use crate::memory::{Memory, MemoryEntryType, MemoryId, MemoryManager, MemoryQuery, MemoryStore, SqliteMemoryStore};
 
 /// Memory tool for storing and retrieving information
 #[derive(Debug, Clone)]
@@ -327,7 +327,7 @@ Memories are automatically searched and relevant ones injected into new conversa
                     memory.content = content.to_string();
                 }
                 if let Some(memory_type) = args["category"].as_str() {
-                    memory.memory_type = memory_type.to_string();
+                    memory.memory_type = MemoryEntryType::from(memory_type);
                 }
 
                 self.storage.update(memory).await?;
@@ -698,7 +698,7 @@ Actions:
                     memory.content = content.to_string();
                 }
                 if let Some(cat) = args["category"].as_str() {
-                    memory.memory_type = cat.to_string();
+                    memory.memory_type = MemoryEntryType::from(cat);
                 }
                 self.storage.update(memory).await?;
                 info!("memory_get: updated {}", id);

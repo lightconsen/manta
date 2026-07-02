@@ -17,6 +17,7 @@ use tracing::{debug, info, instrument, warn};
 
 use super::{
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
+    MemoryEntryType,
 };
 
 /// Unified database store with WAL, FTS5, and access tracking
@@ -36,6 +37,8 @@ struct MemoryRow {
     memory_type: String,
     embedding_bytes: Option<Vec<u8>>,
     created_at_secs: i64,
+    last_accessed_secs: Option<i64>,
+    access_count: Option<i64>,
     expires_at_secs: Option<i64>,
     metadata_str: Option<String>,
     importance_score: f32,
@@ -351,6 +354,11 @@ impl DatabaseStore {
                 "ALTER TABLE memories ADD COLUMN importance_score REAL NOT NULL DEFAULT 0.5",
             ),
             ("source", "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'"),
+            ("last_accessed", "ALTER TABLE memories ADD COLUMN last_accessed INTEGER"),
+            (
+                "access_count",
+                "ALTER TABLE memories ADD COLUMN access_count INTEGER DEFAULT 0",
+            ),
         ];
 
         for (column, stmt) in migrations {
@@ -429,6 +437,11 @@ impl DatabaseStore {
         let embedding = row.embedding_bytes.map(|b| Self::deserialize_embedding(&b));
         let created_at =
             Self::secs_to_system_time(row.created_at_secs).unwrap_or_else(SystemTime::now);
+        let last_accessed = row
+            .last_accessed_secs
+            .and_then(Self::secs_to_system_time)
+            .unwrap_or(created_at);
+        let access_count = row.access_count.unwrap_or(0) as u64;
         let expires_at = row.expires_at_secs.and_then(Self::secs_to_system_time);
         let metadata = row
             .metadata_str
@@ -444,9 +457,11 @@ impl DatabaseStore {
             user_id: row.user_id,
             conversation_id: row.conversation_id,
             content: row.content,
-            memory_type: row.memory_type,
+            memory_type: MemoryEntryType::from(row.memory_type),
             embedding,
             created_at,
+            last_accessed,
+            access_count,
             expires_at,
             metadata,
             importance_score: row.importance_score,
@@ -536,7 +551,7 @@ impl DatabaseStore {
 
 #[async_trait]
 impl MemoryStore for DatabaseStore {
-    async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
+    async fn store(&self, mut memory: Memory) -> crate::Result<MemoryId> {
         debug!("Storing memory: {}", memory.id);
 
         if let (Some(dim), Some(emb)) = (self.expected_embedding_dim, &memory.embedding) {
@@ -548,11 +563,15 @@ impl MemoryStore for DatabaseStore {
             }
         }
 
+        // Record access on store for the initial access
+        memory.record_access();
+
         let embedding_bytes = memory
             .embedding
             .as_ref()
             .map(|e| Self::serialize_embedding(e));
         let created_at_secs = Self::system_time_to_secs(memory.created_at);
+        let last_accessed_secs = Self::system_time_to_secs(memory.last_accessed);
         let expires_at_secs = memory.expires_at.map(Self::system_time_to_secs);
         let metadata_str = memory
             .metadata
@@ -565,17 +584,19 @@ impl MemoryStore for DatabaseStore {
             r#"
             INSERT INTO memories
             (id, user_id, conversation_id, content, memory_type, embedding,
-             created_at, expires_at, metadata, importance_score, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             created_at, last_accessed, access_count, expires_at, metadata, importance_score, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&memory.id.0)
         .bind(&memory.user_id)
         .bind(&memory.conversation_id)
         .bind(&memory.content)
-        .bind(&memory.memory_type)
+        .bind(&memory.memory_type.to_string())
         .bind(embedding_bytes)
         .bind(created_at_secs)
+        .bind(last_accessed_secs)
+        .bind(memory.access_count as i64)
         .bind(expires_at_secs)
         .bind(metadata_str)
         .bind(memory.importance_score)
@@ -596,7 +617,7 @@ impl MemoryStore for DatabaseStore {
 
         let row = sqlx::query(
             "SELECT id, user_id, conversation_id, content, memory_type, embedding, created_at, \
-             expires_at, metadata, importance_score, source FROM memories WHERE id = ?",
+             last_accessed, access_count, expires_at, metadata, importance_score, source FROM memories WHERE id = ?",
         )
         .bind(&id.0)
         .fetch_optional(&self.pool)
@@ -662,6 +683,12 @@ impl MemoryStore for DatabaseStore {
                     created_at_secs: row
                         .try_get("created_at")
                         .map_err(|e| col_err("created_at", e))?,
+                    last_accessed_secs: row
+                        .try_get("last_accessed")
+                        .map_err(|e| col_err("last_accessed", e))?,
+                    access_count: row
+                        .try_get("access_count")
+                        .map_err(|e| col_err("access_count", e))?,
                     expires_at_secs: row
                         .try_get("expires_at")
                         .map_err(|e| col_err("expires_at", e))?,
@@ -702,7 +729,7 @@ impl MemoryStore for DatabaseStore {
 
         let row = sqlx::query(
             "SELECT id, user_id, conversation_id, content, memory_type, embedding, created_at, \
-             expires_at, metadata, importance_score, source FROM memories WHERE id = ?",
+             last_accessed, access_count, expires_at, metadata, importance_score, source FROM memories WHERE id = ?",
         )
         .bind(&id.0)
         .fetch_optional(&mut *tx)
@@ -739,6 +766,12 @@ impl MemoryStore for DatabaseStore {
             created_at_secs: row
                 .try_get("created_at")
                 .map_err(|e| col_err("created_at", e))?,
+            last_accessed_secs: row
+                .try_get("last_accessed")
+                .map_err(|e| col_err("last_accessed", e))?,
+            access_count: row
+                .try_get("access_count")
+                .map_err(|e| col_err("access_count", e))?,
             expires_at_secs: row
                 .try_get("expires_at")
                 .map_err(|e| col_err("expires_at", e))?,
@@ -762,6 +795,10 @@ impl MemoryStore for DatabaseStore {
             return Ok(None);
         }
 
+        let mut updated_memory = memory.clone();
+        updated_memory.importance_score = new_score;
+        updated_memory.record_access();
+
         if (memory.importance_score - new_score).abs() < 0.001 {
             tx.commit()
                 .await
@@ -769,11 +806,14 @@ impl MemoryStore for DatabaseStore {
                     context: "Failed to commit importance-score update transaction".to_string(),
                     details: e.to_string(),
                 })?;
-            return Ok(Some(memory));
+            return Ok(Some(updated_memory));
         }
 
-        let result = sqlx::query("UPDATE memories SET importance_score = ? WHERE id = ?")
+        let last_accessed_secs = Self::system_time_to_secs(updated_memory.last_accessed);
+        let result = sqlx::query("UPDATE memories SET importance_score = ?, last_accessed = ?, access_count = ? WHERE id = ?")
             .bind(new_score)
+            .bind(last_accessed_secs)
+            .bind(updated_memory.access_count as i64)
             .bind(&id.0)
             .execute(&mut *tx)
             .await
@@ -800,9 +840,7 @@ impl MemoryStore for DatabaseStore {
                 details: e.to_string(),
             })?;
 
-        let mut updated = memory;
-        updated.importance_score = new_score;
-        Ok(Some(updated))
+        Ok(Some(updated_memory))
     }
 
     async fn update(&self, memory: Memory) -> crate::Result<()> {
@@ -829,6 +867,7 @@ impl MemoryStore for DatabaseStore {
             .as_ref()
             .map(|e| Self::serialize_embedding(e));
         let created_at_secs = Self::system_time_to_secs(memory.created_at);
+        let last_accessed_secs = Self::system_time_to_secs(memory.last_accessed);
         let expires_at_secs = memory.expires_at.map(Self::system_time_to_secs);
         let metadata_str = memory
             .metadata
@@ -846,6 +885,8 @@ impl MemoryStore for DatabaseStore {
                 memory_type = ?,
                 embedding = ?,
                 created_at = ?,
+                last_accessed = ?,
+                access_count = ?,
                 expires_at = ?,
                 metadata = ?,
                 importance_score = ?,
@@ -856,9 +897,11 @@ impl MemoryStore for DatabaseStore {
         .bind(&memory.user_id)
         .bind(&memory.conversation_id)
         .bind(&memory.content)
-        .bind(&memory.memory_type)
+        .bind(&memory.memory_type.to_string())
         .bind(embedding_bytes)
         .bind(created_at_secs)
+        .bind(last_accessed_secs)
+        .bind(memory.access_count as i64)
         .bind(expires_at_secs)
         .bind(metadata_str)
         .bind(memory.importance_score)
@@ -914,7 +957,7 @@ impl MemoryStore for DatabaseStore {
         debug!("Searching memories");
 
         let mut sql = "SELECT id, user_id, conversation_id, content, memory_type, embedding, \
-                       created_at, expires_at, metadata, importance_score, source FROM memories \
+                       created_at, last_accessed, access_count, expires_at, metadata, importance_score, source FROM memories \
                        WHERE 1=1"
             .to_string();
 
@@ -945,7 +988,7 @@ impl MemoryStore for DatabaseStore {
             db_query = db_query.bind(conv_id);
         }
         if let Some(mem_type) = &query.memory_type {
-            db_query = db_query.bind(mem_type);
+            db_query = db_query.bind(mem_type.as_str());
         }
         if let Some(content) = &query.content_query {
             db_query = db_query.bind(format!("%{}%", content));
@@ -982,6 +1025,12 @@ impl MemoryStore for DatabaseStore {
                 created_at_secs: row
                     .try_get("created_at")
                     .map_err(|e| col_err("created_at", e))?,
+                last_accessed_secs: row
+                    .try_get("last_accessed")
+                    .map_err(|e| col_err("last_accessed", e))?,
+                access_count: row
+                    .try_get("access_count")
+                    .map_err(|e| col_err("access_count", e))?,
                 expires_at_secs: row
                     .try_get("expires_at")
                     .map_err(|e| col_err("expires_at", e))?,
@@ -1043,10 +1092,11 @@ impl MemoryStore for DatabaseStore {
 
         let mut count_by_type = HashMap::new();
         for row in type_rows {
-            let mem_type: String = row
+            let mem_type_str: String = row
                 .try_get("memory_type")
                 .map_err(|e| col_err("memory_type", e))?;
             let count: i64 = row.try_get("count").map_err(|e| col_err("count", e))?;
+            let mem_type = MemoryEntryType::from(mem_type_str);
             count_by_type.insert(mem_type, count as usize);
         }
 

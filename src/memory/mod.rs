@@ -92,6 +92,99 @@ pub use vector::{
 };
 pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 
+/// Memory entry type discriminant for type-safe memory categorization
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+pub enum MemoryEntryType {
+    /// Fact memory (objective information)
+    Fact,
+    /// Preference memory (user preferences)
+    Preference,
+    /// Context memory (conversation/session context)
+    Context,
+    /// User profile memory (persistent user information)
+    UserProfile,
+    /// Semantic search result memory (synthetic)
+    Semantic,
+    /// Session search result memory (synthetic)
+    Session,
+    /// Hybrid search result memory (synthetic)
+    Hybrid,
+    /// QMD query result memory (synthetic)
+    Qmd,
+    /// Custom memory type with string identifier
+    Custom(String),
+}
+
+impl Default for MemoryEntryType {
+    fn default() -> Self {
+        MemoryEntryType::Fact
+    }
+}
+
+impl MemoryEntryType {
+    /// Convert to string representation
+    pub fn as_str(&self) -> &str {
+        match self {
+            MemoryEntryType::Fact => "fact",
+            MemoryEntryType::Preference => "preference",
+            MemoryEntryType::Context => "context",
+            MemoryEntryType::UserProfile => "user_profile",
+            MemoryEntryType::Semantic => "semantic",
+            MemoryEntryType::Session => "session",
+            MemoryEntryType::Hybrid => "hybrid",
+            MemoryEntryType::Qmd => "qmd",
+            MemoryEntryType::Custom(s) => s.as_str(),
+        }
+    }
+}
+
+impl From<String> for MemoryEntryType {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "fact" => MemoryEntryType::Fact,
+            "preference" => MemoryEntryType::Preference,
+            "context" => MemoryEntryType::Context,
+            "user_profile" => MemoryEntryType::UserProfile,
+            "semantic" => MemoryEntryType::Semantic,
+            "session" => MemoryEntryType::Session,
+            "hybrid" => MemoryEntryType::Hybrid,
+            "qmd" => MemoryEntryType::Qmd,
+            _ => MemoryEntryType::Custom(s),
+        }
+    }
+}
+
+impl From<&str> for MemoryEntryType {
+    fn from(s: &str) -> Self {
+        MemoryEntryType::from(s.to_string())
+    }
+}
+
+impl From<&String> for MemoryEntryType {
+    fn from(s: &String) -> Self {
+        MemoryEntryType::from(s.as_str())
+    }
+}
+
+impl std::fmt::Display for MemoryEntryType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<MemoryEntryType> for String {
+    fn from(mem_type: MemoryEntryType) -> Self {
+        mem_type.as_str().to_string()
+    }
+}
+
+impl From<&MemoryEntryType> for String {
+    fn from(mem_type: &MemoryEntryType) -> Self {
+        mem_type.as_str().to_string()
+    }
+}
+
 /// Unique identifier for a memory entry
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MemoryId(pub String);
@@ -122,6 +215,10 @@ fn default_source() -> String {
     "agent".to_string()
 }
 
+fn default_access_count() -> u64 {
+    0
+}
+
 /// A memory entry stored in the system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
@@ -133,13 +230,19 @@ pub struct Memory {
     pub conversation_id: Option<String>,
     /// Memory content
     pub content: String,
-    /// Memory type (e.g., "fact", "preference", "context")
-    pub memory_type: String,
+    /// Memory entry type (fact, preference, context, etc.)
+    pub memory_type: MemoryEntryType,
     /// Optional embedding vector for semantic search
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
     /// When the memory was created
     pub created_at: SystemTime,
+    /// When the memory was last accessed
+    #[serde(default = "SystemTime::now")]
+    pub last_accessed: SystemTime,
+    /// Number of times this memory has been accessed
+    #[serde(default = "default_access_count")]
+    pub access_count: u64,
     /// When the memory expires (None = never)
     pub expires_at: Option<SystemTime>,
     /// Additional metadata
@@ -158,7 +261,7 @@ impl Memory {
     pub fn new(
         user_id: impl Into<String>,
         content: impl Into<String>,
-        memory_type: impl Into<String>,
+        memory_type: impl Into<MemoryEntryType>,
     ) -> Self {
         Self {
             id: MemoryId::generate(),
@@ -168,6 +271,8 @@ impl Memory {
             memory_type: memory_type.into(),
             embedding: None,
             created_at: SystemTime::now(),
+            last_accessed: SystemTime::now(),
+            access_count: 0,
             expires_at: None,
             metadata: None,
             importance_score: 0.5,
@@ -211,6 +316,12 @@ impl Memory {
         self
     }
 
+    /// Record an access - updates last_accessed and increments access_count
+    pub fn record_access(&mut self) {
+        self.last_accessed = SystemTime::now();
+        self.access_count += 1;
+    }
+
     /// Check if the memory has expired
     pub fn is_expired(&self) -> bool {
         self.expires_at
@@ -226,8 +337,8 @@ pub struct MemoryQuery {
     pub user_id: Option<String>,
     /// Filter by conversation ID
     pub conversation_id: Option<String>,
-    /// Filter by memory type
-    pub memory_type: Option<String>,
+    /// Filter by memory entry type
+    pub memory_type: Option<MemoryEntryType>,
     /// Search query for content matching
     pub content_query: Option<String>,
     /// Maximum number of results
@@ -259,8 +370,8 @@ impl MemoryQuery {
         self
     }
 
-    /// Filter by memory type
-    pub fn of_type(mut self, memory_type: impl Into<String>) -> Self {
+    /// Filter by memory entry type
+    pub fn of_type(mut self, memory_type: impl Into<MemoryEntryType>) -> Self {
         self.memory_type = Some(memory_type.into());
         self
     }
@@ -290,7 +401,7 @@ pub struct MemoryStats {
     /// Total number of memories
     pub total_count: usize,
     /// Number of memories per type
-    pub count_by_type: std::collections::HashMap<String, usize>,
+    pub count_by_type: std::collections::HashMap<MemoryEntryType, usize>,
     /// Number of expired memories
     pub expired_count: usize,
 }
@@ -461,7 +572,7 @@ mod tests {
 
         assert_eq!(memory.user_id, "user1");
         assert_eq!(memory.content, "Hello world");
-        assert_eq!(memory.memory_type, "fact");
+        assert_eq!(memory.memory_type, MemoryEntryType::Fact);
         assert_eq!(memory.conversation_id, Some("conv1".to_string()));
         assert!(memory.expires_at.is_some());
         assert!(!memory.is_expired());
@@ -475,7 +586,7 @@ mod tests {
             .limit(5);
 
         assert_eq!(query.user_id, Some("user1".to_string()));
-        assert_eq!(query.memory_type, Some("fact".to_string()));
+        assert_eq!(query.memory_type, Some(MemoryEntryType::Fact));
         assert_eq!(query.limit, 5);
     }
 

@@ -31,7 +31,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::spawn_blocking;
 use tracing::{debug, info, warn};
 
-use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore};
+use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore, MemoryEntryType};
 
 /// Directory name for archival shards.
 pub const ARCHIVAL_DIR_NAME: &str = "archival";
@@ -54,9 +54,13 @@ struct IndexEntry {
     /// User id for filtering (avoids loading shard if mismatch).
     user_id: String,
     /// Memory type for filtering (avoids loading shard if mismatch).
-    memory_type: String,
+    memory_type: MemoryEntryType,
     /// Creation time for reference.
     created_at_secs: i64,
+    /// Last access time for reference.
+    last_accessed_secs: i64,
+    /// Access count for reference.
+    access_count: u64,
     /// Expiration time for filtering (None = never expires).
     expires_at_secs: Option<i64>,
 }
@@ -299,6 +303,8 @@ impl CompressedJsonlStore {
                                 user_id: mem.user_id.clone(),
                                 memory_type: mem.memory_type.clone(),
                                 created_at_secs: Self::system_time_to_secs(mem.created_at),
+                                last_accessed_secs: Self::system_time_to_secs(mem.last_accessed),
+                                access_count: mem.access_count,
                                 expires_at_secs: mem.expires_at.map(Self::system_time_to_secs),
                             },
                         );
@@ -467,6 +473,8 @@ impl CompressedJsonlStore {
             user_id: memory.user_id.clone(),
             memory_type: memory.memory_type.clone(),
             created_at_secs: Self::system_time_to_secs(memory.created_at),
+            last_accessed_secs: Self::system_time_to_secs(memory.last_accessed),
+            access_count: memory.access_count,
             expires_at_secs: memory.expires_at.map(Self::system_time_to_secs),
         })
         .await?;
@@ -636,6 +644,8 @@ impl CompressedJsonlStore {
                         user_id: m.user_id.clone(),
                         memory_type: m.memory_type.clone(),
                         created_at_secs: Self::system_time_to_secs(m.created_at),
+                        last_accessed_secs: Self::system_time_to_secs(m.last_accessed),
+                        access_count: m.access_count,
                         expires_at_secs: m.expires_at.map(Self::system_time_to_secs),
                     },
                 );

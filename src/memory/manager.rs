@@ -426,7 +426,7 @@ impl MemoryManager {
             memories = hybrid_results
                 .into_iter()
                 .map(|r| {
-                    Memory::new(user_id, r.content, &r.memory_type)
+                    Memory::new(user_id, r.content, r.memory_type.clone())
                         .with_importance_score(r.score)
                         .with_source(&r.source)
                         .with_metadata(serde_json::json!({
@@ -524,7 +524,7 @@ impl MemoryManager {
                         recall_id.clone(),
                         &tracking_id,
                         &session_key,
-                        &mem.memory_type,
+                        mem.memory_type.as_str(),
                         mem.importance_score,
                         rank,
                     )

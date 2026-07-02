@@ -18,7 +18,7 @@ use crate::export::formats::{
     MemoryExport,
 };
 use crate::memory::{
-    ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStore, UnifiedStore,
+    ChatHistoryStore, ChatMessage, Memory, MemoryEntryType, MemoryId, MemoryQuery, MemoryStore, UnifiedStore,
 };
 
 /// Export options for controlling export behavior
@@ -933,7 +933,7 @@ impl ExportService {
         let mut by_type: HashMap<String, Vec<&crate::memory::Memory>> = HashMap::new();
         for memory in memories {
             by_type
-                .entry(memory.memory_type.clone())
+                .entry(memory.memory_type.to_string())
                 .or_default()
                 .push(memory);
         }
@@ -1245,9 +1245,11 @@ impl ExportService {
             user_id: json.user_id.clone(),
             conversation_id: json.conversation_id.clone(),
             content: json.content.clone(),
-            memory_type: json.memory_type.clone(),
+            memory_type: MemoryEntryType::from(json.memory_type.clone()),
             embedding: json.embedding.clone(),
             created_at,
+            last_accessed: created_at,
+            access_count: 0,
             expires_at,
             metadata: json.metadata.clone(),
             importance_score: json.importance_score,
