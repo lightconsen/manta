@@ -630,7 +630,7 @@ impl Provider for AnthropicProvider {
 
                     if is_retryable && retries < max_retries {
                         retries += 1;
-                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        let delay = std::time::Duration::from_secs(2_u64.pow(retries - 1));
                         warn!(
                             "Retryable error detected, retrying after {:?}... (attempt {}/{})",
                             delay, retries, max_retries

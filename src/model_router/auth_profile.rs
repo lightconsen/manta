@@ -607,6 +607,8 @@ mod tests {
 
         // Rotate again — key1 is on cooldown, no available keys
         let next = profile.rotate(60);
+        // Both keys are on cooldown (key1 marked failed, key2 rotated to then
+        // also marked failed), so no key is available -> None is correct.
         assert!(next.is_none());
     }
 

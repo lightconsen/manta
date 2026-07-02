@@ -4,14 +4,40 @@
 //! display.
 //!
 //! ```rust,ignore
+//! use syscity::model_router::usage_formatter::FormatConfig;
+//!
+//! let config = FormatConfig::default();
 //! let snapshot = tracker.snapshot("openai").await.unwrap();
-//! println!("{}", format_usage_summary(&snapshot));
+//! println!("{}", format_usage_summary(&snapshot, &config));
 //! ```
 
 use chrono::{DateTime, Utc};
 
 use crate::model_router::usage_tracker::{ProviderUsageSnapshot, UsageWindow};
 use crate::providers::Usage;
+
+/// Configuration for usage formatting output.
+///
+/// Controls cosmetic aspects of the formatted output such as whether emoji
+/// characters are included.  Pass an instance to each formatting function.
+#[derive(Debug, Clone)]
+pub struct FormatConfig {
+    /// Whether to include emoji characters in formatted output.
+    /// When `false`, plain-text equivalents are used instead.
+    pub use_emoji: bool,
+}
+
+impl Default for FormatConfig {
+    fn default() -> Self {
+        Self { use_emoji: true }
+    }
+}
+
+impl FormatConfig {
+    fn emoji(&self, emoji: &'static str) -> &'static str {
+        if self.use_emoji { emoji } else { "" }
+    }
+}
 
 /// Format a single usage window into a human-readable summary.
 ///
@@ -34,7 +60,7 @@ pub fn format_window(window: &UsageWindow) -> String {
 ///
 /// Shows percentage of an optional budget limit.
 /// Example: `today  87% left  ⏱ 2h 15m`
-pub fn format_window_compact(window: &UsageWindow, budget_usd: Option<f64>) -> String {
+pub fn format_window_compact(window: &UsageWindow, budget_usd: Option<f64>, config: &FormatConfig) -> String {
     let budget_str = if let Some(budget) = budget_usd {
         if budget > 0.0 {
             let pct = ((1.0 - window.estimated_cost_usd / budget) * 100.0).clamp(0.0, 100.0) as u32;
@@ -47,13 +73,15 @@ pub fn format_window_compact(window: &UsageWindow, budget_usd: Option<f64>) -> S
     };
 
     let reset_in = format_time_until(window.end);
-    format!("{:>12}  {}  ⏱ {}", window.label, budget_str, reset_in)
+    let timer_emoji = config.emoji("⏱ ");
+    format!("{:>12}  {}  {}{}", window.label, budget_str, timer_emoji, reset_in)
 }
 
 /// Format a complete provider snapshot into a multi-line summary.
-pub fn format_provider_snapshot(snapshot: &ProviderUsageSnapshot) -> String {
+pub fn format_provider_snapshot(snapshot: &ProviderUsageSnapshot, config: &FormatConfig) -> String {
+    let chart_emoji = config.emoji("📊  ");
     let mut lines = vec![
-        format!("📊  {}  —  {} requests", snapshot.provider, snapshot.total_requests),
+        format!("{}{}  —  {} requests", chart_emoji, snapshot.provider, snapshot.total_requests),
         format!(
             "    Tokens: {} prompt / {} completion / {} total",
             snapshot.total_tokens.prompt_tokens,
@@ -93,9 +121,10 @@ pub fn format_provider_snapshot(snapshot: &ProviderUsageSnapshot) -> String {
 /// Format a compact single-line summary for all providers.
 ///
 /// Example: `📊 Usage: openai $0.42 · anthropic $1.23`
-pub fn format_usage_summary_line(snapshots: &[ProviderUsageSnapshot]) -> String {
+pub fn format_usage_summary_line(snapshots: &[ProviderUsageSnapshot], config: &FormatConfig) -> String {
+    let chart_emoji = config.emoji("📊  ");
     if snapshots.is_empty() {
-        return "📊  No usage recorded yet".to_string();
+        return format!("{}No usage recorded yet", chart_emoji);
     }
 
     let parts: Vec<String> = snapshots
@@ -120,11 +149,11 @@ pub fn format_usage_summary_line(snapshots: &[ProviderUsageSnapshot]) -> String 
         })
         .collect();
 
-    format!("📊  Usage: {}", parts.join(" · "))
+    format!("{}Usage: {}", chart_emoji, parts.join(" · "))
 }
 
 /// Format all snapshots into a full report.
-pub fn format_usage_report(snapshots: &[ProviderUsageSnapshot]) -> String {
+pub fn format_usage_report(snapshots: &[ProviderUsageSnapshot], config: &FormatConfig) -> String {
     if snapshots.is_empty() {
         return "No usage data available.\n".to_string();
     }
@@ -136,7 +165,7 @@ pub fn format_usage_report(snapshots: &[ProviderUsageSnapshot]) -> String {
     ];
 
     for snapshot in snapshots {
-        lines.push(format_provider_snapshot(snapshot));
+        lines.push(format_provider_snapshot(snapshot, config));
         lines.push(String::new());
     }
 
@@ -216,6 +245,10 @@ mod tests {
         }
     }
 
+    fn default_config() -> FormatConfig {
+        FormatConfig::default()
+    }
+
     #[test]
     fn test_format_window() {
         let window = test_window("today", 1234, 3, 0.0042);
@@ -228,8 +261,9 @@ mod tests {
 
     #[test]
     fn test_format_provider_snapshot() {
+        let config = default_config();
         let snapshot = test_snapshot("openai");
-        let formatted = format_provider_snapshot(&snapshot);
+        let formatted = format_provider_snapshot(&snapshot, &config);
         assert!(formatted.contains("openai"));
         assert!(formatted.contains("5 requests"));
         assert!(formatted.contains("1000 total"));
@@ -237,8 +271,9 @@ mod tests {
 
     #[test]
     fn test_format_usage_summary_line() {
+        let config = default_config();
         let snapshots = vec![test_snapshot("openai"), test_snapshot("anthropic")];
-        let line = format_usage_summary_line(&snapshots);
+        let line = format_usage_summary_line(&snapshots, &config);
         assert!(line.starts_with("📊  Usage:"));
         assert!(line.contains("openai"));
         assert!(line.contains("anthropic"));
@@ -246,14 +281,16 @@ mod tests {
 
     #[test]
     fn test_format_usage_summary_line_empty() {
-        let line = format_usage_summary_line(&[]);
+        let config = default_config();
+        let line = format_usage_summary_line(&[], &config);
         assert_eq!(line, "📊  No usage recorded yet");
     }
 
     #[test]
     fn test_format_window_compact_with_budget() {
+        let config = default_config();
         let window = test_window("today", 1000, 1, 0.50);
-        let formatted = format_window_compact(&window, Some(1.0));
+        let formatted = format_window_compact(&window, Some(1.0), &config);
         assert!(formatted.contains("50% left"));
     }
 
@@ -265,5 +302,24 @@ mod tests {
             total_tokens: 150,
         };
         assert_eq!(format_tokens(&usage), "100 prompt / 50 completion / 150 total");
+    }
+
+    #[test]
+    fn test_format_no_emoji() {
+        let config = FormatConfig { use_emoji: false };
+        let snapshot = test_snapshot("openai");
+        let line = format_provider_snapshot(&snapshot, &config);
+        assert!(!line.contains('📊'));
+        // Output should still be readable but without emoji prefix
+        assert!(line.starts_with("openai"));
+    }
+
+    #[test]
+    fn test_format_window_compact_no_emoji() {
+        let config = FormatConfig { use_emoji: false };
+        let window = test_window("today", 1000, 1, 0.50);
+        let formatted = format_window_compact(&window, Some(1.0), &config);
+        assert!(!formatted.contains('⏱'));
+        assert!(formatted.contains("50% left"));
     }
 }

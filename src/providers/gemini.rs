@@ -400,7 +400,7 @@ impl Provider for GeminiProvider {
 
                     if is_retryable && retries < max_retries {
                         retries += 1;
-                        let delay = Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        let delay = Duration::from_secs(2_u64.pow(retries - 1));
                         warn!(
                             "Retryable stream error, retrying after {:?}... (attempt {}/{})",
                             delay, retries, max_retries

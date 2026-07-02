@@ -251,7 +251,12 @@ impl HttpGatewayClient {
     }
 }
 
-/// Whether an error is worth retrying.
+/// Whether a transport / connection-level error is worth retrying.
+///
+/// This function is called only for transport failures (not HTTP response
+/// errors) — [`execute_with_retry`] handles 5xx server errors directly in
+/// the status-code branch before reaching here.  The name focuses on the
+/// "should we retry?" question rather than the error category.
 fn is_retryable_error(e: &crate::error::SyscityError) -> bool {
     match e {
         crate::error::SyscityError::Http(req_err) => req_err.is_timeout() || req_err.is_connect(),

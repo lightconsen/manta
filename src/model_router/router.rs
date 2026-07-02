@@ -239,15 +239,18 @@ impl ModelRouter {
     async fn init_fallback_chains_from_config(&self, config: &ModelRouterConfig) {
         let mut chains = self.fallback_chains.write().await;
         for (alias, provider_list) in &config.fallback_chains {
+            let model = config.aliases.get(alias).map(|a| a.model.clone());
+            if model.is_none() {
+                warn!(
+                    "Fallback chain references alias '{}' which is not defined in aliases — model will be empty",
+                    alias
+                );
+            }
             let entries: Vec<FallbackEntry> = provider_list
                 .iter()
                 .map(|p| FallbackEntry {
                     provider: p.clone(),
-                    model: config
-                        .aliases
-                        .get(alias)
-                        .map(|a| a.model.clone())
-                        .unwrap_or_default(),
+                    model: model.clone().unwrap_or_default(),
                     enabled: true,
                     health_score: 100,
                 })
@@ -846,6 +849,8 @@ impl ModelRouter {
         let alias_name_for_cost = alias_name.clone();
         let response = self.complete(&alias_name, messages, tools).await?;
 
+        // Track cost: config is lock #1 (per doc at line 48-58) and we hold
+        // no other locks at this point, so acquiring config.write() is safe.
         if let Some(ref usage) = response.usage {
             let mut config = self.config.write().await;
             if let Some(ref mut cost_aware) = config.cost_aware {
@@ -1059,7 +1064,13 @@ impl ModelRouter {
         }]
     }
 
-    /// Check if circuit breaker is open for a provider
+    /// Check if circuit breaker is open for a provider.
+    ///
+    /// This is an **optimistic** check — a concurrent health-check task may
+    /// transition the state from `Open → HalfOpen` between when this returns
+    /// `false` and when the actual provider call completes.  The downstream
+    /// [`route_with_fallback`] handles that safely by recording the failure
+    /// and re-opening the circuit (see [`record_failure`]).
     async fn is_circuit_open(&self, provider: &str) -> bool {
         let health = self.health.read().await;
         health

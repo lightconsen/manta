@@ -167,7 +167,10 @@ impl ModelDiscoverySource for StaticModelSource {
 fn apply_known_model_metadata(mut entry: ModelCatalogEntry, model_id: &str) -> ModelCatalogEntry {
     let id_lower = model_id.to_lowercase();
 
-    if id_lower.contains("claude-3-opus")
+    if id_lower.contains("claude-4-opus")
+        || id_lower.contains("claude-4-sonnet")
+        || id_lower.contains("claude-4-haiku")
+        || id_lower.contains("claude-3-opus")
         || id_lower.contains("claude-3-5-sonnet")
         || id_lower.contains("claude-3.5-sonnet")
     {

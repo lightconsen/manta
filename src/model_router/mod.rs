@@ -51,7 +51,7 @@ pub use usage_fetcher::{
 };
 pub use usage_formatter::{
     format_provider_snapshot, format_tokens, format_usage_report, format_usage_summary_line,
-    format_window, format_window_compact,
+    format_window, format_window_compact, FormatConfig,
 };
 pub use usage_tracker::{
     ProviderUsageSnapshot, ProviderUsageTracker, QuotaSource, UsageQuota, UsageTrackerConfig,

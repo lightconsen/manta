@@ -209,15 +209,16 @@ pub async fn run_provider_command(
                         Vec<crate::model_router::ProviderUsageSnapshot>,
                     >(body.clone())
                     {
+                        let fmt_config = crate::model_router::usage_formatter::FormatConfig::default();
                         if id.is_some() {
                             for snapshot in &snapshots {
                                 println!(
                                     "{}",
-                                    crate::model_router::format_provider_snapshot(snapshot)
+                                    crate::model_router::format_provider_snapshot(snapshot, &fmt_config)
                                 );
                             }
                         } else {
-                            println!("{}", crate::model_router::format_usage_report(&snapshots));
+                            println!("{}", crate::model_router::format_usage_report(&snapshots, &fmt_config));
                         }
                     } else {
                         // Fallback to pretty-printed JSON
