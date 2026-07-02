@@ -354,21 +354,19 @@ impl TierIndex {
         let path = path.as_ref();
         let serialized = {
             let guard = self.read_guard();
-            serde_json::to_vec_pretty(&*guard).map_err(|e| {
-                crate::error::SyscityError::Storage {
-                    context: "Failed to serialize tier index".to_string(),
-                    details: e.to_string(),
-                }
+            serde_json::to_vec_pretty(&*guard).map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to serialize tier index".to_string(),
+                details: e.to_string(),
             })?
         };
 
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                crate::error::SyscityError::Storage {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: format!("Failed to create tier index directory: {:?}", parent),
                     details: e.to_string(),
-                }
-            })?;
+                })?;
         }
 
         let temp_path = path.with_extension("json.tmp");
@@ -379,12 +377,12 @@ impl TierIndex {
             }
         })?;
 
-        fs::rename(&temp_path, path).await.map_err(|e| {
-            crate::error::SyscityError::Storage {
+        fs::rename(&temp_path, path)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to rename tier index file to {:?}", path),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
 
         info!("Persisted tier index to {:?}", path);
         Ok(())

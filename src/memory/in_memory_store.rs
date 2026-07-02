@@ -255,8 +255,8 @@ mod tests {
 
         // Insert memories with strictly increasing importance scores.
         for (idx, score) in [0.1_f32, 0.3, 0.5, 0.7, 0.9].iter().enumerate() {
-            let mem = Memory::new("u1", format!("content-{}", idx), "fact")
-                .with_importance_score(*score);
+            let mem =
+                Memory::new("u1", format!("content-{}", idx), "fact").with_importance_score(*score);
             store.store(mem).await.unwrap();
         }
 
@@ -277,17 +277,15 @@ mod tests {
         let store = InMemoryStore::with_capacity(2);
 
         for (idx, score) in [0.4_f32, 0.6].iter().enumerate() {
-            let mem = Memory::new("u1", format!("content-{}", idx), "fact")
-                .with_importance_score(*score);
+            let mem =
+                Memory::new("u1", format!("content-{}", idx), "fact").with_importance_score(*score);
             store.store(mem).await.unwrap();
         }
         assert_eq!(store.len().await, 2);
 
         // Adding a third memory should evict the lowest-importance entry.
         store
-            .store(
-                Memory::new("u1", "content-2", "fact").with_importance_score(0.8),
-            )
+            .store(Memory::new("u1", "content-2", "fact").with_importance_score(0.8))
             .await
             .unwrap();
         assert_eq!(store.len().await, 2);

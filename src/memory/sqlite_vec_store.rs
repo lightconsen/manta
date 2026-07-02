@@ -101,7 +101,7 @@ impl SqliteVecStore {
                 chunk_id TEXT NOT NULL,
                 collection TEXT NOT NULL,
                 PRIMARY KEY (chunk_id, collection)
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -186,7 +186,7 @@ impl VectorStore for SqliteVecStore {
 
         if let Some(collection) = &chunk.collection {
             sqlx::query(
-                "INSERT OR REPLACE INTO vec_chunk_collections (chunk_id, collection) VALUES (?, ?)"
+                "INSERT OR REPLACE INTO vec_chunk_collections (chunk_id, collection) VALUES (?, ?)",
             )
             .bind(&chunk.id)
             .bind(collection)

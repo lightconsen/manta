@@ -18,7 +18,8 @@ use crate::export::formats::{
     MemoryExport,
 };
 use crate::memory::{
-    ChatHistoryStore, ChatMessage, Memory, MemoryEntryType, MemoryId, MemoryQuery, MemoryStore, UnifiedStore,
+    ChatHistoryStore, ChatMessage, Memory, MemoryEntryType, MemoryId, MemoryQuery, MemoryStore,
+    UnifiedStore,
 };
 
 /// Export options for controlling export behavior

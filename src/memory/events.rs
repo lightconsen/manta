@@ -193,7 +193,9 @@ async fn list_event_log_files(workspace_dir: impl AsRef<std::path::Path>) -> Vec
     let mut files = Vec::new();
 
     // First add legacy file if it exists (for backward compatibility)
-    let legacy_path = workspace_dir.as_ref().join(LEGACY_MEMORY_EVENT_LOG_RELATIVE_PATH);
+    let legacy_path = workspace_dir
+        .as_ref()
+        .join(LEGACY_MEMORY_EVENT_LOG_RELATIVE_PATH);
     if legacy_path.exists() {
         files.push(legacy_path);
     }

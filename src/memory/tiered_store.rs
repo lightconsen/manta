@@ -20,9 +20,9 @@ use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
 use super::{
-    CompressedJsonlStore, DatabaseStore, EffectivenessConfig, InMemoryStore, Memory, MemoryEntryType, MemoryId,
-    MemoryQuery, MemoryStats, MemoryStore, MemoryTier, TierEvaluator, TierIndex, TierSystemConfig,
-    TIER_INDEX_FILE_NAME,
+    CompressedJsonlStore, DatabaseStore, EffectivenessConfig, InMemoryStore, Memory,
+    MemoryEntryType, MemoryId, MemoryQuery, MemoryStats, MemoryStore, MemoryTier, TierEvaluator,
+    TierIndex, TierSystemConfig, TIER_INDEX_FILE_NAME,
 };
 
 /// Aggregate store that routes each memory to its tier-specific backend.
@@ -144,13 +144,17 @@ impl TieredStore {
     /// Create a tiered store backed entirely by in-memory / temporary storage.
     /// Useful for tests.
     pub async fn new_in_memory() -> crate::Result<Self> {
-        let temp_dir = std::env::temp_dir()
-            .join(format!("syscity_archival_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("syscity_archival_test_{}", uuid::Uuid::new_v4()));
         let default_dim = 384;
         Ok(Self {
             working: InMemoryStore::new(),
-            short_term: DatabaseStore::new_in_memory().await?.with_embedding_dimension(default_dim),
-            long_term: DatabaseStore::new_in_memory().await?.with_embedding_dimension(default_dim),
+            short_term: DatabaseStore::new_in_memory()
+                .await?
+                .with_embedding_dimension(default_dim),
+            long_term: DatabaseStore::new_in_memory()
+                .await?
+                .with_embedding_dimension(default_dim),
             archival: CompressedJsonlStore::new(&temp_dir),
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),

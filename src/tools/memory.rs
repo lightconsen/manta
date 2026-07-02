@@ -15,7 +15,9 @@ use serde_json::Value;
 use tracing::{debug, info};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
-use crate::memory::{Memory, MemoryEntryType, MemoryId, MemoryManager, MemoryQuery, MemoryStore, SqliteMemoryStore};
+use crate::memory::{
+    Memory, MemoryEntryType, MemoryId, MemoryManager, MemoryQuery, MemoryStore, SqliteMemoryStore,
+};
 
 /// Memory tool for storing and retrieving information
 #[derive(Debug, Clone)]

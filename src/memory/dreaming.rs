@@ -19,7 +19,7 @@ use chrono::Utc;
 use cron::Schedule as CronSchedule;
 use serde::{Deserialize, Serialize};
 use sysinfo::{RefreshKind, System};
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{watch, RwLock};
 use tokio::time::{sleep_until, Instant as TokioInstant};
 use tracing::{debug, info, warn};
 
@@ -718,7 +718,10 @@ impl DreamEngine {
                             // Actually move data between backends when a tiered store is available.
                             if let Some(ts) = tiered_store {
                                 if let Err(e) = ts.migrate_memory(mem, new_tier).await {
-                                    errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
+                                    errors.push(format!(
+                                        "Failed to migrate memory {}: {}",
+                                        mem.id, e
+                                    ));
                                     continue;
                                 }
                                 // Keep the outer tier_index in sync with the actual data location.
@@ -745,7 +748,10 @@ impl DreamEngine {
                             // Actually move data between backends when a tiered store is available.
                             if let Some(ts) = tiered_store {
                                 if let Err(e) = ts.migrate_memory(mem, new_tier).await {
-                                    errors.push(format!("Failed to migrate memory {}: {}", mem.id, e));
+                                    errors.push(format!(
+                                        "Failed to migrate memory {}: {}",
+                                        mem.id, e
+                                    ));
                                     continue;
                                 }
                                 // Keep the outer tier_index in sync with the actual data location.
@@ -1197,7 +1203,10 @@ impl DreamEngine {
                                                         to: n2.label.clone(),
                                                         relation: "co_occurs".to_string(),
                                                         confidence: (shared.len() as f32
-                                                            / n1.memory_ids.len().max(n2.memory_ids.len()) as f32)
+                                                            / n1.memory_ids
+                                                                .len()
+                                                                .max(n2.memory_ids.len())
+                                                                as f32)
                                                             .min(1.0),
                                                     });
                                                 }
@@ -1420,7 +1429,10 @@ impl DreamEngine {
 
         // REM dream runs only if requested and budget allows and not cancelled
         if include_rem && self.config.budget == DreamBudget::Expensive && !*cancel.borrow() {
-            match self.run_rem(store, tier_index, llm_callback, cancel.clone()).await {
+            match self
+                .run_rem(store, tier_index, llm_callback, cancel.clone())
+                .await
+            {
                 Ok(r) => {
                     self.metrics.record(&r, false);
                     if let Some(ref event_log) = self.event_log {
@@ -2109,7 +2121,10 @@ mod tests {
 
         // Create a cancel signal that never cancels
         let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        let result = engine.run_light(store.as_ref(), &tier_index, cancel_rx).await.unwrap();
+        let result = engine
+            .run_light(store.as_ref(), &tier_index, cancel_rx)
+            .await
+            .unwrap();
         assert_eq!(result.phase, DreamPhase::Light);
         assert!(!result.cancelled);
         // Removed duplicates are not counted in processed
@@ -2140,7 +2155,10 @@ mod tests {
 
         // Create a cancel signal that never cancels
         let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        let result = engine.run_deep(store.as_ref(), &tier_index, cancel_rx).await.unwrap();
+        let result = engine
+            .run_deep(store.as_ref(), &tier_index, cancel_rx)
+            .await
+            .unwrap();
         assert_eq!(result.phase, DreamPhase::Deep);
         assert!(!result.cancelled);
         assert!(result.memories_processed >= 5);
@@ -2194,15 +2212,18 @@ mod tests {
 
         // Seed a lot of memories so that we can cancel mid-processing
         for i in 0..100 {
-            let mem = Memory::new("u1", format!("Content {}", i), "fact")
-                .with_importance_score(0.5);
+            let mem =
+                Memory::new("u1", format!("Content {}", i), "fact").with_importance_score(0.5);
             let id = store.store(mem).await.unwrap();
             tier_index.insert(id.to_string(), MemoryTier::ShortTerm);
         }
 
         // Create a cancel signal that cancels immediately
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(true);
-        let result = engine.run_light(store.as_ref(), &tier_index, cancel_rx).await.unwrap();
+        let result = engine
+            .run_light(store.as_ref(), &tier_index, cancel_rx)
+            .await
+            .unwrap();
         assert_eq!(result.phase, DreamPhase::Light);
         assert!(result.cancelled);
         drop(cancel_tx);
@@ -2247,7 +2268,10 @@ mod tests {
 
         // Create a cancel signal that never cancels
         let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        let result = engine.run_light(store.as_ref(), &tier_index, cancel_rx).await.unwrap();
+        let result = engine
+            .run_light(store.as_ref(), &tier_index, cancel_rx)
+            .await
+            .unwrap();
         assert_eq!(result.phase, DreamPhase::Light);
         assert!(result.peak_memory_mb.is_some());
         // Removed duplicates are not counted in processed

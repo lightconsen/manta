@@ -343,7 +343,8 @@ async fn effectiveness_data_consistency_across_backends() {
 
 #[tokio::test]
 async fn tiered_store_survives_process_restart() {
-    let temp_dir = std::env::temp_dir().join(format!("syscity_tier_crash_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("syscity_tier_crash_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
     // Create some memories in persistent tiers (Working tier uses InMemoryStore and won't persist)
@@ -355,7 +356,8 @@ async fn tiered_store_survives_process_restart() {
         let id1 = store.store(mem1).await.unwrap();
 
         // ShortTerm tier (another)
-        let mem2 = Memory::new("u1", "Should also be in ShortTerm", "fact").with_importance_score(0.5);
+        let mem2 =
+            Memory::new("u1", "Should also be in ShortTerm", "fact").with_importance_score(0.5);
         let id2 = store.store(mem2).await.unwrap();
 
         // LongTerm tier
@@ -363,7 +365,8 @@ async fn tiered_store_survives_process_restart() {
         let id3 = store.store(mem3).await.unwrap();
 
         // LongTerm tier (another)
-        let mem4 = Memory::new("u1", "Should also be in LongTerm", "fact").with_importance_score(0.9);
+        let mem4 =
+            Memory::new("u1", "Should also be in LongTerm", "fact").with_importance_score(0.9);
         let id4 = store.store(mem4).await.unwrap();
 
         store.close().await.unwrap();
@@ -401,7 +404,8 @@ async fn tiered_store_survives_process_restart() {
 
 #[tokio::test]
 async fn tiered_store_recovers_from_crash_duplicates() {
-    let temp_dir = std::env::temp_dir().join(format!("syscity_tier_crash2_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("syscity_tier_crash2_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
     // First, create a store with a memory in ShortTerm
@@ -409,7 +413,8 @@ async fn tiered_store_recovers_from_crash_duplicates() {
         let store = TieredStore::new(&temp_dir).await.unwrap();
 
         // Store in ShortTerm
-        let mem = Memory::new("u1", "Memory that gets duplicated", "fact").with_importance_score(0.4);
+        let mem =
+            Memory::new("u1", "Memory that gets duplicated", "fact").with_importance_score(0.4);
         let id = store.store(mem).await.unwrap();
 
         store.close().await.unwrap();
@@ -423,7 +428,12 @@ async fn tiered_store_recovers_from_crash_duplicates() {
 
         // Create a new DatabaseStore for long_term.db directly and store it there too
         let long_term_db_path = temp_dir.join("long_term.db");
-        let long_term_store = syscity::memory::DatabaseStore::new(&format!("sqlite://{}", long_term_db_path.to_string_lossy())).await.unwrap();
+        let long_term_store = syscity::memory::DatabaseStore::new(&format!(
+            "sqlite://{}",
+            long_term_db_path.to_string_lossy()
+        ))
+        .await
+        .unwrap();
         long_term_store.store(mem.clone()).await.unwrap();
 
         store2.close().await.unwrap();
@@ -438,7 +448,10 @@ async fn tiered_store_recovers_from_crash_duplicates() {
     assert_eq!(fetched.content, "Memory that gets duplicated");
 
     // Now explicitly migrate it to trigger the idempotent recovery path
-    store3.migrate_memory(&stored_mem, MemoryTier::LongTerm).await.unwrap();
+    store3
+        .migrate_memory(&stored_mem, MemoryTier::LongTerm)
+        .await
+        .unwrap();
 
     // Verify it's now in LongTerm
     let current_tier = store3.tier_index().get_tier(&id.0).unwrap();
@@ -451,14 +464,16 @@ async fn tiered_store_recovers_from_crash_duplicates() {
 
 #[tokio::test]
 async fn tiered_store_recovers_missing_index() {
-    let temp_dir = std::env::temp_dir().join(format!("syscity_tier_crash3_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("syscity_tier_crash3_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
     // Store a memory, then delete the index to simulate index loss
     let id = {
         let store = TieredStore::new(&temp_dir).await.unwrap();
 
-        let mem = Memory::new("u1", "Memory that survives index loss", "fact").with_importance_score(0.5);
+        let mem =
+            Memory::new("u1", "Memory that survives index loss", "fact").with_importance_score(0.5);
         let id = store.store(mem).await.unwrap();
 
         store.close().await.unwrap();

@@ -31,7 +31,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::spawn_blocking;
 use tracing::{debug, info, warn};
 
-use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore, MemoryEntryType};
+use super::{Memory, MemoryEntryType, MemoryId, MemoryQuery, MemoryStats, MemoryStore};
 
 /// Directory name for archival shards.
 pub const ARCHIVAL_DIR_NAME: &str = "archival";
