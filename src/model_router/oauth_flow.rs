@@ -79,13 +79,17 @@ impl OAuthFlow {
     ) -> crate::Result<Credential> {
         let redirect_uri = format!("http://127.0.0.1:{}/callback", config.redirect_port);
 
-        let params = [
+        let mut params: Vec<(&str, &str)> = vec![
             ("grant_type", "authorization_code"),
             ("code", code),
             ("client_id", config.client_id.as_str()),
             ("redirect_uri", redirect_uri.as_str()),
             ("code_verifier", self.verifier.as_str()),
         ];
+
+        if let Some(ref client_secret) = config.client_secret {
+            params.push(("client_secret", client_secret.as_str()));
+        }
 
         let resp = self
             .client
@@ -122,7 +126,7 @@ impl OAuthFlow {
             expires_at,
             token_url: config.token_url.clone(),
             client_id: config.client_id.clone(),
-            client_secret: None,
+            client_secret: config.client_secret.clone(),
             scope: config.scope.clone(),
         })
     }
@@ -154,4 +158,84 @@ fn default_expires_in() -> u64 {
 fn generate_state() -> String {
     let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn test_oauth_config(token_url: String, client_secret: Option<String>) -> OAuthConfig {
+        OAuthConfig {
+            client_id: "test-client".to_string(),
+            auth_url: "http://example.com/auth".to_string(),
+            token_url,
+            scope: None,
+            client_secret,
+            redirect_port: 18081,
+        }
+    }
+
+    #[tokio::test]
+    async fn exchange_code_includes_client_secret() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("client_secret=super-secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-123",
+                "refresh_token": "refresh-456",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config =
+            test_oauth_config(format!("{}/token", server.uri()), Some("super-secret".to_string()));
+        let flow = OAuthFlow::new();
+        let credential = flow.exchange_code("auth-code", &config).await.unwrap();
+
+        match credential {
+            Credential::OAuth2 {
+                client_secret,
+                access_token,
+                refresh_token,
+                ..
+            } => {
+                assert_eq!(access_token, "access-123");
+                assert_eq!(refresh_token, Some("refresh-456".to_string()));
+                assert_eq!(client_secret, Some("super-secret".to_string()));
+            }
+            other => panic!("expected OAuth2 credential, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn exchange_code_omits_client_secret_when_not_configured() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-789",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = test_oauth_config(format!("{}/token", server.uri()), None);
+        let flow = OAuthFlow::new();
+        let credential = flow.exchange_code("auth-code", &config).await.unwrap();
+
+        match credential {
+            Credential::OAuth2 { client_secret, .. } => {
+                assert_eq!(client_secret, None);
+            }
+            other => panic!("expected OAuth2 credential, got {:?}", other),
+        }
+    }
 }

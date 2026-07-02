@@ -246,6 +246,7 @@ pub async fn run_provider_command(
                 auth_url: auth_url.clone(),
                 token_url: token_url.clone(),
                 scope: scope.clone(),
+                client_secret: None,
                 redirect_port: *redirect_port,
             };
             run_auth_command(id, &oauth, *timeout, *no_browser).await
@@ -294,15 +295,8 @@ async fn run_auth_command(
         oauth.redirect_port, timeout_secs
     );
 
-    let (code, returned_state) =
-        oauth_callback::wait_for_callback(oauth.redirect_port, timeout_secs).await?;
-
-    if returned_state != flow.state() {
-        return Err(SyscityError::ExternalService {
-            source: "OAuth state mismatch — possible CSRF attack".to_string(),
-            cause: None,
-        });
-    }
+    let code =
+        oauth_callback::wait_for_callback(oauth.redirect_port, timeout_secs, flow.state()).await?;
 
     println!("Exchanging authorization code for tokens...\n");
 

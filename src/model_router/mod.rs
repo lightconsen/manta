@@ -86,6 +86,9 @@ pub struct OAuthConfig {
     /// Optional scope string
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    /// OAuth2 client secret (required by some providers for token exchange)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
     /// Local redirect callback port (default: 18081)
     #[serde(default = "default_redirect_port")]
     pub redirect_port: u16,
