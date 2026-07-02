@@ -77,7 +77,8 @@ pub struct PluginManager {
     channel_unregister: OnceLock<ChannelUnregisterFn>,
     /// Message sender used to construct PluginChannel instances
     #[cfg(feature = "plugins")]
-    channel_message_tx: OnceLock<tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>>,
+    channel_message_tx:
+        OnceLock<tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>>,
     /// Optional SQLite plugin registry for persistent metadata
     sqlite_registry: OnceLock<PluginSqliteRegistry>,
     /// Optional activation planner for lazy loading / dependency ordering
@@ -662,9 +663,9 @@ impl PluginManager {
                 Err(_) => continue,
             };
 
-                if let Err(e) = registry.register_plugin(&manifest, &path, None).await {
-                    warn!("Failed to sync plugin '{}' to registry: {}", manifest.id, e);
-                }
+            if let Err(e) = registry.register_plugin(&manifest, &path, None).await {
+                warn!("Failed to sync plugin '{}' to registry: {}", manifest.id, e);
+            }
         }
     }
 

@@ -136,9 +136,9 @@ pub async fn init_plugin_manager(
         let mr_unregister = model_router.clone();
         let tx_register = spawn_tx.clone();
         let tx_unregister = spawn_tx.clone();
-        plugin_manager
-            .set_provider_callbacks(
-                Arc::new(move |name: String, provider: Arc<dyn crate::providers::Provider + Send + Sync>| {
+        plugin_manager.set_provider_callbacks(
+            Arc::new(
+                move |name: String, provider: Arc<dyn crate::providers::Provider + Send + Sync>| {
                     let task_name = name.clone();
                     let mr = mr_register.clone();
                     let tx = tx_register.clone();
@@ -147,24 +147,32 @@ pub async fn init_plugin_manager(
                             warn!("Failed to register plugin provider '{}': {}", task_name, e);
                         }
                     });
-                    if let Err(e) = tx.send((format!("plugin:provider:register:{}", name), handle)) {
-                        warn!("Failed to enqueue plugin provider registration task '{}': {}", name, e);
+                    if let Err(e) = tx.send((format!("plugin:provider:register:{}", name), handle))
+                    {
+                        warn!(
+                            "Failed to enqueue plugin provider registration task '{}': {}",
+                            name, e
+                        );
                     }
-                }),
-                Arc::new(move |name: String| {
-                    let task_name = name.clone();
-                    let mr = mr_unregister.clone();
-                    let tx = tx_unregister.clone();
-                    let handle = tokio::spawn(async move {
-                        if let Err(e) = mr.remove_provider(&task_name).await {
-                            warn!("Failed to unregister plugin provider '{}': {}", task_name, e);
-                        }
-                    });
-                    if let Err(e) = tx.send((format!("plugin:provider:unregister:{}", name), handle)) {
-                        warn!("Failed to enqueue plugin provider unregistration task '{}': {}", name, e);
+                },
+            ),
+            Arc::new(move |name: String| {
+                let task_name = name.clone();
+                let mr = mr_unregister.clone();
+                let tx = tx_unregister.clone();
+                let handle = tokio::spawn(async move {
+                    if let Err(e) = mr.remove_provider(&task_name).await {
+                        warn!("Failed to unregister plugin provider '{}': {}", task_name, e);
                     }
-                }),
-            );
+                });
+                if let Err(e) = tx.send((format!("plugin:provider:unregister:{}", name), handle)) {
+                    warn!(
+                        "Failed to enqueue plugin provider unregistration task '{}': {}",
+                        name, e
+                    );
+                }
+            }),
+        );
     }
 
     // Wire plugin manager channel callbacks
@@ -176,35 +184,37 @@ pub async fn init_plugin_manager(
         let channels_unreg = channels.clone();
         let tx_reg = spawn_tx.clone();
         let tx_unreg = spawn_tx.clone();
-        plugin_manager
-            .set_channel_callbacks(
-                Arc::new(
-                    move |name: String, channel: Arc<dyn crate::channels::Channel + Send + Sync>| {
-                        let task_name = name.clone();
-                        let ch = channels_reg.clone();
-                        let tx = tx_reg.clone();
-                        let handle = tokio::spawn(async move {
-                            ch.write().await.insert(task_name.clone(), channel);
-                            info!("Registered plugin channel '{}'", task_name);
-                        });
-                        if let Err(e) = tx.send((format!("plugin:channel:register:{}", name), handle)) {
-                            warn!("Failed to enqueue plugin channel registration task '{}': {}", name, e);
-                        }
-                    },
-                ),
-                Arc::new(move |name: String| {
+        plugin_manager.set_channel_callbacks(
+            Arc::new(
+                move |name: String, channel: Arc<dyn crate::channels::Channel + Send + Sync>| {
                     let task_name = name.clone();
-                    let ch = channels_unreg.clone();
-                    let tx = tx_unreg.clone();
+                    let ch = channels_reg.clone();
+                    let tx = tx_reg.clone();
                     let handle = tokio::spawn(async move {
-                        ch.write().await.remove(&task_name);
-                        info!("Deregistered plugin channel '{}'", task_name);
+                        ch.write().await.insert(task_name.clone(), channel);
+                        info!("Registered plugin channel '{}'", task_name);
                     });
-                    if let Err(e) = tx.send((format!("plugin:channel:unregister:{}", name), handle)) {
-                        warn!("Failed to enqueue plugin channel unregistration task '{}': {}", name, e);
+                    if let Err(e) = tx.send((format!("plugin:channel:register:{}", name), handle)) {
+                        warn!(
+                            "Failed to enqueue plugin channel registration task '{}': {}",
+                            name, e
+                        );
                     }
-                }),
-            );
+                },
+            ),
+            Arc::new(move |name: String| {
+                let task_name = name.clone();
+                let ch = channels_unreg.clone();
+                let tx = tx_unreg.clone();
+                let handle = tokio::spawn(async move {
+                    ch.write().await.remove(&task_name);
+                    info!("Deregistered plugin channel '{}'", task_name);
+                });
+                if let Err(e) = tx.send((format!("plugin:channel:unregister:{}", name), handle)) {
+                    warn!("Failed to enqueue plugin channel unregistration task '{}': {}", name, e);
+                }
+            }),
+        );
 
         plugin_manager.set_channel_message_tx(plugin_inbound_tx);
     }

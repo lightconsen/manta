@@ -78,8 +78,7 @@ impl PluginRuntime {
             let (event_tx, event_rx) = mpsc::unbounded_channel::<PluginEvent>();
             let metrics = Arc::new(PluginMetricsRegistry::new());
             let shared_state = Arc::new(PluginSharedState::with_events(event_tx, metrics.clone()));
-            let event_subscribers: EventSubscribers =
-                Arc::new(RwLock::new(HashMap::new()));
+            let event_subscribers: EventSubscribers = Arc::new(RwLock::new(HashMap::new()));
             let next_sub_id = AtomicU64::new(1);
 
             // Define host functions for plugins
@@ -724,7 +723,21 @@ impl PluginRuntime {
                 }
             };
 
-            Self::invoke_wasm_tool(store, instance, tool_name, params)
+            // Enforce a 60-second timeout on WASM tool invocations as a
+            // secondary safety net alongside fuel metering.
+            // Note: wasmtime's synchronous f.call() blocks the tokio thread,
+            // so fuel metering is the primary protection; the timeout provides
+            // an additional upper bound for the caller.
+            let timeout_future =
+                async { Self::invoke_wasm_tool(store, instance, tool_name, params) };
+            tokio::time::timeout(std::time::Duration::from_secs(60), timeout_future)
+                .await
+                .map_err(|_| {
+                    crate::error::SyscityError::Internal(format!(
+                        "Plugin '{}' tool call timed out after 60 seconds",
+                        plugin_id
+                    ))
+                })?
         }
 
         #[cfg(not(feature = "plugins"))]
@@ -866,16 +879,14 @@ impl PluginRuntime {
     fn get_plugin_store_instance<'a>(
         plugins: &'a mut HashMap<String, PluginInstance>,
         plugin_id: &str,
-    ) -> crate::Result<(
-        &'a mut wasmtime::Store<PluginState>,
-        &'a wasmtime::Instance,
-    )> {
-        let plugin = plugins.get_mut(plugin_id).ok_or_else(|| {
-            crate::error::ConfigError::InvalidValue {
-                key: "plugin_id".to_string(),
-                message: format!("Plugin '{}' not found", plugin_id),
-            }
-        })?;
+    ) -> crate::Result<(&'a mut wasmtime::Store<PluginState>, &'a wasmtime::Instance)> {
+        let plugin =
+            plugins
+                .get_mut(plugin_id)
+                .ok_or_else(|| crate::error::ConfigError::InvalidValue {
+                    key: "plugin_id".to_string(),
+                    message: format!("Plugin '{}' not found", plugin_id),
+                })?;
 
         if !plugin.enabled {
             return Err(crate::error::SyscityError::Validation(format!(
@@ -905,8 +916,7 @@ impl PluginRuntime {
         #[cfg(feature = "plugins")]
         {
             let mut plugins = self.plugins.write().await;
-            let (store, instance) =
-                Self::get_plugin_store_instance(&mut plugins, plugin_id)?;
+            let (store, instance) = Self::get_plugin_store_instance(&mut plugins, plugin_id)?;
             Self::invoke_wasm_provider(store, instance, "provider_complete", request)
         }
 
@@ -931,8 +941,7 @@ impl PluginRuntime {
         #[cfg(feature = "plugins")]
         {
             let mut plugins = self.plugins.write().await;
-            let (store, instance) =
-                Self::get_plugin_store_instance(&mut plugins, plugin_id)?;
+            let (store, instance) = Self::get_plugin_store_instance(&mut plugins, plugin_id)?;
             Self::invoke_wasm_provider(store, instance, "provider_stream", request)
         }
 
@@ -954,8 +963,7 @@ impl PluginRuntime {
         #[cfg(feature = "plugins")]
         {
             let mut plugins = self.plugins.write().await;
-            let (store, instance) =
-                Self::get_plugin_store_instance(&mut plugins, plugin_id)?;
+            let (store, instance) = Self::get_plugin_store_instance(&mut plugins, plugin_id)?;
             Self::invoke_wasm_provider(
                 store,
                 instance,

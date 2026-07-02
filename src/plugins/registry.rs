@@ -49,9 +49,17 @@ impl RegistryClient {
     /// Create a new RegistryClient pointing at `registry_url`.
     pub fn new(registry_url: &str) -> Self {
         Self {
-            http_client: reqwest::Client::new(),
+            http_client: Self::build_http_client(),
             registry_url: registry_url.trim_end_matches('/').to_string(),
         }
+    }
+
+    /// Build an HTTP client with a 30-second timeout.
+    fn build_http_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
     }
 
     /// Fetch the full registry index.
@@ -108,6 +116,8 @@ impl RegistryClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_registry_index_deserialize() {
@@ -126,5 +136,164 @@ mod tests {
         let index: RegistryIndex = serde_json::from_value(json).unwrap();
         assert_eq!(index.plugins.len(), 1);
         assert_eq!(index.plugins[0].id, "com.example.test");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_index() {
+        let mock_server = MockServer::start().await;
+        let index_json = serde_json::json!({
+            "registry_url": mock_server.uri(),
+            "plugins": [{
+                "id": "com.test.mock",
+                "name": "Mock Plugin",
+                "version": "0.1.0",
+                "description": "A mock plugin for testing",
+                "download_url": "/plugins/mock.tar.gz",
+                "checksum_sha256": "deadbeef",
+                "manifest": {}
+            }]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/index.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&index_json))
+            .mount(&mock_server)
+            .await;
+
+        let client = RegistryClient::new(&mock_server.uri());
+        let index = client.fetch_index().await.unwrap();
+        assert_eq!(index.plugins.len(), 1);
+        assert_eq!(index.plugins[0].id, "com.test.mock");
+    }
+
+    #[tokio::test]
+    async fn test_search_matches_id() {
+        let mock_server = MockServer::start().await;
+        let index_json = serde_json::json!({
+            "registry_url": mock_server.uri(),
+            "plugins": [{
+                "id": "com.test.search",
+                "name": "Search Target",
+                "version": "1.0.0",
+                "description": "A searchable plugin",
+                "download_url": "/plugins/search.tar.gz",
+                "checksum_sha256": "cafe01",
+                "manifest": {}
+            }]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/index.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&index_json))
+            .mount(&mock_server)
+            .await;
+
+        let client = RegistryClient::new(&mock_server.uri());
+        let results = client.search("search").await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "com.test.search");
+    }
+
+    #[tokio::test]
+    async fn test_search_no_match() {
+        let mock_server = MockServer::start().await;
+        let index_json = serde_json::json!({
+            "registry_url": mock_server.uri(),
+            "plugins": [{
+                "id": "com.test.alpha",
+                "name": "Alpha",
+                "version": "1.0.0",
+                "description": "First plugin",
+                "download_url": "/plugins/alpha.tar.gz",
+                "checksum_sha256": "aaaa",
+                "manifest": {}
+            }]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/index.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&index_json))
+            .mount(&mock_server)
+            .await;
+
+        let client = RegistryClient::new(&mock_server.uri());
+        let results = client.search("nonexistent").await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_download_checksum_ok() {
+        let mock_server = MockServer::start().await;
+        let content = b"plugin archive content";
+        let checksum = hex::encode(sha2::Sha256::digest(content));
+
+        Mock::given(method("GET"))
+            .and(path("/plugins/valid.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(content))
+            .mount(&mock_server)
+            .await;
+
+        let entry = RegistryPluginEntry {
+            id: "com.test.dl".to_string(),
+            name: "Download Test".to_string(),
+            version: "1.0.0".to_string(),
+            description: "Testing download".to_string(),
+            author: None,
+            download_url: format!("{}/plugins/valid.tar.gz", mock_server.uri()),
+            checksum_sha256: checksum,
+            manifest: serde_json::json!({}),
+        };
+
+        let client = RegistryClient::new(&mock_server.uri());
+        let bytes = client.download(&entry).await.unwrap();
+        assert_eq!(bytes, content);
+    }
+
+    #[tokio::test]
+    async fn test_download_checksum_mismatch() {
+        let mock_server = MockServer::start().await;
+        let content = b"plugin archive content";
+        // Intentionally wrong checksum
+        let wrong_checksum = hex::encode(sha2::Sha256::digest(b"different content"));
+
+        Mock::given(method("GET"))
+            .and(path("/plugins/badsum.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(content))
+            .mount(&mock_server)
+            .await;
+
+        let entry = RegistryPluginEntry {
+            id: "com.test.badsum".to_string(),
+            name: "Bad Checksum".to_string(),
+            version: "1.0.0".to_string(),
+            description: "Testing checksum failure".to_string(),
+            author: None,
+            download_url: format!("{}/plugins/badsum.tar.gz", mock_server.uri()),
+            checksum_sha256: wrong_checksum,
+            manifest: serde_json::json!({}),
+        };
+
+        let client = RegistryClient::new(&mock_server.uri());
+        let result = client.download(&entry).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Checksum mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_index_404() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/index.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        let client = RegistryClient::new(&mock_server.uri());
+        let result = client.fetch_index().await;
+        assert!(result.is_err());
     }
 }

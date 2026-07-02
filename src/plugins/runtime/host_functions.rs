@@ -126,9 +126,10 @@ pub(crate) fn define_host_functions(
     fn get_memory(
         caller: &mut wasmtime::Caller<'_, PluginState>,
     ) -> wasmtime::Result<wasmtime::Memory> {
-        caller.get_export("memory").and_then(|e| e.into_memory()).ok_or_else(|| {
-            wasmtime::Error::msg("Plugin does not export a memory segment")
-        })
+        caller
+            .get_export("memory")
+            .and_then(|e| e.into_memory())
+            .ok_or_else(|| wasmtime::Error::msg("Plugin does not export a memory segment"))
     }
 
     // --- Logging ---

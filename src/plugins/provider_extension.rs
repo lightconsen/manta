@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tracing::warn;
 
 use crate::providers::stream_wrappers::ProviderStreamFamily;
 use crate::providers::{
@@ -84,12 +85,15 @@ impl Provider for PluginProvider {
 
     async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse> {
         // Delegate to plugin runtime
+        let request_val = serde_json::to_value(request).map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "Failed to serialize provider request: {}",
+                e
+            ))
+        })?;
         let result = self
             .runtime
-            .call_provider_complete(
-                &self.plugin_id,
-                &serde_json::to_value(request).unwrap_or_default(),
-            )
+            .call_provider_complete(&self.plugin_id, &request_val)
             .await?;
 
         let response: CompletionResponse = serde_json::from_value(result).map_err(|e| {
@@ -104,12 +108,15 @@ impl Provider for PluginProvider {
     async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
         // For plugin providers, we delegate to the runtime which returns
         // a stream of JSON chunks. We convert those into CompletionChunks.
+        let request_val = serde_json::to_value(request).map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "Failed to serialize provider stream request: {}",
+                e
+            ))
+        })?;
         let result = self
             .runtime
-            .call_provider_stream(
-                &self.plugin_id,
-                &serde_json::to_value(request).unwrap_or_default(),
-            )
+            .call_provider_stream(&self.plugin_id, &request_val)
             .await?;
 
         // The plugin runtime returns a receiver or a stream descriptor.
@@ -141,6 +148,10 @@ impl Provider for PluginProvider {
     ) -> crate::Result<()> {
         // Plugin providers manage credentials inside the plugin runtime; this
         // provider adapter does not hold credentials directly.
+        warn!(
+            "Plugin provider '{}' does not support set_credential (credentials managed internally)",
+            self.plugin_id
+        );
         Ok(())
     }
 }
@@ -194,10 +205,7 @@ mod tests {
 
     #[test]
     fn test_parse_stream_family_openai() {
-        assert_eq!(
-            PluginProvider::parse_stream_family("openai"),
-            ProviderStreamFamily::OpenAi
-        );
+        assert_eq!(PluginProvider::parse_stream_family("openai"), ProviderStreamFamily::OpenAi);
     }
 
     #[test]
@@ -254,22 +262,13 @@ mod tests {
 
     #[test]
     fn test_parse_stream_family_unknown() {
-        assert_eq!(
-            PluginProvider::parse_stream_family("unknown"),
-            ProviderStreamFamily::Generic
-        );
-        assert_eq!(
-            PluginProvider::parse_stream_family(""),
-            ProviderStreamFamily::Generic
-        );
+        assert_eq!(PluginProvider::parse_stream_family("unknown"), ProviderStreamFamily::Generic);
+        assert_eq!(PluginProvider::parse_stream_family(""), ProviderStreamFamily::Generic);
     }
 
     #[test]
     fn test_parse_stream_family_case_insensitive() {
-        assert_eq!(
-            PluginProvider::parse_stream_family("OpenAI"),
-            ProviderStreamFamily::OpenAi
-        );
+        assert_eq!(PluginProvider::parse_stream_family("OpenAI"), ProviderStreamFamily::OpenAi);
         assert_eq!(
             PluginProvider::parse_stream_family("ANTHROPIC"),
             ProviderStreamFamily::Anthropic

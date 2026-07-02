@@ -43,11 +43,19 @@ impl PluginSharedState {
         Self {
             kv_store: Arc::new(RwLock::new(HashMap::new())),
             event_tx: None,
-            http_client: reqwest::Client::new(),
+            http_client: Self::build_http_client(),
             session_id: Arc::new(RwLock::new(None)),
             context: Arc::new(RwLock::new(HashMap::new())),
             metrics: Arc::new(PluginMetricsRegistry::new()),
         }
+    }
+
+    /// Build an HTTP client with a 30-second timeout.
+    fn build_http_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
     }
 
     /// Create shared state with an event channel and metrics registry.
@@ -58,7 +66,7 @@ impl PluginSharedState {
         Self {
             kv_store: Arc::new(RwLock::new(HashMap::new())),
             event_tx: Some(event_tx),
-            http_client: reqwest::Client::new(),
+            http_client: Self::build_http_client(),
             session_id: Arc::new(RwLock::new(None)),
             context: Arc::new(RwLock::new(HashMap::new())),
             metrics,

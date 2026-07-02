@@ -208,4 +208,61 @@ mod tests {
             matches!(result, VerificationResult::Invalid(ref msg) if msg.starts_with("signature mismatch"))
         );
     }
+
+    #[test]
+    fn test_signature_without_public_key() {
+        let mut manifest = unsigned_manifest();
+        manifest.signature = Some("AAAA".to_string());
+        manifest.signer_public_key = None;
+        let result = verify_manifest(&manifest);
+        assert_eq!(
+            result,
+            VerificationResult::Invalid(
+                "signer_public_key missing but signature present".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_invalid_base64_public_key() {
+        let mut manifest = unsigned_manifest();
+        manifest.signature = Some("AAAA".to_string());
+        manifest.signer_public_key = Some("not-valid-base64!!!".to_string());
+        let result = verify_manifest(&manifest);
+        assert!(
+            matches!(result, VerificationResult::Invalid(ref msg) if msg.contains("invalid public key"))
+        );
+    }
+
+    #[test]
+    fn test_wrong_length_public_key() {
+        let mut manifest = unsigned_manifest();
+        manifest.signature = Some("AAAA".to_string());
+        let engine = base64::engine::general_purpose::STANDARD;
+        // 5 bytes is not a valid ed25519 public key (must be 32)
+        manifest.signer_public_key = Some(engine.encode([0u8; 5]));
+        let result = verify_manifest(&manifest);
+        assert!(
+            matches!(result, VerificationResult::Invalid(ref msg) if msg.contains("public key length mismatch"))
+        );
+    }
+
+    #[test]
+    fn test_invalid_base64_signature() {
+        let mut manifest = unsigned_manifest();
+        let engine = base64::engine::general_purpose::STANDARD;
+        manifest.signature = Some("AAAA".to_string());
+        manifest.signer_public_key = Some(engine.encode([0u8; 32]));
+        let result = verify_manifest(&manifest);
+        assert!(
+            matches!(result, VerificationResult::Invalid(ref msg) if msg.contains("invalid signature"))
+        );
+    }
+
+    #[test]
+    fn test_empty_manifest_signing() {
+        // A minimal manifest has no signature fields
+        let m = PluginManifest::minimal("com.test.empty", "");
+        assert_eq!(verify_manifest(&m), VerificationResult::NotSigned);
+    }
 }

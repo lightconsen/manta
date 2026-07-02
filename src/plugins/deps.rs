@@ -32,8 +32,16 @@ impl DependencyResolver {
     pub fn new(plugins_dir: PathBuf) -> Self {
         Self {
             plugins_dir,
-            http_client: reqwest::Client::new(),
+            http_client: Self::build_http_client(),
         }
+    }
+
+    /// Build an HTTP client with a 30-second timeout.
+    fn build_http_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
     }
 
     /// Resolve all dependencies of a plugin, returning them in topological
@@ -175,11 +183,8 @@ mod tests {
 
     fn write_manifest(dir: &std::path::Path, manifest: &PluginManifest) {
         std::fs::create_dir_all(dir).unwrap();
-        std::fs::write(
-            dir.join("plugin.json"),
-            serde_json::to_string_pretty(manifest).unwrap(),
-        )
-        .unwrap();
+        std::fs::write(dir.join("plugin.json"), serde_json::to_string_pretty(manifest).unwrap())
+            .unwrap();
     }
 
     #[tokio::test]
@@ -321,7 +326,10 @@ mod tests {
         let resolver = DependencyResolver::new(plugins_dir);
         let result = resolver.resolve("com.cycle.a").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Cyclic dependency"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cyclic dependency"));
     }
 
     #[tokio::test]
@@ -357,9 +365,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let resolver = DependencyResolver::new(tmp.path().to_path_buf());
         let manifest = PluginManifest::minimal("com.test.none", "None");
-        let result = resolver
-            .ensure_resources(&manifest, tmp.path())
-            .await;
+        let result = resolver.ensure_resources(&manifest, tmp.path()).await;
         assert!(result.is_ok());
     }
 
@@ -378,9 +384,7 @@ mod tests {
             ..PluginManifest::minimal("com.test.opt", "Optional")
         };
         // Should succeed (optional resource not downloaded, no error)
-        let result = resolver
-            .ensure_resources(&manifest, tmp.path())
-            .await;
+        let result = resolver.ensure_resources(&manifest, tmp.path()).await;
         assert!(result.is_ok());
     }
 
@@ -404,9 +408,7 @@ mod tests {
             external_resources: Some(vec![resource]),
             ..PluginManifest::minimal("com.test.checksum", "Checksum")
         };
-        let result = resolver
-            .ensure_resources(&manifest, tmp.path())
-            .await;
+        let result = resolver.ensure_resources(&manifest, tmp.path()).await;
         assert!(result.is_ok());
     }
 
@@ -431,11 +433,12 @@ mod tests {
             external_resources: Some(vec![resource]),
             ..PluginManifest::minimal("com.test.badsum", "BadSum")
         };
-        let result = resolver
-            .ensure_resources(&manifest, tmp.path())
-            .await;
+        let result = resolver.ensure_resources(&manifest, tmp.path()).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Checksum mismatch"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Checksum mismatch"));
     }
 
     #[tokio::test]
@@ -459,9 +462,7 @@ mod tests {
             ..PluginManifest::minimal("com.test.optbad", "OptBad")
         };
         // Should succeed with warning (not required)
-        let result = resolver
-            .ensure_resources(&manifest, tmp.path())
-            .await;
+        let result = resolver.ensure_resources(&manifest, tmp.path()).await;
         assert!(result.is_ok());
     }
 }

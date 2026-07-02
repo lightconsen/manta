@@ -322,4 +322,3 @@ mod tests {
         assert!(!plugin_dir.exists());
     }
 }
-
