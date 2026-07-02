@@ -93,10 +93,11 @@ pub use vector::{
 pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 
 /// Memory entry type discriminant for type-safe memory categorization
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(tag = "type", content = "value")]
 pub enum MemoryEntryType {
     /// Fact memory (objective information)
+    #[default]
     Fact,
     /// Preference memory (user preferences)
     Preference,
@@ -114,12 +115,6 @@ pub enum MemoryEntryType {
     Qmd,
     /// Custom memory type with string identifier
     Custom(String),
-}
-
-impl Default for MemoryEntryType {
-    fn default() -> Self {
-        MemoryEntryType::Fact
-    }
 }
 
 impl MemoryEntryType {

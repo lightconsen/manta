@@ -16,8 +16,8 @@ use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tracing::{debug, info, instrument, warn};
 
 use super::{
-    ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
-    MemoryEntryType,
+    ChatHistoryStore, ChatMessage, Memory, MemoryEntryType, MemoryId, MemoryQuery, MemoryStats,
+    MemoryStore,
 };
 
 /// Unified database store with WAL, FTS5, and access tracking
@@ -91,7 +91,11 @@ impl DatabaseStore {
                 details: e.to_string(),
             })?;
 
-        let store = Self { pool, batch_size: 100, expected_embedding_dim: None };
+        let store = Self {
+            pool,
+            batch_size: 100,
+            expected_embedding_dim: None,
+        };
 
         store.optimize().await?;
         store.init_schema().await?;
@@ -117,7 +121,11 @@ impl DatabaseStore {
     pub async fn new_with_pool(pool: Pool<Sqlite>) -> crate::Result<Self> {
         info!("Initializing unified database store from existing pool");
 
-        let store = Self { pool, batch_size: 100, expected_embedding_dim: None };
+        let store = Self {
+            pool,
+            batch_size: 100,
+            expected_embedding_dim: None,
+        };
 
         store.optimize().await?;
         store.init_schema().await?;
@@ -355,10 +363,7 @@ impl DatabaseStore {
             ),
             ("source", "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'"),
             ("last_accessed", "ALTER TABLE memories ADD COLUMN last_accessed INTEGER"),
-            (
-                "access_count",
-                "ALTER TABLE memories ADD COLUMN access_count INTEGER DEFAULT 0",
-            ),
+            ("access_count", "ALTER TABLE memories ADD COLUMN access_count INTEGER DEFAULT 0"),
         ];
 
         for (column, stmt) in migrations {
@@ -558,7 +563,8 @@ impl MemoryStore for DatabaseStore {
             if emb.len() != dim {
                 return Err(crate::error::SyscityError::Validation(format!(
                     "Embedding dimension mismatch: expected {}, got {}",
-                    dim, emb.len()
+                    dim,
+                    emb.len()
                 )));
             }
         }
@@ -592,7 +598,7 @@ impl MemoryStore for DatabaseStore {
         .bind(&memory.user_id)
         .bind(&memory.conversation_id)
         .bind(&memory.content)
-        .bind(&memory.memory_type.to_string())
+        .bind(memory.memory_type.to_string())
         .bind(embedding_bytes)
         .bind(created_at_secs)
         .bind(last_accessed_secs)
@@ -857,7 +863,8 @@ impl MemoryStore for DatabaseStore {
             if emb.len() != dim {
                 return Err(crate::error::SyscityError::Validation(format!(
                     "Embedding dimension mismatch: expected {}, got {}",
-                    dim, emb.len()
+                    dim,
+                    emb.len()
                 )));
             }
         }
@@ -897,7 +904,7 @@ impl MemoryStore for DatabaseStore {
         .bind(&memory.user_id)
         .bind(&memory.conversation_id)
         .bind(&memory.content)
-        .bind(&memory.memory_type.to_string())
+        .bind(memory.memory_type.to_string())
         .bind(embedding_bytes)
         .bind(created_at_secs)
         .bind(last_accessed_secs)

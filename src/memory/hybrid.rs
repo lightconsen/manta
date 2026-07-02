@@ -268,12 +268,13 @@ pub async fn hybrid_search(
     }
     for (fts_key, vector_key) in merges {
         if let Some(fts_entry) = entries.remove(&fts_key) {
-            let vector_entry = entries.get_mut(&vector_key).unwrap();
-            if vector_entry.fts_score.is_none() {
-                vector_entry.fts_score = fts_entry.fts_score;
-            } else if let Some(fts_score) = fts_entry.fts_score {
-                if fts_score > vector_entry.fts_score.unwrap_or(0.0) {
-                    vector_entry.fts_score = Some(fts_score);
+            if let Some(vector_entry) = entries.get_mut(&vector_key) {
+                if vector_entry.fts_score.is_none() {
+                    vector_entry.fts_score = fts_entry.fts_score;
+                } else if let Some(fts_score) = fts_entry.fts_score {
+                    if fts_score > vector_entry.fts_score.unwrap_or(0.0) {
+                        vector_entry.fts_score = Some(fts_score);
+                    }
                 }
             }
         }
