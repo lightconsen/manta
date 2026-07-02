@@ -35,7 +35,11 @@ impl Default for FormatConfig {
 
 impl FormatConfig {
     fn emoji(&self, emoji: &'static str) -> &'static str {
-        if self.use_emoji { emoji } else { "" }
+        if self.use_emoji {
+            emoji
+        } else {
+            ""
+        }
     }
 }
 
@@ -60,7 +64,11 @@ pub fn format_window(window: &UsageWindow) -> String {
 ///
 /// Shows percentage of an optional budget limit.
 /// Example: `today  87% left  ⏱ 2h 15m`
-pub fn format_window_compact(window: &UsageWindow, budget_usd: Option<f64>, config: &FormatConfig) -> String {
+pub fn format_window_compact(
+    window: &UsageWindow,
+    budget_usd: Option<f64>,
+    config: &FormatConfig,
+) -> String {
     let budget_str = if let Some(budget) = budget_usd {
         if budget > 0.0 {
             let pct = ((1.0 - window.estimated_cost_usd / budget) * 100.0).clamp(0.0, 100.0) as u32;
@@ -121,7 +129,10 @@ pub fn format_provider_snapshot(snapshot: &ProviderUsageSnapshot, config: &Forma
 /// Format a compact single-line summary for all providers.
 ///
 /// Example: `📊 Usage: openai $0.42 · anthropic $1.23`
-pub fn format_usage_summary_line(snapshots: &[ProviderUsageSnapshot], config: &FormatConfig) -> String {
+pub fn format_usage_summary_line(
+    snapshots: &[ProviderUsageSnapshot],
+    config: &FormatConfig,
+) -> String {
     let chart_emoji = config.emoji("📊  ");
     if snapshots.is_empty() {
         return format!("{}No usage recorded yet", chart_emoji);

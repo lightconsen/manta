@@ -3,7 +3,6 @@
 //! Handles downloading plugins from a registry and installing them
 //! into the local plugins directory.  Also supports uninstalling.
 
-use std::io::Read;
 use std::path::PathBuf;
 
 use tracing::{debug, info};
@@ -64,14 +63,18 @@ impl PluginInstaller {
     }
 
     /// Extract a .tar.gz archive into the target directory.
-    async fn extract_archive(archive_path: &std::path::Path, target_dir: &std::path::Path) -> crate::Result<()> {
+    async fn extract_archive(
+        archive_path: &std::path::Path,
+        target_dir: &std::path::Path,
+    ) -> crate::Result<()> {
         let archive_bytes = tokio::fs::read(archive_path).await?;
 
         // Decode gzip and unpack tar in a blocking task (I/O heavy)
         tokio::task::spawn_blocking({
             let target = target_dir.to_path_buf();
             move || -> crate::Result<()> {
-                let decoder = flate2::read::GzDecoder::new(std::io::BufReader::new(&archive_bytes[..]));
+                let decoder =
+                    flate2::read::GzDecoder::new(std::io::BufReader::new(&archive_bytes[..]));
                 let mut archive = tar::Archive::new(decoder);
 
                 // Unpack each entry, sanitising paths to prevent zip-slip
@@ -97,10 +100,14 @@ impl PluginInstaller {
                         ))
                     })?;
                     let components: Vec<_> = raw_path.components().collect();
-                    if components
-                        .iter()
-                        .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir | std::path::Component::Prefix(_)))
-                    {
+                    if components.iter().any(|c| {
+                        matches!(
+                            c,
+                            std::path::Component::ParentDir
+                                | std::path::Component::RootDir
+                                | std::path::Component::Prefix(_)
+                        )
+                    }) {
                         return Err(crate::error::SyscityError::Internal(format!(
                             "Zip-slip detected: tar entry '{}' contains unsafe path components",
                             raw_path.display()
@@ -123,7 +130,9 @@ impl PluginInstaller {
             }
         })
         .await
-        .map_err(|e| crate::error::SyscityError::Internal(format!("Extraction task failed: {}", e)))?
+        .map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Extraction task failed: {}", e))
+        })?
     }
 
     /// Remove an installed plugin by name.

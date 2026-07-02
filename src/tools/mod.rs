@@ -1472,17 +1472,14 @@ impl ToolRegistry {
 
         // requires_approval fallback — only when no policy hook exists, so
         // an explicitly-configured policy hook is always authoritative.
-        if matches!(decision, ToolPolicyDecision::Allow)
-            && !self.active_hooks().has_policy_hooks()
+        if matches!(decision, ToolPolicyDecision::Allow) && !self.active_hooks().has_policy_hooks()
         {
             let caps = self.get_capabilities(name);
             if caps.requires_approval {
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static APPROVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
-                let approval_id = format!(
-                    "fallback-{:08x}",
-                    APPROVAL_COUNTER.fetch_add(1, Ordering::Relaxed)
-                );
+                let approval_id =
+                    format!("fallback-{:08x}", APPROVAL_COUNTER.fetch_add(1, Ordering::Relaxed));
                 decision = ToolPolicyDecision::NeedsApproval {
                     approval_id,
                     tool_name: name.to_string(),

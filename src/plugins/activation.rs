@@ -339,7 +339,11 @@ mod tests {
         json
     }
 
-    async fn write_manifest(dir: &tempfile::TempDir, plugin_id: &str, manifest: &serde_json::Value) {
+    async fn write_manifest(
+        dir: &tempfile::TempDir,
+        plugin_id: &str,
+        manifest: &serde_json::Value,
+    ) {
         let p_dir = dir.path().join(plugin_id);
         tokio::fs::create_dir_all(&p_dir).await.unwrap();
         tokio::fs::write(
@@ -382,12 +386,8 @@ mod tests {
         let tmp = tempdir().unwrap();
 
         for id in &["alpha", "beta", "gamma"] {
-            write_manifest(
-                &tmp,
-                id,
-                &create_minimal_manifest(&format!("com.test.{}", id), id),
-            )
-            .await;
+            write_manifest(&tmp, id, &create_minimal_manifest(&format!("com.test.{}", id), id))
+                .await;
         }
 
         let planner = ActivationPlanner::new(tmp.path().to_path_buf());
@@ -407,13 +407,19 @@ mod tests {
         write_manifest(
             &tmp,
             "a",
-            &manifest_with_deps("com.test.a", HashMap::from([("com.test.b".into(), ">=0.1".into())])),
+            &manifest_with_deps(
+                "com.test.a",
+                HashMap::from([("com.test.b".into(), ">=0.1".into())]),
+            ),
         )
         .await;
         write_manifest(
             &tmp,
             "b",
-            &manifest_with_deps("com.test.b", HashMap::from([("com.test.c".into(), ">=0.1".into())])),
+            &manifest_with_deps(
+                "com.test.b",
+                HashMap::from([("com.test.c".into(), ">=0.1".into())]),
+            ),
         )
         .await;
         write_manifest(&tmp, "c", &create_minimal_manifest("com.test.c", "C")).await;
@@ -423,9 +429,21 @@ mod tests {
 
         assert_eq!(plan.load_order.len(), 3);
         // C must come before B, B must come before A
-        let pos_c = plan.load_order.iter().position(|x| x == "com.test.c").unwrap();
-        let pos_b = plan.load_order.iter().position(|x| x == "com.test.b").unwrap();
-        let pos_a = plan.load_order.iter().position(|x| x == "com.test.a").unwrap();
+        let pos_c = plan
+            .load_order
+            .iter()
+            .position(|x| x == "com.test.c")
+            .unwrap();
+        let pos_b = plan
+            .load_order
+            .iter()
+            .position(|x| x == "com.test.b")
+            .unwrap();
+        let pos_a = plan
+            .load_order
+            .iter()
+            .position(|x| x == "com.test.a")
+            .unwrap();
         assert!(pos_c < pos_b, "C should load before B");
         assert!(pos_b < pos_a, "B should load before A");
     }
@@ -455,9 +473,21 @@ mod tests {
 
         assert_eq!(plan.load_order.len(), 3);
         // B and C must come before A
-        let pos_a = plan.load_order.iter().position(|x| x == "com.test.a").unwrap();
-        let pos_b = plan.load_order.iter().position(|x| x == "com.test.b").unwrap();
-        let pos_c = plan.load_order.iter().position(|x| x == "com.test.c").unwrap();
+        let pos_a = plan
+            .load_order
+            .iter()
+            .position(|x| x == "com.test.a")
+            .unwrap();
+        let pos_b = plan
+            .load_order
+            .iter()
+            .position(|x| x == "com.test.b")
+            .unwrap();
+        let pos_c = plan
+            .load_order
+            .iter()
+            .position(|x| x == "com.test.c")
+            .unwrap();
         assert!(pos_b < pos_a, "B should load before A");
         assert!(pos_c < pos_a, "C should load before A");
         assert!(plan.cycles.is_empty());
@@ -471,19 +501,28 @@ mod tests {
         write_manifest(
             &tmp,
             "a",
-            &manifest_with_deps("com.test.a", HashMap::from([("com.test.b".into(), ">=0.1".into())])),
+            &manifest_with_deps(
+                "com.test.a",
+                HashMap::from([("com.test.b".into(), ">=0.1".into())]),
+            ),
         )
         .await;
         write_manifest(
             &tmp,
             "b",
-            &manifest_with_deps("com.test.b", HashMap::from([("com.test.c".into(), ">=0.1".into())])),
+            &manifest_with_deps(
+                "com.test.b",
+                HashMap::from([("com.test.c".into(), ">=0.1".into())]),
+            ),
         )
         .await;
         write_manifest(
             &tmp,
             "c",
-            &manifest_with_deps("com.test.c", HashMap::from([("com.test.a".into(), ">=0.1".into())])),
+            &manifest_with_deps(
+                "com.test.c",
+                HashMap::from([("com.test.a".into(), ">=0.1".into())]),
+            ),
         )
         .await;
 
@@ -503,7 +542,10 @@ mod tests {
         write_manifest(
             &tmp,
             "a",
-            &manifest_with_deps("com.test.a", HashMap::from([("com.test.b".into(), ">=0.1".into())])),
+            &manifest_with_deps(
+                "com.test.a",
+                HashMap::from([("com.test.b".into(), ">=0.1".into())]),
+            ),
         )
         .await;
 
@@ -525,19 +567,28 @@ mod tests {
         write_manifest(
             &tmp,
             "a",
-            &manifest_with_deps("com.test.a", HashMap::from([("com.test.b".into(), ">=0.1".into())])),
+            &manifest_with_deps(
+                "com.test.a",
+                HashMap::from([("com.test.b".into(), ">=0.1".into())]),
+            ),
         )
         .await;
         write_manifest(
             &tmp,
             "b",
-            &manifest_with_deps("com.test.b", HashMap::from([("com.test.c".into(), ">=0.1".into())])),
+            &manifest_with_deps(
+                "com.test.b",
+                HashMap::from([("com.test.c".into(), ">=0.1".into())]),
+            ),
         )
         .await;
         write_manifest(
             &tmp,
             "c",
-            &manifest_with_deps("com.test.c", HashMap::from([("com.test.a".into(), ">=0.1".into())])),
+            &manifest_with_deps(
+                "com.test.c",
+                HashMap::from([("com.test.a".into(), ">=0.1".into())]),
+            ),
         )
         .await;
         write_manifest(&tmp, "d", &create_minimal_manifest("com.test.d", "D")).await;
