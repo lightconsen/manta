@@ -111,7 +111,7 @@ pub async fn init_plugin_manager(
     let plugins_dir = crate::dirs::config_dir().join("plugins");
     let plugin_manager = {
         let pm = PluginManager::new(plugins_dir).await?;
-        pm.set_tool_registry(tool_registry).await;
+        pm.set_tool_registry(tool_registry);
         Arc::new(pm)
     };
 
@@ -164,8 +164,7 @@ pub async fn init_plugin_manager(
                         warn!("Failed to enqueue plugin provider unregistration task '{}': {}", name, e);
                     }
                 }),
-            )
-            .await;
+            );
     }
 
     // Wire plugin manager channel callbacks
@@ -205,12 +204,9 @@ pub async fn init_plugin_manager(
                         warn!("Failed to enqueue plugin channel unregistration task '{}': {}", name, e);
                     }
                 }),
-            )
-            .await;
+            );
 
-        plugin_manager
-            .set_channel_message_tx(plugin_inbound_tx)
-            .await;
+        plugin_manager.set_channel_message_tx(plugin_inbound_tx);
     }
 
     Ok(plugin_manager)

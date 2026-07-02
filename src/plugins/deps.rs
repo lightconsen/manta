@@ -167,9 +167,20 @@ impl DependencyResolver {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use tempfile::tempdir;
 
     use super::*;
+    use crate::plugins::manifest::ExternalResource;
+
+    fn write_manifest(dir: &std::path::Path, manifest: &PluginManifest) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            serde_json::to_string_pretty(manifest).unwrap(),
+        )
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn test_resolve_no_deps() {
@@ -192,5 +203,265 @@ mod tests {
         // Should resolve to itself (no dependencies)
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].id, "com.test.standalone");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_one_dep() {
+        let tmp = tempdir().unwrap();
+        let plugins_dir = tmp.path().join("plugins");
+
+        // Plugin B (dependency)
+        let mut deps_b = HashMap::new();
+        deps_b.insert("com.dep.lib".to_string(), "1".to_string());
+        let manifest_b = PluginManifest {
+            id: "com.dep.lib".to_string(),
+            name: "Lib".to_string(),
+            version: "1.0.0".to_string(),
+            dependencies: None,
+            ..PluginManifest::minimal("", "")
+        };
+        write_manifest(&plugins_dir.join("com.dep.lib"), &manifest_b);
+
+        // Plugin A (depends on B)
+        let mut deps_a = HashMap::new();
+        deps_a.insert("com.dep.lib".to_string(), "1".to_string());
+        let manifest_a = PluginManifest {
+            id: "com.test.dep".to_string(),
+            name: "Dep".to_string(),
+            version: "1.0.0".to_string(),
+            dependencies: Some(deps_a),
+            ..PluginManifest::minimal("", "")
+        };
+        write_manifest(&plugins_dir.join("com.test.dep"), &manifest_a);
+
+        let resolver = DependencyResolver::new(plugins_dir);
+        let deps = resolver.resolve("com.test.dep").await.unwrap();
+        // Should resolve to: dep first, then the plugin itself
+        assert_eq!(deps.len(), 2);
+        assert_eq!(deps[0].id, "com.dep.lib");
+        assert_eq!(deps[1].id, "com.test.dep");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_chain() {
+        let tmp = tempdir().unwrap();
+        let plugins_dir = tmp.path().join("plugins");
+
+        // Plugin C (leaf)
+        let manifest_c = PluginManifest {
+            id: "com.chain.c".to_string(),
+            name: "C".to_string(),
+            version: "1.0.0".to_string(),
+            dependencies: None,
+            ..PluginManifest::minimal("", "")
+        };
+        write_manifest(&plugins_dir.join("com.chain.c"), &manifest_c);
+
+        // Plugin B (depends on C)
+        let mut deps_b = HashMap::new();
+        deps_b.insert("com.chain.c".to_string(), "1".to_string());
+        let manifest_b = PluginManifest {
+            id: "com.chain.b".to_string(),
+            name: "B".to_string(),
+            version: "1.0.0".to_string(),
+            dependencies: Some(deps_b),
+            ..PluginManifest::minimal("", "")
+        };
+        write_manifest(&plugins_dir.join("com.chain.b"), &manifest_b);
+
+        // Plugin A (depends on B)
+        let mut deps_a = HashMap::new();
+        deps_a.insert("com.chain.b".to_string(), "1".to_string());
+        let manifest_a = PluginManifest {
+            id: "com.chain.a".to_string(),
+            name: "A".to_string(),
+            version: "1.0.0".to_string(),
+            dependencies: Some(deps_a),
+            ..PluginManifest::minimal("", "")
+        };
+        write_manifest(&plugins_dir.join("com.chain.a"), &manifest_a);
+
+        let resolver = DependencyResolver::new(plugins_dir);
+        let deps = resolver.resolve("com.chain.a").await.unwrap();
+        assert_eq!(deps.len(), 3);
+        assert_eq!(deps[0].id, "com.chain.c");
+        assert_eq!(deps[1].id, "com.chain.b");
+        assert_eq!(deps[2].id, "com.chain.a");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_cycle_detected() {
+        let tmp = tempdir().unwrap();
+        let plugins_dir = tmp.path().join("plugins");
+
+        // Plugin A (depends on B)
+        let mut deps_a = HashMap::new();
+        deps_a.insert("com.cycle.b".to_string(), "1".to_string());
+        let manifest_a = PluginManifest {
+            id: "com.cycle.a".to_string(),
+            name: "A".to_string(),
+            version: "1.0.0".to_string(),
+            dependencies: Some(deps_a),
+            ..PluginManifest::minimal("", "")
+        };
+        write_manifest(&plugins_dir.join("com.cycle.a"), &manifest_a);
+
+        // Plugin B (depends on A — cycle!)
+        let mut deps_b = HashMap::new();
+        deps_b.insert("com.cycle.a".to_string(), "1".to_string());
+        let manifest_b = PluginManifest {
+            id: "com.cycle.b".to_string(),
+            name: "B".to_string(),
+            version: "1.0.0".to_string(),
+            dependencies: Some(deps_b),
+            ..PluginManifest::minimal("", "")
+        };
+        write_manifest(&plugins_dir.join("com.cycle.b"), &manifest_b);
+
+        let resolver = DependencyResolver::new(plugins_dir);
+        let result = resolver.resolve("com.cycle.a").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Cyclic dependency"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_missing_dep_skipped() {
+        // When a dependency's manifest is missing, it's silently skipped
+        let tmp = tempdir().unwrap();
+        let plugins_dir = tmp.path().join("plugins");
+
+        // Plugin A (depends on B, but B has no plugin.json)
+        let mut deps_a = HashMap::new();
+        deps_a.insert("com.missing.b".to_string(), "1".to_string());
+        let manifest_a = PluginManifest {
+            id: "com.missing.a".to_string(),
+            name: "A".to_string(),
+            version: "1.0.0".to_string(),
+            dependencies: Some(deps_a),
+            ..PluginManifest::minimal("", "")
+        };
+        write_manifest(&plugins_dir.join("com.missing.a"), &manifest_a);
+
+        // Create B directory but no manifest
+        std::fs::create_dir_all(plugins_dir.join("com.missing.b")).unwrap();
+
+        let resolver = DependencyResolver::new(plugins_dir);
+        let deps = resolver.resolve("com.missing.a").await.unwrap();
+        // Only A is resolved; B is skipped
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].id, "com.missing.a");
+    }
+
+    #[tokio::test]
+    async fn test_ensure_resources_no_resources() {
+        let tmp = tempdir().unwrap();
+        let resolver = DependencyResolver::new(tmp.path().to_path_buf());
+        let manifest = PluginManifest::minimal("com.test.none", "None");
+        let result = resolver
+            .ensure_resources(&manifest, tmp.path())
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_resources_missing_optional_skipped() {
+        let tmp = tempdir().unwrap();
+        let resolver = DependencyResolver::new(tmp.path().to_path_buf());
+        let resource = ExternalResource {
+            url: "https://example.com/missing.txt".to_string(),
+            path: "missing.txt".to_string(),
+            checksum_sha256: None,
+            required: false,
+        };
+        let manifest = PluginManifest {
+            external_resources: Some(vec![resource]),
+            ..PluginManifest::minimal("com.test.opt", "Optional")
+        };
+        // Should succeed (optional resource not downloaded, no error)
+        let result = resolver
+            .ensure_resources(&manifest, tmp.path())
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_resources_existing_verified() {
+        let tmp = tempdir().unwrap();
+        let content = b"existing file content";
+        let target_path = tmp.path().join("existing.txt");
+        tokio::fs::write(&target_path, content).await.unwrap();
+
+        let checksum = hex::encode(sha2::Sha256::digest(content));
+
+        let resolver = DependencyResolver::new(tmp.path().to_path_buf());
+        let resource = ExternalResource {
+            url: "https://example.com/existing.txt".to_string(),
+            path: "existing.txt".to_string(),
+            checksum_sha256: Some(checksum),
+            required: true,
+        };
+        let manifest = PluginManifest {
+            external_resources: Some(vec![resource]),
+            ..PluginManifest::minimal("com.test.checksum", "Checksum")
+        };
+        let result = resolver
+            .ensure_resources(&manifest, tmp.path())
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_resources_checksum_mismatch_required() {
+        let tmp = tempdir().unwrap();
+        let content = b"original content";
+        let target_path = tmp.path().join("mismatch.txt");
+        tokio::fs::write(&target_path, content).await.unwrap();
+
+        // Wrong checksum
+        let bad_checksum = hex::encode(sha2::Sha256::digest(b"different content"));
+
+        let resolver = DependencyResolver::new(tmp.path().to_path_buf());
+        let resource = ExternalResource {
+            url: "https://example.com/mismatch.txt".to_string(),
+            path: "mismatch.txt".to_string(),
+            checksum_sha256: Some(bad_checksum),
+            required: true,
+        };
+        let manifest = PluginManifest {
+            external_resources: Some(vec![resource]),
+            ..PluginManifest::minimal("com.test.badsum", "BadSum")
+        };
+        let result = resolver
+            .ensure_resources(&manifest, tmp.path())
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Checksum mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_ensure_resources_checksum_mismatch_optional() {
+        let tmp = tempdir().unwrap();
+        let content = b"original content";
+        let target_path = tmp.path().join("opt_mismatch.txt");
+        tokio::fs::write(&target_path, content).await.unwrap();
+
+        let bad_checksum = hex::encode(sha2::Sha256::digest(b"different content"));
+
+        let resolver = DependencyResolver::new(tmp.path().to_path_buf());
+        let resource = ExternalResource {
+            url: "https://example.com/opt_mismatch.txt".to_string(),
+            path: "opt_mismatch.txt".to_string(),
+            checksum_sha256: Some(bad_checksum),
+            required: false,
+        };
+        let manifest = PluginManifest {
+            external_resources: Some(vec![resource]),
+            ..PluginManifest::minimal("com.test.optbad", "OptBad")
+        };
+        // Should succeed with warning (not required)
+        let result = resolver
+            .ensure_resources(&manifest, tmp.path())
+            .await;
+        assert!(result.is_ok());
     }
 }

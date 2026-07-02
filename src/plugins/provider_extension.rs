@@ -179,8 +179,232 @@ impl PluginProviderRegistry {
         self.providers.keys().map(|s| s.as_str()).collect()
     }
 
-    /// Check if a provider is registered.
     pub fn has(&self, name: &str) -> bool {
         self.providers.contains_key(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ------------------------------------------------------------------
+    // parse_stream_family
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_stream_family_openai() {
+        assert_eq!(
+            PluginProvider::parse_stream_family("openai"),
+            ProviderStreamFamily::OpenAi
+        );
+    }
+
+    #[test]
+    fn test_parse_stream_family_anthropic() {
+        assert_eq!(
+            PluginProvider::parse_stream_family("anthropic"),
+            ProviderStreamFamily::Anthropic
+        );
+    }
+
+    #[test]
+    fn test_parse_stream_family_openai_reasoning() {
+        assert_eq!(
+            PluginProvider::parse_stream_family("openai_reasoning"),
+            ProviderStreamFamily::OpenAiReasoning
+        );
+        assert_eq!(
+            PluginProvider::parse_stream_family("openai-reasoning"),
+            ProviderStreamFamily::OpenAiReasoning
+        );
+    }
+
+    #[test]
+    fn test_parse_stream_family_anthropic_thinking() {
+        assert_eq!(
+            PluginProvider::parse_stream_family("anthropic_thinking"),
+            ProviderStreamFamily::AnthropicThinking
+        );
+        assert_eq!(
+            PluginProvider::parse_stream_family("anthropic-thinking"),
+            ProviderStreamFamily::AnthropicThinking
+        );
+    }
+
+    #[test]
+    fn test_parse_stream_family_google_thinking() {
+        assert_eq!(
+            PluginProvider::parse_stream_family("google_thinking"),
+            ProviderStreamFamily::GoogleThinking
+        );
+        assert_eq!(
+            PluginProvider::parse_stream_family("google-thinking"),
+            ProviderStreamFamily::GoogleThinking
+        );
+    }
+
+    #[test]
+    fn test_parse_stream_family_openrouter() {
+        assert_eq!(
+            PluginProvider::parse_stream_family("openrouter"),
+            ProviderStreamFamily::OpenRouter
+        );
+    }
+
+    #[test]
+    fn test_parse_stream_family_unknown() {
+        assert_eq!(
+            PluginProvider::parse_stream_family("unknown"),
+            ProviderStreamFamily::Generic
+        );
+        assert_eq!(
+            PluginProvider::parse_stream_family(""),
+            ProviderStreamFamily::Generic
+        );
+    }
+
+    #[test]
+    fn test_parse_stream_family_case_insensitive() {
+        assert_eq!(
+            PluginProvider::parse_stream_family("OpenAI"),
+            ProviderStreamFamily::OpenAi
+        );
+        assert_eq!(
+            PluginProvider::parse_stream_family("ANTHROPIC"),
+            ProviderStreamFamily::Anthropic
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // PluginProvider::new and getters
+    // ------------------------------------------------------------------
+
+    /// Stub runtime for tests that do not actually invoke WASM.
+    fn stub_runtime() -> Arc<crate::plugins::runtime::PluginRuntime> {
+        Arc::new(crate::plugins::runtime::PluginRuntime::new().unwrap())
+    }
+
+    #[test]
+    fn test_plugin_provider_new() {
+        let rt = stub_runtime();
+        let provider = PluginProvider::new(
+            "com.test.provider".to_string(),
+            "test-provider".to_string(),
+            "gpt-4".to_string(),
+            true,
+            8192,
+            ProviderStreamFamily::OpenAi,
+            rt.clone(),
+        );
+        assert_eq!(provider.name(), "test-provider");
+        assert_eq!(provider.default_model(), "gpt-4");
+        assert!(provider.supports_tools());
+        assert_eq!(provider.max_context(), 8192);
+        assert_eq!(provider.stream_family(), ProviderStreamFamily::OpenAi);
+        assert_eq!(provider.plugin_id, "com.test.provider");
+    }
+
+    #[test]
+    fn test_plugin_provider_defaults() {
+        let rt = stub_runtime();
+        let provider = PluginProvider::new(
+            "com.test.defaults".to_string(),
+            "default-provider".to_string(),
+            "claude-3".to_string(),
+            false,
+            4096,
+            ProviderStreamFamily::Anthropic,
+            rt,
+        );
+        assert!(!provider.supports_tools());
+        assert_eq!(provider.max_context(), 4096);
+        assert_eq!(provider.default_model(), "claude-3");
+    }
+
+    // ------------------------------------------------------------------
+    // PluginProviderRegistry
+    // ------------------------------------------------------------------
+
+    fn stub_provider() -> Arc<PluginProvider> {
+        let rt = stub_runtime();
+        Arc::new(PluginProvider::new(
+            "com.reg.test".to_string(),
+            "reg-test".to_string(),
+            "model".to_string(),
+            false,
+            1024,
+            ProviderStreamFamily::Generic,
+            rt,
+        ))
+    }
+
+    #[test]
+    fn test_registry_new_empty() {
+        let registry = PluginProviderRegistry::new();
+        assert!(registry.list().is_empty());
+        assert!(!registry.has("anything"));
+        assert!(registry.get("anything").is_none());
+    }
+
+    #[test]
+    fn test_registry_register_and_get() {
+        let mut registry = PluginProviderRegistry::new();
+        let provider = stub_provider();
+        registry.register("test-provider".to_string(), provider.clone());
+        assert!(registry.has("test-provider"));
+        let retrieved = registry.get("test-provider");
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().name(), "reg-test");
+    }
+
+    #[test]
+    fn test_registry_remove() {
+        let mut registry = PluginProviderRegistry::new();
+        let provider = stub_provider();
+        registry.register("removable".to_string(), provider);
+        assert!(registry.has("removable"));
+        let removed = registry.remove("removable");
+        assert!(removed.is_some());
+        assert!(!registry.has("removable"));
+    }
+
+    #[test]
+    fn test_registry_list() {
+        let mut registry = PluginProviderRegistry::new();
+        registry.register(
+            "first".to_string(),
+            Arc::new(PluginProvider::new(
+                "com.first".to_string(),
+                "first".to_string(),
+                "m1".to_string(),
+                false,
+                1,
+                ProviderStreamFamily::Generic,
+                stub_runtime(),
+            )),
+        );
+        registry.register(
+            "second".to_string(),
+            Arc::new(PluginProvider::new(
+                "com.second".to_string(),
+                "second".to_string(),
+                "m2".to_string(),
+                true,
+                2,
+                ProviderStreamFamily::Generic,
+                stub_runtime(),
+            )),
+        );
+        let mut names = registry.list();
+        names.sort();
+        assert_eq!(names, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn test_registry_remove_nonexistent() {
+        let mut registry = PluginProviderRegistry::new();
+        let removed = registry.remove("nonexistent");
+        assert!(removed.is_none());
     }
 }

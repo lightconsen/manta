@@ -21,7 +21,7 @@ pub mod verification;
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 pub use activation::{ActivationPlan, ActivationPlanner, PluginTrigger};
 pub use deps::{DependencyResolver, ResolvedDependency};
@@ -39,7 +39,6 @@ pub use provider_extension::{PluginProvider, PluginProviderRegistry};
 pub use registry::{RegistryClient, RegistryIndex, RegistryPluginEntry};
 pub use runtime::{PluginInstance, PluginRuntime};
 pub use sqlite_registry::{PluginDbEntry, PluginSqliteRegistry};
-use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 pub use verification::{verify_manifest, VerificationResult};
 
@@ -67,23 +66,22 @@ pub struct PluginManager {
     runtime: Arc<PluginRuntime>,
     hook_registry: Arc<HookRegistry>,
     plugins_dir: PathBuf,
-    tool_registry: RwLock<Option<Arc<ToolRegistry>>>,
+    tool_registry: OnceLock<Arc<ToolRegistry>>,
     trace_enabled: Arc<AtomicBool>,
-    provider_register: RwLock<Option<ProviderRegisterFn>>,
-    provider_unregister: RwLock<Option<ProviderUnregisterFn>>,
+    provider_register: OnceLock<ProviderRegisterFn>,
+    provider_unregister: OnceLock<ProviderUnregisterFn>,
     /// Callbacks for registering/unregistering plugin channels
     #[cfg(feature = "plugins")]
-    channel_register: RwLock<Option<ChannelRegisterFn>>,
+    channel_register: OnceLock<ChannelRegisterFn>,
     #[cfg(feature = "plugins")]
-    channel_unregister: RwLock<Option<ChannelUnregisterFn>>,
+    channel_unregister: OnceLock<ChannelUnregisterFn>,
     /// Message sender used to construct PluginChannel instances
     #[cfg(feature = "plugins")]
-    channel_message_tx:
-        RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>>>,
+    channel_message_tx: OnceLock<tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>>,
     /// Optional SQLite plugin registry for persistent metadata
-    sqlite_registry: RwLock<Option<PluginSqliteRegistry>>,
+    sqlite_registry: OnceLock<PluginSqliteRegistry>,
     /// Optional activation planner for lazy loading / dependency ordering
-    activation_planner: RwLock<Option<ActivationPlanner>>,
+    activation_planner: OnceLock<ActivationPlanner>,
 }
 
 impl PluginManager {
@@ -99,62 +97,56 @@ impl PluginManager {
             runtime,
             hook_registry,
             plugins_dir,
-            tool_registry: RwLock::new(None),
+            tool_registry: OnceLock::new(),
             trace_enabled: Arc::new(AtomicBool::new(false)),
-            provider_register: RwLock::new(None),
-            provider_unregister: RwLock::new(None),
+            provider_register: OnceLock::new(),
+            provider_unregister: OnceLock::new(),
             #[cfg(feature = "plugins")]
-            channel_register: RwLock::new(None),
+            channel_register: OnceLock::new(),
             #[cfg(feature = "plugins")]
-            channel_unregister: RwLock::new(None),
+            channel_unregister: OnceLock::new(),
             #[cfg(feature = "plugins")]
-            channel_message_tx: RwLock::new(None),
-            sqlite_registry: RwLock::new(None),
-            activation_planner: RwLock::new(None),
+            channel_message_tx: OnceLock::new(),
+            sqlite_registry: OnceLock::new(),
+            activation_planner: OnceLock::new(),
         })
     }
 
     /// Set callbacks for registering / unregistering plugin-backed providers.
-    pub async fn set_provider_callbacks(
+    pub fn set_provider_callbacks(
         &self,
         register: ProviderRegisterFn,
         unregister: ProviderUnregisterFn,
     ) {
-        let mut reg = self.provider_register.write().await;
-        *reg = Some(register);
-        let mut unreg = self.provider_unregister.write().await;
-        *unreg = Some(unregister);
+        self.provider_register.set(register).ok();
+        self.provider_unregister.set(unregister).ok();
     }
 
     /// Set callbacks for registering / unregistering plugin-backed channels.
     #[cfg(feature = "plugins")]
-    pub async fn set_channel_callbacks(
+    pub fn set_channel_callbacks(
         &self,
         register: ChannelRegisterFn,
         unregister: ChannelUnregisterFn,
     ) {
-        let mut reg = self.channel_register.write().await;
-        *reg = Some(register);
-        let mut unreg = self.channel_unregister.write().await;
-        *unreg = Some(unregister);
+        self.channel_register.set(register).ok();
+        self.channel_unregister.set(unregister).ok();
     }
 
     /// Set the channel message sender used to construct PluginChannel
     /// instances.
     #[cfg(feature = "plugins")]
-    pub async fn set_channel_message_tx(
+    pub fn set_channel_message_tx(
         &self,
         tx: tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>,
     ) {
-        let mut mt = self.channel_message_tx.write().await;
-        *mt = Some(tx);
+        self.channel_message_tx.set(tx).ok();
     }
 
     /// Attach a `ToolRegistry` so that plugin tools are automatically
     /// registered on load / unregistered on unload.
-    pub async fn set_tool_registry(&self, registry: Arc<ToolRegistry>) {
-        let mut tr = self.tool_registry.write().await;
-        *tr = Some(registry);
+    pub fn set_tool_registry(&self, registry: Arc<ToolRegistry>) {
+        self.tool_registry.set(registry).ok();
     }
 
     /// Initialize and load all plugins
@@ -203,8 +195,7 @@ impl PluginManager {
             self.register_plugin_channels(&plugin).await;
 
             // Sync to SQLite registry if available
-            let registry = self.sqlite_registry.read().await;
-            if let Some(ref reg) = *registry {
+            if let Some(reg) = self.sqlite_registry.get() {
                 if let Err(e) = reg.register_plugin(&plugin.manifest, path, None).await {
                     warn!("Failed to register plugin '{}' in SQLite registry: {}", plugin_id, e);
                 }
@@ -225,8 +216,7 @@ impl PluginManager {
         self.hook_registry.unregister_plugin(plugin_id).await;
 
         // Unregister from SQLite registry if available
-        let registry = self.sqlite_registry.read().await;
-        if let Some(ref reg) = *registry {
+        if let Some(reg) = self.sqlite_registry.get() {
             if let Err(e) = reg.unregister_plugin(plugin_id).await {
                 warn!("Failed to unregister plugin '{}' from SQLite registry: {}", plugin_id, e);
             }
@@ -271,8 +261,7 @@ impl PluginManager {
 
     /// Register a plugin's tools into the `ToolRegistry`.
     async fn register_plugin_tools(&self, plugin: &PluginInstance) {
-        let tool_registry = self.tool_registry.read().await;
-        if let Some(ref registry) = *tool_registry {
+        if let Some(registry) = self.tool_registry.get() {
             for tool in plugin.manifest.get_tools() {
                 let wrapper = Arc::new(PluginToolWrapper::new(
                     plugin.id().to_string(),
@@ -288,8 +277,7 @@ impl PluginManager {
 
     /// Deregister a plugin's tools from the `ToolRegistry`.
     async fn deregister_plugin_tools(&self, plugin_id: &str) {
-        let tool_registry = self.tool_registry.read().await;
-        if let Some(ref registry) = *tool_registry {
+        if let Some(registry) = self.tool_registry.get() {
             if let Some(plugin) = self.runtime.get_plugin(plugin_id).await {
                 for tool in plugin.manifest.get_tools() {
                     registry.deregister_dynamic(&tool.name);
@@ -302,8 +290,7 @@ impl PluginManager {
     /// Register a plugin's provider capabilities with the system.
     #[cfg(feature = "plugins")]
     async fn register_plugin_providers(&self, plugin: &PluginInstance) {
-        let register_fn = self.provider_register.read().await;
-        if let Some(ref register) = *register_fn {
+        if let Some(register) = self.provider_register.get() {
             if let Some(ref capabilities) = plugin.manifest.capabilities {
                 for cap in capabilities {
                     if let PluginCapability::Provider {
@@ -339,8 +326,7 @@ impl PluginManager {
     /// Deregister a plugin's providers from the system.
     #[cfg(feature = "plugins")]
     async fn deregister_plugin_providers(&self, plugin_id: &str) {
-        let unregister_fn = self.provider_unregister.read().await;
-        if let Some(ref unregister) = *unregister_fn {
+        if let Some(unregister) = self.provider_unregister.get() {
             if let Some(plugin) = self.runtime.get_plugin(plugin_id).await {
                 if let Some(ref capabilities) = plugin.manifest.capabilities {
                     for cap in capabilities {
@@ -362,15 +348,12 @@ impl PluginManager {
     async fn register_plugin_channels(&self, plugin: &PluginInstance) {
         use crate::channels::PluginChannel;
 
-        let register_fn = self.channel_register.read().await;
-        let message_tx = self.channel_message_tx.read().await;
-
-        let register = match *register_fn {
-            Some(ref r) => r,
+        let register = match self.channel_register.get() {
+            Some(r) => r,
             None => return,
         };
-        let tx = match *message_tx {
-            Some(ref t) => t.clone(),
+        let tx = match self.channel_message_tx.get() {
+            Some(t) => t.clone(),
             None => return,
         };
 
@@ -415,8 +398,7 @@ impl PluginManager {
     /// Deregister a plugin's channels from the system.
     #[cfg(feature = "plugins")]
     async fn deregister_plugin_channels(&self, plugin_id: &str) {
-        let unregister_fn = self.channel_unregister.read().await;
-        if let Some(ref unregister) = *unregister_fn {
+        if let Some(unregister) = self.channel_unregister.get() {
             if let Some(plugin) = self.runtime.get_plugin(plugin_id).await {
                 if let Some(ref capabilities) = plugin.manifest.capabilities {
                     for cap in capabilities {
@@ -596,22 +578,20 @@ impl PluginManager {
         if let Err(e) = registry.create_table().await {
             warn!("Failed to create plugin_registry table: {}", e);
         }
-        *self.sqlite_registry.write().await = Some(registry);
+        self.sqlite_registry.set(registry).ok();
     }
 
     /// Set the activation planner for dependency-based loading.
-    pub async fn set_activation_planner(&self) {
+    pub fn set_activation_planner(&self) {
         let planner = ActivationPlanner::new(self.plugins_dir.clone());
-        *self.activation_planner.write().await = Some(planner);
+        self.activation_planner.set(planner).ok();
     }
 
     /// Initialize plugins using the activation planner for dependency ordering.
     ///
     /// Falls back to flat scanning if no activation planner is set.
     pub async fn initialize_with_planner(&self) -> crate::Result<usize> {
-        let planner = self.activation_planner.read().await;
-
-        if let Some(ref planner) = *planner {
+        if let Some(planner) = self.activation_planner.get() {
             let plan = planner.plan_activation().await?;
 
             // Warn about cycle and missing deps
@@ -654,11 +634,9 @@ impl PluginManager {
 
     /// Sync filesystem plugins into the SQLite registry.
     async fn sync_filesystem_to_registry(&self) {
-        let registry = self.sqlite_registry.read().await;
-        let Some(ref registry) = *registry else {
+        let Some(registry) = self.sqlite_registry.get() else {
             return;
         };
-        let _ = registry;
 
         let mut entries = match tokio::fs::read_dir(&self.plugins_dir).await {
             Ok(e) => e,
@@ -684,29 +662,24 @@ impl PluginManager {
                 Err(_) => continue,
             };
 
-            let registry = self.sqlite_registry.read().await;
-            if let Some(ref reg) = *registry {
-                if let Err(e) = reg.register_plugin(&manifest, &path, None).await {
+                if let Err(e) = registry.register_plugin(&manifest, &path, None).await {
                     warn!("Failed to sync plugin '{}' to registry: {}", manifest.id, e);
                 }
-            }
         }
     }
 
     /// Get a plugin from the SQLite registry by ID.
     pub async fn get_registry_plugin(&self, id: &str) -> Option<PluginDbEntry> {
-        let registry = self.sqlite_registry.read().await;
-        match *registry {
-            Some(ref reg) => reg.get_plugin(id).await.ok().flatten(),
+        match self.sqlite_registry.get() {
+            Some(reg) => reg.get_plugin(id).await.ok().flatten(),
             None => None,
         }
     }
 
     /// List all plugins from the SQLite registry.
     pub async fn list_registry_plugins(&self) -> Vec<PluginDbEntry> {
-        let registry = self.sqlite_registry.read().await;
-        match *registry {
-            Some(ref reg) => reg.list_plugins().await.unwrap_or_default(),
+        match self.sqlite_registry.get() {
+            Some(reg) => reg.list_plugins().await.unwrap_or_default(),
             None => vec![],
         }
     }

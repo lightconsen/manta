@@ -8,6 +8,50 @@ use tracing::info;
 use super::super::manifest::PluginPermission;
 use super::state::{PluginEvent, PluginState};
 
+/// Helper: write an error JSON string into WASM output memory.
+fn write_error_to_memory(
+    memory: &wasmtime::Memory,
+    caller: &mut wasmtime::Caller<'_, PluginState>,
+    error_json: &str,
+    out_ptr: usize,
+    out_len: usize,
+) -> i32 {
+    let bytes = error_json.as_bytes();
+    let to_write = bytes.len().min(out_len);
+    let data = memory.data_mut(caller);
+    data[out_ptr..out_ptr + to_write].copy_from_slice(&bytes[..to_write]);
+    to_write as i32
+}
+
+/// Helper: record an HTTP request metric (best-effort).
+fn record_http_metric(
+    metrics_registry: &std::sync::Arc<crate::plugins::metrics::PluginMetricsRegistry>,
+    plugin_id: &str,
+    rt: &tokio::runtime::Handle,
+) {
+    let pid = plugin_id.to_string();
+    rt.block_on(async {
+        if let Some(m) = metrics_registry.get(&pid).await {
+            m.record_http_request();
+            m.touch();
+        }
+    });
+}
+
+/// Helper: record an HTTP error metric (best-effort).
+fn record_http_error_metric(
+    metrics_registry: &std::sync::Arc<crate::plugins::metrics::PluginMetricsRegistry>,
+    plugin_id: &str,
+    rt: &tokio::runtime::Handle,
+) {
+    let pid = plugin_id.to_string();
+    rt.block_on(async {
+        if let Some(m) = metrics_registry.get(&pid).await {
+            m.record_http_error();
+        }
+    });
+}
+
 /// Define all host functions available to WASM plugins.
 ///
 /// Registers 16 host functions (logging, config, memory, KV store, HTTP,
@@ -76,6 +120,15 @@ pub(crate) fn define_host_functions(
         if let Some(current) = current {
             let _ = caller.set_fuel(current.saturating_sub(amount));
         }
+    }
+
+    // Resolve the guest's "memory" export.
+    fn get_memory(
+        caller: &mut wasmtime::Caller<'_, PluginState>,
+    ) -> wasmtime::Result<wasmtime::Memory> {
+        caller.get_export("memory").and_then(|e| e.into_memory()).ok_or_else(|| {
+            wasmtime::Error::msg("Plugin does not export a memory segment")
+        })
     }
 
     // --- Logging ---
@@ -407,24 +460,12 @@ pub(crate) fn define_host_functions(
                     &PluginPermission::Network { hosts: vec![] },
                 ) {
                     let err = r#"{"error":"Permission denied: Network access not granted in plugin manifest"}"#;
-                    let bytes = err.as_bytes();
-                    let to_write = bytes.len().min(out_len as usize);
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .ok_or_else(|| {
-                            wasmtime::Error::msg("Plugin does not export a memory segment")
-                        })?;
-                    memory.data_mut(&mut caller)[out_ptr as usize..out_ptr as usize + to_write]
-                        .copy_from_slice(&bytes[..to_write]);
-                    return Ok(to_write as i32);
+                    let memory = get_memory(&mut caller)?;
+                    return Ok(write_error_to_memory(
+                        &memory, &mut caller, err, out_ptr as usize, out_len as usize,
+                    ));
                 }
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .ok_or_else(|| {
-                        wasmtime::Error::msg("Plugin does not export a memory segment")
-                    })?;
+                let memory = get_memory(&mut caller)?;
                 let url = read_memory_string(&memory, &mut caller, url_ptr, url_len)?;
                 let out_ptr = out_ptr as usize;
                 let out_len = out_len as usize;
@@ -432,23 +473,15 @@ pub(crate) fn define_host_functions(
                 // Record metrics
                 let plugin_id = caller.data().plugin_id.clone();
                 let metrics_registry = caller.data().shared_state.metrics.clone();
+                let http_client = caller.data().shared_state.http_client.clone();
                 let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    if let Some(m) = metrics_registry.get(&plugin_id).await {
-                        m.record_http_request();
-                        m.touch();
-                    }
-                });
+                record_http_metric(&metrics_registry, &plugin_id, &rt);
 
-                let body = reqwest::blocking::get(&url)
-                    .and_then(|r| r.text())
+                let body = rt
+                    .block_on(http_client.get(&url).send())
+                    .and_then(|r| rt.block_on(r.text()))
                     .unwrap_or_else(|e| {
-                        let rt = tokio::runtime::Handle::current();
-                        rt.block_on(async {
-                            if let Some(m) = metrics_registry.get(&plugin_id).await {
-                                m.record_http_error();
-                            }
-                        });
+                        record_http_error_metric(&metrics_registry, &plugin_id, &rt);
                         format!("{{\"error\":\"{}\"}}", e)
                     });
                 let bytes = body.as_bytes();
@@ -482,24 +515,12 @@ pub(crate) fn define_host_functions(
                     &PluginPermission::Network { hosts: vec![] },
                 ) {
                     let err = r#"{"error":"Permission denied: Network access not granted in plugin manifest"}"#;
-                    let bytes = err.as_bytes();
-                    let to_write = bytes.len().min(out_len as usize);
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .ok_or_else(|| {
-                            wasmtime::Error::msg("Plugin does not export a memory segment")
-                        })?;
-                    memory.data_mut(&mut caller)[out_ptr as usize..out_ptr as usize + to_write]
-                        .copy_from_slice(&bytes[..to_write]);
-                    return Ok(to_write as i32);
+                    let memory = get_memory(&mut caller)?;
+                    return Ok(write_error_to_memory(
+                        &memory, &mut caller, err, out_ptr as usize, out_len as usize,
+                    ));
                 }
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .ok_or_else(|| {
-                        wasmtime::Error::msg("Plugin does not export a memory segment")
-                    })?;
+                let memory = get_memory(&mut caller)?;
                 let url = read_memory_string(&memory, &mut caller, url_ptr, url_len)?;
                 let body = read_memory_string(&memory, &mut caller, body_ptr, body_len)?;
                 let content_type =
@@ -510,27 +531,21 @@ pub(crate) fn define_host_functions(
                 // Record metrics
                 let plugin_id = caller.data().plugin_id.clone();
                 let metrics_registry = caller.data().shared_state.metrics.clone();
+                let http_client = caller.data().shared_state.http_client.clone();
                 let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    if let Some(m) = metrics_registry.get(&plugin_id).await {
-                        m.record_http_request();
-                        m.touch();
-                    }
-                });
+                record_http_metric(&metrics_registry, &plugin_id, &rt);
 
-                let response = reqwest::blocking::Client::new()
-                    .post(&url)
-                    .header("Content-Type", &content_type)
-                    .body(body)
-                    .send()
-                    .and_then(|r| r.text())
+                let response = rt
+                    .block_on(
+                        http_client
+                            .post(&url)
+                            .header("Content-Type", &content_type)
+                            .body(body)
+                            .send(),
+                    )
+                    .and_then(|r| rt.block_on(r.text()))
                     .unwrap_or_else(|e| {
-                        let rt = tokio::runtime::Handle::current();
-                        rt.block_on(async {
-                            if let Some(m) = metrics_registry.get(&plugin_id).await {
-                                m.record_http_error();
-                            }
-                        });
+                        record_http_error_metric(&metrics_registry, &plugin_id, &rt);
                         format!("{{\"error\":\"{}\"}}", e)
                     });
                 let bytes = response.as_bytes();

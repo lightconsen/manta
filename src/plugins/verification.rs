@@ -23,17 +23,26 @@ pub enum VerificationResult {
 
 /// Canonical serialization of a manifest for signing/verification.
 ///
-/// Produces a deterministic string from the manifest fields that matter
-/// for integrity, excluding the signature and signer_public_key fields.
+/// Uses a sorted JSON serialization of all security-relevant manifest fields.
+/// This ensures deterministic output regardless of HashMap/serde field
+/// ordering. Excludes `signature` and `signer_public_key` (they are what we
+/// are verifying).
 fn canonical_message(manifest: &PluginManifest) -> String {
-    format!(
-        "{}:{}:{}:{}:{}",
-        manifest.id,
-        manifest.name,
-        manifest.version,
-        manifest.description,
-        manifest.main.as_deref().unwrap_or("")
-    )
+    let canonical = serde_json::json!({
+        "id": manifest.id,
+        "name": manifest.name,
+        "version": manifest.version,
+        "description": manifest.description,
+        "main": manifest.main,
+        "author": manifest.author,
+        "capabilities": manifest.capabilities,
+        "permissions": manifest.permissions,
+        "dependencies": manifest.dependencies,
+        "external_resources": manifest.external_resources,
+    });
+    // serde_json::to_string produces deterministic output for json! macro
+    // values (fields are inserted in order).
+    serde_json::to_string(&canonical).unwrap_or_default()
 }
 
 /// Verify the ed25519 signature on a plugin manifest.

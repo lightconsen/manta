@@ -15,6 +15,7 @@ pub use state::PluginInstance;
 pub use state::{PluginEvent, PluginSharedState, PluginState};
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::sync::RwLock;
@@ -28,6 +29,11 @@ use crate::dirs;
 use state::PluginPersistentState;
 use state::{get_migrations, MigrationRecord, CURRENT_SCHEMA_VERSION};
 
+/// Shared handle to the event subscriber map.
+#[cfg(feature = "plugins")]
+type EventSubscribers =
+    Arc<RwLock<HashMap<String, Vec<(u64, mpsc::UnboundedSender<PluginEvent>)>>>>;
+
 /// Plugin runtime - manages plugin lifecycle
 pub struct PluginRuntime {
     plugins: Arc<RwLock<HashMap<String, PluginInstance>>>,
@@ -37,9 +43,13 @@ pub struct PluginRuntime {
     linker: wasmtime::Linker<PluginState>,
     #[cfg(feature = "plugins")]
     shared_state: Arc<PluginSharedState>,
-    /// Event subscribers: plugin_id/wildcard → senders
+    /// Event subscribers: plugin_id/wildcard → list of (subscription_id, sender)
     #[cfg(feature = "plugins")]
-    event_subscribers: Arc<RwLock<HashMap<String, Vec<mpsc::UnboundedSender<PluginEvent>>>>>,
+    event_subscribers: EventSubscribers,
+    /// Monotonically increasing subscription ID counter for selective
+    /// unsubscription.
+    #[cfg(feature = "plugins")]
+    next_sub_id: AtomicU64,
     /// Receiver side of the plugin event channel (kept so the channel stays
     /// open while the runtime is alive; the actual receiver is moved into
     /// the dispatch task spawned in `new()`).
@@ -68,9 +78,9 @@ impl PluginRuntime {
             let (event_tx, event_rx) = mpsc::unbounded_channel::<PluginEvent>();
             let metrics = Arc::new(PluginMetricsRegistry::new());
             let shared_state = Arc::new(PluginSharedState::with_events(event_tx, metrics.clone()));
-            let event_subscribers: Arc<
-                RwLock<HashMap<String, Vec<mpsc::UnboundedSender<PluginEvent>>>>,
-            > = Arc::new(RwLock::new(HashMap::new()));
+            let event_subscribers: EventSubscribers =
+                Arc::new(RwLock::new(HashMap::new()));
+            let next_sub_id = AtomicU64::new(1);
 
             // Define host functions for plugins
             host_functions::define_host_functions(&mut linker)?;
@@ -92,6 +102,7 @@ impl PluginRuntime {
                 linker,
                 shared_state,
                 event_subscribers,
+                next_sub_id,
                 event_rx: Arc::new(Mutex::new(None)),
                 event_dispatch_handle,
                 metrics: Arc::new(PluginMetricsRegistry::new()),
@@ -108,47 +119,54 @@ impl PluginRuntime {
     }
 
     /// Subscribe to events from a specific plugin (or `"*"` for all).
+    /// Returns a subscription ID that can be passed to `unsubscribe_events`
+    /// and a receiver for the events.
     #[cfg(feature = "plugins")]
-    pub async fn subscribe_events(&self, pattern: &str) -> mpsc::UnboundedReceiver<PluginEvent> {
+    pub async fn subscribe_events(
+        &self,
+        pattern: &str,
+    ) -> (u64, mpsc::UnboundedReceiver<PluginEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
+        let sub_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
         self.event_subscribers
             .write()
             .await
             .entry(pattern.to_string())
             .or_default()
-            .push(tx);
-        rx
+            .push((sub_id, tx));
+        (sub_id, rx)
     }
 
-    /// Unsubscribe events for a given pattern by dropping the receiver.
+    /// Unsubscribe a specific subscription by its ID.
+    /// Removes only the matching subscription while leaving others intact.
     #[cfg(feature = "plugins")]
-    pub async fn unsubscribe_events(
-        &self,
-        pattern: &str,
-        rx: mpsc::UnboundedReceiver<PluginEvent>,
-    ) {
-        drop(rx);
-        self.event_subscribers.write().await.remove(pattern);
+    pub async fn unsubscribe_events(&self, sub_id: u64) {
+        let mut subs = self.event_subscribers.write().await;
+        subs.retain(|_, senders| {
+            // Keep all senders whose ID does NOT match
+            senders.retain(|(id, _)| *id != sub_id);
+            !senders.is_empty()
+        });
     }
 
     /// Background dispatch loop: receives events from the plugin channel
     /// and forwards them to matching subscribers.
     #[cfg(feature = "plugins")]
     async fn event_dispatch_loop(
-        subscribers: Arc<RwLock<HashMap<String, Vec<mpsc::UnboundedSender<PluginEvent>>>>>,
+        subscribers: EventSubscribers,
         mut rx: mpsc::UnboundedReceiver<PluginEvent>,
     ) {
         while let Some(event) = rx.recv().await {
             let subs = subscribers.read().await;
             // Dispatch to exact plugin_id subscribers
             if let Some(senders) = subs.get(&event.plugin_id) {
-                for tx in senders {
+                for (_id, tx) in senders {
                     let _ = tx.send(event.clone());
                 }
             }
             // Dispatch to wildcard subscribers
             if let Some(senders) = subs.get("*") {
-                for tx in senders {
+                for (_id, tx) in senders {
                     let _ = tx.send(event.clone());
                 }
             }
@@ -839,6 +857,42 @@ impl PluginRuntime {
     // Provider delegation stubs
     // ------------------------------------------------------------------
 
+    /// Look up a plugin, check it is enabled and has a WASM module loaded,
+    /// returning `(&mut Store, &Instance)`.
+    ///
+    /// Shared boilerplate for `call_provider_complete`, `call_provider_stream`,
+    /// and `call_provider_health_check`.
+    #[cfg(feature = "plugins")]
+    fn get_plugin_store_instance<'a>(
+        plugins: &'a mut HashMap<String, PluginInstance>,
+        plugin_id: &str,
+    ) -> crate::Result<(
+        &'a mut wasmtime::Store<PluginState>,
+        &'a wasmtime::Instance,
+    )> {
+        let plugin = plugins.get_mut(plugin_id).ok_or_else(|| {
+            crate::error::ConfigError::InvalidValue {
+                key: "plugin_id".to_string(),
+                message: format!("Plugin '{}' not found", plugin_id),
+            }
+        })?;
+
+        if !plugin.enabled {
+            return Err(crate::error::SyscityError::Validation(format!(
+                "Plugin '{}' is disabled",
+                plugin_id
+            )));
+        }
+
+        match (&mut plugin.wasm_store, &plugin.instance) {
+            (Some(s), Some(i)) => Ok((s, i)),
+            _ => Err(crate::error::SyscityError::Internal(format!(
+                "Plugin '{}' has no WASM module loaded",
+                plugin_id
+            ))),
+        }
+    }
+
     /// Call a plugin's provider `complete` implementation.
     ///
     /// The plugin must export `provider_complete(request_ptr, request_len,
@@ -851,30 +905,8 @@ impl PluginRuntime {
         #[cfg(feature = "plugins")]
         {
             let mut plugins = self.plugins.write().await;
-            let plugin = plugins.get_mut(plugin_id).ok_or_else(|| {
-                crate::error::ConfigError::InvalidValue {
-                    key: "plugin_id".to_string(),
-                    message: format!("Plugin '{}' not found", plugin_id),
-                }
-            })?;
-
-            if !plugin.enabled {
-                return Err(crate::error::SyscityError::Validation(format!(
-                    "Plugin '{}' is disabled",
-                    plugin_id
-                )));
-            }
-
-            let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
-                (Some(s), Some(i)) => (s, i),
-                _ => {
-                    return Err(crate::error::SyscityError::Internal(format!(
-                        "Plugin '{}' has no WASM module loaded",
-                        plugin_id
-                    )));
-                }
-            };
-
+            let (store, instance) =
+                Self::get_plugin_store_instance(&mut plugins, plugin_id)?;
             Self::invoke_wasm_provider(store, instance, "provider_complete", request)
         }
 
@@ -899,30 +931,8 @@ impl PluginRuntime {
         #[cfg(feature = "plugins")]
         {
             let mut plugins = self.plugins.write().await;
-            let plugin = plugins.get_mut(plugin_id).ok_or_else(|| {
-                crate::error::ConfigError::InvalidValue {
-                    key: "plugin_id".to_string(),
-                    message: format!("Plugin '{}' not found", plugin_id),
-                }
-            })?;
-
-            if !plugin.enabled {
-                return Err(crate::error::SyscityError::Validation(format!(
-                    "Plugin '{}' is disabled",
-                    plugin_id
-                )));
-            }
-
-            let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
-                (Some(s), Some(i)) => (s, i),
-                _ => {
-                    return Err(crate::error::SyscityError::Internal(format!(
-                        "Plugin '{}' has no WASM module loaded",
-                        plugin_id
-                    )));
-                }
-            };
-
+            let (store, instance) =
+                Self::get_plugin_store_instance(&mut plugins, plugin_id)?;
             Self::invoke_wasm_provider(store, instance, "provider_stream", request)
         }
 
@@ -944,30 +954,8 @@ impl PluginRuntime {
         #[cfg(feature = "plugins")]
         {
             let mut plugins = self.plugins.write().await;
-            let plugin = plugins.get_mut(plugin_id).ok_or_else(|| {
-                crate::error::ConfigError::InvalidValue {
-                    key: "plugin_id".to_string(),
-                    message: format!("Plugin '{}' not found", plugin_id),
-                }
-            })?;
-
-            if !plugin.enabled {
-                return Err(crate::error::SyscityError::Validation(format!(
-                    "Plugin '{}' is disabled",
-                    plugin_id
-                )));
-            }
-
-            let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
-                (Some(s), Some(i)) => (s, i),
-                _ => {
-                    return Err(crate::error::SyscityError::Internal(format!(
-                        "Plugin '{}' has no WASM module loaded",
-                        plugin_id
-                    )));
-                }
-            };
-
+            let (store, instance) =
+                Self::get_plugin_store_instance(&mut plugins, plugin_id)?;
             Self::invoke_wasm_provider(
                 store,
                 instance,
