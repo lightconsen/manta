@@ -142,6 +142,11 @@ pub struct SyscityMetadata {
     /// Tags for filtering
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Runtime requirements declared under the syscity block.
+    /// Built-in skills declare `requires` inside `syscity:` rather than
+    /// at the top level, so we need this field to capture them.
+    #[serde(default)]
+    pub requires: RequiresConfig,
 }
 
 /// Runtime requirements configuration

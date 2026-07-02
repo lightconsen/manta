@@ -128,6 +128,25 @@ macro_rules! load_builtin_skills {
                         skill.metadata.emoji = skill_file.frontmatter.emoji.clone();
                     }
 
+                    // Transfer requires from syscity block (built-in skills
+                    // declare bins/env under `syscity.requires`)
+                    if !skill_file.frontmatter.syscity.requires.bins.is_empty() {
+                        skill.metadata.requires.bins =
+                            skill_file.frontmatter.syscity.requires.bins.clone();
+                    }
+                    if !skill_file.frontmatter.syscity.requires.env.is_empty() {
+                        skill.metadata.requires.env =
+                            skill_file.frontmatter.syscity.requires.env.clone();
+                    }
+                    if !skill_file.frontmatter.syscity.requires.os.is_empty() {
+                        skill.metadata.requires.os =
+                            skill_file.frontmatter.syscity.requires.os.clone();
+                    }
+                    if !skill_file.frontmatter.syscity.requires.config.is_empty() {
+                        skill.metadata.requires.config =
+                            skill_file.frontmatter.syscity.requires.config.clone();
+                    }
+
                     skills.insert(name.to_string(), skill);
                 }
                 Err(e) => {

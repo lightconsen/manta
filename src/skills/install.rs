@@ -513,27 +513,49 @@ async fn install_with_cargo(package: &str, binary: Option<&str>) -> InstallResul
 async fn add_to_path_if_needed(dir: &str) {
     // This is a best-effort operation
     let shell = std::env::var("SHELL").unwrap_or_default();
-    let config_file = if shell.contains("zsh") {
-        dirs::home_dir().map(|h| h.join(".zshrc"))
+
+    let (config_file, path_line): (Option<std::path::PathBuf>, String) = if shell.contains("zsh") {
+        (
+            dirs::home_dir().map(|h| h.join(".zshrc")),
+            format!("export PATH=\"{}:$PATH\"", dir),
+        )
     } else if shell.contains("bash") {
-        dirs::home_dir().map(|h| h.join(".bashrc"))
+        (
+            dirs::home_dir().map(|h| h.join(".bashrc")),
+            format!("export PATH=\"{}:$PATH\"", dir),
+        )
+    } else if shell.contains("fish") {
+        (
+            dirs::home_dir().map(|h| h.join("fish").join("config.fish")),
+            format!("set -gx PATH {} $PATH", dir),
+        )
     } else {
-        None
+        (None, String::new())
     };
 
-    if let Some(config) = config_file {
-        let path_line = format!("export PATH=\"{}:$PATH\"", dir);
+    let config = match config_file {
+        Some(c) => c,
+        None => return,
+    };
 
-        // Check if already in config
-        if let Ok(content) = tokio::fs::read_to_string(&config).await {
-            if content.contains(&path_line) {
-                return; // Already present
-            }
+    // Check if already in config
+    if let Ok(content) = tokio::fs::read_to_string(&config).await {
+        if content.contains(&path_line) {
+            return; // Already present
         }
+    }
 
-        // Append to config
-        let _ = tokio::fs::write(&config, format!("\n# Added by Syscity\n{}\n", path_line)).await;
-
+    // Append to config (not overwrite)
+    use tokio::io::AsyncWriteExt;
+    if let Ok(mut file) = tokio::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&config)
+        .await
+    {
+        let _ = file
+            .write_all(format!("\n# Added by Syscity\n{}\n", path_line).as_bytes())
+            .await;
         info!("Added {} to PATH in {:?}", dir, config);
     }
 }

@@ -61,8 +61,8 @@ pub struct SkillWatcher {
     rx: mpsc::UnboundedReceiver<FileChange>,
     /// Set of watched paths
     watched_paths: Arc<RwLock<HashSet<PathBuf>>>,
-    /// Callback for file changes (stored for future use)
-    _callback: Arc<RwLock<Option<FileChangeCallback>>>,
+    /// Callback for file changes (used by rebuild_watcher)
+    callback: Arc<RwLock<Option<FileChangeCallback>>>,
 }
 
 impl SkillWatcher {
@@ -74,7 +74,11 @@ impl SkillWatcher {
         let (tx, rx) = mpsc::unbounded_channel();
         let watched_paths = Arc::new(RwLock::new(HashSet::new()));
 
+        let callback_arc: Arc<RwLock<Option<FileChangeCallback>>> =
+            Arc::new(RwLock::new(Some(Box::new(callback))));
+
         let tx_clone = tx.clone();
+        let cb = Arc::clone(&callback_arc);
         let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             match res {
                 Ok(event) => {
@@ -89,7 +93,11 @@ impl SkillWatcher {
                                 warn!("Failed to send file change event: {}", e);
                             }
                             // Also call the callback with the path
-                            callback(path.to_string_lossy().to_string());
+                            if let Ok(guard) = cb.try_read() {
+                                if let Some(ref cb_fn) = *guard {
+                                    cb_fn(path.to_string_lossy().to_string());
+                                }
+                            }
                         }
                     }
                 }
@@ -118,7 +126,7 @@ impl SkillWatcher {
             tx,
             rx,
             watched_paths,
-            _callback: Arc::new(RwLock::new(None)),
+            callback: callback_arc,
         })
     }
 
@@ -166,14 +174,20 @@ impl SkillWatcher {
         debug!("Rebuilding watcher with {} paths", paths.len());
 
         let tx_clone = self.tx.clone();
+        let cb = Arc::clone(&self.callback);
         let mut new_watcher =
             notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
                 Ok(event) => {
                     let kind: ChangeKind = (&event.kind).into();
                     for path in event.paths {
                         if path.to_string_lossy().ends_with("SKILL.md") {
-                            if let Err(e) = tx_clone.send(FileChange { path, kind }) {
+                            if let Err(e) = tx_clone.send(FileChange { path: path.clone(), kind }) {
                                 warn!("Failed to send file change event: {}", e);
+                            }
+                            if let Ok(guard) = cb.try_read() {
+                                if let Some(ref cb_fn) = *guard {
+                                    cb_fn(path.to_string_lossy().to_string());
+                                }
                             }
                         }
                     }
@@ -224,192 +238,6 @@ impl SkillWatcher {
     }
 }
 
-/// Simple polling-based watcher as fallback
-#[allow(dead_code)]
-pub struct PollingWatcher {
-    /// Polling interval
-    interval: std::time::Duration,
-    /// Last known state of watched files
-    state: Arc<RwLock<HashSet<PathBuf>>>,
-    /// Channel for change events
-    rx: mpsc::UnboundedReceiver<FileChange>,
-    /// Shutdown signal
-    _shutdown_tx: tokio::sync::oneshot::Sender<()>,
-}
-
-#[allow(dead_code)]
-impl PollingWatcher {
-    /// Create a new polling watcher
-    pub fn new(interval: std::time::Duration) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
-
-        let state: Arc<RwLock<HashSet<PathBuf>>> = Arc::new(RwLock::new(HashSet::new()));
-        let state_clone = Arc::clone(&state);
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(interval);
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        Self::check_changes(&state_clone, &tx).await;
-                    }
-                    _ = &mut shutdown_rx => {
-                        debug!("Polling watcher shutting down");
-                        break;
-                    }
-                }
-            }
-        });
-
-        Self {
-            interval,
-            state,
-            rx,
-            _shutdown_tx: shutdown_tx,
-        }
-    }
-
-    /// Watch a directory
-    pub async fn watch_dir(&self, path: &Path) -> crate::Result<()> {
-        let mut state = self.state.write().await;
-
-        // Add all files in the directory
-        if let Ok(mut entries) = tokio::fs::read_dir(path).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let path = entry.path();
-                if path.is_file() {
-                    state.insert(path);
-                }
-            }
-        }
-
-        info!("Polling watcher now tracking {} files", state.len());
-        Ok(())
-    }
-
-    /// Check for changes
-    async fn check_changes(
-        _state: &Arc<RwLock<HashSet<PathBuf>>>,
-        _tx: &mpsc::UnboundedSender<FileChange>,
-    ) {
-        // Simplified implementation - in a real one, we'd compare
-        // file metadata to detect changes
-    }
-
-    /// Get the next file change event
-    pub async fn recv(&mut self) -> Option<FileChange> {
-        self.rx.recv().await
-    }
-}
-
-/// Debounced change events
-#[allow(dead_code)]
-pub struct DebouncedWatcher {
-    /// Inner watcher
-    watcher: SkillWatcher,
-    /// Debounce duration
-    debounce: std::time::Duration,
-    /// Pending changes
-    pending: Arc<RwLock<Vec<FileChange>>>,
-}
-
-#[allow(dead_code)]
-impl DebouncedWatcher {
-    /// Create a new debounced watcher
-    pub fn new<F>(
-        paths: Vec<(StorageLevel, PathBuf)>,
-        debounce: std::time::Duration,
-        callback: F,
-    ) -> crate::Result<Self>
-    where
-        F: Fn(String) + Send + Sync + 'static,
-    {
-        let watcher = SkillWatcher::new(paths, callback)?;
-
-        Ok(Self {
-            watcher,
-            debounce,
-            pending: Arc::new(RwLock::new(Vec::new())),
-        })
-    }
-
-    /// Watch a directory
-    pub async fn watch_dir(&mut self, path: &Path) -> crate::Result<()> {
-        self.watcher.watch_dir(path).await
-    }
-
-    /// Get debounced changes
-    pub async fn recv_debounced(&mut self) -> Option<Vec<FileChange>> {
-        // Collect all changes within the debounce window
-        let start = tokio::time::Instant::now();
-        let mut changes = Vec::new();
-
-        while start.elapsed() < self.debounce {
-            match tokio::time::timeout(std::time::Duration::from_millis(50), self.watcher.recv())
-                .await
-            {
-                Ok(Some(change)) => {
-                    changes.push(change);
-                }
-                Ok(None) => break,
-                Err(_) => continue, // Timeout, continue collecting
-            }
-        }
-
-        if changes.is_empty() {
-            None
-        } else {
-            Some(changes)
-        }
-    }
-}
-
-/// Check if a file change is relevant for skill reloading
-#[allow(dead_code)]
-pub fn is_skill_file_change(change: &FileChange) -> bool {
-    let path_str = change.path.to_string_lossy();
-
-    // Only care about SKILL.md files
-    if path_str.ends_with("SKILL.md") {
-        return true;
-    }
-
-    // Or files in skill directories
-    if path_str.contains("/skills/") || path_str.contains("\\skills\\") {
-        return true;
-    }
-
-    false
-}
-
-/// Get the skill name from a file change path
-#[allow(dead_code)]
-pub fn skill_name_from_change(change: &FileChange) -> Option<String> {
-    let path = &change.path;
-
-    // If it's SKILL.md, get parent directory name
-    if path.file_name()?.to_str()? == "SKILL.md" {
-        return path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            .map(|s| s.to_string());
-    }
-
-    // Otherwise, try to extract from path containing /skills/
-    let path_str = path.to_string_lossy();
-    if let Some(pos) = path_str.find("/skills/") {
-        let after_skills = &path_str[pos + 8..];
-        if let Some(slash_pos) = after_skills.find('/') {
-            return Some(after_skills[..slash_pos].to_string());
-        }
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,87 +283,5 @@ mod tests {
         let cloned = change.clone();
         assert_eq!(change.path, cloned.path);
         assert_eq!(change.kind, cloned.kind);
-    }
-
-    #[test]
-    fn test_is_skill_file_change_skill_md() {
-        let change = FileChange {
-            path: PathBuf::from("/skills/docker/SKILL.md"),
-            kind: ChangeKind::Modified,
-        };
-        assert!(is_skill_file_change(&change));
-    }
-
-    #[test]
-    fn test_is_skill_file_change_other() {
-        let change = FileChange {
-            path: PathBuf::from("/other/file.txt"),
-            kind: ChangeKind::Modified,
-        };
-        assert!(!is_skill_file_change(&change));
-    }
-
-    #[test]
-    fn test_is_skill_file_change_windows_path() {
-        let change = FileChange {
-            path: PathBuf::from("C:\\skills\\docker\\SKILL.md"),
-            kind: ChangeKind::Modified,
-        };
-        assert!(is_skill_file_change(&change));
-    }
-
-    #[test]
-    fn test_skill_name_from_change_skill_md() {
-        let change = FileChange {
-            path: PathBuf::from("/skills/docker/SKILL.md"),
-            kind: ChangeKind::Modified,
-        };
-        assert_eq!(skill_name_from_change(&change), Some("docker".to_string()));
-    }
-
-    #[test]
-    fn test_skill_name_from_change_readme() {
-        let change = FileChange {
-            path: PathBuf::from("/skills/k8s/README.md"),
-            kind: ChangeKind::Modified,
-        };
-        assert_eq!(skill_name_from_change(&change), Some("k8s".to_string()));
-    }
-
-    #[test]
-    fn test_skill_name_from_change_no_skill() {
-        let change = FileChange {
-            path: PathBuf::from("/other/file.txt"),
-            kind: ChangeKind::Modified,
-        };
-        assert_eq!(skill_name_from_change(&change), None);
-    }
-
-    #[test]
-    fn test_skill_name_from_change_no_parent() {
-        let change = FileChange {
-            path: PathBuf::from("SKILL.md"),
-            kind: ChangeKind::Modified,
-        };
-        assert_eq!(skill_name_from_change(&change), None);
-    }
-
-    #[test]
-    fn test_skill_name_from_change_deep_path() {
-        let change = FileChange {
-            path: PathBuf::from("/skills/rust/src/main.rs"),
-            kind: ChangeKind::Modified,
-        };
-        assert_eq!(skill_name_from_change(&change), Some("rust".to_string()));
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn test_skill_name_from_change_windows_path() {
-        let change = FileChange {
-            path: PathBuf::from("C:\\skills\\docker\\SKILL.md"),
-            kind: ChangeKind::Modified,
-        };
-        assert_eq!(skill_name_from_change(&change), Some("docker".to_string()));
     }
 }

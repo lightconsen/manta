@@ -223,6 +223,22 @@ impl SkillRegistry {
 
         let content = response.bytes().await.map_err(SyscityError::Http)?;
 
+        // Validate that the downloaded content is a valid SKILL.md
+        let content_str = std::str::from_utf8(&content).map_err(|_| {
+            SyscityError::Validation("Downloaded skill is not valid UTF-8".to_string())
+        })?;
+        SkillFile::parse(content_str, PathBuf::from("SKILL.md")).map_err(|e| {
+            SyscityError::Validation(format!("Downloaded skill is not a valid SKILL.md: {}", e))
+        })?;
+
+        // Enforce max file size (default 256KB)
+        if content.len() > 256_000 {
+            return Err(SyscityError::Validation(format!(
+                "Downloaded skill too large: {} bytes (max: 256000)",
+                content.len()
+            )));
+        }
+
         // Create skill directory
         fs::create_dir_all(&skill_dir)
             .await

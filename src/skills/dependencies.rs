@@ -214,31 +214,14 @@ impl DependencyGraph {
         None
     }
 
-    /// Build a chain of skills: root -> its chain targets -> their chain
-    /// targets
+    /// Build a chain of skills: root and its dependencies in order.
+    ///
+    /// Note: Skill-level chain annotations (e.g., `chain: ["summarize"]`)
+    /// are handled by [`SkillManager::build_execution_chain`], not here.
+    /// This method returns the topological order for the dependency graph
+    /// rooted at `root`.
     pub fn build_chain(&self, root: &str) -> Result<Vec<String>, DependencyError> {
-        let mut chain = Vec::new();
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
-
-        queue.push_back(root.to_string());
-
-        while let Some(name) = queue.pop_front() {
-            if !visited.insert(name.clone()) {
-                continue;
-            }
-
-            chain.push(name.clone());
-
-            // After a skill, chain to skills that depend on it (reverse
-            // dependency) Or we could look for explicit chain
-            // annotations in the skill For now, this builds the
-            // dependency order which is the natural chain
-        }
-
-        // Build the actual execution chain: dependency order first, then root
-        let deps = self.resolve(root)?;
-        Ok(deps)
+        self.resolve(root)
     }
 }
 

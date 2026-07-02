@@ -437,80 +437,9 @@ impl Skill {
         }
     }
 
-    /// Check runtime eligibility
-    pub fn check_eligibility(&mut self) {
-        self.is_eligible = true;
-        self.eligibility_errors.clear();
-
-        // Check OS
-        if !self.metadata.requires.os.is_empty() {
-            let current_os = std::env::consts::OS;
-            let os_map = match current_os {
-                "macos" => "darwin",
-                "linux" => "linux",
-                "windows" => "win32",
-                _ => current_os,
-            };
-            if !self.metadata.requires.os.iter().any(|o| o == os_map) {
-                self.is_eligible = false;
-                self.eligibility_errors.push(format!(
-                    "OS '{}' not in supported list: {:?}",
-                    os_map, self.metadata.requires.os
-                ));
-            }
-        }
-
-        // Check binaries
-        for bin in &self.metadata.requires.bins {
-            if !self.is_binary_available(bin) {
-                self.is_eligible = false;
-                self.eligibility_errors
-                    .push(format!("Binary '{}' not found on PATH", bin));
-            }
-        }
-
-        // Check env vars
-        for env in &self.metadata.requires.env {
-            if std::env::var(env).is_err() {
-                self.is_eligible = false;
-                self.eligibility_errors
-                    .push(format!("Environment variable '{}' not set", env));
-            }
-        }
-
-        // Check config paths
-        for config_path in &self.metadata.requires.config {
-            let expanded = shellexpand::tilde(config_path);
-            if !Path::new(expanded.as_ref()).exists() {
-                self.is_eligible = false;
-                self.eligibility_errors
-                    .push(format!("Config path '{}' does not exist", config_path));
-            }
-        }
-    }
-
-    /// Check if a binary is available on PATH
-    fn is_binary_available(&self, bin: &str) -> bool {
-        if let Ok(path) = std::env::var("PATH") {
-            let separator = if cfg!(windows) { ';' } else { ':' };
-            for dir in path.split(separator) {
-                let bin_path = Path::new(dir).join(bin);
-                if bin_path.exists() {
-                    return true;
-                }
-                // Try with .exe on Windows
-                #[cfg(windows)]
-                if bin_path.with_extension("exe").exists() {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Verify requirements at activation time (non-mutating).
-    /// Returns Ok(()) if all requirements are met, Err with reasons if not.
-    pub fn verify_requirements(&self) -> Result<(), Vec<String>> {
+    /// Collect requirement errors without mutating self.
+    /// Shared logic between `check_eligibility()` and `verify_requirements()`.
+    fn collect_requirement_errors(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
         // Check OS
@@ -552,6 +481,44 @@ impl Skill {
             }
         }
 
+        errors
+    }
+
+    /// Check runtime eligibility
+    pub fn check_eligibility(&mut self) {
+        self.is_eligible = true;
+        self.eligibility_errors.clear();
+
+        let errors = self.collect_requirement_errors();
+        if !errors.is_empty() {
+            self.is_eligible = false;
+            self.eligibility_errors = errors;
+        }
+    }
+
+    /// Check if a binary is available on PATH
+    fn is_binary_available(&self, bin: &str) -> bool {
+        if let Ok(path) = std::env::var("PATH") {
+            let separator = if cfg!(windows) { ';' } else { ':' };
+            for dir in path.split(separator) {
+                let bin_path = Path::new(dir).join(bin);
+                if bin_path.exists() {
+                    return true;
+                }
+                // Try with .exe on Windows
+                #[cfg(windows)]
+                if bin_path.with_extension("exe").exists() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Verify requirements at activation time (non-mutating).
+    /// Returns Ok(()) if all requirements are met, Err with reasons if not.
+    pub fn verify_requirements(&self) -> Result<(), Vec<String>> {
+        let errors = self.collect_requirement_errors();
         if errors.is_empty() {
             Ok(())
         } else {
@@ -667,10 +634,11 @@ impl SkillManager {
     }
 
     /// Load all skills from all storage locations
-    pub async fn load_all(&mut self) -> crate::Result<usize> {
+    pub async fn load_all(&self) -> crate::Result<usize> {
         let mut total_count = 0;
 
         let mut skills = self.skills.write().await;
+        skills.clear();
 
         // First, load built-in skills (lowest priority, can be overridden)
         let builtin_skills = builtin::get_builtin_skills();
@@ -688,7 +656,7 @@ impl SkillManager {
 
         for skill_location in skill_files {
             let path = &skill_location.skill_file;
-            match self.load_skill_from_file(path).await {
+            match Self::load_skill_from_file_inner(path).await {
                 Ok(mut skill) => {
                     // Check eligibility
                     skill.check_eligibility();
@@ -729,30 +697,6 @@ impl SkillManager {
         Ok(total_count)
     }
 
-    /// Load a single skill from a file
-    async fn load_skill_from_file(&self, path: &Path) -> crate::Result<Skill> {
-        let content = tokio::fs::read_to_string(path).await?;
-
-        // Parse frontmatter and content
-        let (frontmatter, prompt) = frontmatter::parse_skill_md(&content)?;
-
-        // Convert frontmatter to skill
-        let mut skill: Skill = serde_yml::from_str(&frontmatter)?;
-        skill.prompt = prompt;
-        skill.source_path = path.to_path_buf();
-
-        // Check file size
-        let file_size = content.len();
-        if file_size > skill.metadata.max_size {
-            return Err(crate::error::SyscityError::Validation(format!(
-                "Skill file too large: {} bytes (max: {})",
-                file_size, skill.metadata.max_size
-            )));
-        }
-
-        Ok(skill)
-    }
-
     /// Start file watcher for hot reloading
     async fn start_watcher(&mut self) -> crate::Result<()> {
         let _skills = Arc::clone(&self.skills);
@@ -760,7 +704,7 @@ impl SkillManager {
         let storage_paths = self.storage.get_all_paths();
 
         let watcher = SkillWatcher::new(storage_paths, move |path| {
-            let _ = reload_tx.blocking_send(path);
+            let _ = reload_tx.try_send(path);
         })?;
 
         self.watcher = Some(watcher);
@@ -1029,67 +973,13 @@ impl SkillManager {
     /// re-discovers all skills from every storage level (built-in, user,
     /// workspace, project). This lets daemon processes pick up
     /// registry-downloaded or locally-installed skills without a restart.
+    ///
+    /// Delegates to [`load_all`] which contains the canonical loading logic.
     pub async fn reload(&self) -> crate::Result<usize> {
         info!("Reloading all skills from storage");
-
-        // Re-discover from all storage levels (same logic as
-        // `load_all()` but works with `&self` by using the existing
-        // `self.storage` and `self.skills` write lock).
-        let mut total_count = 0;
-
-        {
-            let mut skills = self.skills.write().await;
-            skills.clear();
-
-            // 1. Built-in skills
-            let builtin_skills = builtin::get_builtin_skills();
-            for (name, skill) in builtin_skills {
-                info!(
-                    "Reloaded built-in skill: {} (eligible: {}, enabled: {})",
-                    name, skill.is_eligible, skill.enabled
-                );
-                skills.insert(name, skill);
-                total_count += 1;
-            }
-
-            // 2. Skills from storage (user, workspace, project)
-            let skill_files = self.storage.discover_all().await;
-            for skill_location in skill_files {
-                let path = &skill_location.skill_file;
-                match Self::load_skill_from_file_inner(path).await {
-                    Ok(mut skill) => {
-                        skill.check_eligibility();
-                        skill.enabled = self
-                            .config
-                            .entries
-                            .get(&skill.name)
-                            .map(|e| e.enabled)
-                            .unwrap_or(true);
-                        skill.source_level = skill_location.level;
-
-                        let is_override = skills.contains_key(&skill.name);
-                        if is_override {
-                            info!(
-                                "Overriding built-in skill: {} from {:?}",
-                                skill.name, skill_location.level
-                            );
-                        }
-                        info!(
-                            "Reloaded skill: {} (eligible: {}, enabled: {}, level: {:?})",
-                            skill.name, skill.is_eligible, skill.enabled, skill.source_level
-                        );
-                        skills.insert(skill.name.clone(), skill);
-                        total_count += 1;
-                    }
-                    Err(e) => {
-                        warn!("Failed to reload skill from {:?}: {}", path, e);
-                    }
-                }
-            }
-        }
-
-        info!("Skill reload complete: {} skills loaded", total_count);
-        Ok(total_count)
+        let count = self.load_all().await?;
+        info!("Skill reload complete: {} skills loaded", count);
+        Ok(count)
     }
 
     /// Load a skill from file (static helper for reload).

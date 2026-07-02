@@ -12,7 +12,6 @@ use crate::gateway::*;
 
 // Skills API Handlers
 
-#[allow(dead_code)]
 pub async fn list_skills_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let skills_manager = state.tools.skills_manager.read().await;
     let skills = skills_manager.list_skills().await;
@@ -37,7 +36,6 @@ pub async fn list_skills_handler(State(state): State<Arc<GatewayState>>) -> impl
     }))
 }
 
-#[allow(dead_code)]
 pub async fn get_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -65,7 +63,6 @@ pub async fn get_skill_handler(
     }
 }
 
-#[allow(dead_code)]
 pub async fn enable_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -88,7 +85,6 @@ pub async fn enable_skill_handler(
     }
 }
 
-#[allow(dead_code)]
 pub async fn disable_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -175,7 +171,6 @@ pub async fn uninstall_skill_handler(
     }
 }
 
-#[allow(dead_code)]
 pub async fn run_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,

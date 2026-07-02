@@ -426,50 +426,6 @@ async fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Result<()> {
     Ok(())
 }
 
-/// Find the project root (directory containing .syscity/)
-#[allow(dead_code)]
-pub fn find_project_root() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    let mut current = cwd.as_path();
-
-    loop {
-        if current.join(".syscity").is_dir() {
-            return Some(current.to_path_buf());
-        }
-
-        match current.parent() {
-            Some(parent) => current = parent,
-            None => break,
-        }
-    }
-
-    None
-}
-
-/// Find the workspace root
-#[allow(dead_code)]
-pub fn find_workspace_root() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    let mut current = cwd.as_path();
-
-    loop {
-        // Check for workspace markers
-        let markers = [".syscity-workspace", ".git", "syscity.workspace.toml"];
-        for marker in &markers {
-            if current.join(marker).exists() {
-                return Some(current.to_path_buf());
-            }
-        }
-
-        match current.parent() {
-            Some(parent) => current = parent,
-            None => break,
-        }
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -733,70 +689,6 @@ mod tests {
             std::fs::read_to_string(dst.join("subdir").join("nested.txt")).unwrap(),
             "world"
         );
-    }
-
-    #[test]
-    fn test_find_project_root() {
-        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _guard = CwdGuard::new();
-        let temp = tempfile::tempdir().unwrap();
-        let temp_path = temp.path().canonicalize().unwrap();
-
-        let syscity_dir = temp_path.join(".syscity");
-        std::fs::create_dir_all(&syscity_dir).unwrap();
-        std::env::set_current_dir(&temp_path).unwrap();
-
-        let root = find_project_root();
-        assert_eq!(root, Some(temp_path.clone()));
-
-        // Test nested directory
-        let nested = temp_path.join("src").join("components");
-        std::fs::create_dir_all(&nested).unwrap();
-        std::env::set_current_dir(&nested).unwrap();
-
-        let root = find_project_root();
-        assert_eq!(root, Some(temp_path));
-    }
-
-    #[test]
-    fn test_find_workspace_root_git_marker() {
-        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _guard = CwdGuard::new();
-        let temp = tempfile::tempdir().unwrap();
-        let temp_path = temp.path().canonicalize().unwrap();
-
-        std::fs::create_dir_all(temp_path.join(".git")).unwrap();
-        std::env::set_current_dir(&temp_path).unwrap();
-
-        let root = find_workspace_root();
-        assert_eq!(root, Some(temp_path));
-    }
-
-    #[test]
-    fn test_find_workspace_root_toml_marker() {
-        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _guard = CwdGuard::new();
-        let temp = tempfile::tempdir().unwrap();
-        let temp_path = temp.path().canonicalize().unwrap();
-
-        std::fs::write(temp_path.join("syscity.workspace.toml"), "").unwrap();
-        std::env::set_current_dir(&temp_path).unwrap();
-
-        let root = find_workspace_root();
-        assert_eq!(root, Some(temp_path));
-    }
-
-    #[test]
-    fn test_find_project_root_no_match() {
-        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _guard = CwdGuard::new();
-        let temp = tempfile::tempdir().unwrap();
-        let temp_path = temp.path().canonicalize().unwrap();
-
-        std::env::set_current_dir(&temp_path).unwrap();
-
-        let root = find_project_root();
-        assert_eq!(root, None);
     }
 
     #[tokio::test]
