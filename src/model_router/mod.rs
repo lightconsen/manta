@@ -31,6 +31,7 @@ pub use auth_profile::{
 pub use auth_profile_store::AuthProfileStore;
 use chrono::Utc;
 pub use failure_class::FailureClass;
+use futures::future::join_all;
 pub use gateway_client::{GatewayClient, HttpGatewayClient};
 pub use model_catalog::{ModelCatalog, ModelCatalogEntry, ModelDiscoverySource, ModelPricing};
 pub use oauth_callback::wait_for_callback;
@@ -368,7 +369,12 @@ impl Default for CostAwareConfig {
 pub struct TaskClassifier;
 
 impl TaskClassifier {
-    /// Classify a conversation into a task type based on message content
+    /// Classify a conversation into a task type based on message content.
+    ///
+    /// Uses simple keyword scoring with negative guards. Categories are
+    /// evaluated in priority order and the first category whose score meets
+    /// the threshold wins. Weak signals alone do not force a classification,
+    /// which reduces false positives such as "function" in non-coding contexts.
     pub fn classify(messages: &[crate::providers::Message]) -> TaskType {
         use crate::providers::Role;
 
@@ -381,86 +387,175 @@ impl TaskClassifier {
 
         let lower = text.to_lowercase();
 
-        // Coding patterns
-        if lower.contains("code")
-            || lower.contains("function")
-            || lower.contains("bug")
-            || lower.contains("refactor")
-            || lower.contains("implement")
-            || lower.contains("debug")
-            || lower.contains("programming")
-            || lower.contains("algorithm")
-            || (lower.starts_with("write a") && lower.contains("script"))
-            || lower.contains("```")
+        // Coding: strong signals win outright; weaker signals need reinforcement.
+        if !contains_any(
+            &lower,
+            &[
+                "no code",
+                "not code",
+                "without code",
+                "don't code",
+                "don't write code",
+                "don't need code",
+                "no need for code",
+                "not need code",
+                "no coding",
+                "not coding",
+                "不需要代码",
+                "不要代码",
+                "不用代码",
+                "不需要写代码",
+            ],
+        ) && score(
+            &lower,
+            &[
+                "code",
+                "coding",
+                "programming",
+                "algorithm",
+                "debug",
+                "refactor",
+                "write a function",
+                "write a script",
+                "```",
+            ],
+            &["function", "bug", "implement"],
+        ) >= 2
         {
             return TaskType::Coding;
         }
 
-        // Reasoning patterns
-        if lower.contains("explain why")
-            || lower.contains("analyze")
-            || lower.contains("compare")
-            || lower.contains("evaluate")
-            || lower.contains("reason")
-            || lower.contains("logic")
-            || lower.contains("step by step")
-            || lower.contains("prove")
-            || lower.contains("why does")
-            || lower.contains("how does")
+        // Reasoning
+        if !contains_any(
+            &lower,
+            &[
+                "no reason",
+                "not reason",
+                "don't explain",
+                "no explanation",
+                "不需要理由",
+                "不用解释",
+                "不要解释",
+            ],
+        ) && score(
+            &lower,
+            &[
+                "explain why",
+                "analyze",
+                "compare",
+                "evaluate",
+                "prove",
+                "step by step",
+                "why does",
+                "how does",
+            ],
+            &["reason", "logic", "explain"],
+        ) >= 2
         {
             return TaskType::Reasoning;
         }
 
         // Summarization
-        if lower.contains("summarize")
-            || lower.contains("summary")
-            || lower.contains("tl;dr")
-            || lower.contains("key points")
-            || lower.contains("main ideas")
+        if !contains_any(
+            &lower,
+            &[
+                "don't summarize",
+                "no summary",
+                "不要总结",
+                "不需要总结",
+                "不用总结",
+            ],
+        ) && score(&lower, &["summarize", "summary", "tl;dr", "key points", "main ideas"], &[])
+            >= 2
         {
             return TaskType::Summarization;
         }
 
         // Classification
-        if lower.contains("classify")
-            || lower.contains("categor")
-            || lower.contains("label")
-            || lower.contains("sentiment")
-            || lower.contains("is this")
-            || lower.starts_with("what type")
+        if !contains_any(
+            &lower,
+            &[
+                "don't classify",
+                "no classification",
+                "不要分类",
+                "不需要分类",
+            ],
+        ) && score(
+            &lower,
+            &["classify", "categor", "label", "sentiment", "what type"],
+            &["is this"],
+        ) >= 2
         {
             return TaskType::Classification;
         }
 
         // Translation
-        if lower.contains("translate") || lower.contains("translation") {
+        if !contains_any(
+            &lower,
+            &[
+                "don't translate",
+                "no translation",
+                "不要翻译",
+                "不需要翻译",
+            ],
+        ) && score(&lower, &["translate", "translation"], &[]) >= 2
+        {
             return TaskType::Translation;
         }
 
         // Extraction
-        if lower.contains("extract")
-            || lower.contains("pull out")
-            || lower.contains("parse")
-            || lower.contains("find all")
-            || lower.contains("list the")
-            || lower.contains("get the")
+        if !contains_any(&lower, &["don't extract", "no extraction", "不要提取", "不需要提取"])
+            && score(
+                &lower,
+                &["extract", "pull out", "find all", "list the"],
+                &["parse", "get the"],
+            ) >= 2
         {
             return TaskType::Extraction;
         }
 
         // Creative
-        if lower.contains("write a story")
-            || lower.contains("poem")
-            || lower.contains("creative")
-            || lower.contains("draft")
-            || lower.contains("compose")
-            || lower.contains("rewrite")
+        if !contains_any(
+            &lower,
+            &[
+                "don't write",
+                "no story",
+                "no poem",
+                "不要写",
+                "不要故事",
+                "不要诗歌",
+            ],
+        ) && score(
+            &lower,
+            &[
+                "write a story",
+                "poem",
+                "poetry",
+                "creative writing",
+                "compose a",
+            ],
+            &["draft", "rewrite", "creative", "compose"],
+        ) >= 2
         {
             return TaskType::Creative;
         }
 
         TaskType::Chat
     }
+}
+
+/// True if `text` contains any of the `phrases`.
+fn contains_any(text: &str, phrases: &[&str]) -> bool {
+    phrases.iter().any(|p| text.contains(p))
+}
+
+/// Score `text` against strong and weak keyword lists.
+///
+/// Strong matches count for 2 points, weak matches for 1 point.
+fn score(text: &str, strong: &[&str], weak: &[&str]) -> u32 {
+    let strong_hits = strong.iter().filter(|p| text.contains(**p)).count() as u32;
+    let weak_hits = weak.iter().filter(|p| text.contains(**p)).count() as u32;
+    strong_hits * 2 + weak_hits
 }
 
 /// Supported provider types
@@ -859,7 +954,7 @@ impl ModelRouter {
                 if !api_key.is_empty() {
                     let fetcher = OpenAiUsageFetcher::new(api_key);
                     let mut fetchers = self.usage_fetchers.write().await;
-                    fetchers.register(name.clone(), Box::new(fetcher));
+                    fetchers.register(name.clone(), Arc::new(fetcher));
                 }
             }
         }
@@ -1553,23 +1648,39 @@ impl ModelRouter {
     /// Get all usage snapshots enriched with remote quota.
     pub async fn all_snapshots_with_quota(&self) -> Vec<ProviderUsageSnapshot> {
         let base_snapshots = self.usage_tracker.all_snapshots().await;
-        let mut enriched = Vec::with_capacity(base_snapshots.len());
 
-        for mut snapshot in base_snapshots {
-            let provider = snapshot.provider.clone();
-            let quota = {
-                let fetchers = self.usage_fetchers.read().await;
-                if let Some(fetcher) = fetchers.get(&provider) {
-                    match fetcher.fetch().await {
-                        Ok(Some(q)) => Some(q),
-                        _ => self.local_budget_quota(&provider).await,
-                    }
-                } else {
-                    drop(fetchers);
-                    self.local_budget_quota(&provider).await
+        // Collect fetcher handles while holding the read lock briefly, then
+        // drop the lock before awaiting any remote calls.
+        let fetchers = self.usage_fetchers.read().await;
+        let futures = base_snapshots
+            .into_iter()
+            .map(|snapshot| {
+                let provider = snapshot.provider.clone();
+                let fetcher = fetchers.get(&provider).clone();
+                async move {
+                    let quota = if let Some(fetcher) = fetcher {
+                        match fetcher.fetch().await {
+                            Ok(Some(q)) => Some(q),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    (snapshot, quota)
                 }
+            })
+            .collect::<Vec<_>>();
+        drop(fetchers);
+
+        let results = join_all(futures).await;
+        let mut enriched = Vec::with_capacity(results.len());
+        for (mut snapshot, remote_quota) in results {
+            let provider = snapshot.provider.clone();
+            snapshot.quota = if let Some(q) = remote_quota {
+                Some(q)
+            } else {
+                self.local_budget_quota(&provider).await
             };
-            snapshot.quota = quota;
             snapshot.last_updated = Utc::now();
             enriched.push(snapshot);
         }
@@ -2816,6 +2927,42 @@ mod tests {
     }
 
     #[test]
+    fn task_classifier_negative_guard_avoids_coding() {
+        let msgs = vec![crate::providers::Message::user(
+            "I don't need code, just explain why this happens",
+        )];
+        assert_ne!(TaskClassifier::classify(&msgs), TaskType::Coding);
+    }
+
+    #[test]
+    fn task_classifier_weak_function_is_not_coding() {
+        let msgs = vec![crate::providers::Message::user(
+            "The function of this device is unclear",
+        )];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Chat);
+    }
+
+    #[test]
+    fn task_classifier_is_this_stays_chat() {
+        let msgs = vec![crate::providers::Message::user("Is this a good idea?")];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Chat);
+    }
+
+    #[test]
+    fn task_classifier_dont_summarize_stays_chat() {
+        let msgs = vec![crate::providers::Message::user(
+            "Don't summarize, just chat with me",
+        )];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Chat);
+    }
+
+    #[test]
+    fn task_classifier_chinese_negative_guard() {
+        let msgs = vec![crate::providers::Message::user("不需要代码，只要解释原因")];
+        assert_ne!(TaskClassifier::classify(&msgs), TaskType::Coding);
+    }
+
+    #[test]
     fn model_cost_estimate() {
         let cost = ModelCost {
             input_cost_per_1k: 3.0,
@@ -3314,5 +3461,60 @@ mod tests {
         assert!(first.unwrap().is_ok());
         assert!(second.unwrap().is_ok());
         assert_eq!(*provider.calls.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn all_snapshots_with_quota_fetches_for_all_providers() {
+        #[derive(Clone)]
+        struct MockUsageFetcher {
+            remaining: f64,
+        }
+
+        #[async_trait]
+        impl UsageFetcher for MockUsageFetcher {
+            fn provider(&self) -> &str {
+                "mock"
+            }
+
+            async fn fetch(&self) -> crate::Result<Option<UsageQuota>> {
+                Ok(Some(UsageQuota {
+                    remaining: self.remaining,
+                    limit: 100.0,
+                    reset_at: None,
+                    unit: "usd".to_string(),
+                    source: QuotaSource::Remote,
+                }))
+            }
+        }
+
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let usage = Usage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+        };
+        router.usage_tracker.record("openai", usage, "gpt-4o").await;
+        router
+            .usage_tracker
+            .record("anthropic", usage, "claude-3-opus")
+            .await;
+
+        {
+            let mut fetchers = router.usage_fetchers.write().await;
+            fetchers.register("openai", Arc::new(MockUsageFetcher { remaining: 42.0 }));
+            fetchers.register("anthropic", Arc::new(MockUsageFetcher { remaining: 7.0 }));
+        }
+
+        let snapshots = router.all_snapshots_with_quota().await;
+        assert_eq!(snapshots.len(), 2);
+
+        let openai = snapshots.iter().find(|s| s.provider == "openai").unwrap();
+        let anthropic = snapshots
+            .iter()
+            .find(|s| s.provider == "anthropic")
+            .unwrap();
+
+        assert_eq!(openai.quota.as_ref().unwrap().remaining, 42.0);
+        assert_eq!(anthropic.quota.as_ref().unwrap().remaining, 7.0);
     }
 }

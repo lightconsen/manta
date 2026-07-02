@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Months, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
@@ -94,6 +94,15 @@ pub struct ProviderUsageSnapshot {
     pub last_updated: DateTime<Utc>,
 }
 
+/// Configured per-model price for usage estimation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPrice {
+    /// Input token cost in USD per 1 million tokens.
+    pub input_cpm: f64,
+    /// Output token cost in USD per 1 million tokens.
+    pub output_cpm: f64,
+}
+
 /// Configuration for the usage tracker.
 #[derive(Debug, Clone)]
 pub struct UsageTrackerConfig {
@@ -101,6 +110,8 @@ pub struct UsageTrackerConfig {
     pub daily_budget_usd: f64,
     /// Monthly budget per provider in USD (0 = unlimited).
     pub monthly_budget_usd: f64,
+    /// Optional per-model price overrides for cost estimation.
+    pub model_prices: Option<HashMap<String, ModelPrice>>,
 }
 
 impl Default for UsageTrackerConfig {
@@ -108,6 +119,7 @@ impl Default for UsageTrackerConfig {
         Self {
             daily_budget_usd: 0.0,
             monthly_budget_usd: 0.0,
+            model_prices: None,
         }
     }
 }
@@ -133,7 +145,7 @@ impl ProviderUsageTracker {
 
     /// Record usage for a provider.
     pub async fn record(&self, provider: &str, usage: Usage, model: &str) {
-        let cost = Self::estimate_cost(usage, model);
+        let cost = self.estimate_cost(usage, model);
         let now = Utc::now();
 
         let mut snapshots = self.snapshots.write().await;
@@ -261,7 +273,16 @@ impl ProviderUsageTracker {
                     .and_then(|d| d.with_second(0))
                     .and_then(|d| d.with_nanosecond(0))
                     .unwrap_or(now);
-                let end = start + Duration::days(32); // generous upper bound
+                // End on the first day of the next calendar month.
+                let end = start
+                    .date_naive()
+                    .checked_add_months(Months::new(1))
+                    .and_then(|d| {
+                        d.and_hms_opt(0, 0, 0)
+                            .map(|ndt| ndt.and_local_timezone(Utc).single())
+                    })
+                    .flatten()
+                    .unwrap_or(start + Duration::days(31));
                 (start, end)
             }
             _ => (now, now + Duration::days(1)),
@@ -270,9 +291,24 @@ impl ProviderUsageTracker {
     }
 
     /// Estimate cost in USD from token usage and model name.
-    fn estimate_cost(usage: Usage, model: &str) -> f64 {
+    fn estimate_cost(&self, usage: Usage, model: &str) -> f64 {
         let model_lower = model.to_lowercase();
-        let (input_cpm, output_cpm) = if model_lower.contains("opus") {
+        let (input_cpm, output_cpm) = self
+            .config
+            .model_prices
+            .as_ref()
+            .and_then(|prices| prices.get(&model_lower))
+            .map(|p| (p.input_cpm, p.output_cpm))
+            .unwrap_or_else(|| Self::default_price_for_model(&model_lower));
+
+        let input_cost = usage.prompt_tokens as f64 * input_cpm / 1_000_000.0;
+        let output_cost = usage.completion_tokens as f64 * output_cpm / 1_000_000.0;
+        input_cost + output_cost
+    }
+
+    /// Fallback hard-coded pricing when no configured price exists.
+    fn default_price_for_model(model_lower: &str) -> (f64, f64) {
+        if model_lower.contains("opus") {
             (15.0, 75.0)
         } else if model_lower.contains("sonnet") && model_lower.contains("4") {
             // claude-4-sonnet
@@ -291,16 +327,14 @@ impl ProviderUsageTracker {
             (15.0, 60.0)
         } else {
             (3.0, 15.0) // default
-        };
-
-        let input_cost = usage.prompt_tokens as f64 * input_cpm / 1_000_000.0;
-        let output_cost = usage.completion_tokens as f64 * output_cpm / 1_000_000.0;
-        input_cost + output_cost
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone;
+
     use super::*;
 
     #[test]
@@ -319,24 +353,26 @@ mod tests {
 
     #[test]
     fn test_estimate_cost_gpt4o() {
+        let tracker = ProviderUsageTracker::new(UsageTrackerConfig::default());
         let usage = Usage {
             prompt_tokens: 1_000_000,
             completion_tokens: 500_000,
             total_tokens: 1_500_000,
         };
-        let cost = ProviderUsageTracker::estimate_cost(usage, "gpt-4o");
+        let cost = tracker.estimate_cost(usage, "gpt-4o");
         // (1M * $2.50 + 0.5M * $10.00) / 1M = $2.50 + $5.00 = $7.50
         assert!((cost - 7.5).abs() < 0.01);
     }
 
     #[test]
     fn test_estimate_cost_claude_opus() {
+        let tracker = ProviderUsageTracker::new(UsageTrackerConfig::default());
         let usage = Usage {
             prompt_tokens: 1_000_000,
             completion_tokens: 500_000,
             total_tokens: 1_500_000,
         };
-        let cost = ProviderUsageTracker::estimate_cost(usage, "claude-3-opus");
+        let cost = tracker.estimate_cost(usage, "claude-3-opus");
         // (1M * $15 + 0.5M * $75) / 1M = $15 + $37.5 = $52.5
         assert!((cost - 52.5).abs() < 0.01);
     }
@@ -386,6 +422,7 @@ mod tests {
         let config = UsageTrackerConfig {
             daily_budget_usd: 0.001, // very low budget
             monthly_budget_usd: 0.0,
+            model_prices: None,
         };
         let tracker = ProviderUsageTracker::new(config);
         let usage = Usage {
@@ -397,5 +434,66 @@ mod tests {
 
         assert!(!tracker.is_within_budget("openai").await);
         assert!(tracker.is_within_budget("unknown").await);
+    }
+
+    #[test]
+    fn test_this_month_window_end_boundary() {
+        let now = Utc.with_ymd_and_hms(2024, 2, 15, 12, 0, 0).unwrap();
+        let window = ProviderUsageTracker::build_window("this_month", now);
+        assert_eq!(window.start, Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap());
+        assert_eq!(window.end, Utc.with_ymd_and_hms(2024, 3, 1, 0, 0, 0).unwrap());
+
+        // 30-day month.
+        let now = Utc.with_ymd_and_hms(2024, 4, 10, 0, 0, 0).unwrap();
+        let window = ProviderUsageTracker::build_window("this_month", now);
+        assert_eq!(window.end, Utc.with_ymd_and_hms(2024, 5, 1, 0, 0, 0).unwrap());
+
+        // December -> January rollover.
+        let now = Utc.with_ymd_and_hms(2024, 12, 31, 23, 59, 59).unwrap();
+        let window = ProviderUsageTracker::build_window("this_month", now);
+        assert_eq!(window.end, Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn test_configured_price_overrides_default() {
+        let mut prices = HashMap::new();
+        prices.insert(
+            "custom-model".to_string(),
+            ModelPrice {
+                input_cpm: 1.0,
+                output_cpm: 2.0,
+            },
+        );
+        let config = UsageTrackerConfig {
+            daily_budget_usd: 0.0,
+            monthly_budget_usd: 0.0,
+            model_prices: Some(prices),
+        };
+        let tracker = ProviderUsageTracker::new(config);
+        let usage = Usage {
+            prompt_tokens: 1_000_000,
+            completion_tokens: 500_000,
+            total_tokens: 1_500_000,
+        };
+        let cost = tracker.estimate_cost(usage, "custom-model");
+        // $1.00 input + $1.00 output = $2.00
+        assert!((cost - 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_unconfigured_model_uses_default_price() {
+        let config = UsageTrackerConfig {
+            daily_budget_usd: 0.0,
+            monthly_budget_usd: 0.0,
+            model_prices: Some(HashMap::new()),
+        };
+        let tracker = ProviderUsageTracker::new(config);
+        let usage = Usage {
+            prompt_tokens: 1_000_000,
+            completion_tokens: 500_000,
+            total_tokens: 1_500_000,
+        };
+        let cost = tracker.estimate_cost(usage, "gpt-4o");
+        assert!((cost - 7.5).abs() < 0.01);
     }
 }

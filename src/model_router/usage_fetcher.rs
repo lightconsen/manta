@@ -8,6 +8,8 @@
 //! let quota = fetcher.fetch().await?;
 //! ```
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use chrono::{Datelike, Utc};
 
@@ -75,36 +77,10 @@ impl UsageFetcher for OpenAiUsageFetcher {
             req = req.header("OpenAI-Organization", org.clone());
         }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: format!("OpenAI usage fetch request failed: {}", e),
-                cause: Some(Box::new(e)),
-            })?;
-
-        if !resp.status().is_success() {
-            // Most API keys don't have dashboard access — silently return None
-            return Ok(None);
-        }
-
-        let body: serde_json::Value =
-            resp.json()
-                .await
-                .map_err(|e| crate::error::SyscityError::ExternalService {
-                    source: format!("OpenAI usage response invalid: {}", e),
-                    cause: Some(Box::new(e)),
-                })?;
-
-        let limit = body
-            .get("hard_limit_usd")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-
         // Fetch current usage for the month
         let now = Utc::now();
-        let start_date = format!("{}-{:02}-{:02}", now.year(), now.month(), now.day());
-        let end_date = start_date.clone();
+        let start_date = format!("{}-{:02}-{:02}", now.year(), now.month(), 1);
+        let end_date = format!("{}-{:02}-{:02}", now.year(), now.month(), now.day());
 
         let mut usage_req = self
             .client
@@ -118,23 +94,46 @@ impl UsageFetcher for OpenAiUsageFetcher {
             usage_req = usage_req.header("OpenAI-Organization", org.clone());
         }
 
-        let usage_resp = usage_req.send().await.ok();
-        let used_today = if let Some(r) = usage_resp {
-            if r.status().is_success() {
+        // Query subscription and usage endpoints concurrently.
+        let (sub_result, usage_result) = tokio::join!(req.send(), usage_req.send());
+
+        let sub_resp = sub_result.map_err(|e| crate::error::SyscityError::ExternalService {
+            source: format!("OpenAI usage fetch request failed: {}", e),
+            cause: Some(Box::new(e)),
+        })?;
+
+        if !sub_resp.status().is_success() {
+            // Most API keys don't have dashboard access — silently return None
+            return Ok(None);
+        }
+
+        let body: serde_json::Value =
+            sub_resp
+                .json()
+                .await
+                .map_err(|e| crate::error::SyscityError::ExternalService {
+                    source: format!("OpenAI usage response invalid: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
+
+        let limit = body
+            .get("hard_limit_usd")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let used_this_month = match usage_result {
+            Ok(r) if r.status().is_success() => {
                 r.json::<serde_json::Value>()
                     .await
                     .ok()
                     .and_then(|v| v.get("total_usage").and_then(|u| u.as_f64()))
                     .unwrap_or(0.0)
-                    / 100.0 // convert cents to USD
-            } else {
-                0.0
-            }
-        } else {
-            0.0
+                    / 100.0
+            } // convert cents to USD
+            _ => 0.0,
         };
 
-        let remaining = (limit - used_today).max(0.0);
+        let remaining = (limit - used_this_month).max(0.0);
 
         Ok(Some(UsageQuota {
             remaining,
@@ -210,22 +209,22 @@ impl UsageFetcher for LocalBudgetFetcher {
 /// A registry of [`UsageFetcher`] instances keyed by provider name.
 #[derive(Default)]
 pub struct UsageFetcherRegistry {
-    fetchers: std::collections::HashMap<String, Box<dyn UsageFetcher>>,
+    fetchers: std::collections::HashMap<String, Arc<dyn UsageFetcher>>,
 }
 
 impl UsageFetcherRegistry {
     /// Register a fetcher for a provider.
-    pub fn register(&mut self, provider: impl Into<String>, fetcher: Box<dyn UsageFetcher>) {
+    pub fn register(&mut self, provider: impl Into<String>, fetcher: Arc<dyn UsageFetcher>) {
         self.fetchers.insert(provider.into(), fetcher);
     }
 
     /// Get a fetcher by provider name.
-    pub fn get(&self, provider: &str) -> Option<&dyn UsageFetcher> {
-        self.fetchers.get(provider).map(|f| f.as_ref())
+    pub fn get(&self, provider: &str) -> Option<Arc<dyn UsageFetcher>> {
+        self.fetchers.get(provider).cloned()
     }
 
     /// Remove a fetcher.
-    pub fn remove(&mut self, provider: &str) -> Option<Box<dyn UsageFetcher>> {
+    pub fn remove(&mut self, provider: &str) -> Option<Arc<dyn UsageFetcher>> {
         self.fetchers.remove(provider)
     }
 
@@ -261,7 +260,7 @@ mod tests {
     #[test]
     fn test_registry_register_and_get() {
         let mut registry = UsageFetcherRegistry::default();
-        registry.register("mock", Box::new(MockFetcher));
+        registry.register("mock", Arc::new(MockFetcher));
         assert!(registry.get("mock").is_some());
         assert!(registry.get("other").is_none());
     }
