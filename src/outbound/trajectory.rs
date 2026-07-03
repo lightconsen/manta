@@ -162,7 +162,27 @@ impl TrajectoryWriter {
         let json = serde_json::to_string(entry)?;
 
         let json = if json.len() > self.max_event_size {
-            json.chars().take(self.max_event_size).collect::<String>()
+            // Truncate at the last valid JSON boundary within the limit.
+            // Iterate backwards from the truncation point finding `}`
+            // positions until we get valid JSON (typically 1-2 iterations).
+            let truncated: String =
+                json.chars().take(self.max_event_size).collect();
+            let mut search_end = truncated.len();
+            loop {
+                if let Some(pos) = truncated[..search_end].rfind('}') {
+                    if serde_json::from_str::<serde_json::Value>(&truncated[..=pos]).is_ok() {
+                        break truncated[..=pos].to_string();
+                    }
+                    search_end = pos;
+                } else {
+                    // No valid JSON boundary found — skip the entire event.
+                    tracing::warn!(
+                        "Trajectory entry too large ({} bytes) and no JSON boundary found, dropping",
+                        json.len()
+                    );
+                    return Ok(());
+                }
+            }
         } else {
             json
         };
@@ -276,16 +296,17 @@ impl TrajectoryWriter {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if name_str.starts_with("trajectory-") && name_str.ends_with(".jsonl") {
-                // Extract session_id slug from: trajectory-YYYY-MM-DD-HHMMSS-slug.jsonl
-                // The slug is everything after the last '-' in the stem.
+                // Extract session_id slug from: trajectory-YYYYMMDD-HHMMSS-slug.jsonl
+                // The slug is everything after the second '-' in the stem.
                 let stem = name_str
                     .strip_prefix("trajectory-")
                     .and_then(|s| s.strip_suffix(".jsonl"))
                     .unwrap_or("");
-                if let Some(slug) = stem.rsplit('-').next() {
-                    if !slug.is_empty() && !sessions.contains(&slug.to_string()) {
-                        sessions.push(slug.to_string());
-                    }
+                // stem = "YYYYMMDD-HHMMSS-<slug>"
+                // splitn(3, '-') → ["YYYYMMDD", "HHMMSS", "<slug>"]
+                let slug = stem.splitn(3, '-').nth(2).unwrap_or("").to_string();
+                if !slug.is_empty() && !sessions.contains(&slug) {
+                    sessions.push(slug);
                 }
             }
         }
@@ -348,11 +369,15 @@ pub fn trajectory_dir() -> PathBuf {
 
 /// Generate a JSONL filename for a session, based on the current timestamp.
 ///
-/// Format: `trajectory-YYYY-MM-DD-HHMMSS-<slug>.jsonl`
+/// Format: `trajectory-YYYYMMDD-HHMMSS-<slug>.jsonl`
+///
+/// Uses a compact date (no dashes) so the slug can be reliably extracted
+/// from the filename by splitting on `-` and taking the tail after the
+/// second dash.
 fn generate_filename(session_id: &str) -> String {
     let now = chrono::Local::now();
     let slug = slugify(session_id);
-    format!("trajectory-{}-{}.jsonl", now.format("%Y-%m-%d-%H%M%S"), slug)
+    format!("trajectory-{}-{}.jsonl", now.format("%Y%m%d-%H%M%S"), slug)
 }
 
 /// Convert a string to a safe filesystem slug: alphanumeric + hyphens only,
@@ -488,10 +513,17 @@ mod tests {
         let name = generate_filename("test-session");
         assert!(name.starts_with("trajectory-"));
         assert!(name.ends_with("-test-session.jsonl"));
-        // The middle part should be a date-time stamp like 2026-06-09-143022
-        let parts: Vec<&str> = name.splitn(3, '-').collect();
-        assert_eq!(parts.len(), 3);
-        assert!(parts[2].ends_with("-test-session.jsonl"));
+        // The middle part should be a compact date-time stamp like 20260609-143022
+        let stem = name
+            .strip_prefix("trajectory-")
+            .and_then(|s| s.strip_suffix(".jsonl"))
+            .unwrap();
+        let parts: Vec<&str> = stem.splitn(3, '-').collect();
+        assert_eq!(parts.len(), 3, "stem should have exactly 3 parts: date, time, slug — got {parts:?}");
+        assert_eq!(parts[2], "test-session");
+        // parts[0] should be 8-digit date (YYYYMMDD), parts[1] should be 6-digit time (HHMMSS)
+        assert_eq!(parts[0].len(), 8, "date part should be YYYYMMDD (8 digits)");
+        assert_eq!(parts[1].len(), 6, "time part should be HHMMSS (6 digits)");
     }
 
     #[test]

@@ -55,6 +55,13 @@ impl ReplyDispatcher {
         info!("Registered channel '{}' for reply dispatch", name);
     }
 
+    /// Remove a previously registered channel.
+    pub async fn unregister_channel(&self, name: &str) {
+        let mut channels = self.channels.write().await;
+        channels.remove(name);
+        info!("Unregistered channel '{}' from reply dispatch", name);
+    }
+
     /// Dispatch an outgoing message to its target channel.
     pub async fn dispatch(
         &self,

@@ -25,7 +25,11 @@ pub use side_effects::{SideEffect, SideEffectContext, SideEffectExecutor, SideEf
 pub use sse::{SseEvent, SseStreamer};
 pub use trajectory::{TrajectoryEntry, TrajectoryLog, TrajectoryWriter};
 
-use crate::channels::reply_prefix::{ReplyPrefixEngine, TemplateContext};
+use self::stage::{
+    CanvasStage, DispatchStage, ReplyPrefixStage, SideEffectStage, SseStage, TrajectoryStage,
+    OutboundStageContext, run_outbound_stages,
+};
+use crate::channels::reply_prefix::ReplyPrefixEngine;
 
 /// A fully-processed outbound result ready for delivery.
 #[derive(Debug, Clone)]
@@ -62,6 +66,8 @@ pub struct OutboundContext {
     pub trajectory: TrajectoryLog,
     /// Optional token usage statistics.
     pub usage: Option<crate::providers::Usage>,
+    /// Side effects to execute after the reply is dispatched.
+    pub side_effects: Vec<SideEffect>,
 }
 
 /// Default outbound pipeline implementation.
@@ -104,95 +110,30 @@ impl DefaultOutboundPipeline {
 #[async_trait::async_trait]
 impl OutboundPipeline for DefaultOutboundPipeline {
     async fn process(&self, ctx: OutboundContext) -> OutboundResult {
-        // Stage 1: Trajectory persistence (fire-and-forget style, but we await)
+        // Build stages from our dependencies and delegate to the pluggable
+        // stage runner (avoids duplicating the pipeline in two places).
+        let mut stages: Vec<Box<dyn self::stage::OutboundStage>> = Vec::new();
+
         if let Some(ref writer) = self.trajectory_writer {
-            if !ctx.trajectory.entries.is_empty() {
-                if let Err(e) = writer.append_log(&ctx.session_id, &ctx.trajectory).await {
-                    tracing::warn!(
-                        "Failed to persist trajectory for session {}: {}",
-                        ctx.session_id,
-                        e
-                    );
-                }
-            }
+            stages.push(Box::new(TrajectoryStage::from_arc(writer.clone())));
         }
+        stages.push(Box::new(CanvasStage));
 
-        // Stage 2: Canvas rendering — detect A2UI components in agent output
-        let canvas_update = if let Ok(component) =
-            serde_json::from_str::<crate::canvas::CanvasComponent>(&ctx.raw_output)
-        {
-            Some(crate::canvas::CanvasUpdate::Init {
-                canvas_id: ctx.session_id.clone(),
-                root: component,
-            })
-        } else {
-            None
-        };
-
-        // Stage 3: SSE streaming — emit tool call and completion events
-        let mut sse_events = Vec::new();
         if let Some(ref sse) = self.sse {
-            for tc in &ctx.tool_calls {
-                let evt = SseEvent::ToolStart { name: tc.function.name.clone() };
-                sse.send(&ctx.session_id, evt.clone()).await;
-                sse_events.push(evt);
-            }
-            let done_evt = SseEvent::Done;
-            sse.send(&ctx.session_id, done_evt.clone()).await;
-            sse_events.push(done_evt);
+            stages.push(Box::new(SseStage::from_arc(sse.clone())));
+        }
+        if let Some(ref engine) = self.reply_prefix_engine {
+            stages.push(Box::new(ReplyPrefixStage::new(engine.clone())));
         }
 
-        // Stage 4: Build the outbound result
-        let result = OutboundResult {
-            text: ctx.raw_output.clone(),
-            canvas_update,
-            sse_events,
-            side_effects: Vec::new(),
-            session_id: ctx.session_id.clone(),
-            channel: ctx.channel.clone(),
-        };
+        stages.push(Box::new(DispatchStage::from_arc(
+            self.reply_dispatcher.clone(),
+        )));
+        stages.push(Box::new(SideEffectStage::from_arc(
+            self.side_effects.clone(),
+        )));
 
-        // Stage 5: Apply reply prefix if configured
-        let final_content = if let Some(ref engine) = self.reply_prefix_engine {
-            let template_ctx = TemplateContext::new()
-                .with_session(&ctx.session_id)
-                .with_channel(&ctx.channel);
-            engine
-                .apply_async(&ctx.raw_output, &template_ctx, Some(&ctx.channel))
-                .await
-        } else {
-            ctx.raw_output.clone()
-        };
-
-        // Stage 6: Dispatch via reply dispatcher
-        let outbound_msg = crate::channels::OutgoingMessage {
-            conversation_id: crate::channels::ConversationId::new(&ctx.session_id),
-            content: final_content,
-            reasoning_content: None,
-            tool_calls: None,
-            formatted_content: None,
-            attachments: vec![],
-            reply_to: None,
-            options: crate::channels::MessageOptions {
-                silent: false,
-                show_typing: false,
-                custom: std::collections::HashMap::new(),
-            },
-            usage: ctx.usage,
-        };
-        if let Err(e) = self
-            .reply_dispatcher
-            .dispatch(&ctx.channel, outbound_msg)
-            .await
-        {
-            tracing::warn!("Reply dispatch failed for channel {}: {}", ctx.channel, e);
-        }
-
-        // Stage 7: Side effects (memory storage, cron, etc.)
-        if !result.side_effects.is_empty() {
-            self.side_effects.execute_batch(&result.side_effects).await;
-        }
-
-        result
+        let mut stage_ctx = OutboundStageContext::new(ctx);
+        run_outbound_stages(&stages, &mut stage_ctx).await
     }
 }

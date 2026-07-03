@@ -79,6 +79,7 @@ impl SseStreamer {
         let sessions = self.sessions.read().await;
         if let Some(sender) = sessions.get(session_id) {
             if sender.receiver_count() == 0 {
+                debug!("SSE send skipped for session {}: no active subscribers", session_id);
                 return;
             }
             if let Err(e) = sender.send(event) {
@@ -86,6 +87,8 @@ impl SseStreamer {
             } else {
                 debug!("SSE event sent to session {}", session_id);
             }
+        } else {
+            debug!("SSE send skipped for session {}: no channel created (no subscriber yet)", session_id);
         }
     }
 

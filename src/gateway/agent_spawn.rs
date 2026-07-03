@@ -653,6 +653,7 @@ async fn process_message_acp(
         tool_calls: vec![],
         trajectory,
         usage: response_usage,
+        side_effects: vec![],
     };
     let outbound_result = state.pipelines.outbound.process(outbound_ctx).await;
 

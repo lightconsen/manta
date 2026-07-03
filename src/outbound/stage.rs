@@ -14,6 +14,7 @@ use super::{
     OutboundContext, OutboundResult, ReplyDispatcher, SideEffectExecutor, SseEvent, SseStreamer,
     TrajectoryWriter,
 };
+use crate::canvas::CanvasComponent;
 use crate::canvas::CanvasUpdate;
 use crate::channels::reply_prefix::{ReplyPrefixEngine, TemplateContext};
 
@@ -91,6 +92,11 @@ impl TrajectoryStage {
     pub fn new(writer: TrajectoryWriter) -> Self {
         Self { writer: Arc::new(writer) }
     }
+
+    /// Create from an already-`Arc`-wrapped writer (avoids double-wrap).
+    pub fn from_arc(writer: Arc<TrajectoryWriter>) -> Self {
+        Self { writer }
+    }
 }
 
 #[async_trait]
@@ -137,9 +143,6 @@ impl OutboundStage for CanvasStage {
     }
 }
 
-// Re-use the canvas type
-use crate::canvas::CanvasComponent;
-
 /// SSE streaming stage – emits tool call and completion events.
 pub struct SseStage {
     sse: Arc<SseStreamer>,
@@ -148,6 +151,11 @@ pub struct SseStage {
 impl SseStage {
     pub fn new(sse: SseStreamer) -> Self {
         Self { sse: Arc::new(sse) }
+    }
+
+    /// Create from an already-`Arc`-wrapped streamer.
+    pub fn from_arc(sse: Arc<SseStreamer>) -> Self {
+        Self { sse }
     }
 }
 
@@ -211,6 +219,11 @@ impl DispatchStage {
             dispatcher: Arc::new(dispatcher),
         }
     }
+
+    /// Create from an already-`Arc`-wrapped dispatcher.
+    pub fn from_arc(dispatcher: Arc<ReplyDispatcher>) -> Self {
+        Self { dispatcher }
+    }
 }
 
 #[async_trait]
@@ -258,6 +271,11 @@ pub struct SideEffectStage {
 impl SideEffectStage {
     pub fn new(executor: SideEffectExecutor) -> Self {
         Self { executor: Arc::new(executor) }
+    }
+
+    /// Create from an already-`Arc`-wrapped executor.
+    pub fn from_arc(executor: Arc<SideEffectExecutor>) -> Self {
+        Self { executor }
     }
 }
 
@@ -370,6 +388,7 @@ mod tests {
             tool_calls: vec![],
             trajectory: TrajectoryLog { entries: vec![] },
             usage: None,
+            side_effects: vec![],
         })
     }
 

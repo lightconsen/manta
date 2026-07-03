@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 /// A declarative side effect.
@@ -89,22 +89,17 @@ pub struct SideEffectContext {
 }
 
 /// Executor that runs side effects asynchronously.
-#[allow(dead_code)]
 pub struct SideEffectExecutor {
     registry: Arc<SideEffectRegistry>,
     /// Shared context populated at runtime by the gateway.
     ctx: RwLock<SideEffectContext>,
-    /// Sender for offloading effect execution to a background task.
-    effect_tx: mpsc::Sender<SideEffect>,
 }
 
 impl SideEffectExecutor {
     pub fn new(registry: Arc<SideEffectRegistry>) -> Self {
-        let (effect_tx, _effect_rx) = mpsc::channel(256);
         Self {
             registry,
             ctx: RwLock::new(SideEffectContext::default()),
-            effect_tx,
         }
     }
 
@@ -143,7 +138,7 @@ impl SideEffectExecutor {
                         Err(e) => error!("MemoryStore side-effect failed: {}", e),
                     }
                 } else {
-                    debug!("MemoryStore: no memory manager configured");
+                    warn!("MemoryStore side-effect: no memory manager configured, effect dropped");
                 }
             }
 
@@ -168,24 +163,33 @@ impl SideEffectExecutor {
                         debug!("CronSchedule: added job for '{}'", expression);
                     }
                 } else {
-                    debug!("CronSchedule: no cron scheduler configured");
+                    warn!("CronSchedule side-effect: no cron scheduler configured, effect dropped");
                 }
             }
 
             SideEffect::Webhook { url, payload } => {
-                let client = ctx.webhook_client.unwrap_or_else(|| {
-                    Arc::new(
-                        reqwest::Client::builder()
-                            .timeout(std::time::Duration::from_secs(10))
-                            .build()
-                            .unwrap_or_default(),
-                    )
-                });
+                let client = match &ctx.webhook_client {
+                    Some(c) => c.clone(),
+                    None => {
+                        debug!("Webhook side-effect: no shared client configured, creating one-off");
+                        Arc::new(
+                            reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(10))
+                                .build()
+                                .unwrap_or_default(),
+                        )
+                    }
+                };
                 let url = url.clone();
                 let payload = payload.clone();
                 tokio::spawn(async move {
                     match client.post(&url).json(&payload).send().await {
-                        Ok(resp) => debug!("Webhook side-effect: {} {}", url, resp.status()),
+                        Ok(resp) => {
+                            let status = resp.status();
+                            // Drain the response body to free the connection pool slot.
+                            let _ = resp.bytes().await;
+                            debug!("Webhook side-effect: {} status={}", url, status);
+                        }
                         Err(e) => error!("Webhook side-effect failed: {} {}", url, e),
                     }
                 });
