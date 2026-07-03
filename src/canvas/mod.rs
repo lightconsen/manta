@@ -11,6 +11,7 @@ use axum::extract::ws::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::broadcast::error::RecvError;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -123,6 +124,81 @@ pub enum CanvasComponent {
     },
 }
 
+impl CanvasComponent {
+    /// Return the unique identifier of this component.
+    pub fn id(&self) -> &str {
+        match self {
+            CanvasComponent::Container { id, .. } => id,
+            CanvasComponent::Text { id, .. } => id,
+            CanvasComponent::Markdown { id, .. } => id,
+            CanvasComponent::Input { id, .. } => id,
+            CanvasComponent::Textarea { id, .. } => id,
+            CanvasComponent::Button { id, .. } => id,
+            CanvasComponent::Select { id, .. } => id,
+            CanvasComponent::Checkbox { id, .. } => id,
+            CanvasComponent::RadioGroup { id, .. } => id,
+            CanvasComponent::Progress { id, .. } => id,
+            CanvasComponent::Spinner { id, .. } => id,
+            CanvasComponent::Image { id, .. } => id,
+            CanvasComponent::Code { id, .. } => id,
+            CanvasComponent::Table { id, .. } => id,
+            CanvasComponent::Divider { id, .. } => id,
+            CanvasComponent::Alert { id, .. } => id,
+        }
+    }
+
+    /// Recursively find and replace a component by ID.
+    /// Returns true if the component was found and replaced.
+    pub fn update_by_id(&mut self, target_id: &str, new_component: CanvasComponent) -> bool {
+        if self.id() == target_id {
+            *self = new_component;
+            return true;
+        }
+        if let CanvasComponent::Container { children, .. } = self {
+            for child in children.iter_mut() {
+                if child.update_by_id(target_id, new_component.clone()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Recursively find a Container by parent_id and append a child.
+    /// Returns true if the parent was found.
+    pub fn append_child(&mut self, parent_id: &str, child: CanvasComponent) -> bool {
+        if let CanvasComponent::Container { id, children, .. } = self {
+            if id == parent_id {
+                children.push(child);
+                return true;
+            }
+            for c in children.iter_mut() {
+                if c.append_child(parent_id, child.clone()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Recursively find the parent of target_id and remove it.
+    /// Returns true if the component was found and removed.
+    pub fn remove_by_id(&mut self, target_id: &str) -> bool {
+        if let CanvasComponent::Container { children, .. } = self {
+            if let Some(pos) = children.iter().position(|c| c.id() == target_id) {
+                children.remove(pos);
+                return true;
+            }
+            for child in children.iter_mut() {
+                if child.remove_by_id(target_id) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
 /// Container layout options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -205,10 +281,18 @@ pub struct CanvasSession {
     pub update_tx: broadcast::Sender<CanvasUpdate>,
 }
 
+impl std::fmt::Debug for CanvasSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CanvasSession")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl CanvasSession {
     pub fn new(event_tx: mpsc::Sender<CanvasEvent>) -> Self {
         let id = CanvasId::new();
-        let (update_tx, _) = broadcast::channel(100);
+        let (update_tx, _) = broadcast::channel(1024);
 
         Self {
             id: id.clone(),
@@ -235,6 +319,9 @@ impl CanvasSession {
 
     /// Update a specific component
     pub async fn update(&self, component_id: String, component: CanvasComponent) {
+        let mut guard = self.root.write().await;
+        guard.update_by_id(&component_id, component.clone());
+        drop(guard);
         let _ = self
             .update_tx
             .send(CanvasUpdate::Update { component_id, component });
@@ -242,9 +329,20 @@ impl CanvasSession {
 
     /// Append component to container
     pub async fn append(&self, parent_id: String, component: CanvasComponent) {
+        let mut guard = self.root.write().await;
+        guard.append_child(&parent_id, component.clone());
+        drop(guard);
         let _ = self
             .update_tx
             .send(CanvasUpdate::Append { parent_id, component });
+    }
+
+    /// Remove a component from the tree
+    pub async fn remove(&self, component_id: String) {
+        let mut guard = self.root.write().await;
+        guard.remove_by_id(&component_id);
+        drop(guard);
+        let _ = self.update_tx.send(CanvasUpdate::Remove { component_id });
     }
 
     /// Show notification
@@ -263,6 +361,17 @@ pub struct CanvasManager {
     sessions: RwLock<HashMap<CanvasId, Arc<CanvasSession>>>,
     /// Maps external session IDs (e.g. conversation IDs) to canvas sessions.
     session_map: RwLock<HashMap<String, CanvasId>>,
+    /// Event receivers for sessions created via `get_or_create_for_session`.
+    /// Keyed by external session ID.
+    event_rxs: RwLock<HashMap<String, mpsc::Receiver<CanvasEvent>>>,
+}
+
+impl std::fmt::Debug for CanvasManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CanvasManager")
+            .field("session_count", &self.sessions.try_read().ok().map(|s| s.len()))
+            .finish_non_exhaustive()
+    }
 }
 
 impl CanvasManager {
@@ -270,6 +379,7 @@ impl CanvasManager {
         Self {
             sessions: RwLock::new(HashMap::new()),
             session_map: RwLock::new(HashMap::new()),
+            event_rxs: RwLock::new(HashMap::new()),
         }
     }
 
@@ -284,26 +394,41 @@ impl CanvasManager {
     /// Get or create a canvas session tied to an external session_id.
     ///
     /// Used by the outbound pipeline to render UI for a specific conversation.
+    /// The event receiver is stored in the manager; call [`take_event_rx`](Self::take_event_rx)
+    /// to retrieve it for event processing.
     pub async fn get_or_create_for_session(&self, session_id: &str) -> Arc<CanvasSession> {
-        {
-            let map = self.session_map.read().await;
-            if let Some(canvas_id) = map.get(session_id) {
-                let sessions = self.sessions.read().await;
-                if let Some(session) = sessions.get(canvas_id) {
-                    return session.clone();
-                }
+        // Use a single write lock for atomic check-and-insert to prevent TOCTOU race
+        let mut map = self.session_map.write().await;
+        let mut sessions = self.sessions.write().await;
+
+        if let Some(canvas_id) = map.get(session_id) {
+            if let Some(session) = sessions.get(canvas_id) {
+                return session.clone();
             }
         }
 
-        // Create new session with a dummy event channel (events are consumed via
-        // broadcast)
-        let (_event_tx, _event_rx) = mpsc::channel(1);
-        let session = Arc::new(CanvasSession::new(_event_tx));
-        let mut sessions = self.sessions.write().await;
-        let mut map = self.session_map.write().await;
-        map.insert(session_id.to_string(), session.id.clone());
-        sessions.insert(session.id.clone(), session.clone());
+        let (event_tx, event_rx) = mpsc::channel(256);
+        let session = Arc::new(CanvasSession::new(event_tx));
+        let canvas_id = session.id.clone();
+        map.insert(session_id.to_string(), canvas_id.clone());
+        sessions.insert(canvas_id.clone(), session.clone());
+        drop(sessions);
+        drop(map);
+
+        // Store the event receiver so events are not silently dropped
+        let mut rxs = self.event_rxs.write().await;
+        rxs.insert(session_id.to_string(), event_rx);
+
         session
+    }
+
+    /// Take the event receiver for a session created via [`get_or_create_for_session`].
+    ///
+    /// Returns `None` if no receiver is registered for this session (e.g. if the
+    /// session was created via [`create_session`](Self::create_session) instead, or
+    /// if the receiver was already taken).
+    pub async fn take_event_rx(&self, session_id: &str) -> Option<mpsc::Receiver<CanvasEvent>> {
+        self.event_rxs.write().await.remove(session_id)
     }
 
     /// Apply a [`CanvasUpdate`] to the session associated with `session_id`.
@@ -315,9 +440,7 @@ impl CanvasManager {
                 session.update(component_id, component).await;
             }
             CanvasUpdate::Remove { component_id } => {
-                // CanvasSession doesn't have a remove method; use update with empty container
-                // as stub
-                let _ = component_id;
+                session.remove(component_id).await;
             }
             CanvasUpdate::Append { parent_id, component } => {
                 session.append(parent_id, component).await;
@@ -335,10 +458,24 @@ impl CanvasManager {
         sessions.get(id).cloned()
     }
 
-    /// Remove session
+    /// Remove session, cleaning up both mappings and the event receiver.
     pub async fn remove_session(&self, id: &CanvasId) {
         let mut sessions = self.sessions.write().await;
         sessions.remove(id);
+        let mut map = self.session_map.write().await;
+        let external_id: Vec<String> = map
+            .iter()
+            .filter(|(_, v)| *v == id)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in &external_id {
+            map.remove(key);
+        }
+        drop(map);
+        let mut rxs = self.event_rxs.write().await;
+        for key in &external_id {
+            rxs.remove(key);
+        }
     }
 
     /// List active sessions
@@ -387,13 +524,31 @@ impl CanvasWebSocketHandler {
                     }
                 }
             }
+            Message::Close(_) => {
+                debug!("Canvas {} received close frame", self.canvas_id.0);
+                let event = CanvasEvent::Close;
+                let _ = self.event_tx.send(event.clone()).await;
+                Some(event)
+            }
             _ => None,
         }
     }
 
     /// Get next update to send to client
     pub async fn next_update(&mut self) -> Option<CanvasUpdate> {
-        self.update_rx.recv().await.ok()
+        loop {
+            match self.update_rx.recv().await {
+                Ok(update) => return Some(update),
+                Err(RecvError::Lagged(n)) => {
+                    warn!(
+                        "Canvas {} broadcast lagged by {} messages",
+                        self.canvas_id.0, n
+                    );
+                    continue;
+                }
+                Err(RecvError::Closed) => return None,
+            }
+        }
     }
 
     /// Get canvas ID
