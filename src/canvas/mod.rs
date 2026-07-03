@@ -184,6 +184,20 @@ impl CanvasComponent {
                 children.push(child);
                 return true;
             }
+            // Check direct children first (zero clones for shallow appends)
+            if let Some(pos) = children.iter().position(|c| {
+                matches!(c, CanvasComponent::Container { id, .. } if id == parent_id)
+            }) {
+                if let CanvasComponent::Container {
+                    children: target_children,
+                    ..
+                } = &mut children[pos]
+                {
+                    target_children.push(child);
+                    return true;
+                }
+            }
+            // Recurse — at most one clone per depth level
             for c in children.iter_mut() {
                 if c.append_child(parent_id, child.clone()) {
                     return true;
@@ -620,6 +634,14 @@ impl CanvasWebSocketHandler {
     /// Get canvas ID
     pub fn canvas_id(&self) -> &CanvasId {
         &self.canvas_id
+    }
+
+    /// Close the canvas session and remove it from the manager.
+    ///
+    /// Should be called when the WebSocket connection is torn down so the
+    /// session and its associated resources are cleaned up.
+    pub async fn close_session(&self, manager: &CanvasManager) {
+        manager.remove_session(&self.canvas_id).await;
     }
 }
 
@@ -1382,5 +1404,147 @@ mod tests {
         assert!(!id.0.is_empty());
         // Should be a valid UUID format
         assert_eq!(id.0.len(), 36);
+    }
+
+    // -----------------------------------------------------------------------
+    // apply_update dispatch tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_apply_update_init_dispatch() {
+        let manager = CanvasManager::new();
+
+        let root = CanvasComponent::Text {
+            id: "greeting".to_string(),
+            content: "hello".to_string(),
+            style: None,
+        };
+
+        manager
+            .apply_update("session-1", CanvasUpdate::Init {
+                canvas_id: "ignored".to_string(),
+                root,
+            })
+            .await;
+
+        // Session should have been created and root set
+        let session = manager.get_or_create_for_session("session-1").await;
+        let guard = session.root.read().await;
+        assert_eq!(guard.id(), "greeting");
+    }
+
+    #[tokio::test]
+    async fn test_apply_update_notify_dispatch() {
+        let manager = CanvasManager::new();
+        let session = manager.get_or_create_for_session("session-1").await;
+        let mut rx = session.update_tx.subscribe();
+
+        manager
+            .apply_update("session-1", CanvasUpdate::Notify {
+                level: "warn".to_string(),
+                message: "test notification".to_string(),
+            })
+            .await;
+
+        let update = rx.try_recv().unwrap();
+        assert!(matches!(update, CanvasUpdate::Notify { level, message }
+            if level == "warn" && message == "test notification"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_update_close_dispatch() {
+        let manager = CanvasManager::new();
+        let session = manager.get_or_create_for_session("session-1").await;
+        let mut rx = session.update_tx.subscribe();
+
+        manager
+            .apply_update("session-1", CanvasUpdate::Close)
+            .await;
+
+        let update = rx.try_recv().unwrap();
+        assert!(matches!(update, CanvasUpdate::Close));
+    }
+
+    #[tokio::test]
+    async fn test_apply_update_update_dispatch() {
+        let manager = CanvasManager::new();
+        let session = manager.get_or_create_for_session("session-1").await;
+        let mut rx = session.update_tx.subscribe();
+
+        let component = CanvasComponent::Text {
+            id: "title".to_string(),
+            content: "updated".to_string(),
+            style: None,
+        };
+
+        manager
+            .apply_update("session-1", CanvasUpdate::Update {
+                component_id: "title".to_string(),
+                component,
+            })
+            .await;
+
+        let update = rx.try_recv().unwrap();
+        assert!(matches!(update, CanvasUpdate::Update { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_apply_update_remove_dispatch() {
+        let manager = CanvasManager::new();
+        let session = manager.get_or_create_for_session("session-1").await;
+        let mut rx = session.update_tx.subscribe();
+
+        manager
+            .apply_update("session-1", CanvasUpdate::Remove {
+                component_id: "old-comp".to_string(),
+            })
+            .await;
+
+        let update = rx.try_recv().unwrap();
+        assert!(matches!(update, CanvasUpdate::Remove { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_apply_update_append_dispatch() {
+        let manager = CanvasManager::new();
+        let session = manager.get_or_create_for_session("session-1").await;
+        let mut rx = session.update_tx.subscribe();
+
+        manager
+            .apply_update("session-1", CanvasUpdate::Append {
+                parent_id: "root".to_string(),
+                component: CanvasComponent::Text {
+                    id: "child".to_string(),
+                    content: "appended".to_string(),
+                    style: None,
+                },
+            })
+            .await;
+
+        let update = rx.try_recv().unwrap();
+        assert!(matches!(update, CanvasUpdate::Append { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // WebSocket handler cleanup tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_handler_close_session_removes_from_manager() {
+        let manager = CanvasManager::new();
+        let session = manager.get_or_create_for_session("cleanup-test").await;
+        let canvas_id = session.id.clone();
+
+        let (event_tx, _event_rx) = mpsc::channel(10);
+        let (_update_tx, update_rx) = broadcast::channel(10);
+
+        // Create a new handler that references the same canvas_id
+        let handler = CanvasWebSocketHandler::new(canvas_id, event_tx, update_rx);
+
+        assert!(manager.get_session(handler.canvas_id()).await.is_some());
+
+        handler.close_session(&manager).await;
+
+        assert!(manager.get_session(handler.canvas_id()).await.is_none());
     }
 }
