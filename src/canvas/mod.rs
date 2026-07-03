@@ -10,8 +10,8 @@ use std::sync::Arc;
 use axum::extract::ws::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -185,13 +185,12 @@ impl CanvasComponent {
                 return true;
             }
             // Check direct children first (zero clones for shallow appends)
-            if let Some(pos) = children.iter().position(|c| {
-                matches!(c, CanvasComponent::Container { id, .. } if id == parent_id)
-            }) {
-                if let CanvasComponent::Container {
-                    children: target_children,
-                    ..
-                } = &mut children[pos]
+            if let Some(pos) = children
+                .iter()
+                .position(|c| matches!(c, CanvasComponent::Container { id, .. } if id == parent_id))
+            {
+                if let CanvasComponent::Container { children: target_children, .. } =
+                    &mut children[pos]
                 {
                     target_children.push(child);
                     return true;
@@ -356,10 +355,7 @@ impl CanvasSession {
         drop(guard);
         if self
             .update_tx
-            .send(CanvasUpdate::Update {
-                component_id,
-                component,
-            })
+            .send(CanvasUpdate::Update { component_id, component })
             .is_err()
         {
             warn!("Canvas {}: update send failed (no receivers)", self.id.0);
@@ -373,10 +369,7 @@ impl CanvasSession {
         drop(guard);
         if self
             .update_tx
-            .send(CanvasUpdate::Append {
-                parent_id,
-                component,
-            })
+            .send(CanvasUpdate::Append { parent_id, component })
             .is_err()
         {
             warn!("Canvas {}: append send failed (no receivers)", self.id.0);
@@ -620,10 +613,7 @@ impl CanvasWebSocketHandler {
             match self.update_rx.recv().await {
                 Ok(update) => return Some(update),
                 Err(RecvError::Lagged(n)) => {
-                    warn!(
-                        "Canvas {} broadcast lagged by {} messages",
-                        self.canvas_id.0, n
-                    );
+                    warn!("Canvas {} broadcast lagged by {} messages", self.canvas_id.0, n);
                     continue;
                 }
                 Err(RecvError::Closed) => return None,
@@ -1284,9 +1274,7 @@ mod tests {
                     content: "remove me".to_string(),
                     style: None,
                 },
-                CanvasComponent::Divider {
-                    id: "div1".to_string(),
-                },
+                CanvasComponent::Divider { id: "div1".to_string() },
             ],
             layout: None,
         };
@@ -1321,9 +1309,7 @@ mod tests {
         };
         assert_eq!(text.id(), "my_text");
 
-        let divider = CanvasComponent::Divider {
-            id: "sep".to_string(),
-        };
+        let divider = CanvasComponent::Divider { id: "sep".to_string() };
         assert_eq!(divider.id(), "sep");
     }
 
@@ -1421,10 +1407,13 @@ mod tests {
         };
 
         manager
-            .apply_update("session-1", CanvasUpdate::Init {
-                canvas_id: "ignored".to_string(),
-                root,
-            })
+            .apply_update(
+                "session-1",
+                CanvasUpdate::Init {
+                    canvas_id: "ignored".to_string(),
+                    root,
+                },
+            )
             .await;
 
         // Session should have been created and root set
@@ -1440,10 +1429,13 @@ mod tests {
         let mut rx = session.update_tx.subscribe();
 
         manager
-            .apply_update("session-1", CanvasUpdate::Notify {
-                level: "warn".to_string(),
-                message: "test notification".to_string(),
-            })
+            .apply_update(
+                "session-1",
+                CanvasUpdate::Notify {
+                    level: "warn".to_string(),
+                    message: "test notification".to_string(),
+                },
+            )
             .await;
 
         let update = rx.try_recv().unwrap();
@@ -1457,9 +1449,7 @@ mod tests {
         let session = manager.get_or_create_for_session("session-1").await;
         let mut rx = session.update_tx.subscribe();
 
-        manager
-            .apply_update("session-1", CanvasUpdate::Close)
-            .await;
+        manager.apply_update("session-1", CanvasUpdate::Close).await;
 
         let update = rx.try_recv().unwrap();
         assert!(matches!(update, CanvasUpdate::Close));
@@ -1478,10 +1468,13 @@ mod tests {
         };
 
         manager
-            .apply_update("session-1", CanvasUpdate::Update {
-                component_id: "title".to_string(),
-                component,
-            })
+            .apply_update(
+                "session-1",
+                CanvasUpdate::Update {
+                    component_id: "title".to_string(),
+                    component,
+                },
+            )
             .await;
 
         let update = rx.try_recv().unwrap();
@@ -1495,9 +1488,12 @@ mod tests {
         let mut rx = session.update_tx.subscribe();
 
         manager
-            .apply_update("session-1", CanvasUpdate::Remove {
-                component_id: "old-comp".to_string(),
-            })
+            .apply_update(
+                "session-1",
+                CanvasUpdate::Remove {
+                    component_id: "old-comp".to_string(),
+                },
+            )
             .await;
 
         let update = rx.try_recv().unwrap();
@@ -1511,14 +1507,17 @@ mod tests {
         let mut rx = session.update_tx.subscribe();
 
         manager
-            .apply_update("session-1", CanvasUpdate::Append {
-                parent_id: "root".to_string(),
-                component: CanvasComponent::Text {
-                    id: "child".to_string(),
-                    content: "appended".to_string(),
-                    style: None,
+            .apply_update(
+                "session-1",
+                CanvasUpdate::Append {
+                    parent_id: "root".to_string(),
+                    component: CanvasComponent::Text {
+                        id: "child".to_string(),
+                        content: "appended".to_string(),
+                        style: None,
+                    },
                 },
-            })
+            )
             .await;
 
         let update = rx.try_recv().unwrap();
