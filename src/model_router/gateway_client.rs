@@ -60,6 +60,11 @@ pub trait GatewayClient: Send + Sync {
     /// Change the request timeout.
     async fn set_timeout(&self, duration: Duration);
 
+    /// GET and return the raw `Response` for status checking (e.g. health
+    /// checks). Auth headers, extra headers, retries, and timeouts are handled
+    /// internally.
+    async fn get(&self, path: &str) -> crate::Result<reqwest::Response>;
+
     /// Return the configured base URL.
     fn base_url(&self) -> &str;
 }
@@ -156,11 +161,6 @@ impl HttpGatewayClient {
     pub fn with_extra_headers(mut self, headers: HeaderMap) -> Self {
         self.extra_headers = headers;
         self
-    }
-
-    /// Expose the inner `reqwest::Client` for direct use (e.g. streaming).
-    pub(crate) fn inner_client(&self) -> &reqwest::Client {
-        &self.inner
     }
 
     /// Return the auth header name and value for a given credential.
@@ -384,7 +384,6 @@ impl GatewayClient for HttpGatewayClient {
         let url = self.url(path);
         let credential = self.credential.read().await.clone();
         let (auth_name, auth_value) = self.auth_for_credential(&credential);
-        let timeout = *self.timeout.read().await;
         let extra = self.extra_headers.clone();
 
         self.execute_with_retry(|| {
@@ -395,7 +394,6 @@ impl GatewayClient for HttpGatewayClient {
                 let mut builder = self
                     .inner
                     .post(&url)
-                    .timeout(timeout)
                     .header(auth_name, auth_value)
                     .header("Content-Type", "application/json")
                     .header("Accept", "text/event-stream");
@@ -406,6 +404,37 @@ impl GatewayClient for HttpGatewayClient {
 
                 builder
                     .json(body)
+                    .send()
+                    .await
+                    .map_err(crate::error::SyscityError::Http)
+            }
+        })
+        .await
+    }
+
+    async fn get(&self, path: &str) -> crate::Result<reqwest::Response> {
+        let url = self.url(path);
+        let credential = self.credential.read().await.clone();
+        let (auth_name, auth_value) = self.auth_for_credential(&credential);
+        let timeout = *self.timeout.read().await;
+        let extra = self.extra_headers.clone();
+
+        self.execute_with_retry(|| {
+            let url = url.clone();
+            let auth_value = auth_value.clone();
+            let extra = extra.clone();
+            async move {
+                let mut builder = self
+                    .inner
+                    .get(&url)
+                    .timeout(timeout)
+                    .header(auth_name, auth_value);
+
+                for (name, value) in extra.iter() {
+                    builder = builder.header(name, value);
+                }
+
+                builder
                     .send()
                     .await
                     .map_err(crate::error::SyscityError::Http)

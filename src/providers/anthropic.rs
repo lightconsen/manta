@@ -485,8 +485,8 @@ impl AnthropicProvider {
                             }
                             "content_block_stop" => {
                                 if let Some(tool) = current_tool_call.take() {
-                                    let args = serde_json::from_str(&tool.input)
-                                        .unwrap_or_else(|e| {
+                                    let args =
+                                        serde_json::from_str(&tool.input).unwrap_or_else(|e| {
                                             warn!("Failed to parse tool input JSON: {}", e);
                                             serde_json::Value::Object(serde_json::Map::new())
                                         });
@@ -539,10 +539,7 @@ impl AnthropicProvider {
 
     /// Parse a raw byte chunk from the HTTP response body, buffering partial
     /// SSE lines across calls. Returns completed SSE lines.
-    fn parse_sse_chunk(
-        incoming: &str,
-        buffer: &mut String,
-    ) -> Vec<CompletionChunk> {
+    fn parse_sse_chunk(incoming: &str, buffer: &mut String) -> Vec<CompletionChunk> {
         buffer.push_str(incoming);
 
         // Find the last complete SSE event boundary (ends with "\n\n" or "\n")
@@ -830,5 +827,91 @@ mod tests {
         let (header_name, header_value) = provider.gateway_client.auth_for_credential(&cred);
         assert_eq!(header_name, "Authorization");
         assert_eq!(header_value, "Bearer oauth-token");
+    }
+
+    // ------------------------------------------------------------------
+    // parse_sse_events tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_sse_text_delta() {
+        let sse = "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n";
+        let chunks = AnthropicProvider::parse_sse_events(sse);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, Some("Hello".to_string()));
+        assert!(!chunks[0].is_done);
+    }
+
+    #[test]
+    fn test_parse_sse_message_stop() {
+        let sse = "data: {\"type\":\"message_stop\"}\n\n";
+        let chunks = AnthropicProvider::parse_sse_events(sse);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].is_done);
+        assert!(chunks[0].content.is_none());
+    }
+
+    #[test]
+    fn test_parse_sse_done_signal() {
+        let sse = "data: [DONE]\n\n";
+        let chunks = AnthropicProvider::parse_sse_events(sse);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].is_done);
+    }
+
+    #[test]
+    fn test_parse_sse_unknown_event_ignored() {
+        let sse = "data: {\"type\":\"ping\"}\n\n";
+        let chunks = AnthropicProvider::parse_sse_events(sse);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_malformed_json_ignored() {
+        let sse = "data: not-json\n\n";
+        let chunks = AnthropicProvider::parse_sse_events(sse);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_tool_use_full_flow() {
+        let sse = "\
+data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"read_file\"}}\n\n
+data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"/tmp\\\"\"}}\n\n
+data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"}\"}}\n\n
+data: {\"type\":\"content_block_stop\"}\n\n
+data: {\"type\":\"message_stop\"}\n\n";
+        let chunks = AnthropicProvider::parse_sse_events(sse);
+        // Content_block_stop yields a tool call chunk, message_stop yields a done chunk
+        let tool_chunks: Vec<_> = chunks.iter().filter(|c| c.tool_calls.is_some()).collect();
+        assert_eq!(tool_chunks.len(), 1);
+        let calls = tool_chunks[0].tool_calls.as_ref().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "tu_1");
+        assert_eq!(calls[0].function.name, "read_file");
+        // Arguments should be valid JSON after accumulation
+        let args: serde_json::Value = serde_json::from_str(&calls[0].function.arguments).unwrap();
+        assert_eq!(args["path"], "/tmp");
+
+        let done_chunks: Vec<_> = chunks.iter().filter(|c| c.is_done).collect();
+        assert_eq!(done_chunks.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_sse_multiple_text_deltas() {
+        let sse = "\
+data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello \"}}\n\n
+data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"world\"}}\n\n
+data: {\"type\":\"message_stop\"}\n\n";
+        let chunks = AnthropicProvider::parse_sse_events(sse);
+        let text_chunks: Vec<_> = chunks.iter().filter_map(|c| c.content.clone()).collect();
+        assert_eq!(text_chunks, vec!["Hello ".to_string(), "world".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_sse_message_delta_ignored() {
+        let sse = "data: {\"type\":\"message_delta\"}\n\n";
+        let chunks = AnthropicProvider::parse_sse_events(sse);
+        assert!(chunks.is_empty());
     }
 }

@@ -35,6 +35,8 @@ pub struct OpenAiProvider {
     stream_family_override: Option<ProviderStreamFamily>,
     /// Maximum context length (0 = use model-based estimate).
     max_context: usize,
+    /// Cached SYSCITY_API_PATH override, read once during construction.
+    api_path_override: Option<String>,
 }
 
 impl OpenAiProvider {
@@ -79,6 +81,7 @@ impl OpenAiProvider {
             gateway_client,
             stream_family_override: None,
             max_context: 0,
+            api_path_override: std::env::var("SYSCITY_API_PATH").ok(),
         })
     }
 
@@ -105,9 +108,7 @@ impl OpenAiProvider {
 
     /// Build the request URL
     fn url(&self, path: &str) -> String {
-        // Support custom paths via SYSCITY_API_PATH env var
-        let custom_path = std::env::var("SYSCITY_API_PATH").ok();
-        if let Some(api_path) = custom_path {
+        if let Some(ref api_path) = self.api_path_override {
             format!("{}/{}", self.base_url.trim_end_matches('/'), api_path.trim_start_matches('/'))
         } else {
             format!("{}{}", self.base_url.trim_end_matches('/'), path)
@@ -380,25 +381,10 @@ impl Provider for OpenAiProvider {
     }
 
     async fn health_check(&self) -> crate::Result<bool> {
-        let credential = self.gateway_client.credential.read().await.clone();
-        let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
-
-        let mut builder = self
-            .gateway_client
-            .inner_client()
-            .get(self.url("/models"))
-            .header(auth_name, auth_value);
-
-        for (name, value) in self.gateway_client.extra_headers.iter() {
-            builder = builder.header(name, value);
+        match self.gateway_client.get(&self.url("/models")).await {
+            Ok(resp) => Ok(resp.status().is_success()),
+            Err(_) => Ok(false),
         }
-
-        let response = builder
-            .send()
-            .await
-            .map_err(crate::error::SyscityError::Http)?;
-
-        Ok(response.status().is_success())
     }
 
     async fn set_credential(

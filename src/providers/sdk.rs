@@ -114,10 +114,7 @@ impl ProviderSdk {
     ///
     /// Returns pack names for packs where the predicate returns `true`.
     /// The predicate receives the pack's name and provider list.
-    pub fn find_by_capability(
-        &self,
-        predicate: impl Fn(&str, &[String]) -> bool,
-    ) -> Vec<String> {
+    pub fn find_by_capability(&self, predicate: impl Fn(&str, &[String]) -> bool) -> Vec<String> {
         self.packs
             .iter()
             .filter(|(_, pack)| predicate(&pack.name, &pack.providers))
@@ -225,9 +222,8 @@ mod tests {
             version: "1.0".to_string(),
             providers: vec!["gpt-4".to_string()],
         });
-        let found = sdk.find_by_capability(|_name, providers| {
-            providers.iter().any(|p| p.contains("vision"))
-        });
+        let found = sdk
+            .find_by_capability(|_name, providers| providers.iter().any(|p| p.contains("vision")));
         assert_eq!(found, vec!["vision_pack"]);
     }
 

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use super::{
     CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, Message, Provider,
@@ -365,92 +365,23 @@ impl Provider for GeminiProvider {
 
         let request_url = self.url(&model, true);
 
-        // Retry logic for transient errors (cannot use post_json because
-        // streaming needs the raw byte stream)
-        let mut retries: u32 = 0;
-        let max_retries: u32 = 3;
+        let response = self
+            .gateway_client
+            .post_json_streaming(&request_url, &body)
+            .await?;
 
-        loop {
-            let credential = self.gateway_client.credential.read().await.clone();
-            let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
-
-            let mut builder = self
-                .gateway_client
-                .inner_client()
-                .post(&request_url)
-                .header(auth_name, auth_value)
-                .header(CONTENT_TYPE, "application/json")
-                .json(&body);
-
-            for (name, value) in self.gateway_client.extra_headers.iter() {
-                builder = builder.header(name, value);
-            }
-
-            match builder.send().await {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        let status = response.status();
-                        let text = response.text().await.unwrap_or_default();
-                        error!("Gemini API error: {} - {}", status, text);
-                        return Err(crate::error::SyscityError::ExternalService {
-                            source: format!("Gemini API error {}: {}", status, text),
-                            cause: None,
-                        });
-                    }
-
-                    let stream = response.bytes_stream();
-                    let gemini_stream = GeminiStream::new(stream);
-                    return Ok(Box::pin(gemini_stream));
-                }
-                Err(e) => {
-                    let error_msg = e.to_string();
-                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
-
-                    let is_retryable = error_msg.contains("connection closed")
-                        || error_msg.contains("timeout")
-                        || error_msg.contains("reset")
-                        || error_msg.contains("broken pipe");
-
-                    if is_retryable && retries < max_retries {
-                        retries += 1;
-                        let delay = Duration::from_secs(2_u64.pow(retries - 1));
-                        warn!(
-                            "Retryable stream error, retrying after {:?}... (attempt {}/{})",
-                            delay, retries, max_retries
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-
-                    return Err(crate::error::SyscityError::Http(e));
-                }
-            }
-        }
+        let stream = response.bytes_stream();
+        let gemini_stream = GeminiStream::new(stream);
+        return Ok(Box::pin(gemini_stream));
     }
 
     async fn health_check(&self) -> crate::Result<bool> {
-        let credential = self.gateway_client.credential.read().await.clone();
-        let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
-
         let model = &self.default_model;
         let url = format!("{}/models/{}", self.base_url.trim_end_matches('/'), model);
-
-        let mut builder = self
-            .gateway_client
-            .inner_client()
-            .get(&url)
-            .header(auth_name, auth_value);
-
-        for (name, value) in self.gateway_client.extra_headers.iter() {
-            builder = builder.header(name, value);
+        match self.gateway_client.get(&url).await {
+            Ok(resp) => Ok(resp.status().is_success()),
+            Err(_) => Ok(false),
         }
-
-        let response = builder
-            .send()
-            .await
-            .map_err(crate::error::SyscityError::Http)?;
-
-        Ok(response.status().is_success())
     }
 
     async fn set_credential(
@@ -973,5 +904,89 @@ mod tests {
         let (header_name, header_value) = provider.gateway_client.auth_for_credential(&cred);
         assert_eq!(header_name, "Authorization");
         assert_eq!(header_value, "Bearer oauth-token");
+    }
+
+    // ------------------------------------------------------------------
+    // GeminiStream parse_line tests
+    // ------------------------------------------------------------------
+
+    struct GeminiEmptyStream;
+    impl futures::Stream for GeminiEmptyStream {
+        type Item = Result<bytes::Bytes, reqwest::Error>;
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Option<Self::Item>> {
+            Poll::Ready(None)
+        }
+    }
+
+    fn make_stream() -> GeminiStream {
+        GeminiStream::new(GeminiEmptyStream)
+    }
+
+    #[test]
+    fn test_parse_line_text_content() {
+        let mut stream = make_stream();
+        let line = r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]}}]}"#;
+        let chunk = stream.parse_line(line);
+        assert!(chunk.is_some());
+        let chunk = chunk.unwrap();
+        assert_eq!(chunk.content, Some("Hello".to_string()));
+        assert!(!chunk.is_done);
+    }
+
+    #[test]
+    fn test_parse_line_finish_reason() {
+        let mut stream = make_stream();
+        let line = r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"done"}]},"finish_reason":"STOP"}]}"#;
+        let chunk = stream.parse_line(line);
+        assert!(chunk.is_some());
+        let chunk = chunk.unwrap();
+        assert_eq!(chunk.content, Some("done".to_string()));
+        assert!(chunk.is_done);
+    }
+
+    #[test]
+    fn test_parse_line_usage_only() {
+        let mut stream = make_stream();
+        let line = r#"{"usage_metadata":{"prompt_token_count":10,"candidates_token_count":5,"total_token_count":15}}"#;
+        let chunk = stream.parse_line(line);
+        assert!(chunk.is_some());
+        let chunk = chunk.unwrap();
+        assert!(chunk.is_done);
+        let usage = chunk.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(usage.total_tokens, 15);
+    }
+
+    #[test]
+    fn test_parse_line_empty_returns_none() {
+        let mut stream = make_stream();
+        assert!(stream.parse_line("").is_none());
+        assert!(stream.parse_line("   ").is_none());
+    }
+
+    #[test]
+    fn test_parse_line_data_prefix_returns_none() {
+        let mut stream = make_stream();
+        assert!(stream.parse_line("data: some text").is_none());
+    }
+
+    #[test]
+    fn test_parse_line_invalid_json_returns_none() {
+        let mut stream = make_stream();
+        assert!(stream.parse_line("not json at all").is_none());
+    }
+
+    #[test]
+    fn test_parse_line_multiple_text_parts_joined() {
+        let mut stream = make_stream();
+        let line = r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hello "},{"text":"world"}]}}]}"#;
+        let chunk = stream.parse_line(line);
+        assert!(chunk.is_some());
+        let chunk = chunk.unwrap();
+        assert_eq!(chunk.content, Some("Hello world".to_string()));
     }
 }
