@@ -52,97 +52,30 @@ pub struct StreamFamilyRegistry {
 
 impl Default for StreamFamilyRegistry {
     fn default() -> Self {
+        let default_chain = default_wrappers();
         let mut registry = Self::empty();
-        registry.register(
-            ProviderStreamFamily::OpenAi,
-            vec![
-                reasoning_content_wrapper(),
-                thinking_tag_extractor_wrapper(),
-                tool_call_accumulator_wrapper(),
-                html_entity_decoder_wrapper(),
-                json_repair_wrapper(),
-                usage_extractor_wrapper(),
-            ],
-        );
-        registry.register(
-            ProviderStreamFamily::Anthropic,
-            vec![
-                reasoning_content_wrapper(),
-                thinking_tag_extractor_wrapper(),
-                tool_call_accumulator_wrapper(),
-                html_entity_decoder_wrapper(),
-                json_repair_wrapper(),
-                usage_extractor_wrapper(),
-            ],
-        );
-        registry.register(
-            ProviderStreamFamily::OpenAiReasoning,
-            vec![
-                reasoning_content_wrapper(),
-                thinking_tag_extractor_wrapper(),
-                tool_call_accumulator_wrapper(),
-                html_entity_decoder_wrapper(),
-                json_repair_wrapper(),
-                usage_extractor_wrapper(),
-            ],
-        );
-        registry.register(
-            ProviderStreamFamily::AnthropicThinking,
-            vec![
-                reasoning_content_wrapper(),
-                thinking_tag_extractor_wrapper(),
-                tool_call_accumulator_wrapper(),
-                html_entity_decoder_wrapper(),
-                json_repair_wrapper(),
-                usage_extractor_wrapper(),
-            ],
-        );
-        registry.register(
-            ProviderStreamFamily::OpenRouter,
-            vec![
-                reasoning_content_wrapper(),
-                thinking_tag_extractor_wrapper(),
-                tool_call_accumulator_wrapper(),
-                html_entity_decoder_wrapper(),
-                json_repair_wrapper(),
-                usage_extractor_wrapper(),
-            ],
-        );
-        registry.register(
-            ProviderStreamFamily::GoogleThinking,
-            vec![
-                reasoning_content_wrapper(),
-                thinking_tag_extractor_wrapper(),
-                tool_call_accumulator_wrapper(),
-                html_entity_decoder_wrapper(),
-                json_repair_wrapper(),
-                usage_extractor_wrapper(),
-            ],
-        );
-        registry.register(
-            ProviderStreamFamily::Moonshot,
-            vec![
-                reasoning_content_wrapper(),
-                thinking_tag_extractor_wrapper(),
-                tool_call_accumulator_wrapper(),
-                html_entity_decoder_wrapper(),
-                json_repair_wrapper(),
-                usage_extractor_wrapper(),
-            ],
-        );
-        registry.register(
-            ProviderStreamFamily::Minimax,
-            vec![
-                reasoning_content_wrapper(),
-                thinking_tag_extractor_wrapper(),
-                tool_call_accumulator_wrapper(),
-                html_entity_decoder_wrapper(),
-                json_repair_wrapper(),
-                usage_extractor_wrapper(),
-            ],
-        );
+        registry.register(ProviderStreamFamily::OpenAi, default_chain.clone());
+        registry.register(ProviderStreamFamily::Anthropic, default_chain.clone());
+        registry.register(ProviderStreamFamily::OpenAiReasoning, default_chain.clone());
+        registry.register(ProviderStreamFamily::AnthropicThinking, default_chain.clone());
+        registry.register(ProviderStreamFamily::OpenRouter, default_chain.clone());
+        registry.register(ProviderStreamFamily::GoogleThinking, default_chain.clone());
+        registry.register(ProviderStreamFamily::Moonshot, default_chain.clone());
+        registry.register(ProviderStreamFamily::Minimax, default_chain);
         registry
     }
+}
+
+/// Default wrapper chain shared by all stream families.
+fn default_wrappers() -> Vec<StreamWrapper> {
+    vec![
+        reasoning_content_wrapper(),
+        thinking_tag_extractor_wrapper(),
+        tool_call_accumulator_wrapper(),
+        html_entity_decoder_wrapper(),
+        json_repair_wrapper(),
+        usage_extractor_wrapper(),
+    ]
 }
 
 impl StreamFamilyRegistry {

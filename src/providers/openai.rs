@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use super::{
     stream_wrappers::ProviderStreamFamily, CompletionChunk, CompletionRequest, CompletionResponse,
@@ -369,70 +369,14 @@ impl Provider for OpenAiProvider {
 
         let request_url = self.url("/chat/completions");
 
-        // Retry logic for transient errors (cannot use post_json_text because
-        // streaming needs the raw byte stream, not the full body as text)
-        let mut retries: u32 = 0;
-        let max_retries: u32 = 3;
+        let response = self
+            .gateway_client
+            .post_json_streaming(&request_url, &body_value)
+            .await?;
 
-        loop {
-            let credential = self.gateway_client.credential.read().await.clone();
-            let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
-
-            let mut builder = self
-                .gateway_client
-                .inner_client()
-                .post(&request_url)
-                .header(auth_name, auth_value)
-                .header(CONTENT_TYPE, "application/json")
-                .header("Accept", "text/event-stream")
-                .json(&body_value);
-
-            for (name, value) in self.gateway_client.extra_headers.iter() {
-                builder = builder.header(name, value);
-            }
-
-            match builder.send().await {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        let status = response.status();
-                        let text = response.text().await.unwrap_or_default();
-                        error!("OpenAI API error: {} - {}", status, text);
-                        return Err(crate::error::SyscityError::ExternalService {
-                            source: format!("OpenAI API error {}: {}", status, text),
-                            cause: None,
-                        });
-                    }
-
-                    let stream = response.bytes_stream();
-                    let openai_stream = OpenAiStream::new(stream);
-                    return Ok(Box::pin(openai_stream));
-                }
-                Err(e) => {
-                    let error_msg = e.to_string();
-                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
-
-                    let is_retryable = error_msg.contains("connection closed")
-                        || error_msg.contains("timeout")
-                        || error_msg.contains("reset")
-                        || error_msg.contains("broken pipe")
-                        || error_msg.contains("Connection reset")
-                        || error_msg.contains("unexpected EOF");
-
-                    if is_retryable && retries < max_retries {
-                        retries += 1;
-                        let delay = std::time::Duration::from_secs(2_u64.pow(retries - 1));
-                        warn!(
-                            "Retryable stream error, retrying after {:?}... (attempt {}/{})",
-                            delay, retries, max_retries
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-
-                    return Err(crate::error::SyscityError::Http(e));
-                }
-            }
-        }
+        let stream = response.bytes_stream();
+        let openai_stream = OpenAiStream::new(stream);
+        return Ok(Box::pin(openai_stream));
     }
 
     async fn health_check(&self) -> crate::Result<bool> {

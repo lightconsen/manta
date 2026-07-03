@@ -672,103 +672,45 @@ impl Provider for AnthropicProvider {
 
         let request_url = format!("{}/v1/messages", self.base_url);
 
-        // Retry logic for transient errors (cannot use post_json_text because
-        // streaming needs the raw byte stream)
-        let mut retries: u32 = 0;
-        let max_retries: u32 = 3;
+        let response = self
+            .gateway_client
+            .post_json_streaming(&request_url, &body_value)
+            .await?;
 
-        loop {
-            let credential = self.gateway_client.credential.read().await.clone();
-            let (auth_name, auth_value) = self.gateway_client.auth_for_credential(&credential);
-
-            let mut builder = self
-                .gateway_client
-                .inner_client()
-                .post(&request_url)
-                .header(auth_name, auth_value)
-                .header(CONTENT_TYPE, "application/json")
-                .json(&body_value);
-
-            for (name, value) in self.gateway_client.extra_headers.iter() {
-                builder = builder.header(name, value);
-            }
-
-            match builder.send().await {
-                Ok(response) => {
-                    let status = response.status();
-                    if !status.is_success() {
-                        let body = response.text().await.unwrap_or_default();
-                        error!("Anthropic API error: {} - {}", status, body);
-                        return Err(crate::error::SyscityError::ExternalService {
-                            source: format!("Anthropic API error {}: {}", status, body),
-                            cause: None,
-                        });
-                    }
-
-                    // Process the stream as SSE events with line buffering
-                    // to handle TCP fragmentation.
-                    let body_stream = response.bytes_stream();
-                    let stream = async_stream::stream! {
-                        let mut line_buffer = String::new();
-                        for await chunk in body_stream {
-                            match chunk {
-                                Ok(bytes) => {
-                                    let text = String::from_utf8_lossy(&bytes);
-                                    for event in Self::parse_sse_chunk(&text, &mut line_buffer) {
-                                        yield event;
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Stream error: {}", e);
-                                    yield CompletionChunk {
-                                        content: Some(format!("[Stream error: {}]", e)),
-                                        reasoning_content: None,
-                                        tool_calls: None,
-                                        is_done: true,
-                                        usage: None,
-                                    };
-                                }
-                            }
+        // Process the stream as SSE events with line buffering
+        // to handle TCP fragmentation.
+        let body_stream = response.bytes_stream();
+        let stream = async_stream::stream! {
+            let mut line_buffer = String::new();
+            for await chunk in body_stream {
+                match chunk {
+                    Ok(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        for event in Self::parse_sse_chunk(&text, &mut line_buffer) {
+                            yield event;
                         }
-                        // Process any remaining data in the buffer
-                        if !line_buffer.is_empty() {
-                            for event in Self::parse_sse_events(&line_buffer) {
-                                yield event;
-                            }
-                        }
-                    };
-
-                    return Ok(Box::pin(stream));
-                }
-                Err(e) => {
-                    let error_msg = e.to_string();
-                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
-
-                    let is_retryable = error_msg.contains("connection closed")
-                        || error_msg.contains("timeout")
-                        || error_msg.contains("reset")
-                        || error_msg.contains("broken pipe")
-                        || error_msg.contains("Connection reset")
-                        || error_msg.contains("unexpected EOF");
-
-                    if is_retryable && retries < max_retries {
-                        retries += 1;
-                        let delay = std::time::Duration::from_secs(2_u64.pow(retries - 1));
-                        warn!(
-                            "Retryable error detected, retrying after {:?}... (attempt {}/{})",
-                            delay, retries, max_retries
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
                     }
-
-                    return Err(crate::error::SyscityError::ExternalService {
-                        source: format!("Anthropic streaming request failed: {}", e),
-                        cause: Some(Box::new(e)),
-                    });
+                    Err(e) => {
+                        error!("Stream error: {}", e);
+                        yield CompletionChunk {
+                            content: Some(format!("[Stream error: {}]", e)),
+                            reasoning_content: None,
+                            tool_calls: None,
+                            is_done: true,
+                            usage: None,
+                        };
+                    }
                 }
             }
-        }
+            // Process any remaining data in the buffer
+            if !line_buffer.is_empty() {
+                for event in Self::parse_sse_events(&line_buffer) {
+                    yield event;
+                }
+            }
+        };
+
+        return Ok(Box::pin(stream));
     }
 
     fn supports_tools(&self) -> bool {

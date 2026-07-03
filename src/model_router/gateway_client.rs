@@ -42,6 +42,18 @@ pub trait GatewayClient: Send + Sync {
         body: &T,
     ) -> crate::Result<String>;
 
+    /// POST a JSON body and return the raw `Response` for byte-level
+    /// streaming consumption.
+    ///
+    /// The caller owns the response and is responsible for consuming the
+    /// byte stream (e.g. via `response.bytes_stream()`). Auth headers,
+    /// extra headers, retries, and timeouts are handled internally.
+    async fn post_json_streaming<T: Serialize + Send + Sync>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> crate::Result<reqwest::Response>;
+
     /// Update the active credential (e.g. after token refresh or key rotation).
     async fn set_credential(&self, credential: Credential);
 
@@ -362,6 +374,44 @@ impl GatewayClient for HttpGatewayClient {
                 source: format!("Failed to read response body: {}", e),
                 cause: None,
             })
+    }
+
+    async fn post_json_streaming<T: Serialize + Send + Sync>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> crate::Result<reqwest::Response> {
+        let url = self.url(path);
+        let credential = self.credential.read().await.clone();
+        let (auth_name, auth_value) = self.auth_for_credential(&credential);
+        let timeout = *self.timeout.read().await;
+        let extra = self.extra_headers.clone();
+
+        self.execute_with_retry(|| {
+            let url = url.clone();
+            let auth_value = auth_value.clone();
+            let extra = extra.clone();
+            async move {
+                let mut builder = self
+                    .inner
+                    .post(&url)
+                    .timeout(timeout)
+                    .header(auth_name, auth_value)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream");
+
+                for (name, value) in extra.iter() {
+                    builder = builder.header(name, value);
+                }
+
+                builder
+                    .json(body)
+                    .send()
+                    .await
+                    .map_err(crate::error::SyscityError::Http)
+            }
+        })
+        .await
     }
 
     async fn set_credential(&self, credential: Credential) {

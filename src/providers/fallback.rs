@@ -4,6 +4,7 @@
 //! succeeds.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tracing::{debug, error, info, warn};
@@ -78,6 +79,13 @@ impl Provider for FallbackProvider {
             .map(|p| p.max_context())
             .min()
             .unwrap_or(4096)
+    }
+
+    fn timeout(&self) -> Option<Duration> {
+        self.providers
+            .iter()
+            .filter_map(|p| p.timeout())
+            .min_by_key(|d| d.as_nanos())
     }
 
     async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse> {

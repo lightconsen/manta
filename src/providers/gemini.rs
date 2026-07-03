@@ -794,13 +794,18 @@ impl Stream for GeminiStream {
 
             match self.inner.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(bytes))) => {
-                    if let Ok(chunk) = std::str::from_utf8(&bytes) {
-                        self.buffer.push_str(chunk);
-                    }
+                    let chunk = String::from_utf8_lossy(&bytes);
+                    self.buffer.push_str(&chunk);
                 }
                 Poll::Ready(Some(Err(e))) => {
                     warn!("Gemini stream error: {}", e);
-                    return Poll::Ready(None);
+                    return Poll::Ready(Some(CompletionChunk {
+                        content: Some(format!("[Stream error: {}]", e)),
+                        reasoning_content: None,
+                        tool_calls: None,
+                        is_done: true,
+                        usage: None,
+                    }));
                 }
                 Poll::Ready(None) => {
                     if !self.buffer.is_empty() {
