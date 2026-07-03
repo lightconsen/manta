@@ -251,17 +251,26 @@ impl Engine {
             .write()
             .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
 
-        if entities.remove(&id).is_none() {
+        // Capture entity name for audit trail before removal
+        let entity_name = entities.get(&id).map(|e| e.name.clone()).ok_or_else(|| {
             self.metrics.errors.fetch_add(1, Ordering::Relaxed);
-            return Err(SyscityError::NotFound {
+            SyscityError::NotFound {
                 resource: format!("Entity with ID '{}' not found", id),
-            });
-        }
+            }
+        })?;
 
+        entities.remove(&id);
+        drop(entities);
+
+        // Emit both events so listeners see the terminal transition
+        self.emit_event(CoreEvent::entity_archived(1));
+        self.emit_event(CoreEvent::entity_deleted_with_name(id, &entity_name));
         self.metrics
             .entities_deleted
             .fetch_add(1, Ordering::Relaxed);
-        self.emit_event(CoreEvent::entity_deleted(id));
+        self.metrics
+            .entities_archived
+            .fetch_add(1, Ordering::Relaxed);
         info!("Entity deleted successfully");
         Ok(())
     }
@@ -282,22 +291,39 @@ impl Engine {
         use chrono::Duration;
 
         let cutoff = chrono::Utc::now() - Duration::days(max_age_days);
-        let mut archived_count = 0;
 
-        let mut entities = self
-            .entities
-            .write()
-            .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
+        // Phase 1: collect candidate IDs under a read lock (fast, non-blocking)
+        let candidates: Vec<Id> = {
+            let entities = self
+                .entities
+                .read()
+                .map_err(|_| SyscityError::Internal("Failed to acquire read lock".to_string()))?;
+            entities
+                .iter()
+                .filter(|(_, e)| {
+                    e.is_terminal()
+                        && e.metadata.updated_at < cutoff
+                        && e.status != Status::Archived
+                })
+                .map(|(id, _)| *id)
+                .collect()
+        };
 
-        for entity in entities.values_mut() {
-            if entity.is_terminal()
-                && entity.metadata.updated_at < cutoff
-                && entity.status != Status::Archived
-            {
-                entity.set_status(Status::Archived);
-                archived_count += 1;
+        // Phase 2: archive candidates under a write lock (only touches matched IDs)
+        let archived_count = {
+            let mut entities = self
+                .entities
+                .write()
+                .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
+            let mut count = 0usize;
+            for id in &candidates {
+                if let Some(entity) = entities.get_mut(id) {
+                    entity.set_status(Status::Archived);
+                    count += 1;
+                }
             }
-        }
+            count
+        };
 
         self.metrics.archive_runs.fetch_add(1, Ordering::Relaxed);
         self.metrics
@@ -473,9 +499,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_emits_events_via_bus() {
-        use std::sync::atomic::Ordering;
         use crate::core::events::EventHandler;
         use async_trait::async_trait;
+        use std::sync::atomic::Ordering;
 
         #[derive(Debug)]
         struct BusRecorder {
@@ -484,7 +510,11 @@ mod tests {
         }
 
         impl BusRecorder {
-            fn new() -> (Self, std::sync::Arc<std::sync::atomic::AtomicU64>, std::sync::Arc<std::sync::atomic::AtomicU64>) {
+            fn new() -> (
+                Self,
+                std::sync::Arc<std::sync::atomic::AtomicU64>,
+                std::sync::Arc<std::sync::atomic::AtomicU64>,
+            ) {
                 let created = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
                 let deleted = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
                 (
@@ -518,7 +548,8 @@ mod tests {
 
         let bus = EventBus::new();
         let (recorder, created, deleted) = BusRecorder::new();
-        bus.subscribe("bus_recorder", Box::new(recorder)).await;
+        bus.subscribe("bus_recorder", std::sync::Arc::new(recorder))
+            .await;
 
         let engine = Engine::with_config_and_event_bus(EngineConfig::default(), bus);
 

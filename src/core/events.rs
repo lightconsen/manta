@@ -54,6 +54,9 @@ pub enum CoreEvent {
         /// When the event was created (Unix timestamp seconds).
         ts: u64,
         entity_id: Id,
+        /// Entity name at time of deletion (for audit trail).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        entity_name: Option<String>,
     },
     /// One or more entities were archived during a sweep.
     EntityArchived {
@@ -97,6 +100,17 @@ impl CoreEvent {
         Self::EntityDeleted {
             ts: chrono::Utc::now().timestamp() as u64,
             entity_id,
+            entity_name: None,
+        }
+    }
+
+    /// Shortcut — create an `EntityDeleted` event with the entity name
+    /// included for audit trail.
+    pub fn entity_deleted_with_name(entity_id: Id, entity_name: &str) -> Self {
+        Self::EntityDeleted {
+            ts: chrono::Utc::now().timestamp() as u64,
+            entity_id,
+            entity_name: Some(entity_name.to_string()),
         }
     }
 
@@ -156,7 +170,7 @@ pub struct EventBus {
 #[derive(Debug)]
 struct HandlerEntry {
     name: &'static str,
-    handler: Box<dyn EventHandler>,
+    handler: Arc<dyn EventHandler>,
 }
 
 impl EventBus {
@@ -171,7 +185,7 @@ impl EventBus {
     ///
     /// Handlers can be removed later by name (useful for dynamic plugin
     /// lifecycles and avoids fragility of `std::any::type_name`).
-    pub async fn subscribe(&self, name: &'static str, handler: Box<dyn EventHandler>) {
+    pub async fn subscribe(&self, name: &'static str, handler: Arc<dyn EventHandler>) {
         self.handlers
             .write()
             .await
@@ -191,6 +205,26 @@ impl EventBus {
         let handlers = self.handlers.read().await;
         for entry in handlers.iter() {
             entry.handler.handle(event).await;
+        }
+    }
+
+    /// Publish an event to all registered handlers **concurrently**.
+    ///
+    /// Each handler is dispatched in its own `tokio::spawn` task so that
+    /// a slow handler does not block others.  The method waits for all
+    /// spawned tasks to complete before returning.
+    pub async fn publish_concurrent(&self, event: &CoreEvent) {
+        let handlers = self.handlers.read().await;
+        let mut handles = Vec::with_capacity(handlers.len());
+        for entry in handlers.iter() {
+            let handler = entry.handler.clone();
+            let event = event.clone();
+            handles.push(tokio::spawn(async move {
+                handler.handle(&event).await;
+            }));
+        }
+        for handle in handles {
+            let _ = handle.await;
         }
     }
 
@@ -292,9 +326,22 @@ pub async fn read_core_events(
 /// Convenience wrapper around the JSONL event log.
 ///
 /// Holds the workspace path so callers don't need to pass it every time.
-#[derive(Debug, Clone)]
+/// The file handle is opened lazily on first write and cached for subsequent
+/// appends, avoiding repeated `open` syscalls.
+#[derive(Debug)]
 pub struct EventLog {
     workspace_dir: PathBuf,
+    /// Lazily opened file handle, shared across clones.
+    file: Arc<tokio::sync::Mutex<Option<tokio::fs::File>>>,
+}
+
+impl Clone for EventLog {
+    fn clone(&self) -> Self {
+        Self {
+            workspace_dir: self.workspace_dir.clone(),
+            file: self.file.clone(),
+        }
+    }
 }
 
 impl EventLog {
@@ -302,12 +349,65 @@ impl EventLog {
     pub fn new(workspace_dir: impl Into<PathBuf>) -> Self {
         Self {
             workspace_dir: workspace_dir.into(),
+            file: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
-    /// Append an event to the log.
+    /// Append an event to the log using a cached file handle.
+    ///
+    /// The file is opened on the first call and kept open for subsequent
+    /// writes, which avoids the overhead of repeated `open` syscalls.
     pub async fn append(&self, event: &CoreEvent) -> crate::Result<()> {
-        append_core_event(&self.workspace_dir, event).await
+        let path = self.workspace_dir.join(CORE_EVENT_LOG_RELATIVE_PATH);
+        let line =
+            serde_json::to_string(event).map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to serialize core event".to_string(),
+                details: e.to_string(),
+            })?;
+
+        let mut guard = self.file.lock().await;
+        if guard.is_none() {
+            // First use — ensure directory exists and open the file
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    crate::error::SyscityError::Storage {
+                        context: format!("Failed to create event log directory: {:?}", parent),
+                        details: e.to_string(),
+                    }
+                })?;
+            }
+            let file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: format!("Failed to open event log: {:?}", path),
+                    details: e.to_string(),
+                })?;
+            *guard = Some(file);
+        }
+
+        if let Some(file) = guard.as_mut() {
+            // SAFETY: we hold the lock, so no concurrent writes.
+            // Write the JSON line followed by a newline.
+            use tokio::io::AsyncWriteExt;
+            file.write_all(format!("{}\n", line).as_bytes())
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: format!("Failed to write event log: {:?}", path),
+                    details: e.to_string(),
+                })?;
+
+            file.flush()
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: format!("Failed to flush event log: {:?}", path),
+                    details: e.to_string(),
+                })?;
+        }
+
+        Ok(())
     }
 
     /// Read all events from the log.
@@ -374,7 +474,7 @@ mod tests {
         let bus = EventBus::new();
         let handler = CountingHandler::new();
 
-        bus.subscribe("counting_handler", Box::new(handler)).await;
+        bus.subscribe("counting_handler", Arc::new(handler)).await;
 
         bus.publish(&CoreEvent::entity_created(Id::new(), "foo"))
             .await;
@@ -391,7 +491,7 @@ mod tests {
     async fn test_unsubscribe() {
         let bus = EventBus::new();
 
-        bus.subscribe("test", Box::new(CountingHandler::new()))
+        bus.subscribe("test", Arc::new(CountingHandler::new()))
             .await;
         assert_eq!(bus.handler_count().await, 1);
 
@@ -474,11 +574,7 @@ mod tests {
         let deserialized: CoreEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(e.event_name(), deserialized.event_name());
         match deserialized {
-            CoreEvent::EntityCreated {
-                entity_id,
-                ref entity_name,
-                ..
-            } => {
+            CoreEvent::EntityCreated { entity_id, ref entity_name, .. } => {
                 assert_eq!(entity_id, id);
                 assert_eq!(entity_name, "test-entity");
             }
