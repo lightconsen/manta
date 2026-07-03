@@ -25,7 +25,7 @@ pub use side_effects::{SideEffect, SideEffectContext, SideEffectExecutor, SideEf
 pub use sse::{SseEvent, SseStreamer};
 pub use trajectory::{TrajectoryEntry, TrajectoryLog, TrajectoryWriter};
 
-use self::stage::{default_outbound_stages_from_arcs, OutboundStageContext, run_outbound_stages};
+use self::stage::{default_outbound_stages_from_arcs, run_outbound_stages, OutboundStageContext};
 use crate::channels::reply_prefix::ReplyPrefixEngine;
 
 /// A fully-processed outbound result ready for delivery.
@@ -65,6 +65,10 @@ pub struct OutboundContext {
     pub usage: Option<crate::providers::Usage>,
     /// Side effects to execute after the reply is dispatched.
     pub side_effects: Vec<SideEffect>,
+    /// LLM model name (e.g. "claude-sonnet-4-6"), if known.
+    pub model_name: Option<String>,
+    /// LLM provider name (e.g. "anthropic"), if known.
+    pub model_provider: Option<String>,
 }
 
 /// Default outbound pipeline implementation.

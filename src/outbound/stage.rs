@@ -201,14 +201,18 @@ impl OutboundStage for ReplyPrefixStage {
             .with_channel(&ctx.input.channel);
 
         // Enrich with available metadata
+        if let Some(ref model_name) = ctx.input.model_name {
+            template_ctx = template_ctx.with_model(model_name);
+        }
+        if let Some(ref provider) = ctx.input.model_provider {
+            template_ctx = template_ctx.with_provider(provider);
+        }
         if let Some(ref usage) = ctx.input.usage {
             template_ctx = template_ctx
                 .with_custom("prompt_tokens", usage.prompt_tokens.to_string())
                 .with_custom("completion_tokens", usage.completion_tokens.to_string())
                 .with_custom("total_tokens", usage.total_tokens.to_string());
         }
-        // model_name/model_provider require enrichment on OutboundContext
-        // — not yet available at the pipeline stage level.
 
         let prefixed = self
             .engine
@@ -430,6 +434,8 @@ mod tests {
             trajectory: TrajectoryLog { entries: vec![] },
             usage: None,
             side_effects: vec![],
+            model_name: None,
+            model_provider: None,
         })
     }
 

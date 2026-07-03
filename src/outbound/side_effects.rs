@@ -13,11 +13,7 @@ use tracing::{debug, error, info, warn};
 #[derive(Debug, Clone)]
 pub enum SideEffect {
     /// Store a memory entry.
-    MemoryStore {
-        session_id: String,
-        content: String,
-        tags: Vec<String>,
-    },
+    MemoryStore { session_id: String, content: String },
     /// Schedule a cron job.
     CronSchedule { expression: String, payload: String },
     /// Trigger a webhook.
@@ -122,11 +118,7 @@ impl SideEffectExecutor {
         let ctx = self.ctx.read().await.clone();
 
         match effect {
-            SideEffect::MemoryStore {
-                session_id,
-                content,
-                tags: _tags,
-            } => {
+            SideEffect::MemoryStore { session_id, content } => {
                 if let Some(ref mm) = ctx.memory_manager {
                     match mm
                         .observe(session_id, content.clone(), "side_effect", 0.5)
@@ -171,7 +163,9 @@ impl SideEffectExecutor {
                 let client = match &ctx.webhook_client {
                     Some(c) => c.clone(),
                     None => {
-                        debug!("Webhook side-effect: no shared client configured, creating one-off");
+                        debug!(
+                            "Webhook side-effect: no shared client configured, creating one-off"
+                        );
                         Arc::new(
                             reqwest::Client::builder()
                                 .timeout(std::time::Duration::from_secs(10))
@@ -280,7 +274,6 @@ mod tests {
         let effects = vec![SideEffect::MemoryStore {
             session_id: "s1".to_string(),
             content: "hello".to_string(),
-            tags: vec!["greeting".to_string()],
         }];
 
         executor.execute_batch(&effects).await;
@@ -392,7 +385,6 @@ mod tests {
         let effect = SideEffect::MemoryStore {
             session_id: "s1".to_string(),
             content: "hello".to_string(),
-            tags: vec!["tag".to_string()],
         };
         let debug = format!("{:?}", effect);
         assert!(debug.contains("MemoryStore"));
@@ -430,7 +422,6 @@ mod tests {
         let effect = SideEffect::MemoryStore {
             session_id: "s1".to_string(),
             content: "hello".to_string(),
-            tags: vec![],
         };
 
         executor.execute_one(&effect).await;

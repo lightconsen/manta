@@ -645,15 +645,20 @@ async fn process_message_acp(
         traj.clone()
     };
 
-    let outbound_ctx = crate::outbound::OutboundContext {
-        session_id: session_id.to_string(),
-        channel: channel.to_string(),
-        agent_id: agent_id.to_string(),
-        raw_output: response_content,
-        tool_calls: vec![],
-        trajectory,
-        usage: response_usage,
-        side_effects: vec![],
+    let outbound_ctx = {
+        let cfg = state.config.read().await;
+        crate::outbound::OutboundContext {
+            session_id: session_id.to_string(),
+            channel: channel.to_string(),
+            agent_id: agent_id.to_string(),
+            raw_output: response_content,
+            tool_calls: vec![],
+            trajectory,
+            usage: response_usage,
+            side_effects: vec![],
+            model_name: Some(cfg.model.clone()),
+            model_provider: Some(cfg.model_provider.clone()),
+        }
     };
     let outbound_result = state.pipelines.outbound.process(outbound_ctx).await;
 

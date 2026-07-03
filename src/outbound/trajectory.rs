@@ -165,8 +165,7 @@ impl TrajectoryWriter {
             // Truncate at the last valid JSON boundary within the limit.
             // Iterate backwards from the truncation point finding `}`
             // positions until we get valid JSON (typically 1-2 iterations).
-            let truncated: String =
-                json.chars().take(self.max_event_size).collect();
+            let truncated: String = json.chars().take(self.max_event_size).collect();
             let mut search_end = truncated.len();
             loop {
                 if let Some(pos) = truncated[..search_end].rfind('}') {
@@ -519,7 +518,11 @@ mod tests {
             .and_then(|s| s.strip_suffix(".jsonl"))
             .unwrap();
         let parts: Vec<&str> = stem.splitn(3, '-').collect();
-        assert_eq!(parts.len(), 3, "stem should have exactly 3 parts: date, time, slug — got {parts:?}");
+        assert_eq!(
+            parts.len(),
+            3,
+            "stem should have exactly 3 parts: date, time, slug — got {parts:?}"
+        );
         assert_eq!(parts[2], "test-session");
         // parts[0] should be 8-digit date (YYYYMMDD), parts[1] should be 6-digit time (HHMMSS)
         assert_eq!(parts[0].len(), 8, "date part should be YYYYMMDD (8 digits)");

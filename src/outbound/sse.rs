@@ -88,7 +88,10 @@ impl SseStreamer {
                 debug!("SSE event sent to session {}", session_id);
             }
         } else {
-            debug!("SSE send skipped for session {}: no channel created (no subscriber yet)", session_id);
+            debug!(
+                "SSE send skipped for session {}: no channel created (no subscriber yet)",
+                session_id
+            );
         }
     }
 

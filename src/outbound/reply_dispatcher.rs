@@ -63,6 +63,7 @@ impl ReplyDispatcher {
     }
 
     /// Dispatch an outgoing message to its target channel.
+    /// Long messages are split into chunks at word boundaries.
     pub async fn dispatch(
         &self,
         channel_name: &str,
@@ -78,21 +79,26 @@ impl ReplyDispatcher {
             .get(channel_name)
             .ok_or_else(|| ReplyDispatchError::ChannelNotFound(channel_name.to_string()))?;
 
-        // TODO: implement chunking for messages exceeding max_chunk_length
-        let msg = OutgoingMessage { content: message.content.clone(), ..message };
+        let chunks = if self.config.chunk_long_messages
+            && message.content.len() > self.config.max_chunk_length
+        {
+            chunk_content(&message.content, self.config.max_chunk_length)
+        } else {
+            vec![message.content.clone()]
+        };
 
-        debug!(
-            "Dispatching reply to channel {} (conversation {})",
-            channel_name, msg.conversation_id.0
-        );
-
-        match channel.send(msg).await {
-            Ok(_) => Ok(()),
-            Err(e) => {
+        for content in chunks {
+            let msg = OutgoingMessage { content, ..message.clone() };
+            debug!(
+                "Dispatching reply to channel {} (conversation {})",
+                channel_name, msg.conversation_id.0
+            );
+            if let Err(e) = channel.send(msg).await {
                 error!("Failed to dispatch reply to {}: {}", channel_name, e);
-                Err(ReplyDispatchError::SendFailed(e.to_string()))
+                return Err(ReplyDispatchError::SendFailed(e.to_string()));
             }
         }
+        Ok(())
     }
 
     /// List registered channels.
@@ -109,6 +115,33 @@ pub enum ReplyDispatchError {
     ChannelNotFound(String),
     #[error("Failed to send message: {0}")]
     SendFailed(String),
+}
+
+/// Split content into chunks at word boundaries, each at most `max_len` bytes.
+///
+/// Each chunk ends at a space character when possible to avoid splitting words.
+/// If a single word exceeds `max_len`, it is hard-split at the limit.
+fn chunk_content(content: &str, max_len: usize) -> Vec<String> {
+    if max_len == 0 {
+        return vec![content.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut remaining = content;
+
+    while remaining.len() > max_len {
+        // Find the last space within the first max_len characters
+        let slice = &remaining[..max_len];
+        let split_at = slice.rfind(' ').map(|pos| pos + 1).unwrap_or(max_len);
+        chunks.push(remaining[..split_at].to_string());
+        remaining = remaining[split_at..].trim_start();
+    }
+
+    if !remaining.is_empty() {
+        chunks.push(remaining.to_string());
+    }
+
+    chunks
 }
 
 #[cfg(test)]
@@ -133,6 +166,55 @@ mod tests {
             usage: None,
         }
     }
+
+    // ── chunk_content tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_chunk_content_no_split() {
+        let chunks = chunk_content("hello world", 100);
+        assert_eq!(chunks, vec!["hello world"]);
+    }
+
+    #[test]
+    fn test_chunk_content_word_boundary() {
+        // "hello worl"[..10] = "hello worl", rfind(' ') = 5 → "hello " + "world foo bar"
+        let chunks = chunk_content("hello world foo bar", 10);
+        assert_eq!(chunks, vec!["hello ", "world foo ", "bar"]);
+    }
+
+    #[test]
+    fn test_chunk_content_no_space() {
+        let chunks = chunk_content("abcdefghijklmnop", 5);
+        assert_eq!(chunks, vec!["abcde", "fghij", "klmno", "p"]);
+    }
+
+    #[test]
+    fn test_chunk_content_empty() {
+        let chunks = chunk_content("", 10);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_content_exact_fit() {
+        let chunks = chunk_content("12345", 5);
+        assert_eq!(chunks, vec!["12345"]);
+    }
+
+    #[test]
+    fn test_chunk_content_max_len_zero() {
+        let chunks = chunk_content("hello", 0);
+        assert_eq!(chunks, vec!["hello"]);
+    }
+
+    #[test]
+    fn test_chunk_content_trim_remainder() {
+        let chunks = chunk_content("12345 7890", 5);
+        // "12345"[..5].rfind(' ') = None → split_at = 5 → "12345" + " 7890"
+        // trim_start → "7890"
+        assert_eq!(chunks, vec!["12345", "7890"]);
+    }
+
+    // ── dispatcher tests ────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_dispatch_empty_suppressed() {
