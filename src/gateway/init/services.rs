@@ -300,6 +300,7 @@ pub async fn init_side_effect_context(state: &Arc<GatewayState>) {
                 .build()
                 .unwrap_or_default(),
         )),
+        task_registry: Some(state.task_registry.clone()),
     };
     state
         .pipelines

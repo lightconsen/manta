@@ -133,12 +133,16 @@ impl OutboundStage for CanvasStage {
     }
 
     async fn process(&self, ctx: &mut OutboundStageContext) -> OutboundStageAction {
-        ctx.result.canvas_update = serde_json::from_str::<CanvasComponent>(&ctx.result.text)
-            .ok()
-            .map(|component| CanvasUpdate::Init {
-                canvas_id: ctx.input.session_id.clone(),
-                root: component,
-            });
+        let text = ctx.result.text.trim();
+        if text.starts_with('{') {
+            ctx.result.canvas_update =
+                serde_json::from_str::<CanvasComponent>(text)
+                    .ok()
+                    .map(|component| CanvasUpdate::Init {
+                        canvas_id: ctx.input.session_id.clone(),
+                        root: component,
+                    });
+        }
         OutboundStageAction::Continue
     }
 }
@@ -167,9 +171,18 @@ impl OutboundStage for SseStage {
 
     async fn process(&self, ctx: &mut OutboundStageContext) -> OutboundStageAction {
         for tc in &ctx.input.tool_calls {
-            let evt = SseEvent::ToolStart { name: tc.function.name.clone() };
-            self.sse.send(&ctx.input.session_id, evt.clone()).await;
-            ctx.result.sse_events.push(evt);
+            let start_evt = SseEvent::ToolStart { name: tc.function.name.clone() };
+            self.sse
+                .send(&ctx.input.session_id, start_evt.clone())
+                .await;
+            ctx.result.sse_events.push(start_evt);
+
+            let end_evt = SseEvent::ToolEnd {
+                name: tc.function.name.clone(),
+                result: serde_json::Value::Null,
+            };
+            self.sse.send(&ctx.input.session_id, end_evt.clone()).await;
+            ctx.result.sse_events.push(end_evt);
         }
         let done_evt = SseEvent::Done;
         self.sse.send(&ctx.input.session_id, done_evt.clone()).await;
@@ -255,7 +268,7 @@ impl OutboundStage for DispatchStage {
         let outbound_msg = crate::channels::OutgoingMessage {
             conversation_id: crate::channels::ConversationId::new(&ctx.input.session_id),
             content: ctx.result.text.clone(),
-            reasoning_content: None,
+            reasoning_content: ctx.input.reasoning_content.clone(),
             tool_calls: None,
             formatted_content: None,
             attachments: vec![],
@@ -312,7 +325,7 @@ impl OutboundStage for SideEffectStage {
 
 /// Run a slice of outbound stages sequentially.
 ///
-/// Returns `Some(OutboundResult)` if all stages completed (potentially
+/// Returns the final `OutboundResult` after all stages complete (potentially
 /// skipping dispatch), or the partial result if `SkipDispatch` was returned.
 pub async fn run_outbound_stages(
     stages: &[Box<dyn OutboundStage>],
@@ -395,7 +408,57 @@ pub fn default_outbound_stages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::reply_prefix::ReplyPrefixTemplate;
+    use crate::channels::ConversationId;
+    use crate::outbound::ReplyDispatchConfig;
     use crate::outbound::TrajectoryLog;
+
+    // ── Mock Channel for DispatchStage tests ─────────────────────────────
+
+    struct MockChannel {
+        messages: Arc<tokio::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::channels::Channel for MockChannel {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> crate::channels::ChannelCapabilities {
+            crate::channels::ChannelCapabilities::default()
+        }
+        async fn start(&self) -> crate::Result<()> {
+            Ok(())
+        }
+        async fn stop(&self) -> crate::Result<()> {
+            Ok(())
+        }
+        async fn send(
+            &self,
+            msg: crate::channels::OutgoingMessage,
+        ) -> crate::Result<crate::core::Id> {
+            self.messages.lock().await.push(msg.content);
+            Ok(crate::core::Id::new())
+        }
+        async fn send_typing(&self, _conversation_id: &ConversationId) -> crate::Result<()> {
+            Ok(())
+        }
+        async fn edit_message(
+            &self,
+            _message_id: crate::core::Id,
+            _new_content: String,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+        async fn delete_message(&self, _message_id: crate::core::Id) -> crate::Result<()> {
+            Ok(())
+        }
+        async fn health_check(&self) -> crate::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    // ── Stage test helpers ───────────────────────────────────────────────
 
     /// A stage that always continues.
     struct PassStage;
@@ -436,6 +499,7 @@ mod tests {
             side_effects: vec![],
             model_name: None,
             model_provider: None,
+            reasoning_content: None,
         })
     }
 
@@ -455,5 +519,102 @@ mod tests {
         let result = run_outbound_stages(&stages, &mut ctx).await;
         assert_eq!(result.text, "hello world");
         assert!(ctx.skip_dispatch);
+    }
+
+    // ── CanvasStage tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_canvas_stage_valid_json() {
+        let stage = CanvasStage;
+        let mut ctx = dummy_context();
+        ctx.result.text = r#"{"type":"text","id":"t1","content":"hello"}"#.into();
+        stage.process(&mut ctx).await;
+        assert!(ctx.result.canvas_update.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_canvas_stage_plain_text() {
+        let stage = CanvasStage;
+        let mut ctx = dummy_context();
+        ctx.result.text = "hello world".into();
+        stage.process(&mut ctx).await;
+        assert!(ctx.result.canvas_update.is_none());
+    }
+
+    // ── SseStage tests ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sse_stage_tool_events() {
+        let streamer = Arc::new(SseStreamer::new());
+        let mut rx = streamer.subscribe("sess-1").await;
+
+        let mut ctx = dummy_context();
+        ctx.input.tool_calls = vec![crate::providers::ToolCall {
+            id: "call-1".into(),
+            call_type: "function".into(),
+            function: crate::providers::FunctionCall {
+                name: "search".into(),
+                arguments: "{}".to_string(),
+            },
+            index: None,
+            result: None,
+        }];
+
+        let stage = SseStage::from_arc(streamer);
+        stage.process(&mut ctx).await;
+
+        // Should have received: ToolStart, ToolEnd, Done in order
+        let evt1 = rx.recv().await.unwrap();
+        assert!(matches!(evt1, SseEvent::ToolStart { .. }));
+
+        let evt2 = rx.recv().await.unwrap();
+        assert!(matches!(evt2, SseEvent::ToolEnd { .. }));
+
+        let evt3 = rx.recv().await.unwrap();
+        assert!(matches!(evt3, SseEvent::Done));
+
+        // Also verify the result records 3 events
+        assert_eq!(ctx.result.sse_events.len(), 3);
+    }
+
+    // ── DispatchStage tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_dispatch_stage_sends_message() {
+        let messages = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let channel = Arc::new(MockChannel { messages: messages.clone() });
+
+        let dispatcher = Arc::new(ReplyDispatcher::new(ReplyDispatchConfig::default()));
+        dispatcher.register_channel("test", channel).await;
+
+        let stage = DispatchStage::from_arc(dispatcher);
+        let mut ctx = dummy_context();
+        ctx.result.text = "hello from dispatch".into();
+
+        stage.process(&mut ctx).await;
+
+        let sent = messages.lock().await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0], "hello from dispatch");
+    }
+
+    // ── ReplyPrefixStage tests ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_reply_prefix_stage_applies_prefix() {
+        let engine = ReplyPrefixEngine::new();
+        engine
+            .set_templates(vec![ReplyPrefixTemplate::new("[model: {{model_name}}] ")])
+            .await;
+        let stage = ReplyPrefixStage::new(engine);
+
+        let mut ctx = dummy_context();
+        ctx.input.model_name = Some("claude-sonnet-4-6".into());
+        ctx.result.text = "hello".into();
+
+        stage.process(&mut ctx).await;
+
+        assert!(ctx.result.text.starts_with("[model: claude-sonnet-4-6]"));
+        assert!(ctx.result.text.contains("hello"));
     }
 }

@@ -29,7 +29,7 @@ pub enum SseEvent {
     Done,
     /// An error occurred.
     Error { message: String },
-    /// A heartbeat to keep the connection alive.
+    /// A heartbeat to keep the connection alive (reserved for future use).
     Heartbeat,
 }
 

@@ -575,17 +575,18 @@ async fn process_message_acp(
         })
     });
 
-    let (response_content, response_usage) = match agent
+    let (response_content, response_usage, response_reasoning) = match agent
         .process_message_with_progress(incoming_msg, progress_cb)
         .await
     {
         Ok(outgoing) => {
+            let reasoning = outgoing.reasoning_content.clone();
             let mut traj = trajectory.lock().await;
             traj.push(crate::outbound::TrajectoryEntry::Finish {
                 timestamp: std::time::SystemTime::now(),
                 output: outgoing.content.clone(),
             });
-            (outgoing.content, outgoing.usage)
+            (outgoing.content, outgoing.usage, reasoning)
         }
         Err(e) => {
             error!("Agent {} failed to process message: {}", agent_id, e);
@@ -594,7 +595,7 @@ async fn process_message_acp(
                 timestamp: std::time::SystemTime::now(),
                 message: e.to_string(),
             });
-            (format!("Error processing message: {}", e), None)
+            (format!("Error processing message: {}", e), None, None)
         }
     };
 
@@ -658,6 +659,7 @@ async fn process_message_acp(
             side_effects: vec![],
             model_name: Some(cfg.model.clone()),
             model_provider: Some(cfg.model_provider.clone()),
+            reasoning_content: response_reasoning,
         }
     };
     let outbound_result = state.pipelines.outbound.process(outbound_ctx).await;

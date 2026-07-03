@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+use crate::gateway::TaskRegistry;
+
 /// A declarative side effect.
 #[derive(Debug, Clone)]
 pub enum SideEffect {
@@ -82,6 +84,8 @@ pub struct SideEffectContext {
     pub cron_scheduler: Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>,
     /// Webhook client for Webhook effects.
     pub webhook_client: Option<Arc<reqwest::Client>>,
+    /// Task registry for tracking spawned tasks (required by CLAUDE.md checklist).
+    pub task_registry: Option<Arc<TaskRegistry>>,
 }
 
 /// Executor that runs side effects asynchronously.
@@ -176,7 +180,9 @@ impl SideEffectExecutor {
                 };
                 let url = url.clone();
                 let payload = payload.clone();
-                tokio::spawn(async move {
+                let task_registry = ctx.task_registry.clone();
+                let webhook_id = uuid::Uuid::new_v4().to_string();
+                let handle = tokio::spawn(async move {
                     match client.post(&url).json(&payload).send().await {
                         Ok(resp) => {
                             let status = resp.status();
@@ -187,6 +193,10 @@ impl SideEffectExecutor {
                         Err(e) => error!("Webhook side-effect failed: {} {}", url, e),
                     }
                 });
+                if let Some(ref tr) = task_registry {
+                    tr.insert_join(format!("webhook:{}", webhook_id), handle)
+                        .await;
+                }
             }
 
             SideEffect::Analytics { event, properties } => {
@@ -376,6 +386,7 @@ mod tests {
             memory_manager: None,
             cron_scheduler: None,
             webhook_client: None,
+            task_registry: None,
         };
         executor.set_context(ctx).await;
     }

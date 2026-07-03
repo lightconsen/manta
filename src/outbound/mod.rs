@@ -69,6 +69,8 @@ pub struct OutboundContext {
     pub model_name: Option<String>,
     /// LLM provider name (e.g. "anthropic"), if known.
     pub model_provider: Option<String>,
+    /// Optional reasoning/thinking content from the LLM.
+    pub reasoning_content: Option<String>,
 }
 
 /// Default outbound pipeline implementation.

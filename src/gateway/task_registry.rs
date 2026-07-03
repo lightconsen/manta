@@ -12,6 +12,7 @@ use tokio::task::{AbortHandle, JoinHandle};
 use tracing::debug;
 
 /// A tracked background task.
+#[derive(Debug)]
 pub enum Task {
     /// A task whose [`JoinHandle`] is owned by the registry. Used for workers
     /// that shutdown needs to await with a timeout.
@@ -32,7 +33,7 @@ impl Task {
 }
 
 /// Registry of named background tasks.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct TaskRegistry {
     tasks: RwLock<HashMap<String, Task>>,
 }
