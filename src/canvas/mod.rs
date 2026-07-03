@@ -16,12 +16,18 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 /// Unique identifier for a UI session
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CanvasId(pub String);
 
 impl CanvasId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string())
+    }
+}
+
+impl Default for CanvasId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -155,6 +161,12 @@ impl CanvasComponent {
             return true;
         }
         if let CanvasComponent::Container { children, .. } = self {
+            // Check direct children first (zero clones for shallow updates)
+            if let Some(pos) = children.iter().position(|c| c.id() == target_id) {
+                children[pos] = new_component;
+                return true;
+            }
+            // Recurse — at most one clone per depth level
             for child in children.iter_mut() {
                 if child.update_by_id(target_id, new_component.clone()) {
                     return true;
@@ -311,10 +323,16 @@ impl CanvasSession {
         let mut guard = self.root.write().await;
         *guard = root.clone();
 
-        let _ = self.update_tx.send(CanvasUpdate::Init {
-            canvas_id: self.id.0.clone(),
-            root,
-        });
+        if self
+            .update_tx
+            .send(CanvasUpdate::Init {
+                canvas_id: self.id.0.clone(),
+                root,
+            })
+            .is_err()
+        {
+            warn!("Canvas {}: init send failed (no receivers)", self.id.0);
+        }
     }
 
     /// Update a specific component
@@ -322,9 +340,16 @@ impl CanvasSession {
         let mut guard = self.root.write().await;
         guard.update_by_id(&component_id, component.clone());
         drop(guard);
-        let _ = self
+        if self
             .update_tx
-            .send(CanvasUpdate::Update { component_id, component });
+            .send(CanvasUpdate::Update {
+                component_id,
+                component,
+            })
+            .is_err()
+        {
+            warn!("Canvas {}: update send failed (no receivers)", self.id.0);
+        }
     }
 
     /// Append component to container
@@ -332,9 +357,16 @@ impl CanvasSession {
         let mut guard = self.root.write().await;
         guard.append_child(&parent_id, component.clone());
         drop(guard);
-        let _ = self
+        if self
             .update_tx
-            .send(CanvasUpdate::Append { parent_id, component });
+            .send(CanvasUpdate::Append {
+                parent_id,
+                component,
+            })
+            .is_err()
+        {
+            warn!("Canvas {}: append send failed (no receivers)", self.id.0);
+        }
     }
 
     /// Remove a component from the tree
@@ -342,17 +374,31 @@ impl CanvasSession {
         let mut guard = self.root.write().await;
         guard.remove_by_id(&component_id);
         drop(guard);
-        let _ = self.update_tx.send(CanvasUpdate::Remove { component_id });
+        if self
+            .update_tx
+            .send(CanvasUpdate::Remove { component_id })
+            .is_err()
+        {
+            warn!("Canvas {}: remove send failed (no receivers)", self.id.0);
+        }
     }
 
     /// Show notification
     pub async fn notify(&self, level: String, message: String) {
-        let _ = self.update_tx.send(CanvasUpdate::Notify { level, message });
+        if self
+            .update_tx
+            .send(CanvasUpdate::Notify { level, message })
+            .is_err()
+        {
+            warn!("Canvas {}: notify send failed (no receivers)", self.id.0);
+        }
     }
 
     /// Close canvas
     pub async fn close(&self) {
-        let _ = self.update_tx.send(CanvasUpdate::Close);
+        if self.update_tx.send(CanvasUpdate::Close).is_err() {
+            warn!("Canvas {}: close send failed (no receivers)", self.id.0);
+        }
     }
 }
 
@@ -458,22 +504,32 @@ impl CanvasManager {
         sessions.get(id).cloned()
     }
 
-    /// Remove session, cleaning up both mappings and the event receiver.
+    /// Remove session, cleaning up all three maps.
+    ///
+    /// Locks are acquired and released sequentially (never held simultaneously)
+    /// to avoid deadlock with [`get_or_create_for_session`] which locks in
+    /// `session_map → sessions` order.
     pub async fn remove_session(&self, id: &CanvasId) {
+        // 1. Remove session from the primary map
         let mut sessions = self.sessions.write().await;
         sessions.remove(id);
+        drop(sessions);
+
+        // 2. Collect external session IDs mapped to this canvas and remove them
         let mut map = self.session_map.write().await;
-        let external_id: Vec<String> = map
+        let external_ids: Vec<String> = map
             .iter()
             .filter(|(_, v)| *v == id)
             .map(|(k, _)| k.clone())
             .collect();
-        for key in &external_id {
+        for key in &external_ids {
             map.remove(key);
         }
         drop(map);
+
+        // 3. Cleanup the event receivers
         let mut rxs = self.event_rxs.write().await;
-        for key in &external_id {
+        for key in &external_ids {
             rxs.remove(key);
         }
     }
@@ -515,7 +571,12 @@ impl CanvasWebSocketHandler {
 
                 match serde_json::from_str::<CanvasEvent>(&text) {
                     Ok(event) => {
-                        let _ = self.event_tx.send(event.clone()).await;
+                        if self.event_tx.send(event.clone()).await.is_err() {
+                            warn!(
+                                "Canvas {}: event send failed (receiver dropped)",
+                                self.canvas_id.0
+                            );
+                        }
                         Some(event)
                     }
                     Err(e) => {
@@ -527,7 +588,12 @@ impl CanvasWebSocketHandler {
             Message::Close(_) => {
                 debug!("Canvas {} received close frame", self.canvas_id.0);
                 let event = CanvasEvent::Close;
-                let _ = self.event_tx.send(event.clone()).await;
+                if self.event_tx.send(event.clone()).await.is_err() {
+                    warn!(
+                        "Canvas {}: close event send failed (receiver dropped)",
+                        self.canvas_id.0
+                    );
+                }
                 Some(event)
             }
             _ => None,
@@ -1055,5 +1121,266 @@ mod tests {
         assert!(style.size.is_none());
         assert!(style.weight.is_none());
         assert!(style.color.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Component tree operation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_component_update_by_id_direct_child() {
+        let mut container = CanvasComponent::Container {
+            id: "root".to_string(),
+            children: vec![
+                CanvasComponent::Text {
+                    id: "txt1".to_string(),
+                    content: "old".to_string(),
+                    style: None,
+                },
+                CanvasComponent::Button {
+                    id: "btn1".to_string(),
+                    label: "Click".to_string(),
+                    variant: None,
+                    disabled: None,
+                },
+            ],
+            layout: None,
+        };
+
+        let updated = CanvasComponent::Text {
+            id: "txt1".to_string(),
+            content: "new".to_string(),
+            style: None,
+        };
+
+        assert!(container.update_by_id("txt1", updated));
+        match &container {
+            CanvasComponent::Container { children, .. } => {
+                assert_eq!(children.len(), 2);
+                match &children[0] {
+                    CanvasComponent::Text { content, .. } => assert_eq!(content, "new"),
+                    _ => panic!("Expected Text"),
+                }
+            }
+            _ => panic!("Expected Container"),
+        }
+    }
+
+    #[test]
+    fn test_component_update_by_id_nested() {
+        let mut tree = CanvasComponent::Container {
+            id: "root".to_string(),
+            children: vec![CanvasComponent::Container {
+                id: "inner".to_string(),
+                children: vec![CanvasComponent::Text {
+                    id: "target".to_string(),
+                    content: "old".to_string(),
+                    style: None,
+                }],
+                layout: None,
+            }],
+            layout: None,
+        };
+
+        let updated = CanvasComponent::Text {
+            id: "target".to_string(),
+            content: "updated".to_string(),
+            style: None,
+        };
+
+        assert!(tree.update_by_id("target", updated));
+    }
+
+    #[test]
+    fn test_component_update_by_id_not_found() {
+        let mut container = CanvasComponent::Container {
+            id: "root".to_string(),
+            children: vec![CanvasComponent::Text {
+                id: "txt1".to_string(),
+                content: "hello".to_string(),
+                style: None,
+            }],
+            layout: None,
+        };
+
+        let updated = CanvasComponent::Text {
+            id: "nonexistent".to_string(),
+            content: "should not appear".to_string(),
+            style: None,
+        };
+
+        assert!(!container.update_by_id("missing", updated));
+    }
+
+    #[test]
+    fn test_component_append_child() {
+        let mut container = CanvasComponent::Container {
+            id: "root".to_string(),
+            children: vec![],
+            layout: None,
+        };
+
+        let child = CanvasComponent::Text {
+            id: "new_child".to_string(),
+            content: "appended".to_string(),
+            style: None,
+        };
+
+        assert!(container.append_child("root", child));
+        match &container {
+            CanvasComponent::Container { children, .. } => {
+                assert_eq!(children.len(), 1);
+            }
+            _ => panic!("Expected Container"),
+        }
+    }
+
+    #[test]
+    fn test_component_append_child_parent_not_found() {
+        let mut container = CanvasComponent::Container {
+            id: "root".to_string(),
+            children: vec![],
+            layout: None,
+        };
+
+        let child = CanvasComponent::Text {
+            id: "orphan".to_string(),
+            content: "never added".to_string(),
+            style: None,
+        };
+
+        assert!(!container.append_child("nonexistent", child));
+    }
+
+    #[test]
+    fn test_component_remove_by_id() {
+        let mut container = CanvasComponent::Container {
+            id: "root".to_string(),
+            children: vec![
+                CanvasComponent::Text {
+                    id: "txt1".to_string(),
+                    content: "remove me".to_string(),
+                    style: None,
+                },
+                CanvasComponent::Divider {
+                    id: "div1".to_string(),
+                },
+            ],
+            layout: None,
+        };
+
+        assert!(container.remove_by_id("txt1"));
+        match &container {
+            CanvasComponent::Container { children, .. } => {
+                assert_eq!(children.len(), 1);
+                assert_eq!(children[0].id(), "div1");
+            }
+            _ => panic!("Expected Container"),
+        }
+    }
+
+    #[test]
+    fn test_component_remove_nonexistent() {
+        let mut container = CanvasComponent::Container {
+            id: "root".to_string(),
+            children: vec![],
+            layout: None,
+        };
+
+        assert!(!container.remove_by_id("ghost"));
+    }
+
+    #[test]
+    fn test_component_id_on_non_container() {
+        let text = CanvasComponent::Text {
+            id: "my_text".to_string(),
+            content: "hello".to_string(),
+            style: None,
+        };
+        assert_eq!(text.id(), "my_text");
+
+        let divider = CanvasComponent::Divider {
+            id: "sep".to_string(),
+        };
+        assert_eq!(divider.id(), "sep");
+    }
+
+    // -----------------------------------------------------------------------
+    // CanvasManager extended tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_take_event_rx() {
+        let manager = CanvasManager::new();
+
+        let _session = manager.get_or_create_for_session("test-session").await;
+        let rx = manager.take_event_rx("test-session").await;
+        assert!(rx.is_some());
+
+        // Second take should return None (already taken)
+        let rx2 = manager.take_event_rx("test-session").await;
+        assert!(rx2.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_take_event_rx_receives_events() {
+        let manager = CanvasManager::new();
+
+        let session = manager.get_or_create_for_session("test-session").await;
+        let mut rx = manager.take_event_rx("test-session").await.unwrap();
+
+        // Simulate an event coming through the WebSocket handler
+        let event = CanvasEvent::ButtonClick {
+            component_id: "btn1".to_string(),
+        };
+        session.event_tx.send(event.clone()).await.unwrap();
+
+        let received = rx.recv().await;
+        assert!(received.is_some());
+        assert!(matches!(received.unwrap(), CanvasEvent::ButtonClick { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_remove_session_cleans_all_maps() {
+        let manager = CanvasManager::new();
+
+        let session = manager.get_or_create_for_session("cleanup-test").await;
+        let canvas_id = session.id.clone();
+        let _rx = manager.take_event_rx("cleanup-test").await;
+
+        manager.remove_session(&canvas_id).await;
+
+        // Session should be gone
+        assert!(manager.get_session(&canvas_id).await.is_none());
+        assert!(manager.list_sessions().await.is_empty());
+
+        // get_or_create_for_session should create a fresh session
+        let new_session = manager.get_or_create_for_session("cleanup-test").await;
+        assert_ne!(new_session.id, canvas_id);
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_close() {
+        let (event_tx, mut event_rx) = mpsc::channel(10);
+        let (_update_tx, update_rx) = broadcast::channel(10);
+        let canvas_id = CanvasId::new();
+
+        let handler = CanvasWebSocketHandler::new(canvas_id, event_tx, update_rx);
+
+        let result = handler.handle_message(Message::Close(None)).await;
+        assert!(result.is_some());
+        assert!(matches!(result.unwrap(), CanvasEvent::Close));
+
+        let forwarded = event_rx.try_recv();
+        assert!(forwarded.is_ok());
+        assert!(matches!(forwarded.unwrap(), CanvasEvent::Close));
+    }
+
+    #[tokio::test]
+    async fn test_canvas_id_default_generates_valid_id() {
+        let id = CanvasId::default();
+        assert!(!id.0.is_empty());
+        // Should be a valid UUID format
+        assert_eq!(id.0.len(), 36);
     }
 }
