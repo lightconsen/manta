@@ -194,13 +194,16 @@ impl Tool for SandboxedTool {
         self.check_path_args(&args)?;
 
         // ── network access guard ─────────────────────────────────────────
-        // Heuristic: block tools whose name signals network use unless allowed.
+        // Check the tool's advertised capabilities: if it has the "network"
+        // category, it requires network access. This is more robust than
+        // heuristic name matching.
         if !self.config.allow_network_access {
-            let name = self.inner.name();
-            if name.contains("web") || name.contains("http") || name.contains("fetch") {
+            let caps = self.inner.capabilities();
+            let needs_network = caps.categories.iter().any(|c| c == "network");
+            if needs_network {
                 return Err(SyscityError::SandboxViolation(format!(
                     "network access is disabled; tool '{}' requires network",
-                    name
+                    self.inner.name()
                 )));
             }
         }
@@ -386,6 +389,12 @@ mod tests {
             }
             fn parameters_schema(&self) -> Value {
                 json!({})
+            }
+            fn capabilities(&self) -> ToolCapabilities {
+                ToolCapabilities {
+                    categories: vec!["network".to_string()],
+                    ..Default::default()
+                }
             }
             async fn execute(
                 &self,

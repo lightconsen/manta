@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_stream::StreamExt;
+use tracing::warn;
 
 use crate::providers::{FunctionCall, FunctionDefinition, ToolResult};
 
@@ -701,6 +702,16 @@ impl ToolExecutionResult {
         self
     }
 
+    /// Returns `true` if this is a successful result with no output content.
+    pub fn is_empty(&self) -> bool {
+        self.success && self.output.is_empty() && self.error.is_none()
+    }
+
+    /// Returns `true` if this result represents a failure.
+    pub fn is_error(&self) -> bool {
+        !self.success
+    }
+
     /// Convert to a ToolResult for LLM response
     pub fn to_tool_result(self, tool_call_id: impl Into<String>) -> ToolResult {
         let content = if self.success {
@@ -787,10 +798,16 @@ pub trait Tool: Send + Sync {
 
     /// Convert to a function definition for LLM providers
     fn to_function_definition(&self) -> FunctionDefinition {
+        let caps = self.capabilities();
         FunctionDefinition {
             name: self.name().to_string(),
             description: self.description().to_string(),
             parameters: self.parameters_schema(),
+            capabilities: Some(crate::providers::FunctionCapabilities {
+                requires_approval: caps.requires_approval,
+                risk_level: format!("{:?}", caps.risk_level).to_lowercase(),
+                categories: caps.categories.clone(),
+            }),
         }
     }
 }
@@ -1193,6 +1210,36 @@ impl ToolRegistry {
         }
     }
 
+    // ── Unified tool iteration ───────────────────────────────────────────────
+
+    /// Iterate over both static and dynamic registries, yielding
+    /// `(name, Arc<dyn Tool>)` for every tool that satisfies `filter`.
+    ///
+    /// This is the single point of iteration for `list()`, `get_definitions()`,
+    /// `get_available()`, and `all_tools_arc()` — they all delegate here rather
+    /// than duplicating the two-registry walk.
+    fn iter_tools<F>(&self, filter: F) -> Vec<(String, Arc<dyn Tool>)>
+    where
+        F: Fn(&str) -> bool,
+    {
+        let mut result = Vec::new();
+        if let Ok(map) = self.tools.read() {
+            for (name, tool) in map.iter() {
+                if filter(name) {
+                    result.push((name.clone(), tool.clone()));
+                }
+            }
+        }
+        if let Ok(dynamic) = self.dynamic_tools.read() {
+            for (name, tool) in dynamic.iter() {
+                if filter(name) {
+                    result.push((name.clone(), tool.clone()));
+                }
+            }
+        }
+        result
+    }
+
     /// Generate a cache key from tool name and arguments
     fn cache_key(name: &str, args: &Value) -> String {
         use std::collections::hash_map::DefaultHasher;
@@ -1211,7 +1258,13 @@ impl ToolRegistry {
             return None;
         }
 
-        let cache = self.cache.lock().ok()?;
+        let cache = match self.cache.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                warn!("Cache mutex poisoned in get_cached: {}", e);
+                return None;
+            }
+        };
         let entry = cache.get(key)?;
 
         // Check if cache entry is expired
@@ -1311,15 +1364,23 @@ impl ToolRegistry {
     pub fn register(&mut self, tool: BoxedTool) {
         let name = tool.name().to_string();
         let tool: SharedTool = tool.into();
-        self.tools
-            .write()
-            .ok()
-            .map(|mut map| map.insert(name, tool));
+        match self.tools.write() {
+            Ok(mut map) => {
+                map.insert(name, tool);
+            }
+            Err(e) => warn!("Tools RwLock poisoned in register: {}", e),
+        }
     }
 
     /// Remove a single tool by exact name.
     pub fn remove(&mut self, name: &str) -> Option<SharedTool> {
-        self.tools.write().ok()?.remove(name)
+        match self.tools.write() {
+            Ok(mut map) => map.remove(name),
+            Err(e) => {
+                warn!("Tools RwLock poisoned in remove: {}", e);
+                None
+            }
+        }
     }
 
     /// Remove all tools whose names start with `prefix`.
@@ -1378,25 +1439,13 @@ impl ToolRegistry {
 
     /// List available tool names (excludes blocked and degraded tools).
     /// Includes both statically- and dynamically-registered tools.
+    /// List available tool names (excludes blocked and degraded tools).
+    /// Includes both statically- and dynamically-registered tools.
     pub fn list(&self) -> Vec<String> {
-        let mut names: Vec<String> = match self.tools.read() {
-            Ok(map) => map
-                .keys()
-                .filter(|name| !self.is_blocked(name) && !self.is_degraded(name))
-                .cloned()
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-
-        if let Ok(dynamic) = self.dynamic_tools.read() {
-            for name in dynamic.keys() {
-                if !self.is_blocked(name) && !self.is_degraded(name) {
-                    names.push(name.clone());
-                }
-            }
-        }
-
-        names
+        self.iter_tools(|name| !self.is_blocked(name) && !self.is_degraded(name))
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
     }
 
     /// Get all dynamically-registered tools as `Arc<dyn Tool>` references.
@@ -1442,24 +1491,10 @@ impl ToolRegistry {
     /// Get all tools as function definitions (excludes blocked and degraded
     /// tools). Includes both statically- and dynamically-registered tools.
     pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
-        let mut defs: Vec<FunctionDefinition> = match self.tools.read() {
-            Ok(map) => map
-                .iter()
-                .filter(|(name, _)| !self.is_blocked(name) && !self.is_degraded(name))
-                .map(|(_, t)| t.to_function_definition())
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-
-        if let Ok(dynamic) = self.dynamic_tools.read() {
-            for (name, tool) in dynamic.iter() {
-                if !self.is_blocked(name) && !self.is_degraded(name) {
-                    defs.push(tool.to_function_definition());
-                }
-            }
-        }
-
-        defs
+        self.iter_tools(|name| !self.is_blocked(name) && !self.is_degraded(name))
+            .into_iter()
+            .map(|(_, tool)| tool.to_function_definition())
+            .collect()
     }
 
     /// Get all available tools for a given context.
@@ -1471,24 +1506,11 @@ impl ToolRegistry {
     ///
     /// Includes both statically- and dynamically-registered tools.
     pub fn get_available(&self, context: &ToolContext) -> Vec<FunctionDefinition> {
-        let mut defs: Vec<FunctionDefinition> = match self.tools.read() {
-            Ok(map) => map
-                .iter()
-                .filter(|(name, t)| !self.is_excluded(name, context) && t.is_available(context))
-                .map(|(_, t)| t.to_function_definition())
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-
-        if let Ok(dynamic) = self.dynamic_tools.read() {
-            for (name, tool) in dynamic.iter() {
-                if !self.is_excluded(name, context) && tool.is_available(context) {
-                    defs.push(tool.to_function_definition());
-                }
-            }
-        }
-
-        defs
+        self.iter_tools(|name| !self.is_excluded(name, context))
+            .into_iter()
+            .filter(|(_, tool)| tool.is_available(context))
+            .map(|(_, tool)| tool.to_function_definition())
+            .collect()
     }
 
     /// Execute a tool by name with optional caching, hooks, and approval flow.
@@ -1511,10 +1533,15 @@ impl ToolRegistry {
         {
             let caps = self.get_capabilities(name);
             if caps.requires_approval {
-                use std::sync::atomic::{AtomicU64, Ordering};
-                static APPROVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
-                let approval_id =
-                    format!("fallback-{:08x}", APPROVAL_COUNTER.fetch_add(1, Ordering::Relaxed));
+                let approval_id = format!(
+                    "fallback-{}-{}",
+                    name,
+                    uuid::Uuid::new_v4()
+                        .to_string()
+                        .split('-')
+                        .next()
+                        .unwrap_or("0000")
+                );
                 decision = ToolPolicyDecision::NeedsApproval {
                     approval_id,
                     tool_name: name.to_string(),
@@ -1672,7 +1699,10 @@ impl ToolRegistry {
                         }
                         Some(result)
                     } else {
-                        None
+                        Some(Err(crate::error::SyscityError::Validation(format!(
+                            "Tool '{}' is blocked or degraded",
+                            name
+                        ))))
                     }
                 } else {
                     None
@@ -1777,28 +1807,76 @@ impl ToolRegistry {
     /// filtering, audit logging, before/after hooks, and the circuit breaker.
     /// Prefer [`execute()`](Self::execute) when safety checks are required.
     #[allow(dead_code)]
+    /// Execute a tool by name, skipping the cache layer but still running the
+    /// full policy, approval, hooks, and audit pipeline.
+    ///
+    /// Returns `None` only when the tool name is unknown (not registered).
+    /// Blocked, degraded, or policy-denied tools return `Some(Err(...))`
+    /// so callers can distinguish "not found" from "rejected".
     pub(crate) async fn execute_no_cache(
         &self,
         name: &str,
         args: Value,
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
-        // Try static tools first
-        if let Some(tool) = self.get(name) {
-            return Some(tool.execute(args, context).await);
-        }
-        // Try dynamic tools
-        let dynamic_tool = self
-            .dynamic_tools
-            .read()
-            .ok()
-            .and_then(|map| map.get(name).cloned());
-        if let Some(tool) = dynamic_tool {
-            if !self.is_blocked(name) && !self.is_degraded(name) {
-                return Some(tool.execute(args, context).await);
+        // Run policy evaluation (approval, denials, hooks all handled here).
+        let policy_decision = self.evaluate_policy(name, &args).await;
+        match policy_decision {
+            ToolPolicyDecision::Allow => { /* proceed */ }
+            ToolPolicyDecision::Deny { reason } => {
+                return Some(Err(crate::error::SyscityError::Validation(format!(
+                    "Tool '{}' denied: {}",
+                    name, reason
+                ))));
+            }
+            ToolPolicyDecision::NeedsApproval { .. } => {
+                // execute_no_cache does not support the full approval flow;
+                // callers should use `execute()` instead.
+                return Some(Err(crate::error::SyscityError::Validation(format!(
+                    "Tool '{}' requires approval; use execute() instead of execute_no_cache",
+                    name,
+                ))));
             }
         }
-        None
+
+        // Run before-hooks
+        self.active_hooks().run_before(name, &args).await;
+
+        // Execute the tool
+        let execution_result: Option<crate::Result<ToolExecutionResult>> = {
+            // Try static tools first
+            if let Some(tool) = self.get(name) {
+                Some(tool.execute(args.clone(), context).await)
+            } else {
+                // Try dynamic tools
+                let dynamic_tool = self
+                    .dynamic_tools
+                    .read()
+                    .ok()
+                    .and_then(|map| map.get(name).cloned());
+                if let Some(tool) = dynamic_tool {
+                    if !self.is_blocked(name) && !self.is_degraded(name) {
+                        Some(tool.execute(args.clone(), context).await)
+                    } else {
+                        Some(Err(crate::error::SyscityError::Validation(format!(
+                            "Tool '{}' is blocked or degraded",
+                            name
+                        ))))
+                    }
+                } else {
+                    None
+                }
+            }
+        };
+
+        // Run after-hooks
+        if let Some(Ok(ref exec_result)) = execution_result {
+            self.active_hooks()
+                .run_after(name, &args, exec_result)
+                .await;
+        }
+
+        self.filter_and_audit(name, context, execution_result).await
     }
 
     /// Execute a function call from an LLM.

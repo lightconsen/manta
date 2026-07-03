@@ -307,6 +307,42 @@ impl Default for ToolSdk {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::{BoxedTool, Tool};
+
+    // ── Test stub tool ──────────────────────────────────────────────────
+    struct StubTool {
+        name: String,
+    }
+
+    impl StubTool {
+        fn new(name: &str) -> Self {
+            Self { name: name.to_string() }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for StubTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn description(&self) -> &str {
+            "stub"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            _context: &crate::tools::ToolContext,
+        ) -> crate::Result<crate::tools::ToolExecutionResult> {
+            Ok(crate::tools::ToolExecutionResult::success("ok"))
+        }
+    }
+
+    fn stub_tool(name: &str) -> BoxedTool {
+        Box::new(StubTool::new(name))
+    }
 
     #[test]
     fn test_tool_capabilities_default() {
@@ -457,5 +493,112 @@ mod tests {
         let results = sdk.find_by_capability(&filter);
         // The tool should appear since the default risk is Low
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_sync_from_tool_registry_adds_new_tools() {
+        let mut reg = ToolRegistry::new();
+        reg.register(stub_tool("my-tool"));
+
+        let mut sdk = ToolSdk::new();
+        let result = sdk.sync_from_tool_registry(&reg);
+
+        assert!(result.tools_added.contains(&"my-tool".to_string()));
+        assert!(result.packs_updated.contains(&"default_tools".to_string()));
+        let pack = sdk.get_pack("default_tools");
+        assert!(pack.is_some());
+        assert!(pack.unwrap().tools.contains(&"my-tool".to_string()));
+    }
+
+    #[test]
+    fn test_sync_from_tool_registry_removes_stale_tools() {
+        let reg = ToolRegistry::new();
+
+        let mut sdk = ToolSdk::new();
+        sdk.register_pack(ToolPack {
+            name: "stale".to_string(),
+            version: "1.0".to_string(),
+            description: "Has stale tools".to_string(),
+            tools: vec!["gone".to_string(), "present".to_string()],
+        });
+
+        // Register "present" in the registry so it's not stale
+        let mut reg2 = ToolRegistry::new();
+        reg2.register(stub_tool("present"));
+        let result = sdk.sync_from_tool_registry(&reg2);
+
+        assert!(result.tools_removed.contains(&"stale".to_string()));
+        // Verify the stale tool was removed from the pack
+        let pack = sdk.get_pack("stale").unwrap();
+        assert!(!pack.tools.contains(&"gone".to_string()));
+        assert!(pack.tools.contains(&"present".to_string()));
+    }
+
+    #[test]
+    fn test_find_by_capability_category_filter() {
+        let mut sdk = ToolSdk::new();
+        // This won't match without a registry, but we can test the filter
+        // by adding to a pack with default (empty) capabilities
+        sdk.register_pack(ToolPack {
+            name: "tools".to_string(),
+            version: "1.0".to_string(),
+            description: "Tools".to_string(),
+            tools: vec!["no-category".to_string()],
+        });
+
+        // Filter for "network" category — should not match any pack tool
+        let filter = CapabilityFilter {
+            categories: Some(vec!["network".to_string()]),
+            ..Default::default()
+        };
+        // No tools have "network" category (pack tools use default capabilities)
+        let results = sdk.find_by_capability(&filter);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_with_registry_metadata_lookup() {
+        let mut reg = ToolRegistry::new();
+        reg.register(stub_tool("alpha"));
+
+        let sdk = ToolSdk::new().with_registry(std::sync::Arc::new(reg));
+
+        // Tool should be found via registry
+        let meta = sdk.get_tool_metadata("alpha").unwrap();
+        assert_eq!(meta.name, "alpha");
+        assert_eq!(meta.description, "stub");
+    }
+
+    #[test]
+    fn test_get_tool_parameter_schema_from_registry() {
+        let mut reg = ToolRegistry::new();
+        reg.register(stub_tool("params-tool"));
+
+        let sdk = ToolSdk::new().with_registry(std::sync::Arc::new(reg));
+
+        let schema = sdk.get_tool_parameter_schema("params-tool").unwrap();
+        assert_eq!(schema, serde_json::json!({"type": "object"}));
+    }
+
+    #[test]
+    fn test_sync_default_pack_reused() {
+        let mut reg = ToolRegistry::new();
+        reg.register(stub_tool("tool-a"));
+        reg.register(stub_tool("tool-b"));
+
+        let mut sdk = ToolSdk::new();
+        sdk.register_pack(ToolPack {
+            name: "default_tools".to_string(),
+            version: "1.0".to_string(),
+            description: "Existing default pack".to_string(),
+            tools: vec![],
+        });
+
+        let result = sdk.sync_from_tool_registry(&reg);
+        assert_eq!(result.tools_added.len(), 2);
+        assert!(result.tools_added.contains(&"tool-a".to_string()));
+
+        let pack = sdk.get_pack("default_tools").unwrap();
+        assert_eq!(pack.tools.len(), 2);
     }
 }
