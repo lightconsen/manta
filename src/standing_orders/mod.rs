@@ -54,7 +54,7 @@ impl StandingOrderManager {
     /// expression cannot be parsed are silently skipped (a warning is logged).
     ///
     /// Idempotent — calling `start()` a second time is a no-op.
-    pub fn start(&mut self) {
+    pub async fn start(&mut self) {
         if self.started {
             info!("Standing orders already started, ignoring duplicate start");
             return;
@@ -197,14 +197,10 @@ impl StandingOrderManager {
             });
 
             // Register the task handle for coordinated shutdown.
-            let state_for_registry = Arc::clone(&self.state);
-            let order_name_clone = order_name.clone();
-            tokio::spawn(async move {
-                state_for_registry
-                    .task_registry
-                    .insert_join(format!("standing_order:{}", order_name_clone), handle)
-                    .await;
-            });
+            self.state
+                .task_registry
+                .insert_join(format!("standing_order:{}", order_name), handle)
+                .await;
         }
 
         self.started = true;
@@ -212,11 +208,44 @@ impl StandingOrderManager {
     }
 
     /// Stop all running standing orders.
+    ///
+    /// After `stop()`, the manager can be restarted with a new config
+    /// via [`reload_config`] followed by [`start`].
     pub async fn stop(&mut self) {
         for (name, tx) in self.shutdown_txs.drain(..) {
             let _ = tx.send(());
             info!("Standing order '{}' stop signal sent", name);
         }
+        self.started = false;
+    }
+
+    /// Stop a single standing order by name.
+    ///
+    /// Returns `true` if the order was found and sent a shutdown signal,
+    /// `false` if no order with that name was running.
+    pub async fn stop_order(&mut self, name: &str) -> bool {
+        let pos = self.shutdown_txs.iter().position(|(n, _)| n == name);
+        match pos {
+            Some(i) => {
+                let (_name, tx) = self.shutdown_txs.remove(i);
+                let _ = tx.send(());
+                info!("Standing order '{}' stop signal sent", name);
+                true
+            }
+            None => {
+                warn!("Standing order '{}' not found or already stopped", name);
+                false
+            }
+        }
+    }
+
+    /// Replace the configuration (takes effect on next [`start`]).
+    ///
+    /// Does **not** stop running orders. Call [`stop`] first if the goal is
+    /// to restart with the new config.
+    pub fn reload_config(&mut self, config: StandingOrderConfig) {
+        info!("Standing order config reloaded (orders={})", config.orders.len());
+        self.config = config;
     }
 
     /// Returns the number of running (enabled) orders.

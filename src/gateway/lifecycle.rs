@@ -241,7 +241,7 @@ pub(crate) async fn start_gateway(
             config.standing_orders.clone(),
             state.clone(),
         );
-        manager.start();
+        manager.start().await;
         info!("Standing orders manager started");
         *state.memory.standing_order_manager.write().await = Some(manager);
     }
