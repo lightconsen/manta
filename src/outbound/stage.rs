@@ -51,7 +51,7 @@ impl OutboundStageContext {
             text: input.raw_output.clone(),
             canvas_update: None,
             sse_events: Vec::new(),
-            side_effects: Vec::new(),
+            side_effects: input.side_effects.clone(),
             session_id: input.session_id.clone(),
             channel: input.channel.clone(),
         };
@@ -196,9 +196,20 @@ impl OutboundStage for ReplyPrefixStage {
     }
 
     async fn process(&self, ctx: &mut OutboundStageContext) -> OutboundStageAction {
-        let template_ctx = TemplateContext::new()
+        let mut template_ctx = TemplateContext::new()
             .with_session(&ctx.input.session_id)
             .with_channel(&ctx.input.channel);
+
+        // Enrich with available metadata
+        if let Some(ref usage) = ctx.input.usage {
+            template_ctx = template_ctx
+                .with_custom("prompt_tokens", usage.prompt_tokens.to_string())
+                .with_custom("completion_tokens", usage.completion_tokens.to_string())
+                .with_custom("total_tokens", usage.total_tokens.to_string());
+        }
+        // model_name/model_provider require enrichment on OutboundContext
+        // — not yet available at the pipeline stage level.
+
         let prefixed = self
             .engine
             .apply_async(&ctx.result.text, &template_ctx, Some(&ctx.input.channel))
@@ -316,6 +327,36 @@ pub async fn run_outbound_stages(
 }
 
 // ── Default stage list helper ────────────────────────────────────────────────
+
+/// Build the default list of outbound stages from Arc-wrapped dependencies.
+///
+/// Used by [`DefaultOutboundPipeline`] which holds `Arc<T>` references.
+/// Stages: Trajectory → Canvas → SSE → ReplyPrefix → Dispatch → SideEffects
+pub fn default_outbound_stages_from_arcs(
+    trajectory_writer: Option<Arc<TrajectoryWriter>>,
+    sse: Option<Arc<SseStreamer>>,
+    reply_prefix_engine: Option<ReplyPrefixEngine>,
+    dispatcher: Arc<ReplyDispatcher>,
+    side_effects: Arc<SideEffectExecutor>,
+) -> Vec<Box<dyn OutboundStage>> {
+    let mut stages: Vec<Box<dyn OutboundStage>> = Vec::new();
+
+    if let Some(writer) = trajectory_writer {
+        stages.push(Box::new(TrajectoryStage::from_arc(writer)));
+    }
+    stages.push(Box::new(CanvasStage));
+
+    if let Some(sse) = sse {
+        stages.push(Box::new(SseStage::from_arc(sse)));
+    }
+    if let Some(engine) = reply_prefix_engine {
+        stages.push(Box::new(ReplyPrefixStage::new(engine)));
+    }
+
+    stages.push(Box::new(DispatchStage::from_arc(dispatcher)));
+    stages.push(Box::new(SideEffectStage::from_arc(side_effects)));
+    stages
+}
 
 /// Build the default list of outbound stages matching the current pipeline
 /// order.

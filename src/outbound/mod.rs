@@ -25,10 +25,7 @@ pub use side_effects::{SideEffect, SideEffectContext, SideEffectExecutor, SideEf
 pub use sse::{SseEvent, SseStreamer};
 pub use trajectory::{TrajectoryEntry, TrajectoryLog, TrajectoryWriter};
 
-use self::stage::{
-    CanvasStage, DispatchStage, ReplyPrefixStage, SideEffectStage, SseStage, TrajectoryStage,
-    OutboundStageContext, run_outbound_stages,
-};
+use self::stage::{default_outbound_stages_from_arcs, OutboundStageContext, run_outbound_stages};
 use crate::channels::reply_prefix::ReplyPrefixEngine;
 
 /// A fully-processed outbound result ready for delivery.
@@ -110,28 +107,13 @@ impl DefaultOutboundPipeline {
 #[async_trait::async_trait]
 impl OutboundPipeline for DefaultOutboundPipeline {
     async fn process(&self, ctx: OutboundContext) -> OutboundResult {
-        // Build stages from our dependencies and delegate to the pluggable
-        // stage runner (avoids duplicating the pipeline in two places).
-        let mut stages: Vec<Box<dyn self::stage::OutboundStage>> = Vec::new();
-
-        if let Some(ref writer) = self.trajectory_writer {
-            stages.push(Box::new(TrajectoryStage::from_arc(writer.clone())));
-        }
-        stages.push(Box::new(CanvasStage));
-
-        if let Some(ref sse) = self.sse {
-            stages.push(Box::new(SseStage::from_arc(sse.clone())));
-        }
-        if let Some(ref engine) = self.reply_prefix_engine {
-            stages.push(Box::new(ReplyPrefixStage::new(engine.clone())));
-        }
-
-        stages.push(Box::new(DispatchStage::from_arc(
+        let stages = default_outbound_stages_from_arcs(
+            self.trajectory_writer.clone(),
+            self.sse.clone(),
+            self.reply_prefix_engine.clone(),
             self.reply_dispatcher.clone(),
-        )));
-        stages.push(Box::new(SideEffectStage::from_arc(
             self.side_effects.clone(),
-        )));
+        );
 
         let mut stage_ctx = OutboundStageContext::new(ctx);
         run_outbound_stages(&stages, &mut stage_ctx).await

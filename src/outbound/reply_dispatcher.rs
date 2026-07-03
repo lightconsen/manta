@@ -78,16 +78,8 @@ impl ReplyDispatcher {
             .get(channel_name)
             .ok_or_else(|| ReplyDispatchError::ChannelNotFound(channel_name.to_string()))?;
 
-        let content = if self.config.chunk_long_messages
-            && message.content.len() > self.config.max_chunk_length
-        {
-            // For now, just send the full message. Future: chunk it.
-            message.content.clone()
-        } else {
-            message.content.clone()
-        };
-
-        let msg = OutgoingMessage { content, ..message };
+        // TODO: implement chunking for messages exceeding max_chunk_length
+        let msg = OutgoingMessage { content: message.content.clone(), ..message };
 
         debug!(
             "Dispatching reply to channel {} (conversation {})",

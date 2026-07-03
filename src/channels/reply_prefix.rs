@@ -284,6 +284,8 @@ impl ReplyPrefixEngine {
         let prefix = self.render(ctx, channel);
         if prefix.is_empty() {
             content.to_string()
+        } else if prefix.ends_with(' ') {
+            format!("{}{}", prefix, content)
         } else {
             format!("{} {}", prefix, content)
         }
@@ -299,6 +301,8 @@ impl ReplyPrefixEngine {
         let prefix = self.render_async(ctx, channel).await;
         if prefix.is_empty() {
             content.to_string()
+        } else if prefix.ends_with(' ') {
+            format!("{}{}", prefix, content)
         } else {
             format!("{} {}", prefix, content)
         }
@@ -418,7 +422,7 @@ mod tests {
         engine.add_template(ReplyPrefixTemplate::new("[bot] "));
         let ctx = TemplateContext::new();
         let result = engine.apply("Hello world", &ctx, None);
-        assert_eq!(result, "[bot]  Hello world");
+        assert_eq!(result, "[bot] Hello world");
     }
 
     #[test]
