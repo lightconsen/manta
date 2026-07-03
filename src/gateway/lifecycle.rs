@@ -463,7 +463,7 @@ pub(crate) async fn start_gateway(
     }
 
     // Stop standing orders manager on shutdown
-    if let Some(mut manager) = state.memory.standing_order_manager.read().await.clone() {
+    if let Some(mut manager) = state.memory.standing_order_manager.write().await.take() {
         manager.stop().await;
         info!("Standing orders manager stopped");
     }
@@ -573,7 +573,7 @@ pub(crate) async fn stop_gateway(
     }
 
     // 7. Standing orders manager.
-    if let Some(mut manager) = state.memory.standing_order_manager.read().await.clone() {
+    if let Some(mut manager) = state.memory.standing_order_manager.write().await.take() {
         manager.stop().await;
         info!("Standing orders manager stopped");
     }

@@ -1,6 +1,8 @@
 //! Configuration for standing orders (persistent background agent programs).
 
-use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Top-level standing orders configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +42,8 @@ pub struct StandingOrderDef {
     pub agent_id: String,
 
     /// Cron expression (six-field: sec min hour day-of-month month
-    /// day-of-week).
+    /// day-of-week). Validated at deserialization time.
+    #[serde(deserialize_with = "validate_cron")]
     pub schedule: String,
 
     /// The prompt to send to the agent each time the schedule fires.
@@ -62,4 +65,15 @@ pub struct StandingOrderDef {
 
 fn default_order_enabled() -> bool {
     true
+}
+
+/// Deserializer that validates a cron expression at config load time.
+fn validate_cron<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    cron::Schedule::from_str(&s)
+        .map_err(|e| serde::de::Error::custom(format!("invalid cron expression '{}': {}", s, e)))?;
+    Ok(s)
 }
