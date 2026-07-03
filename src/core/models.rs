@@ -133,6 +133,7 @@ impl Metadata {
             Some(tags) => tags.push(tag.into()),
             None => self.tags = Some(vec![tag.into()]),
         }
+        self.touch();
     }
 }
 
@@ -268,6 +269,11 @@ impl UpdateEntityRequest {
                     "Name cannot be empty".to_string(),
                 ));
             }
+            if name.len() > 256 {
+                return Err(crate::error::SyscityError::Validation(
+                    "Name cannot exceed 256 characters".to_string(),
+                ));
+            }
             entity.set_name(name.clone());
         }
 
@@ -369,5 +375,58 @@ mod tests {
         assert_eq!(entity.name, "Updated");
         assert_eq!(entity.description, Some("New desc".to_string()));
         assert_eq!(entity.status, Status::Active);
+    }
+
+    #[test]
+    fn test_update_request_empty_name_rejected() {
+        let mut entity = Entity::new("Original");
+        let update = UpdateEntityRequest {
+            name: Some("".to_string()),
+            ..Default::default()
+        };
+        assert!(update.apply(&mut entity).is_err());
+    }
+
+    #[test]
+    fn test_update_request_name_too_long_rejected() {
+        let mut entity = Entity::new("Original");
+        let long_name = "a".repeat(257);
+        let update = UpdateEntityRequest {
+            name: Some(long_name),
+            ..Default::default()
+        };
+        assert!(update.apply(&mut entity).is_err());
+    }
+
+    #[test]
+    fn test_metadata_add_tag_bumps_version() {
+        let mut meta = Metadata::new();
+        let v0 = meta.version;
+        meta.add_tag("new-tag");
+        assert_eq!(meta.version, v0 + 1);
+        assert_eq!(meta.tags, Some(vec!["new-tag".to_string()]));
+    }
+
+    #[test]
+    fn test_status_from_str_error() {
+        let result = "unknown_status".parse::<Status>();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown_status"));
+    }
+
+    #[test]
+    fn test_status_display_roundtrip() {
+        for status in &[
+            Status::Pending,
+            Status::Active,
+            Status::Paused,
+            Status::Completed,
+            Status::Failed,
+            Status::Archived,
+        ] {
+            let display = status.to_string();
+            let parsed: Status = display.parse().unwrap();
+            assert_eq!(*status, parsed);
+        }
     }
 }

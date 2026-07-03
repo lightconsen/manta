@@ -114,6 +114,8 @@ impl Engine {
             tokio::spawn(async move {
                 bus.publish(&event).await;
             });
+        } else {
+            warn!("Event bus not attached — dropping event: {:?}", event.event_name());
         }
     }
 
@@ -467,5 +469,73 @@ mod tests {
                 tags: None,
             })
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_engine_emits_events_via_bus() {
+        use std::sync::atomic::Ordering;
+        use crate::core::events::EventHandler;
+        use async_trait::async_trait;
+
+        #[derive(Debug)]
+        struct BusRecorder {
+            created: std::sync::Arc<std::sync::atomic::AtomicU64>,
+            deleted: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        }
+
+        impl BusRecorder {
+            fn new() -> (Self, std::sync::Arc<std::sync::atomic::AtomicU64>, std::sync::Arc<std::sync::atomic::AtomicU64>) {
+                let created = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+                let deleted = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+                (
+                    Self {
+                        created: created.clone(),
+                        deleted: deleted.clone(),
+                    },
+                    created,
+                    deleted,
+                )
+            }
+        }
+
+        #[async_trait]
+        impl EventHandler for BusRecorder {
+            fn handler_name(&self) -> &'static str {
+                "bus_recorder"
+            }
+            async fn handle(&self, event: &CoreEvent) {
+                match event {
+                    CoreEvent::EntityCreated { .. } => {
+                        self.created.fetch_add(1, Ordering::SeqCst);
+                    }
+                    CoreEvent::EntityDeleted { .. } => {
+                        self.deleted.fetch_add(1, Ordering::SeqCst);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let bus = EventBus::new();
+        let (recorder, created, deleted) = BusRecorder::new();
+        bus.subscribe("bus_recorder", Box::new(recorder)).await;
+
+        let engine = Engine::with_config_and_event_bus(EngineConfig::default(), bus);
+
+        let entity = engine
+            .create_entity(CreateEntityRequest {
+                name: "evented".to_string(),
+                description: None,
+                tags: None,
+            })
+            .unwrap();
+
+        // Yield so the spawned event-publish task runs
+        tokio::task::yield_now().await;
+        assert_eq!(created.load(Ordering::SeqCst), 1);
+
+        engine.delete_entity(entity.id).unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(deleted.load(Ordering::SeqCst), 1);
     }
 }

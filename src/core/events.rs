@@ -15,7 +15,7 @@
 //! # Usage (consumer side)
 //!
 //! ```ignore
-//! event_bus.subscribe(MyHandler);
+//! event_bus.subscribe("my_handler", MyHandler);
 //! // MyHandler: impl EventHandler — pattern match on CoreEvent
 //! ```
 
@@ -167,20 +167,11 @@ impl EventBus {
         }
     }
 
-    /// Register a handler that will receive **all** future events.
-    pub async fn subscribe(&self, handler: Box<dyn EventHandler>) {
-        let name = handler.handler_name();
-        self.handlers
-            .write()
-            .await
-            .push(HandlerEntry { name, handler });
-    }
-
     /// Register a handler by name.
     ///
-    /// Handlers registered this way can be removed later by name
-    /// (useful for dynamic plugin lifecycles).
-    pub async fn subscribe_named(&self, name: &'static str, handler: Box<dyn EventHandler>) {
+    /// Handlers can be removed later by name (useful for dynamic plugin
+    /// lifecycles and avoids fragility of `std::any::type_name`).
+    pub async fn subscribe(&self, name: &'static str, handler: Box<dyn EventHandler>) {
         self.handlers
             .write()
             .await
@@ -248,16 +239,17 @@ pub async fn append_core_event(
             details: e.to_string(),
         })?;
 
-    file.write_all(line.as_bytes())
+    file.write_all(format!("{}\n", line).as_bytes())
         .await
         .map_err(|e| crate::error::SyscityError::Storage {
             context: format!("Failed to write event log: {:?}", path),
             details: e.to_string(),
         })?;
-    file.write_all(b"\n")
+
+    file.flush()
         .await
         .map_err(|e| crate::error::SyscityError::Storage {
-            context: format!("Failed to write newline to event log: {:?}", path),
+            context: format!("Failed to flush event log: {:?}", path),
             details: e.to_string(),
         })?;
 
@@ -382,7 +374,7 @@ mod tests {
         let bus = EventBus::new();
         let handler = CountingHandler::new();
 
-        bus.subscribe(Box::new(handler)).await;
+        bus.subscribe("counting_handler", Box::new(handler)).await;
 
         bus.publish(&CoreEvent::entity_created(Id::new(), "foo"))
             .await;
@@ -399,7 +391,7 @@ mod tests {
     async fn test_unsubscribe() {
         let bus = EventBus::new();
 
-        bus.subscribe_named("test", Box::new(CountingHandler::new()))
+        bus.subscribe("test", Box::new(CountingHandler::new()))
             .await;
         assert_eq!(bus.handler_count().await, 1);
 
@@ -476,9 +468,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_core_event_serialization() {
-        let e = CoreEvent::entity_created(Id::new(), "test");
+        let id = Id::new();
+        let e = CoreEvent::entity_created(id, "test-entity");
         let json = serde_json::to_string(&e).unwrap();
         let deserialized: CoreEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(e.event_name(), deserialized.event_name());
+        match deserialized {
+            CoreEvent::EntityCreated {
+                entity_id,
+                ref entity_name,
+                ..
+            } => {
+                assert_eq!(entity_id, id);
+                assert_eq!(entity_name, "test-entity");
+            }
+            _ => panic!("expected EntityCreated variant"),
+        }
     }
 }
