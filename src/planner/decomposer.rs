@@ -293,22 +293,7 @@ fn build_decomposition_prompt(
 }
 
 fn strip_code_fences(text: &str) -> &str {
-    let trimmed = text.trim();
-    if trimmed.starts_with("```json") {
-        trimmed
-            .strip_prefix("```json")
-            .and_then(|s| s.strip_suffix("```"))
-            .unwrap_or(trimmed)
-            .trim()
-    } else if trimmed.starts_with("```") {
-        trimmed
-            .strip_prefix("```")
-            .and_then(|s| s.strip_suffix("```"))
-            .unwrap_or(trimmed)
-            .trim()
-    } else {
-        trimmed
-    }
+    crate::planner::util::strip_code_fences(text)
 }
 
 fn detect_cycle(subtasks: &[SubTask]) -> Option<Vec<String>> {

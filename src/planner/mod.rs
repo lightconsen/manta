@@ -24,6 +24,7 @@ pub mod scheduled_tasks;
 pub mod state;
 pub mod tool_chain;
 pub mod tool_learning;
+pub mod util;
 pub mod workflow;
 
 pub use composite_tool::{CompositeTool, CompositeToolRegistry, ToolStep};

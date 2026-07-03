@@ -341,10 +341,6 @@ impl ErrorDiagnosisEngine {
         }
 
         // Rule: service down (port unreachable but host is up).
-        if lower.contains("connection refused") {
-            // Already handled above; this is a fallback for more specific
-            // cases.
-        }
         if lower.contains("could not connect to server")
             || lower.contains("refused")
             || lower.contains("service unavailable")
@@ -514,22 +510,7 @@ impl Default for ErrorDiagnosisEngine {
 // ---------------------------------------------------------------------------
 
 fn strip_code_fences(text: &str) -> &str {
-    let trimmed = text.trim();
-    if trimmed.starts_with("```json") {
-        trimmed
-            .strip_prefix("```json")
-            .and_then(|s| s.strip_suffix("```"))
-            .unwrap_or(trimmed)
-            .trim()
-    } else if trimmed.starts_with("```") {
-        trimmed
-            .strip_prefix("```")
-            .and_then(|s| s.strip_suffix("```"))
-            .unwrap_or(trimmed)
-            .trim()
-    } else {
-        trimmed
-    }
+    crate::planner::util::strip_code_fences(text)
 }
 
 fn parse_category(s: &str) -> ErrorCategory {

@@ -139,10 +139,17 @@ impl CompositeTool {
             })
             .collect();
 
+        let required: Vec<String> = self
+            .parameters
+            .iter()
+            .filter(|(_, default)| default.is_none())
+            .map(|(k, _)| k.clone())
+            .collect();
+
         serde_json::json!({
             "type": "object",
             "properties": props,
-            "required": self.parameters.keys().collect::<Vec<_>>()
+            "required": required,
         })
     }
 }

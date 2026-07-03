@@ -150,14 +150,6 @@ impl ToolLearningEngine {
         }
     }
 
-    /// Set the TTL for stored experiences (default: 90 days).
-    /// Set to 0 for no expiry.
-    #[allow(dead_code)]
-    pub fn with_experience_ttl_secs(mut self, secs: u64) -> Self {
-        self.experience_ttl_secs = secs;
-        self
-    }
-
     /// Record the outcome of a tool execution.
     pub async fn record_experience(
         &self,

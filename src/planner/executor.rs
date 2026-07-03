@@ -161,39 +161,86 @@ impl TaskExecutor {
                 .take(self.config.max_concurrency)
                 .collect();
 
-            // Execute the batch sequentially.
-            // Tasks in a batch are independent (DAG guarantees no inter-dependencies),
-            // but we avoid concurrent mutable borrows of plan/rollback_mgr.
-            let mut any_failure = false;
-            for id in batch {
-                let result = self
-                    .run_single_task(id.clone(), plan, rollback_mgr.as_mut())
+            // Execute the batch concurrently.
+            // Tasks in a batch are independent (DAG guarantees no inter-dependencies).
+            let mut handles: Vec<tokio::task::JoinHandle<(String, TaskExecutionOutcome)>> =
+                Vec::with_capacity(batch.len());
+            for id in &batch {
+                let task = match plan.get_task(id) {
+                    Some(t) => t.clone(),
+                    None => continue,
+                };
+                plan.set_status(id, TaskStatus::Running);
+
+                let id_clone = id.clone();
+                let adapter = self.adapter.clone();
+                let verifier = self.verifier.clone();
+                let tool_registry = self.tool_registry.clone();
+                let diagnosis_engine = self.diagnosis_engine.clone();
+                let learning_engine = self.learning_engine.clone();
+                let exec_controller = self.execution_controller.clone();
+                let plan_goal = plan.goal.clone();
+
+                handles.push(tokio::spawn(async move {
+                    let outcome = execute_task_inner(
+                        task,
+                        adapter,
+                        verifier,
+                        tool_registry,
+                        diagnosis_engine,
+                        learning_engine,
+                        exec_controller,
+                        plan_goal,
+                    )
                     .await;
-                match result {
-                    Ok(()) => {
-                        completed.insert(id.clone());
+                    (id_clone, outcome)
+                }));
+            }
+
+            let mut any_failure = false;
+            let mut cancelled = false;
+            for handle in handles {
+                match handle.await {
+                    Ok((id, TaskExecutionOutcome::Success(msg))) => {
+                        plan.complete_task(&id, msg);
+                        completed.insert(id);
                     }
-                    Err(e) => {
+                    Ok((id, TaskExecutionOutcome::Failure(err))) => {
                         failed.insert(id.clone());
                         any_failure = true;
-                        plan.fail_task(&id, e.to_string());
+                        plan.fail_task(&id, err);
+                    }
+                    Ok((_id, TaskExecutionOutcome::Cancelled(reason))) => {
+                        cancelled = true;
+                        any_failure = true;
+                        tracing::warn!("Task execution cancelled: {}", reason);
+                    }
+                    Err(e) => {
+                        tracing::error!("Task execution panicked: {}", e);
                     }
                 }
             }
 
+            if cancelled {
+                return Ok(PlanResult {
+                    success: false,
+                    goal: plan.goal.clone(),
+                    tasks_completed: completed.len(),
+                    tasks_failed: failed.len(),
+                    tasks_rolled_back: rolled_back.len(),
+                    message: "Execution cancelled by controller".to_string(),
+                });
+            }
+
             // If any task failed and rollback is enabled, roll back completed tasks
-            // that have snapshots and abort remaining tasks.
+            // and abort remaining tasks.
             if any_failure && self.config.enable_rollback {
+                let completed_ids: Vec<_> = completed.iter().cloned().collect();
+                for id in completed_ids.iter().rev() {
+                    rolled_back.insert(id.clone());
+                    plan.set_status(id, TaskStatus::RolledBack);
+                }
                 if let Some(ref mut mgr) = rollback_mgr {
-                    let completed_ids: Vec<_> = completed.iter().cloned().collect();
-                    for id in completed_ids.iter().rev() {
-                        if let Some(task) = plan.get_task(id) {
-                            if task.snapshot_before {
-                                rolled_back.insert(id.clone());
-                                plan.set_status(id, TaskStatus::RolledBack);
-                            }
-                        }
-                    }
                     if let Err(e) = mgr.rollback().await {
                         tracing::error!("Rollback failed: {}", e);
                     }
@@ -222,251 +269,6 @@ impl TaskExecutor {
                 )
             },
         })
-    }
-
-    /// Execute a single task with retries and optional verification.
-    async fn run_single_task(
-        &self,
-        id: String,
-        plan: &mut Plan,
-        rollback_mgr: Option<&mut RollbackManager>,
-    ) -> crate::Result<()> {
-        let task = plan
-            .get_task(&id)
-            .ok_or_else(|| {
-                crate::error::SyscityError::Validation(format!("Task '{}' not found in plan", id))
-            })?
-            .clone();
-
-        plan.set_status(&id, TaskStatus::Running);
-
-        // Snapshot before execution if requested.
-        if task.snapshot_before {
-            if let Some(mgr) = rollback_mgr {
-                // Snapshot is best-effort; don't fail the task if it fails.
-                let path = std::path::PathBuf::from(&task.id);
-                let _ = mgr.snapshot_file(&path).await;
-            }
-        }
-
-        // Execute with retries.
-        for attempt in 0..=task.max_retries {
-            // Check execution controller before each attempt.
-            if let Some(ref ctrl) = self.execution_controller {
-                if let Err(reason) = ctrl.check_and_wait().await {
-                    plan.fail_task(&id, format!("Execution cancelled: {}", reason));
-                    return Err(crate::error::SyscityError::Internal(reason.to_string()));
-                }
-            }
-
-            match self.resolve_action(&task.action).await {
-                Ok(result) => {
-                    // Verify if criteria are set.
-                    let verified = if let Some(ref criteria) = task.verification {
-                        match self.verifier.verify(criteria, &result, None).await {
-                            Ok(true) => true,
-                            Ok(false) => {
-                                if attempt < task.max_retries {
-                                    tracing::warn!(
-                                        "Task '{}' verification failed (attempt {}/{}), \
-                                         retrying...",
-                                        id,
-                                        attempt + 1,
-                                        task.max_retries + 1
-                                    );
-                                    tokio::time::sleep(task.retry_delay).await;
-                                    continue;
-                                }
-                                false
-                            }
-                            Err(e) => {
-                                if attempt < task.max_retries {
-                                    tracing::warn!(
-                                        "Task '{}' verification error (attempt {}/{}): {}, \
-                                         retrying...",
-                                        id,
-                                        attempt + 1,
-                                        task.max_retries + 1,
-                                        e
-                                    );
-                                    tokio::time::sleep(task.retry_delay).await;
-                                    continue;
-                                }
-                                plan.fail_task(&id, format!("Verification failed: {}", e));
-                                return Err(crate::error::SyscityError::ExternalService {
-                                    source: format!("Task verification failed: {}", e),
-                                    cause: None,
-                                });
-                            }
-                        }
-                    } else {
-                        true
-                    };
-
-                    if verified {
-                        plan.complete_task(&id, result.message.clone());
-
-                        // ── Record success experience ────────────────────────────────
-                        if let Some(ref learning) = self.learning_engine {
-                            let ctx = ExperienceContext::current(&plan.goal);
-                            let _ = learning
-                                .record_experience(
-                                    &desktop_action_name(&task.action),
-                                    &task.action,
-                                    true,
-                                    None,
-                                    None,
-                                    &ctx,
-                                )
-                                .await;
-                        }
-
-                        return Ok(());
-                    } else {
-                        plan.fail_task(&id, "Verification failed after all retries".to_string());
-                        return Err(crate::error::SyscityError::Validation(
-                            "Verification failed".to_string(),
-                        ));
-                    }
-                }
-                Err(e) => {
-                    if attempt < task.max_retries {
-                        tracing::warn!(
-                            "Task '{}' execution failed (attempt {}/{}): {}, retrying...",
-                            id,
-                            attempt + 1,
-                            task.max_retries + 1,
-                            e
-                        );
-                        tokio::time::sleep(task.retry_delay).await;
-                    } else {
-                        let error_str = e.to_string();
-
-                        // ── Self-correction: diagnose the failure ─────────────────────
-                        let diagnosis = self
-                            .diagnosis_engine
-                            .diagnose(&error_str, &task.description)
-                            .await;
-                        if let Ok(ref d) = diagnosis {
-                            tracing::info!(
-                                "Diagnosis for task '{}': {} (severity: {:?}, confidence: {:.2})",
-                                id,
-                                d.root_causes
-                                    .first()
-                                    .map(|r| r.description.as_str())
-                                    .unwrap_or("unknown"),
-                                d.severity,
-                                d.confidence
-                            );
-                        }
-
-                        // ── Check past experience for known alternatives ──────────────
-                        let mut alternative_suggestion = None;
-                        if let Some(ref learning) = self.learning_engine {
-                            let ctx = ExperienceContext::current(&plan.goal);
-                            if let Ok(Some(suggestion)) = learning
-                                .suggest_alternative(
-                                    &desktop_action_name(&task.action),
-                                    &error_str,
-                                    &ctx,
-                                )
-                                .await
-                            {
-                                tracing::info!(
-                                    "ToolLearningEngine suggests alternative for task '{}': {}",
-                                    id,
-                                    suggestion.alternative
-                                );
-                                alternative_suggestion = Some(suggestion.alternative.clone());
-                            }
-                        }
-
-                        let mut error_msg = format!("Execution failed: {}", e);
-                        if let Some(ref alt) = alternative_suggestion {
-                            error_msg.push_str(&format!("\nSuggested alternative: {}", alt));
-                        }
-                        plan.fail_task(&id, error_msg.clone());
-
-                        // ── Record experience ─────────────────────────────────────────
-                        if let Some(ref learning) = self.learning_engine {
-                            let ctx = ExperienceContext::current(&plan.goal);
-                            let _ = learning
-                                .record_experience(
-                                    &desktop_action_name(&task.action),
-                                    &task.action,
-                                    false,
-                                    Some(&error_str),
-                                    alternative_suggestion.as_deref(),
-                                    &ctx,
-                                )
-                                .await;
-                        }
-
-                        return Err(crate::error::SyscityError::ExternalService {
-                            source: error_msg,
-                            cause: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        // Should not reach here, but handle defensively.
-        plan.fail_task(&id, "Exhausted all retries".to_string());
-        Err(crate::error::SyscityError::Validation("Exhausted all retries".to_string()))
-    }
-
-    /// Resolve a [`DesktopAction`] into an [`ActionResult`].
-    ///
-    /// For [`ToolCall`](crate::computer::DesktopAction::ToolCall) actions the
-    /// tool is looked up and executed via [`ToolRegistry`].  All other actions
-    /// are forwarded to the [`ComputerAdapter`].
-    async fn resolve_action(
-        &self,
-        action: &crate::computer::DesktopAction,
-    ) -> crate::Result<ActionResult> {
-        match action {
-            crate::computer::DesktopAction::ToolCall { tool_name, args } => {
-                self.execute_tool_call(tool_name, args).await
-            }
-            other => self.adapter.execute(other.clone()).await.map_err(|e| {
-                crate::error::SyscityError::ExternalService {
-                    source: e.to_string(),
-                    cause: None,
-                }
-            }),
-        }
-    }
-
-    /// Execute a tool call through the [`ToolRegistry`].
-    ///
-    /// Looks up `tool_name` in the registry, calls it with `args`, and converts
-    /// the [`ToolExecutionResult`] into an [`ActionResult`].  Returns an error
-    /// if no registry is configured or the tool is not found.
-    async fn execute_tool_call(
-        &self,
-        tool_name: &str,
-        args: &serde_json::Value,
-    ) -> crate::Result<ActionResult> {
-        let registry = self.tool_registry.as_ref().ok_or_else(|| {
-            crate::error::SyscityError::Validation(
-                "ToolCall requires ToolRegistry but none is configured on the executor".to_string(),
-            )
-        })?;
-
-        let context = crate::tools::ToolContext::default();
-        match registry.execute(tool_name, args.clone(), &context).await {
-            Some(Ok(result)) => Ok(ActionResult {
-                success: result.success,
-                message: result.output,
-                screenshot_after: None,
-                data: result.data,
-            }),
-            Some(Err(e)) => Err(e),
-            None => Err(crate::error::SyscityError::NotFound {
-                resource: format!("Tool '{}' referenced by ToolCall", tool_name),
-            }),
-        }
     }
 }
 
@@ -511,6 +313,226 @@ fn desktop_action_name(action: &crate::computer::DesktopAction) -> String {
         crate::computer::DesktopAction::ToolCall { .. } => "tool_call",
     }
     .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Concurrent task execution
+// ---------------------------------------------------------------------------
+
+/// Outcome of executing a single task concurrently.
+enum TaskExecutionOutcome {
+    /// Task completed successfully with an optional result message.
+    Success(String),
+    /// Task failed after all retries.
+    Failure(String),
+    /// Execution was cancelled by the controller.
+    Cancelled(String),
+}
+
+/// Execute a single task with retries and optional verification.
+///
+/// This is a standalone function (not a method on [`TaskExecutor`]) so that
+/// independent tasks can be spawned concurrently via [`tokio::spawn`].
+#[allow(clippy::too_many_arguments)]
+async fn execute_task_inner(
+    task: crate::planner::Task,
+    adapter: Arc<dyn ComputerAdapter>,
+    verifier: VerificationEngine,
+    tool_registry: Option<Arc<ToolRegistry>>,
+    diagnosis_engine: ErrorDiagnosisEngine,
+    learning_engine: Option<Arc<ToolLearningEngine>>,
+    exec_controller: Option<Arc<crate::acp::ExecutionController>>,
+    plan_goal: String,
+) -> TaskExecutionOutcome {
+    let action_name = desktop_action_name(&task.action);
+
+    for attempt in 0..=task.max_retries {
+        // Check execution controller before each attempt.
+        if let Some(ref ctrl) = exec_controller {
+            if let Err(reason) = ctrl.check_and_wait().await {
+                return TaskExecutionOutcome::Cancelled(reason.to_string());
+            }
+        }
+
+        match resolve_action_standalone(&task.action, &adapter, &tool_registry).await {
+            Ok(result) => {
+                // Verify if criteria are set.
+                let verified = if let Some(ref criteria) = task.verification {
+                    match verifier.verify(criteria, &result, None).await {
+                        Ok(true) => true,
+                        Ok(false) => {
+                            if attempt < task.max_retries {
+                                tracing::warn!(
+                                    "Task '{}' verification failed (attempt {}/{}), retrying...",
+                                    task.id,
+                                    attempt + 1,
+                                    task.max_retries + 1
+                                );
+                                tokio::time::sleep(task.retry_delay).await;
+                                continue;
+                            }
+                            false
+                        }
+                        Err(e) => {
+                            if attempt < task.max_retries {
+                                tracing::warn!(
+                                    "Task '{}' verification error (attempt {}/{}): {}, retrying...",
+                                    task.id,
+                                    attempt + 1,
+                                    task.max_retries + 1,
+                                    e
+                                );
+                                tokio::time::sleep(task.retry_delay).await;
+                                continue;
+                            }
+                            return TaskExecutionOutcome::Failure(format!(
+                                "Verification failed: {}",
+                                e
+                            ));
+                        }
+                    }
+                } else {
+                    true
+                };
+
+                if verified {
+                    // ── Record success experience ────────────────────────────
+                    if let Some(ref learning) = learning_engine {
+                        let ctx = ExperienceContext::current(&plan_goal);
+                        let _ = learning
+                            .record_experience(&action_name, &task.action, true, None, None, &ctx)
+                            .await;
+                    }
+
+                    return TaskExecutionOutcome::Success(result.message);
+                } else {
+                    return TaskExecutionOutcome::Failure(
+                        "Verification failed after all retries".to_string(),
+                    );
+                }
+            }
+            Err(e) => {
+                if attempt < task.max_retries {
+                    tracing::warn!(
+                        "Task '{}' execution failed (attempt {}/{}): {}, retrying...",
+                        task.id,
+                        attempt + 1,
+                        task.max_retries + 1,
+                        e
+                    );
+                    tokio::time::sleep(task.retry_delay).await;
+                } else {
+                    let error_str = e.to_string();
+
+                    // ── Self-correction: diagnose the failure ─────────────────
+                    if let Ok(d) = diagnosis_engine
+                        .diagnose(&error_str, &task.description)
+                        .await
+                    {
+                        tracing::info!(
+                            "Diagnosis for task '{}': {} (severity: {:?}, confidence: {:.2})",
+                            task.id,
+                            d.root_causes
+                                .first()
+                                .map(|r| r.description.as_str())
+                                .unwrap_or("unknown"),
+                            d.severity,
+                            d.confidence
+                        );
+                    }
+
+                    // ── Check past experience for known alternatives ──────────
+                    let mut alternative_suggestion = None;
+                    if let Some(ref learning) = learning_engine {
+                        let ctx = ExperienceContext::current(&plan_goal);
+                        if let Ok(Some(suggestion)) = learning
+                            .suggest_alternative(&action_name, &error_str, &ctx)
+                            .await
+                        {
+                            tracing::info!(
+                                "ToolLearningEngine suggests alternative for task '{}': {}",
+                                task.id,
+                                suggestion.alternative
+                            );
+                            alternative_suggestion = Some(suggestion.alternative.clone());
+                        }
+                    }
+
+                    let mut error_msg = format!("Execution failed: {}", e);
+                    if let Some(ref alt) = alternative_suggestion {
+                        error_msg.push_str(&format!("\nSuggested alternative: {}", alt));
+                    }
+
+                    // ── Record experience ─────────────────────────────────────
+                    if let Some(ref learning) = learning_engine {
+                        let ctx = ExperienceContext::current(&plan_goal);
+                        let _ = learning
+                            .record_experience(
+                                &action_name,
+                                &task.action,
+                                false,
+                                Some(&error_str),
+                                alternative_suggestion.as_deref(),
+                                &ctx,
+                            )
+                            .await;
+                    }
+
+                    return TaskExecutionOutcome::Failure(error_msg);
+                }
+            }
+        }
+    }
+
+    TaskExecutionOutcome::Failure("Exhausted all retries".to_string())
+}
+
+/// Resolve a [`DesktopAction`] into an [`ActionResult`] (standalone version
+/// for concurrent execution).
+async fn resolve_action_standalone(
+    action: &crate::computer::DesktopAction,
+    adapter: &Arc<dyn ComputerAdapter>,
+    tool_registry: &Option<Arc<ToolRegistry>>,
+) -> crate::Result<ActionResult> {
+    match action {
+        crate::computer::DesktopAction::ToolCall { tool_name, args } => {
+            execute_tool_call_standalone(tool_name, args, tool_registry).await
+        }
+        other => adapter.execute(other.clone()).await.map_err(|e| {
+            crate::error::SyscityError::ExternalService {
+                source: e.to_string(),
+                cause: None,
+            }
+        }),
+    }
+}
+
+/// Execute a tool call through the [`ToolRegistry`] (standalone version
+/// for concurrent execution).
+async fn execute_tool_call_standalone(
+    tool_name: &str,
+    args: &serde_json::Value,
+    tool_registry: &Option<Arc<ToolRegistry>>,
+) -> crate::Result<ActionResult> {
+    let registry = tool_registry.as_ref().ok_or_else(|| {
+        crate::error::SyscityError::Validation(
+            "ToolCall requires ToolRegistry but none is configured on the executor".to_string(),
+        )
+    })?;
+
+    let context = crate::tools::ToolContext::default();
+    match registry.execute(tool_name, args.clone(), &context).await {
+        Some(Ok(result)) => Ok(ActionResult {
+            success: result.success,
+            message: result.output,
+            screenshot_after: None,
+            data: result.data,
+        }),
+        Some(Err(e)) => Err(e),
+        None => Err(crate::error::SyscityError::NotFound {
+            resource: format!("Tool '{}' referenced by ToolCall", tool_name),
+        }),
+    }
 }
 
 #[cfg(test)]

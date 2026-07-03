@@ -5,6 +5,8 @@
 
 use tracing::{info, warn};
 
+use tokio::io::AsyncBufReadExt;
+
 use crate::planner::{GoalPlanner, PlanResult, TaskStateStore};
 
 /// Result of a startup recovery check.
@@ -74,55 +76,58 @@ pub async fn check_startup_recovery(
 
     if auto_resume {
         info!("Auto-resume enabled — resuming most recent plan");
-        let mut results = Vec::new();
-        for s in summaries {
-            match planner.resume_plan(&s.id).await {
-                Ok(Some(result)) => {
-                    println!("✅ Plan '{}' resumed: {}", s.goal, result.message);
-                    results.push(result);
-                }
-                Ok(None) => {
-                    warn!("Plan '{}' disappeared during resume", s.id);
-                }
-                Err(e) => {
-                    warn!("Failed to resume plan '{}': {}", s.id, e);
-                }
-            }
-        }
-        return Ok(RecoveryOutcome::Resumed(results));
-    }
-
-    // Interactive prompt only when stdin is a TTY.
-    use std::io::IsTerminal;
-    if !std::io::stdin().is_terminal() {
-        info!("Non-interactive mode — skipping resume prompt");
-        return Ok(RecoveryOutcome::Declined);
-    }
-
-    println!("Resume the most recent plan? [y/N]");
-    let mut answer = String::new();
-    match std::io::stdin().read_line(&mut answer) {
-        Ok(_) if answer.trim().eq_ignore_ascii_case("y") => {
-            let s = &summaries[0];
-            info!("User chose to resume plan '{}'", s.id);
+        if let Some(s) = summaries.into_iter().next() {
             match planner.resume_plan(&s.id).await {
                 Ok(Some(result)) => {
                     println!("✅ Plan '{}' resumed: {}", s.goal, result.message);
                     Ok(RecoveryOutcome::Resumed(vec![result]))
                 }
                 Ok(None) => {
-                    println!("⚠️  Plan no longer exists");
+                    warn!("Plan '{}' disappeared during resume", s.id);
                     Ok(RecoveryOutcome::Declined)
                 }
                 Err(e) => {
-                    println!("❌ Failed to resume plan: {}", e);
+                    warn!("Failed to resume plan '{}': {}", s.id, e);
                     Ok(RecoveryOutcome::Declined)
                 }
             }
+        } else {
+            Ok(RecoveryOutcome::NothingToResume)
         }
-        _ => {
-            info!("User declined to resume interrupted plans");
-            Ok(RecoveryOutcome::Declined)
+    } else {
+        // Interactive prompt only when stdin is a TTY.
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() {
+            info!("Non-interactive mode — skipping resume prompt");
+            return Ok(RecoveryOutcome::Declined);
+        }
+
+        println!("Resume the most recent plan? [y/N]");
+        let reader = tokio::io::BufReader::new(tokio::io::stdin());
+        let mut lines = reader.lines();
+        match lines.next_line().await {
+            Ok(Some(line)) if line.trim().eq_ignore_ascii_case("y") => {
+                let s = &summaries[0];
+                info!("User chose to resume plan '{}'", s.id);
+                match planner.resume_plan(&s.id).await {
+                    Ok(Some(result)) => {
+                        println!("✅ Plan '{}' resumed: {}", s.goal, result.message);
+                        Ok(RecoveryOutcome::Resumed(vec![result]))
+                    }
+                    Ok(None) => {
+                        println!("⚠️  Plan no longer exists");
+                        Ok(RecoveryOutcome::Declined)
+                    }
+                    Err(e) => {
+                        println!("❌ Failed to resume plan: {}", e);
+                        Ok(RecoveryOutcome::Declined)
+                    }
+                }
+            }
+            _ => {
+                info!("User declined to resume interrupted plans");
+                Ok(RecoveryOutcome::Declined)
+            }
         }
     }
 }

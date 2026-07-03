@@ -139,7 +139,11 @@ impl ToolChainReasoner {
             links.push(ChainLink {
                 id: "check-build-tool".to_string(),
                 description: "Verify build toolchain is installed".to_string(),
-                action: DesktopAction::ListProcesses { filter: None, limit: Some(5) },
+                action: DesktopAction::LaunchApp {
+                    name: "which".to_string(),
+                    args: vec!["cargo".to_string()],
+                    wait_for_ready: true,
+                },
                 dependencies: vec![],
             });
             confidence = confidence.max(0.7);
@@ -286,22 +290,7 @@ impl Default for ToolChainReasoner {
 // ---------------------------------------------------------------------------
 
 fn strip_code_fences(text: &str) -> &str {
-    let trimmed = text.trim();
-    if trimmed.starts_with("```json") {
-        trimmed
-            .strip_prefix("```json")
-            .and_then(|s| s.strip_suffix("```"))
-            .unwrap_or(trimmed)
-            .trim()
-    } else if trimmed.starts_with("```") {
-        trimmed
-            .strip_prefix("```")
-            .and_then(|s| s.strip_suffix("```"))
-            .unwrap_or(trimmed)
-            .trim()
-    } else {
-        trimmed
-    }
+    crate::planner::util::strip_code_fences(text)
 }
 
 fn parse_llm_action(action_type: &str, params: &serde_json::Value) -> DesktopAction {

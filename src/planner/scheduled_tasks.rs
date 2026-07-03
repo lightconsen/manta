@@ -196,6 +196,7 @@ pub struct TaskScheduler {
     tasks: Arc<RwLock<HashMap<String, ScheduledTask>>>,
     running: Arc<AtomicBool>,
     handle: Option<tokio::task::JoinHandle<()>>,
+    poll_interval_secs: u64,
 }
 
 impl TaskScheduler {
@@ -205,7 +206,14 @@ impl TaskScheduler {
             tasks: Arc::new(RwLock::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
             handle: None,
+            poll_interval_secs: 1,
         }
+    }
+
+    /// Set the poll interval in seconds (default: 1).
+    pub fn with_poll_interval(mut self, secs: u64) -> Self {
+        self.poll_interval_secs = secs;
+        self
     }
 
     /// Add or replace a scheduled task.
@@ -267,12 +275,13 @@ impl TaskScheduler {
             ));
         }
 
+        let interval_secs = self.poll_interval_secs;
         self.running.store(true, Ordering::SeqCst);
         let running = self.running.clone();
         let tasks = self.tasks.clone();
 
         let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             while running.load(Ordering::SeqCst) {
