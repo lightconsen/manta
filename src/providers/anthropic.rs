@@ -11,8 +11,8 @@ use tracing::{debug, error, instrument, warn};
 
 use super::{
     stream_wrappers::ProviderStreamFamily, CompletionChunk, CompletionRequest, CompletionResponse,
-    CompletionStream, FunctionDefinition, Message, Provider, ProviderInstanceConfig, Role,
-    ToolCall, Usage,
+    CompletionStream, FunctionCall, FunctionDefinition, Message, Provider, ProviderInstanceConfig,
+    Role, ToolCall, Usage,
 };
 
 use crate::model_router::gateway_client::GatewayClient;
@@ -29,6 +29,8 @@ pub struct AnthropicProvider {
     gateway_client: std::sync::Arc<HttpGatewayClient>,
     /// Optional stream family override (e.g. for Kimi Anthropic endpoint)
     stream_family_override: Option<ProviderStreamFamily>,
+    /// Maximum context length (0 = use model-based estimate).
+    max_context: usize,
 }
 
 /// Anthropic API request body
@@ -136,14 +138,34 @@ struct StreamEvent {
     message: Option<StreamMessage>,
     #[serde(default)]
     usage: Option<StreamUsage>,
+    #[serde(default)]
+    content_block: Option<StreamContentBlock>,
+}
+
+/// Content block in content_block_start streaming event
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct StreamContentBlock {
+    #[serde(rename = "type")]
+    block_type: String,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    input: Option<serde_json::Value>,
 }
 
 /// Delta in streaming response
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct StreamDelta {
+    #[serde(rename = "type")]
+    delta_type: Option<String>,
     #[serde(default)]
     text: Option<String>,
+    #[serde(default)]
+    partial_json: Option<String>,
     #[serde(default)]
     stop_reason: Option<String>,
 }
@@ -203,6 +225,7 @@ impl AnthropicProvider {
             default_model: "claude-3-5-sonnet-20241022".to_string(),
             gateway_client,
             stream_family_override: None,
+            max_context: 0,
         })
     }
 
@@ -211,13 +234,14 @@ impl AnthropicProvider {
     /// This is the primary constructor used by the resolver; it sets all fields
     /// including protocol-variant-specific stream families (e.g., Kimi
     /// Anthropic).
-    pub fn from_config(config: ProviderInstanceConfig) -> crate::Result<Self> {
+    pub fn from_config(config: &ProviderInstanceConfig) -> crate::Result<Self> {
         let credential =
-            crate::model_router::Credential::api_key(config.api_key.unwrap_or_default());
+            crate::model_router::Credential::api_key(config.api_key.clone().unwrap_or_default());
         let mut this = Self::with_credential(credential)?;
-        this.base_url = config.base_url;
-        this.default_model = config.model;
+        this.base_url = config.base_url.clone();
+        this.default_model = config.model.clone();
         this.stream_family_override = Some(config.stream_family);
+        this.max_context = config.max_context;
         Ok(this)
     }
 
@@ -387,10 +411,18 @@ impl AnthropicProvider {
         }
     }
 
-    /// Parse Server-Sent Events (SSE) from streaming response
+    /// Parse Server-Sent Events (SSE) from a complete chunk of SSE data.
+    ///
+    /// Handles text deltas, tool_use start/delta/stop events, and message_stop.
     fn parse_sse_events(text: &str) -> Vec<CompletionChunk> {
         let mut chunks = Vec::new();
-        let mut current_text = String::new();
+        // Tool call accumulation state across events within the same parse call
+        struct ToolAccum {
+            id: String,
+            name: String,
+            input: String,
+        }
+        let mut current_tool_call: Option<ToolAccum> = None;
 
         for line in text.lines() {
             let line = line.trim();
@@ -415,16 +447,66 @@ impl AnthropicProvider {
                         match event.event_type.as_str() {
                             "content_block_delta" => {
                                 if let Some(delta) = event.delta {
-                                    if let Some(text) = delta.text {
-                                        current_text.push_str(&text);
-                                        chunks.push(CompletionChunk {
-                                            content: Some(text),
-                                            reasoning_content: None,
-                                            tool_calls: None,
-                                            is_done: false,
-                                            usage: None,
+                                    match delta.delta_type.as_deref() {
+                                        Some("text_delta") => {
+                                            if let Some(text) = delta.text {
+                                                chunks.push(CompletionChunk {
+                                                    content: Some(text),
+                                                    reasoning_content: None,
+                                                    tool_calls: None,
+                                                    is_done: false,
+                                                    usage: None,
+                                                });
+                                            }
+                                        }
+                                        Some("input_json_delta") => {
+                                            if let Some(partial_json) = delta.partial_json {
+                                                if let Some(ref mut tool) = current_tool_call {
+                                                    tool.input.push_str(&partial_json);
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            "content_block_start" => {
+                                if let Some(content_block) = &event.content_block {
+                                    if content_block.block_type == "tool_use" {
+                                        current_tool_call = Some(ToolAccum {
+                                            id: content_block.id.clone().unwrap_or_default(),
+                                            name: content_block.name.clone().unwrap_or_default(),
+                                            input: String::new(),
                                         });
                                     }
+                                }
+                                // Text content blocks don't have a start delta;
+                                // text comes through content_block_delta
+                            }
+                            "content_block_stop" => {
+                                if let Some(tool) = current_tool_call.take() {
+                                    let args = serde_json::from_str(&tool.input)
+                                        .unwrap_or_else(|e| {
+                                            warn!("Failed to parse tool input JSON: {}", e);
+                                            serde_json::Value::Object(serde_json::Map::new())
+                                        });
+                                    chunks.push(CompletionChunk {
+                                        content: None,
+                                        reasoning_content: None,
+                                        tool_calls: Some(vec![ToolCall {
+                                            id: tool.id,
+                                            call_type: "function".to_string(),
+                                            function: FunctionCall {
+                                                name: tool.name,
+                                                arguments: serde_json::to_string(&args)
+                                                    .unwrap_or_default(),
+                                            },
+                                            index: None,
+                                            result: None,
+                                        }]),
+                                        is_done: false,
+                                        usage: None,
+                                    });
                                 }
                             }
                             "message_stop" => {
@@ -436,9 +518,12 @@ impl AnthropicProvider {
                                     usage: None,
                                 });
                             }
+                            "message_delta" => {
+                                // May contain usage or stop_reason updates;
+                                // skip for now, message_stop signals completion
+                            }
                             _ => {
-                                // Ignore other event types (message_start,
-                                // content_block_start, etc.)
+                                // Ignore other event types (message_start, ping, etc.)
                             }
                         }
                     }
@@ -450,6 +535,45 @@ impl AnthropicProvider {
         }
 
         chunks
+    }
+
+    /// Parse a raw byte chunk from the HTTP response body, buffering partial
+    /// SSE lines across calls. Returns completed SSE lines.
+    fn parse_sse_chunk(
+        incoming: &str,
+        buffer: &mut String,
+    ) -> Vec<CompletionChunk> {
+        buffer.push_str(incoming);
+
+        // Find the last complete SSE event boundary (ends with "\n\n" or "\n")
+        // SSE events end with a blank line, but each data line is "\ndata: ..."
+        let last_boundary = buffer.rfind("\n\n").map(|i| i + 2).unwrap_or(0);
+
+        // Also handle the case where we have a complete line ending with \n
+        // but no blank line yet — process any complete data lines
+        let complete = if last_boundary > 0 {
+            let ready = buffer[..last_boundary].to_string();
+            buffer.drain(..last_boundary);
+            ready
+        } else {
+            // No complete SSE event yet; check for a complete data line
+            let mut ready = String::new();
+            while let Some(newline_pos) = buffer.find('\n') {
+                let line = buffer[..newline_pos].to_string();
+                buffer.drain(..=newline_pos);
+                if line.starts_with("data: ") {
+                    ready.push_str(&line);
+                    ready.push('\n');
+                }
+            }
+            ready
+        };
+
+        if complete.is_empty() {
+            Vec::new()
+        } else {
+            Self::parse_sse_events(&complete)
+        }
     }
 }
 
@@ -498,16 +622,8 @@ impl Provider for AnthropicProvider {
         };
 
         // Merge provider-specific extra parameters
-        let mut body_value = serde_json::to_value(&anthropic_request).unwrap_or_default();
-        if let Some(extra) = request.extra {
-            if let serde_json::Value::Object(ref mut map) = body_value {
-                if let serde_json::Value::Object(extra_map) = extra {
-                    for (k, v) in extra_map {
-                        map.insert(k, v);
-                    }
-                }
-            }
-        }
+        let mut body_value = serde_json::to_value(&anthropic_request)?;
+        crate::providers::merge_extra(&mut body_value, request.extra);
 
         debug!("Sending request to Anthropic API");
 
@@ -551,16 +667,8 @@ impl Provider for AnthropicProvider {
         };
 
         // Merge provider-specific extra parameters
-        let mut body_value = serde_json::to_value(&anthropic_request).unwrap_or_default();
-        if let Some(extra) = request.extra {
-            if let serde_json::Value::Object(ref mut map) = body_value {
-                if let serde_json::Value::Object(extra_map) = extra {
-                    for (k, v) in extra_map {
-                        map.insert(k, v);
-                    }
-                }
-            }
-        }
+        let mut body_value = serde_json::to_value(&anthropic_request)?;
+        crate::providers::merge_extra(&mut body_value, request.extra);
 
         let request_url = format!("{}/v1/messages", self.base_url);
 
@@ -597,20 +705,35 @@ impl Provider for AnthropicProvider {
                         });
                     }
 
-                    // Process the stream as SSE events
+                    // Process the stream as SSE events with line buffering
+                    // to handle TCP fragmentation.
                     let body_stream = response.bytes_stream();
                     let stream = async_stream::stream! {
+                        let mut line_buffer = String::new();
                         for await chunk in body_stream {
                             match chunk {
                                 Ok(bytes) => {
                                     let text = String::from_utf8_lossy(&bytes);
-                                    for event in Self::parse_sse_events(&text) {
+                                    for event in Self::parse_sse_chunk(&text, &mut line_buffer) {
                                         yield event;
                                     }
                                 }
                                 Err(e) => {
                                     error!("Stream error: {}", e);
+                                    yield CompletionChunk {
+                                        content: Some(format!("[Stream error: {}]", e)),
+                                        reasoning_content: None,
+                                        tool_calls: None,
+                                        is_done: true,
+                                        usage: None,
+                                    };
                                 }
+                            }
+                        }
+                        // Process any remaining data in the buffer
+                        if !line_buffer.is_empty() {
+                            for event in Self::parse_sse_events(&line_buffer) {
+                                yield event;
                             }
                         }
                     };
@@ -653,7 +776,11 @@ impl Provider for AnthropicProvider {
     }
 
     fn max_context(&self) -> usize {
-        200000 // Claude 3.5 Sonnet context window
+        if self.max_context > 0 {
+            self.max_context
+        } else {
+            200000 // Claude 3.5 Sonnet context window
+        }
     }
 
     async fn health_check(&self) -> crate::Result<bool> {

@@ -33,6 +33,8 @@ pub struct OpenAiProvider {
     /// Optional stream family override (for protocol-variant vendors like
     /// Moonshot/Minimax)
     stream_family_override: Option<ProviderStreamFamily>,
+    /// Maximum context length (0 = use model-based estimate).
+    max_context: usize,
 }
 
 impl OpenAiProvider {
@@ -76,6 +78,7 @@ impl OpenAiProvider {
             default_model: "gpt-4o-mini".to_string(),
             gateway_client,
             stream_family_override: None,
+            max_context: 0,
         })
     }
 
@@ -83,12 +86,13 @@ impl OpenAiProvider {
     ///
     /// This is the primary constructor used by the resolver; it sets all fields
     /// including protocol-variant-specific stream families.
-    pub fn from_config(config: ProviderInstanceConfig) -> crate::Result<Self> {
+    pub fn from_config(config: &ProviderInstanceConfig) -> crate::Result<Self> {
         let credential =
-            crate::model_router::Credential::api_key(config.api_key.unwrap_or_default());
+            crate::model_router::Credential::api_key(config.api_key.clone().unwrap_or_default());
         let mut this = Self::with_credential(credential)?;
-        this.base_url = config.base_url;
-        this.default_model = config.model;
+        this.base_url = config.base_url.clone();
+        this.default_model = config.model.clone();
+        this.max_context = config.max_context;
         this.stream_family_override = Some(config.stream_family);
         Ok(this)
     }
@@ -252,6 +256,9 @@ impl Provider for OpenAiProvider {
     }
 
     fn max_context(&self) -> usize {
+        if self.max_context > 0 {
+            return self.max_context;
+        }
         match self.default_model.as_str() {
             "gpt-4o" | "gpt-4-turbo" => 128_000,
             "gpt-4" => 8_192,
@@ -306,16 +313,8 @@ impl Provider for OpenAiProvider {
         };
 
         // Merge provider-specific extra parameters
-        let mut body_value = serde_json::to_value(&body).unwrap_or_default();
-        if let Some(extra) = request.extra {
-            if let serde_json::Value::Object(ref mut map) = body_value {
-                if let serde_json::Value::Object(extra_map) = extra {
-                    for (k, v) in extra_map {
-                        map.insert(k, v);
-                    }
-                }
-            }
-        }
+        let mut body_value = serde_json::to_value(&body)?;
+        crate::providers::merge_extra(&mut body_value, request.extra);
 
         // Debug: print the actual request body
         let body_json = serde_json::to_string(&body_value).unwrap_or_default();
@@ -365,16 +364,8 @@ impl Provider for OpenAiProvider {
         };
 
         // Merge provider-specific extra parameters
-        let mut body_value = serde_json::to_value(&body).unwrap_or_default();
-        if let Some(extra) = request.extra {
-            if let serde_json::Value::Object(ref mut map) = body_value {
-                if let serde_json::Value::Object(extra_map) = extra {
-                    for (k, v) in extra_map {
-                        map.insert(k, v);
-                    }
-                }
-            }
-        }
+        let mut body_value = serde_json::to_value(&body)?;
+        crate::providers::merge_extra(&mut body_value, request.extra);
 
         let request_url = self.url("/chat/completions");
 

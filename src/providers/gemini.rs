@@ -29,6 +29,8 @@ pub struct GeminiProvider {
     base_url: String,
     /// Default model (default: gemini-2.0-flash)
     default_model: String,
+    /// Per-provider context window override from config (0 = use model-based estimate)
+    max_context: usize,
     /// Unified HTTP client with retry/backoff, auth, and rate limiting
     gateway_client: std::sync::Arc<HttpGatewayClient>,
 }
@@ -59,6 +61,7 @@ impl GeminiProvider {
         Ok(Self {
             base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
             default_model: "gemini-2.0-flash".to_string(),
+            max_context: 0,
             gateway_client,
         })
     }
@@ -76,12 +79,13 @@ impl GeminiProvider {
     }
 
     /// Create from a fully-resolved `ProviderInstanceConfig`.
-    pub fn from_config(config: ProviderInstanceConfig) -> crate::Result<Self> {
+    pub fn from_config(config: &ProviderInstanceConfig) -> crate::Result<Self> {
         let credential =
-            crate::model_router::Credential::api_key(config.api_key.unwrap_or_default());
+            crate::model_router::Credential::api_key(config.api_key.clone().unwrap_or_default());
         let mut this = Self::with_credential(credential)?;
-        this.base_url = config.base_url;
-        this.default_model = config.model;
+        this.base_url = config.base_url.clone();
+        this.default_model = config.model.clone();
+        this.max_context = config.max_context;
         Ok(this)
     }
 
@@ -133,9 +137,14 @@ impl GeminiProvider {
                 // Include tool calls from assistant messages
                 if let Some(ref calls) = msg.tool_calls {
                     for tc in calls {
+                        let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                            .unwrap_or_else(|e| {
+                                warn!("Failed to parse tool call arguments: {}", e);
+                                serde_json::Value::Object(serde_json::Map::new())
+                            });
                         parts.push(GeminiPart::FunctionCall {
                             name: tc.function.name.clone(),
-                            args: serde_json::from_str(&tc.function.arguments).unwrap_or_default(),
+                            args,
                         });
                     }
                 }
@@ -196,7 +205,7 @@ impl GeminiProvider {
                         call_type: "function".to_string(),
                         function: super::FunctionCall {
                             name,
-                            arguments: serde_json::to_string(&args).unwrap_or_default(),
+                            arguments: serde_json::to_string(&args)?,
                         },
                         index: None,
                         result: None,
@@ -259,10 +268,14 @@ impl Provider for GeminiProvider {
     }
 
     fn max_context(&self) -> usize {
-        match self.default_model.as_str() {
-            "gemini-2.0-flash" | "gemini-2.0-pro" | "gemini-1.5-pro" => 1_048_576,
-            "gemini-1.5-flash" => 1_048_576,
-            _ => 128_000,
+        if self.max_context > 0 {
+            self.max_context
+        } else {
+            match self.default_model.as_str() {
+                "gemini-2.0-flash" | "gemini-2.0-pro" | "gemini-1.5-pro" => 1_048_576,
+                "gemini-1.5-flash" => 1_048_576,
+                _ => 128_000,
+            }
         }
     }
 

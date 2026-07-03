@@ -4,6 +4,7 @@
 //! services (OpenAI, Anthropic, Local models, etc.).
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -464,6 +465,13 @@ pub trait Provider: Send + Sync {
         &self,
         credential: crate::model_router::Credential,
     ) -> crate::Result<()>;
+
+    /// Optional per-request timeout in seconds.
+    ///
+    /// Return `None` (the default) to use the system-wide timeout.
+    fn timeout(&self) -> Option<Duration> {
+        None
+    }
 }
 
 /// Registry of providers
@@ -505,6 +513,11 @@ impl ProviderRegistry {
     /// Check if a provider exists
     pub fn has(&self, name: &str) -> bool {
         self.providers.contains_key(name)
+    }
+
+    /// Remove a provider by name, returning the removed provider if it existed.
+    pub fn remove(&mut self, name: &str) -> Option<Box<dyn Provider>> {
+        self.providers.remove(name)
     }
 }
 
@@ -620,6 +633,17 @@ pub struct ProviderInstanceConfig {
     pub supports_tools: bool,
     /// Stream family for wrapper selection
     pub stream_family: stream_wrappers::ProviderStreamFamily,
+}
+
+/// Merge provider-specific `extra` parameters into a serialized request body.
+///
+/// Both `body` and `extra` are expected to be JSON objects. Non-object values
+/// (including `None`) are silently ignored so this is safe to call unconditionally.
+pub fn merge_extra(body: &mut serde_json::Value, extra: Option<serde_json::Value>) {
+    let Some(serde_json::Value::Object(extra_map)) = extra else { return };
+    if let serde_json::Value::Object(ref mut map) = body {
+        map.extend(extra_map);
+    }
 }
 
 #[cfg(test)]
@@ -912,6 +936,17 @@ mod tests {
         assert_eq!(p.default_model(), "mock-model");
         assert!(p.supports_tools());
         assert_eq!(p.max_context(), 4096);
+    }
+
+    #[test]
+    fn test_provider_registry_remove() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        assert!(registry.has("mock"));
+        let removed = registry.remove("mock");
+        assert!(removed.is_some());
+        assert!(!registry.has("mock"));
+        assert!(registry.remove("nonexistent").is_none());
     }
 
     #[test]

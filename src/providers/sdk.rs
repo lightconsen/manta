@@ -109,6 +109,21 @@ impl ProviderSdk {
             providers: names,
         });
     }
+
+    /// Find packs whose name or provider list matches a capability predicate.
+    ///
+    /// Returns pack names for packs where the predicate returns `true`.
+    /// The predicate receives the pack's name and provider list.
+    pub fn find_by_capability(
+        &self,
+        predicate: impl Fn(&str, &[String]) -> bool,
+    ) -> Vec<String> {
+        self.packs
+            .iter()
+            .filter(|(_, pack)| predicate(&pack.name, &pack.providers))
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
 }
 
 impl Default for ProviderSdk {
@@ -195,6 +210,32 @@ mod tests {
             providers: vec!["p2".to_string(), "p3".to_string()],
         });
         assert_eq!(sdk.list_packs().len(), 2);
+    }
+
+    #[test]
+    fn test_find_by_capability() {
+        let mut sdk = ProviderSdk::new();
+        sdk.register_pack(ProviderPack {
+            name: "vision_pack".to_string(),
+            version: "1.0".to_string(),
+            providers: vec!["gpt-4-vision".to_string()],
+        });
+        sdk.register_pack(ProviderPack {
+            name: "text_pack".to_string(),
+            version: "1.0".to_string(),
+            providers: vec!["gpt-4".to_string()],
+        });
+        let found = sdk.find_by_capability(|_name, providers| {
+            providers.iter().any(|p| p.contains("vision"))
+        });
+        assert_eq!(found, vec!["vision_pack"]);
+    }
+
+    #[test]
+    fn test_find_by_capability_no_match() {
+        let sdk = ProviderSdk::new();
+        let found = sdk.find_by_capability(|_, _| false);
+        assert!(found.is_empty());
     }
 
     #[test]

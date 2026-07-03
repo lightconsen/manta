@@ -200,9 +200,9 @@ fn resolve_custom_instance(
 /// Create a protocol-level provider from a fully-resolved instance config.
 fn create_protocol_provider(config: &ProviderInstanceConfig) -> crate::Result<Arc<dyn Provider>> {
     match config.protocol {
-        Protocol::OpenAi => Ok(Arc::new(OpenAiProvider::from_config(config.clone())?)),
-        Protocol::Anthropic => Ok(Arc::new(AnthropicProvider::from_config(config.clone())?)),
-        Protocol::Gemini => Ok(Arc::new(GeminiProvider::from_config(config.clone())?)),
+        Protocol::OpenAi => Ok(Arc::new(OpenAiProvider::from_config(config)?)),
+        Protocol::Anthropic => Ok(Arc::new(AnthropicProvider::from_config(config)?)),
+        Protocol::Gemini => Ok(Arc::new(GeminiProvider::from_config(config)?)),
     }
 }
 
