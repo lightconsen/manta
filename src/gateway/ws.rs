@@ -3244,7 +3244,7 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
 
     // Reload skills
     {
-        let mut sm = state.tools.skills_manager.write().await;
+        let sm = state.tools.skills_manager.write().await;
         if let Err(e) = sm.load_all().await {
             return WsResponse::err(
                 &req.id,

@@ -21,10 +21,6 @@ pub struct GatewayConfig {
     pub host: String,
     /// Port for gateway control plane (serves API + WebSocket + SPA)
     pub port: u16,
-    /// Enable Tailscale remote access
-    pub tailscale_enabled: bool,
-    /// Tailscale funnel domain (if using)
-    pub tailscale_domain: Option<String>,
     /// Default agent configuration
     pub default_agent: AgentConfig,
     /// Channel configurations
@@ -682,8 +678,6 @@ impl Default for GatewayConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: 18080,
-            tailscale_enabled: false,
-            tailscale_domain: None,
             default_agent: AgentConfig::default(),
             channels: HashMap::new(),
             vector_memory: VectorMemoryConfig::default(),

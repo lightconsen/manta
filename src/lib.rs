@@ -70,8 +70,6 @@ pub mod secrets;
 pub mod security;
 pub mod skills;
 pub mod standing_orders;
-#[cfg(feature = "tailscale")]
-pub mod tailscale;
 pub mod test_helpers;
 pub mod tools;
 pub mod tui;

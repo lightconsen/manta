@@ -124,8 +124,7 @@ allowed_tailnets = ["example.ts.net"]   # empty = any tailnet allowed
 tailscale_auth_ttl_secs = 300           # whois cache TTL
 ```
 
-Requires the host to be on a tailnet. Pair with the gateway's `tailscale`
-integration to serve/funnel the API.
+Requires the host to be on a tailnet.
 
 ## Scopes
 

@@ -56,7 +56,7 @@ access checks and the `Gateway` struct shell; behavior lives in:
 
 | Category | Fields |
 |----------|--------|
-| Network | `host`, `port`, `tailscale_enabled`, `tailscale_domain` |
+| Network | `host`, `port` |
 | Agent | `default_agent` |
 | Channels | `channels` (HashMap) |
 | Memory | `vector_memory` |
@@ -102,8 +102,6 @@ pub struct GatewayState {
 pub struct GatewayConfig {
     pub host: String,
     pub port: u16,
-    pub tailscale_enabled: bool,
-    pub tailscale_domain: Option<String>,
     pub default_agent: AgentConfig,
     pub channels: HashMap<String, ChannelConfig>,
     pub vector_memory: VectorMemoryConfig,
@@ -151,7 +149,6 @@ pub struct GatewayConfig {
 - Command provider for dynamic command resolution
 - Health check and device pairing handlers
 - Admin endpoints for provider switching and status
-- Tailscale integration support
 - Cost guard configuration
 - Workspace boundary enforcement
 - Config snapshot and diff for change tracking

@@ -68,7 +68,6 @@ directory under `src/`.
 - [cron](modules/cron.md) — scheduled tasks
 - [heartbeat](modules/heartbeat.md) — periodic wake (interval-based)
 - [standing_orders](modules/standing_orders.md) — cron-like background agents
-- [tailscale](modules/tailscale.md) — serve / funnel networking
 
 ### Infrastructure
 - [adapters](modules/adapters.md) — storage backends (InMem/File/Sqlite)

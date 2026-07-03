@@ -15,8 +15,6 @@ fn gateway_config_default_values() {
 
     assert_eq!(config.host, "127.0.0.1");
     assert_eq!(config.port, 18080);
-    assert!(!config.tailscale_enabled);
-    assert!(config.tailscale_domain.is_none());
     assert!(config.channels.is_empty());
     assert!(config.providers.is_empty());
     assert_eq!(config.model, "claude-3-sonnet-20240229");

@@ -62,7 +62,6 @@ all channels plus browser, vision, local embeddings, and device I/O.
 | `native-plugins` | — | Native `.so`/`.dylib` plugin loading (`libloading`) |
 | `hot-reload` | ✓ | Config/plugin hot-reload via file watching |
 | `serialport` / `hidapi` / `gpio` | ✓ / ✓ / — | Hardware device drivers |
-| `tailscale` | — | Tailscale serve / funnel networking |
 | `vector-db` / `pgvector` / `sqlite-vec` | — / — / ✓ | Vector memory backends (`sqlite-vec` is the default persistent backend) |
 
 Build with a custom feature set:
@@ -71,7 +70,7 @@ Build with a custom feature set:
 cargo build --release --no-default-features --features webchat,plugins
 
 # Everything
-cargo build --release --features all-channels,tailscale,vector-db
+cargo build --release --features all-channels,vector-db
 ```
 
 ## Desktop App

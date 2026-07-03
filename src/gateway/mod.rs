@@ -1046,8 +1046,7 @@ impl Gateway {
 
     /// Gracefully shut down the gateway and its subsystems.
     pub async fn stop(&self) -> crate::Result<()> {
-        let tailscale_enabled = self.state.config.read().await.tailscale_enabled;
-        lifecycle::stop_gateway(&self.shutdown_token, &self.state, tailscale_enabled).await
+        lifecycle::stop_gateway(&self.shutdown_token, &self.state).await
     }
 
     /// Spawn a new agent

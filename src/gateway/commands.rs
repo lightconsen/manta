@@ -1585,14 +1585,6 @@ async fn handle_config(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -
         let mut lines = vec!["⚙️ **Config**".to_string()];
         lines.push(format!("Model: {} (provider: {})", cfg.model, cfg.model_provider));
         lines.push(format!("Host: {}:{}", cfg.host, cfg.port));
-        lines.push(format!(
-            "Tailscale: {}",
-            if cfg.tailscale_enabled {
-                "enabled"
-            } else {
-                "disabled"
-            }
-        ));
         if !settings.is_empty() {
             lines.push("\nRuntime settings:".to_string());
             for (k, v) in settings.iter() {
@@ -2680,14 +2672,9 @@ async fn handle_restart(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
         let shutdown_token = state_for_restart.shutdown_token.clone();
         shutdown_token.cancel();
 
-        let tailscale_enabled = state_for_restart.config.read().await.tailscale_enabled;
         match tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            crate::gateway::lifecycle::stop_gateway(
-                &shutdown_token,
-                &state_for_restart,
-                tailscale_enabled,
-            ),
+            crate::gateway::lifecycle::stop_gateway(&shutdown_token, &state_for_restart),
         )
         .await
         {

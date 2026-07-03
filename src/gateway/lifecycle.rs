@@ -477,7 +477,6 @@ pub(crate) async fn start_gateway(
 pub(crate) async fn stop_gateway(
     shutdown_token: &CancellationToken,
     state: &Arc<GatewayState>,
-    _tailscale_enabled: bool,
 ) -> crate::Result<()> {
     info!("Shutting down Syscity Gateway...");
 
@@ -612,26 +611,19 @@ pub(crate) async fn stop_gateway(
         }
     }
 
-    // 12. Tailscale authenticator is managed within GatewayState; the Tailscale
-    //     daemon itself is started externally.
-    #[cfg(feature = "tailscale")]
-    if _tailscale_enabled {
-        info!("Tailscale authentication mode enabled");
-    }
-
-    // 13. Abort remaining background tasks (includes followup timers now that they
+    // 12. Abort remaining background tasks (includes followup timers now that they
     //     live in the unified registry).
     let background_handles = state.task_registry.take_all().await;
     for (_name, handle) in background_handles {
         handle.abort();
     }
 
-    // 14. Plugin manager shutdown.
+    // 13. Plugin manager shutdown.
     if let Err(e) = state.infra.plugin_manager.shutdown().await {
         warn!("Failed to shutdown plugin manager: {}", e);
     }
 
-    // 15. Storage is left to flush on process exit.
+    // 14. Storage is left to flush on process exit.
     info!("Gateway shutdown complete");
     Ok(())
 }
