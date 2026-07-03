@@ -18,6 +18,7 @@ use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use crate::memory::{
     Memory, MemoryEntryType, MemoryId, MemoryManager, MemoryQuery, MemoryStore, SqliteMemoryStore,
 };
+use crate::tools::sdk::ToolCapabilities;
 
 /// Memory tool for storing and retrieving information
 #[derive(Debug, Clone)]
@@ -149,6 +150,15 @@ Memories are automatically searched and relevant ones injected into new conversa
             }),
             vec!["action"],
         )
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["memory".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
@@ -448,6 +458,15 @@ Actions:
         )
     }
 
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["memory".to_string(), "search".to_string()],
+            ..Default::default()
+        }
+    }
+
     async fn execute(
         &self,
         args: Value,
@@ -614,6 +633,15 @@ Actions:
             }),
             vec!["action"],
         )
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["memory".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

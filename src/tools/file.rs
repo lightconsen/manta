@@ -79,6 +79,15 @@ impl Tool for FileReadTool {
         )
     }
 
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["file".to_string(), "read".to_string()],
+            ..Default::default()
+        }
+    }
+
     async fn execute(
         &self,
         args: Value,
@@ -441,6 +450,15 @@ impl Tool for GlobTool {
             }),
             vec!["pattern"],
         )
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["file".to_string(), "search".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

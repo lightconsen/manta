@@ -11,6 +11,7 @@ use serde_json::Value;
 use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 #[allow(clippy::unwrap_used)] // Static regex with known-valid pattern.
 static RE_IMAGE_DIMS: std::sync::LazyLock<regex::Regex> =
@@ -69,6 +70,15 @@ impl Tool for ImageTool {
             },
             "required": ["path"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["media".to_string(), "image".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
@@ -269,6 +279,15 @@ impl Tool for ImageGenerateTool {
             },
             "required": ["prompt"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["media".to_string(), "ai".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

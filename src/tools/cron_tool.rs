@@ -16,6 +16,7 @@ use tracing::{info, warn};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use crate::cron::cron::{CronJob, CronScheduler, DeliveryMode, ExecutionTarget, Schedule};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Global scheduler reference for CronTool
 /// This is set by the Gateway after the CronScheduler is initialized
@@ -109,6 +110,15 @@ impl Tool for CronTool {
             }),
             vec!["action"],
         )
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["system".to_string(), "scheduling".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

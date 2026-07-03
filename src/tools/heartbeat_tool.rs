@@ -11,6 +11,7 @@ use tracing::{error, info};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::heartbeat::parser::{parse_heartbeat_tasks, HeartbeatTask};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Tool for managing agent heartbeat tasks
 #[derive(Debug)]
@@ -174,6 +175,15 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
             },
             "required": ["action", "agent_id"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["system".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

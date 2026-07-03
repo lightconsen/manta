@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::error::SyscityError;
+use crate::tools::sdk::ToolCapabilities;
 
 /// Configuration for the sandbox around a tool.
 #[derive(Debug, Clone)]
@@ -164,6 +165,15 @@ impl Tool for SandboxedTool {
 
     fn parameters_schema(&self) -> Value {
         self.inner.parameters_schema()
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["system".to_string(), "sandbox".to_string()],
+            ..Default::default()
+        }
     }
 
     fn is_available(&self, context: &ToolContext) -> bool {

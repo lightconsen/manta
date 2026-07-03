@@ -9,6 +9,7 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// List available agent personalities.
 pub struct AgentsListTool {
@@ -36,6 +37,15 @@ impl Tool for AgentsListTool {
             "type": "object",
             "properties": {},
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["system".to_string(), "info".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

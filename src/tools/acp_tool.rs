@@ -12,6 +12,7 @@ use tracing::{info, warn};
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::acp::{AcpControlPlane, AcpSessionId, SpawnMode, SubagentConfig, ThreadBinding};
 use crate::channels::IncomingMessage;
+use crate::tools::sdk::ToolCapabilities;
 
 /// Tool for spawning subagents via ACP
 pub struct AcpSpawnTool {
@@ -101,6 +102,15 @@ impl Tool for AcpSpawnTool {
             },
             "required": ["task"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["system".to_string(), "acp".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
@@ -331,6 +341,15 @@ impl Tool for AcpSessionTool {
             },
             "required": ["action"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["network".to_string(), "acp".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

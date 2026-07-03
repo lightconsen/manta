@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::tools::sdk::ToolCapabilities;
 use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
 /// Information about a single capability set.
@@ -47,6 +48,15 @@ impl Tool for ListCapabilitiesTool {
 
     fn parameters_schema(&self) -> Value {
         create_schema("List available capability sets", serde_json::json!({}), Vec::<String>::new())
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["system".to_string(), "info".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

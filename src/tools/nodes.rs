@@ -10,6 +10,7 @@ use serde_json::Value;
 use tracing::warn;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Nodes discovery and control tool
 pub struct NodesTool;
@@ -179,6 +180,15 @@ impl Tool for NodesTool {
             },
             "required": ["action"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["system".to_string(), "network".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

@@ -11,6 +11,7 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Speech-to-text tool
 pub struct SttTool;
@@ -109,6 +110,15 @@ impl Tool for SttTool {
             },
             "required": ["audio"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["media".to_string(), "audio".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

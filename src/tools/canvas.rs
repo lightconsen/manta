@@ -14,6 +14,7 @@ use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::canvas::{CanvasComponent, CanvasManager, CanvasUpdate};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Canvas control tool
 pub struct CanvasTool {
@@ -316,6 +317,15 @@ impl Tool for CanvasTool {
             },
             "required": ["action", "session_id"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["display".to_string(), "canvas".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

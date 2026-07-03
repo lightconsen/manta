@@ -16,6 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::todo::{TaskStatus, TodoStore};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Tool for managing tasks/todos
 #[derive(Debug)]
@@ -287,6 +288,15 @@ Examples:
             },
             "required": ["action"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["task".to_string(), "management".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

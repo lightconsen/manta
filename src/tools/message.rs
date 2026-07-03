@@ -14,6 +14,7 @@ use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::channels::{Channel, ConversationId, MessageOptions, OutgoingMessage};
 use crate::core::models::Id;
 use crate::gateway::GatewayState;
+use crate::tools::sdk::ToolCapabilities;
 
 /// Send a message through a channel.
 pub struct MessageTool {
@@ -125,6 +126,15 @@ impl Tool for MessageTool {
             },
             "required": ["action", "channel", "conversation_id"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["communication".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

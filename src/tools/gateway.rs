@@ -15,6 +15,7 @@ use tracing::{info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::gateway::GatewayState;
+use crate::tools::sdk::ToolCapabilities;
 
 /// Gateway management tool — restart, inspect, and mutate gateway config.
 pub struct GatewayTool {
@@ -280,6 +281,19 @@ impl Tool for GatewayTool {
             },
             "required": ["action"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["network".to_string(), "gateway".to_string()],
+            ..Default::default()
+        }
+    }
+
+    fn is_available(&self, context: &ToolContext) -> bool {
+        !context.sandboxed() || !context.allowed_commands().is_empty()
     }
 
     async fn execute(

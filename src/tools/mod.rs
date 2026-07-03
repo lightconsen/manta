@@ -1600,25 +1600,32 @@ impl ToolRegistry {
                 // Submit to approval queue
                 approval_queue.submit(approval).await;
 
-                // Wait for human decision
-                match rx.await {
-                    Ok(ApprovalDecision::Approve) => {
+                // Wait for human decision (with 5-minute timeout)
+                const APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
+                match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await {
+                    Ok(Ok(ApprovalDecision::Approve)) => {
                         tracing::info!(
                             "Approval {} granted, proceeding with tool execution",
                             approval_id
                         );
                         // Proceed with execution below
                     }
-                    Ok(ApprovalDecision::Deny { reason }) => {
+                    Ok(Ok(ApprovalDecision::Deny { reason })) => {
                         return Some(Err(crate::error::SyscityError::Validation(format!(
                             "Tool '{}' denied by user: {}",
                             name, reason
                         ))));
                     }
-                    Err(_) => {
+                    Ok(Err(_)) => {
                         return Some(Err(crate::error::SyscityError::Validation(
                             "Approval channel closed".into(),
                         )));
+                    }
+                    Err(_) => {
+                        return Some(Err(crate::error::SyscityError::Timeout(format!(
+                            "Tool '{}' approval request timed out after {:?}",
+                            name, APPROVAL_TIMEOUT
+                        ))));
                     }
                 }
             }
@@ -1920,9 +1927,8 @@ impl ToolRegistry {
                         Err(e)
                     }
                     None => Err(crate::error::SyscityError::Validation(format!(
-                        "Unknown tool: {}. Available tools: {}",
+                        "Tool '{}' was found but could not be executed (may have been deregistered)",
                         tool_name,
-                        self.list().join(", ")
                     ))),
                 };
             }
@@ -2932,6 +2938,88 @@ mod tests {
         ) -> crate::Result<ToolExecutionResult> {
             Ok(ToolExecutionResult::success("blocked"))
         }
+    }
+
+    // ── execute()/execute_call() integration tests ───────────────────────────
+
+    #[tokio::test]
+    async fn test_execute_simple_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ReadTool));
+
+        let ctx = ToolContext::new("user", "conv1");
+        let result = registry
+            .execute("read", serde_json::json!({"path": "/tmp/test"}), &ctx)
+            .await;
+
+        assert!(result.is_some(), "execute should return Some for known tools");
+        let inner = result.unwrap();
+        assert!(inner.is_ok(), "ReadTool should succeed");
+        assert_eq!(inner.unwrap().output, "ok");
+    }
+
+    #[tokio::test]
+    async fn test_execute_unknown_tool() {
+        let registry = ToolRegistry::new();
+        let ctx = ToolContext::new("user", "conv1");
+        let result = registry
+            .execute("nonexistent", serde_json::json!({}), &ctx)
+            .await;
+
+        assert!(result.is_none(), "execute should return None for unknown tools");
+    }
+
+    #[tokio::test]
+    async fn test_execute_blocked_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ReadTool));
+
+        // Block the tool by prefix
+        registry.deregister_prefix("read");
+
+        let ctx = ToolContext::new("user", "conv1");
+        let result = registry
+            .execute("read", serde_json::json!({"path": "/tmp/test"}), &ctx)
+            .await;
+
+        assert!(result.is_none(), "execute should return None for blocked tools");
+    }
+
+    #[tokio::test]
+    async fn test_execute_no_cache_skips_cache() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ReadTool));
+
+        let ctx = ToolContext::new("user", "conv1");
+        // Execute once to warm cache
+        let r1 = registry
+            .execute("read", serde_json::json!({"path": "/tmp/test"}), &ctx)
+            .await;
+        assert!(r1.is_some());
+        assert!(r1.unwrap().is_ok());
+
+        // execute_no_cache should bypass cache
+        let r2 = registry
+            .execute_no_cache("read", serde_json::json!({"path": "/tmp/test"}), &ctx)
+            .await;
+        assert!(r2.is_some());
+        assert!(r2.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execute_call_simple() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ReadTool));
+
+        let call = crate::providers::FunctionCall {
+            name: "read".to_string(),
+            arguments: "{\"path\": \"/tmp/test\"}".to_string(),
+        };
+        let ctx = ToolContext::new("user", "conv1");
+
+        let result = registry.execute_call(&call, &ctx).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().output, "ok");
     }
 
     // ── Streaming tool tests ─────────────────────────────────────────────────

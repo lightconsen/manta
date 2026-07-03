@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Apply a unified diff patch to files.
 pub struct ApplyPatchTool;
@@ -61,6 +62,15 @@ impl Tool for ApplyPatchTool {
             },
             "required": ["patch"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["file".to_string(), "write".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

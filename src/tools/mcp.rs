@@ -23,6 +23,7 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionChunk, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 // ─────────────────────────────────────────────
 // Transport selection
@@ -1407,6 +1408,19 @@ impl Tool for McpToolWrapper {
         self.parameters_schema.clone()
     }
 
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["system".to_string(), "mcp".to_string()],
+            ..Default::default()
+        }
+    }
+
+    fn is_available(&self, context: &ToolContext) -> bool {
+        !context.sandboxed() || !context.allowed_commands().is_empty()
+    }
+
     async fn execute(
         &self,
         args: serde_json::Value,
@@ -1568,6 +1582,15 @@ impl Tool for McpPromptTool {
 
     fn parameters_schema(&self) -> serde_json::Value {
         self.parameters_schema.clone()
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["mcp".to_string(), "prompt".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
@@ -2064,6 +2087,19 @@ Actions:
             },
             "required": ["action"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["network".to_string(), "mcp".to_string()],
+            ..Default::default()
+        }
+    }
+
+    fn is_available(&self, context: &ToolContext) -> bool {
+        !context.sandboxed() || !context.allowed_commands().is_empty()
     }
 
     async fn execute(

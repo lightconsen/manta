@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 // ── sessions_list ────────────────────────────────────────────────────────────
 
@@ -38,6 +39,15 @@ impl Tool for SessionsListTool {
             "type": "object",
             "properties": {},
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["system".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
@@ -155,6 +165,15 @@ impl Tool for SessionsHistoryTool {
             },
             "required": ["session_id"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["system".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
@@ -294,6 +313,15 @@ impl Tool for SessionsSendTool {
         })
     }
 
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["communication".to_string()],
+            ..Default::default()
+        }
+    }
+
     async fn execute(
         &self,
         args: Value,
@@ -382,6 +410,15 @@ impl Tool for SessionsYieldTool {
             },
             "required": ["subagent_id"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["system".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
@@ -481,6 +518,15 @@ impl Tool for SessionStatusTool {
                 }
             }
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["system".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

@@ -14,6 +14,7 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 #[allow(clippy::unwrap_used)]
 static RE_INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
@@ -214,6 +215,15 @@ impl Tool for PdfTool {
             },
             "required": ["content"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["file".to_string(), "read".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

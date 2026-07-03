@@ -9,6 +9,7 @@ use serde_json::Value;
 use tracing::{debug, info};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Time tool for time-related operations
 #[derive(Debug, Default)]
@@ -277,6 +278,15 @@ Use this for:
             }),
             vec!["action"],
         )
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["system".to_string(), "info".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

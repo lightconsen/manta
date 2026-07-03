@@ -21,6 +21,7 @@ use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::budget::IterationBudget;
 use crate::agent::subagent_registry::SubagentRegistry;
 use crate::tools::hooks::ToolHooks;
+use crate::tools::sdk::ToolCapabilities;
 
 /// Maximum number of concurrent child agents
 const MAX_CHILDREN: usize = 3;
@@ -517,6 +518,19 @@ Progress and results are relayed to the parent."#
             },
             "required": ["action"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["system".to_string(), "delegate".to_string()],
+            ..Default::default()
+        }
+    }
+
+    fn is_available(&self, context: &ToolContext) -> bool {
+        !context.sandboxed() || !context.allowed_commands().is_empty()
     }
 
     async fn execute(

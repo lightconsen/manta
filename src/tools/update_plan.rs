@@ -13,6 +13,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Status of a plan step
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,6 +197,15 @@ impl Tool for UpdatePlanTool {
             },
             "required": ["action"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["plan".to_string(), "management".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

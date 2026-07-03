@@ -12,6 +12,7 @@ use tokio::fs;
 use tracing::{debug, info, warn};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Maximum file size to search (5MB)
 const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024;
@@ -281,6 +282,15 @@ Supports regex patterns and can search recursively through directories."#
             }),
             vec!["pattern"],
         )
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["file".to_string(), "search".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

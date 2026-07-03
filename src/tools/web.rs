@@ -7,6 +7,7 @@ use serde_json::Value;
 use tracing::{debug, error, info};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Maximum content size to fetch (100KB)
 const MAX_CONTENT_SIZE: usize = 100 * 1024;
@@ -230,6 +231,15 @@ impl Tool for WebFetchTool {
             }),
             vec!["url"],
         )
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["network".to_string(), "web".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
@@ -852,6 +862,15 @@ impl Tool for WebSearchTool {
             }),
             vec!["query"],
         )
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: crate::tools::approval::RiskLevel::Low,
+            categories: vec!["network".to_string(), "web".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
