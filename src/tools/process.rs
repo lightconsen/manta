@@ -16,6 +16,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Status of a background process
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +175,15 @@ impl Tool for ProcessTool {
             },
             "required": ["action"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["system".to_string(), "process".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(

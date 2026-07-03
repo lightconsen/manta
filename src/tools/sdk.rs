@@ -155,7 +155,22 @@ impl ToolSdk {
 
     /// Get metadata for a named tool.
     pub fn get_tool_metadata(&self, name: &str) -> Result<ToolMetadata, ToolSdkError> {
-        // First check packs
+        // Query capabilities from registry if available (covers both
+        // registry-registered tools and pack tools that happen to be
+        // registered in the registry).
+        if let Some((desc, schema, caps)) = self.registry.as_ref().and_then(|reg| {
+            let tool = reg.get(name)?;
+            Some((tool.description().to_string(), tool.parameters_schema(), tool.capabilities()))
+        }) {
+            return Ok(ToolMetadata {
+                name: name.to_string(),
+                description: desc,
+                capabilities: caps,
+                parameter_schema: schema,
+            });
+        }
+
+        // Fallback: check packs for metadata
         for pack in self.packs.values() {
             if pack.tools.contains(&name.to_string()) {
                 return Ok(ToolMetadata {
@@ -166,25 +181,7 @@ impl ToolSdk {
                 });
             }
         }
-        // Then check registry for detailed metadata
-        if let Some(ref reg) = self.registry {
-            if reg.has(name) {
-                let desc = reg
-                    .get(name)
-                    .map(|t| t.description().to_string())
-                    .unwrap_or_default();
-                let schema = reg
-                    .get(name)
-                    .map(|t| t.parameters_schema())
-                    .unwrap_or(serde_json::json!({"type": "object"}));
-                return Ok(ToolMetadata {
-                    name: name.to_string(),
-                    description: desc,
-                    capabilities: ToolCapabilities::default(),
-                    parameter_schema: schema,
-                });
-            }
-        }
+
         Err(ToolSdkError::ToolNotFound(name.to_string()))
     }
 

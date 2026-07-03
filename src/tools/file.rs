@@ -12,6 +12,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Maximum file size to read (1MB)
 const MAX_FILE_SIZE: u64 = 1024 * 1024;
@@ -275,6 +276,15 @@ impl Tool for FileWriteTool {
             path.display()
         )))
     }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["file".to_string(), "write".to_string()],
+            ..ToolCapabilities::default()
+        }
+    }
 }
 
 /// File edit tool (find and replace)
@@ -383,6 +393,15 @@ impl Tool for FileEditTool {
             replacements,
             path.display()
         )))
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::Medium,
+            categories: vec!["file".to_string(), "write".to_string()],
+            ..ToolCapabilities::default()
+        }
     }
 }
 

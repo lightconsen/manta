@@ -16,6 +16,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, info};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Code execution sandbox configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -444,6 +445,15 @@ print(json.dumps({"average": result, "count": len(data)}))
                 error!("Code execution failed: {}", e);
                 Ok(ToolExecutionResult::error(format!("Execution failed: {}", e)))
             }
+        }
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["system".to_string(), "exec".to_string()],
+            ..ToolCapabilities::default()
         }
     }
 }

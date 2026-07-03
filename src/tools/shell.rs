@@ -12,6 +12,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Shell tool for executing commands
 #[derive(Debug)]
@@ -83,6 +84,47 @@ fn resolve_shell() -> String {
         .unwrap_or_else(|| "/bin/sh".to_string())
 }
 
+/// Returns `true` if `cmd` contains shell control operators that could be
+/// used to chain additional commands beyond the first one.
+///
+/// Used to harden command-allowlist enforcement. Without this check a user
+/// who allows `echo` could be hit by `echo hello && rm -rf /`.
+fn contains_shell_control(cmd: &str) -> bool {
+    // Strip the first "word" (the command name) — anything after is arguments
+    // and shell operators.
+    let rest = cmd
+        .trim_start()
+        .split_once(|c: char| c.is_whitespace())
+        .map(|(_, rest)| rest)
+        .unwrap_or("");
+    if rest.is_empty() {
+        return false;
+    }
+
+    // Check for shell control operators in the non-command portion.
+    // We only check outside quotes to reduce false positives.
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = rest.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            _ if in_single || in_double => continue,
+            _ => {}
+        }
+        if in_single || in_double {
+            continue;
+        }
+        match ch {
+            ';' | '|' | '&' | '`' => return true,
+            '$' if chars.peek() == Some(&'(') => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 #[async_trait]
 impl Tool for ShellTool {
     fn name(&self) -> &str {
@@ -125,6 +167,16 @@ impl Tool for ShellTool {
         if !context.is_command_allowed(command_str) {
             return Ok(ToolExecutionResult::error(format!(
                 "Command '{}' is not in the allowlist",
+                command_str
+            )));
+        }
+
+        // When an allowlist is active, reject shell control operators that
+        // could chain additional commands beyond the allowed one.
+        if !context.allowed_commands().is_empty() && contains_shell_control(command_str) {
+            return Ok(ToolExecutionResult::error(format!(
+                "Command '{}' contains shell control operators which are not \
+                 permitted when command allowlisting is active",
                 command_str
             )));
         }
@@ -280,6 +332,15 @@ impl Tool for ShellTool {
         // or if there are allowed commands specified
         !context.sandboxed() || !context.allowed_commands().is_empty()
     }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["system".to_string(), "exec".to_string()],
+            ..ToolCapabilities::default()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -427,5 +488,91 @@ mod tests {
         let result = tool.execute(args, &context).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_shell_tool_and_operator_blocked_with_allowlist() {
+        let tool = ShellTool::new();
+        let context = ToolContext::new("user", "conv1").allow_command("echo");
+
+        // `&&` should be blocked when allowlist is active, even though the
+        // first token ("echo") is allowed — the operator chains additional
+        // commands beyond the allowed one.
+        let args = serde_json::json!({
+            "command": "echo hello && rm -rf /"
+        });
+
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success, "chained && should be blocked");
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("shell control operators"));
+    }
+
+    #[tokio::test]
+    async fn test_shell_tool_or_operator_blocked_with_allowlist() {
+        let tool = ShellTool::new();
+        let context = ToolContext::new("user", "conv1").allow_command("echo");
+
+        let args = serde_json::json!({
+            "command": "echo hello || rm -rf /"
+        });
+
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("shell control operators"));
+    }
+
+    #[test]
+    fn test_contains_shell_control_semicolon() {
+        assert!(contains_shell_control("echo a; echo b"));
+    }
+
+    #[test]
+    fn test_contains_shell_control_and_operator() {
+        assert!(contains_shell_control("echo a && echo b"));
+    }
+
+    #[test]
+    fn test_contains_shell_control_pipe() {
+        assert!(contains_shell_control("cat foo | grep bar"));
+    }
+
+    #[test]
+    fn test_contains_shell_control_subshell() {
+        assert!(contains_shell_control("echo $(whoami)"));
+    }
+
+    #[test]
+    fn test_contains_shell_control_backtick() {
+        assert!(contains_shell_control("echo `whoami`"));
+    }
+
+    #[test]
+    fn test_contains_shell_control_simple_command() {
+        assert!(!contains_shell_control("echo hello world"));
+    }
+
+    #[test]
+    fn test_contains_shell_control_semicolon_in_quotes() {
+        // A semicolon inside a quoted string is not a control operator.
+        assert!(!contains_shell_control("echo 'hello; world'"));
+    }
+
+    #[test]
+    fn test_contains_shell_control_no_args() {
+        assert!(!contains_shell_control("ls"));
+    }
+
+    #[test]
+    fn test_contains_shell_control_ampersand_in_url() {
+        // `&` inside double-quotes should not trigger.
+        assert!(!contains_shell_control("echo \"foo & bar\""));
     }
 }

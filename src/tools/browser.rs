@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::sdk::ToolCapabilities;
 
 /// Browser action types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1479,6 +1480,15 @@ impl Tool for BrowserTool {
             },
             "required": ["actions"]
         })
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["network".to_string(), "browser".to_string()],
+            ..Default::default()
+        }
     }
 
     async fn execute(
