@@ -145,9 +145,13 @@ impl Tool for ScreenshotTool {
             }
         })?;
 
-        let _ = tokio::fs::remove_file(&temp_path).await;
+        if let Err(e) = tokio::fs::remove_file(&temp_path).await {
+            tracing::warn!("Failed to cleanup temp file '{}': {}", temp_path.display(), e);
+        }
         if encoded_path != temp_path {
-            let _ = tokio::fs::remove_file(&encoded_path).await;
+            if let Err(e) = tokio::fs::remove_file(&encoded_path).await {
+                tracing::warn!("Failed to cleanup temp file '{}': {}", encoded_path.display(), e);
+            }
         }
 
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);

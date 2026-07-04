@@ -445,59 +445,57 @@ impl NetworkInspector {
 
     #[cfg(target_os = "macos")]
     async fn list_firewall_rules_macos(&self) -> crate::Result<Vec<FirewallRule>> {
-        let output = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg("sudo -n pfctl -sr 2>/dev/null || pfctl -sr 2>/dev/null || echo 'NO_RULES'")
+        // Try with sudo first, then fall back to regular pfctl.
+        let text = match tokio::process::Command::new("sudo")
+            .arg("-n")
+            .arg("pfctl")
+            .arg("-sr")
             .output()
-            .await;
+            .await
+        {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => match tokio::process::Command::new("pfctl").arg("-sr").output().await {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+                _ => String::new(),
+            },
+        };
 
         let mut rules = Vec::new();
 
-        match output {
-            Ok(o) => {
-                let text = String::from_utf8_lossy(&o.stdout);
-                if text.contains("NO_RULES") || text.contains("Permission denied") {
-                    rules.push(FirewallRule {
-                        chain: "pf".to_string(),
-                        action: "INFO".to_string(),
-                        protocol: "any".to_string(),
-                        source: "any".to_string(),
-                        destination: "any".to_string(),
-                        dport: None,
-                        extra: "pfctl requires root or explicit permission".to_string(),
-                    });
-                } else {
-                    for line in text.lines() {
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() || trimmed.starts_with('#') {
-                            continue;
-                        }
-                        let action = if trimmed.contains(" pass ") {
-                            "PASS"
-                        } else if trimmed.contains(" block ") {
-                            "BLOCK"
-                        } else if trimmed.contains(" match ") {
-                            "MATCH"
-                        } else {
-                            "RULE"
-                        };
-                        rules.push(FirewallRule {
-                            chain: "pf".to_string(),
-                            action: action.to_string(),
-                            protocol: "any".to_string(),
-                            source: "any".to_string(),
-                            destination: "any".to_string(),
-                            dport: None,
-                            extra: trimmed.to_string(),
-                        });
-                    }
+        if text.is_empty() || text.contains("Permission denied") {
+            rules.push(FirewallRule {
+                chain: "pf".to_string(),
+                action: "INFO".to_string(),
+                protocol: "any".to_string(),
+                source: "any".to_string(),
+                destination: "any".to_string(),
+                dport: None,
+                extra: "pfctl requires root or explicit permission".to_string(),
+            });
+        } else {
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
                 }
-            }
-            Err(e) => {
-                return Err(crate::error::SyscityError::ExternalService {
-                    source: "pfctl".to_string(),
-                    cause: Some(Box::new(e)),
-                })
+                let action = if trimmed.contains(" pass ") {
+                    "PASS"
+                } else if trimmed.contains(" block ") {
+                    "BLOCK"
+                } else if trimmed.contains(" match ") {
+                    "MATCH"
+                } else {
+                    "RULE"
+                };
+                rules.push(FirewallRule {
+                    chain: "pf".to_string(),
+                    action: action.to_string(),
+                    protocol: "any".to_string(),
+                    source: "any".to_string(),
+                    destination: "any".to_string(),
+                    dport: None,
+                    extra: trimmed.to_string(),
+                });
             }
         }
 

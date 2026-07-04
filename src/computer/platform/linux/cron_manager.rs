@@ -132,7 +132,9 @@ impl CronManagerTool {
         // Write via stdin using a shell heredoc is complex with tokio::process;
         // Instead use a temporary file.
         let tmp = format!("/tmp/syscity_cron_{}.tmp", uuid::Uuid::new_v4());
-        let _ = tokio::fs::write(&tmp, &new_crontab).await;
+        if let Err(e) = tokio::fs::write(&tmp, &new_crontab).await {
+            tracing::warn!("Failed to write temp file '{}': {}", tmp, e);
+        }
 
         let install_args: Vec<&str> = if let Some(u) = user {
             vec!["-u", u, &tmp]
@@ -145,7 +147,9 @@ impl CronManagerTool {
             None => (false, "Failed to install crontab".to_string()),
         };
 
-        let _ = tokio::fs::remove_file(&tmp).await;
+        if let Err(e) = tokio::fs::remove_file(&tmp).await {
+            tracing::warn!("Failed to cleanup temp file '{}': {}", tmp, e);
+        }
         result
     }
 
@@ -169,7 +173,9 @@ impl CronManagerTool {
             + "\n";
 
         let tmp = format!("/tmp/syscity_cron_{}.tmp", uuid::Uuid::new_v4());
-        let _ = tokio::fs::write(&tmp, &filtered).await;
+        if let Err(e) = tokio::fs::write(&tmp, &filtered).await {
+            tracing::warn!("Failed to write temp file '{}': {}", tmp, e);
+        }
 
         let install_args: Vec<&str> = if let Some(u) = user {
             vec!["-u", u, &tmp]
@@ -182,7 +188,9 @@ impl CronManagerTool {
             None => (false, "Failed to install crontab".to_string()),
         };
 
-        let _ = tokio::fs::remove_file(&tmp).await;
+        if let Err(e) = tokio::fs::remove_file(&tmp).await {
+            tracing::warn!("Failed to cleanup temp file '{}': {}", tmp, e);
+        }
         result
     }
 

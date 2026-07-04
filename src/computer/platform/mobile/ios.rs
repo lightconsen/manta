@@ -215,8 +215,12 @@ impl Tool for IdeviceScreenshotTool {
         };
 
         // Clean up temp files
-        let _ = tokio::fs::remove_file(&tmp_file).await;
-        let _ = tokio::fs::remove_file(&png_file).await;
+        if let Err(e) = tokio::fs::remove_file(&tmp_file).await {
+            tracing::warn!("Failed to cleanup temp file '{}': {}", tmp_file, e);
+        }
+        if let Err(e) = tokio::fs::remove_file(&png_file).await {
+            tracing::warn!("Failed to cleanup temp file '{}': {}", png_file, e);
+        }
 
         let base64 = match png_data {
             Some(data) => base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data),

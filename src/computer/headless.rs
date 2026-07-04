@@ -142,7 +142,9 @@ impl VirtualDisplay for XvfbDisplay {
                 // Write to temp file and apply ScreenshotEncoder
                 let temp_path =
                     std::env::temp_dir().join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
-                let _ = tokio::fs::write(&temp_path, &bytes).await;
+                if let Err(e) = tokio::fs::write(&temp_path, &bytes).await {
+                    tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
+                }
                 let encoded = maybe_encode_screenshot(&temp_path).await;
                 let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(bytes);
                 // Cleanup temps
@@ -221,7 +223,9 @@ impl VirtualDisplay for XvfbDisplay {
         // Write to temp file and apply ScreenshotEncoder
         let temp_path =
             std::env::temp_dir().join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
-        let _ = tokio::fs::write(&temp_path, &bytes).await;
+        if let Err(e) = tokio::fs::write(&temp_path, &bytes).await {
+            tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
+        }
         let encoded = maybe_encode_screenshot(&temp_path).await;
         let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(bytes);
         // Cleanup temps
