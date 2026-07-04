@@ -93,18 +93,6 @@ impl CommandDef {
         }
     }
 
-    #[allow(dead_code)]
-    fn with_tier(mut self, tier: CommandTier) -> Self {
-        self.tier = tier;
-        self
-    }
-
-    #[allow(dead_code)]
-    fn with_provider_hint(mut self, hint: CommandProviderHint) -> Self {
-        self.provider_hint = Some(hint);
-        self
-    }
-
     fn with_args(mut self, args: &str) -> Self {
         self.args = Some(args.to_string());
         self
@@ -112,18 +100,6 @@ impl CommandDef {
 
     fn with_aliases(mut self, aliases: &[&str]) -> Self {
         self.aliases = aliases.iter().map(|a| a.to_string()).collect();
-        self
-    }
-
-    #[allow(dead_code)]
-    fn dm(mut self) -> Self {
-        self.scope = CommandScope::DirectMessage;
-        self
-    }
-
-    #[allow(dead_code)]
-    fn channel(mut self) -> Self {
-        self.scope = CommandScope::Channel;
         self
     }
 
@@ -1471,7 +1447,13 @@ async fn handle_acp(
                         warn!("Failed to step ACP session {}: {}", sid, e);
                     }
                 }
-                _ => unreachable!(),
+                _ => {
+                    return WsResponse::err(
+                        &req.id,
+                        "INVALID_ARGS",
+                        format!("Unknown ACP subcommand: {}", sub),
+                    );
+                }
             }
             WsResponse::ok(
                 &req.id,

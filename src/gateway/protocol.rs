@@ -327,7 +327,6 @@ pub struct ProtocolConnection {
     /// Connection ID
     pub conn_id: String,
     /// Log subscription cancel sender
-    #[allow(dead_code)]
     pub log_cancel_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 

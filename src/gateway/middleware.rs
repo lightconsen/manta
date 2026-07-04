@@ -40,7 +40,7 @@ pub enum AllowedOrigin {
 }
 
 /// Check if an IP address is allowed based on origin policy
-#[allow(dead_code)]
+#[cfg_attr(not(test), allow(dead_code))]
 fn is_ip_allowed(addr: IpAddr, allowed: &AllowedOrigin) -> bool {
     match allowed {
         AllowedOrigin::Any => true,

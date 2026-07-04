@@ -518,7 +518,6 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     }
 }
 
-#[allow(dead_code)]
 pub async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let agents = state.agents.agents.read().await;
     let channels = state.channels.channels.read().await;
@@ -533,7 +532,6 @@ pub async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl Into
     }))
 }
 
-#[allow(dead_code)]
 pub async fn repair_status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     use std::sync::atomic::Ordering;
     let last_cycle = state
@@ -564,7 +562,6 @@ pub async fn repair_status_handler(State(state): State<Arc<GatewayState>>) -> im
     }))
 }
 
-#[allow(dead_code)]
 /// GET /api/v1/cost/status
 ///
 /// Returns current spend and action-rate counters from the live CostGuard.

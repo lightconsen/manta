@@ -54,13 +54,11 @@ pub struct WsConnectQuery {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum WsCommand {
     SendResponse(String),
     SendEvent(String),
     Subscribe(Vec<String>),
     Unsubscribe(Vec<String>),
-    SubscribeAll,
 }
 
 /// Pre-validated WebSocket authentication result, injected via Extension
@@ -298,10 +296,6 @@ async fn handle_websocket(
                         WsCommand::Unsubscribe(ids) => {
                             let mut cg = conn_send.write().await;
                             cg.subscriptions.retain(|s| !ids.contains(s));
-                        }
-                        WsCommand::SubscribeAll => {
-                            let mut cg = conn_send.write().await;
-                            cg.subscriptions.clear();
                         }
                     }
                 }
