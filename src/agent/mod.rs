@@ -3805,7 +3805,9 @@ Your response:"#,
         }
 
         if let Some(tx) = self.shutdown_tx.write().await.take() {
-            let _ = tx.send(()).await;
+            if tx.send(()).await.is_err() {
+                debug!("Agent shutdown: receiver already dropped");
+            }
         }
         Ok(())
     }

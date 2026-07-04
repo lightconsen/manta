@@ -525,7 +525,9 @@ async fn session_processing_task(
                     let s = session.lock().await;
                     s.get_status()
                 };
-                let _ = respond_to.send(status);
+                if respond_to.send(status).is_err() {
+                    warn!("Session {}: GetStatus receiver dropped", session_id);
+                }
             }
 
             // ── Spawn a new agent in the session ────────────────────────────
@@ -591,10 +593,6 @@ async fn session_processing_task(
 }
 
 use tokio::sync::oneshot;
-
-/// Shared session manager
-#[allow(dead_code)]
-type SharedSessionManager = Arc<RwLock<SessionManager>>;
 
 #[cfg(test)]
 mod tests {
