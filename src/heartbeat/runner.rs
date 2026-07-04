@@ -100,8 +100,13 @@ impl HeartbeatRunner {
                     self._emit_event(HeartbeatEvent::Started);
                     self.handle_wake_request(&req).await;
                 }
+                _ = self.state.shutdown_token.cancelled() => {
+                    info!("Heartbeat runner received shutdown signal, exiting");
+                    break;
+                }
             }
         }
+        info!("Heartbeat runner stopped");
     }
 
     /// Initialize heartbeat state for all existing agents
@@ -342,7 +347,6 @@ impl HeartbeatRunner {
                 reason: "agent_busy".to_string(),
                 agent_id: agent_id.clone(),
             });
-            // Reschedule so we don't keep trying while busy
             let mut states = self.agent_states.write().await;
             if let Some(state) = states.get_mut(agent_id) {
                 state.reschedule(Instant::now());
@@ -350,7 +354,6 @@ impl HeartbeatRunner {
             return;
         }
 
-        // Read HEARTBEAT.md content
         let heartbeat_content = self.read_heartbeat_content(handle).await;
 
         // If HEARTBEAT.md is empty and no custom prompt, mark idle
@@ -372,8 +375,47 @@ impl HeartbeatRunner {
             return;
         }
 
-        // Parse tasks and build prompt
-        let prompt = match custom_prompt {
+        let prompt = self
+            .build_heartbeat_prompt(agent_id, custom_prompt, heartbeat_content.clone())
+            .await;
+
+        let session_id = format!("heartbeat:{}", agent_id);
+        info!("Heartbeat poll for agent {}", agent_id);
+
+        let message = IncomingMessage::new("system", &session_id, &prompt).with_provenance(
+            crate::channels::InputProvenance::InternalSystem {
+                source: "heartbeat".to_string(),
+            },
+        );
+
+        match handle.agent.process_message(message).await {
+            Ok(response) => {
+                self.on_heartbeat_ok(agent_id, heartbeat_content, session_id, response)
+                    .await;
+            }
+            Err(e) => {
+                error!("Heartbeat failed for agent {}: {}", agent_id, e);
+                self._emit_event(HeartbeatEvent::Failed {
+                    error: e.to_string(),
+                    agent_id: agent_id.to_string(),
+                });
+                self.update_consecutive_idle(agent_id, false).await;
+                let mut states = self.agent_states.write().await;
+                if let Some(agent_state) = states.get_mut(agent_id) {
+                    agent_state.reschedule(Instant::now());
+                }
+            }
+        }
+    }
+
+    /// Build the prompt to send to the agent for a heartbeat cycle.
+    async fn build_heartbeat_prompt(
+        &self,
+        agent_id: &str,
+        custom_prompt: Option<&str>,
+        heartbeat_content: Option<String>,
+    ) -> String {
+        match custom_prompt {
             Some(cp) => cp.to_string(),
             None => {
                 let tasks = heartbeat_content
@@ -415,76 +457,59 @@ impl HeartbeatRunner {
                     prompt
                 }
             }
-        };
+        }
+    }
 
-        let session_id = format!("heartbeat:{}", agent_id);
-
-        info!("Heartbeat poll for agent {}", agent_id);
-
-        let message = IncomingMessage::new("system", &session_id, &prompt).with_provenance(
-            crate::channels::InputProvenance::InternalSystem {
-                source: "heartbeat".to_string(),
-            },
-        );
-
-        match handle.agent.process_message(message).await {
-            Ok(response) => {
-                if let Some(ref content) = heartbeat_content {
-                    let tasks = parse_heartbeat_tasks(content);
-                    if !response.content.contains("HEARTBEAT_OK") && !tasks.is_empty() {
-                        let mut states = self.agent_states.write().await;
-                        if let Some(agent_state) = states.get_mut(agent_id) {
-                            // Prune stale task entries to prevent unbounded HashMap growth
-                            let active: std::collections::HashSet<String> =
-                                tasks.iter().map(|t| t.name.clone()).collect();
-                            agent_state.dedup.retain_active(&active);
-                            for task in &tasks {
-                                agent_state.dedup.mark_executed(&task.name);
-                            }
-                        }
+    /// Handle a successful heartbeat response from an agent.
+    async fn on_heartbeat_ok(
+        &self,
+        agent_id: &str,
+        heartbeat_content: Option<String>,
+        session_id: String,
+        response: crate::channels::OutgoingMessage,
+    ) {
+        if let Some(ref content) = heartbeat_content {
+            let tasks = parse_heartbeat_tasks(content);
+            if !response.content.contains("HEARTBEAT_OK") && !tasks.is_empty() {
+                let mut states = self.agent_states.write().await;
+                if let Some(agent_state) = states.get_mut(agent_id) {
+                    // Prune stale task entries to prevent unbounded HashMap growth
+                    let active: std::collections::HashSet<String> =
+                        tasks.iter().map(|t| t.name.clone()).collect();
+                    agent_state.dedup.retain_active(&active);
+                    for task in &tasks {
+                        agent_state.dedup.mark_executed(&task.name);
                     }
                 }
-
-                let is_idle = response.content.contains("HEARTBEAT_OK");
-                let status = if is_idle {
-                    HeartbeatStatus::Idle
-                } else {
-                    HeartbeatStatus::TaskExecuted
-                };
-
-                self.update_consecutive_idle(agent_id, is_idle).await;
-
-                self._emit_event(HeartbeatEvent::Completed {
-                    status,
-                    agent_id: agent_id.clone(),
-                    session_id: Some(session_id),
-                });
-
-                info!(
-                    "Heartbeat response from {}: status={:?}, content_preview: {}",
-                    agent_id,
-                    status,
-                    response.content.chars().take(80).collect::<String>()
-                );
-
-                let mut states = self.agent_states.write().await;
-                if let Some(agent_state) = states.get_mut(agent_id) {
-                    agent_state.last_run = Some(Instant::now());
-                    agent_state.reschedule(Instant::now());
-                }
             }
-            Err(e) => {
-                error!("Heartbeat failed for agent {}: {}", agent_id, e);
-                self._emit_event(HeartbeatEvent::Failed {
-                    error: e.to_string(),
-                    agent_id: agent_id.clone(),
-                });
-                self.update_consecutive_idle(agent_id, false).await;
-                let mut states = self.agent_states.write().await;
-                if let Some(agent_state) = states.get_mut(agent_id) {
-                    agent_state.reschedule(Instant::now());
-                }
-            }
+        }
+
+        let is_idle = response.content.contains("HEARTBEAT_OK");
+        let status = if is_idle {
+            HeartbeatStatus::Idle
+        } else {
+            HeartbeatStatus::TaskExecuted
+        };
+
+        self.update_consecutive_idle(agent_id, is_idle).await;
+
+        self._emit_event(HeartbeatEvent::Completed {
+            status,
+            agent_id: agent_id.to_string(),
+            session_id: Some(session_id),
+        });
+
+        info!(
+            "Heartbeat response from {}: status={:?}, content_preview: {}",
+            agent_id,
+            status,
+            response.content.chars().take(80).collect::<String>()
+        );
+
+        let mut states = self.agent_states.write().await;
+        if let Some(agent_state) = states.get_mut(agent_id) {
+            agent_state.last_run = Some(Instant::now());
+            agent_state.reschedule(Instant::now());
         }
     }
 

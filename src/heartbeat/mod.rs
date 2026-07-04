@@ -1,8 +1,8 @@
-pub mod config;
-pub mod events;
-pub mod parser;
-pub mod runner;
-pub mod wake;
+pub(crate) mod config;
+pub(crate) mod events;
+pub(crate) mod parser;
+pub(crate) mod runner;
+pub(crate) mod wake;
 
 pub use config::HeartbeatConfig;
 pub use events::{HeartbeatEvent, HeartbeatStatus};
