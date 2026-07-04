@@ -100,7 +100,10 @@ impl TrajectoryLog {
             .collect()
     }
 
-    pub fn total_duration_ms(&self) -> u64 {
+    /// Total duration from Start to Finish in milliseconds.
+    /// Returns 0 if either marker is missing.
+    #[allow(dead_code)]
+    pub(crate) fn total_duration_ms(&self) -> u64 {
         let start = self.entries.iter().find_map(|e| match e {
             TrajectoryEntry::Start { timestamp, .. } => Some(*timestamp),
             _ => None,
@@ -237,7 +240,10 @@ impl TrajectoryWriter {
     /// single export JSON file to `~/.syscity/trajectory/exports/`.
     ///
     /// Returns the path to the exported file.
-    pub async fn export_bundle(&self, session_id: &str) -> Result<PathBuf> {
+    /// Collect all JSONL files for a session, redact paths, and export as a
+    /// single JSON array file. Only used in tests but kept as a utility.
+    #[allow(dead_code)]
+    pub(crate) async fn export_bundle(&self, session_id: &str) -> Result<PathBuf> {
         let files = self.session_files(session_id).await?;
         let mut all_text = Vec::new();
 
@@ -362,7 +368,7 @@ impl Default for TrajectoryWriter {
 // ---------------------------------------------------------------------------
 
 /// Returns the default trajectory directory: `~/.syscity/trajectory/`.
-pub fn trajectory_dir() -> PathBuf {
+pub(crate) fn trajectory_dir() -> PathBuf {
     crate::dirs::syscity_dir().join("trajectory")
 }
 

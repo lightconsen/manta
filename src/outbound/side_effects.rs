@@ -123,99 +123,123 @@ impl SideEffectExecutor {
 
         match effect {
             SideEffect::MemoryStore { session_id, content } => {
-                if let Some(ref mm) = ctx.memory_manager {
-                    match mm
-                        .observe(session_id, content.clone(), "side_effect", 0.5)
-                        .await
-                    {
-                        Ok(id) => {
-                            debug!("MemoryStore: saved entry {} for session {}", id, session_id)
-                        }
-                        Err(e) => error!("MemoryStore side-effect failed: {}", e),
-                    }
-                } else {
-                    warn!("MemoryStore side-effect: no memory manager configured, effect dropped");
-                }
+                Self::handle_memory_store(&ctx, session_id, content).await;
             }
-
             SideEffect::CronSchedule { expression, payload } => {
-                if let Some(ref scheduler) = ctx.cron_scheduler {
-                    let schedule = crate::cron::cron::Schedule::Cron {
-                        expression: expression.clone(),
-                        timezone: None,
-                        stagger_ms: None,
-                    };
-                    let target = crate::cron::cron::ExecutionTarget::shell(payload.clone());
-                    let job = crate::cron::cron::CronJob::new(
-                        uuid::Uuid::new_v4().to_string(),
-                        format!("side-effect-{}", expression),
-                        schedule,
-                        target,
-                    );
-                    let guard = scheduler.lock().await;
-                    if let Err(e) = guard.add_job(job).await {
-                        error!("CronSchedule side-effect failed: {}", e);
-                    } else {
-                        debug!("CronSchedule: added job for '{}'", expression);
-                    }
-                } else {
-                    warn!("CronSchedule side-effect: no cron scheduler configured, effect dropped");
-                }
+                Self::handle_cron_schedule(&ctx, expression, payload).await;
             }
-
             SideEffect::Webhook { url, payload } => {
-                let client = match &ctx.webhook_client {
-                    Some(c) => c.clone(),
-                    None => {
-                        debug!(
-                            "Webhook side-effect: no shared client configured, creating one-off"
-                        );
-                        Arc::new(
-                            reqwest::Client::builder()
-                                .timeout(std::time::Duration::from_secs(10))
-                                .build()
-                                .unwrap_or_default(),
-                        )
-                    }
-                };
-                let url = url.clone();
-                let payload = payload.clone();
-                let task_registry = ctx.task_registry.clone();
-                let webhook_id = uuid::Uuid::new_v4().to_string();
-                let handle = tokio::spawn(async move {
-                    match client.post(&url).json(&payload).send().await {
-                        Ok(resp) => {
-                            let status = resp.status();
-                            // Drain the response body to free the connection pool slot.
-                            let _ = resp.bytes().await;
-                            debug!("Webhook side-effect: {} status={}", url, status);
-                        }
-                        Err(e) => error!("Webhook side-effect failed: {} {}", url, e),
-                    }
-                });
-                if let Some(ref tr) = task_registry {
-                    tr.insert_join(format!("webhook:{}", webhook_id), handle)
-                        .await;
-                }
+                self.handle_webhook(&ctx, url, payload).await;
             }
-
             SideEffect::Analytics { event, properties } => {
-                info!(
-                    event = %event,
-                    properties = ?properties,
-                    "Analytics side-effect"
-                );
+                Self::handle_analytics(event, properties);
             }
+            SideEffect::Custom { name, .. } => {
+                self.handle_custom(effect, name).await;
+            }
+        }
+    }
 
-            SideEffect::Custom { name, params: _params } => {
-                if let Some(handler) = self.registry.get(name).await {
-                    if let Err(e) = handler.execute(effect).await {
-                        error!("Custom side-effect '{}' failed: {}", name, e);
-                    }
-                } else {
-                    warn!("No handler registered for custom side-effect: {}", name);
+    async fn handle_memory_store(ctx: &SideEffectContext, session_id: &str, content: &str) {
+        if let Some(ref mm) = ctx.memory_manager {
+            match mm
+                .observe(session_id, content.to_owned(), "side_effect", 0.5)
+                .await
+            {
+                Ok(id) => {
+                    debug!("MemoryStore: saved entry {} for session {}", id, session_id)
                 }
+                Err(e) => error!("MemoryStore side-effect failed: {}", e),
             }
+        } else {
+            warn!("MemoryStore side-effect: no memory manager configured, effect dropped");
+        }
+    }
+
+    async fn handle_cron_schedule(ctx: &SideEffectContext, expression: &str, payload: &str) {
+        if let Some(ref scheduler) = ctx.cron_scheduler {
+            let schedule = crate::cron::cron::Schedule::Cron {
+                expression: expression.to_owned(),
+                timezone: None,
+                stagger_ms: None,
+            };
+            let target = crate::cron::cron::ExecutionTarget::shell(payload.to_owned());
+            let job = crate::cron::cron::CronJob::new(
+                uuid::Uuid::new_v4().to_string(),
+                format!("side-effect-{}", expression),
+                schedule,
+                target,
+            );
+            let guard = scheduler.lock().await;
+            if let Err(e) = guard.add_job(job).await {
+                error!("CronSchedule side-effect failed: {}", e);
+            } else {
+                debug!("CronSchedule: added job for '{}'", expression);
+            }
+        } else {
+            warn!("CronSchedule side-effect: no cron scheduler configured, effect dropped");
+        }
+    }
+
+    async fn handle_webhook(
+        &self,
+        ctx: &SideEffectContext,
+        url: &str,
+        payload: &serde_json::Value,
+    ) {
+        let client = match &ctx.webhook_client {
+            Some(c) => c.clone(),
+            None => {
+                debug!("Webhook side-effect: no shared client configured, creating one-off");
+                Arc::new(
+                    reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(10))
+                        .build()
+                        .unwrap_or_default(),
+                )
+            }
+        };
+        let url = url.to_owned();
+        let payload = payload.clone();
+        let task_registry = ctx.task_registry.clone();
+        let webhook_id = uuid::Uuid::new_v4().to_string();
+        let handle = tokio::spawn(async move {
+            match client.post(&url).json(&payload).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    // Drain the response body to free the connection pool slot.
+                    if let Err(e) = resp.bytes().await {
+                        warn!("Failed to drain webhook response body for {}: {}", url, e);
+                    }
+                    debug!("Webhook side-effect: {} status={}", url, status);
+                }
+                Err(e) => error!("Webhook side-effect failed: {} {}", url, e),
+            }
+        });
+        if let Some(ref tr) = task_registry {
+            tr.insert_join(format!("webhook:{}", webhook_id), handle)
+                .await;
+        }
+    }
+
+    fn handle_analytics(
+        event: &str,
+        properties: &std::collections::HashMap<String, serde_json::Value>,
+    ) {
+        info!(
+            event = %event,
+            properties = ?properties,
+            "Analytics side-effect"
+        );
+    }
+
+    async fn handle_custom(&self, effect: &SideEffect, name: &str) {
+        if let Some(handler) = self.registry.get(name).await {
+            if let Err(e) = handler.execute(effect).await {
+                error!("Custom side-effect '{}' failed: {}", name, e);
+            }
+        } else {
+            warn!("No handler registered for custom side-effect: {}", name);
         }
     }
 }
