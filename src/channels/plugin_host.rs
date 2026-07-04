@@ -147,24 +147,6 @@ fn read_string_from_memory(
         .map_err(|e| crate::error::SyscityError::Plugin(format!("Invalid UTF-8: {}", e)))
 }
 
-/// Encode a Result<String, String> as i64: high 32 bits = error ptr (0 = ok),
-/// low 32 bits = value/error ptr
-#[allow(dead_code)]
-fn encode_result(ok: &str, err: Option<&str>) -> i64 {
-    match err {
-        None => {
-            let ptr = ok.as_ptr() as usize as u32;
-            let len = ok.len() as u32;
-            ((len as i64) << 32) | (ptr as i64)
-        }
-        Some(e) => {
-            let ptr = e.as_ptr() as usize as u32;
-            let len = e.len() as u32;
-            ((len as i64) << 32) | (ptr as i64) | (1i64 << 63) // Set error bit
-        }
-    }
-}
-
 impl PluginChannel {
     /// Load a WASM plugin from file
     pub async fn load(

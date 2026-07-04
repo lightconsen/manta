@@ -954,7 +954,7 @@ async fn handle_event_message(
         if let Some(reply_text) = reply {
             // Send access-denied reply back via Slack API
             let client = reqwest::Client::new();
-            let _ = client
+            if let Err(e) = client
                 .post("https://slack.com/api/chat.postMessage")
                 .header("Authorization", format!("Bearer {}", bot_token))
                 .header("Content-Type", "application/json")
@@ -963,7 +963,10 @@ async fn handle_event_message(
                     "text": reply_text,
                 }))
                 .send()
-                .await;
+                .await
+            {
+                warn!("Slack: failed to send access-denied reply to {}: {}", event_channel, e);
+            }
         }
         return;
     }

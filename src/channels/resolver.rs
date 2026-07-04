@@ -126,14 +126,13 @@ pub trait ResolutionProvider: Send + Sync {
 
 /// Uses explicit `@agent_name` mentions or commands to resolve.
 pub struct CommandProvider {
-    #[allow(dead_code)]
-    default_agent_id: String,
+    _default_agent_id: String,
 }
 
 impl CommandProvider {
-    pub fn new(default_agent_id: impl Into<String>) -> Self {
+    pub fn new(_default_agent_id: impl Into<String>) -> Self {
         Self {
-            default_agent_id: default_agent_id.into(),
+            _default_agent_id: _default_agent_id.into(),
         }
     }
 }

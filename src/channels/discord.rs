@@ -1058,7 +1058,9 @@ impl EventHandler for DiscordHandler {
 
         // Send to handler if configured
         if let Some(tx) = &self.config.message_tx {
-            let _ = tx.send(incoming);
+            if tx.send(incoming).is_err() {
+                warn!("Discord event handler send failed: receiver closed");
+            }
         }
     }
 
@@ -1083,7 +1085,9 @@ impl EventHandler for DiscordHandler {
         );
 
         if let Some(tx) = &self.config.message_tx {
-            let _ = tx.send(incoming);
+            if tx.send(incoming).is_err() {
+                warn!("Discord event handler send failed: receiver closed");
+            }
         }
     }
 }
@@ -1098,46 +1102,6 @@ fn reaction_emoji_name(emoji: &ReactionType) -> String {
         }
         _ => "unknown".to_string(),
     }
-}
-
-/// Verify a Discord webhook/interaction Ed25519 signature.
-///
-/// Discord signs interaction payloads with the application's public key.
-/// The signature is in the `X-Signature-Ed25519` header (hex-encoded, 64
-/// bytes) and the timestamp in `X-Signature-Timestamp`. The signed message
-/// is `timestamp_bytes || body_bytes`.
-///
-/// Returns `Ok(())` on valid signature, `Err(reason)` on failure. Callers
-/// should **reject** the request on error instead of silently continuing.
-#[cfg(feature = "discord")]
-#[allow(dead_code)]
-fn verify_discord_signature(
-    public_key: &str,
-    timestamp: &str,
-    body: &[u8],
-    signature_header: &str,
-) -> Result<(), String> {
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-
-    // Decode the hex-encoded public key
-    let verifying_key = hex::decode(public_key)
-        .ok()
-        .and_then(|bytes| VerifyingKey::from_bytes(&bytes.try_into().ok()?).ok())
-        .ok_or_else(|| "failed to decode Discord public key".to_string())?;
-
-    // Decode the hex-encoded signature (64 bytes for Ed25519)
-    let sig_bytes =
-        hex::decode(signature_header).map_err(|_| "failed to decode signature hex".to_string())?;
-    let signature =
-        Signature::from_slice(&sig_bytes).map_err(|_| "failed to parse signature".to_string())?;
-
-    // The signed message is timestamp || body
-    let mut message = timestamp.as_bytes().to_vec();
-    message.extend_from_slice(body);
-
-    verifying_key
-        .verify(&message, &signature)
-        .map_err(|_| "Ed25519 signature mismatch".to_string())
 }
 
 #[cfg(test)]
