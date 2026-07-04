@@ -46,6 +46,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use tracing::warn;
 
 use super::{
     CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, Message, Provider,
@@ -202,13 +203,15 @@ impl Provider for MockProvider {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
         // Emit the content as a single chunk (or split tool_calls if present)
-        let _ = tx.send(CompletionChunk {
+        if let Err(e) = tx.send(CompletionChunk {
             content: Some(message.content.clone()),
             reasoning_content: message.reasoning_content.clone(),
             tool_calls: message.tool_calls.clone(),
             is_done: false,
             usage: None,
-        });
+        }) {
+            warn!("MockProvider stream: failed to send content chunk: {}", e);
+        }
 
         // Final chunk with usage
         let prompt_tokens: u32 = request
@@ -216,7 +219,7 @@ impl Provider for MockProvider {
             .iter()
             .map(|m| m.content.len() as u32 / 4)
             .sum();
-        let _ = tx.send(CompletionChunk {
+        if let Err(e) = tx.send(CompletionChunk {
             content: None,
             reasoning_content: None,
             tool_calls: None,
@@ -226,7 +229,9 @@ impl Provider for MockProvider {
                 completion_tokens: message.content.len() as u32 / 4,
                 total_tokens: prompt_tokens + message.content.len() as u32 / 4,
             }),
-        });
+        }) {
+            warn!("MockProvider stream: failed to send done chunk: {}", e);
+        }
 
         Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)))
     }

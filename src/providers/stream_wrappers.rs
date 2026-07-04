@@ -69,7 +69,6 @@ impl Default for StreamFamilyRegistry {
 /// Default wrapper chain shared by all stream families.
 fn default_wrappers() -> Vec<StreamWrapper> {
     vec![
-        reasoning_content_wrapper(),
         thinking_tag_extractor_wrapper(),
         tool_call_accumulator_wrapper(),
         html_entity_decoder_wrapper(),
@@ -105,14 +104,6 @@ impl StreamFamilyRegistry {
 // ------------------------------------------------------------------
 // Built-in wrappers
 // ------------------------------------------------------------------
-
-/// Wrapper that extracts reasoning_content into a dedicated field.
-pub fn reasoning_content_wrapper() -> StreamWrapper {
-    Arc::new(|stream| {
-        let wrapped = ReasoningStream { inner: stream };
-        Box::pin(wrapped)
-    })
-}
 
 /// Wrapper that accumulates partial tool_call deltas into complete calls.
 pub fn tool_call_accumulator_wrapper() -> StreamWrapper {
@@ -177,33 +168,6 @@ pub fn json_repair_wrapper() -> StreamWrapper {
 // ------------------------------------------------------------------
 // Wrapper implementations
 // ------------------------------------------------------------------
-
-struct ReasoningStream {
-    inner: CompletionStream,
-}
-
-impl Stream for ReasoningStream {
-    type Item = CompletionChunk;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.inner.as_mut().poll_next(cx) {
-            Poll::Ready(Some(chunk)) => {
-                // Ensure reasoning_content is Some when content contains thinking tags
-                if chunk.reasoning_content.is_none() {
-                    if let Some(ref content) = chunk.content {
-                        if content.contains("<thinking>") || content.contains("< reasoning>") {
-                            // Some providers embed reasoning in content — split
-                            // it out (simplified:
-                            // in practice this would parse tags)
-                        }
-                    }
-                }
-                Poll::Ready(Some(chunk))
-            }
-            other => other,
-        }
-    }
-}
 
 struct ToolCallAccumulator {
     inner: CompletionStream,
