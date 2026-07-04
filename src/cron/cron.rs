@@ -1006,6 +1006,37 @@ impl CronScheduler {
         });
     }
 
+    /// Build structured delivery payload for a completed job execution.
+    ///
+    /// Returns a JSON object with `status: "ok"` on success or
+    /// `status: "error"` on failure, along with the job identity and
+    /// execution timestamp. This is a pure function — it does not mutate
+    /// any job state — so callers can invoke it inside a write-lock
+    /// section without worrying about ordering.
+    fn build_delivery_payload(
+        result: &Result<String>,
+        job_name: &str,
+        job_id: &str,
+        completed_at: DateTime<Utc>,
+    ) -> serde_json::Value {
+        match result {
+            Ok(output) => serde_json::json!({
+                "job_name": job_name,
+                "job_id": job_id,
+                "status": "ok",
+                "output": output.trim(),
+                "run_at": completed_at.to_rfc3339(),
+            }),
+            Err(e) => serde_json::json!({
+                "job_name": job_name,
+                "job_id": job_id,
+                "status": "error",
+                "error": format!("{}", e),
+                "run_at": completed_at.to_rfc3339(),
+            }),
+        }
+    }
+
     /// Execute a job
     ///
     /// When `force` is true, the job runs regardless of `should_run` /
@@ -1149,36 +1180,25 @@ impl CronScheduler {
                 j.state.last_run_at = Some(completed_at);
                 j.state.run_count += 1;
 
-                // Build structured delivery payload for both success and error
-                let delivery_payload = match &result {
-                    Ok(output) => {
+                // Apply side effects before building the delivery payload.
+                // The payload construction is extracted to keep the
+                // write-lock section focused on state mutation.
+                match &result {
+                    Ok(_) => {
                         j.state.last_error = None;
                         j.state.consecutive_errors = 0;
                         info!("Job '{}' completed successfully", j.name);
-
-                        serde_json::json!({
-                            "job_name": j.name,
-                            "job_id": j.id,
-                            "status": "ok",
-                            "output": output.trim(),
-                            "run_at": completed_at.to_rfc3339(),
-                        })
                     }
                     Err(e) => {
                         let error_msg = format!("{}", e);
                         j.state.last_error = Some(error_msg.clone());
                         j.state.consecutive_errors += 1;
                         error!("Job '{}' failed: {}", j.name, error_msg);
-
-                        serde_json::json!({
-                            "job_name": j.name,
-                            "job_id": j.id,
-                            "status": "error",
-                            "error": error_msg,
-                            "run_at": completed_at.to_rfc3339(),
-                        })
                     }
-                };
+                }
+
+                let delivery_payload =
+                    Self::build_delivery_payload(&result, &j.name, &j.id, completed_at);
 
                 // Capture what delivery needs so we can `.await` it outside
                 // the lock. Cloning is cheap relative to the alternative of
