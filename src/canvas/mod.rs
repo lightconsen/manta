@@ -351,8 +351,13 @@ impl CanvasSession {
     /// Update a specific component
     pub async fn update(&self, component_id: String, component: CanvasComponent) {
         let mut guard = self.root.write().await;
-        guard.update_by_id(&component_id, component.clone());
+        let found = guard.update_by_id(&component_id, component.clone());
         drop(guard);
+
+        if !found {
+            warn!("Canvas {}: update target '{}' not found in tree", self.id.0, component_id);
+        }
+
         if self
             .update_tx
             .send(CanvasUpdate::Update { component_id, component })
@@ -365,8 +370,13 @@ impl CanvasSession {
     /// Append component to container
     pub async fn append(&self, parent_id: String, component: CanvasComponent) {
         let mut guard = self.root.write().await;
-        guard.append_child(&parent_id, component.clone());
+        let found = guard.append_child(&parent_id, component.clone());
         drop(guard);
+
+        if !found {
+            warn!("Canvas {}: append parent '{}' not found in tree", self.id.0, parent_id);
+        }
+
         if self
             .update_tx
             .send(CanvasUpdate::Append { parent_id, component })
@@ -379,8 +389,13 @@ impl CanvasSession {
     /// Remove a component from the tree
     pub async fn remove(&self, component_id: String) {
         let mut guard = self.root.write().await;
-        guard.remove_by_id(&component_id);
+        let found = guard.remove_by_id(&component_id);
         drop(guard);
+
+        if !found {
+            warn!("Canvas {}: remove target '{}' not found in tree", self.id.0, component_id);
+        }
+
         if self
             .update_tx
             .send(CanvasUpdate::Remove { component_id })
@@ -514,15 +529,10 @@ impl CanvasManager {
     /// Remove session, cleaning up all three maps.
     ///
     /// Locks are acquired and released sequentially (never held simultaneously)
-    /// to avoid deadlock with [`get_or_create_for_session`] which locks in
-    /// `session_map → sessions` order.
+    /// in `session_map → sessions → event_rxs` order to match
+    /// [`get_or_create_for_session`] and prevent AB-BA deadlock.
     pub async fn remove_session(&self, id: &CanvasId) {
-        // 1. Remove session from the primary map
-        let mut sessions = self.sessions.write().await;
-        sessions.remove(id);
-        drop(sessions);
-
-        // 2. Collect external session IDs mapped to this canvas and remove them
+        // 1. Collect external session IDs from session_map and remove them
         let mut map = self.session_map.write().await;
         let external_ids: Vec<String> = map
             .iter()
@@ -533,6 +543,11 @@ impl CanvasManager {
             map.remove(key);
         }
         drop(map);
+
+        // 2. Remove session from the primary map
+        let mut sessions = self.sessions.write().await;
+        sessions.remove(id);
+        drop(sessions);
 
         // 3. Cleanup the event receivers
         let mut rxs = self.event_rxs.write().await;
