@@ -1,47 +1,47 @@
-//! Linux Wayland desktop capability set — GUI automation via Wayland portals.
+//! Linux X11 desktop capability set — GUI automation via X11 protocols.
 
 pub mod accessibility;
 pub mod clipboard;
 pub mod desktop_control;
 pub mod screenshot;
 
-pub use accessibility::WaylandAccessibilityTool;
+pub use accessibility::X11AccessibilityTool;
 pub use clipboard::ClipboardTool;
 pub use desktop_control::DesktopControlTool;
 pub use screenshot::ScreenshotTool;
 
 use super::{OsControlScope, PlatformConstraints, PlatformToolSet};
+use crate::computer::has_x11;
 use crate::tools::Tool;
 
-/// Linux Wayland desktop platform tool set — provides GUI automation through
-/// Wayland-specific mechanisms such as `grim`, `ydotool`, and `wtype`.
-pub struct LinuxDesktopWaylandToolset;
+/// Linux X11 desktop platform tool set — provides GUI automation through
+/// X11-specific tools such as `xdotool`, `xclip`, `maim`, and `import`.
+pub struct LinuxDesktopX11Toolset;
 
-impl LinuxDesktopWaylandToolset {
+impl LinuxDesktopX11Toolset {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for LinuxDesktopWaylandToolset {
+impl Default for LinuxDesktopX11Toolset {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PlatformToolSet for LinuxDesktopWaylandToolset {
+impl PlatformToolSet for LinuxDesktopX11Toolset {
     fn id(&self) -> &str {
-        "wayland"
+        "x11"
     }
 
     fn name(&self) -> &str {
-        "Linux Wayland Desktop Control"
+        "Linux X11 Desktop Control"
     }
 
     fn description(&self) -> &str {
-        "Linux Wayland desktop automation: screenshots (grim/spectacle/gnome-screenshot) and input \
-         simulation (ydotool/wtype for click, type, key), and clipboard (wl-copy/wl-paste). Note: \
-         Wayland restricts window introspection compared to X11."
+        "Linux X11 desktop automation: screenshots (maim/import/gnome-screenshot), desktop control \
+         (xdotool click/type/key/window management), and clipboard (xclip)."
     }
 
     fn constraints(&self) -> &PlatformConstraints {
@@ -62,11 +62,11 @@ impl PlatformToolSet for LinuxDesktopWaylandToolset {
             Box::new(ScreenshotTool::new()),
             Box::new(DesktopControlTool::new()),
             Box::new(ClipboardTool::new()),
-            Box::new(WaylandAccessibilityTool::new()),
+            Box::new(X11AccessibilityTool::new()),
         ]
     }
 
     fn is_available(&self) -> bool {
-        super::has_wayland()
+        has_x11()
     }
 }

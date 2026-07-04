@@ -46,7 +46,7 @@ impl PlatformConstraints {
             return false;
         }
 
-        if self.requires_gui && !has_display_server() {
+        if self.requires_gui && !crate::computer::has_display_server() {
             return false;
         }
 
@@ -180,22 +180,6 @@ impl CapabilityProfile {
     }
 }
 
-/// Detect whether a display server is available.
-fn has_display_server() -> bool {
-    // Check common display environment variables.
-    has_x11() || has_wayland() || cfg!(target_os = "macos") || cfg!(target_os = "windows")
-}
-
-/// Detect whether an X11 display server is available.
-fn has_x11() -> bool {
-    std::env::var("DISPLAY").is_ok() && std::env::var("WAYLAND_DISPLAY").is_err()
-}
-
-/// Detect whether a Wayland display server is available.
-fn has_wayland() -> bool {
-    std::env::var("WAYLAND_DISPLAY").is_ok()
-}
-
 /// Detect whether a system service is available.
 fn is_service_available(name: &str) -> bool {
     match name {
@@ -205,8 +189,8 @@ fn is_service_available(name: &str) -> bool {
 }
 
 pub mod linux;
-pub mod linux_desktop_wayland;
-pub mod linux_desktop_x11;
+pub mod wayland;
+pub mod x11;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod mobile;
@@ -215,8 +199,8 @@ pub mod server_operator;
 pub mod windows;
 
 pub use linux::LinuxToolset;
-pub use linux_desktop_wayland::LinuxDesktopWaylandToolset;
-pub use linux_desktop_x11::LinuxDesktopX11Toolset;
+pub use wayland::LinuxDesktopWaylandToolset;
+pub use x11::LinuxDesktopX11Toolset;
 #[cfg(target_os = "macos")]
 pub use macos::MacosToolset;
 pub use mobile::{AndroidToolset, IosToolset};

@@ -385,7 +385,9 @@ async fn tail_file(
                         continue;
                     }
                     if let Some(entry) = parse_generic_log_line(trimmed, source_name) {
-                        let _ = tx.send(entry);
+                        if tx.send(entry).is_err() {
+                            warn!("Log entry dropped (broadcast channel full) for source '{}'", source_name);
+                        }
                     }
                 }
             }
@@ -421,7 +423,9 @@ async fn tail_journald(
 
     while let Some(line) = reader.next_line().await? {
         if let Some(entry) = parse_journald_line(&line, source_name) {
-            let _ = tx.send(entry);
+            if tx.send(entry).is_err() {
+                warn!("Log entry dropped (broadcast channel full) for source '{}'", source_name);
+            }
         }
     }
 
@@ -467,7 +471,9 @@ async fn tail_macos_log(
 
     while let Some(line) = reader.next_line().await? {
         if let Some(entry) = parse_macos_log_line(&line, source_name) {
-            let _ = tx.send(entry);
+            if tx.send(entry).is_err() {
+                warn!("Log entry dropped (broadcast channel full) for source '{}'", source_name);
+            }
         }
     }
 
@@ -512,7 +518,9 @@ async fn tail_windows_event(
             if let Some(entry) = parse_windows_event_line(line, source_name) {
                 // Only emit events newer than last check
                 if entry.timestamp > DateTime::from(last_check) {
-                    let _ = tx.send(entry);
+                    if tx.send(entry).is_err() {
+                        warn!("Log entry dropped (broadcast channel full) for source '{}'", source_name);
+                    }
                 }
             }
         }
@@ -671,13 +679,11 @@ fn parse_windows_event_line(_line: &str, _source_name: &str) -> Option<LogEntry>
 /// Strip a recognized timestamp prefix from the start of a log line.
 fn strip_timestamp_prefix(line: &str) -> &str {
     // ISO 8601 / RFC 3339.
-    let iso_re = RE_ISO_TIMESTAMP.clone();
-    if let Some(m) = iso_re.find(line) {
+    if let Some(m) = RE_ISO_TIMESTAMP.find(line) {
         return line[m.end()..].trim_start();
     }
     // Syslog style: "Jan 15 10:30:00".
-    let syslog_re = RE_SYSLOG_TIMESTAMP.clone();
-    if let Some(m) = syslog_re.find(line) {
+    if let Some(m) = RE_SYSLOG_TIMESTAMP.find(line) {
         return line[m.end()..].trim_start();
     }
     line
@@ -719,8 +725,7 @@ fn extract_timestamp(line: &str) -> Option<DateTime<Utc>> {
 /// Extract severity level from the line and return the remainder text.
 fn extract_level_and_remainder(line: &str) -> (LogLevel, &str) {
     // Check for bracketed level: [ERROR], [WARN], etc.
-    let bracket_re = RE_BRACKET_LEVEL.clone();
-    if let Some(caps) = bracket_re.captures(line) {
+    if let Some(caps) = RE_BRACKET_LEVEL.captures(line) {
         let level_str = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         let rest = caps.get(2).map(|m| m.as_str()).unwrap_or("");
         if let Some(level) = LogLevel::parse(level_str) {
@@ -729,8 +734,7 @@ fn extract_level_and_remainder(line: &str) -> (LogLevel, &str) {
     }
 
     // Check for colon-separated level: ERROR: message, WARN - message.
-    let colon_re = RE_COLON_LEVEL.clone();
-    if let Some(caps) = colon_re.captures(line) {
+    if let Some(caps) = RE_COLON_LEVEL.captures(line) {
         let level_str = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         let rest = caps.get(2).map(|m| m.as_str()).unwrap_or("");
         if let Some(level) = LogLevel::parse(level_str) {
@@ -744,8 +748,7 @@ fn extract_level_and_remainder(line: &str) -> (LogLevel, &str) {
 
 /// Try to extract process name and PID from prefixes like `process[123]:`.
 fn extract_process_info(line: &str) -> (Option<String>, Option<u32>, &str) {
-    let re = RE_PROCESS_INFO.clone();
-    if let Some(caps) = re.captures(line) {
+    if let Some(caps) = RE_PROCESS_INFO.captures(line) {
         let proc = caps.get(1).map(|m| m.as_str().to_string());
         let pid = caps.get(2).and_then(|m| m.as_str().parse().ok());
         let msg = caps.get(3).map(|m| m.as_str()).unwrap_or(line);

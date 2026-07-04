@@ -6,9 +6,17 @@ use super::{OsControlScope, PlatformToolSet, ToolConflictStrategy};
 use crate::tools::ToolRegistry;
 
 /// Registry of all platform tool sets, with runtime environment detection.
+///
+/// Tool lists are allocated by `set.tools()` on each export call. The
+/// `Tool` trait does not currently implement `Clone`, so caching tool
+/// lists would require a larger refactor. Since export typically happens
+/// once at startup, the allocation cost is acceptable.
 pub struct PlatformCapabilityRegistry {
     sets: Vec<Box<dyn PlatformToolSet>>,
     disabled: HashSet<String>,
+    /// Environment availability cache. Uses `std::sync::RwLock` — the
+    /// critical section is a brief HashMap lookup/insert and is never
+    /// held across an `.await` point, so it is safe in async contexts.
     availability_cache: std::sync::RwLock<HashMap<String, bool>>,
 }
 

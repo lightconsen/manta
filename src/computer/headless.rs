@@ -146,9 +146,17 @@ impl VirtualDisplay for XvfbDisplay {
                 let encoded = maybe_encode_screenshot(&temp_path).await;
                 let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(bytes);
                 // Cleanup temps
-                let _ = tokio::fs::remove_file(&temp_path).await;
+                if let Err(e) = tokio::fs::remove_file(&temp_path).await {
+                    tracing::warn!("Failed to cleanup temp file '{}': {}", temp_path.display(), e);
+                }
                 if encoded != temp_path {
-                    let _ = tokio::fs::remove_file(&encoded).await;
+                    if let Err(e) = tokio::fs::remove_file(&encoded).await {
+                        tracing::warn!(
+                            "Failed to cleanup temp file '{}': {}",
+                            encoded.display(),
+                            e
+                        );
+                    }
                 }
                 let base64 = base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
@@ -217,9 +225,13 @@ impl VirtualDisplay for XvfbDisplay {
         let encoded = maybe_encode_screenshot(&temp_path).await;
         let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(bytes);
         // Cleanup temps
-        let _ = tokio::fs::remove_file(&temp_path).await;
+        if let Err(e) = tokio::fs::remove_file(&temp_path).await {
+            tracing::warn!("Failed to cleanup temp file '{}': {}", temp_path.display(), e);
+        }
         if encoded != temp_path {
-            let _ = tokio::fs::remove_file(&encoded).await;
+            if let Err(e) = tokio::fs::remove_file(&encoded).await {
+                tracing::warn!("Failed to cleanup temp file '{}': {}", encoded.display(), e);
+            }
         }
 
         let base64 =
@@ -626,35 +638,23 @@ impl ComputerAdapter for HeadlessComputerAdapter {
             DesktopAction::TestPing { target, count } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let result = inspector.test_ping(&target, count).await;
-                let success = result.success;
-                let message = result.message.clone();
-                let mut ar = ActionResult {
-                    success,
-                    message,
+                Ok(ActionResult {
+                    success: result.success,
+                    message: result.message.clone(),
                     screenshot_after: None,
                     data: Some(serde_json::to_value(&result).unwrap_or_default()),
-                };
-                if !success {
-                    ar.success = false;
-                }
-                Ok(ar)
+                })
             }
             DesktopAction::TestTcpConnect { target, port, timeout_ms } => {
                 let inspector = crate::computer::network::NetworkInspector::new();
                 let timeout = timeout_ms.map(std::time::Duration::from_millis);
                 let result = inspector.test_tcp_connect(&target, port, timeout).await;
-                let success = result.success;
-                let message = result.message.clone();
-                let mut ar = ActionResult {
-                    success,
-                    message,
+                Ok(ActionResult {
+                    success: result.success,
+                    message: result.message.clone(),
                     screenshot_after: None,
                     data: Some(serde_json::to_value(&result).unwrap_or_default()),
-                };
-                if !success {
-                    ar.success = false;
-                }
-                Ok(ar)
+                })
             }
             DesktopAction::ListFirewallRules => {
                 let inspector = crate::computer::network::NetworkInspector::new();

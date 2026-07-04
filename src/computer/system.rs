@@ -158,6 +158,10 @@ impl SystemMonitor {
     /// Kills the process (with optional force), then attempts to
     /// re-launch it using the original command line when available.
     /// Returns the new PID if restart succeeds.
+    ///
+    /// **Blocking:** This method performs a blocking sleep
+    /// (`std::thread::sleep`). Call via `tokio::task::spawn_blocking` or
+    /// from a blocking context only.
     pub fn restart_process(
         &mut self,
         pid: Option<u32>,
@@ -358,6 +362,9 @@ impl Default for ProcessMonitorConfig {
 pub struct ProcessMonitor {
     config: ProcessMonitorConfig,
     last_alert: std::collections::HashMap<u32, std::time::Instant>,
+    /// Cached system monitor — initialized on first poll to avoid
+    /// re-creating a full `RefreshKind::everything` snapshot every cycle.
+    monitor: Option<SystemMonitor>,
 }
 
 impl ProcessMonitor {
@@ -365,13 +372,16 @@ impl ProcessMonitor {
         Self {
             config,
             last_alert: std::collections::HashMap::new(),
+            monitor: None,
         }
     }
 
     /// Poll once and return any alerts for processes exceeding thresholds.
     pub fn poll(&mut self) -> Vec<ProcessAlert> {
-        let mut monitor = SystemMonitor::new();
-        let procs = monitor.list_processes(None, None);
+        let procs = self
+            .monitor
+            .get_or_insert_with(SystemMonitor::new)
+            .list_processes(None, None);
         let mut alerts = Vec::new();
         let now = std::time::Instant::now();
 

@@ -314,22 +314,37 @@ impl VerificationEngine {
     }
 }
 
-/// Compute a simple difference metric between two screenshots.
+/// Compute a difference metric between two screenshots.
 ///
-/// Returns 0 for identical images, `u32::MAX` for any difference.
-/// A future enhancement could decode the PNGs and count per-pixel differences.
+/// Returns 0 for identical images. Otherwise counts differing bytes
+/// between the decoded PNG data. A future enhancement could decode the
+/// PNGs and count per-pixel differences using the `image` crate.
 fn compute_screenshot_diff(a: &Screenshot, b: &Screenshot) -> u32 {
     if a.base64 == b.base64 {
         return 0;
     }
-    // Compare decoded bytes for a slightly more accurate metric.
-    match (
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &a.base64),
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b.base64),
-    ) {
-        (Ok(a_bytes), Ok(b_bytes)) if a_bytes == b_bytes => 0,
-        _ => u32::MAX,
+
+    let Ok(a_bytes) =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &a.base64)
+    else {
+        return u32::MAX;
+    };
+    let Ok(b_bytes) =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b.base64)
+    else {
+        return u32::MAX;
+    };
+
+    let min_len = a_bytes.len().min(b_bytes.len());
+    let mut diff = 0u32;
+    for i in 0..min_len {
+        if a_bytes[i] != b_bytes[i] {
+            diff += 1;
+        }
     }
+    // Length difference also counts as differences
+    diff += (a_bytes.len().max(b_bytes.len()) - min_len) as u32;
+    diff
 }
 
 #[cfg(test)]
@@ -368,7 +383,9 @@ mod tests {
             height: 100,
             timestamp: std::time::Instant::now(),
         };
-        assert_eq!(compute_screenshot_diff(&a, &b), u32::MAX);
+        // "hello" vs "world" — decoded bytes differ
+        assert!(compute_screenshot_diff(&a, &b) > 0);
+        assert!(compute_screenshot_diff(&a, &b) < u32::MAX);
     }
 
     #[test]

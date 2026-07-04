@@ -14,6 +14,7 @@
 //!     ok         = verifier.verify(criteria)     // validate
 //! ```
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -116,6 +117,10 @@ pub struct ComputerUseLoop {
     snapshot_paths: Vec<String>,
     /// Consecutive-failure threshold that triggers auto-rollback.
     auto_rollback_threshold: usize,
+    /// Guards against repeatedly triggering auto-rollback between the
+    /// threshold and escalation (set true on first rollback, reset on
+    /// success).
+    rollback_already_triggered: AtomicBool,
     /// Tracks how many snapshots were taken for each step (index = step
     /// number).
     step_snapshot_counts: Arc<tokio::sync::Mutex<Vec<usize>>>,
@@ -133,6 +138,7 @@ impl ComputerUseLoop {
             rollback_manager: None,
             snapshot_paths: Vec::new(),
             auto_rollback_threshold: 3,
+            rollback_already_triggered: AtomicBool::new(false),
             step_snapshot_counts: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
@@ -240,7 +246,11 @@ impl ComputerUseLoop {
             }
 
             // Auto-rollback: trigger exactly once when threshold is reached.
-            if consecutive_failures == self.auto_rollback_threshold {
+            if consecutive_failures == self.auto_rollback_threshold
+                && !self.rollback_already_triggered.load(Ordering::Relaxed)
+            {
+                self.rollback_already_triggered
+                    .store(true, Ordering::Relaxed);
                 tracing::warn!(
                     "Auto-rollback triggered after {} consecutive failures",
                     consecutive_failures
@@ -363,6 +373,8 @@ impl ComputerUseLoop {
                             if verified {
                                 // Success — reset failure counters and settle delay.
                                 consecutive_failures = 0;
+                                self.rollback_already_triggered
+                                    .store(false, Ordering::Relaxed);
                                 current_settle_delay_ms = self.config.settle_delay_ms;
                             } else {
                                 consecutive_failures += 1;
@@ -443,7 +455,7 @@ impl ComputerUseLoop {
     /// Verify a single action using heuristics.
     ///
     /// Returns `true` if the action appears to have succeeded.
-    async fn verify_action(&self, action: &DesktopAction, _result: &ActionResult) -> Result<bool> {
+    async fn verify_action(&self, action: &DesktopAction, result: &ActionResult) -> Result<bool> {
         match action {
             DesktopAction::Screenshot { .. } => {
                 // Screenshots are self-verifying.
@@ -505,11 +517,13 @@ impl ComputerUseLoop {
                     Ok(true)
                 }
             }
-            DesktopAction::GetSystemStatus | DesktopAction::ListProcesses { .. } => Ok(true),
+            DesktopAction::GetSystemStatus | DesktopAction::ListProcesses { .. } => {
+                Ok(result.success)
+            }
             DesktopAction::WatchDirectory { .. }
             | DesktopAction::UnwatchDirectory { .. }
             | DesktopAction::WatchFile { .. }
-            | DesktopAction::UnwatchFile { .. } => Ok(true),
+            | DesktopAction::UnwatchFile { .. } => Ok(result.success),
             _ => Ok(true), // Other actions: assume success.
         }
     }

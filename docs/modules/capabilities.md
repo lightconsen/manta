@@ -17,7 +17,7 @@ Platform capability sets for Syscity — organizes platform-specific tools by en
 | Platform | Module | Description |
 |----------|--------|-------------|
 | Linux Server | `linux.rs` | Server-oriented tools (systemd, logs, processes) |
-| Linux Desktop | `linux_desktop_wayland.rs` | Wayland desktop tools |
+| Linux Desktop | `wayland/` | Wayland desktop tools |
 | macOS | `platform_macos.rs` | macOS-specific desktop automation |
 | Windows | `platform_windows.rs` | Windows-specific desktop automation |
 | Linux | `platform_linux.rs` | Linux-specific desktop automation |

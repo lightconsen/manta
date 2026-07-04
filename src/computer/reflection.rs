@@ -305,6 +305,49 @@ impl ReflectionEngine {
 
     // ── Experience Memory ─────────────────────────────────────────────────
 
+    /// Map a `DesktopAction` to a short human-readable action-type key used
+    /// for past-experience matching in the memory store.
+    fn action_type_key(action: &DesktopAction) -> &'static str {
+        match action {
+            DesktopAction::Screenshot { .. } => "Screenshot",
+            DesktopAction::Click { .. } => "Click",
+            DesktopAction::DoubleClick { .. } => "DoubleClick",
+            DesktopAction::Type { .. } => "Type",
+            DesktopAction::KeyPress { .. } => "KeyPress",
+            DesktopAction::Scroll { .. } => "Scroll",
+            DesktopAction::Drag { .. } => "Drag",
+            DesktopAction::ReadUiTree { .. } => "ReadUiTree",
+            DesktopAction::LaunchApp { .. } => "LaunchApp",
+            DesktopAction::ActivateWindow { .. } => "ActivateWindow",
+            DesktopAction::CloseWindow { .. } => "CloseWindow",
+            DesktopAction::Wait { .. } => "Wait",
+            DesktopAction::ClipboardGet => "ClipboardGet",
+            DesktopAction::ClipboardSet { .. } => "ClipboardSet",
+            DesktopAction::GetSystemStatus => "GetSystemStatus",
+            DesktopAction::ListProcesses { .. } => "ListProcesses",
+            DesktopAction::KillProcess { .. } => "KillProcess",
+            DesktopAction::WatchDirectory { .. } => "WatchDirectory",
+            DesktopAction::UnwatchDirectory { .. } => "UnwatchDirectory",
+            DesktopAction::WatchFile { .. } => "WatchFile",
+            DesktopAction::UnwatchFile { .. } => "UnwatchFile",
+            DesktopAction::ListPorts { .. } => "ListPorts",
+            DesktopAction::TestPing { .. } => "TestPing",
+            DesktopAction::TestTcpConnect { .. } => "TestTcpConnect",
+            DesktopAction::ListFirewallRules => "ListFirewallRules",
+            DesktopAction::RestartProcess { .. } => "RestartProcess",
+            DesktopAction::SetProcessPriority { .. } => "SetProcessPriority",
+            DesktopAction::KeySequence { .. } => "KeySequence",
+            DesktopAction::InstallPackage { .. } => "InstallPackage",
+            DesktopAction::BrowseFiles { .. } => "BrowseFiles",
+            DesktopAction::ReadFileChunked { .. } => "ReadFileChunked",
+            DesktopAction::EditFile { .. } => "EditFile",
+            DesktopAction::Compress { .. } => "Compress",
+            DesktopAction::Decompress { .. } => "Decompress",
+            DesktopAction::TransferFile { .. } => "TransferFile",
+            DesktopAction::ToolCall { .. } => "ToolCall",
+        }
+    }
+
     /// Query the memory store for past experiences matching this failure.
     pub async fn query_past_experience(
         &self,
@@ -316,7 +359,7 @@ impl ReflectionEngine {
             None => return Vec::new(),
         };
 
-        let action_type = format!("{:?}", std::mem::discriminant(action));
+        let action_type = Self::action_type_key(action);
 
         let query = MemoryQuery::new()
             .of_type("failure_experience")
@@ -422,7 +465,7 @@ impl ReflectionEngine {
             None => return,
         };
 
-        let action_type = format!("{:?}", std::mem::discriminant(action));
+        let action_type = Self::action_type_key(action);
         let content = if success {
             format!(
                 "{} with {} succeeded after waiting {}ms (was {}ms). Root cause: {:?}.",
