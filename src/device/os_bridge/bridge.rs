@@ -149,68 +149,91 @@ async fn handle_added(
             continue;
         }
 
-        let driver = match build_driver(&entry.driver_kind, entry.params.clone()) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::warn!("OS bridge: failed to build driver '{}': {e}", entry.driver_kind);
-                continue;
-            }
-        };
-
-        let driver_name = driver.driver_name().to_string();
-
-        // Register the driver with the registry (async, Arc-safe method)
-        registry.register(driver).await;
-
-        // Probe the hardware
-        match registry.probe_driver(&driver_name).await {
-            Ok(true) => {
-                tracing::info!("OS bridge: auto-discovered device for driver '{driver_name}'");
-            }
-            Ok(false) => {
-                tracing::debug!("OS bridge: driver '{driver_name}' not present yet");
-                return;
-            }
-            Err(e) => {
-                tracing::warn!("OS bridge: probe failed for '{driver_name}': {e}");
-                return;
-            }
+        if try_connect_matched_entry(
+            registry,
+            tool_registry,
+            perception_registry,
+            build_driver,
+            devnode_map,
+            &event,
+            entry,
+        )
+        .await
+        {
+            // First match wins
+            return;
         }
-
-        // Connect the device
-        let device = match registry.connect(&driver_name).await {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::warn!("OS bridge: connect failed for '{driver_name}': {e}");
-                return;
-            }
-        };
-
-        let device_id = device.id().to_string();
-
-        // Register each capability as a tool and (optionally) as a perception source
-        for cap in &device.capabilities {
-            let wrapper = DeviceToolWrapper::new(driver_name.clone(), cap.clone());
-            tool_registry.register_dynamic(Arc::new(wrapper));
-
-            if let Some(per_reg) = perception_registry {
-                per_reg
-                    .register_source(Arc::new(DeviceSourceAdapter::new(
-                        device_id.clone(),
-                        cap.clone(),
-                    )))
-                    .await;
-            }
-        }
-
-        // Track the devnode → driver / device mapping
-        if let Some(devnode) = &event.devnode {
-            devnode_map.insert(devnode.clone(), (driver_name, device_id));
-        }
-
-        // First match wins
-        return;
     }
+}
+
+/// Try to build, probe, connect, and register tools for a single matching
+/// [`MatcherEntry`]. Returns `true` if the device was successfully connected.
+async fn try_connect_matched_entry(
+    registry: &DeviceRegistry,
+    tool_registry: &ToolRegistry,
+    perception_registry: Option<&PerceptionRegistry>,
+    build_driver: &DriverBuilder,
+    devnode_map: &mut HashMap<String, (String, String)>,
+    event: &OsDeviceEvent,
+    entry: &MatcherEntry,
+) -> bool {
+    let driver = match build_driver(&entry.driver_kind, entry.params.clone()) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("OS bridge: failed to build driver '{}': {e}", entry.driver_kind);
+            return false;
+        }
+    };
+
+    let driver_name = driver.driver_name().to_string();
+
+    // Register the driver with the registry (async, Arc-safe method)
+    registry.register(driver).await;
+
+    // Probe the hardware
+    match registry.probe_driver(&driver_name).await {
+        Ok(true) => {
+            tracing::info!("OS bridge: auto-discovered device for driver '{driver_name}'");
+        }
+        Ok(false) => {
+            tracing::debug!("OS bridge: driver '{driver_name}' not present yet");
+            return false;
+        }
+        Err(e) => {
+            tracing::warn!("OS bridge: probe failed for '{driver_name}': {e}");
+            return false;
+        }
+    }
+
+    // Connect the device
+    let device = match registry.connect(&driver_name).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("OS bridge: connect failed for '{driver_name}': {e}");
+            return false;
+        }
+    };
+
+    let device_id = device.id().to_string();
+
+    // Register each capability as a tool and (optionally) as a perception source
+    for cap in &device.capabilities {
+        let wrapper = DeviceToolWrapper::new(driver_name.clone(), cap.clone());
+        tool_registry.register_dynamic(Arc::new(wrapper));
+
+        if let Some(per_reg) = perception_registry {
+            per_reg
+                .register_source(Arc::new(DeviceSourceAdapter::new(device_id.clone(), cap.clone())))
+                .await;
+        }
+    }
+
+    // Track the devnode → driver / device mapping
+    if let Some(devnode) = &event.devnode {
+        devnode_map.insert(devnode.clone(), (driver_name, device_id));
+    }
+
+    true
 }
 
 /// Handle a device Removed event: look up devnode, disconnect, deregister tools
@@ -233,7 +256,9 @@ async fn handle_removed(
     };
 
     // Disconnect from registry
-    registry.disconnect(&device_id).await.ok();
+    if let Err(e) = registry.disconnect(&device_id).await {
+        tracing::warn!("OS bridge: disconnect failed for '{}': {}", device_id, e);
+    }
 
     // Deregister all tools for this device
     let tool_prefix = format!("device_{}_", driver_name);

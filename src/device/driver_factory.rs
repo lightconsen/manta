@@ -64,8 +64,13 @@ impl DriverFactory {
 
     /// Register a driver constructor for the given `kind` string.
     pub fn register(&self, kind: &str, ctor: DriverConstructor) {
-        if let Ok(mut map) = self.inner.write() {
-            map.insert(kind.to_string(), ctor);
+        match self.inner.write() {
+            Ok(mut map) => {
+                map.insert(kind.to_string(), ctor);
+            }
+            Err(e) => {
+                tracing::warn!("DriverFactory lock poisoned while registering '{}': {}", kind, e);
+            }
         }
     }
 

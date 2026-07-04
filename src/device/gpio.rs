@@ -135,7 +135,9 @@ impl DeviceDriver for GpioDriver {
                 tracing::warn!("Failed to export GPIO pin {}: {}", pin, e);
             }
             // Set default direction to "in"
-            let _ = Self::set_pin_direction(pin, "in");
+            if let Err(e) = Self::set_pin_direction(pin, "in") {
+                tracing::warn!("Failed to set GPIO pin {} direction to 'in': {}", pin, e);
+            }
         }
 
         let pins = self.pins.clone();
@@ -164,7 +166,9 @@ impl DeviceDriver for GpioDriver {
 
     async fn disconnect(&self) -> Result<()> {
         for &pin in &self.pins {
-            let _ = Self::unexport_pin(pin);
+            if let Err(e) = Self::unexport_pin(pin) {
+                tracing::warn!("Failed to unexport GPIO pin {}: {}", pin, e);
+            }
         }
         Ok(())
     }
@@ -296,7 +300,9 @@ impl Capability for GpioWriteCapability {
             .unwrap_or(false);
 
         // Ensure pin direction is set to "out" before writing
-        let _ = GpioDriver::set_pin_direction(pin, "out");
+        if let Err(e) = GpioDriver::set_pin_direction(pin, "out") {
+            tracing::warn!("Failed to set GPIO pin {} direction to 'out': {}", pin, e);
+        }
 
         match GpioDriver::write_pin(pin, value) {
             Ok(()) => CapabilityResult {

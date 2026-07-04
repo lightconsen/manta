@@ -334,7 +334,9 @@ impl DeviceRegistry {
         };
 
         // Remove old device entry (emits Disconnected event).
-        self.disconnect(device_id).await.ok();
+        if let Err(e) = self.disconnect(device_id).await {
+            tracing::warn!("Reconnect: disconnect failed for '{}': {}", device_id, e);
+        }
 
         // Connect fresh device through the same driver.
         let new_device = {

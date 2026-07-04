@@ -98,7 +98,15 @@ impl MockCapability {
 
     /// Set the duration reported in the result (default 0).
     pub fn with_duration(mut self, ms: u64) -> Self {
-        let old_fn = std::mem::replace(&mut self.execute_fn, Box::new(|_| unreachable!()));
+        let old_fn = std::mem::replace(
+            &mut self.execute_fn,
+            Box::new(|_| CapabilityResult {
+                success: true,
+                output: None,
+                error: None,
+                duration_ms: 0,
+            }),
+        );
         self.execute_fn = Box::new(move |params| {
             let mut result = old_fn(params);
             result.duration_ms = ms;
