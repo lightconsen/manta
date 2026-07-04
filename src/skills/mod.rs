@@ -586,7 +586,13 @@ impl SkillManager {
     /// Create a new skill manager
     pub async fn new() -> crate::Result<Self> {
         let storage = SkillStorage::new()?;
-        let config = SkillConfig::load().await.unwrap_or_default();
+        let config = match SkillConfig::load().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Failed to load skill config (using defaults): {}", e);
+                SkillConfig::default()
+            }
+        };
         let (reload_tx, reload_rx) = mpsc::channel(100);
 
         let manager = Self {
@@ -704,7 +710,9 @@ impl SkillManager {
         let storage_paths = self.storage.get_all_paths();
 
         let watcher = SkillWatcher::new(storage_paths, move |path| {
-            let _ = reload_tx.try_send(path);
+            if let Err(e) = reload_tx.try_send(path) {
+                warn!("Hot-reload channel full, reload event dropped: {}", e);
+            }
         })?;
 
         self.watcher = Some(watcher);

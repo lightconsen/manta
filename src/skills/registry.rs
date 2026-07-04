@@ -57,12 +57,9 @@ pub struct SkillUpdate {
 
 /// Skill registry client
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SkillRegistry {
     /// Registry base URL
     url: String,
-    /// Cache directory for downloaded skills
-    cache_dir: PathBuf,
     /// HTTP client
     client: reqwest::Client,
 }
@@ -70,19 +67,13 @@ pub struct SkillRegistry {
 impl SkillRegistry {
     /// Create a new skill registry client
     pub fn new(url: impl Into<String>) -> Result<Self> {
-        let cache_dir = dirs::skills_dir().join(".registry-cache");
-
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .user_agent(format!("syscity/{} (SkillRegistry)", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| SyscityError::Internal(format!("Failed to create HTTP client: {}", e)))?;
 
-        Ok(Self {
-            url: url.into(),
-            cache_dir,
-            client,
-        })
+        Ok(Self { url: url.into(), client })
     }
 
     /// Create registry with default URL

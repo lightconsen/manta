@@ -5,7 +5,7 @@
 
 use std::process::Stdio;
 
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::skills::frontmatter::InstallSpec;
 
@@ -372,12 +372,16 @@ async fn install_by_download(
         if let Ok(metadata) = tokio::fs::metadata(&final_path).await {
             let mut perms = metadata.permissions();
             perms.set_mode(0o755);
-            let _ = tokio::fs::set_permissions(&final_path, perms).await;
+            if let Err(e) = tokio::fs::set_permissions(&final_path, perms).await {
+                warn!("Failed to set executable permissions on {:?}: {}", final_path, e);
+            }
         }
     }
 
     // Clean up temp file
-    let _ = tokio::fs::remove_file(&temp_file).await;
+    if let Err(e) = tokio::fs::remove_file(&temp_file).await {
+        warn!("Failed to remove temp file {:?}: {}", temp_file, e);
+    }
 
     info!("Successfully installed {} to {:?}", binary, final_path);
     InstallResultInternal::Installed
@@ -553,10 +557,14 @@ async fn add_to_path_if_needed(dir: &str) {
         .open(&config)
         .await
     {
-        let _ = file
+        if let Err(e) = file
             .write_all(format!("\n# Added by Syscity\n{}\n", path_line).as_bytes())
-            .await;
-        info!("Added {} to PATH in {:?}", dir, config);
+            .await
+        {
+            warn!("Failed to write PATH config to {:?}: {}", config, e);
+        } else {
+            info!("Added {} to PATH in {:?}", dir, config);
+        }
     }
 }
 

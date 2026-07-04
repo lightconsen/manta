@@ -239,12 +239,6 @@ pub enum DependencyError {
     },
     /// Circular dependency detected
     CircularDependency { cycle: Vec<String> },
-    /// A skill conflicts with another
-    Conflict {
-        skill1: String,
-        skill2: String,
-        reason: String,
-    },
 }
 
 impl std::fmt::Display for DependencyError {
@@ -271,9 +265,6 @@ impl std::fmt::Display for DependencyError {
                 } else {
                     write!(f, "Circular dependency: {}", cycle.join(" -> "))
                 }
-            }
-            DependencyError::Conflict { skill1, skill2, reason } => {
-                write!(f, "Conflict between '{}' and '{}': {}", skill1, skill2, reason)
             }
         }
     }
