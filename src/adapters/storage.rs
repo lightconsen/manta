@@ -711,40 +711,8 @@ impl Storage for SqliteStorage {
 }
 
 // =============================================================================
-// Helper functions for serialization
+// Helper functions
 // =============================================================================
-
-#[allow(dead_code)]
-fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
-    embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
-}
-
-#[allow(dead_code)]
-fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect()
-}
-
-#[allow(dead_code)]
-fn system_time_to_rfc3339(time: std::time::SystemTime) -> String {
-    chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339()
-}
-
-#[allow(dead_code)]
-fn rfc3339_to_system_time(s: &str) -> Option<std::time::SystemTime> {
-    chrono::DateTime::parse_from_rfc3339(s)
-        .ok()
-        .map(|dt| dt.with_timezone(&chrono::Utc).into())
-}
-
-#[allow(dead_code)]
-fn system_time_to_secs(time: std::time::SystemTime) -> i64 {
-    time.duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
 
 fn secs_to_system_time(secs: i64) -> Option<std::time::SystemTime> {
     if secs <= 0 {
@@ -927,35 +895,6 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
         let storage_err: StorageError = io_err.into();
         assert!(storage_err.to_string().contains("file missing"));
-    }
-
-    #[test]
-    fn test_serialize_deserialize_embedding() {
-        let original = vec![1.0f32, 2.5, -3.14, 0.0];
-        let bytes = serialize_embedding(&original);
-        let restored = deserialize_embedding(&bytes);
-        assert_eq!(original, restored);
-    }
-
-    #[test]
-    fn test_system_time_to_rfc3339_roundtrip() {
-        let now = std::time::SystemTime::now();
-        let rfc = system_time_to_rfc3339(now);
-        let restored = rfc3339_to_system_time(&rfc);
-        assert!(restored.is_some());
-        // Allow small rounding difference
-        let diff = now.duration_since(restored.unwrap()).unwrap_or_default();
-        assert!(diff.as_secs() < 2);
-    }
-
-    #[test]
-    fn test_system_time_to_secs_roundtrip() {
-        let now = std::time::SystemTime::now();
-        let secs = system_time_to_secs(now);
-        let restored = secs_to_system_time(secs);
-        assert!(restored.is_some());
-        let diff = now.duration_since(restored.unwrap()).unwrap_or_default();
-        assert!(diff.as_secs() < 2);
     }
 
     #[test]
