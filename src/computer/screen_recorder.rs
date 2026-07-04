@@ -583,10 +583,11 @@ async fn run_ffmpeg_capture(
     ffmpeg_bin: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut cmd = build_ffmpeg_command(config, &ffmpeg_bin)?;
-    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd.spawn()?;
     let stdout = child.stdout.take().ok_or("ffmpeg has no stdout")?;
+    let stderr = child.stderr.take();
 
     // Read raw RGBA frames from FFmpeg stdout.
     let mut reader = tokio::io::BufReader::new(stdout);
@@ -594,7 +595,13 @@ async fn run_ffmpeg_capture(
 
     // If output dimensions are not set, detect them from the platform.
     let (width, height) = if config.output_width == 0 || config.output_height == 0 {
-        detect_screen_resolution().await.unwrap_or((1920, 1080))
+        match detect_screen_resolution().await {
+            Some(res) => res,
+            None => {
+                warn!("Could not detect screen resolution, falling back to 1920x1080");
+                (1920, 1080)
+            }
+        }
     } else {
         (config.output_width, config.output_height)
     };
@@ -608,9 +615,11 @@ async fn run_ffmpeg_capture(
         match tokio::time::timeout(Duration::from_secs(2), reader.read_exact(&mut frame_data)).await
         {
             Ok(Ok(_)) => {
+                let data = std::mem::take(&mut frame_data);
+                frame_data = vec![0u8; actual_frame_size];
                 let frame = VideoFrame {
                     timestamp: Instant::now(),
-                    data: frame_data.clone(),
+                    data,
                     width,
                     height,
                 };
@@ -633,6 +642,17 @@ async fn run_ffmpeg_capture(
     }
 
     let _ = child.kill().await;
+    let _ = child.wait().await;
+
+    // Log ffmpeg stderr for diagnostics (e.g. codec init failures).
+    if let Some(mut stderr) = stderr {
+        use tokio::io::AsyncReadExt;
+        let mut buf = String::new();
+        if stderr.read_to_string(&mut buf).await.unwrap_or(0) > 0 {
+            warn!("ffmpeg stderr output: {}", buf.trim());
+        }
+    }
+
     Ok(())
 }
 

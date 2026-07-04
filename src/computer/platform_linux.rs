@@ -1460,21 +1460,11 @@ async fn transfer_file_linux(
 
 // ── Factory ────────────────────────────────────────────────────────────────
 
-/// Detect X11 at runtime.
-fn has_x11() -> bool {
-    std::env::var("DISPLAY").is_ok() && std::env::var("WAYLAND_DISPLAY").is_err()
-}
-
-/// Detect Wayland at runtime.
-fn has_wayland() -> bool {
-    std::env::var("WAYLAND_DISPLAY").is_ok()
-}
-
 /// Create the appropriate Linux adapter.
 pub async fn create(registry: Arc<ToolRegistry>) -> Result<Box<dyn ComputerAdapter>> {
-    if has_wayland() {
+    if crate::computer::has_wayland() {
         Ok(Box::new(WaylandComputerAdapter::new(registry)))
-    } else if has_x11() {
+    } else if crate::computer::has_x11() {
         Ok(Box::new(X11ComputerAdapter::new(registry)))
     } else {
         Ok(Box::new(super::HeadlessComputerAdapter::new(registry)))

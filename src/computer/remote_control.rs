@@ -298,12 +298,22 @@ impl RemoteControlAdapter {
                 // Apply ScreenshotEncoder to reduce payload size over SSH.
                 let temp_path = std::env::temp_dir()
                     .join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
-                let _ = tokio::fs::write(&temp_path, &raw_bytes).await;
+                if let Err(e) = tokio::fs::write(&temp_path, &raw_bytes).await {
+                    tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
+                }
                 let encoded = maybe_encode_screenshot(&temp_path).await;
                 let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(raw_bytes);
-                let _ = tokio::fs::remove_file(&temp_path).await;
+                if let Err(e) = tokio::fs::remove_file(&temp_path).await {
+                    tracing::warn!("Failed to cleanup temp file '{}': {}", temp_path.display(), e);
+                }
                 if encoded != temp_path {
-                    let _ = tokio::fs::remove_file(&encoded).await;
+                    if let Err(e) = tokio::fs::remove_file(&encoded).await {
+                        tracing::warn!(
+                            "Failed to cleanup temp file '{}': {}",
+                            encoded.display(),
+                            e
+                        );
+                    }
                 }
 
                 let base64 = base64::Engine::encode(
@@ -357,12 +367,18 @@ impl RemoteControlAdapter {
         // Apply ScreenshotEncoder to reduce payload size over SSH.
         let temp_path =
             std::env::temp_dir().join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
-        let _ = tokio::fs::write(&temp_path, &raw_bytes).await;
+        if let Err(e) = tokio::fs::write(&temp_path, &raw_bytes).await {
+            tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
+        }
         let encoded = maybe_encode_screenshot(&temp_path).await;
         let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(raw_bytes);
-        let _ = tokio::fs::remove_file(&temp_path).await;
+        if let Err(e) = tokio::fs::remove_file(&temp_path).await {
+            tracing::warn!("Failed to cleanup temp file '{}': {}", temp_path.display(), e);
+        }
         if encoded != temp_path {
-            let _ = tokio::fs::remove_file(&encoded).await;
+            if let Err(e) = tokio::fs::remove_file(&encoded).await {
+                tracing::warn!("Failed to cleanup temp file '{}': {}", encoded.display(), e);
+            }
         }
 
         let base64 =
@@ -425,12 +441,18 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
         {
             let temp_path =
                 std::env::temp_dir().join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
-            let _ = tokio::fs::write(&temp_path, &decoded).await;
+            if let Err(e) = tokio::fs::write(&temp_path, &decoded).await {
+                tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
+            }
             let encoded = maybe_encode_screenshot(&temp_path).await;
             let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(decoded.clone());
-            let _ = tokio::fs::remove_file(&temp_path).await;
+            if let Err(e) = tokio::fs::remove_file(&temp_path).await {
+                tracing::warn!("Failed to cleanup temp file '{}': {}", temp_path.display(), e);
+            }
             if encoded != temp_path {
-                let _ = tokio::fs::remove_file(&encoded).await;
+                if let Err(e) = tokio::fs::remove_file(&encoded).await {
+                    tracing::warn!("Failed to cleanup temp file '{}': {}", encoded.display(), e);
+                }
             }
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &final_bytes)
         } else {
@@ -786,8 +808,6 @@ Dump-Tree $desktop 0
 
 // ── ComputerAdapter impl ───────────────────────────────────────────────────
 
-// ── ComputerAdapter impl ───────────────────────────────────────────────────
-
 #[async_trait::async_trait]
 impl ComputerAdapter for RemoteControlAdapter {
     async fn screenshot(&self, region: Option<Rect>) -> Result<Screenshot> {
@@ -977,8 +997,10 @@ impl ComputerAdapter for RemoteControlAdapter {
                 Ok(ActionResult::success(text))
             }
             DesktopAction::EditFile { path, search, replace } => {
-                // Use sed for remote file editing
-                let sed_expr = format!("s/{}/{}/g", search, replace);
+                // Use sed for remote file editing (escape / delimiter).
+                let sed_search = search.replace('/', "\\/");
+                let sed_replace = replace.replace('/', "\\/");
+                let sed_expr = format!("s/{}/{}/g", sed_search, sed_replace);
                 self.run_remote_text("sed", &["-i", &sed_expr, &path])
                     .await?;
                 Ok(ActionResult::success("file edited"))
@@ -989,9 +1011,9 @@ impl ComputerAdapter for RemoteControlAdapter {
                 format: _,
             } => {
                 // Archive files/directories over SSH using zip.
-                let sources_str = sources.join(" ");
-                self.run_remote_text("zip", &["-r", &destination, &sources_str])
-                    .await?;
+                let mut args = vec!["-r", destination.as_str()];
+                args.extend(sources.iter().map(|s| s.as_str()));
+                self.run_remote_text("zip", &args).await?;
                 Ok(ActionResult::success("compressed"))
             }
             DesktopAction::Decompress { archive, destination } => {

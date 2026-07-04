@@ -115,13 +115,17 @@ impl NetworkInspector {
         let start = Instant::now();
 
         #[cfg(target_os = "windows")]
-        let cmd = format!("ping -n {} {}", count, target);
+        let output = tokio::process::Command::new("ping")
+            .arg("-n")
+            .arg(count.to_string())
+            .arg(target)
+            .output()
+            .await;
         #[cfg(not(target_os = "windows"))]
-        let cmd = format!("ping -c {} {}", count, target);
-
-        let output = tokio::process::Command::new("sh")
+        let output = tokio::process::Command::new("ping")
             .arg("-c")
-            .arg(&cmd)
+            .arg(count.to_string())
+            .arg(target)
             .output()
             .await;
 
@@ -693,7 +697,7 @@ impl NetworkInspector {
             // Linux: 64 bytes from 1.1.1.1: icmp_seq=1 ttl=58 time=12.3 ms
             // macOS: 64 bytes from 1.1.1.1: icmp_seq=0 ttl=58 time=12.345 ms
             // Windows: Reply from 1.1.1.1: bytes=32 time=12ms TTL=58
-            if line.contains("time=") || line.contains("time=") {
+            if line.contains("time=") {
                 received += 1;
             }
             if let Some(pos) = line.find("time=") {

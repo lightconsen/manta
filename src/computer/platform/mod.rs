@@ -189,24 +189,24 @@ fn is_service_available(name: &str) -> bool {
 }
 
 pub mod linux;
-pub mod wayland;
-pub mod x11;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod mobile;
 pub mod registry;
 pub mod server_operator;
+pub mod wayland;
 pub mod windows;
+pub mod x11;
 
 pub use linux::LinuxToolset;
-pub use wayland::LinuxDesktopWaylandToolset;
-pub use x11::LinuxDesktopX11Toolset;
 #[cfg(target_os = "macos")]
 pub use macos::MacosToolset;
 pub use mobile::{AndroidToolset, IosToolset};
 pub use registry::PlatformCapabilityRegistry;
 pub use server_operator::{Diagnosis, ServerOperator, SystemInspector, SystemSnapshot};
+pub use wayland::LinuxDesktopWaylandToolset;
 pub use windows::WindowsToolset;
+pub use x11::LinuxDesktopX11Toolset;
 
 /// Return all platform tool sets compiled into this binary.
 ///

@@ -324,13 +324,11 @@ fn compute_screenshot_diff(a: &Screenshot, b: &Screenshot) -> u32 {
         return 0;
     }
 
-    let Ok(a_bytes) =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &a.base64)
+    let Ok(a_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &a.base64)
     else {
         return u32::MAX;
     };
-    let Ok(b_bytes) =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b.base64)
+    let Ok(b_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b.base64)
     else {
         return u32::MAX;
     };

@@ -974,6 +974,11 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 .map_err(|e| ComputerError::Other(format!("Transfer task failed: {}", e)))??;
                 Ok(ActionResult::success(format!("Transferred to {}", result)))
             }
+            // ToolCall is processed at the GoalPlanner layer, not in platform adapters.
+            DesktopAction::ToolCall { tool_name, .. } => Err(ComputerError::Other(format!(
+                "ToolCall '{}' must be dispatched through ToolRegistry, not through ComputerAdapter",
+                tool_name
+            ))),
             _ => Err(ComputerError::Other("Action not available in headless mode".to_string())),
         }
     }

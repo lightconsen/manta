@@ -386,7 +386,10 @@ async fn tail_file(
                     }
                     if let Some(entry) = parse_generic_log_line(trimmed, source_name) {
                         if tx.send(entry).is_err() {
-                            warn!("Log entry dropped (broadcast channel full) for source '{}'", source_name);
+                            warn!(
+                                "Log entry dropped (broadcast channel full) for source '{}'",
+                                source_name
+                            );
                         }
                     }
                 }
@@ -519,7 +522,10 @@ async fn tail_windows_event(
                 // Only emit events newer than last check
                 if entry.timestamp > DateTime::from(last_check) {
                     if tx.send(entry).is_err() {
-                        warn!("Log entry dropped (broadcast channel full) for source '{}'", source_name);
+                        warn!(
+                            "Log entry dropped (broadcast channel full) for source '{}'",
+                            source_name
+                        );
                     }
                 }
             }

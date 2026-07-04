@@ -42,14 +42,15 @@ pub struct RollbackManager {
 }
 
 impl RollbackManager {
-    /// Return a reference to the most recently pushed snapshot, or an
-    /// internal error if the snapshot list is unexpectedly empty.
-    fn last_snapshot(&self) -> crate::Result<&Snapshot> {
-        self.snapshots.last().ok_or_else(|| {
-            crate::error::SyscityError::Internal(
-                "snapshot push did not produce a last entry".to_string(),
-            )
-        })
+    /// Return a reference to the most recently pushed snapshot.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the snapshot list is empty — this should only be called
+    /// immediately after a push, so the invariant is always upheld.
+    #[allow(clippy::expect_used)]
+    fn last_snapshot(&self) -> &Snapshot {
+        self.snapshots.last().expect("snapshot list should not be empty after push")
     }
 
     /// Create a new rollback manager.
@@ -74,7 +75,9 @@ impl RollbackManager {
     ///
     /// The directory is created if it does not already exist.
     pub fn with_backup_dir(backup_dir: PathBuf) -> Self {
-        let _ = std::fs::create_dir_all(&backup_dir);
+        if let Err(e) = std::fs::create_dir_all(&backup_dir) {
+            tracing::warn!("Failed to create backup directory '{}': {}", backup_dir.display(), e);
+        }
         Self {
             snapshots: Vec::new(),
             backup_dir,
@@ -101,7 +104,7 @@ impl RollbackManager {
                 backup_path,
             };
             self.snapshots.push(snap);
-            return self.last_snapshot();
+            return Ok(self.last_snapshot());
         }
 
         let backup_path = self.backup_dir.join(format!(
@@ -125,7 +128,7 @@ impl RollbackManager {
             backup_path,
         };
         self.snapshots.push(snap);
-        self.last_snapshot()
+        Ok(self.last_snapshot())
     }
 
     /// Snapshot a directory before modifying it.
@@ -159,7 +162,7 @@ impl RollbackManager {
             backup_path,
         };
         self.snapshots.push(snap);
-        self.last_snapshot()
+        Ok(self.last_snapshot())
     }
 
     /// Create an APFS snapshot on macOS (best-effort).
@@ -191,7 +194,7 @@ impl RollbackManager {
             snapshot_name,
         };
         self.snapshots.push(snap);
-        self.last_snapshot()
+        Ok(self.last_snapshot())
     }
 
     /// Create a Btrfs snapshot on Linux (best-effort).
@@ -250,7 +253,7 @@ impl RollbackManager {
             snapshot_path,
         };
         self.snapshots.push(snap);
-        self.last_snapshot()
+        Ok(self.last_snapshot())
     }
 
     /// Create a Windows System Restore point (best-effort).
@@ -297,7 +300,7 @@ Checkpoint-Computer -Description $description -RestorePointType 'MODIFY_SETTINGS
             backup_path: PathBuf::from(format!("system-restore:{}", description)),
         };
         self.snapshots.push(snap);
-        self.last_snapshot()
+        Ok(self.last_snapshot())
     }
 
     /// Restore all snapshots in reverse order (LIFO).
@@ -447,14 +450,14 @@ Checkpoint-Computer -Description $description -RestorePointType 'MODIFY_SETTINGS
         #[cfg(target_os = "macos")]
         {
             if self.snapshot_apfs(path).await.is_ok() {
-                return self.last_snapshot();
+                return Ok(self.last_snapshot());
             }
             tracing::warn!("APFS snapshot failed, falling back to directory backup");
         }
         #[cfg(target_os = "linux")]
         {
             if self.snapshot_btrfs(path).await.is_ok() {
-                return self.last_snapshot();
+                return Ok(self.last_snapshot());
             }
             tracing::warn!("Btrfs snapshot failed, falling back to directory backup");
         }
@@ -462,7 +465,7 @@ Checkpoint-Computer -Description $description -RestorePointType 'MODIFY_SETTINGS
         {
             let description = format!("syscity-rollback-{}", uuid::Uuid::new_v4());
             if self.snapshot_windows(&description).await.is_ok() {
-                return self.last_snapshot();
+                return Ok(self.last_snapshot());
             }
             tracing::warn!("Windows System Restore failed, falling back to directory backup");
         }
