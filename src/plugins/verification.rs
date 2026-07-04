@@ -42,7 +42,11 @@ fn canonical_message(manifest: &PluginManifest) -> String {
     });
     // serde_json::to_string produces deterministic output for json! macro
     // values (fields are inserted in order).
-    serde_json::to_string(&canonical).unwrap_or_default()
+    // Infallible for json! values; fallback keeps verification possible.
+    serde_json::to_string(&canonical).unwrap_or_else(|e| {
+        warn!("Canonical serialization failed: {}", e);
+        String::new()
+    })
 }
 
 /// Verify the ed25519 signature on a plugin manifest.

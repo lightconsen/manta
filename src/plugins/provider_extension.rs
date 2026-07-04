@@ -123,7 +123,16 @@ impl Provider for PluginProvider {
         // For now, we return an empty stream as a placeholder.
         // In a full implementation, the runtime would return a channel receiver
         // that we convert into a CompletionStream.
-        let chunks: Vec<CompletionChunk> = serde_json::from_value(result).unwrap_or_default();
+        let chunks: Vec<CompletionChunk> = match serde_json::from_value(result) {
+            Ok(chunks) => chunks,
+            Err(e) => {
+                warn!(
+                    "Plugin provider '{}' stream returned unparseable JSON: {}",
+                    self.plugin_id, e
+                );
+                Vec::new()
+            }
+        };
         Ok(Box::pin(futures::stream::iter(chunks)))
     }
 
@@ -137,7 +146,16 @@ impl Provider for PluginProvider {
             .call_provider_health_check(&self.plugin_id)
             .await
         {
-            Ok(val) => Ok(val.as_bool().unwrap_or(false)),
+            Ok(val) => match val.as_bool() {
+                Some(b) => Ok(b),
+                None => {
+                    warn!(
+                        "Plugin provider '{}' health_check returned non-boolean: {}",
+                        self.plugin_id, val
+                    );
+                    Ok(false)
+                }
+            },
             Err(_) => Ok(false),
         }
     }

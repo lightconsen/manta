@@ -20,8 +20,8 @@ pub struct PluginMetrics {
     pub http_requests: AtomicU64,
     pub http_errors: AtomicU64,
     pub memory_usage_bytes: AtomicU64,
-    pub last_error: std::sync::Mutex<Option<String>>,
-    pub last_active: std::sync::Mutex<Instant>,
+    last_error: std::sync::Mutex<Option<String>>,
+    last_active: std::sync::Mutex<Instant>,
     pub cpu_duration_ns: AtomicU64,
 }
 

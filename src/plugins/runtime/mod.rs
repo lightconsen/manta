@@ -51,8 +51,10 @@ pub struct PluginRuntime {
     #[cfg(feature = "plugins")]
     next_sub_id: AtomicU64,
     /// Receiver side of the plugin event channel (kept so the channel stays
-    /// open while the runtime is alive; the actual receiver is moved into
-    /// the dispatch task spawned in `new()`).
+    /// open while the runtime is alive; the `Some` variant is moved into
+    /// the dispatch task spawned in `new()`, leaving `None` here).
+    /// This field is never directly read after construction; it exists solely
+    /// to hold the `Arc` reference that keeps the `mpsc` channel open.
     #[cfg(feature = "plugins")]
     #[allow(dead_code)]
     event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<PluginEvent>>>>,
@@ -160,13 +162,17 @@ impl PluginRuntime {
             // Dispatch to exact plugin_id subscribers
             if let Some(senders) = subs.get(&event.plugin_id) {
                 for (_id, tx) in senders {
-                    let _ = tx.send(event.clone());
+                    if tx.send(event.clone()).is_err() {
+                        warn!("Failed to dispatch event to subscriber of '{}'", event.plugin_id);
+                    }
                 }
             }
             // Dispatch to wildcard subscribers
             if let Some(senders) = subs.get("*") {
                 for (_id, tx) in senders {
-                    let _ = tx.send(event.clone());
+                    if tx.send(event.clone()).is_err() {
+                        warn!("Failed to dispatch event to wildcard subscriber");
+                    }
                 }
             }
         }
@@ -375,10 +381,17 @@ impl PluginRuntime {
         // Load config if present
         let config_path = path.join("config.json");
         let config = if config_path.exists() {
-            let config_content = tokio::fs::read_to_string(&config_path)
-                .await
-                .unwrap_or_default();
-            serde_json::from_str(&config_content).unwrap_or(serde_json::json!({}))
+            let config_content = match tokio::fs::read_to_string(&config_path).await {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("Failed to read plugin config from {:?}: {}", config_path, e);
+                    String::new()
+                }
+            };
+            serde_json::from_str(&config_content).unwrap_or_else(|e| {
+                warn!("Failed to parse plugin config from {:?}: {}", config_path, e);
+                serde_json::json!({})
+            })
         } else {
             manifest.config.clone().unwrap_or(serde_json::json!({}))
         };
@@ -591,10 +604,17 @@ impl PluginRuntime {
         // Load config
         let config_path = path.join("config.json");
         let config = if config_path.exists() {
-            let config_content = tokio::fs::read_to_string(&config_path)
-                .await
-                .unwrap_or_default();
-            serde_json::from_str(&config_content).unwrap_or(serde_json::json!({}))
+            let config_content = match tokio::fs::read_to_string(&config_path).await {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("Failed to read plugin config from {:?}: {}", config_path, e);
+                    String::new()
+                }
+            };
+            serde_json::from_str(&config_content).unwrap_or_else(|e| {
+                warn!("Failed to parse plugin config from {:?}: {}", config_path, e);
+                serde_json::json!({})
+            })
         } else {
             manifest.config.clone().unwrap_or(serde_json::json!({}))
         };

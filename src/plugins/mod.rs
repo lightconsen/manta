@@ -92,7 +92,9 @@ impl PluginManager {
         let hook_registry = Arc::new(HookRegistry::new());
 
         // Ensure plugins directory exists
-        tokio::fs::create_dir_all(&plugins_dir).await.ok();
+        if let Err(e) = tokio::fs::create_dir_all(&plugins_dir).await {
+            warn!("Failed to create plugins directory {:?}: {}", plugins_dir, e);
+        }
 
         Ok(Self {
             runtime,
@@ -985,7 +987,7 @@ mod tests {
 /// Plugin tool wrapper - adapts plugin tools to Syscity's Tool trait
 use crate::tools::{Tool, ToolContext, ToolExecutionResult};
 
-pub struct PluginToolWrapper {
+pub(crate) struct PluginToolWrapper {
     plugin_id: String,
     tool_name: String,
     description: String,
@@ -995,7 +997,7 @@ pub struct PluginToolWrapper {
 }
 
 impl PluginToolWrapper {
-    pub fn new(
+    pub(crate) fn new(
         plugin_id: String,
         tool: &PluginTool,
         runtime: Arc<PluginRuntime>,

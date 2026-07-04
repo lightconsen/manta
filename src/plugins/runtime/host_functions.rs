@@ -3,7 +3,7 @@
 //! Note: This entire module is `#[cfg(feature = "plugins")]`-gated from
 //! `runtime/mod.rs`, so no per-item cfg annotations are needed.
 
-use tracing::info;
+use tracing::{info, warn};
 
 use super::super::manifest::PluginPermission;
 use super::state::{PluginEvent, PluginState};
@@ -587,7 +587,15 @@ pub(crate) fn define_host_functions(
                 let state = caller.data();
                 let plugin_id = state.plugin_id.clone();
                 if let Some(ref tx) = state.shared_state.event_tx {
-                    let _ = tx.send(PluginEvent { plugin_id, event_type, payload });
+                    if tx
+                        .send(PluginEvent { plugin_id, event_type, payload })
+                        .is_err()
+                    {
+                        warn!(
+                            "Plugin event channel closed; dropping event from '{}'",
+                            state.plugin_id
+                        );
+                    }
                     Ok(1)
                 } else {
                     Ok(0)
