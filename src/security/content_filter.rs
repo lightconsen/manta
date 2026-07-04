@@ -133,113 +133,24 @@ impl ContentFilter {
         let mut output = result.output.clone();
         let mut data = result.data.clone();
 
-        match pii_result {
-            FilterResult::Clean(_) => {}
-            FilterResult::Redacted(_redacted_text, findings) => {
-                pii_findings = findings;
-                if self.redact_confidential {
-                    action = FilterAction::Redacted;
-                    // Apply redactions to output and data separately
-                    let (new_output, _) = self.pii_detector.redact_text(&result.output);
-                    output = new_output;
-                    if let Some(ref d) = result.data {
-                        let data_text = d.to_string();
-                        let (redacted_data_text, _) = self.pii_detector.redact_text(&data_text);
-                        data = serde_json::from_str(&redacted_data_text)
-                            .ok()
-                            .or(Some(Value::String(redacted_data_text)));
-                    }
-                }
-            }
-            FilterResult::Blocked(findings) => {
-                pii_findings = findings;
-                if self.block_restricted {
-                    action = FilterAction::Blocked;
-                    output = "⚠️ This response contains sensitive personal information and has \
-                              been blocked. Please review the content before sharing."
-                        .to_string();
-                    data = None;
-                } else if self.redact_confidential {
-                    // Redact instead of blocking
-                    action = FilterAction::Redacted;
-                    let (new_output, _) = self.pii_detector.redact_text(&result.output);
-                    output = new_output;
-                    if let Some(ref d) = result.data {
-                        let data_text = d.to_string();
-                        let (redacted_data_text, _) = self.pii_detector.redact_text(&data_text);
-                        data = serde_json::from_str(&redacted_data_text)
-                            .ok()
-                            .or(Some(Value::String(redacted_data_text)));
-                    }
-                }
-            }
-        }
+        self.apply_pii_result(
+            &pii_result,
+            result,
+            &mut pii_findings,
+            &mut action,
+            &mut output,
+            &mut data,
+        );
 
         // ── Secret scan ───────────────────────────────────────────────────
         if action != FilterAction::Blocked && self.redact_secrets {
-            let secret_scan_text = if action == FilterAction::Redacted {
-                // Scan the already-redacted text to avoid double-redacting PII
-                let mut s = output.clone();
-                if let Some(ref d) = data {
-                    s.push(' ');
-                    s.push_str(&d.to_string());
-                }
-                s
-            } else {
-                combined.clone()
-            };
-
-            secret_findings = self.secret_scanner.scan(&secret_scan_text);
-            if !secret_findings.is_empty() {
-                // Secret redaction: the original text is needed for replacement.
-                // The actual replacement happens in the re-scan block below.
-                tracing::debug!(
-                    "{} secret finding(s) detected, will redact",
-                    secret_findings.len()
-                );
-            }
-        }
-
-        // Secret redaction: we need the original text to replace.
-        // Re-scan with a manual approach for secrets.
-        if action != FilterAction::Blocked && self.redact_secrets {
-            let secret_output_findings = self.secret_scanner.scan(&result.output);
-            let secret_data_findings = result
-                .data
-                .as_ref()
-                .map(|d| self.secret_scanner.scan(&d.to_string()))
-                .unwrap_or_default();
-
-            let all_secret_findings: Vec<_> = secret_output_findings
-                .into_iter()
-                .chain(secret_data_findings)
-                .collect();
-
-            if !all_secret_findings.is_empty() {
-                // Replace originals with redacted versions in output
-                for finding in &all_secret_findings {
-                    // We need the original match text. SecretScanner's
-                    // DetectedSecret doesn't store it. We'll re-run regex
-                    // to get the original text.
-                    if let Some(original) = self.find_secret_original(&result.output, finding) {
-                        output = output.replace(&original, &finding.redacted);
-                    }
-                    if let Some(ref d) = result.data {
-                        let data_text = d.to_string();
-                        if let Some(original) = self.find_secret_original(&data_text, finding) {
-                            let new_data_text = data_text.replace(&original, &finding.redacted);
-                            data = serde_json::from_str(&new_data_text)
-                                .ok()
-                                .or(Some(Value::String(new_data_text)));
-                        }
-                    }
-                }
-                if action == FilterAction::Pass {
-                    action = FilterAction::Redacted;
-                }
-                // Deduplicate findings by pattern+line
-                secret_findings = self.dedup_secrets(all_secret_findings);
-            }
+            self.apply_secret_redaction(
+                result,
+                &mut action,
+                &mut output,
+                &mut data,
+                &mut secret_findings,
+            );
         }
 
         let summary = self.build_summary(&action, &pii_findings, &secret_findings);
@@ -267,28 +178,95 @@ impl ContentFilter {
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
-    /// Find the original matched text for a secret finding by re-scanning.
-    fn find_secret_original(&self, text: &str, finding: &DetectedSecret) -> Option<String> {
-        // Look for the pattern's redacted form's surrounding context to
-        // identify the original. Since SecretScanner doesn't store the
-        // original, we approximate: scan again and take the first match
-        // on the same line.
-        let lines: Vec<&str> = text.lines().collect();
-        let line_idx = finding.line_number.saturating_sub(1);
-        if line_idx >= lines.len() {
-            return None;
-        }
-        let line = lines[line_idx];
-
-        // Find the pattern in the scanner that produced this finding
-        for pattern in self.secret_scanner.patterns() {
-            if pattern.name == finding.pattern {
-                if let Some(mat) = pattern.regex.find(line) {
-                    return Some(mat.as_str().to_string());
+    /// Process the PII scan result: decide to pass, redact, or block.
+    fn apply_pii_result(
+        &self,
+        pii_result: &FilterResult,
+        result: &ToolExecutionResult,
+        pii_findings: &mut Vec<DetectedPii>,
+        action: &mut FilterAction,
+        output: &mut String,
+        data: &mut Option<Value>,
+    ) {
+        match pii_result {
+            FilterResult::Clean(_) => {}
+            FilterResult::Redacted(_redacted_text, findings) => {
+                *pii_findings = findings.clone();
+                if self.redact_confidential {
+                    *action = FilterAction::Redacted;
+                    let (new_output, _) = self.pii_detector.redact_text(&result.output);
+                    *output = new_output;
+                    if let Some(ref d) = result.data {
+                        let (redacted_data_text, _) = self.pii_detector.redact_text(&d.to_string());
+                        *data = serde_json::from_str(&redacted_data_text)
+                            .ok()
+                            .or(Some(Value::String(redacted_data_text)));
+                    }
+                }
+            }
+            FilterResult::Blocked(findings) => {
+                *pii_findings = findings.clone();
+                if self.block_restricted {
+                    *action = FilterAction::Blocked;
+                    *output = "This response contains sensitive personal information and has \
+                               been blocked. Please review the content before sharing."
+                        .to_string();
+                    *data = None;
+                } else if self.redact_confidential {
+                    *action = FilterAction::Redacted;
+                    let (new_output, _) = self.pii_detector.redact_text(&result.output);
+                    *output = new_output;
+                    if let Some(ref d) = result.data {
+                        let (redacted_data_text, _) = self.pii_detector.redact_text(&d.to_string());
+                        *data = serde_json::from_str(&redacted_data_text)
+                            .ok()
+                            .or(Some(Value::String(redacted_data_text)));
+                    }
                 }
             }
         }
-        None
+    }
+
+    /// Re-scan output and data for secrets, replace each original match with
+    /// its redacted form.
+    fn apply_secret_redaction(
+        &self,
+        result: &ToolExecutionResult,
+        action: &mut FilterAction,
+        output: &mut String,
+        data: &mut Option<Value>,
+        secret_findings: &mut Vec<DetectedSecret>,
+    ) {
+        let secret_output_findings = self.secret_scanner.scan(&result.output);
+        let secret_data_findings = result
+            .data
+            .as_ref()
+            .map(|d| self.secret_scanner.scan(&d.to_string()))
+            .unwrap_or_default();
+
+        let all_secret_findings: Vec<_> = secret_output_findings
+            .into_iter()
+            .chain(secret_data_findings)
+            .collect();
+
+        if all_secret_findings.is_empty() {
+            return;
+        }
+
+        for finding in &all_secret_findings {
+            *output = output.replace(&finding.original, &finding.redacted);
+            if let Some(ref d) = result.data {
+                let data_text = d.to_string();
+                let new_data_text = data_text.replace(&finding.original, &finding.redacted);
+                *data = serde_json::from_str(&new_data_text)
+                    .ok()
+                    .or(Some(Value::String(new_data_text)));
+            }
+        }
+        if *action == FilterAction::Pass {
+            *action = FilterAction::Redacted;
+        }
+        *secret_findings = self.dedup_secrets(all_secret_findings);
     }
 
     fn dedup_secrets(&self, secrets: Vec<DetectedSecret>) -> Vec<DetectedSecret> {

@@ -417,7 +417,9 @@ impl Allowlist {
 
         // Create parent directory if needed
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.ok();
+            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                warn!("Failed to create parent directory {:?}: {}", parent, e);
+            }
         }
 
         // Write with file locking to prevent concurrent writes

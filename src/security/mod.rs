@@ -751,9 +751,9 @@ impl RateLimitHeaders {
     }
 
     /// Create headers for a rate-limited request
-    pub fn denied(retry_after: u64, policy: impl Into<String>) -> Self {
+    pub fn denied(retry_after: u64, capacity: u32, policy: impl Into<String>) -> Self {
         Self {
-            limit: 0,
+            limit: capacity,
             remaining: 0,
             reset: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1114,6 +1114,8 @@ pub mod secrets {
         pub redacted: String,
         /// Full description
         pub description: String,
+        /// The original matched text (for precise replacement in redaction)
+        pub original: String,
     }
 
     impl DetectedSecret {
@@ -1163,12 +1165,14 @@ pub mod secrets {
             for (line_num, line) in text.lines().enumerate() {
                 for pattern in &self.patterns {
                     for mat in pattern.regex.find_iter(line) {
+                        let raw = mat.as_str();
                         findings.push(DetectedSecret {
                             pattern: pattern.name.to_string(),
                             severity: pattern.severity,
                             line_number: line_num + 1,
-                            redacted: DetectedSecret::redact(mat.as_str()),
+                            redacted: DetectedSecret::redact(raw),
                             description: pattern.description.to_string(),
+                            original: raw.to_string(),
                         });
                     }
                 }
@@ -1183,12 +1187,14 @@ pub mod secrets {
 
             for pattern in &self.patterns {
                 for mat in pattern.regex.find_iter(line) {
+                    let raw = mat.as_str();
                     findings.push(DetectedSecret {
                         pattern: pattern.name.to_string(),
                         severity: pattern.severity,
                         line_number,
-                        redacted: DetectedSecret::redact(mat.as_str()),
+                        redacted: DetectedSecret::redact(raw),
                         description: pattern.description.to_string(),
+                        original: raw.to_string(),
                     });
                 }
             }

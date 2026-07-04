@@ -652,72 +652,8 @@ impl SecurityAuditor {
             };
 
             while let Some(entry) = entries.next_entry().await.ok().flatten() {
-                let file_path = entry.path();
-                let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-                // Skip hidden files and non-source files
-                if file_name.starts_with('.') {
-                    continue;
-                }
-
-                // Check if it's a file with a source extension
-                if !file_path.is_file() {
-                    continue;
-                }
-
-                let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-
-                if !source_extensions.contains(&ext) {
-                    continue;
-                }
-
-                // Skip test files that may contain test secrets
-                if file_name.contains("test") || file_name.contains("mock") {
-                    continue;
-                }
-
-                audit.checks_performed += 1;
-
-                // Read and scan the file
-                let content = match tokio::fs::read_to_string(&file_path).await {
-                    Ok(content) => content,
-                    Err(e) => {
-                        debug!("Failed to read file {}: {}", file_path.display(), e);
-                        continue;
-                    }
-                };
-
-                // Scan for secrets
-                let findings = scanner.scan(&content);
-                for finding in findings {
-                    let category = match finding.severity {
-                        crate::security::secrets::Severity::Critical => {
-                            LeakCategory::CredentialExposure
-                        }
-                        crate::security::secrets::Severity::High => {
-                            LeakCategory::UnencryptedStorage
-                        }
-                        _ => LeakCategory::LogLeak,
-                    };
-
-                    let severity = match finding.severity {
-                        crate::security::secrets::Severity::Critical => RiskLevel::Critical,
-                        crate::security::secrets::Severity::High => RiskLevel::High,
-                        crate::security::secrets::Severity::Medium => RiskLevel::Medium,
-                        crate::security::secrets::Severity::Low => RiskLevel::Low,
-                    };
-
-                    audit.leaks.push(PotentialLeak {
-                        category,
-                        description: format!("{}: {}", finding.pattern, finding.description),
-                        location: format!("{}:{}", file_path.display(), finding.line_number),
-                        severity,
-                        recommendation: "Remove secrets from source code and use environment \
-                                         variables or a secrets manager"
-                            .to_string(),
-                    });
-                    audit.leaks_found += 1;
-                }
+                self.scan_single_file(&scanner, &source_extensions, &entry, &mut audit)
+                    .await;
             }
         }
 
@@ -734,6 +670,79 @@ impl SecurityAuditor {
         );
 
         audit
+    }
+
+    /// Scan a single file entry for secret leaks and record findings into
+    /// `audit`.
+    async fn scan_single_file(
+        &self,
+        scanner: &crate::security::secrets::SecretScanner,
+        source_extensions: &[&str],
+        entry: &tokio::fs::DirEntry,
+        audit: &mut DataLeakAudit,
+    ) {
+        let file_path = entry.path();
+        let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+        // Skip hidden files and non-source files
+        if file_name.starts_with('.') {
+            return;
+        }
+
+        // Check if it's a file with a source extension
+        if !file_path.is_file() {
+            return;
+        }
+
+        let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        if !source_extensions.contains(&ext) {
+            return;
+        }
+
+        // Skip test files that may contain test secrets
+        if file_name.contains("test") || file_name.contains("mock") {
+            return;
+        }
+
+        audit.checks_performed += 1;
+
+        // Read and scan the file
+        let content = match tokio::fs::read_to_string(&file_path).await {
+            Ok(content) => content,
+            Err(e) => {
+                debug!("Failed to read file {}: {}", file_path.display(), e);
+                return;
+            }
+        };
+
+        // Scan for secrets
+        let findings = scanner.scan(&content);
+        for finding in findings {
+            let category = match finding.severity {
+                crate::security::secrets::Severity::Critical => LeakCategory::CredentialExposure,
+                crate::security::secrets::Severity::High => LeakCategory::UnencryptedStorage,
+                _ => LeakCategory::LogLeak,
+            };
+
+            let severity = match finding.severity {
+                crate::security::secrets::Severity::Critical => RiskLevel::Critical,
+                crate::security::secrets::Severity::High => RiskLevel::High,
+                crate::security::secrets::Severity::Medium => RiskLevel::Medium,
+                crate::security::secrets::Severity::Low => RiskLevel::Low,
+            };
+
+            audit.leaks.push(PotentialLeak {
+                category,
+                description: format!("{}: {}", finding.pattern, finding.description),
+                location: format!("{}:{}", file_path.display(), finding.line_number),
+                severity,
+                recommendation: "Remove secrets from source code and use environment variables \
+                                 or a secrets manager"
+                    .to_string(),
+            });
+            audit.leaks_found += 1;
+        }
     }
 
     /// Check for potential sensitive data in error message patterns
