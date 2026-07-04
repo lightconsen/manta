@@ -227,7 +227,9 @@ impl ApprovalQueue {
         );
 
         // Broadcast event to subscribers (web UI, notifications, etc.)
-        let _ = self.event_tx.send(event);
+        if self.event_tx.send(event).is_err() {
+            warn!("No active subscribers for approval event");
+        }
 
         id
     }

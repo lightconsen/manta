@@ -46,11 +46,9 @@ struct PdfArgs {
     title: Option<String>,
     /// Page orientation: portrait or landscape
     #[serde(default = "default_orientation")]
-    #[allow(dead_code)]
     orientation: String,
     /// Paper size: a4, letter, legal
     #[serde(default = "default_paper")]
-    #[allow(dead_code)]
     paper: String,
 }
 
@@ -63,7 +61,7 @@ fn default_paper() -> String {
 }
 
 /// Convert markdown-like content to a simple HTML document
-fn markdown_to_html(content: &str, title: &str) -> String {
+fn markdown_to_html(content: &str, title: &str, orientation: &str, paper: &str) -> String {
     let mut html = content.to_string();
 
     // Escape HTML entities
@@ -149,6 +147,12 @@ fn markdown_to_html(content: &str, title: &str) -> String {
     html = html.replace("\n\n", "</p><p>");
     html = html.replace('\n', "<br>");
 
+    let paper_size = match paper {
+        "letter" => "8.5in 11in",
+        "legal" => "8.5in 14in",
+        _ => "210mm 297mm", // a4 default
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -156,6 +160,7 @@ fn markdown_to_html(content: &str, title: &str) -> String {
 <meta charset="utf-8">
 <title>{}</title>
 <style>
+@page {{ size: {} {}; }}
 body {{ font-family: system-ui, -apple-system, sans-serif; margin: 40px; line-height: 1.6; color: #333; }}
 h1, h2, h3 {{ color: #1a1a1a; }}
 code {{ background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }}
@@ -171,7 +176,7 @@ th {{ background: #f8f8f8; }}
 <p>{}</p>
 </body>
 </html>"#,
-        title, title, html
+        title, paper_size, orientation, title, html
     )
 }
 
@@ -253,7 +258,7 @@ impl Tool for PdfTool {
         };
 
         // Generate HTML as intermediate format
-        let html = markdown_to_html(&args.content, title);
+        let html = markdown_to_html(&args.content, title, &args.orientation, &args.paper);
         let html_path = output_path.with_extension("html");
 
         if let Err(e) = tokio::fs::write(&html_path, &html).await {
@@ -346,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_markdown_to_html_bold() {
-        let html = markdown_to_html("**bold text**", "Test");
+        let html = markdown_to_html("**bold text**", "Test", "portrait", "a4");
         assert!(
             html.contains("<strong>bold text</strong>"),
             "bold tags should wrap text: {}",
@@ -356,14 +361,14 @@ mod tests {
 
     #[test]
     fn test_markdown_to_html_headers() {
-        let html = markdown_to_html("# Title\n## Subtitle", "Doc");
+        let html = markdown_to_html("# Title\n## Subtitle", "Doc", "portrait", "a4");
         assert!(html.contains("<h1>Title</h1>"), "h1 should be generated: {}", html);
         assert!(html.contains("<h2>Subtitle</h2>"), "h2 should be generated: {}", html);
     }
 
     #[test]
     fn test_markdown_to_html_inline_code() {
-        let html = markdown_to_html("use `cargo test` to run", "Doc");
+        let html = markdown_to_html("use `cargo test` to run", "Doc", "portrait", "a4");
         assert!(
             html.contains("<code>cargo test</code>"),
             "inline code should be wrapped: {}",
@@ -373,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_markdown_to_html_escapes_html_entities() {
-        let html = markdown_to_html("5 < 10 && 10 > 5", "Doc");
+        let html = markdown_to_html("5 < 10 && 10 > 5", "Doc", "portrait", "a4");
         assert!(!html.contains("5 < 10"), "raw < should be escaped");
         assert!(html.contains("&lt;"), "< should become &lt;: {}", html);
         assert!(html.contains("&gt;"), "> should become &gt;: {}", html);
@@ -381,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_markdown_to_html_contains_doctype_and_title() {
-        let html = markdown_to_html("Hello", "My Title");
+        let html = markdown_to_html("Hello", "My Title", "portrait", "a4");
         assert!(html.contains("<!DOCTYPE html>"), "should have doctype");
         assert!(html.contains("<title>My Title</title>"), "should have title");
         assert!(html.contains("<h1>My Title</h1>"), "should have h1 title");

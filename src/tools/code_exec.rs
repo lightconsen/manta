@@ -13,7 +13,7 @@ use serde_json::json;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::tools::sdk::ToolCapabilities;
@@ -293,7 +293,9 @@ print(json.dumps(result))
             Ok(Err(e)) => Err(e),
             Err(_) => {
                 // Timeout - kill the process
-                let _ = child.kill().await;
+                if let Err(e) = child.kill().await {
+                    warn!("Failed to kill timed-out code execution process: {}", e);
+                }
                 Err(crate::error::SyscityError::Internal(format!(
                     "Code execution timed out after {} seconds",
                     timeout_secs

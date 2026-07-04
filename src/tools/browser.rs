@@ -158,7 +158,9 @@ pub struct BrowserTool {
     viewport_height: u32,
     /// Whether to run headless (default: true)
     headless: bool,
-    /// Default timeout for operations
+    /// Default timeout for browser operations (feature-gated: only used when
+    /// `browser` feature is enabled, hence `#[allow(dead_code)]` to suppress
+    /// warnings when feature is off).
     #[allow(dead_code)]
     default_timeout: Duration,
     /// Optional browser pool for persistent sessions
@@ -236,7 +238,9 @@ impl BrowserTool {
                 info!("Navigating to: {}", url);
                 match page.goto(&url).await {
                     Ok(_) => {
-                        page.wait_for_navigation().await.ok();
+                        if let Err(e) = page.wait_for_navigation().await {
+                            warn!("Navigation wait failed after page load: {}", e);
+                        }
                         Ok(json!({
                             "success": true,
                             "url": url,
@@ -694,7 +698,9 @@ impl BrowserTool {
                             r#"() => {{ Object.defineProperty(navigator, 'userAgent', {{ value: '{}', configurable: true }}); return true; }}"#,
                             ua
                         );
-                        page.evaluate(ua_script.as_str()).await.ok();
+                        if let Err(e) = page.evaluate(ua_script.as_str()).await {
+                            warn!("Failed to set custom user agent: {}", e);
+                        }
                         Ok(json!({
                             "success": true,
                             "device": device_name,

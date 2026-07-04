@@ -1801,18 +1801,18 @@ impl ToolRegistry {
         result
     }
 
-    /// Execute a tool by name without caching.
-    ///
-    /// WARNING: This method bypasses policy hooks, approval flow, content
-    /// filtering, audit logging, before/after hooks, and the circuit breaker.
-    /// Prefer [`execute()`](Self::execute) when safety checks are required.
-    #[allow(dead_code)]
     /// Execute a tool by name, skipping the cache layer but still running the
     /// full policy, approval, hooks, and audit pipeline.
     ///
     /// Returns `None` only when the tool name is unknown (not registered).
     /// Blocked, degraded, or policy-denied tools return `Some(Err(...))`
     /// so callers can distinguish "not found" from "rejected".
+    ///
+    /// This is `pub(crate)` for use by other modules in the crate
+    /// (e.g. streaming execution paths) that need to bypass the cache
+    /// without sacrificing safety checks, though currently no external
+    /// caller exists.
+    #[cfg(test)]
     pub(crate) async fn execute_no_cache(
         &self,
         name: &str,

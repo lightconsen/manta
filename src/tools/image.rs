@@ -35,11 +35,8 @@ impl Default for ImageTool {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct ImageArgs {
     path: String,
-    #[serde(default)]
-    action: Option<String>,
 }
 
 #[async_trait]
@@ -60,12 +57,6 @@ impl Tool for ImageTool {
                 "path": {
                     "type": "string",
                     "description": "Path to the image file"
-                },
-                "action": {
-                    "type": "string",
-                    "enum": ["info"],
-                    "default": "info",
-                    "description": "Action to perform"
                 }
             },
             "required": ["path"]
@@ -485,14 +476,6 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(args.path, "/tmp/test.png");
-        assert_eq!(args.action, None);
-
-        let args2: ImageArgs = serde_json::from_value(serde_json::json!({
-            "path": "/tmp/test.jpg",
-            "action": "info"
-        }))
-        .unwrap();
-        assert_eq!(args2.action, Some("info".to_string()));
     }
 
     #[test]

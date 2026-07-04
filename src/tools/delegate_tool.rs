@@ -690,7 +690,9 @@ impl DelegateTool {
 
                 if let Some(_child) = self.tracker.remove_child(child_id).await {
                     // Also kill in the registry so metrics stay correct.
-                    let _ = self.registry.kill(child_id).await;
+                    if let Err(e) = self.registry.kill(child_id).await {
+                        warn!("Failed to kill child agent '{}': {}", child_id, e);
+                    }
                     info!("Cancelled child agent: {}", child_id);
                     Ok(ToolExecutionResult::success(format!("Cancelled child {}", child_id)))
                 } else {

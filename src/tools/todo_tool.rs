@@ -37,7 +37,7 @@ impl TodoTool {
     }
 
     /// Create with custom directory (for testing)
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn with_dir(base_dir: PathBuf) -> Self {
         Self {
             stores: Arc::new(RwLock::new(HashMap::new())),
