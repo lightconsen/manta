@@ -372,76 +372,37 @@ impl AgentRouter {
         }
 
         // 2. Check existing session binding (by conversation_id)
-        {
-            let bindings = self.session_bindings.read().await;
-            if let Some((agent_id, workspace_id)) = bindings.get(&session_id) {
-                debug!("Session {} bound to agent {}", session_id, agent_id);
-                return RouteResult {
-                    agent_id: agent_id.clone(),
-                    workspace_id: workspace_id.clone(),
-                    persisted_binding: false,
-                    is_fallback: false,
-                };
-            }
+        if let Some(result) = self.resolve_session_binding(&session_id).await {
+            return result;
         }
 
         // 2b. Check existing session binding by derived `{channel}:{user_id}` key
-        let channel_name = match &message.provenance {
-            crate::channels::InputProvenance::ExternalUser { channel, .. } => Some(channel.clone()),
-            _ => None,
-        };
+        let channel_name = Self::resolve_channel_name(message);
         let user_id = message.user_id.0.as_str();
 
         if let Some(ch) = channel_name.as_deref() {
             let derived_key = Self::derive_session_key(ch, user_id);
             if derived_key != session_id {
-                let bindings = self.session_bindings.read().await;
-                if let Some((agent_id, workspace_id)) = bindings.get(&derived_key) {
+                if let Some(result) = self.resolve_session_binding(&derived_key).await {
                     debug!(
                         "Session {} resolved via derived key {} to agent {}",
-                        session_id, derived_key, agent_id
+                        session_id, derived_key, result.agent_id
                     );
-                    return RouteResult {
-                        agent_id: agent_id.clone(),
-                        workspace_id: workspace_id.clone(),
-                        persisted_binding: false,
-                        is_fallback: false,
-                    };
+                    return result;
                 }
             }
         }
 
         // 3. Check channel-specific default
         if let Some(ch) = &channel_name {
-            let defaults = self.channel_defaults.read().await;
-            if let Some((agent_id, workspace_id)) = defaults.get(ch) {
-                debug!("Channel {} default agent: {}", ch, agent_id);
-                let mut result = RouteResult {
-                    agent_id: agent_id.clone(),
-                    workspace_id: workspace_id.clone(),
-                    persisted_binding: true,
-                    is_fallback: false,
-                };
-                // Store binding for future messages
-                drop(defaults);
-                result.persisted_binding = self.bind_session(&session_id, &result).await;
+            if let Some(result) = self.resolve_channel_default(ch, &session_id).await {
                 return result;
             }
         }
 
         // 4. Check workspace-specific default
         if let Some(ws) = workspace_hint {
-            let defaults = self.workspace_defaults.read().await;
-            if let Some(agent_id) = defaults.get(ws) {
-                debug!("Workspace {} default agent: {}", ws, agent_id);
-                let mut result = RouteResult {
-                    agent_id: agent_id.clone(),
-                    workspace_id: Some(ws.to_string()),
-                    persisted_binding: true,
-                    is_fallback: false,
-                };
-                drop(defaults);
-                result.persisted_binding = self.bind_session(&session_id, &result).await;
+            if let Some(result) = self.resolve_workspace_default(ws, &session_id).await {
                 return result;
             }
         }
@@ -450,8 +411,6 @@ impl AgentRouter {
         // fallback)
         if let Some(ref resolver) = self.conversation_resolver {
             let resolution = resolver.resolve(message).await;
-            // Only use the resolver result if it's not the fallback (which just
-            // returns the global default — we handle that in step 5 ourselves)
             let is_fallback = matches!(
                 resolution.source,
                 crate::channels::resolver::ResolutionSource::InboundFallback
@@ -487,6 +446,68 @@ impl AgentRouter {
         };
         result.persisted_binding = self.bind_session(&session_id, &result).await;
         result
+    }
+
+    /// Look up a session binding by key (session_id or derived key).
+    async fn resolve_session_binding(&self, key: &str) -> Option<RouteResult> {
+        let bindings = self.session_bindings.read().await;
+        bindings.get(key).map(|(agent_id, workspace_id)| {
+            debug!("Session bound to agent {}", agent_id);
+            RouteResult {
+                agent_id: agent_id.clone(),
+                workspace_id: workspace_id.clone(),
+                persisted_binding: false,
+                is_fallback: false,
+            }
+        })
+    }
+
+    /// Extract the channel name from message provenance, if present.
+    fn resolve_channel_name(message: &IncomingMessage) -> Option<String> {
+        match &message.provenance {
+            crate::channels::InputProvenance::ExternalUser { channel, .. } => Some(channel.clone()),
+            _ => None,
+        }
+    }
+
+    /// Look up a channel-specific default agent binding and persist it.
+    async fn resolve_channel_default(
+        &self,
+        channel: &str,
+        session_id: &str,
+    ) -> Option<RouteResult> {
+        let defaults = self.channel_defaults.read().await;
+        let (agent_id, workspace_id) = defaults.get(channel)?;
+        debug!("Channel {} default agent: {}", channel, agent_id);
+        let mut result = RouteResult {
+            agent_id: agent_id.clone(),
+            workspace_id: workspace_id.clone(),
+            persisted_binding: true,
+            is_fallback: false,
+        };
+        drop(defaults);
+        result.persisted_binding = self.bind_session(session_id, &result).await;
+        Some(result)
+    }
+
+    /// Look up a workspace-specific default agent binding and persist it.
+    async fn resolve_workspace_default(
+        &self,
+        workspace: &str,
+        session_id: &str,
+    ) -> Option<RouteResult> {
+        let defaults = self.workspace_defaults.read().await;
+        let agent_id = defaults.get(workspace)?.clone();
+        debug!("Workspace {} default agent: {}", workspace, agent_id);
+        drop(defaults);
+        let mut result = RouteResult {
+            agent_id,
+            workspace_id: Some(workspace.to_string()),
+            persisted_binding: true,
+            is_fallback: false,
+        };
+        result.persisted_binding = self.bind_session(session_id, &result).await;
+        Some(result)
     }
 
     /// Bind a session to a specific agent.

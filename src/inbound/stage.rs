@@ -575,7 +575,6 @@ mod tests {
     use super::*;
     use crate::channels::IncomingMessage;
     use crate::channels::MessageMetadata;
-    #[allow(unused_imports)]
     use crate::inbound::dispatch::AutoReplyDispatchConfig;
 
     /// A stage that always suppresses.

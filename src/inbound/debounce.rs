@@ -96,7 +96,6 @@ impl InboundDebouncer {
         let key = Self::resolve_key(&message);
         let content = message.content.trim();
 
-        // Bypass: commands and other non-debouncable items go straight through.
         if self.should_bypass(content) {
             debug!("Bypassing debounce for key {} (command)", key);
             return Some(message);
@@ -104,37 +103,7 @@ impl InboundDebouncer {
 
         let mut buffers = self.buffers.write().await;
 
-        // LRU eviction: if we're at capacity, flush the least-recently-active
-        // key so its messages are not lost, then remove it.
-        if buffers.len() >= self.config.max_tracked_keys && !buffers.contains_key(&key) {
-            let mut oldest_key: Option<String> = None;
-            let mut oldest_time: Option<Instant> = None;
-            for (k, buf) in buffers.iter() {
-                let guard = buf.lock().await;
-                if oldest_time.map(|t| guard.last_activity < t).unwrap_or(true) {
-                    oldest_time = Some(guard.last_activity);
-                    oldest_key = Some(k.clone());
-                }
-            }
-            if let Some(oldest) = oldest_key {
-                warn!(
-                    "Debouncer at capacity ({}), flushing least-recently-active key {}",
-                    self.config.max_tracked_keys, oldest
-                );
-                if let Some(buf) = buffers.remove(&oldest) {
-                    let guard = buf.lock().await;
-                    if let Some(handle) = guard.timer_handle.as_ref() {
-                        handle.abort();
-                    }
-                    if !guard.items.is_empty() {
-                        let batch = guard.items.clone();
-                        let tx = guard.flush_tx.clone();
-                        drop(guard);
-                        let _ = tx.send(batch).await;
-                    }
-                }
-            }
-        }
+        self.evict_lru_if_necessary(&key, &mut buffers).await;
 
         let buffer = buffers.entry(key.clone()).or_insert_with(|| {
             let tx = self.flush_tx.clone();
@@ -159,7 +128,8 @@ impl InboundDebouncer {
         });
         guard.last_activity = Instant::now();
 
-        // (Re-)start the flush timer.
+        // (Re-)start the flush timer: cancel any existing timer, then spawn
+        // a new one that fires after the configured debounce window.
         if let Some(handle) = guard.timer_handle.take() {
             handle.abort();
         }
@@ -169,24 +139,69 @@ impl InboundDebouncer {
         let key_clone = key.clone();
         let self_arc = self.clone();
 
-        guard.timer_handle = Some(tokio::spawn(async move {
-            sleep(Duration::from_millis(debounce_ms)).await;
-            // Remove the buffer and send the batch.
-            let batch = {
-                let mut buffers = self_arc.buffers.write().await;
-                if let Some(buf) = buffers.remove(&key_clone) {
-                    let guard = buf.lock().await;
-                    guard.items.clone()
-                } else {
-                    Vec::new()
-                }
-            };
-            if !batch.is_empty() {
-                let _ = flush_tx.send(batch).await;
-            }
-        }));
+        guard.timer_handle =
+            Some(self::start_flush_timer(self_arc, key_clone, flush_tx, debounce_ms));
 
         None // message absorbed into pending batch
+    }
+
+    /// If the debouncer has reached capacity and `key` is not yet tracked,
+    /// evict the least-recently-active buffer: abort its in-flight timer,
+    /// flush any buffered items through the send channel, and remove it
+    /// from the map.
+    async fn evict_lru_if_necessary(
+        self: &Arc<Self>,
+        key: &str,
+        buffers: &mut tokio::sync::RwLockWriteGuard<
+            '_,
+            HashMap<String, Arc<Mutex<DebounceBuffer>>>,
+        >,
+    ) {
+        if buffers.len() < self.config.max_tracked_keys || buffers.contains_key(key) {
+            return;
+        }
+
+        let oldest = self.find_oldest_key(buffers).await;
+        let Some(oldest) = oldest else {
+            return;
+        };
+
+        warn!(
+            "Debouncer at capacity ({}), flushing least-recently-active key {}",
+            self.config.max_tracked_keys, oldest
+        );
+
+        if let Some(buf) = buffers.remove(&oldest) {
+            let guard = buf.lock().await;
+            if let Some(handle) = guard.timer_handle.as_ref() {
+                handle.abort();
+            }
+            if !guard.items.is_empty() {
+                let batch = guard.items.clone();
+                let tx = guard.flush_tx.clone();
+                drop(guard);
+                if let Err(e) = tx.send(batch).await {
+                    warn!("Debouncer LRU eviction: failed to flush batch: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Find the key whose buffer has the oldest `last_activity` timestamp.
+    async fn find_oldest_key(
+        &self,
+        buffers: &tokio::sync::RwLockWriteGuard<'_, HashMap<String, Arc<Mutex<DebounceBuffer>>>>,
+    ) -> Option<String> {
+        let mut oldest_key: Option<String> = None;
+        let mut oldest_time: Option<Instant> = None;
+        for (k, buf) in buffers.iter() {
+            let guard = buf.lock().await;
+            if oldest_time.map(|t| guard.last_activity < t).unwrap_or(true) {
+                oldest_time = Some(guard.last_activity);
+                oldest_key = Some(k.clone());
+            }
+        }
+        oldest_key
     }
 
     /// Flush all pending items for a given key immediately.
@@ -241,6 +256,35 @@ impl InboundDebouncer {
         }
         false
     }
+}
+
+/// Spawn a background task that waits `debounce_ms` milliseconds, then
+/// drains the debounce buffer for `key` and sends the batch through
+/// `flush_tx`. The buffer is removed from the debouncer's map as part of
+/// the drain.
+fn start_flush_timer(
+    self_arc: Arc<InboundDebouncer>,
+    key: String,
+    flush_tx: mpsc::Sender<Vec<DebouncedItem>>,
+    debounce_ms: u64,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        sleep(Duration::from_millis(debounce_ms)).await;
+        let batch = {
+            let mut buffers = self_arc.buffers.write().await;
+            if let Some(buf) = buffers.remove(&key) {
+                let guard = buf.lock().await;
+                guard.items.clone()
+            } else {
+                Vec::new()
+            }
+        };
+        if !batch.is_empty() {
+            if let Err(e) = flush_tx.send(batch).await {
+                warn!("Debouncer timer flush failed: {}", e);
+            }
+        }
+    })
 }
 
 #[cfg(test)]

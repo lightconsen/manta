@@ -320,7 +320,9 @@ impl DefaultInboundPipeline {
         match run_inbound_stages(&self.post_stages, &mut ctx).await {
             Ok(InboundStageAction::Continue) => match build_routed_message(&mut ctx) {
                 Ok(routed) => {
-                    let _ = self.routed_tx.send(routed.clone()).await;
+                    if let Err(e) = self.routed_tx.send(routed.clone()).await {
+                        warn!(error = %e, "Failed to forward routed message to agent execution layer");
+                    }
                     InboundProcessOutcome::Routed(Box::new(routed))
                 }
                 Err(e) => {
@@ -364,7 +366,9 @@ impl DefaultInboundPipeline {
         match run_inbound_stages(&self.post_stages, &mut ctx).await {
             Ok(InboundStageAction::Continue) => match build_routed_message(&mut ctx) {
                 Ok(routed) => {
-                    let _ = self.routed_tx.send(routed.clone()).await;
+                    if let Err(e) = self.routed_tx.send(routed.clone()).await {
+                        warn!(error = %e, "Failed to forward routed message to agent execution layer (route_one)");
+                    }
                     Some(routed)
                 }
                 Err(e) => {
