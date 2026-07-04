@@ -110,8 +110,7 @@ pub struct AuthProfile {
     /// Currently active key index
     current_index: usize,
     /// Cooldown duration after a failure (seconds)
-    #[allow(dead_code)]
-    cooldown_secs: u64,
+    _cooldown_secs: u64,
     /// Max failures before disabling a key permanently
     max_failures: u32,
 }
@@ -149,7 +148,7 @@ impl AuthProfile {
             provider_name: provider_name.into(),
             keys: entries,
             current_index: 0,
-            cooldown_secs,
+            _cooldown_secs: cooldown_secs,
             max_failures,
         }
     }

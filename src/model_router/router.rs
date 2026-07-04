@@ -22,8 +22,8 @@ use crate::gateway::task_registry::TaskRegistry;
 use crate::model_router::auth_profile::{AuthProfileManager, ProfileStatus};
 use crate::model_router::classifier::{KeywordTaskClassifier, TaskClassifierImpl};
 use crate::model_router::config::{
-    CircuitState, FallbackEntry, ModelAlias, ModelRouterConfig, ProviderConfig, ProviderHealth,
-    ProviderHealthInfo, ProviderInfo, ProviderType, TaskType,
+    CircuitState, CostAwareConfig, FallbackEntry, ModelAlias, ModelRouterConfig, ProviderConfig,
+    ProviderHealth, ProviderHealthInfo, ProviderInfo, ProviderType, TaskType,
 };
 use crate::model_router::failure_class::FailureClass;
 use crate::model_router::model_catalog::{self, ModelCatalog, ModelCatalogEntry};
@@ -777,72 +777,20 @@ impl ModelRouter {
         info!("Task classified as: {:?}", task_type);
 
         let config = self.config.read().await;
-        #[allow(clippy::expect_used)]
-        let cost_aware = config
-            .cost_aware
-            .as_ref()
-            .expect("cost_aware config checked above");
+        let Some(cost_aware) = config.cost_aware.as_ref() else {
+            let default = config.default_model.clone();
+            drop(config);
+            return self.complete(&default, messages, tools).await;
+        };
 
         // Check budget limit
-        if let Some(budget) = cost_aware.budget_limit_usd {
-            let current_spend = cost_aware.daily_spend_usd;
-            if current_spend >= budget {
-                warn!(
-                    "Daily budget exceeded: ${:.2} / ${:.2}. Falling back to cheapest model.",
-                    current_spend, budget
-                );
-                let cheapest = cost_aware
-                    .model_costs
-                    .iter()
-                    .min_by(|a, b| {
-                        let a_total = a.1.input_cost_per_1k + a.1.output_cost_per_1k;
-                        let b_total = b.1.input_cost_per_1k + b.1.output_cost_per_1k;
-                        a_total
-                            .partial_cmp(&b_total)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                    .map(|(name, _)| name.clone())
-                    .unwrap_or_else(|| cost_aware.default_alias.clone());
-                drop(config);
-                return self.complete(&cheapest, messages, tools).await;
-            }
+        if let Some(cheapest) = Self::cheapest_model_on_budget_exceeded(cost_aware) {
+            drop(config);
+            return self.complete(&cheapest, messages, tools).await;
         }
 
-        // Find routing rule for this task type
-        let rule = cost_aware
-            .routing_rules
-            .iter()
-            .find(|r| r.task_type == task_type)
-            .or_else(|| {
-                cost_aware
-                    .routing_rules
-                    .iter()
-                    .find(|r| r.task_type == TaskType::Unknown)
-            });
-
-        let alias_name = if let Some(rule) = rule {
-            let estimated_tokens: u32 = messages.iter().map(|m| m.content.len() as u32 / 4).sum();
-
-            if let Some(max_tokens) = rule.max_input_tokens {
-                if estimated_tokens > max_tokens {
-                    info!(
-                        "Estimated tokens ({estimated_tokens}) exceeds max for '{}' ({max_tokens}), using fallback",
-                        rule.preferred_alias
-                    );
-                    if let Some(ref fallback) = rule.fallback_alias {
-                        fallback.clone()
-                    } else {
-                        rule.preferred_alias.clone()
-                    }
-                } else {
-                    rule.preferred_alias.clone()
-                }
-            } else {
-                rule.preferred_alias.clone()
-            }
-        } else {
-            cost_aware.default_alias.clone()
-        };
+        // Resolve alias from routing rules
+        let alias_name = Self::resolve_alias_for_task(cost_aware, &task_type, &messages);
         drop(config);
 
         // Complete and track cost
@@ -865,6 +813,70 @@ impl ModelRouter {
         }
 
         Ok(response)
+    }
+
+    /// Get cheapest model alias when budget is exceeded, or `None` if within budget.
+    fn cheapest_model_on_budget_exceeded(cost_aware: &CostAwareConfig) -> Option<String> {
+        let budget = cost_aware.budget_limit_usd?;
+        let current_spend = cost_aware.daily_spend_usd;
+        if current_spend < budget {
+            return None;
+        }
+        warn!(
+            "Daily budget exceeded: ${:.2} / ${:.2}. Falling back to cheapest model.",
+            current_spend, budget
+        );
+        let cheapest = cost_aware
+            .model_costs
+            .iter()
+            .min_by(|a, b| {
+                let a_total = a.1.input_cost_per_1k + a.1.output_cost_per_1k;
+                let b_total = b.1.input_cost_per_1k + b.1.output_cost_per_1k;
+                a_total
+                    .partial_cmp(&b_total)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| cost_aware.default_alias.clone());
+        Some(cheapest)
+    }
+
+    /// Resolve the model alias to use for a given task type based on routing rules.
+    fn resolve_alias_for_task(
+        cost_aware: &CostAwareConfig,
+        task_type: &TaskType,
+        messages: &[Message],
+    ) -> String {
+        let rule = cost_aware
+            .routing_rules
+            .iter()
+            .find(|r| r.task_type == *task_type)
+            .or_else(|| {
+                cost_aware
+                    .routing_rules
+                    .iter()
+                    .find(|r| r.task_type == TaskType::Unknown)
+            });
+
+        let Some(rule) = rule else {
+            return cost_aware.default_alias.clone();
+        };
+
+        let estimated_tokens: u32 = messages.iter().map(|m| m.content.len() as u32 / 4).sum();
+        if let Some(max_tokens) = rule.max_input_tokens {
+            if estimated_tokens > max_tokens {
+                info!(
+                    "Estimated tokens ({estimated_tokens}) exceeds max for '{}' ({max_tokens}), \
+                     using fallback",
+                    rule.preferred_alias
+                );
+                return rule
+                    .fallback_alias
+                    .clone()
+                    .unwrap_or_else(|| rule.preferred_alias.clone());
+            }
+        }
+        rule.preferred_alias.clone()
     }
 
     /// Get current daily spend
@@ -898,7 +910,15 @@ impl ModelRouter {
                 Ok(Some(quota)) => {
                     snapshot.quota = Some(quota);
                 }
-                _ => {
+                Ok(None) => {
+                    drop(fetchers);
+                    snapshot.quota = self.local_budget_quota(provider).await;
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to fetch usage quota for {}: {}; falling back to local budget",
+                        provider, e
+                    );
                     drop(fetchers);
                     snapshot.quota = self.local_budget_quota(provider).await;
                 }
@@ -923,10 +943,15 @@ impl ModelRouter {
                 let provider = snapshot.provider.clone();
                 let fetcher = fetchers.get(&provider).clone();
                 async move {
+                    let provider = snapshot.provider.clone();
                     let quota = if let Some(fetcher) = fetcher {
                         match fetcher.fetch().await {
                             Ok(Some(q)) => Some(q),
-                            _ => None,
+                            Ok(None) => None,
+                            Err(e) => {
+                                warn!("Failed to fetch usage quota for {}: {}", provider, e);
+                                None
+                            }
                         }
                     } else {
                         None
@@ -1381,7 +1406,8 @@ impl ModelRouter {
                 self.record_failure(name, None).await;
                 Ok(false)
             }
-            Err(_) => {
+            Err(e) => {
+                warn!("Health check failed for {}: {}", name, e);
                 self.record_failure(name, None).await;
                 Ok(false)
             }

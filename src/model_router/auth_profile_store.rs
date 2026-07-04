@@ -207,7 +207,9 @@ impl AuthProfileStore {
 
     /// Delete all persisted state for a provider.
     pub async fn delete_profile_state(&self, provider: &str) -> crate::Result<()> {
-        self.ensure_table().await.ok();
+        if let Err(e) = self.ensure_table().await {
+            warn!("Failed to ensure auth_profile_states table before delete: {}", e);
+        }
 
         sqlx::query("DELETE FROM auth_profile_states WHERE provider_name = ?")
             .bind(provider)

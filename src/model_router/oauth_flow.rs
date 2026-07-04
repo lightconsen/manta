@@ -140,15 +140,12 @@ impl Default for OAuthFlow {
 
 /// OAuth2 token endpoint response (authorization_code flow).
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 struct TokenResponse {
     access_token: String,
     #[serde(default = "default_expires_in")]
     expires_in: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    token_type: Option<String>,
 }
 
 fn default_expires_in() -> u64 {
