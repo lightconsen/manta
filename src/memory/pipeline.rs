@@ -5,19 +5,10 @@
 //! a single `embed_batch()` call.  This amortises API latency and keeps the
 //! hot path non-blocking.
 
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use tracing::warn;
 
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, info};
-
-/// Shared state for tracking pipeline metrics.
-#[derive(Debug, Default)]
-#[allow(dead_code)]
-struct PipelineMetrics {
-    batch_count: AtomicUsize,
-}
+use tracing::{debug, error, info, warn};
 
 /// An embedding request sent to the pipeline.
 #[derive(Debug)]
@@ -126,9 +117,11 @@ pub trait PipelineEmbeddingProvider: Send + Sync {
 }
 
 /// The embedding pipeline worker.
-#[allow(dead_code)]
+///
+/// Holds a handle clone for job submission and the pipeline config for
+/// introspection.
 pub struct EmbeddingPipeline {
-    config: EmbeddingPipelineConfig,
+    _config: EmbeddingPipelineConfig,
     handle: EmbeddingPipelineHandle,
 }
 
@@ -184,7 +177,10 @@ impl EmbeddingPipeline {
             }
         });
 
-        let pipeline = Self { config, handle: handle.clone() };
+        let pipeline = Self {
+            _config: config,
+            handle: handle.clone(),
+        };
         (pipeline, worker_handle, handle)
     }
 

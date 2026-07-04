@@ -754,12 +754,12 @@ impl BatchEmbeddingProcessor {
 }
 
 /// High-level vector memory service
-#[allow(dead_code)]
 pub struct VectorMemoryService {
     embedding_provider: Arc<dyn EmbeddingProvider>,
     vector_store: Arc<dyn VectorStore>,
     chunker: TextChunker,
-    batch_processor: BatchEmbeddingProcessor,
+    /// Reserved for future batched re-indexing. Currently unused.
+    _batch_processor: BatchEmbeddingProcessor,
     /// Tracks the set of collections that have been written to
     collections: tokio::sync::RwLock<std::collections::HashSet<String>>,
 }
@@ -785,7 +785,7 @@ impl VectorMemoryService {
             embedding_provider,
             vector_store,
             chunker,
-            batch_processor,
+            _batch_processor: batch_processor,
             collections: tokio::sync::RwLock::new(initial_collections),
         }
     }

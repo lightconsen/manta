@@ -574,20 +574,6 @@ impl DreamEngine {
         }
     }
 
-    /// Compute cosine similarity between two embedding vectors.
-    fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() || a.is_empty() {
-            return 0.0;
-        }
-        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm_a == 0.0 || norm_b == 0.0 {
-            return 0.0;
-        }
-        dot / (norm_a * norm_b)
-    }
-
     /// Run a Light Dream: deduplication, expiry cleanup, basic tier
     /// maintenance.
     ///
@@ -651,7 +637,7 @@ impl DreamEngine {
                 }
                 let similar = match (&mem_i.embedding, &mem_j.embedding) {
                     (Some(emb_i), Some(emb_j)) => {
-                        Self::cosine_similarity(emb_i, emb_j) > dedup_threshold
+                        super::cosine_similarity(emb_i, emb_j) > dedup_threshold
                     }
                     _ => {
                         let key_i = mem_i
@@ -913,7 +899,7 @@ impl DreamEngine {
                         if embeddings[i].len() != embeddings[j].len() {
                             continue;
                         }
-                        let sim = Self::cosine_similarity(embeddings[i], embeddings[j]);
+                        let sim = super::cosine_similarity(embeddings[i], embeddings[j]);
                         if sim > merge_threshold {
                             let ri = find(&mut parent, i);
                             let rj = find(&mut parent, j);
@@ -1894,8 +1880,9 @@ impl DreamScheduler {
     pub async fn stop(&mut self) {
         // First send cancellation signal to any in-progress dream
         if let Some(tx) = self.cancel_tx.take() {
-            // Ignore send error - receiver may already be dropped
-            let _ = tx.send(true);
+            if tx.send(true).is_err() {
+                warn!("Failed to send dream cancellation signal (receiver already dropped)");
+            }
         }
         // Then send shutdown signal to the scheduler loop
         if let Some(tx) = self.shutdown_tx.take() {

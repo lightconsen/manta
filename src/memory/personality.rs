@@ -42,6 +42,25 @@ static RE_PREFERENCE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("hard-coded preference regex is valid")
 });
 
+// Threat-scanning regex patterns (compiled once for all PersonalityMemory instances).
+#[allow(clippy::expect_used)]
+static RE_SYSTEM_PROMPT_INJECTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|\n)\s*(system|assistant|user)\s*:\s*")
+        .expect("hard-coded threat-scan regex is valid")
+});
+#[allow(clippy::expect_used)]
+static RE_COMMAND_INJECTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(;|\|\||&&|`|<\(|>\$)\s*[a-z]+")
+        .expect("hard-coded threat-scan regex is valid")
+});
+#[allow(clippy::expect_used)]
+static RE_PATH_TRAVERSAL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\.\./|\.\.\\").expect("hard-coded threat-scan regex is valid"));
+#[allow(clippy::expect_used)]
+static RE_EXFILTRATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(curl|wget|fetch)\s+.*http").expect("hard-coded threat-scan regex is valid")
+});
+
 /// Controls which memory files are included in the system prompt.
 ///
 /// `Primary` produces the full prompt including MEMORY.md (for main session
@@ -209,7 +228,13 @@ impl PersonalityMemory {
     /// Find workspace-level memory directory
     fn find_workspace_memory_dir() -> Option<PathBuf> {
         // Look for workspace root marker
-        let cwd = std::env::current_dir().ok()?;
+        let cwd = match std::env::current_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                warn!("Failed to get current directory for workspace memory scan: {}", e);
+                return None;
+            }
+        };
         let mut current = cwd.as_path();
 
         loop {
@@ -699,19 +724,17 @@ impl PersonalityMemory {
 
     /// Scan content for security threats
     fn scan_for_threats(&self, content: &str) -> Option<String> {
-        // List of suspicious patterns
-        let patterns = [
-            ("system_prompt_injection", r"(?i)(?:^|\n)\s*(system|assistant|user)\s*:\s*"),
-            ("command_injection", r"(?i)(;|\|\||&&|`|<\(|>\$)\s*[a-z]+"),
-            ("path_traversal", r"\.\./|\.\.\\"),
-            ("exfiltration", r"(?i)(curl|wget|fetch)\s+.*http"),
+        // Use pre-compiled static regex patterns (compiled once at startup).
+        static PATTERNS: &[(&str, &LazyLock<Regex>)] = &[
+            ("system_prompt_injection", &RE_SYSTEM_PROMPT_INJECTION),
+            ("command_injection", &RE_COMMAND_INJECTION),
+            ("path_traversal", &RE_PATH_TRAVERSAL),
+            ("exfiltration", &RE_EXFILTRATION),
         ];
 
-        for (name, pattern) in patterns {
-            if let Ok(re) = regex::Regex::new(pattern) {
-                if re.is_match(content) {
-                    return Some(name.to_string());
-                }
+        for (name, re) in PATTERNS {
+            if re.is_match(content) {
+                return Some(name.to_string());
             }
         }
 
