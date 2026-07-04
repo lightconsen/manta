@@ -91,7 +91,10 @@ impl ApiClient {
     fn resolve_api_key(key_ref: Option<&SecretRef>) -> Option<String> {
         let s = match key_ref? {
             SecretRef::String(s) => s,
-            _ => return None,
+            other => {
+                tracing::warn!("resolve_api_key: unsupported SecretRef variant {:?}, key will be None", other);
+                return None;
+            }
         };
 
         // Check for explicit env var syntax: ${VAR_NAME}

@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -192,150 +193,18 @@ impl AcpControlPlane {
         let abort_handle = join_handle.abort_handle();
 
         // Watchdog: await the JoinHandle and update status on exit or panic.
-        let watchdog_subagents_ref = Arc::clone(&self.subagents);
-        let watch_id = subagent_id.clone();
-        let store_ref = self.store.clone();
-        let acp_for_events = self.clone();
-        let event_session_id = session_id.clone();
-        tokio::spawn(async move {
-            match join_handle.await {
-                Ok(()) => {
-                    let mut map = watchdog_subagents_ref.write().await;
-                    if let Some(h) = map.get_mut(&watch_id) {
-                        h.status = SubagentStatus::Terminated;
-                    }
-                    drop(map);
-                    acp_for_events
-                        .emit(crate::gateway::GatewayEvent::AcpCompleted {
-                            session_id: event_session_id.to_string(),
-                            subagent_id: watch_id.clone(),
-                            status: "terminated".to_string(),
-                        })
-                        .await;
-                    if let Some(store) = store_ref {
-                        if let Err(e) = store
-                            .complete_subagent_run(&watch_id, Some("normal exit"), None)
-                            .await
-                        {
-                            warn!("Failed to persist normal completion for {}: {}", watch_id, e);
-                        }
-                    }
-                }
-                Err(e) if e.is_panic() => {
-                    warn!("Subagent {} panicked — marking Crashed", watch_id);
-                    let current_crash_count = {
-                        let map = watchdog_subagents_ref.read().await;
-                        map.get(&watch_id).map(|h| h.crash_count).unwrap_or(0)
-                    };
-                    {
-                        let mut map = watchdog_subagents_ref.write().await;
-                        if let Some(h) = map.get_mut(&watch_id) {
-                            h.status = SubagentStatus::Crashed;
-                        }
-                    }
-                    acp_for_events
-                        .emit(crate::gateway::GatewayEvent::AcpCompleted {
-                            session_id: event_session_id.to_string(),
-                            subagent_id: watch_id.clone(),
-                            status: "crashed".to_string(),
-                        })
-                        .await;
-                    if let Some(store) = store_ref {
-                        if let Err(e) = store
-                            .complete_subagent_run(&watch_id, None, Some("panicked"))
-                            .await
-                        {
-                            warn!("Failed to persist crash completion for {}: {}", watch_id, e);
-                        }
-                    }
-                    // Log crash for external recovery (call recover_crashed_subagent to restart)
-                    let recovery_enabled = {
-                        let global = acp_for_recovery.recovery.read().await;
-                        global.enabled && current_crash_count < global.max_retries
-                    };
-                    if recovery_enabled {
-                        warn!(
-                            "Subagent {} crashed (attempt {}/{}). Auto-recovery enabled — call \
-                             acp.recover_crashed_subagent() to restart.",
-                            watch_id,
-                            current_crash_count + 1,
-                            {
-                                let global = acp_for_recovery.recovery.read().await;
-                                global.max_retries
-                            }
-                        );
-                    }
-
-                    // Automatic recovery: if enabled globally, schedule a recovery command to the
-                    // ACP actor loop so that recovery does not create a direct async recursion
-                    // cycle with `spawn_subagent`.
-                    let acp = acp_for_recovery.clone();
-                    let sid = recovery_session_id.clone();
-                    let pid = recovery_parent_id.clone();
-                    let cfg = recovery_config_clone.clone();
-                    tokio::spawn(async move {
-                        let (should_recover, delay) = {
-                            let global = acp.recovery.read().await;
-                            let should_recover =
-                                global.enabled && current_crash_count < global.max_retries;
-                            let delay = if should_recover {
-                                global
-                                    .backoff_seconds
-                                    .get(current_crash_count as usize)
-                                    .copied()
-                                    .unwrap_or_else(|| {
-                                        global.backoff_seconds.last().copied().unwrap_or(30)
-                                    })
-                            } else {
-                                0
-                            };
-                            (should_recover, delay)
-                        };
-
-                        if !should_recover {
-                            return;
-                        }
-
-                        warn!(
-                            "Auto-recovering subagent {} (attempt {}/{}) in {}s",
-                            watch_id,
-                            current_crash_count + 1,
-                            {
-                                let global = acp.recovery.read().await;
-                                global.max_retries
-                            },
-                            delay
-                        );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
-                        let cmd = AcpCommand::RecoverSubagent {
-                            session_id: sid,
-                            parent_id: pid,
-                            config: cfg,
-                            crash_count: current_crash_count + 1,
-                        };
-                        if let Err(e) = acp.command_tx.send(cmd).await {
-                            warn!("Failed to schedule recovery command for {}: {}", watch_id, e);
-                        }
-                    });
-                }
-                Err(_) => {
-                    // Aborted externally
-                    let mut map = watchdog_subagents_ref.write().await;
-                    if let Some(h) = map.get_mut(&watch_id) {
-                        h.status = SubagentStatus::Terminated;
-                    }
-                    drop(map);
-                    acp_for_events
-                        .emit(crate::gateway::GatewayEvent::AcpCompleted {
-                            session_id: event_session_id.to_string(),
-                            subagent_id: watch_id.clone(),
-                            status: "aborted".to_string(),
-                        })
-                        .await;
-                    // Kill/abort already updates the store, so no-op here.
-                }
-            }
-        });
+        tokio::spawn(watchdog_task(
+            join_handle,
+            Arc::clone(&self.subagents),
+            subagent_id.clone(),
+            self.store.clone(),
+            self.clone(),
+            session_id.clone(),
+            acp_for_recovery,
+            recovery_session_id,
+            recovery_parent_id,
+            recovery_config_clone,
+        ));
 
         let handle = SubagentHandle {
             id: subagent_id.clone(),
@@ -570,5 +439,130 @@ impl AcpControlPlane {
             .await;
         }
         Some(handle)
+    }
+}
+
+/// Watchdog task that monitors a subagent's JoinHandle, updates status on
+/// normal exit, panic, or external abort, and triggers automatic crash
+/// recovery when configured.
+#[allow(clippy::too_many_arguments)]
+async fn watchdog_task(
+    join_handle: tokio::task::JoinHandle<()>,
+    subagents: Arc<RwLock<HashMap<String, crate::acp::subagent::SubagentHandle>>>,
+    watch_id: String,
+    store: Option<Arc<crate::agent::session_store::SessionStore>>,
+    acp: AcpControlPlane,
+    session_id: crate::acp::config::AcpSessionId,
+    acp_for_recovery: AcpControlPlane,
+    recovery_session_id: crate::acp::config::AcpSessionId,
+    recovery_parent_id: String,
+    recovery_config: SubagentConfig,
+) {
+    type SubagentMap = HashMap<String, SubagentHandle>;
+
+    match join_handle.await {
+        Ok(()) => {
+            let mut map: tokio::sync::RwLockWriteGuard<'_, SubagentMap> = subagents.write().await;
+            if let Some(h) = map.get_mut(&watch_id) {
+                h.status = SubagentStatus::Terminated;
+            }
+            drop(map);
+            acp.emit(crate::gateway::GatewayEvent::AcpCompleted {
+                session_id: session_id.to_string(),
+                subagent_id: watch_id.clone(),
+                status: "terminated".to_string(),
+            })
+            .await;
+            if let Some(store) = store {
+                if let Err(e) = store
+                    .complete_subagent_run(&watch_id, Some("normal exit"), None)
+                    .await
+                {
+                    warn!("Failed to persist normal completion for {}: {}", watch_id, e);
+                }
+            }
+        }
+        Err(e) if e.is_panic() => {
+            warn!("Subagent {} panicked — marking Crashed", watch_id);
+            let current_crash_count = {
+                let map: tokio::sync::RwLockReadGuard<'_, SubagentMap> = subagents.read().await;
+                map.get(&watch_id).map(|h| h.crash_count).unwrap_or(0)
+            };
+            {
+                let mut map: tokio::sync::RwLockWriteGuard<'_, SubagentMap> = subagents.write().await;
+                if let Some(h) = map.get_mut(&watch_id) {
+                    h.status = SubagentStatus::Crashed;
+                }
+            }
+            acp.emit(crate::gateway::GatewayEvent::AcpCompleted {
+                session_id: session_id.to_string(),
+                subagent_id: watch_id.clone(),
+                status: "crashed".to_string(),
+            })
+            .await;
+            if let Some(ref store) = store {
+                if let Err(e) = store
+                    .complete_subagent_run(&watch_id, None, Some("panicked"))
+                    .await
+                {
+                    warn!("Failed to persist crash completion for {}: {}", watch_id, e);
+                }
+            }
+
+            // Automatic recovery with backoff, scheduled through the actor loop
+            // to avoid a direct async recursion cycle with spawn_subagent.
+            let (should_recover, delay) = {
+                let global = acp_for_recovery.recovery.read().await;
+                let should_recover =
+                    global.enabled && current_crash_count < global.max_retries;
+                let delay = if should_recover {
+                    global
+                        .backoff_seconds
+                        .get(current_crash_count as usize)
+                        .copied()
+                        .unwrap_or_else(|| global.backoff_seconds.last().copied().unwrap_or(30))
+                } else {
+                    0
+                };
+                (should_recover, delay)
+            };
+
+            if !should_recover {
+                return;
+            }
+
+            let acp = acp_for_recovery;
+            warn!(
+                "Auto-recovering subagent {} (attempt {}/{}) in {}s",
+                watch_id,
+                current_crash_count + 1,
+                { acp.recovery.read().await.max_retries },
+                delay
+            );
+            tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+            let cmd = AcpCommand::RecoverSubagent {
+                session_id: recovery_session_id,
+                parent_id: recovery_parent_id,
+                config: recovery_config,
+                crash_count: current_crash_count + 1,
+            };
+            if let Err(e) = acp.command_tx.send(cmd).await {
+                warn!("Failed to schedule recovery command for {}: {}", watch_id, e);
+            }
+        }
+        Err(_) => {
+            // Aborted externally
+            let mut map: tokio::sync::RwLockWriteGuard<'_, SubagentMap> = subagents.write().await;
+            if let Some(h) = map.get_mut(&watch_id) {
+                h.status = SubagentStatus::Terminated;
+            }
+            drop(map);
+            acp.emit(crate::gateway::GatewayEvent::AcpCompleted {
+                session_id: session_id.to_string(),
+                subagent_id: watch_id.clone(),
+                status: "aborted".to_string(),
+            })
+            .await;
+        }
     }
 }

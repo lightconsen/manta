@@ -182,6 +182,41 @@ pub(crate) struct ActorContext {
     pub(crate) control_plane: AcpControlPlane,
 }
 
+/// Dispatches an execute command to a session actor.
+///
+/// Extracted to eliminate the 3-way repetition across ExecuteSession,
+/// ExecuteRun, and ExecuteSessionWithProgress.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_execute(
+    sessions: &mut HashMap<String, SessionHandle>,
+    session_meta: &mut HashMap<String, usize>,
+    session_id: String,
+    agent: Arc<Agent>,
+    message: IncomingMessage,
+    mode: ExecutionMode,
+    progress_cb: Option<ProgressCallback>,
+    max_iterations: usize,
+    respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
+    label: &str,
+) {
+    let handle = get_or_create_session(sessions, session_meta, &session_id, mode, max_iterations).await;
+
+    if let Err(e) = handle
+        .tx
+        .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
+            agent,
+            message,
+            mode,
+            progress_cb,
+            max_iterations,
+            respond_to,
+        })))
+        .await
+    {
+        warn!("Failed to dispatch {} for {}: {}", label, session_id, e);
+    }
+}
+
 /// ACP actor loop — routes commands to per-session serial queues
 pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, ctx: ActorContext) {
     let mut sessions: HashMap<String, SessionHandle> = HashMap::new();
@@ -197,29 +232,19 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
             } => {
                 let session_id = message.conversation_id.0.clone();
                 let effective_max = req_max_iter.unwrap_or(ctx.max_iterations);
-                let handle = get_or_create_session(
+                dispatch_execute(
                     &mut sessions,
                     &mut session_meta,
-                    &session_id,
+                    session_id,
+                    agent,
+                    message,
                     ExecutionMode::Session,
+                    None,
                     effective_max,
+                    respond_to,
+                    "ExecuteSession",
                 )
                 .await;
-
-                if let Err(e) = handle
-                    .tx
-                    .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
-                        agent,
-                        message,
-                        mode: ExecutionMode::Session,
-                        progress_cb: None,
-                        max_iterations: effective_max,
-                        respond_to,
-                    })))
-                    .await
-                {
-                    warn!("Failed to dispatch ExecuteSession for {}: {}", session_id, e);
-                }
             }
 
             AcpCommand::ExecuteRun {
@@ -230,29 +255,19 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
             } => {
                 let session_id = message.conversation_id.0.clone();
                 let effective_max = req_max_iter.unwrap_or(ctx.max_iterations);
-                let handle = get_or_create_session(
+                dispatch_execute(
                     &mut sessions,
                     &mut session_meta,
-                    &session_id,
+                    session_id,
+                    agent,
+                    message,
                     ExecutionMode::Run,
+                    None,
                     effective_max,
+                    respond_to,
+                    "ExecuteRun",
                 )
                 .await;
-
-                if let Err(e) = handle
-                    .tx
-                    .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
-                        agent,
-                        message,
-                        mode: ExecutionMode::Run,
-                        progress_cb: None,
-                        max_iterations: effective_max,
-                        respond_to,
-                    })))
-                    .await
-                {
-                    warn!("Failed to dispatch ExecuteRun for {}: {}", session_id, e);
-                }
             }
 
             AcpCommand::ExecuteSessionWithProgress {
@@ -264,32 +279,19 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
             } => {
                 let session_id = message.conversation_id.0.clone();
                 let effective_max = req_max_iter.unwrap_or(ctx.max_iterations);
-                let handle = get_or_create_session(
+                dispatch_execute(
                     &mut sessions,
                     &mut session_meta,
-                    &session_id,
+                    session_id,
+                    agent,
+                    message,
                     ExecutionMode::Session,
+                    Some(progress_cb),
                     effective_max,
+                    respond_to,
+                    "ExecuteSessionWithProgress",
                 )
                 .await;
-
-                if let Err(e) = handle
-                    .tx
-                    .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
-                        agent,
-                        message,
-                        mode: ExecutionMode::Session,
-                        progress_cb: Some(progress_cb),
-                        max_iterations: effective_max,
-                        respond_to,
-                    })))
-                    .await
-                {
-                    warn!(
-                        "Failed to dispatch ExecuteSessionWithProgress for {}: {}",
-                        session_id, e
-                    );
-                }
             }
 
             AcpCommand::Pause { session_id } => {
@@ -346,7 +348,9 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
 
             AcpCommand::GetStatus { session_id, respond_to } => {
                 let status = if let Some(handle) = sessions.get(&session_id) {
-                    let queue_depth = 256_usize.saturating_sub(handle.tx.capacity());
+                    // tokio::mpsc does not expose remaining capacity from the
+                    // sender side, so queue_depth is always reported as 0.
+                    let queue_depth = 0usize;
                     let max_iterations = session_meta
                         .get(&session_id)
                         .copied()
@@ -379,56 +383,32 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                         Some(builder) => match builder() {
                             Ok(agent) => Arc::new(agent),
                             Err(e) => {
-                                if let Err(send_err) = respond_to.send(Err(e)) {
-                                    warn!(
-                                        "Failed to send ExecuteForBridge builder error response: \
-                                         {:?}",
-                                        send_err
-                                    );
-                                }
+                                let _ = respond_to.send(Err(e));
                                 continue;
                             }
                         },
                         None => {
-                            let err = crate::error::SyscityError::Internal(
+                            let _ = respond_to.send(Err(crate::error::SyscityError::Internal(
                                 "No agent builder configured".to_string(),
-                            );
-                            if let Err(send_err) = respond_to.send(Err(err)) {
-                                warn!(
-                                    "Failed to send ExecuteForBridge no-builder error response: \
-                                     {:?}",
-                                    send_err
-                                );
-                            }
+                            )));
                             continue;
                         }
                     }
                 };
 
-                let effective_max = ctx.max_iterations;
-                let handle = get_or_create_session(
+                dispatch_execute(
                     &mut sessions,
                     &mut session_meta,
-                    &session_id,
+                    session_id,
+                    agent,
+                    message,
                     mode,
-                    effective_max,
+                    None,
+                    ctx.max_iterations,
+                    respond_to,
+                    "ExecuteForBridge",
                 )
                 .await;
-
-                if let Err(e) = handle
-                    .tx
-                    .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
-                        agent,
-                        message,
-                        mode,
-                        progress_cb: None,
-                        max_iterations: effective_max,
-                        respond_to,
-                    })))
-                    .await
-                {
-                    warn!("Failed to dispatch ExecuteForBridge for {}: {}", session_id, e);
-                }
             }
 
             AcpCommand::RecoverSubagent {
