@@ -199,7 +199,8 @@ async fn dispatch_execute(
     respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
     label: &str,
 ) {
-    let handle = get_or_create_session(sessions, session_meta, &session_id, mode, max_iterations).await;
+    let handle =
+        get_or_create_session(sessions, session_meta, &session_id, mode, max_iterations).await;
 
     if let Err(e) = handle
         .tx

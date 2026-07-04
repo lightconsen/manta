@@ -215,8 +215,10 @@ fn spawn_derived_task(inner: Arc<Inner>, derived_hub: Arc<DerivedStreamHub>) -> 
                     if admitted {
                         // Cache fused entities so `now()` can return them.
                         if let Event::Entity { entity, .. } = &ev {
-                            let mut entities =
-                                inner.current_entities.lock().unwrap_or_else(|e| e.into_inner());
+                            let mut entities = inner
+                                .current_entities
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
                             entities.insert(entity.id.clone(), entity.clone());
                         }
                         inner.push_event(ev);

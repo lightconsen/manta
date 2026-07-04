@@ -59,7 +59,9 @@ impl AppleScriptTool {
         };
 
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(script_owned.as_bytes()).await;
+            if let Err(e) = stdin.write_all(script_owned.as_bytes()).await {
+                warn!("Failed to write to osascript stdin: {}", e);
+            }
         }
 
         let mut child_opt = Some(child);

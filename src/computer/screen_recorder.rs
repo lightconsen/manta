@@ -422,7 +422,12 @@ impl ScreenRecorder {
         self.running.store(false, Ordering::SeqCst);
 
         if let Some(handle) = self.capture_task.take() {
-            let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+            if tokio::time::timeout(Duration::from_secs(2), handle)
+                .await
+                .is_err()
+            {
+                warn!("Screen recorder capture task did not stop within 2s timeout");
+            }
         }
 
         if let Some(path) = &self.save_path {
@@ -641,8 +646,12 @@ async fn run_ffmpeg_capture(
         }
     }
 
-    let _ = child.kill().await;
-    let _ = child.wait().await;
+    if let Err(e) = child.kill().await {
+        warn!("Failed to kill ffmpeg child: {}", e);
+    }
+    if let Err(e) = child.wait().await {
+        warn!("Failed to wait for ffmpeg child exit: {}", e);
+    }
 
     // Log ffmpeg stderr for diagnostics (e.g. codec init failures).
     if let Some(mut stderr) = stderr {

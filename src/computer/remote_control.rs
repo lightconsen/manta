@@ -25,14 +25,13 @@
 //!     ..Default::default()
 //! };
 //! let adapter =
-//!     RemoteControlAdapter::new(config, Arc::new(syscity::tools::ToolRegistry::new())).await?;
+//!     RemoteControlAdapter::new(config).await?;
 //! let screenshot = adapter.screenshot(None).await?;
 //! # Ok(())
 //! # }
 //! ```
 
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -45,8 +44,6 @@ use crate::computer::{
     ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton, Point,
     Rect, Result, Screenshot, UiElement, WaitCondition,
 };
-use crate::tools::ToolRegistry;
-
 // ── Configuration ──────────────────────────────────────────────────────────
 
 /// Remote access protocol.
@@ -132,8 +129,6 @@ impl RemoteOs {
 /// native automation tools (`xdotool`, `cliclick`, PowerShell, etc.).
 pub struct RemoteControlAdapter {
     config: RemoteControlConfig,
-    #[allow(dead_code)]
-    registry: Arc<ToolRegistry>,
     remote_os: RemoteOs,
 }
 
@@ -151,10 +146,9 @@ impl RemoteControlAdapter {
     ///
     /// Probes the remote host to detect its OS.  Fails if the host is
     /// unreachable or SSH authentication fails.
-    pub async fn new(config: RemoteControlConfig, registry: Arc<ToolRegistry>) -> Result<Self> {
+    pub async fn new(config: RemoteControlConfig) -> Result<Self> {
         let mut adapter = Self {
             config,
-            registry,
             remote_os: RemoteOs::Unknown,
         };
 
@@ -167,10 +161,9 @@ impl RemoteControlAdapter {
     }
 
     /// Create without probing (useful in tests).
-    pub fn new_unchecked(config: RemoteControlConfig, registry: Arc<ToolRegistry>) -> Self {
+    pub fn new_unchecked(config: RemoteControlConfig) -> Self {
         Self {
             config,
-            registry,
             remote_os: RemoteOs::Linux,
         }
     }
@@ -909,7 +902,9 @@ impl ComputerAdapter for RemoteControlAdapter {
                                 .await
                                 .map_err(|e| ComputerError::Other(e.to_string()))?;
                         }
-                        let _ = child.wait().await;
+                        if let Err(e) = child.wait().await {
+                            warn!("Failed to wait for remote clipboard (Linux): {}", e);
+                        }
                     }
                     RemoteOs::Macos => {
                         let mut ssh = self.ssh_cmd();
@@ -924,7 +919,9 @@ impl ComputerAdapter for RemoteControlAdapter {
                                 .await
                                 .map_err(|e| ComputerError::Other(e.to_string()))?;
                         }
-                        let _ = child.wait().await;
+                        if let Err(e) = child.wait().await {
+                            warn!("Failed to wait for remote clipboard (macOS): {}", e);
+                        }
                     }
                     RemoteOs::Windows => {
                         let ps = format!(
@@ -1116,30 +1113,24 @@ mod tests {
 
     #[test]
     fn test_remote_control_adapter_debug() {
-        let adapter = RemoteControlAdapter::new_unchecked(
-            RemoteControlConfig::default(),
-            Arc::new(ToolRegistry::new()),
-        );
+        let adapter = RemoteControlAdapter::new_unchecked(RemoteControlConfig::default());
         let debug = format!("{:?}", adapter);
         assert!(debug.contains("RemoteControlAdapter"));
     }
 
     #[test]
     fn test_ssh_cmd_builds() {
-        let adapter = RemoteControlAdapter::new_unchecked(
-            RemoteControlConfig {
-                host: "test.example.com".to_string(),
-                user: "admin".to_string(),
-                port: 2222,
-                protocol: RemoteProtocol::Ssh {
-                    key_path: Some("/key".to_string()),
-                },
-                display: Some(":1".to_string()),
-                ssh_extra_args: vec!["-o".to_string(), "Compression=yes".to_string()],
-                connect_timeout: Duration::from_secs(5),
+        let adapter = RemoteControlAdapter::new_unchecked(RemoteControlConfig {
+            host: "test.example.com".to_string(),
+            user: "admin".to_string(),
+            port: 2222,
+            protocol: RemoteProtocol::Ssh {
+                key_path: Some("/key".to_string()),
             },
-            Arc::new(ToolRegistry::new()),
-        );
+            display: Some(":1".to_string()),
+            ssh_extra_args: vec!["-o".to_string(), "Compression=yes".to_string()],
+            connect_timeout: Duration::from_secs(5),
+        });
 
         let cmd = adapter.ssh_cmd();
         // We can't inspect the Command easily, but at least we verified it doesn't

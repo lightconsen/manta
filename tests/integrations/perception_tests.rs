@@ -470,7 +470,7 @@ impl ComputerAdapter for StubScreenshotComputer {
 
 #[tokio::test]
 async fn screenshot_adapter_name_and_modality() {
-    let headless = HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new()));
+    let headless = HeadlessComputerAdapter::new();
     let adapter = ScreenshotAdapter::new(Arc::new(headless));
     assert_eq!(adapter.name(), "screenshot");
     assert_eq!(adapter.modality(), Modality::Rgb);
@@ -481,7 +481,7 @@ async fn screenshot_adapter_name_and_modality() {
 async fn screenshot_adapter_observe_handles_no_display() {
     // HeadlessComputerAdapter without virtual display → ComputerError::NoDisplay
     // → ScreenshotAdapter swallows the error and returns empty Vec.
-    let headless = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
+    let headless = Arc::new(HeadlessComputerAdapter::new());
     let adapter = ScreenshotAdapter::new(headless);
     let obs = adapter.observe().await;
     assert!(obs.is_empty(), "expected empty observations when no display server");

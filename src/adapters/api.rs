@@ -92,7 +92,10 @@ impl ApiClient {
         let s = match key_ref? {
             SecretRef::String(s) => s,
             other => {
-                tracing::warn!("resolve_api_key: unsupported SecretRef variant {:?}, key will be None", other);
+                tracing::warn!(
+                    "resolve_api_key: unsupported SecretRef variant {:?}, key will be None",
+                    other
+                );
                 return None;
             }
         };

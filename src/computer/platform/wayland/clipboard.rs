@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 
@@ -110,8 +110,12 @@ impl Tool for ClipboardTool {
                         .spawn()?;
                     use tokio::io::AsyncWriteExt;
                     if let Some(mut stdin) = child.stdin.take() {
-                        let _ = stdin.write_all(text.as_bytes()).await;
-                        let _ = stdin.shutdown().await;
+                        if let Err(e) = stdin.write_all(text.as_bytes()).await {
+                            warn!("Failed to write to wl-copy stdin: {}", e);
+                        }
+                        if let Err(e) = stdin.shutdown().await {
+                            warn!("Failed to shutdown wl-copy stdin: {}", e);
+                        }
                     }
                     child.wait().await
                 })

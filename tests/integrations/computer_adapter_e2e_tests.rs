@@ -21,7 +21,7 @@ use syscity::tools::ToolRegistry;
 // ---------------------------------------------------------------------------
 
 fn headless_adapter() -> HeadlessComputerAdapter {
-    HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new()))
+    HeadlessComputerAdapter::new()
 }
 
 fn default_loop_config() -> LoopConfig {

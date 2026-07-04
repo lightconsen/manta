@@ -592,9 +592,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_with_cancelled_controller() {
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
-            crate::tools::ToolRegistry::new(),
-        )));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new());
         let verifier = VerificationEngine::new(adapter.clone());
         let ctrl = crate::acp::ExecutionController::new();
         ctrl.cancel().await;
@@ -628,9 +626,7 @@ mod tests {
         let tool_registry = Arc::new(ToolRegistry::new());
         tool_registry.register_dynamic(Arc::new(MockDeviceReadTool));
 
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
-            ToolRegistry::new(),
-        )));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new());
         let verifier = VerificationEngine::new(adapter.clone());
         let executor = TaskExecutor::new(adapter, verifier).with_tool_registry(tool_registry);
 
@@ -660,9 +656,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_tool_call_no_registry() {
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
-            ToolRegistry::new(),
-        )));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new());
         let verifier = VerificationEngine::new(adapter.clone());
         // No with_tool_registry() — ToolRegistry not configured
         let executor = TaskExecutor::new(adapter, verifier);
@@ -696,9 +690,7 @@ mod tests {
         // Register a tool but call a different one
         tool_registry.register_dynamic(Arc::new(MockDeviceReadTool));
 
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
-            ToolRegistry::new(),
-        )));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new());
         let verifier = VerificationEngine::new(adapter.clone());
         let executor = TaskExecutor::new(adapter, verifier).with_tool_registry(tool_registry);
 

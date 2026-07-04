@@ -489,7 +489,8 @@ async fn watchdog_task(
                 map.get(&watch_id).map(|h| h.crash_count).unwrap_or(0)
             };
             {
-                let mut map: tokio::sync::RwLockWriteGuard<'_, SubagentMap> = subagents.write().await;
+                let mut map: tokio::sync::RwLockWriteGuard<'_, SubagentMap> =
+                    subagents.write().await;
                 if let Some(h) = map.get_mut(&watch_id) {
                     h.status = SubagentStatus::Crashed;
                 }
@@ -513,8 +514,7 @@ async fn watchdog_task(
             // to avoid a direct async recursion cycle with spawn_subagent.
             let (should_recover, delay) = {
                 let global = acp_for_recovery.recovery.read().await;
-                let should_recover =
-                    global.enabled && current_crash_count < global.max_retries;
+                let should_recover = global.enabled && current_crash_count < global.max_retries;
                 let delay = if should_recover {
                     global
                         .backoff_seconds

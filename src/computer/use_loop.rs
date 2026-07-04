@@ -594,9 +594,7 @@ mod tests {
     async fn test_execution_controller_cancels_loop() {
         // Verify that attaching an already-cancelled controller aborts the loop
         // immediately with a cancellation message.
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
-            crate::tools::ToolRegistry::new(),
-        )));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new());
         let ctrl = crate::acp::ExecutionController::new();
         ctrl.cancel().await;
 
@@ -628,9 +626,7 @@ mod tests {
         ));
 
         let loop_ = ComputerUseLoop::new(Arc::new(
-            crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
-                crate::tools::ToolRegistry::new(),
-            )),
+            crate::computer::headless::HeadlessComputerAdapter::new(),
         ))
         .with_rollback_manager(mgr.clone())
         .with_snapshot_paths(vec![file.to_string_lossy().to_string()]);
@@ -673,9 +669,7 @@ mod tests {
     #[tokio::test]
     async fn test_undo_last_step_no_manager_returns_false() {
         let loop_ = ComputerUseLoop::new(Arc::new(
-            crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
-                crate::tools::ToolRegistry::new(),
-            )),
+            crate::computer::headless::HeadlessComputerAdapter::new(),
         ));
 
         let undone = loop_.undo_last_step().await.unwrap();
@@ -684,9 +678,7 @@ mod tests {
 
     #[test]
     fn test_computer_use_loop_builder_methods() {
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(Arc::new(
-            crate::tools::ToolRegistry::new(),
-        )));
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new());
         let mgr = Arc::new(tokio::sync::Mutex::new(
             crate::computer::RollbackManager::with_backup_dir(std::env::temp_dir().join("test")),
         ));

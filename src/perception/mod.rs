@@ -84,7 +84,9 @@ pub use temporal_processor::{
 pub use crate::tools::perception_tool::PerceptionQueryTool;
 
 /// Sensor modality classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Modality {
     /// RGB camera / screenshot.
     Rgb,

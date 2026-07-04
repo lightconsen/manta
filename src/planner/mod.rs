@@ -656,7 +656,7 @@ mod tests {
             Message::assistant("ok")
         });
 
-        let adapter = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
+        let adapter = Arc::new(HeadlessComputerAdapter::new());
         let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
 
         let tools = vec!["shell".to_string()];
@@ -682,7 +682,7 @@ mod tests {
             Message::assistant("done")
         });
 
-        let adapter = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
+        let adapter = Arc::new(HeadlessComputerAdapter::new());
         let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
 
         let result = planner.achieve("run a no-op", &[]).await.unwrap();
@@ -707,7 +707,7 @@ mod tests {
             Message::assistant("done")
         });
 
-        let adapter = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
+        let adapter = Arc::new(HeadlessComputerAdapter::new());
         let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
 
         let result = planner.achieve("chain of waits", &[]).await.unwrap();
@@ -732,7 +732,7 @@ mod tests {
             Message::assistant("ok")
         });
 
-        let adapter = Arc::new(HeadlessComputerAdapter::new(Arc::new(ToolRegistry::new())));
+        let adapter = Arc::new(HeadlessComputerAdapter::new());
         let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
 
         let err = planner.decompose("cyclic goal", &[]).await.unwrap_err();

@@ -73,7 +73,7 @@ pub async fn init_computer_adapter(
                 config.computer.remote_control.timeout_secs,
             ),
         };
-        match crate::computer::RemoteControlAdapter::new(rc_config, tool_registry.clone()).await {
+        match crate::computer::RemoteControlAdapter::new(rc_config).await {
             Ok(adapter) => {
                 info!("Remote control adapter connected to {} for desktop automation", host);
                 return Some(Arc::new(adapter));

@@ -446,13 +446,11 @@ impl ComputerAdapter for X11ComputerAdapter {
                     })?;
                     *guard = Some(watcher);
                 }
-                guard
-                    .as_mut()
-                    .unwrap()
-                    .watch_directory(&path)
-                    .map_err(|e| {
+                if let Some(ref mut watcher) = *guard {
+                    watcher.watch_directory(&path).map_err(|e| {
                         ComputerError::Other(format!("Failed to watch directory: {}", e))
                     })?;
+                }
                 Ok(ActionResult::success(format!("Watching directory: {}", path)))
             }
             DesktopAction::UnwatchDirectory { path } => {
@@ -472,11 +470,11 @@ impl ComputerAdapter for X11ComputerAdapter {
                     })?;
                     *guard = Some(watcher);
                 }
-                guard
-                    .as_mut()
-                    .unwrap()
-                    .watch_file(&path)
-                    .map_err(|e| ComputerError::Other(format!("Failed to watch file: {}", e)))?;
+                if let Some(ref mut watcher) = *guard {
+                    watcher.watch_file(&path).map_err(|e| {
+                        ComputerError::Other(format!("Failed to watch file: {}", e))
+                    })?;
+                }
                 Ok(ActionResult::success(format!("Watching file: {}", path)))
             }
             DesktopAction::UnwatchFile { path } => {
@@ -1035,13 +1033,11 @@ impl ComputerAdapter for WaylandComputerAdapter {
                     })?;
                     *guard = Some(watcher);
                 }
-                guard
-                    .as_mut()
-                    .unwrap()
-                    .watch_directory(&path)
-                    .map_err(|e| {
+                if let Some(ref mut watcher) = *guard {
+                    watcher.watch_directory(&path).map_err(|e| {
                         ComputerError::Other(format!("Failed to watch directory: {}", e))
                     })?;
+                }
                 Ok(ActionResult::success(format!("Watching directory: {}", path)))
             }
             DesktopAction::UnwatchDirectory { path } => {
@@ -1061,11 +1057,11 @@ impl ComputerAdapter for WaylandComputerAdapter {
                     })?;
                     *guard = Some(watcher);
                 }
-                guard
-                    .as_mut()
-                    .unwrap()
-                    .watch_file(&path)
-                    .map_err(|e| ComputerError::Other(format!("Failed to watch file: {}", e)))?;
+                if let Some(ref mut watcher) = *guard {
+                    watcher.watch_file(&path).map_err(|e| {
+                        ComputerError::Other(format!("Failed to watch file: {}", e))
+                    })?;
+                }
                 Ok(ActionResult::success(format!("Watching file: {}", path)))
             }
             DesktopAction::UnwatchFile { path } => {
@@ -1467,6 +1463,6 @@ pub async fn create(registry: Arc<ToolRegistry>) -> Result<Box<dyn ComputerAdapt
     } else if crate::computer::has_x11() {
         Ok(Box::new(X11ComputerAdapter::new(registry)))
     } else {
-        Ok(Box::new(super::HeadlessComputerAdapter::new(registry)))
+        Ok(Box::new(super::HeadlessComputerAdapter::new()))
     }
 }

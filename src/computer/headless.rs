@@ -13,16 +13,15 @@
 
 use std::io::Write;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
+
+use tracing::warn;
 
 use crate::computer::screenshot_encoder::maybe_encode_screenshot;
 use crate::computer::{
     ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton, Rect,
     Result, Screenshot, ScrollDirection, UiElement, WaitCondition,
 };
-use crate::tools::ToolRegistry;
-
 // ── Virtual Display abstraction ────────────────────────────────────────────
 
 /// A virtual display that can host GUI applications without a physical monitor.
@@ -251,8 +250,12 @@ impl VirtualDisplay for XvfbDisplay {
 
     async fn shutdown(&mut self) -> Result<()> {
         if let Some(mut child) = self.child.take() {
-            let _ = child.start_kill();
-            let _ = child.wait().await;
+            if let Err(e) = child.start_kill() {
+                warn!("Failed to kill Xvfb: {}", e);
+            }
+            if let Err(e) = child.wait().await {
+                warn!("Failed to wait for Xvfb exit: {}", e);
+            }
         }
         Ok(())
     }
@@ -274,25 +277,26 @@ impl Drop for XvfbDisplay {
 /// are forwarded to the virtual framebuffer.  When `None`, only non-GUI
 /// actions (shell, wait, file) are supported.
 pub struct HeadlessComputerAdapter {
-    #[allow(dead_code)]
-    registry: Arc<ToolRegistry>,
     virtual_display: Option<Box<dyn VirtualDisplay>>,
+}
+
+impl Default for HeadlessComputerAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HeadlessComputerAdapter {
     /// Create a new headless adapter **without** a virtual display.
-    pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self {
-            registry,
-            virtual_display: None,
-        }
+    pub fn new() -> Self {
+        Self { virtual_display: None }
     }
 
     /// Create a new headless adapter **with** an Xvfb virtual display.
     ///
     /// Only available on Linux.  On other platforms this falls back to
     /// `new()`.
-    pub async fn with_xvfb(registry: Arc<ToolRegistry>) -> Self {
+    pub async fn with_xvfb() -> Self {
         #[cfg(target_os = "linux")]
         {
             match XvfbDisplay::start(1920, 1080).await {
@@ -300,7 +304,6 @@ impl HeadlessComputerAdapter {
                     let display_name = display.display();
                     tracing::info!("Xvfb virtual display started on {}", display_name);
                     return Self {
-                        registry,
                         virtual_display: Some(Box::new(display)),
                     };
                 }
@@ -309,7 +312,7 @@ impl HeadlessComputerAdapter {
                 }
             }
         }
-        Self::new(registry)
+        Self::new()
     }
 
     fn display(&self) -> Option<&str> {
@@ -1035,7 +1038,7 @@ mod tests {
 
     #[test]
     fn test_headless_adapter_without_display() {
-        let adapter = HeadlessComputerAdapter::new(Arc::new(ToolRegistry::default()));
+        let adapter = HeadlessComputerAdapter::new();
         assert!(adapter.display().is_none());
     }
 }

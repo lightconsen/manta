@@ -5,6 +5,7 @@
 //! [`GoalPlanner`](crate::planner) to make multi-step workflows safe.
 
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 /// A single snapshot of some system state.
 #[derive(Debug, Clone)]
@@ -382,23 +383,39 @@ Checkpoint-Computer -Description $description -RestorePointType 'MODIFY_SETTINGS
             #[cfg(target_os = "macos")]
             Snapshot::ApfsSnapshot { path, snapshot_name } => {
                 // Best-effort APFS snapshot restore via tmutil
-                let _ = tokio::process::Command::new("tmutil")
+                warn!(
+                    "Attempting APFS snapshot restore via tmutil for {} (snapshot: {})",
+                    path.display(),
+                    snapshot_name
+                );
+                if let Err(e) = tokio::process::Command::new("tmutil")
                     .args([
                         "restore",
                         &format!("{}/{}", path.display(), snapshot_name),
                         &path.to_string_lossy(),
                     ])
                     .output()
-                    .await;
+                    .await
+                {
+                    warn!("APFS snapshot restore failed: {}", e);
+                }
             }
             #[cfg(target_os = "linux")]
             Snapshot::BtrfsSnapshot { subvolume, snapshot_path } => {
                 // Best-effort Btrfs snapshot restore
-                let _ = tokio::process::Command::new("btrfs")
+                warn!(
+                    "Attempting Btrfs snapshot restore for {} (snapshot: {})",
+                    subvolume.display(),
+                    snapshot_path.display()
+                );
+                if let Err(e) = tokio::process::Command::new("btrfs")
                     .args(["subvolume", "delete", &subvolume.to_string_lossy()])
                     .output()
-                    .await;
-                let _ = tokio::process::Command::new("btrfs")
+                    .await
+                {
+                    warn!("Btrfs subvolume delete failed: {}", e);
+                }
+                if let Err(e) = tokio::process::Command::new("btrfs")
                     .args([
                         "subvolume",
                         "snapshot",
@@ -406,7 +423,10 @@ Checkpoint-Computer -Description $description -RestorePointType 'MODIFY_SETTINGS
                         &subvolume.to_string_lossy(),
                     ])
                     .output()
-                    .await;
+                    .await
+                {
+                    warn!("Btrfs subvolume snapshot failed: {}", e);
+                }
             }
         }
         Ok(())
