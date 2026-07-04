@@ -399,9 +399,16 @@ async fn execute_task_inner(
                     // ── Record success experience ────────────────────────────
                     if let Some(ref learning) = learning_engine {
                         let ctx = ExperienceContext::current(&plan_goal);
-                        let _ = learning
+                        if let Err(e) = learning
                             .record_experience(&action_name, &task.action, true, None, None, &ctx)
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(
+                                "Failed to record success experience for '{}': {}",
+                                task.id,
+                                e
+                            );
+                        }
                     }
 
                     return TaskExecutionOutcome::Success(result.message);
@@ -466,7 +473,7 @@ async fn execute_task_inner(
                     // ── Record experience ─────────────────────────────────────
                     if let Some(ref learning) = learning_engine {
                         let ctx = ExperienceContext::current(&plan_goal);
-                        let _ = learning
+                        if let Err(e) = learning
                             .record_experience(
                                 &action_name,
                                 &task.action,
@@ -475,7 +482,14 @@ async fn execute_task_inner(
                                 alternative_suggestion.as_deref(),
                                 &ctx,
                             )
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(
+                                "Failed to record failure experience for '{}': {}",
+                                task.id,
+                                e
+                            );
+                        }
                     }
 
                     return TaskExecutionOutcome::Failure(error_msg);

@@ -395,7 +395,11 @@ impl TaskScheduler {
     pub async fn stop(&mut self) -> crate::Result<()> {
         self.running.store(false, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
-            let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+            match tokio::time::timeout(Duration::from_secs(5), handle).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!("Scheduler task panicked: {}", e),
+                Err(_) => warn!("Scheduler task did not stop within 5s timeout"),
+            }
         }
         info!("Task scheduler stopped");
         Ok(())

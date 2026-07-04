@@ -177,7 +177,8 @@ impl ToolLearningEngine {
                 serde_json::from_str::<ToolExperience>(&existing_mem.content)
             {
                 existing_exp.reinforcement_count += 1;
-                existing_mem.content = serde_json::to_string(&existing_exp).unwrap_or_default();
+                existing_mem.content = serde_json::to_string(&existing_exp)
+                    .map_err(crate::error::SyscityError::Serialization)?;
                 self.memory.update(existing_mem).await?;
                 info!(
                     "Reinforced tool experience for '{}' (count: {})",
@@ -189,7 +190,7 @@ impl ToolLearningEngine {
 
         let mem = Memory::new(
             "agent",
-            serde_json::to_string(&exp).unwrap_or_default(),
+            serde_json::to_string(&exp).map_err(crate::error::SyscityError::Serialization)?,
             "tool_experience",
         )
         .with_importance_score(if success { 0.6 } else { 0.85 })

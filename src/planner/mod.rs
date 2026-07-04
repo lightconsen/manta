@@ -227,13 +227,8 @@ pub struct PlanResult {
 /// High-level planner that decomposes goals and executes plans.
 #[derive(Clone)]
 pub struct GoalPlanner {
-    #[allow(dead_code)]
-    adapter: Arc<dyn ComputerAdapter>,
-    #[allow(dead_code)]
-    verifier: VerificationEngine,
     executor: TaskExecutor,
     decomposer: GoalDecomposer,
-    #[allow(dead_code)]
     memory: Option<Arc<dyn MemoryStore>>,
     state_store: Option<TaskStateStore>,
     /// Infers prerequisite tool chains for a goal.
@@ -246,12 +241,10 @@ impl GoalPlanner {
     /// Create a new planner with only the adapter (no LLM decomposition).
     pub fn new(adapter: Arc<dyn ComputerAdapter>) -> Self {
         let verifier = VerificationEngine::new(adapter.clone());
-        let executor = TaskExecutor::new(adapter.clone(), verifier.clone());
+        let executor = TaskExecutor::new(adapter, verifier);
         // Dummy decomposer — will error if used.
         let decomposer = GoalDecomposer::new(Arc::new(DummyProvider));
         Self {
-            adapter,
-            verifier,
             executor,
             decomposer,
             memory: None,
@@ -265,11 +258,9 @@ impl GoalPlanner {
     /// decomposition.
     pub fn with_provider(adapter: Arc<dyn ComputerAdapter>, provider: Arc<dyn Provider>) -> Self {
         let verifier = VerificationEngine::new(adapter.clone());
-        let executor = TaskExecutor::new(adapter.clone(), verifier.clone());
+        let executor = TaskExecutor::new(adapter, verifier);
         let decomposer = GoalDecomposer::new(provider.clone());
         Self {
-            adapter,
-            verifier,
             executor,
             decomposer,
             memory: None,
@@ -340,7 +331,12 @@ impl GoalPlanner {
                         context.push_str(&format!("{}. {}\n", i + 1, exp.content));
                     }
                 }
-                _ => {}
+                Ok(_) => {
+                    // No relevant experiences found — proceed without context.
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to search memory for relevant experiences: {}", e);
+                }
             }
         }
 
@@ -359,7 +355,12 @@ impl GoalPlanner {
             Ok(chain) if chain.confidence > 0.7 => {
                 prerequisite_tasks = ToolChainReasoner::links_to_tasks(&chain.prerequisites);
             }
-            Ok(_) | Err(_) => {}
+            Ok(_) => {
+                // Low-confidence or empty chain — no prerequisites to prepend.
+            }
+            Err(e) => {
+                tracing::warn!("Tool-chain analysis failed for goal '{}': {}", goal, e);
+            }
         }
 
         let subtasks = self
