@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::profile::{BrowserDriver, BrowserPoolConfig, BrowserProfile};
 
@@ -188,7 +188,9 @@ impl BrowserInstance {
         if let Some(handle) = page {
             // Close the CDP page via JavaScript so page is actually closed in Chrome
             let close_script = "window.close();";
-            let _ = handle.page.evaluate(close_script).await;
+            if let Err(e) = handle.page.evaluate(close_script).await {
+                warn!(target_id = %target_id, "Failed to close page via JS: {}", e);
+            }
 
             *self.last_used.write().await = Instant::now();
             Ok(true)
@@ -205,8 +207,10 @@ impl BrowserInstance {
             pages.keys().cloned().collect()
         };
 
-        for id in page_ids {
-            self.close_page(&id).await.ok();
+        for id in &page_ids {
+            if let Err(e) = self.close_page(id).await {
+                warn!(target_id = %id, "Error closing page during shutdown: {}", e);
+            }
         }
 
         // Abort the handler task; the browser process will be terminated
@@ -279,9 +283,9 @@ impl BrowserInstance {
 #[derive(Debug)]
 pub struct BrowserPool {
     instances: Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>>,
-    #[allow(dead_code)]
     config: BrowserPoolConfig,
     profiles: Arc<RwLock<HashMap<String, BrowserProfile>>>,
+    cleanup_shutdown: Option<Arc<tokio::sync::Notify>>,
     _cleanup_task: Option<tokio::task::AbortHandle>,
 }
 
@@ -291,20 +295,32 @@ impl BrowserPool {
         instances: Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>>,
         idle_timeout_secs: u64,
         cleanup_interval_secs: u64,
-    ) -> Option<tokio::task::AbortHandle> {
-        tokio::runtime::Handle::try_current().ok().map(|_| {
-            let idle_timeout = Duration::from_secs(idle_timeout_secs);
-            let interval = Duration::from_secs(cleanup_interval_secs);
+    ) -> (Option<tokio::task::AbortHandle>, Option<Arc<tokio::sync::Notify>>) {
+        let runtime_handle = tokio::runtime::Handle::try_current();
+        if runtime_handle.is_err() {
+            return (None, None);
+        }
+        let idle_timeout = Duration::from_secs(idle_timeout_secs);
+        let interval = Duration::from_secs(cleanup_interval_secs);
 
-            let task = tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
-                loop {
-                    ticker.tick().await;
-                    Self::evict_idle(&instances, idle_timeout).await;
+        let shutdown = Arc::new(tokio::sync::Notify::new());
+        let shutdown_clone = shutdown.clone();
+
+        let task = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        Self::evict_idle(&instances, idle_timeout).await;
+                    }
+                    _ = shutdown_clone.notified() => {
+                        debug!("Cleanup task shutting down");
+                        break;
+                    }
                 }
-            });
-            task.abort_handle()
-        })
+            }
+        });
+        (Some(task.abort_handle()), Some(shutdown))
     }
 
     /// Create a new empty browser pool
@@ -316,7 +332,7 @@ impl BrowserPool {
             .insert(config.default_profile.clone(), BrowserProfile::new(&config.default_profile));
         let profiles = Arc::new(RwLock::new(profiles_map));
 
-        let cleanup_handle = Self::spawn_cleanup(
+        let (cleanup_handle, shutdown_notify) = Self::spawn_cleanup(
             instances.clone(),
             config.idle_timeout_secs,
             config.cleanup_interval_secs,
@@ -326,8 +342,14 @@ impl BrowserPool {
             instances,
             config,
             profiles,
+            cleanup_shutdown: shutdown_notify,
             _cleanup_task: cleanup_handle,
         }
+    }
+
+    /// Get the pool configuration
+    pub fn config(&self) -> &BrowserPoolConfig {
+        &self.config
     }
 
     /// Create a pool with pre-configured profiles
@@ -342,7 +364,7 @@ impl BrowserPool {
         let instances: Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
-        let cleanup_handle = Self::spawn_cleanup(
+        let (cleanup_handle, shutdown_notify) = Self::spawn_cleanup(
             instances.clone(),
             config.idle_timeout_secs,
             config.cleanup_interval_secs,
@@ -352,6 +374,7 @@ impl BrowserPool {
             instances,
             config,
             profiles,
+            cleanup_shutdown: shutdown_notify,
             _cleanup_task: cleanup_handle,
         }
     }
@@ -431,6 +454,8 @@ impl BrowserPool {
         if let Some(inst) = instance {
             info!(profile = %profile_name, "Shutting down browser instance");
             inst.shutdown().await;
+        } else {
+            debug!(profile = %profile_name, "No browser instance to shut down");
         }
     }
 
@@ -528,6 +553,10 @@ impl BrowserPool {
 
 impl Drop for BrowserPool {
     fn drop(&mut self) {
+        // Signal the cleanup task to shut down gracefully before aborting
+        if let Some(notify) = self.cleanup_shutdown.take() {
+            notify.notify_waiters();
+        }
         if let Some(handle) = self._cleanup_task.take() {
             handle.abort();
         }

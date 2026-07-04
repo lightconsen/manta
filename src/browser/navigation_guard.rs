@@ -53,16 +53,16 @@ impl NavigationPolicy {
 
 /// Check whether a hostname matches a pattern.
 /// Supports exact match and `*.` prefix wildcard (e.g. `*.example.com`
-/// matches `sub.example.com`).
+/// matches `sub.example.com` but NOT `anexample.com`).
 fn hostname_matches(pattern: &str, host: &str) -> bool {
-    if let Some(suffix) = pattern.strip_prefix("/*.") {
-        host.ends_with(suffix)
-            || host.eq_ignore_ascii_case(suffix)
-            || host.eq_ignore_ascii_case(&format!(".{}", suffix))
-    } else if let Some(suffix) = pattern.strip_prefix("*.") {
-        host.ends_with(suffix)
-            || host.eq_ignore_ascii_case(suffix)
-            || host.eq_ignore_ascii_case(&format!(".{}", suffix))
+    if let Some(suffix) = pattern
+        .strip_prefix("/*.")
+        .or_else(|| pattern.strip_prefix("*."))
+    {
+        // suffix is "example.com" for pattern "*.example.com".
+        // Use subdomain-boundary matching (dot prefix) to avoid false
+        // positives like `anexample.com` matching `*.example.com`.
+        host.eq_ignore_ascii_case(suffix) || host.ends_with(&format!(".{}", suffix))
     } else {
         host.eq_ignore_ascii_case(pattern)
     }
@@ -273,6 +273,15 @@ mod tests {
         // Wildcard: /*. form
         assert!(hostname_matches("/*.example.com", "sub.example.com"));
         assert!(!hostname_matches("/*.example.com", "other.com"));
+        // Regression: wildcard must use subdomain boundary, not suffix match
+        assert!(
+            !hostname_matches("*.example.com", "anexample.com"),
+            "should NOT match anexample.com against *.example.com"
+        );
+        assert!(
+            !hostname_matches("*.example.com", "notexample.com"),
+            "should NOT match notexample.com against *.example.com"
+        );
     }
 
     #[tokio::test]

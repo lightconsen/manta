@@ -269,8 +269,6 @@ pub async fn aria_snapshot(
 
     let data = result.value().cloned().unwrap_or_default();
 
-    let _ref_count = data.get("refCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-
     let elements = data
         .get("elements")
         .and_then(|v| v.as_array())
