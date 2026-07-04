@@ -240,7 +240,7 @@ impl FusionEngine {
         // Derive aggregate properties
         let now = Instant::now();
         let mut modalities: Vec<Modality> = winners.keys().copied().collect();
-        modalities.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        modalities.sort();
 
         let observation_ids: Vec<String> = winners.values().map(|obs| obs.id.to_string()).collect();
 

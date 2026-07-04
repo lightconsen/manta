@@ -104,7 +104,11 @@ impl Tool for ScreenshotTool {
                 }
                 if encoded_path != temp_path {
                     if let Err(e) = tokio::fs::remove_file(&encoded_path).await {
-                        tracing::warn!("Failed to cleanup temp file '{}': {}", encoded_path.display(), e);
+                        tracing::warn!(
+                            "Failed to cleanup temp file '{}': {}",
+                            encoded_path.display(),
+                            e
+                        );
                     }
                 }
 

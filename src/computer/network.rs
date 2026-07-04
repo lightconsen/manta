@@ -454,7 +454,11 @@ impl NetworkInspector {
             .await
         {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-            _ => match tokio::process::Command::new("pfctl").arg("-sr").output().await {
+            _ => match tokio::process::Command::new("pfctl")
+                .arg("-sr")
+                .output()
+                .await
+            {
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
                 _ => String::new(),
             },

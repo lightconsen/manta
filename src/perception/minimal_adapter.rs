@@ -27,7 +27,7 @@
 //!
 //! [`shutdown`]: AgentPerceptionAdapter::shutdown
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -38,8 +38,8 @@ use tokio::task::JoinHandle;
 
 use crate::perception::{
     AdapterError, AgentPerceptionAdapter, AttentionGate, DefaultTemporalProcessor,
-    DerivedStreamHub, Event, Focus, PerceptionStreamHub, PerceptionSummarizer, SalienceFilter,
-    Snapshot, TemporalProcessor,
+    DerivedStreamHub, Event, Focus, FusedEntity, PerceptionStreamHub, PerceptionSummarizer,
+    SalienceFilter, Snapshot, TemporalProcessor,
 };
 
 /// Construction-time tuning for [`MinimalAdapter`].
@@ -103,6 +103,12 @@ struct Inner {
     /// prompt build.
     last_summary: Mutex<Option<String>>,
 
+    /// Latest fused entities, keyed by entity ID. Updated whenever a
+    /// gate-admitted [`Event::Entity`] arrives via the derived task.
+    /// Read by [`AgentPerceptionAdapter::now`] so `Snapshot::entities`
+    /// reflects the current fusion output.
+    current_entities: Mutex<HashMap<String, FusedEntity>>,
+
     shutdown: AtomicBool,
     config: AdapterConfig,
 }
@@ -162,6 +168,7 @@ impl MinimalAdapter {
             temporal,
             summarizer: summarizer.clone(),
             last_summary: Mutex::new(None),
+            current_entities: Mutex::new(HashMap::new()),
             shutdown: AtomicBool::new(false),
             config: config.clone(),
         });
@@ -206,6 +213,12 @@ fn spawn_derived_task(inner: Arc<Inner>, derived_hub: Arc<DerivedStreamHub>) -> 
                         g.admit(&ev)
                     };
                     if admitted {
+                        // Cache fused entities so `now()` can return them.
+                        if let Event::Entity { entity, .. } = &ev {
+                            let mut entities =
+                                inner.current_entities.lock().unwrap_or_else(|e| e.into_inner());
+                            entities.insert(entity.id.clone(), entity.clone());
+                        }
                         inner.push_event(ev);
                     }
                 }
@@ -382,9 +395,17 @@ impl AgentPerceptionAdapter for MinimalAdapter {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
+        let entities: Vec<FusedEntity> = self
+            .inner
+            .current_entities
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect();
         Snapshot {
             at: SystemTime::now(),
-            entities: Vec::new(),
+            entities,
             aggregates,
             recent_events: recent,
             summary,

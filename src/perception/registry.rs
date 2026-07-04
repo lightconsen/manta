@@ -137,6 +137,16 @@ impl PerceptionRegistry {
     /// does not block or affect others. Successes/failures are recorded in
     /// the [`HealthTracker`], which adapts each source's timeout/interval.
     pub async fn poll_all(&self) {
+        let (all_obs, outcomes) = self.collect_poll_results().await;
+        let transitions = self.apply_health_outcomes(&outcomes).await;
+        self.ingest_observations(&all_obs).await;
+        self.mirror_to_raw_hub(&all_obs).await;
+        Self::emit_anomalies(&self.derived_hub_tx, &transitions);
+        self.persist_observations(&all_obs).await;
+    }
+
+    /// Snapshot sources + timeouts, launch parallel polls, drain results.
+    async fn collect_poll_results(&self) -> (Vec<Observation>, Vec<(String, bool)>) {
         // Snapshot the source list and per-source timeouts so we don't hold
         // the read lock while polling.
         let sources_snapshot: Vec<(String, Arc<dyn PerceptionSource>)> = {
@@ -179,12 +189,9 @@ impl PerceptionRegistry {
             });
         }
 
-        // Drain results, collecting per-source outcomes. We batch all
-        // health-tracker mutations into a single write-lock acquisition
-        // afterwards rather than locking once per result, which keeps the
-        // poll path's lock churn at O(1) instead of O(sources).
+        // Drain results.
         let mut all_obs = Vec::new();
-        let mut outcomes: Vec<(String, bool)> = Vec::new(); // (name, succeeded)
+        let mut outcomes: Vec<(String, bool)> = Vec::new();
         while let Some((name, result)) = futs.next().await {
             match result {
                 Ok(obs) => {
@@ -198,58 +205,80 @@ impl PerceptionRegistry {
             }
         }
 
-        // Apply all health transitions under one write lock.
+        (all_obs, outcomes)
+    }
+
+    /// Batch-apply all health transitions under a single write lock.
+    async fn apply_health_outcomes(
+        &self,
+        outcomes: &[(String, bool)],
+    ) -> Vec<(String, HealthState)> {
         let mut transitions: Vec<(String, HealthState)> = Vec::new();
-        {
-            let mut health = self.health.write().await;
-            for (name, succeeded) in &outcomes {
-                let transition = if *succeeded {
-                    health.record_success(name)
-                } else {
-                    health.record_timeout(name)
-                };
-                if let Some(new_state) = transition {
-                    transitions.push((name.clone(), new_state));
-                }
+        let mut health = self.health.write().await;
+        for (name, succeeded) in outcomes {
+            let transition = if *succeeded {
+                health.record_success(name)
+            } else {
+                health.record_timeout(name)
+            };
+            if let Some(new_state) = transition {
+                transitions.push((name.clone(), new_state));
             }
         }
+        transitions
+    }
 
+    /// Push observations into the in-memory aggregator.
+    async fn ingest_observations(&self, all_obs: &[Observation]) {
+        if all_obs.is_empty() {
+            return;
+        }
         let mut aggregator = self.aggregator.write().await;
-        for obs in &all_obs {
+        for obs in all_obs {
             aggregator.push(obs.clone());
         }
-        drop(aggregator);
+    }
 
-        // Mirror onto the streaming pipeline if attached. `send` returns
-        // an error iff there are no active subscribers — that's fine,
-        // it just means no agent is listening yet.
-        if !all_obs.is_empty() {
-            if let Some(tx) = self.raw_hub_tx.read().await.as_ref() {
-                for obs in &all_obs {
-                    let _ = tx.send(obs.clone());
-                }
+    /// Mirror observations onto the streaming pipeline's raw hub.
+    async fn mirror_to_raw_hub(&self, all_obs: &[Observation]) {
+        if all_obs.is_empty() {
+            return;
+        }
+        if let Some(tx) = self.raw_hub_tx.read().await.as_ref() {
+            for obs in all_obs {
+                let _ = tx.send(obs.clone());
             }
         }
+    }
 
-        // Emit health-transition anomalies onto the derived hub.
-        if !transitions.is_empty() {
-            let derived = self.derived_hub_tx.read().await;
-            for (name, new_state) in transitions {
-                Self::emit_anomaly(
-                    &derived,
-                    &name,
-                    AnomalyKind::SourceFault,
-                    Self::severity_for(new_state),
-                );
-            }
+    /// Emit health-transition anomalies onto the derived hub.
+    ///
+    /// Uses `try_read` to avoid blocking the poll cycle — no anomalies
+    /// are worth stalling source polling for.
+    fn emit_anomalies(
+        tx_lock: &RwLock<Option<broadcast::Sender<Event>>>,
+        transitions: &[(String, HealthState)],
+    ) {
+        let Ok(derived) = tx_lock.try_read() else {
+            return;
+        };
+        for (name, new_state) in transitions {
+            Self::emit_anomaly(
+                &derived,
+                name,
+                AnomalyKind::SourceFault,
+                Self::severity_for(*new_state),
+            );
         }
+    }
 
-        // Best-effort durable persistence — log on error but never propagate,
-        // as the in-memory window is the source of truth for live queries.
-        if !all_obs.is_empty() {
-            if let Err(e) = self.store.append_batch(&all_obs).await {
-                tracing::warn!("perception store append failed: {}", e);
-            }
+    /// Best-effort durable persistence — log on error but never propagate.
+    async fn persist_observations(&self, all_obs: &[Observation]) {
+        if all_obs.is_empty() {
+            return;
+        }
+        if let Err(e) = self.store.append_batch(all_obs).await {
+            tracing::warn!("perception store append failed: {}", e);
         }
     }
 

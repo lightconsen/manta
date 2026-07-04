@@ -50,7 +50,9 @@ impl RollbackManager {
     /// immediately after a push, so the invariant is always upheld.
     #[allow(clippy::expect_used)]
     fn last_snapshot(&self) -> &Snapshot {
-        self.snapshots.last().expect("snapshot list should not be empty after push")
+        self.snapshots
+            .last()
+            .expect("snapshot list should not be empty after push")
     }
 
     /// Create a new rollback manager.

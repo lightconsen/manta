@@ -60,6 +60,13 @@ pub trait ObservationStore: Send + Sync {
     /// `since` restricts to observations whose `created_at >= since`.
     /// Implementations may apply a reasonable default cap on result size
     /// (e.g. 10_000 rows) when `query.limit` is `None`.
+    ///
+    /// # Usage
+    ///
+    /// This method is for **direct store access** — e.g., time-range queries
+    /// that span beyond the in-memory aggregation window, or cross-restart
+    /// history lookups. The normal hot-path query goes through
+    /// [`PerceptionRegistry::query`] which reads the in-memory aggregator.
     async fn query(
         &self,
         query: &PerceptionQuery,
@@ -101,13 +108,13 @@ impl ObservationStore for NullObservationStore {
 
 /// Wire format for JSONL records. We keep this distinct from
 /// [`Observation`] because the runtime struct contains [`std::time::Instant`]
-/// (not portable) and uses [`Modality`] (custom Serialize-only) — the
+/// (not portable) and uses [`ObservationId`] (no Deserialize impl) — the
 /// stored form must round-trip through serde including deserialise.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedObservation {
     id: String,
     source: String,
-    modality: PersistedModality,
+    modality: Modality,
     /// Seconds since UNIX_EPOCH. Used as the canonical timestamp for
     /// queries that need cross-restart ordering.
     created_at_unix_secs: u64,
@@ -115,55 +122,6 @@ struct PersistedObservation {
     created_at_nanos: u32,
     confidence: f32,
     data: serde_json::Value,
-}
-
-/// Serializable mirror of [`crate::perception::Modality`].
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-enum PersistedModality {
-    Rgb,
-    Depth,
-    Audio,
-    Tactile,
-    System,
-    Device,
-    UiTree,
-    FileSystem,
-    Network,
-    Other,
-}
-
-impl From<Modality> for PersistedModality {
-    fn from(m: Modality) -> Self {
-        match m {
-            Modality::Rgb => Self::Rgb,
-            Modality::Depth => Self::Depth,
-            Modality::Audio => Self::Audio,
-            Modality::Tactile => Self::Tactile,
-            Modality::System => Self::System,
-            Modality::Device => Self::Device,
-            Modality::UiTree => Self::UiTree,
-            Modality::FileSystem => Self::FileSystem,
-            Modality::Network => Self::Network,
-            Modality::Other => Self::Other,
-        }
-    }
-}
-
-impl From<PersistedModality> for Modality {
-    fn from(m: PersistedModality) -> Self {
-        match m {
-            PersistedModality::Rgb => Self::Rgb,
-            PersistedModality::Depth => Self::Depth,
-            PersistedModality::Audio => Self::Audio,
-            PersistedModality::Tactile => Self::Tactile,
-            PersistedModality::System => Self::System,
-            PersistedModality::Device => Self::Device,
-            PersistedModality::UiTree => Self::UiTree,
-            PersistedModality::FileSystem => Self::FileSystem,
-            PersistedModality::Network => Self::Network,
-            PersistedModality::Other => Self::Other,
-        }
-    }
 }
 
 impl PersistedObservation {
@@ -175,7 +133,7 @@ impl PersistedObservation {
         Self {
             id: obs.id.to_string(),
             source: obs.source.clone(),
-            modality: obs.modality.into(),
+            modality: obs.modality,
             created_at_unix_secs: dur.as_secs(),
             created_at_nanos: dur.subsec_nanos(),
             confidence: obs.confidence,
@@ -192,7 +150,7 @@ impl PersistedObservation {
         Observation {
             id: parse_observation_id(&self.id),
             source: self.source,
-            modality: self.modality.into(),
+            modality: self.modality,
             timestamp: std::time::Instant::now(),
             created_at,
             confidence: self.confidence,
@@ -305,7 +263,18 @@ impl ObservationStore for JsonlObservationStore {
         let mut out = Vec::new();
         let cap = query.limit.unwrap_or(10_000);
 
+        // Pre-compute cutoff day key so we can skip whole files.
+        let since_day = since.as_ref().map(|s| day_key(*s));
+
         for (_day, path) in files.into_iter().rev() {
+            // Skip files whose day key is strictly before the `since`
+            // cutoff — no observation in that file can match.
+            if let Some(ref sd) = since_day {
+                if _day.as_str() < sd.as_str() {
+                    continue;
+                }
+            }
+
             // Iterate newest day first.
             let f = tokio::fs::File::open(&path).await?;
             let reader = tokio::io::BufReader::new(f);
