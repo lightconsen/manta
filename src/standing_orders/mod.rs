@@ -71,135 +71,24 @@ impl StandingOrderManager {
                 continue;
             }
 
-            let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+            let (shutdown_tx, shutdown_rx) = oneshot::channel();
             self.shutdown_txs.push((order.name.clone(), shutdown_tx));
 
-            let order_name = order.name.clone();
-            let agent_id = order.agent_id.clone();
-            let prompt = order.prompt.clone();
-            let schedule_expr = order.schedule.clone();
-            let output_channel = order.output_channel.clone();
-            let timeout = order.timeout_secs.unwrap_or(120);
-            let state = Arc::clone(&self.state);
-
-            let order_name_for_spawn = order_name.clone();
-            let handle = tokio::spawn(async move {
-                let schedule = match CronSchedule::from_str(&schedule_expr) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!(
-                            "Invalid cron expression '{}' for standing order '{}': {}",
-                            schedule_expr, order_name_for_spawn, e
-                        );
-                        return;
-                    }
-                };
-
-                info!(
-                    "Standing order '{}' started (agent={}, schedule='{}')",
-                    order_name_for_spawn, agent_id, schedule_expr
-                );
-
-                loop {
-                    // Calculate next execution time
-                    let next = match schedule.upcoming(Utc).next() {
-                        Some(dt) => dt,
-                        None => {
-                            warn!(
-                                "No upcoming times for standing order '{}' cron '{}'",
-                                order_name_for_spawn, schedule_expr
-                            );
-                            break;
-                        }
-                    };
-
-                    let now = Utc::now();
-                    let delay_ms = if next > now {
-                        (next - now).num_milliseconds().max(0) as u64
-                    } else {
-                        0
-                    };
-
-                    let sleep_deadline = TokioInstant::now() + Duration::from_millis(delay_ms);
-
-                    tokio::select! {
-                        _ = sleep_until(sleep_deadline) => {
-                            // ── Fire the standing order ────────────────
-                            let session_id = format!("standing_order:{}", order_name_for_spawn);
-                            let message = IncomingMessage::new("system", &session_id, &prompt)
-                                .with_provenance(InputProvenance::InternalSystem {
-                                    source: "standing_order".to_string(),
-                                });
-
-                            // Find the target agent
-                            let agent_handle = {
-                                let agents = state.agents.agents.read().await;
-                                agents.get(&agent_id).cloned()
-                            };
-
-                            match agent_handle {
-                                Some(handle) => {
-                                    let result = tokio::time::timeout(
-                                        Duration::from_secs(timeout),
-                                        handle.agent.process_message(message),
-                                    )
-                                    .await;
-
-                                    match result {
-                                        Ok(Ok(response)) => {
-                                            info!("Standing order '{}' completed", order_name_for_spawn);
-
-                                            // Optionally dispatch to a channel
-                                            if let Some(ref channel) = output_channel {
-                                                let dispatch_msg = OutgoingMessage::new(
-                                                    ConversationId(session_id),
-                                                    response.content,
-                                                );
-                                                if let Err(e) = state.channels.reply_dispatcher
-                                                    .dispatch(channel, dispatch_msg)
-                                                    .await
-                                                {
-                                                    warn!(
-                                                        "Failed to dispatch '{}' response: {}",
-                                                        order_name_for_spawn, e
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        Ok(Err(e)) => {
-                                            error!(
-                                                "Standing order '{}' agent error: {}",
-                                                order_name_for_spawn, e
-                                            );
-                                        }
-                                        Err(_) => {
-                                            warn!(
-                                                "Standing order '{}' timed out after {}s",
-                                                order_name_for_spawn, timeout
-                                            );
-                                        }
-                                    }
-                                }
-                                None => {
-                                    warn!(
-                                        "Standing order '{}': agent '{}' not found",
-                                        order_name_for_spawn, agent_id
-                                    );
-                                }
-                            }
-                        }
-                        _ = &mut shutdown_rx => {
-                            info!("Standing order '{}' shutting down", order_name_for_spawn);
-                            break;
-                        }
-                    }
-                }
-            });
+            let handle = tokio::spawn(Self::run_single_order(
+                order.name.clone(),
+                order.agent_id.clone(),
+                order.prompt.clone(),
+                order.schedule.clone(),
+                order.output_channel.clone(),
+                order.timeout_secs.unwrap_or(120),
+                Arc::clone(&self.state),
+                shutdown_rx,
+            ));
 
             // Register the task handle for coordinated shutdown.
             self.state
                 .task_registry
-                .insert_join(format!("standing_order:{}", order_name), handle)
+                .insert_join(format!("standing_order:{}", order.name), handle)
                 .await;
         }
 
@@ -251,6 +140,136 @@ impl StandingOrderManager {
     /// Returns the number of running (enabled) orders.
     pub fn running_count(&self) -> usize {
         self.shutdown_txs.len()
+    }
+
+    /// Run a single standing order: parse the cron schedule, then loop,
+    /// sleeping until each tick and firing the prompt against the agent.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_single_order(
+        order_name: String,
+        agent_id: String,
+        prompt: String,
+        schedule_expr: String,
+        output_channel: Option<String>,
+        timeout_secs: u64,
+        state: Arc<GatewayState>,
+        mut shutdown_rx: oneshot::Receiver<()>,
+    ) {
+        let schedule = match CronSchedule::from_str(&schedule_expr) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(
+                    "Invalid cron expression '{}' for standing order '{}': {}",
+                    schedule_expr, order_name, e
+                );
+                return;
+            }
+        };
+
+        info!(
+            "Standing order '{}' started (agent={}, schedule='{}')",
+            order_name, agent_id, schedule_expr
+        );
+
+        loop {
+            let next = match schedule.upcoming(Utc).next() {
+                Some(dt) => dt,
+                None => {
+                    warn!(
+                        "No upcoming times for standing order '{}' cron '{}'",
+                        order_name, schedule_expr
+                    );
+                    break;
+                }
+            };
+
+            let now = Utc::now();
+            let delay_ms = if next > now {
+                (next - now).num_milliseconds().max(0) as u64
+            } else {
+                0
+            };
+
+            let sleep_deadline = TokioInstant::now() + Duration::from_millis(delay_ms);
+
+            tokio::select! {
+                _ = sleep_until(sleep_deadline) => {
+                    Self::execute_order(
+                        &order_name,
+                        &agent_id,
+                        &prompt,
+                        timeout_secs,
+                        &output_channel,
+                        &state,
+                    ).await;
+                }
+                _ = &mut shutdown_rx => {
+                    info!("Standing order '{}' shutting down", order_name);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Fire a single standing order's prompt against its target agent
+    /// and optionally dispatch the response.
+    async fn execute_order(
+        order_name: &str,
+        agent_id: &str,
+        prompt: &str,
+        timeout_secs: u64,
+        output_channel: &Option<String>,
+        state: &Arc<GatewayState>,
+    ) {
+        let session_id = format!("standing_order:{}", order_name);
+        let message = IncomingMessage::new("system", &session_id, prompt).with_provenance(
+            InputProvenance::InternalSystem {
+                source: "standing_order".to_string(),
+            },
+        );
+
+        let agent_handle = {
+            let agents = state.agents.agents.read().await;
+            agents.get(agent_id).cloned()
+        };
+
+        match agent_handle {
+            Some(handle) => {
+                let result = tokio::time::timeout(
+                    Duration::from_secs(timeout_secs),
+                    handle.agent.process_message(message),
+                )
+                .await;
+
+                match result {
+                    Ok(Ok(response)) => {
+                        info!("Standing order '{}' completed", order_name);
+
+                        if let Some(ref channel) = output_channel {
+                            let dispatch_msg =
+                                OutgoingMessage::new(ConversationId(session_id), response.content);
+                            if let Err(e) = state
+                                .channels
+                                .reply_dispatcher
+                                .dispatch(channel, dispatch_msg)
+                                .await
+                            {
+                                warn!("Failed to dispatch '{}' response: {}", order_name, e);
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        error!("Standing order '{}' agent error: {}", order_name, e);
+                    }
+                    Err(_) => {
+                        warn!("Standing order '{}' timed out after {}s", order_name, timeout_secs);
+                    }
+                }
+            }
+            None => {
+                warn!("Standing order '{}': agent '{}' not found", order_name, agent_id);
+            }
+        }
     }
 }
 
@@ -383,16 +402,6 @@ prompt = "ping"
     }
 
     // ── Manager construction tests ─────────────────────────────────
-
-    #[test]
-    fn test_manager_new_running_count_zero() {
-        let config = StandingOrderConfig::default();
-        // Construct without GatewayState — only tests construction API.
-        let _ = config;
-        // standing_orders::StandingOrderManager requires Arc<GatewayState>,
-        // which is not constructable in isolation. Full start/stop tests
-        // belong in gateway integration tests.
-    }
 
     #[test]
     fn test_standing_order_def_fields() {
