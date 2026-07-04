@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use sqlx::Row;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::error::{Result, SyscityError};
 use crate::export::formats::{
@@ -1193,7 +1193,13 @@ impl ExportService {
         let metadata_str = msg
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m).unwrap_or_default());
+            .map(|m| match serde_json::to_string(m) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Failed to serialize metadata for message {}: {}", msg.id, e);
+                    String::new()
+                }
+            });
 
         sqlx::query(
             "UPDATE chat_messages SET conversation_id = ?, user_id = ?, role = ?, content = ?, \
