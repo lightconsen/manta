@@ -2980,12 +2980,9 @@ Your response:"#,
             // Check for duplicate tool calls
             if context.is_tool_call_duplicate(&tool_name, &tool_args) {
                 warn!("Duplicate tool call detected: {} with same args, skipping", tool_name);
-                results.push(ToolResult::error(
-                    &tool_call.id,
-                    "Error: This exact tool call was already executed. The previous result did \
-                     not provide the expected data. Please try a different approach or \
-                     acknowledge that the tool cannot fulfill this request.",
-                ));
+                // Don't push a ToolResult — the provider will see fewer results
+                // than tool_calls, which is valid and avoids breaking the
+                // tool_call → tool message pairing required by the API.
                 continue;
             }
 
@@ -3336,13 +3333,9 @@ Your response:"#,
                 })
                 .await;
 
-                // Add error result so LLM knows this failed
-                results.push(ToolResult::error(
-                    &tool_call.id,
-                    "Error: This exact tool call was already executed. The previous result did \
-                     not provide the expected data. Please try a different approach or \
-                     acknowledge that the tool cannot fulfill this request.",
-                ));
+                // Don't push a ToolResult — the provider will see fewer results
+                // than tool_calls, which is valid and avoids breaking the
+                // tool_call → tool message pairing required by the API.
                 continue;
             }
 
