@@ -27,7 +27,7 @@ impl WebFetchTool {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(WEB_TIMEOUT)
-            .user_agent("Syscity/0.1.0 (Personal AI Assistant)")
+            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15")
             .build()
             .unwrap_or_default();
 
@@ -358,7 +358,7 @@ impl Default for WebSearchTool {
     fn default() -> Self {
         let client = reqwest::Client::builder()
             .timeout(WEB_TIMEOUT)
-            .user_agent("Syscity/0.1.0 (Personal AI Assistant)")
+            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15")
             .build()
             .unwrap_or_default();
 

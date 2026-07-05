@@ -296,7 +296,7 @@ impl AgentPersonality {
                 }
             }
             Err(e) => {
-                warn!("Failed to stat {} for agent {}: {}", filename, self.id, e);
+                debug!("Failed to stat {} for agent {}: {}", filename, self.id, e);
                 String::new()
             }
         }

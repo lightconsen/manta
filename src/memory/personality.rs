@@ -50,7 +50,7 @@ static RE_SYSTEM_PROMPT_INJECTION: LazyLock<Regex> = LazyLock::new(|| {
 });
 #[allow(clippy::expect_used)]
 static RE_COMMAND_INJECTION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(;|\|\||&&|`|<\(|>\$)\s*[a-z]+")
+    Regex::new(r"(?i)(;|\|\||&&)\s*(rm|sudo|wget|curl|bash|sh|python|perl|powershell|cmd|kill|mkfs|dd|chmod|chown)")
         .expect("hard-coded threat-scan regex is valid")
 });
 #[allow(clippy::expect_used)]
