@@ -426,24 +426,20 @@ pub(crate) async fn start_gateway(
         info!("Log tail broadcaster started");
     }
 
-    // Run the server with graceful shutdown (bounded by a 30s timeout so a
-    // stuck connection cannot prevent gateway teardown indefinitely).
-    let shutdown = async move { shutdown_token.cancelled().await };
-    match timeout(
-        Duration::from_secs(30),
-        axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
-            .with_graceful_shutdown(shutdown),
+    // Run the server until the shutdown token is cancelled.  Axum's
+    // graceful-shutdown mechanism drains existing connections after the
+    // token fires.  Stuck handles are aborted later by `stop_gateway`
+    // (step 12 — abort remaining background tasks) so no separate drain
+    // timeout is needed here.
+    let serve = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .await
-    {
-        Ok(result) => result.map_err(|e| crate::error::SyscityError::ExternalService {
-            source: "Gateway server error".to_string(),
-            cause: Some(Box::new(e)),
-        })?,
-        Err(_) => {
-            warn!("Axum graceful shutdown timed out after 30s; proceeding with teardown");
-        }
-    }
+    .with_graceful_shutdown(async move { shutdown_token.cancelled().await });
+    serve.await.map_err(|e| crate::error::SyscityError::ExternalService {
+        source: "Gateway server error".to_string(),
+        cause: Some(Box::new(e)),
+    })?;
 
     Ok(())
 }
