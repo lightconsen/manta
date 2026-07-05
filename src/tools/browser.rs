@@ -148,7 +148,55 @@ pub enum BrowserAction {
     },
 }
 
-/// Browser tool for web automation
+/// Normalize action names in browser action JSON values.
+/// Converts PascalCase action names to snake_case for serde compatibility.
+/// This handles cases where the LLM sends the Rust enum variant name
+/// (e.g. "Navigate" or "GetHtml") instead of the serde-renamed snake_case
+/// form (e.g. "navigate" or "get_html").
+fn normalize_browser_actions(value: &mut Value) {
+    let normalize_action = |name: &str| -> String {
+        let mut result = String::with_capacity(name.len() + 4);
+        for (i, c) in name.chars().enumerate() {
+            if c.is_uppercase() {
+                if i > 0 {
+                    result.push('_');
+                }
+                for lower in c.to_lowercase() {
+                    result.push(lower);
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    };
+
+    match value {
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                if let Value::Object(obj) = item {
+                    let orig = obj.get("action").and_then(|v| v.as_str()).map(String::from);
+                    if let Some(name) = orig {
+                        let normalized = normalize_action(&name);
+                        if normalized != name {
+                            obj.insert("action".to_string(), Value::String(normalized));
+                        }
+                    }
+                }
+            }
+        }
+        Value::Object(obj) => {
+            let orig = obj.get("action").and_then(|v| v.as_str()).map(String::from);
+            if let Some(name) = orig {
+                let normalized = normalize_action(&name);
+                if normalized != name {
+                    obj.insert("action".to_string(), Value::String(normalized));
+                }
+            }
+        }
+        _ => {}
+    }
+}
 pub struct BrowserTool {
     /// Chrome/Chromium executable path (None = auto-detect)
     chrome_path: Option<String>,
@@ -1499,9 +1547,14 @@ impl Tool for BrowserTool {
 
     async fn execute(
         &self,
-        args: Value,
+        mut args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
+        // Normalize action names to handle LLM-generated PascalCase variant names
+        if let Some(actions_val) = args.get_mut("actions") {
+            normalize_browser_actions(actions_val);
+        }
+
         let actions: Vec<BrowserAction> = serde_json::from_value(
             args.get("actions").cloned().unwrap_or(json!([])),
         )
