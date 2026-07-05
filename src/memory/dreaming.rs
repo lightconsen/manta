@@ -1881,13 +1881,13 @@ impl DreamScheduler {
         // First send cancellation signal to any in-progress dream
         if let Some(tx) = self.cancel_tx.take() {
             if tx.send(true).is_err() {
-                warn!("Failed to send dream cancellation signal (receiver already dropped)");
+                debug!("Failed to send dream cancellation signal (receiver already dropped)");
             }
         }
         // Then send shutdown signal to the scheduler loop
         if let Some(tx) = self.shutdown_tx.take() {
             if let Err(e) = tx.send(()).await {
-                warn!("Failed to send dream scheduler shutdown signal: {:?}", e);
+                debug!("Failed to send dream scheduler shutdown signal: {:?}", e);
             }
         }
     }

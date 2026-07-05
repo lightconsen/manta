@@ -445,29 +445,6 @@ pub(crate) async fn start_gateway(
         }
     }
 
-    // Stop dream scheduler on shutdown
-    if let Some(mut scheduler) = state.memory.dream_scheduler.read().await.clone() {
-        scheduler.stop().await;
-        if let Some(handle) = state
-            .task_registry
-            .remove_join_or_abort("dream_scheduler")
-            .await
-        {
-            match timeout(Duration::from_secs(5), handle).await {
-                Ok(_) => info!("Dream scheduler stopped"),
-                Err(_) => warn!("Dream scheduler did not stop within timeout"),
-            }
-        } else {
-            info!("Dream scheduler stopped");
-        }
-    }
-
-    // Stop standing orders manager on shutdown
-    if let Some(mut manager) = state.memory.standing_order_manager.write().await.take() {
-        manager.stop().await;
-        info!("Standing orders manager stopped");
-    }
-
     Ok(())
 }
 
@@ -484,15 +461,17 @@ pub(crate) async fn stop_gateway(
     shutdown_token.cancel();
 
     // 1. Drain the unified message workers.
+    // Abort all first (shutdown_token was already cancelled), then await
+    // so we don't hang on stuck tasks.
     let message_handles = state
         .task_registry
         .remove_matching_join_or_abort("message:")
         .await;
+    for handle in &message_handles {
+        handle.abort();
+    }
     for handle in message_handles {
-        match timeout(Duration::from_secs(5), handle).await {
-            Ok(_) => {}
-            Err(_) => warn!("Message worker did not stop within timeout"),
-        }
+        let _ = handle.await;
     }
 
     // 2. Stop all spawned agents and await their loops.
@@ -508,11 +487,11 @@ pub(crate) async fn stop_gateway(
         .task_registry
         .remove_matching_join_or_abort("agent:")
         .await;
+    for handle in &agent_handles {
+        handle.abort();
+    }
     for handle in agent_handles {
-        match timeout(Duration::from_secs(10), handle).await {
-            Ok(_) => {}
-            Err(_) => warn!("Agent task did not stop within timeout"),
-        }
+        let _ = handle.await;
     }
 
     // 3. Stop configured channels.
@@ -556,7 +535,7 @@ pub(crate) async fn stop_gateway(
     }
 
     // 6. Dream scheduler.
-    if let Some(mut scheduler) = state.memory.dream_scheduler.read().await.clone() {
+    if let Some(mut scheduler) = state.memory.dream_scheduler.write().await.take() {
         scheduler.stop().await;
         if let Some(handle) = state
             .task_registry
