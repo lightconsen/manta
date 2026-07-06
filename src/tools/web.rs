@@ -387,25 +387,57 @@ impl WebSearchTool {
         query: &str,
         limit: usize,
     ) -> crate::Result<Vec<SearchResult>> {
-        // DuckDuckGo HTML interface
-        let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding::encode(query));
+        // Try primary endpoint first, fall back to alternative
+        let encoded = urlencoding::encode(query);
+        let primary_url = format!("https://html.duckduckgo.com/html/?q={}", encoded);
+        let fallback_url = format!("https://lite.duckduckgo.com/lite/?q={}", encoded);
 
         let response = self
             .client
-            .get(&url)
-            .header("Accept", "text/html")
+            .get(&primary_url)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            .header("Accept-Encoding", "gzip, deflate")
+            .header("DNT", "1")
+            .header("Connection", "keep-alive")
+            .header("Upgrade-Insecure-Requests", "1")
+            .header("Sec-Fetch-Dest", "document")
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", "none")
+            .header("Sec-Fetch-User", "?1")
+            .timeout(std::time::Duration::from_secs(60))
             .send()
-            .await
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!("Search request failed: {}", e))
-            })?;
+            .await;
 
-        if !response.status().is_success() {
-            return Err(crate::error::SyscityError::Internal(format!(
-                "Search failed: HTTP {}",
-                response.status()
-            )));
-        }
+        let response = match response {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                debug!("DDG primary returned HTTP {}, trying fallback", r.status());
+                self.client
+                    .get(&fallback_url)
+                    .header("Accept", "text/html")
+                    .header("Accept-Language", "zh-CN,zh;q=0.9")
+                    .timeout(std::time::Duration::from_secs(60))
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        crate::error::SyscityError::Internal(format!("Search request failed: {}", e))
+                    })?
+            }
+            Err(_) => {
+                debug!("DDG primary connection failed, trying fallback endpoint");
+                self.client
+                    .get(&fallback_url)
+                    .header("Accept", "text/html")
+                    .header("Accept-Language", "zh-CN,zh;q=0.9")
+                    .timeout(std::time::Duration::from_secs(60))
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        crate::error::SyscityError::Internal(format!("Search request failed: {}", e))
+                    })?
+            }
+        };
 
         let html = response.text().await.map_err(|e| {
             crate::error::SyscityError::Internal(format!("Failed to read response: {}", e))
