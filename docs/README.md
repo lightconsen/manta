@@ -43,7 +43,6 @@ directory under `src/`.
 - [memory](modules/memory.md) — long-term + semantic memory
 - [planner](modules/planner.md) — goal decomposition + DAG execution
 - [skills](modules/skills.md) — skill storage + triggering
-- [perception](modules/perception.md) — sensor fusion pipeline
 
 ### Tools & extension
 - [tools](modules/tools.md) — tool registry, RBAC, approval, circuit breakers
@@ -52,9 +51,8 @@ directory under `src/`.
 - [plugins](modules/plugins.md) — WASM plugin sandbox + hot-reload
 - [canvas](modules/canvas.md) — A2UI dynamic UI components
 
-### Physical / device layer
+### Physical / execution layer
 - [computer](modules/computer.md) — cross-platform desktop control
-- [device](modules/device.md) — device drivers + registry + safety
 - [browser](modules/browser.md) — browser automation
 - [capabilities](modules/capabilities.md) — capability profiles + platform constraints
 

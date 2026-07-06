@@ -17,7 +17,6 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::agent::AgentConfig;
 use crate::channels::ChannelAcpBridge;
 use crate::inbound::*;
 
@@ -227,361 +226,9 @@ pub struct Gateway {
     pub(crate) shutdown_token: CancellationToken,
 }
 
-/// Initialize the perception fusion layer.
-///
-/// 1. Creates the [`PerceptionRegistry`] with the configured aggregation
-///    strategy.
-/// 2. Registers computer adapter sources (screenshot, system monitor).
-/// 3. Registers device capability sources (from the device subsystem).
-/// 4. Registers the microphone source (if enabled).
-/// 5. Registers the [`PerceptionQueryTool`] with [`FusionEngine`].
-/// 6. Spawns a background poll loop (if configured).
-/// 7. Stores the [`PerceptionInit`] on `state.perception_init`.
-///
-/// Returns `Some(Arc<PerceptionRegistry>)` when perception is enabled,
-/// `None` otherwise.
-async fn init_perception(
-    config: &PerceptionConfig,
-    state: &GatewayState,
-    device_registry: Option<Arc<crate::device::registry::DeviceRegistry>>,
-) -> Option<Arc<crate::perception::PerceptionRegistry>> {
-    if !config.enabled {
-        return None;
-    }
-
-    // Build the persistence backend (defaults to NullObservationStore).
-    let store: Arc<dyn crate::perception::ObservationStore> =
-        match config.persistence_backend.as_str() {
-            "jsonl" => {
-                let dir = config.persistence_dir.clone().map(std::path::PathBuf::from);
-                match crate::perception::build_store("jsonl", dir).await {
-                    Ok(s) => {
-                        tracing::info!(
-                            "perception persistence: jsonl backend at {}",
-                            config
-                                .persistence_dir
-                                .clone()
-                                .unwrap_or_else(|| "<default temp dir>".into()),
-                        );
-                        s
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "failed to open jsonl perception store: {}; falling back to none",
-                            e
-                        );
-                        Arc::new(crate::perception::NullObservationStore)
-                    }
-                }
-            }
-            _ => Arc::new(crate::perception::NullObservationStore),
-        };
-
-    let reg = Arc::new(
-        crate::perception::PerceptionRegistry::new(
-            crate::perception::AggregationStrategy::Latest,
-            config.aggregation_window_secs,
-        )
-        .with_store(store.clone()),
-    );
-
-    // Register computer adapter sources
-    let computer_adapter = state.tools.computer_adapter.read().await.clone();
-    if let Some(ref adapter) = computer_adapter {
-        reg.register_source(Arc::new(crate::perception::ScreenshotAdapter::new(adapter.clone())))
-            .await;
-
-        let monitor =
-            Arc::new(tokio::sync::Mutex::new(crate::computer::system::SystemMonitor::new()));
-        reg.register_source(Arc::new(crate::perception::SystemMonitorAdapter::new(monitor)))
-            .await;
-    }
-
-    // Register device capabilities as perception sources
-    if let Some(ref device_registry) = device_registry {
-        for device_id in device_registry.list().await {
-            if let Some(device) = device_registry.get(&device_id).await {
-                for cap in &device.capabilities {
-                    reg.register_source(Arc::new(crate::perception::DeviceSourceAdapter::new(
-                        device.id().to_string(),
-                        cap.clone(),
-                    )))
-                    .await;
-                }
-            }
-        }
-    }
-
-    // Register microphone as a perception source
-    if config.enable_microphone {
-        let audio_source = match config.audio_source.as_str() {
-            "system_output" => crate::computer::audio::AudioSource::SystemOutput,
-            _ => crate::computer::audio::AudioSource::Microphone,
-        };
-        let adapter_config = crate::perception::AudioAdapterConfig {
-            audio_source,
-            sample_rate: config.audio_sample_rate,
-            silence_threshold_db: config.silence_threshold_db,
-            channel_capacity: 256,
-            reprobe_interval_secs: 0,
-        };
-        reg.register_source(Arc::new(crate::perception::MicrophoneAdapter::new(adapter_config)))
-            .await;
-        tracing::info!(
-            "Microphone perception source registered (source={}, rate={}Hz)",
-            config.audio_source,
-            config.audio_sample_rate,
-        );
-    }
-
-    // Register the perception query tool with fusion support
-    let tool = Arc::new(
-        crate::tools::perception_tool::PerceptionQueryTool::new(reg.clone())
-            .with_fusion(crate::perception::FusionConfig::default()),
-    );
-    state.tools.registry.register_dynamic(tool);
-
-    // Spawn background poll loop and keep its handle in PerceptionInit.
-    let poll_handle = if config.poll_interval_secs > 0 {
-        let r = reg.clone();
-        let interval = std::time::Duration::from_secs(config.poll_interval_secs);
-        let handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            loop {
-                ticker.tick().await;
-                r.poll_all().await;
-            }
-        });
-        state
-            .task_registry
-            .insert_abort("perception:poll", &handle)
-            .await;
-        Some(handle)
-    } else {
-        None
-    };
-
-    // Spawn periodic prune task for the persistent store.
-    if config.persistence_retention_days > 0 && config.persistence_backend != "none" {
-        let store_clone = store.clone();
-        let retention_days = config.persistence_retention_days;
-        let handle = tokio::spawn(async move {
-            // Run every 6 hours.
-            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
-            ticker.tick().await; // skip the immediate tick
-            loop {
-                ticker.tick().await;
-                let cutoff = std::time::SystemTime::now()
-                    - std::time::Duration::from_secs(retention_days * 86_400);
-                match store_clone.prune_older_than(cutoff).await {
-                    Ok(n) => tracing::debug!("perception store prune: ~{n} rows removed"),
-                    Err(e) => tracing::warn!("perception store prune failed: {e}"),
-                }
-            }
-        });
-        state
-            .task_registry
-            .insert_join("perception:prune", handle)
-            .await;
-    }
-
-    // Spin up the streaming pipeline (raw_hub → temporal/fusion →
-    // derived_hub) that per-agent MinimalAdapters subscribe to. Then
-    // attach every streaming source already known to the registry, and
-    // spawn a periodic sync so hot-plugged sources are picked up.
-    let perception_context = Arc::new(crate::perception::PerceptionContext::start(
-        crate::perception::PerceptionContextConfig::default(),
-    ));
-    perception_context
-        .raw_hub()
-        .sync_with_registry(reg.as_ref())
-        .await;
-    // Bridge poll-only sources (Screenshot, SystemMonitor, …) into
-    // raw_hub by handing the registry the hub's broadcast sender.
-    reg.set_raw_hub_sender(Some(perception_context.raw_hub().sender()))
-        .await;
-    // Wire health-transition anomalies onto the derived hub so per-agent
-    // adapters see source faults (Healthy → Degraded → Quarantined and
-    // back) without polling the health endpoint.
-    reg.set_derived_hub_sender(Some(perception_context.derived_hub().sender()))
-        .await;
-    let sync_handle = crate::perception::spawn_stream_hub_sync(
-        perception_context.raw_hub().clone(),
-        reg.clone(),
-        std::time::Duration::from_secs(5),
-    );
-    state
-        .task_registry
-        .insert_join("perception:stream_sync", sync_handle)
-        .await;
-
-    // Store PerceptionInit on state (poll_handle tracks the poll loop).
-    *state.perception_init.write().await = Some(crate::gateway::state::PerceptionInit {
-        registry: reg.clone(),
-        context: perception_context,
-        poll_handle,
-    });
-
-    Some(reg)
-}
-
-/// Initialize the control lane (optional high-priority safety loop).
-///
-/// When [`DeviceConfig::control`] is enabled, this function:
-/// 1. Creates a [`ControlHandlerRegistry`].
-/// 2. Collects [`ControlHandler`]s from registered device drivers.
-/// 3. Spawns the control loop on the current runtime (or a dedicated
-///    single-threaded runtime if configured).
-/// 4. Stores a [`ControlInit`] on `state.control_init`.
-async fn init_control(device_config: &crate::gateway::DeviceConfig, state: &GatewayState) {
-    if !device_config.control.enabled {
-        return;
-    }
-
-    // Get the device registry — need it for the control loop.
-    let registry = match state.device_init.read().await.as_ref() {
-        Some(di) => di.registry.clone(),
-        None => {
-            tracing::warn!("Control lane enabled but no device registry available");
-            return;
-        }
-    };
-
-    let handlers = crate::device::control::new_handler_registry();
-
-    // Collect control handlers from registered device drivers.
-    // Only drivers that implement `control_handler()` on DeviceDriver
-    // will contribute handlers.
-    // (Handlers are registered by driver name, then mapped to device IDs
-    //  at runtime by the control loop.)
-    // For now, the control loop only uses the registry for health checks;
-    // handler registration will be expanded in future iterations.
-
-    // Spawn the control loop on the current runtime.
-    let handle = crate::device::control::spawn_control_loop(
-        registry.clone(),
-        handlers.clone(),
-        state.config.clone(),
-    );
-    state
-        .task_registry
-        .insert_abort("control:loop", &handle)
-        .await;
-
-    *state.control_init.write().await = Some(crate::gateway::state::ControlInit {
-        registry,
-        handle: Some(handle),
-        handlers,
-    });
-
-    tracing::info!(
-        "Control lane initialized (interval: {}ms)",
-        device_config.control.loop_interval_ms,
-    );
-}
-
-/// Validate authentication configuration for ambiguity and conflicts.
-///
-/// Fails fast when the configured security settings cannot work at runtime.
-fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
-    if !config.security.enabled || !config.security.auth_required {
-        return Ok(());
-    }
-
-    let has_token = config
-        .security
-        .shared_token
-        .as_deref()
-        .map(|t| !t.is_empty())
-        .unwrap_or(false);
-    let has_oauth = config.security.oauth.enabled
-        && (config.security.oauth.github.is_some() || config.security.oauth.google.is_some());
-    let mode = config.security.auth_mode;
-    let mode_unset = mode == crate::gateway::protocol::AuthMode::None;
-
-    if has_token && has_oauth && mode_unset {
-        return Err(crate::error::SyscityError::Validation(
-            "Auth mode ambiguity: both shared_token and OAuth are configured but auth_mode is not \
-             set. Please set auth_mode to 'token' or 'device' in your security configuration."
-                .into(),
-        ));
-    }
-
-    // Token mode requires a non-empty shared token.
-    if mode == crate::gateway::protocol::AuthMode::Token && !has_token {
-        return Err(crate::error::SyscityError::Validation(
-            "auth_mode is 'token' but shared_token is missing or empty".into(),
-        ));
-    }
-
-    // OAuth providers must be complete when enabled.
-    if config.security.oauth.enabled {
-        let providers = [
-            ("github", config.security.oauth.github.as_ref()),
-            ("google", config.security.oauth.google.as_ref()),
-        ];
-        for (name, provider) in providers.iter() {
-            if let Some(p) = provider {
-                if p.client_id.is_empty() || p.client_secret.is_empty() {
-                    return Err(crate::error::SyscityError::Validation(format!(
-                        "OAuth provider '{}' is missing client_id or client_secret",
-                        name
-                    )));
-                }
-                if p.redirect_uri.is_empty() {
-                    return Err(crate::error::SyscityError::Validation(format!(
-                        "OAuth provider '{}' is missing redirect_uri",
-                        name
-                    )));
-                }
-            }
-        }
-    }
-
-    // When auth is required, at least one mechanism must be configured.
-    let has_device = mode == crate::gateway::protocol::AuthMode::Device;
-    let has_tailscale = mode == crate::gateway::protocol::AuthMode::Tailscale;
-    if !has_token && !has_oauth && !has_device && !has_tailscale {
-        return Err(crate::error::SyscityError::Validation(
-            "security.auth_required is true but no authentication mechanism is configured \
-             (shared_token, OAuth, device, or tailscale)"
-                .into(),
-        ));
-    }
-
-    // Warn when token is configured but auth_mode is not Token
-    if has_token && mode_unset {
-        tracing::warn!(
-            "shared_token is configured but auth_mode is 'none'. Set auth_mode to 'token' for \
-             consistent authentication."
-        );
-    }
-
-    Ok(())
-}
-
 impl Gateway {
-    /// Create a new gateway instance with no device drivers.
+    /// Create a new gateway instance.
     pub async fn new(config: GatewayConfig, config_path: Option<PathBuf>) -> crate::Result<Self> {
-        Self::with_devices(config, config_path, vec![]).await
-    }
-
-    /// Create a new gateway instance with optional device drivers.
-    ///
-    /// Device drivers are discovered, probed, and connected at startup.  Each
-    /// capability is registered in `ToolRegistry` so the LLM can discover and
-    /// call device operations through standard function calling.
-    ///
-    /// Pass an empty vec (or use [`Gateway::new`]) when no physical devices
-    /// are needed.
-    pub async fn with_devices(
-        config: GatewayConfig,
-        config_path: Option<PathBuf>,
-        device_drivers: Vec<Arc<dyn crate::device::DeviceDriver>>,
-    ) -> crate::Result<Self> {
-        // Validate security configuration before proceeding
-        validate_auth_config(&config)?;
-
         let (event_tx, _) = broadcast::channel(1000);
         let (log_tx, _) = broadcast::channel(1000);
         let (inbound_entry_tx, inbound_entry_rx) =
@@ -589,7 +236,6 @@ impl Gateway {
         let (routed_tx, routed_rx) = mpsc::channel(1000);
         let shutdown_token = CancellationToken::new();
 
-        // Initialize storage adapter, shared SQLite pool, session store, and audit log
         let storage_init = init::storage::init_storage(&config).await?;
         let storage = storage_init.storage;
         let unified_vector_store = storage_init.unified_vector_store;
@@ -598,24 +244,16 @@ impl Gateway {
         let audit_log = storage_init.audit_log;
         let audit_log_dyn = storage_init.audit_log_dyn;
 
-        // Initialize ACP control plane and model router
         let acp = init::agents::init_acp(&config, session_store.clone()).await;
 
-        // Central task registry must be created before subsystems that register
-        // background tasks (e.g. the model router health-check loop).
         let task_registry = Arc::new(crate::gateway::task_registry::TaskRegistry::new());
         let model_router =
             init::agents::init_model_router(&config, task_registry.clone(), shutdown_token.clone())
                 .await;
 
-        // Initialize skill manager, agent registry, and session manager
         let (skills_manager, agent_registry, session_manager) =
             init::agents::init_agent_state().await?;
 
-        // Assemble the domain-grouped GatewayState used by the rest of the system
-
-        // Initialize tool subsystem (registry, MCP, plugins, channels, computer
-        // adapter)
         let tools_init = init::tools::init_tools(
             &config,
             acp.clone(),
@@ -626,7 +264,6 @@ impl Gateway {
         )
         .await?;
 
-        // Configure ACP default agent builder now that provider and tools are ready
         init::agents::configure_acp_agent_builder(
             &acp,
             &config,
@@ -636,10 +273,8 @@ impl Gateway {
         )
         .await;
 
-        // Initialize security components
         let security_init = init::security::init_security(&config, audit_log_dyn.clone()).await?;
 
-        // Initialize inbound / outbound pipelines
         let pipelines_init = init::pipelines::init_pipelines(
             &config,
             sqlite_pool.as_ref(),
@@ -648,15 +283,10 @@ impl Gateway {
         )
         .await?;
 
-        // Assemble the domain-grouped GatewayState used by the rest of the system
         let state = Arc::new(GatewayState {
             config: Arc::new(RwLock::new(Arc::new(config.clone()))),
             start_time: Instant::now(),
             config_path: config_path.clone(),
-            device_init: RwLock::new(None),
-            perception_init: RwLock::new(None),
-            control_init: RwLock::new(None),
-            summarizer: tokio::sync::OnceCell::new(),
             task_registry: task_registry.clone(),
             shutdown_token: shutdown_token.clone(),
             auth: AuthState {
@@ -777,7 +407,6 @@ impl Gateway {
                 },
                 hot_reload: RwLock::new(None),
                 plugin_manager: tools_init.plugin_manager.clone(),
-                driver_factory: crate::device::DriverFactory::new(),
                 model_router: model_router.clone(),
                 engine_metrics: None,
                 #[cfg(feature = "browser")]
@@ -795,19 +424,13 @@ impl Gateway {
             },
         });
 
-        // Background tasks are registered in `state.task_registry` as they are
-        // spawned, so they can be aborted or awaited by name during shutdown.
-
-        // Attach SessionStore to SessionManager for unified session model
         if let Some(ref store) = state.agents.store {
             let mut mgr = state.agents.manager.write().await;
             mgr.with_store(store.clone());
         }
 
-        // Wire ACP lifecycle events into the gateway broadcast channel
         state.agents.acp.set_event_tx(state.events.tx.clone()).await;
 
-        // Forward MCP lifecycle events into the gateway broadcast channel
         {
             let event_tx = state.events.tx.clone();
             let mut mcp_event_rx = tools_init.mcp_event_rx;
@@ -818,15 +441,9 @@ impl Gateway {
                         Some(event) = mcp_event_rx.recv() => {
                             let gateway_event = match event {
                                 crate::tools::mcp::McpEvent::Connected {
-                                    server_id,
-                                    tools,
-                                    prompts,
-                                    resources,
+                                    server_id, tools, prompts, resources,
                                 } => GatewayEvent::McpConnected {
-                                    server_id,
-                                    tools,
-                                    prompts,
-                                    resources,
+                                    server_id, tools, prompts, resources,
                                 },
                                 crate::tools::mcp::McpEvent::Disconnected { server_id, reason } => {
                                     GatewayEvent::McpDisconnected { server_id, reason }
@@ -855,12 +472,10 @@ impl Gateway {
                 .await;
         }
 
-        // Initialize audit table (SQLite-backed persistent audit log)
         if let Err(e) = state.auth.audit_log.init().await {
             warn!("Failed to initialize persistent audit log: {}", e);
         }
 
-        // Dynamically register tools that need GatewayState
         state
             .tools
             .registry
@@ -882,7 +497,6 @@ impl Gateway {
                 state.tools.canvas_manager.clone(),
             )));
 
-        // Sync ProviderSdk / ToolSdk with existing registries
         {
             let mut provider_sdk = state.sdk.provider_sdk.write().await;
             provider_sdk
@@ -894,8 +508,6 @@ impl Gateway {
             tool_sdk.sync_from_tool_registry(&state.tools.registry);
         }
 
-        // Initialize late services: vector memory, session search, cron, task
-        // scheduler, etc.
         init::services::init_late_services(
             &config,
             &state,
@@ -904,76 +516,6 @@ impl Gateway {
         )
         .await?;
 
-        // ── Initialize device subsystem ──
-        // Probes, connects, and registers device capabilities as tools in
-        // ToolRegistry so the LLM can discover and call device operations
-        // through standard function calling.
-        //
-        // Drivers are provided either explicitly (via `with_devices()`) or
-        // discovered from the configuration's `device.drivers` entries.
-        //
-        // The shared DriverFactory is stored in state so that all paths
-        // (config-driven init, OS bridge, hot-reload, native plugins) use
-        // the same registered constructors (already initialized in InfraState).
-
-        let device_drivers = if device_drivers.is_empty() {
-            crate::gateway::init::devices::discover_drivers_from_config(
-                &state.infra.driver_factory,
-                &config.device,
-            )
-        } else {
-            device_drivers
-        };
-
-        // Scan native plugin directory if configured
-        #[cfg(feature = "native-plugins")]
-        if let Some(ref dir) = config.device.native_plugins_dir {
-            tracing::info!("Scanning native plugins directory: {:?}", dir);
-            state.infra.driver_factory.scan_native_plugins_dir(dir);
-        }
-
-        let device_init = crate::gateway::init::devices::init_devices(
-            &config.device,
-            device_drivers,
-            &state.tools.registry,
-            None,
-            &state.task_registry,
-        )
-        .await?;
-
-        // Spawn OS device bridge if enabled and register it in the unified
-        // task registry.
-        if let Some(ref di) = device_init {
-            crate::gateway::init::devices::spawn_os_bridge_from_config(
-                &state.infra.driver_factory,
-                di.registry.clone(),
-                &config.device.os_bridge,
-                state.tools.registry.clone(),
-                None,
-                state.task_registry.clone(),
-            )
-            .await;
-        }
-
-        // Store device_init on state for lifecycle management and hot-reload.
-        // Background task handles are owned by the task registry.
-        *state.device_init.write().await = device_init;
-
-        let device_registry: Option<Arc<crate::device::registry::DeviceRegistry>> = state
-            .device_init
-            .read()
-            .await
-            .as_ref()
-            .map(|di| di.registry.clone());
-
-        // Initialize perception fusion layer (delegated to helper)
-        let _perception_registry: Option<Arc<crate::perception::PerceptionRegistry>> =
-            init_perception(&config.perception, state.as_ref(), device_registry.clone()).await;
-
-        // Initialize control lane (optional, runs alongside perception)
-        init_control(&config.device, state.as_ref()).await;
-
-        // Start message processing workers
         let inbound_handle = tokio::spawn(dispatch::process_inbound_entries(
             state.clone(),
             inbound_entry_rx,
@@ -997,9 +539,6 @@ impl Gateway {
     }
 
     /// Return a clone of the internal `ModelRouter` arc.
-    ///
-    /// Primarily used in integration / E2E tests to inject a mock provider
-    /// before calling `start()`.
     pub fn model_router(&self) -> Arc<crate::model_router::ModelRouter> {
         self.state.infra.model_router.clone()
     }
@@ -1007,30 +546,6 @@ impl Gateway {
     /// Return a clone of the internal `ToolRegistry` arc.
     pub fn tool_registry(&self) -> Arc<crate::tools::ToolRegistry> {
         self.state.tools.registry.clone()
-    }
-
-    /// Return a clone of the internal `DeviceRegistry`, if one exists.
-    ///
-    /// Returns `None` when no device drivers were registered at startup.
-    /// Primarily used in integration / E2E tests to verify device registration.
-    pub async fn device_registry(&self) -> Option<Arc<crate::device::registry::DeviceRegistry>> {
-        self.state
-            .device_init
-            .read()
-            .await
-            .as_ref()
-            .map(|di| di.registry.clone())
-    }
-
-    /// Return a clone of the internal `PerceptionRegistry`, if one exists.
-    /// Returns `None` when perception is disabled.
-    pub async fn perception_registry(&self) -> Option<Arc<crate::perception::PerceptionRegistry>> {
-        self.state
-            .perception_init
-            .read()
-            .await
-            .as_ref()
-            .map(|pi| pi.registry.clone())
     }
 
     /// Return a clone of the gateway shutdown token.
@@ -1050,13 +565,11 @@ impl Gateway {
     }
 
     /// Spawn a new agent
-    async fn spawn_agent(&self, id: String, config: AgentConfig) -> crate::Result<()> {
+    async fn spawn_agent(&self, id: String, config: crate::agent::AgentConfig) -> crate::Result<()> {
         spawn_agent_inner(self.state.clone(), id, config).await?;
         Ok(())
     }
-}
 
-impl Gateway {
     /// Spawn an agent from its personality (on-demand spawning)
     ///
     /// Returns the agent handle and a boolean indicating whether the agent was
@@ -1155,6 +668,86 @@ impl Gateway {
     }
 }
 
+/// Validate authentication configuration for ambiguity and conflicts.
+///
+/// Fails fast when the configured security settings cannot work at runtime.
+pub(crate) fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
+    if !config.security.enabled || !config.security.auth_required {
+        return Ok(());
+    }
+
+    let has_token = config
+        .security
+        .shared_token
+        .as_deref()
+        .map(|t| !t.is_empty())
+        .unwrap_or(false);
+    let has_oauth = config.security.oauth.enabled
+        && (config.security.oauth.github.is_some() || config.security.oauth.google.is_some());
+    let mode = config.security.auth_mode;
+    let mode_unset = mode == crate::gateway::protocol::AuthMode::None;
+
+    if has_token && has_oauth && mode_unset {
+        return Err(crate::error::SyscityError::Validation(
+            "Auth mode ambiguity: both shared_token and OAuth are configured but auth_mode is not \
+             set. Please set auth_mode to 'token' or 'device' in your security configuration."
+                .into(),
+        ));
+    }
+
+    // Token mode requires a non-empty shared token.
+    if mode == crate::gateway::protocol::AuthMode::Token && !has_token {
+        return Err(crate::error::SyscityError::Validation(
+            "auth_mode is 'token' but shared_token is missing or empty".into(),
+        ));
+    }
+
+    // OAuth providers must be complete when enabled.
+    if config.security.oauth.enabled {
+        let providers = [
+            ("github", config.security.oauth.github.as_ref()),
+            ("google", config.security.oauth.google.as_ref()),
+        ];
+        for (name, provider) in providers.iter() {
+            if let Some(p) = provider {
+                if p.client_id.is_empty() || p.client_secret.is_empty() {
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "OAuth provider '{}' is missing client_id or client_secret",
+                        name
+                    )));
+                }
+                if p.redirect_uri.is_empty() {
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "OAuth provider '{}' is missing redirect_uri",
+                        name
+                    )));
+                }
+            }
+        }
+    }
+
+    // When auth is required, at least one mechanism must be configured.
+    let has_device = mode == crate::gateway::protocol::AuthMode::Device;
+    let has_tailscale = mode == crate::gateway::protocol::AuthMode::Tailscale;
+    if !has_token && !has_oauth && !has_device && !has_tailscale {
+        return Err(crate::error::SyscityError::Validation(
+            "security.auth_required is true but no authentication mechanism is configured \
+             (shared_token, OAuth, device, or tailscale)"
+                .into(),
+        ));
+    }
+
+    // Warn when token is configured but auth_mode is not Token
+    if has_token && mode_unset {
+        tracing::warn!(
+            "shared_token is configured but auth_mode is 'none'. Set auth_mode to 'token' for \
+             consistent authentication."
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod api_tests;
 #[cfg(test)]
@@ -1166,3 +759,4 @@ use crate::canvas::CanvasManager;
 use crate::model_router::ModelRouter;
 #[cfg(test)]
 use crate::plugins::PluginManager;
+

@@ -189,7 +189,6 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
                     .await
                     .expect("plugin manager"),
             ),
-            driver_factory: syscity::device::DriverFactory::new(),
             model_router: Arc::new(syscity::model_router::ModelRouter::new(
                 syscity::model_router::ModelRouterConfig::default(),
             )),
@@ -207,10 +206,6 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             heartbeat_event_tx: tokio::sync::RwLock::new(None),
             cron_scheduler: tokio::sync::RwLock::new(None),
         },
-        device_init: tokio::sync::RwLock::new(None),
-        perception_init: tokio::sync::RwLock::new(None),
-        control_init: tokio::sync::RwLock::new(None),
-        summarizer: tokio::sync::OnceCell::new(),
         task_registry: Arc::new(syscity::gateway::task_registry::TaskRegistry::new()),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
     }

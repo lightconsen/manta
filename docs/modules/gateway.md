@@ -33,8 +33,8 @@ access checks and the `Gateway` struct shell; behavior lives in:
 - **`dispatch.rs`** — inbound message entry worker and routed message dispatch.
 - **`hot_reload.rs`** — config-change handlers for Main / Agent / Channel /
   Plugin / Gateway file types.
-- **`init/`** — subsystem constructors: `channels.rs` (8 channel-type inits),
-  `devices.rs`, `storage.rs`, `agents.rs`, `pipelines.rs`, `security.rs`,
+- **`init/`** — subsystem constructors: `channels.rs`,
+  `storage.rs`, `agents.rs`, `pipelines.rs`, `security.rs`,
   `services.rs`, `tools.rs`.
 - **`runtime.rs`** — runtime event/command types (`BufferedMessage`,
   `AgentHandle`, `AgentCommand`, `AgentQuery`, `GatewayEvent`, `AgentStatus`).
@@ -74,8 +74,7 @@ access checks and the `Gateway` struct shell; behavior lives in:
 | Workspace | `workspace_dir`, `workspace_only` |
 | Browser | `browser` |
 | Computer | `computer` |
-| Device | `device` (with sub-fields: `enabled`, `drivers`, `health_check`, `hot_plug`, `os_bridge`, `control`, `native_plugins_dir`) |
-| Perception | `perception` (with sub-fields: `enabled`, `poll_interval_secs`, `scene_history`, `aggregation_window_secs`, `audio_source`, `enable_microphone`, `persistence_backend`, `enable_summary`, `summarizer_kind`, `summary_refresh_secs`) |
+| Computer | `computer` |
 | Dreaming | `dreaming` |
 | Standing Orders | `standing_orders` |
 | Capabilities | `capabilities` |
@@ -124,8 +123,6 @@ pub struct GatewayConfig {
     pub dreaming: MemoryDreamingConfig,
     pub standing_orders: StandingOrderConfig,
     pub capabilities: CapabilitiesConfig,
-    pub device: DeviceConfig,
-    pub perception: PerceptionConfig,
 }
 ```
 
@@ -147,7 +144,7 @@ pub struct GatewayConfig {
 - Send policy enforcement
 - Gateway-level hooks system
 - Command provider for dynamic command resolution
-- Health check and device pairing handlers
+- Health check and admin handlers
 - Admin endpoints for provider switching and status
 - Cost guard configuration
 - Workspace boundary enforcement

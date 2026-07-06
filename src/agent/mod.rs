@@ -843,10 +843,6 @@ pub struct Agent {
     /// Optional thread binding manager for tracking session/thread hierarchy
     /// with idle timeout, max age, and child-spawning policies.
     thread_binding_manager: Option<ThreadBindingManager>,
-    /// Optional per-agent perception adapter. When set, the agent has
-    /// access to filtered perception events, sensor snapshots, and
-    /// LLM-generated environment summaries.
-    perception_adapter: Option<Arc<dyn crate::perception::AgentPerceptionAdapter>>,
     /// Per-conversation concurrency guards to prevent reentrant processing
     /// of the same conversation_id.
     concurrency_guards: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
@@ -948,7 +944,6 @@ impl Agent {
             computer_config: None,
             goal_planner: None,
             thread_binding_manager: None,
-            perception_adapter: None,
             concurrency_guards: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -1301,26 +1296,6 @@ impl Agent {
         self
     }
 
-    /// Attach a per-agent perception adapter.
-    ///
-    /// The adapter is the agent's contact surface with the perception
-    /// pipeline (filtered events, sensor snapshots, LLM summaries).
-    /// Mint one via [`crate::perception::PerceptionContext::new_adapter`].
-    pub fn with_perception_adapter(
-        mut self,
-        adapter: Arc<dyn crate::perception::AgentPerceptionAdapter>,
-    ) -> Self {
-        self.perception_adapter = Some(adapter);
-        self
-    }
-
-    /// Borrow the per-agent perception adapter, if one was attached.
-    pub fn perception_adapter(
-        &self,
-    ) -> Option<&Arc<dyn crate::perception::AgentPerceptionAdapter>> {
-        self.perception_adapter.as_ref()
-    }
-
     /// Update agent configuration at runtime.
     ///
     /// Applies fields from `new_config` to the running agent.  The update is
@@ -1553,16 +1528,6 @@ Your response:"#,
             // Add memory context if available
             if let Some(ref mem_ctx) = memory_context {
                 prompt = format!("{}\n\n{}", prompt, mem_ctx);
-            }
-
-            // Inject perception snapshot if a per-agent adapter is wired up.
-            // The block is suppressed (`None`) when there is nothing to show,
-            // so we don't bloat the prompt with an empty `## Perception`
-            // section.
-            if let Some(ref adapter) = self.perception_adapter {
-                if let Some(percept_block) = adapter.now().format_for_prompt(8) {
-                    prompt = format!("{}\n\n{}", prompt, percept_block);
-                }
             }
 
             // Add dynamically filtered skills based on user message

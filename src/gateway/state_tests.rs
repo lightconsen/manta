@@ -103,10 +103,6 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         config: Arc::new(RwLock::new(Arc::new(config))),
         start_time: std::time::Instant::now(),
         config_path: None,
-        device_init: tokio::sync::RwLock::new(None),
-        perception_init: tokio::sync::RwLock::new(None),
-        control_init: tokio::sync::RwLock::new(None),
-        summarizer: tokio::sync::OnceCell::new(),
         task_registry: task_registry.clone(),
         shutdown_token: CancellationToken::new(),
         auth: AuthState {
@@ -197,7 +193,6 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
                     .await
                     .expect("plugin manager"),
             ),
-            driver_factory: crate::device::DriverFactory::new(),
             model_router: Arc::new(ModelRouter::new(
                 crate::model_router::ModelRouterConfig::default(),
             )),

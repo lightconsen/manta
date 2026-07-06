@@ -13,8 +13,6 @@
 **Linux (Debian/Ubuntu):**
 ```bash
 sudo apt-get install -y build-essential pkg-config libssl-dev
-# Optional, for the `serialport`/`hidapi` device features:
-sudo apt-get install -y libudev-dev libusb-1.0-0-dev
 ```
 
 **macOS:**
@@ -25,8 +23,8 @@ Desktop control additionally requires granting **Screen Recording** and
 **Accessibility** permissions in *System Settings → Privacy & Security*.
 
 **Windows:** Install the [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-(MSVC toolchain). Desktop control and some device features are macOS-first;
-core agent / channel functionality works cross-platform.
+(MSVC toolchain). Desktop control is macOS-first; core agent / channel
+functionality works cross-platform.
 
 ## Build
 
@@ -48,7 +46,7 @@ cargo build --release
 ## Feature flags
 
 Syscity uses Cargo features to gate optional functionality. The defaults enable
-all channels plus browser, vision, local embeddings, and device I/O.
+all channels plus browser, vision, and local embeddings.
 
 | Feature | Default | Enables |
 |---------|:-------:|---------|
@@ -57,11 +55,8 @@ all channels plus browser, vision, local embeddings, and device I/O.
 | `browser` | ✓ | Browser automation (requires Chrome/Chromium installed) |
 | `vision` | ✓ | ONNX-based screen vision (`ort`/`image`/`ndarray`) |
 | `local-embeddings` | ✓ | On-device embeddings via `llama-cpp-2` + `hf-hub` |
-| `local-summarizer` | — | On-device perception summarizer |
 | `plugins` | ✓ | WASM plugin sandbox (`wasmtime`) |
-| `native-plugins` | — | Native `.so`/`.dylib` plugin loading (`libloading`) |
 | `hot-reload` | ✓ | Config/plugin hot-reload via file watching |
-| `serialport` / `hidapi` / `gpio` | ✓ / ✓ / — | Hardware device drivers |
 | `vector-db` / `pgvector` / `sqlite-vec` | — / — / ✓ | Vector memory backends (`sqlite-vec` is the default persistent backend) |
 
 Build with a custom feature set:
@@ -95,7 +90,7 @@ cargo test
 - **`openssl`/`pkg-config` errors on Linux** — install `libssl-dev` and `pkg-config`.
 - **`llama-cpp-2` fails to compile** — needs a C compiler; on Linux install
   `build-essential`. To skip it, build with `--no-default-features` and omit
-  `local-embeddings`/`local-summarizer`.
+  `local-embeddings`.
 - **Browser tools do nothing** — the `browser` feature requires a Chrome/Chromium
   binary on `PATH`.
 - **`pnpm: command not found`** — install pnpm (`npm i -g pnpm`) or build the

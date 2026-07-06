@@ -223,19 +223,12 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 tokio-util = { version = "0.7" }
 unicode-width = { version = "0.2" }
 
-# Hardware drivers (optional)
-serialport = { version = "4.3", optional = true }
-hidapi = { version = "2.6", optional = true }
-
-# Native plugin loading (optional)
-libloading = { version = "0.8", optional = true }
-
 # Channels (optional)
 teloxide = { version = "0.17", features = ["macros"], optional = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }
 
 [features]
-default = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "plugins", "hot-reload", "local-embeddings", "browser", "serialport", "hidapi", "vision", "sqlite-vec"]
+default = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "plugins", "hot-reload", "local-embeddings", "browser", "vision", "sqlite-vec"]
 telegram = ["teloxide"]
 discord = ["serenity"]
 slack = []
@@ -249,12 +242,7 @@ all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "sig
 web = []
 browser = ["chromiumoxide"]
 local-embeddings = ["llama-cpp-2", "hf-hub"]
-local-summarizer = ["llama-cpp-2", "hf-hub"]
 plugins = ["wasmtime", "wasmtime-wasi"]
-serialport = ["dep:serialport"]
-hidapi = ["dep:hidapi"]
-gpio = []
-native-plugins = ["dep:libloading"]
 hot-reload = ["notify-debouncer-full"]
 vision = ["ort", "image", "ndarray"]
 pgvector = ["dep:pgvector", "pgvector/sqlx", "sqlx/postgres"]

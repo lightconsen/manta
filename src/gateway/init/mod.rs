@@ -6,7 +6,6 @@
 
 pub mod agents;
 pub mod channels;
-pub mod devices;
 pub mod pipelines;
 pub mod security;
 pub mod services;

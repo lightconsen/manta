@@ -129,49 +129,6 @@ pub(crate) async fn spawn_agent_inner(
     // (Template / Local / Llm) and respects the master enable_summary
     // switch so that the default deployment pays zero LLM tokens for
     // the periodic `### Summary` block.
-    let perception_adapter: Option<Arc<dyn crate::perception::AgentPerceptionAdapter>> = {
-        let init = state.perception_init.read().await;
-        let p_cfg = &state.config.read().await.perception;
-        // Use the lazily-initialized shared summarizer so the (potentially
-        // async, model-downloading) backend is only built once across all
-        // agent spawns.
-        if let Some(p) = init.as_ref() {
-            let summarizer: Option<Arc<dyn crate::perception::PerceptionSummarizer>> =
-                if p_cfg.enable_summary {
-                    Some(
-                        state
-                            .summarizer
-                            .get_or_init(|| {
-                                build_summarizer(
-                                    &p_cfg.summarizer_kind,
-                                    provider.clone(),
-                                    model.clone(),
-                                )
-                            })
-                            .await
-                            .clone(),
-                    )
-                } else {
-                    None
-                };
-            let adapter_cfg = crate::perception::AdapterConfig {
-                enable_summary: p_cfg.enable_summary,
-                summary_refresh_interval: p_cfg
-                    .summary_refresh_secs
-                    .or(Some(60))
-                    .map(std::time::Duration::from_secs),
-                ..Default::default()
-            };
-            Some(
-                p.context
-                    .new_adapter(crate::perception::Focus::default(), summarizer, adapter_cfg)
-                    as Arc<dyn crate::perception::AgentPerceptionAdapter>,
-            )
-        } else {
-            None
-        }
-    };
-
     let agent = if let Some(mm) = memory_manager {
         let chat_history = mm.chat_history();
         let mut builder = Agent::new(config.clone(), provider, tools)
@@ -190,9 +147,6 @@ pub(crate) async fn spawn_agent_inner(
             builder = builder
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
-        }
-        if let Some(pa) = perception_adapter.clone() {
-            builder = builder.with_perception_adapter(pa);
         }
         // Attach planner state store for crash recovery on restart.
         let planner_db = crate::dirs::syscity_dir().join("planner.db");
@@ -216,9 +170,6 @@ pub(crate) async fn spawn_agent_inner(
             builder = builder
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
-        }
-        if let Some(pa) = perception_adapter.clone() {
-            builder = builder.with_perception_adapter(pa);
         }
         // Attach planner state store for crash recovery on restart.
         let planner_db = crate::dirs::syscity_dir().join("planner.db");
@@ -1257,47 +1208,3 @@ pub(crate) async fn create_default_tool_registry(
     Ok(registry)
 }
 
-// ── build_summarizer ─────────────────────────────────────────────────────────
-
-/// Build the summarizer backend selected by configuration.
-///
-/// * `Template` — always available, zero-LLM, rule-based.
-/// * `Llm` — uses the agent's LLM provider (same cost as a normal model call).
-/// * `Local` — requires the `local-summarizer` feature (Qwen2.5-1.5B GGUF). If
-///   the feature is missing or model loading fails, falls back to `Template`
-///   with a warning so agent spawn never panics.
-async fn build_summarizer(
-    kind: &super::config::SummarizerKind,
-    provider: Arc<dyn crate::providers::Provider>,
-    model: String,
-) -> Arc<dyn crate::perception::PerceptionSummarizer> {
-    match kind {
-        super::config::SummarizerKind::Template => {
-            Arc::new(crate::perception::TemplateSummarizer::new())
-        }
-        super::config::SummarizerKind::Llm => {
-            Arc::new(crate::perception::LlmProviderSummarizer::new(provider).with_model(model))
-        }
-        super::config::SummarizerKind::Local => {
-            #[cfg(feature = "local-summarizer")]
-            {
-                match crate::perception::local_summarizer::LocalLlamaSummarizer::new_auto().await {
-                    Ok(s) => return Arc::new(s),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Local summarizer init failed: {e}; falling back to TemplateSummarizer"
-                        );
-                    }
-                }
-            }
-            #[cfg(not(feature = "local-summarizer"))]
-            {
-                tracing::warn!(
-                    "summarizer_kind = \"local\" but feature local-summarizer is not enabled; \
-                     falling back to TemplateSummarizer"
-                );
-            }
-            Arc::new(crate::perception::TemplateSummarizer::new())
-        }
-    }
-}

@@ -9,9 +9,6 @@
 
 use std::sync::Arc;
 
-use syscity::device::mock::{MockCapability, MockDeviceDriver};
-use syscity::device::Capability;
-use syscity::device::DeviceDriver;
 use syscity::tools::hooks::{ToolHooks, ToolPolicyDecision};
 use syscity::tools::ToolRegistry;
 

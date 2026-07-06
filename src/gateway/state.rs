@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::acp::AcpControlPlane;
@@ -31,10 +30,7 @@ use crate::channels::{
 };
 use crate::config::hot_reload::HotReloadManager;
 use crate::cron::cron::CronScheduler;
-use crate::device::control::ControlHandlerRegistry;
-use crate::device::DriverFactory;
 use crate::gateway::hooks::EventHookRegistry;
-use crate::gateway::init::devices::DeviceInit;
 use crate::gateway::rate_limit::MultiTierRateLimiter;
 use crate::gateway::task_registry::TaskRegistry;
 use crate::gateway::AgentHandle;
@@ -156,9 +152,6 @@ pub struct InfraState {
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     pub plugin_manager: Arc<PluginManager>,
     pub model_router: Arc<ModelRouter>,
-    /// Pluggable device driver factory — shared between config-driven init
-    /// and OS bridge runtime event path.
-    pub driver_factory: DriverFactory,
     /// Engine metrics counters (populated when a core `Engine` is wired in).
     pub engine_metrics: Option<Arc<crate::core::EngineMetrics>>,
     /// Browser bridge server (started when browser.bridge_enabled is true).
@@ -180,32 +173,6 @@ pub struct SchedulerState {
     pub cron_scheduler: RwLock<Option<Arc<Mutex<CronScheduler>>>>,
 }
 
-/// Perception subsystem init state (registry, streaming context,
-/// background poll handle).
-/// Replaced on hot-reload via the admin API.
-pub struct PerceptionInit {
-    /// The perception registry managing sources and scene graph.
-    pub registry: Arc<crate::perception::PerceptionRegistry>,
-    /// Shared streaming infrastructure (raw_hub + derived_hub +
-    /// temporal processor + fusion engine). Per-agent
-    /// [`crate::perception::AgentPerceptionAdapter`]s are minted from
-    /// this context.
-    pub context: Arc<crate::perception::PerceptionContext>,
-    /// Background poll loop handle, if one was spawned.
-    pub poll_handle: Option<JoinHandle<()>>,
-}
-
-/// Control lane init state (registry, runtime, loop handle).
-/// Replaced on hot-reload via the admin API.
-pub struct ControlInit {
-    /// The device registry shared with the control lane.
-    pub registry: Arc<crate::device::registry::DeviceRegistry>,
-    /// The control loop join handle.
-    pub handle: Option<tokio::task::JoinHandle<()>>,
-    /// Registered control handlers (shared with driver connections).
-    pub handlers: ControlHandlerRegistry,
-}
-
 /// Shared gateway state grouped by domain.
 pub struct GatewayState {
     /// Configuration.
@@ -219,20 +186,6 @@ pub struct GatewayState {
     pub start_time: Instant,
     /// Path to the config file (for runtime persistence)
     pub config_path: Option<PathBuf>,
-    /// Device subsystem init state (registry, health check handle).
-    /// Replaced on hot-reload to re-probe/re-connect devices.
-    pub device_init: RwLock<Option<DeviceInit>>,
-    /// Perception fusion layer init state (registry, poll loop handle).
-    /// Replaced on hot-reload via the admin API.
-    pub perception_init: RwLock<Option<PerceptionInit>>,
-    /// Control lane init state (runtime, handlers, loop handle).
-    /// Replaced on hot-reload via the admin API.
-    pub control_init: RwLock<Option<ControlInit>>,
-
-    /// Lazily-initialized shared perception summarizer.
-    /// Building the local backend can trigger a model download, so the first
-    /// agent spawn pays that cost and subsequent spawns reuse the result.
-    pub summarizer: tokio::sync::OnceCell<Arc<dyn crate::perception::PerceptionSummarizer>>,
 
     /// Centralized registry for all gateway background tasks.
     pub task_registry: Arc<TaskRegistry>,

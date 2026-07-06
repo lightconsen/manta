@@ -10,7 +10,6 @@ pub use std::time::Duration;
 pub use futures_util::{SinkExt, StreamExt};
 pub use serde_json::json;
 pub use serial_test::serial;
-use syscity::device::DeviceDriver;
 pub use syscity::gateway::protocol::AuthMode;
 pub use syscity::gateway::{Gateway, GatewayConfig};
 pub use syscity::model_router::{ModelAlias, ProviderConfig, ProviderType};
@@ -240,31 +239,6 @@ pub async fn start_test_gateway_with_mock(port: u16, mock: MockProvider) {
             max_tokens: None,
         })
         .await;
-
-    tokio::spawn(async move {
-        let _ = gateway.start().await;
-    });
-
-    let url = format!("ws://127.0.0.1:{}/ws", port);
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        if connect_async(&url).await.is_ok() {
-            return;
-        }
-    }
-    panic!("Gateway did not start within 10 seconds");
-}
-
-/// Start a test Gateway with mock device drivers injected.
-///
-/// Device drivers are probed and connected at startup.  Each capability is
-/// registered in both CapabilityRegistry and ToolRegistry.
-pub async fn start_test_gateway_with_devices(port: u16, drivers: Vec<Arc<dyn DeviceDriver>>) {
-    let config = test_config(port, false);
-
-    let gateway = Gateway::with_devices(config, None, drivers)
-        .await
-        .expect("Failed to create test gateway with devices");
 
     tokio::spawn(async move {
         let _ = gateway.start().await;
@@ -678,11 +652,9 @@ mod agent_tests;
 mod browser_chat_tests;
 mod command_tests;
 mod computer_tests;
-mod device_tests;
 mod health_tests;
 mod llm_chat_tests;
 mod mock_chat_tests;
-mod perception_tests;
 mod planner_tests;
 mod screen_recorder_tests;
 mod session_tests;
