@@ -140,6 +140,10 @@ impl OpenAiProvider {
                 })
                 .collect();
             Some(serde_json::Value::Array(parts))
+        } else if msg.content.is_empty() && msg.tool_calls.is_some() {
+            // OpenAI API: content must be null/absent when tool_calls is present
+            // DeepSeek rejects requests with content: "" alongside tool_calls
+            None
         } else {
             Some(serde_json::Value::String(msg.content.clone()))
         };
@@ -367,6 +371,10 @@ impl Provider for OpenAiProvider {
         // Merge provider-specific extra parameters
         let mut body_value = serde_json::to_value(&body)?;
         crate::providers::merge_extra(&mut body_value, request.extra);
+
+        // Debug: print the actual request body
+        let body_json = serde_json::to_string(&body_value).unwrap_or_default();
+        info!("OpenAI API streaming request body: {}", body_json);
 
         let request_url = self.url("/chat/completions");
 

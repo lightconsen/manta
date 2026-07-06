@@ -225,6 +225,26 @@ impl Context {
         self.prune_if_needed();
     }
 
+    /// Add multiple messages atomically, then prune once.
+    ///
+    /// Use this when adding a logical group of messages (e.g. an assistant
+    /// message with tool_calls followed by its tool results) to prevent
+    /// intermediate pruning from removing the assistant before its results
+    /// are added — the prune step sees all messages in the group and can
+    /// correctly determine which tool_calls have matching results.
+    pub fn add_batch(&mut self, messages: Vec<Message>) {
+        if messages.is_empty() {
+            return;
+        }
+        for msg in &messages {
+            self.token_count += msg.content.len() / 4;
+        }
+        self.messages.extend(messages);
+        self.last_accessed = SystemTime::now();
+        self.limit_turns();
+        self.prune_if_needed();
+    }
+
     /// Get all messages including system prompt
     pub fn to_messages(&self) -> Vec<Message> {
         let mut result = Vec::with_capacity(self.messages.len() + 1);

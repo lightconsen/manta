@@ -2963,28 +2963,43 @@ Your response:"#,
             });
         }
 
-        // Add assistant message with tool calls
-        context.add_message(original_response.message.clone());
+        // Filter out duplicate tool calls before adding assistant message
+        // This ensures the tool_call count matches the tool result count,
+        // which is required by APIs like DeepSeek that enforce strict pairing.
+        let filtered_tool_calls: Vec<ToolCall> = tool_calls
+            .iter()
+            .take(self.config.max_concurrent_tools)
+            .filter(|tc| {
+                let tool_name = &tc.function.name;
+                let tool_args = &tc.function.arguments;
+                if context.is_tool_call_duplicate(tool_name, tool_args) {
+                    warn!("Duplicate tool call detected: {} with same args, skipping", tool_name);
+                    false
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
 
-        // Execute tools concurrently (up to limit)
+        if filtered_tool_calls.is_empty() {
+            // All tool calls were duplicates; return the original response as-is
+            // (the assistant message with tool_calls was never added to context)
+            return Ok(original_response.clone());
+        }
+
+        // Execute tools FIRST, before adding the assistant message.
+        // This avoids context.prune_if_needed() removing the assistant because
+        // its tool_call IDs don't yet have matching tool results.
         let tool_context = self
             .build_tool_context(user_id, context.id())
             .with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
 
-        for tool_call in tool_calls.iter().take(self.config.max_concurrent_tools) {
+        for tool_call in &filtered_tool_calls {
             let tool_name = tool_call.function.name.clone();
             let tool_args = tool_call.function.arguments.clone();
-
-            // Check for duplicate tool calls
-            if context.is_tool_call_duplicate(&tool_name, &tool_args) {
-                warn!("Duplicate tool call detected: {} with same args, skipping", tool_name);
-                // Don't push a ToolResult — the provider will see fewer results
-                // than tool_calls, which is valid and avoids breaking the
-                // tool_call → tool message pairing required by the API.
-                continue;
-            }
 
             // Record this tool call before executing
             context.record_tool_call(&tool_name, &tool_args);
@@ -3020,19 +3035,28 @@ Your response:"#,
             results.push(result);
         }
 
-        // Add tool results to context
-        for result in results {
-            context.add_message(Message {
+        // NOW add assistant message with ONLY non-duplicate tool calls,
+        // immediately followed by tool results as a single atomic batch.
+        // This prevents prune_if_needed() from removing the assistant before
+        // its tool results are added.
+        let mut assistant_msg = original_response.message.clone();
+        assistant_msg.tool_calls = Some(filtered_tool_calls.clone());
+
+        let mut batch = Vec::with_capacity(1 + results.len());
+        batch.push(assistant_msg);
+        for result in &results {
+            batch.push(Message {
                 role: Role::Tool,
-                content: result.content,
+                content: result.content.clone(),
                 content_blocks: None,
                 reasoning_content: None,
                 name: None,
                 tool_calls: None,
-                tool_call_id: Some(result.tool_call_id),
+                tool_call_id: Some(result.tool_call_id.clone()),
                 metadata: None,
             });
         }
+        context.add_batch(batch);
 
         // Check execution controller before next iteration
         {
@@ -3306,38 +3330,58 @@ Your response:"#,
             });
         }
 
-        // Add assistant message with tool calls
-        context.add_message(original_response.message.clone());
+        // Filter out duplicate tool calls before adding assistant message
+        // This ensures the tool_call count matches the tool result count,
+        // which is required by APIs like DeepSeek that enforce strict pairing.
+        let filtered_tool_calls: Vec<ToolCall> = tool_calls
+            .iter()
+            .take(self.config.max_concurrent_tools)
+            .filter(|tc| {
+                let tool_name = &tc.function.name;
+                let tool_args = &tc.function.arguments;
+                if context.is_tool_call_duplicate(tool_name, tool_args) {
+                    warn!("Duplicate tool call detected: {} with same args, skipping", tool_name);
 
-        // Execute tools with progress
+                    // Notify about duplicate via progress callback
+                    let cb = progress_cb.clone();
+                    let name = tool_name.clone();
+                    tokio::spawn(async move {
+                        (cb)(ProgressEvent::ToolResult {
+                            name,
+                            result: "[Duplicate tool call skipped - already executed with same parameters]"
+                                .to_string(),
+                            data: None,
+                        })
+                        .await;
+                    });
+
+                    false
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+
+        if filtered_tool_calls.is_empty() {
+            // All tool calls were duplicates; return the original response as-is
+            return Ok(original_response.clone());
+        }
+
+        // Execute tools with progress FIRST, before adding the assistant message.
+        // This avoids a critical issue: context.prune_if_needed() removes any
+        // assistant message whose tool_call IDs don't yet appear in tool results.
+        // By adding the assistant AFTER execution and immediately followed by
+        // tool results, the tool_call/tool_result pairing is preserved.
         let tool_context = self
             .build_tool_context(user_id, context.id())
             .with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
 
-        for tool_call in tool_calls.iter().take(self.config.max_concurrent_tools) {
+        for tool_call in &filtered_tool_calls {
             let tool_name = tool_call.function.name.clone();
             let tool_args = tool_call.function.arguments.clone();
-
-            // Check for duplicate tool calls
-            if context.is_tool_call_duplicate(&tool_name, &tool_args) {
-                warn!("Duplicate tool call detected: {} with same args, skipping", tool_name);
-
-                // Notify about duplicate
-                (progress_cb)(ProgressEvent::ToolResult {
-                    name: tool_name.clone(),
-                    result: "[Duplicate tool call skipped - already executed with same parameters]"
-                        .to_string(),
-                    data: None,
-                })
-                .await;
-
-                // Don't push a ToolResult — the provider will see fewer results
-                // than tool_calls, which is valid and avoids breaking the
-                // tool_call → tool message pairing required by the API.
-                continue;
-            }
 
             // Record this tool call before executing
             context.record_tool_call(&tool_name, &tool_args);
@@ -3364,31 +3408,34 @@ Your response:"#,
             .map(|r| (r.tool_call_id.clone(), r.content.clone()))
             .collect();
 
-        // Add tool results to context
-        for result in results {
-            context.add_message(Message {
+        // NOW add assistant message with ONLY non-duplicate tool calls,
+        // immediately followed by tool results as a single atomic batch.
+        // This prevents prune_if_needed() from removing the assistant before
+        // its tool results are added.
+        let mut assistant_msg = original_response.message.clone();
+        assistant_msg.tool_calls = Some(filtered_tool_calls.clone());
+
+        let mut batch = Vec::with_capacity(1 + results.len());
+        batch.push(assistant_msg);
+        for result in &results {
+            batch.push(Message {
                 role: Role::Tool,
-                content: result.content,
+                content: result.content.clone(),
                 content_blocks: None,
                 reasoning_content: None,
                 name: None,
                 tool_calls: None,
-                tool_call_id: Some(result.tool_call_id),
+                tool_call_id: Some(result.tool_call_id.clone()),
                 metadata: None,
             });
         }
+        context.add_batch(batch);
 
         // Check execution controller before next iteration
         {
             let ctrl_guard = self.execution_controller.read().await;
             if let Some(ref ctrl) = *ctrl_guard {
                 if let Err(reason) = ctrl.check_and_wait().await {
-                    // Notify cancellation
-                    (progress_cb)(ProgressEvent::Error {
-                        message: format!("Execution halted: {}", reason),
-                    })
-                    .await;
-
                     return Ok(crate::providers::CompletionResponse {
                         message: Message {
                             role: Role::Assistant,
