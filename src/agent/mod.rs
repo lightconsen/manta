@@ -652,7 +652,7 @@ The current time is provided in the context. When asked about time-sensitive inf
 
         Self {
             system_prompt,
-            max_context_tokens: 4096,
+            max_context_tokens: 16384,
             max_concurrent_tools: 5,
             temperature: 0.7,
             max_tokens: 2048,
@@ -4287,7 +4287,7 @@ mod tests {
     #[test]
     fn test_agent_config_default() {
         let config = AgentConfig::default();
-        assert_eq!(config.max_context_tokens, 4096);
+        assert_eq!(config.max_context_tokens, 16384);
         assert_eq!(config.max_concurrent_tools, 5);
         assert_eq!(config.temperature, 0.7);
         assert_eq!(config.max_tokens, 2048);
