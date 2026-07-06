@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use tokio::process::Command;
-use tracing::warn;
+use tracing::{info, warn};
 
 /// Daemon configuration
 #[derive(Debug, Clone)]
@@ -239,6 +239,7 @@ fn apply_env_provider_overrides(config: &mut crate::gateway::GatewayConfig) {
 impl DaemonManager {
     pub async fn run_foreground(&self) -> crate::Result<()> {
         println!("🚀 Syscity daemon running with Gateway...");
+        println!("   Version: {} (build: {})", crate::VERSION, crate::GIT_HASH);
 
         use crate::gateway::{Gateway, GatewayConfig};
 
@@ -338,7 +339,28 @@ workspace_only = true
                         }
                         Err(e) => {
                             warn!("Failed to parse syscity.toml: {}, using defaults", e);
-                            GatewayConfig::default()
+                            let mut default_config = GatewayConfig::default();
+                            // Attempt to extract [search] section separately, since the
+                            // syscity.toml uses [server] section format that doesn't
+                            // match GatewayConfig's flat host/port fields.
+                            if let Ok(toml_value) = content.parse::<toml::Value>() {
+                                if let Some(search_section) = toml_value.get("search") {
+                                    let search_toml =
+                                        toml::to_string(search_section).unwrap_or_default();
+                                    if let Ok(search) =
+                                        toml::from_str::<crate::gateway::config::SearchConfig>(
+                                            &search_toml,
+                                        )
+                                    {
+                                        default_config.search = search;
+                                        info!(
+                                            "Extracted search config from syscity.toml: {:?}",
+                                            default_config.search.provider_list()
+                                        );
+                                    }
+                                }
+                            }
+                            default_config
                         }
                     }
                 }

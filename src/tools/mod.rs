@@ -731,7 +731,7 @@ impl ToolExecutionResult {
 
 /// Trait for tools that can be executed by the agent
 #[async_trait]
-pub trait Tool: Send + Sync {
+pub trait Tool: Send + Sync + 'static {
     /// Get the unique name of this tool
     fn name(&self) -> &str;
 
@@ -810,6 +810,7 @@ pub trait Tool: Send + Sync {
             }),
         }
     }
+
 }
 
 /// A boxed tool for storage
@@ -898,6 +899,11 @@ struct CacheEntry {
     timestamp: std::time::Instant,
 }
 
+/// Shared, mutable list of web search providers. Held by both WebSearchTool
+/// and ToolRegistry so hot-reload can update providers without rebuilding
+/// the registry.
+pub type WebSearchProviders = std::sync::Arc<tokio::sync::RwLock<Vec<crate::tools::web::SearchProvider>>>;
+
 /// Registry of tools with optional caching, circuit breaker, and trust-level
 /// filtering.
 pub struct ToolRegistry {
@@ -933,6 +939,9 @@ pub struct ToolRegistry {
     content_filter: Option<Arc<crate::security::content_filter::ContentFilter>>,
     /// Audit logger for recording tool invocations and security events.
     audit_log: Option<Arc<dyn crate::security::runtime_audit::AuditLogger>>,
+    /// Shared provider list for the web_search tool. Hot-reload updates this
+    /// directly when `[search]` configuration changes.
+    web_search_providers: Option<WebSearchProviders>,
 }
 
 impl Default for ToolRegistry {
@@ -951,6 +960,7 @@ impl Default for ToolRegistry {
             approval_queue: None,
             content_filter: None,
             audit_log: None,
+            web_search_providers: None,
         }
     }
 }
@@ -992,6 +1002,7 @@ impl ToolRegistry {
             approval_queue: None,
             content_filter: None,
             audit_log: None,
+            web_search_providers: None,
         }
     }
 
@@ -1011,7 +1022,20 @@ impl ToolRegistry {
             approval_queue: None,
             content_filter: None,
             audit_log: None,
+            web_search_providers: None,
         }
+    }
+
+    /// Attach the shared web_search provider list so hot-reload can update it
+    /// without rebuilding the registry.
+    pub fn with_web_search_providers(mut self, providers: WebSearchProviders) -> Self {
+        self.web_search_providers = Some(providers);
+        self
+    }
+
+    /// Get a clone of the shared web_search provider list, if one was set.
+    pub fn web_search_providers(&self) -> Option<WebSearchProviders> {
+        self.web_search_providers.clone()
     }
 
     // ── Circuit breaker ───────────────────────────────────────────────────────
@@ -1360,6 +1384,27 @@ impl ToolRegistry {
         self
     }
 
+    /// Get a clone of the configured audit logger, if any.
+    pub fn audit_log(&self) -> Option<Arc<dyn crate::security::runtime_audit::AuditLogger>> {
+        self.audit_log.clone()
+    }
+
+    /// Get a clone of the configured content filter, if any.
+    pub fn content_filter(&self) -> Option<Arc<crate::security::content_filter::ContentFilter>> {
+        self.content_filter.clone()
+    }
+
+    /// Return a snapshot of all dynamically-registered tools.
+    pub fn dynamic_tools(&self) -> Vec<(String, std::sync::Arc<dyn Tool>)> {
+        match self.dynamic_tools.read() {
+            Ok(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            Err(e) => {
+                warn!("dynamic_tools lock poisoned: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
     /// Register a tool from a boxed implementation.
     pub fn register(&mut self, tool: BoxedTool) {
         let name = tool.name().to_string();
@@ -1378,6 +1423,26 @@ impl ToolRegistry {
             Ok(mut map) => map.remove(name),
             Err(e) => {
                 warn!("Tools RwLock poisoned in remove: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Replace a statically-registered tool by exact name.
+    /// Returns the previous tool if one existed.
+    pub fn replace(&mut self, name: &str, tool: BoxedTool) -> Option<SharedTool> {
+        let new_name = tool.name().to_string();
+        if name != new_name {
+            warn!(
+                "Tool replacement name mismatch: replacing '{}' with '{}'",
+                name, new_name
+            );
+        }
+        let tool: SharedTool = tool.into();
+        match self.tools.write() {
+            Ok(mut map) => map.insert(new_name, tool),
+            Err(e) => {
+                warn!("Tools RwLock poisoned in replace: {}", e);
                 None
             }
         }

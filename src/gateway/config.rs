@@ -298,7 +298,7 @@ fn default_search_providers() -> Vec<String> {
 }
 
 /// Web search provider configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchConfig {
     /// Legacy single search provider name.
     /// Use `providers` for fallback ordering.

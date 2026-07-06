@@ -1047,7 +1047,11 @@ pub(crate) async fn create_default_tool_registry(
     if search_providers.is_empty() {
         search_providers.push(crate::tools::web::SearchProvider::DuckDuckGo);
     }
-    registry.register(Box::new(WebSearchTool::new().with_providers(search_providers)));
+    let shared_providers = std::sync::Arc::new(tokio::sync::RwLock::new(search_providers));
+    registry = registry.with_web_search_providers(shared_providers.clone());
+    registry.register(Box::new(
+        WebSearchTool::new().with_providers_arc(shared_providers),
+    ));
     registry.register(Box::new(WebFetchTool::new()));
 
     // Register todo tool

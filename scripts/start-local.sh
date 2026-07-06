@@ -80,9 +80,16 @@ fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-log_info "Stopping any existing Syscity instance..."
-"$PROJECT_ROOT/target/release/syscity" stop 2>/dev/null || true
-sleep 1
+log_info "Force stopping any existing Syscity processes..."
+pkill -9 syscity 2>/dev/null || true
+sleep 2
+
+# Truncate daemon log before starting fresh
+LOG_FILE="$HOME/.syscity/logs/daemon.log"
+if [[ -f "$LOG_FILE" ]]; then
+    : > "$LOG_FILE"
+    log_info "Truncated daemon log: $LOG_FILE"
+fi
 
 echo ""
 log_success "Starting Syscity"

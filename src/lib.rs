@@ -91,6 +91,9 @@ pub use crate::core::Engine;
 /// Application version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Git commit hash (embedded at build time via build.rs)
+pub const GIT_HASH: &str = env!("GIT_HASH");
+
 /// Application name
 pub const NAME: &str = env!("CARGO_PKG_NAME");
 

@@ -13,7 +13,12 @@ use crate::tools::sdk::ToolCapabilities;
 const MAX_CONTENT_SIZE: usize = 100 * 1024;
 
 /// Default timeout for web requests
-const WEB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const WEB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Per-provider request timeout. Each provider gets a strict, shorter budget
+/// so that a fallback chain has time to try more than one backend before the
+/// tool-level wrapper times out.
+const PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 /// Web fetch tool for HTTP requests
 #[derive(Debug, Default)]
@@ -326,8 +331,10 @@ impl Tool for WebFetchTool {
 pub struct WebSearchTool {
     /// HTTP client
     client: reqwest::Client,
-    /// Search providers to try in order (fallback)
-    providers: Vec<SearchProvider>,
+    /// Search providers to try in order (fallback).
+    /// Wrapped in Arc<RwLock<>> so hot-reload can update providers without
+    /// rebuilding the entire tool registry.
+    providers: std::sync::Arc<tokio::sync::RwLock<Vec<SearchProvider>>>,
 }
 
 /// Search provider configuration
@@ -376,7 +383,9 @@ impl Default for WebSearchTool {
 
         Self {
             client,
-            providers: vec![SearchProvider::DuckDuckGo],
+            providers: std::sync::Arc::new(tokio::sync::RwLock::new(vec![
+                SearchProvider::DuckDuckGo,
+            ])),
         }
     }
 }
@@ -389,12 +398,28 @@ impl WebSearchTool {
 
     /// Set a single search provider
     pub fn with_provider(mut self, provider: SearchProvider) -> Self {
-        self.providers = vec![provider];
+        self.providers = std::sync::Arc::new(tokio::sync::RwLock::new(vec![provider]));
         self
     }
 
     /// Set multiple search providers to try in order
     pub fn with_providers(mut self, providers: Vec<SearchProvider>) -> Self {
+        self.providers = std::sync::Arc::new(tokio::sync::RwLock::new(providers));
+        self
+    }
+
+    /// Replace the provider list at runtime (used by hot-reload).
+    pub async fn set_providers(&self, providers: Vec<SearchProvider>) {
+        let mut guard = self.providers.write().await;
+        *guard = providers;
+    }
+
+    /// Use a pre-built, shared provider list so the registry and the tool
+    /// observe the same providers during hot-reload.
+    pub fn with_providers_arc(
+        mut self,
+        providers: std::sync::Arc<tokio::sync::RwLock<Vec<SearchProvider>>>,
+    ) -> Self {
         self.providers = providers;
         self
     }
@@ -417,37 +442,57 @@ fn provider_name(provider: &SearchProvider) -> &'static str {
 
 impl WebSearchTool {
     /// Execute a search against a single provider.
+    /// Each provider request is wrapped with its own timeout so that a slow
+    /// backend does not consume the entire tool-level budget.
     async fn search_with_provider(
         &self,
         provider: &SearchProvider,
         query: &str,
         limit: usize,
     ) -> crate::Result<Vec<SearchResult>> {
-        match provider {
-            SearchProvider::DuckDuckGo => self.search_duckduckgo(query, limit).await,
-            SearchProvider::Bing { api_key, endpoint } => {
-                self.search_bing(api_key, endpoint, query, limit).await
+        let provider_name = provider_name(provider);
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(PROVIDER_TIMEOUT, async {
+            match provider {
+                SearchProvider::DuckDuckGo => self.search_duckduckgo(query, limit).await,
+                SearchProvider::Bing { api_key, endpoint } => {
+                    self.search_bing(api_key, endpoint, query, limit).await
+                }
+                SearchProvider::Google { api_key, cx } => {
+                    self.search_google(api_key, cx, query, limit).await
+                }
+                SearchProvider::Brave { api_key } => self.search_brave(api_key, query, limit).await,
+                SearchProvider::Tavily { api_key } => self.search_tavily(api_key, query, limit).await,
+                SearchProvider::SerpApi { api_key } => self.search_serpapi(api_key, query, limit).await,
+                SearchProvider::Exa { api_key } => self.search_exa(api_key, query, limit).await,
+                SearchProvider::Firecrawl { api_key } => {
+                    self.search_firecrawl(api_key, query, limit).await
+                }
+                SearchProvider::Custom {
+                    url,
+                    api_key,
+                    headers,
+                    result_parser,
+                } => {
+                    self.search_custom(url, api_key, headers, result_parser, query, limit)
+                        .await
+                }
             }
-            SearchProvider::Google { api_key, cx } => {
-                self.search_google(api_key, cx, query, limit).await
-            }
-            SearchProvider::Brave { api_key } => self.search_brave(api_key, query, limit).await,
-            SearchProvider::Tavily { api_key } => self.search_tavily(api_key, query, limit).await,
-            SearchProvider::SerpApi { api_key } => self.search_serpapi(api_key, query, limit).await,
-            SearchProvider::Exa { api_key } => self.search_exa(api_key, query, limit).await,
-            SearchProvider::Firecrawl { api_key } => {
-                self.search_firecrawl(api_key, query, limit).await
-            }
-            SearchProvider::Custom {
-                url,
-                api_key,
-                headers,
-                result_parser,
-            } => {
-                self.search_custom(url, api_key, headers, result_parser, query, limit)
-                    .await
-            }
-        }
+        })
+        .await
+        .map_err(|_| {
+            crate::error::SyscityError::Timeout(format!(
+                "Provider '{}' search exceeded {:?}",
+                provider_name, PROVIDER_TIMEOUT
+            ))
+        })?;
+
+        debug!(
+            "Provider {} search completed in {:?}",
+            provider_name,
+            start.elapsed()
+        );
+        result
     }
 
     /// Search using DuckDuckGo
@@ -813,12 +858,16 @@ impl WebSearchTool {
         query: &str,
         limit: usize,
     ) -> crate::Result<Vec<SearchResult>> {
+        let start = std::time::Instant::now();
+        debug!("Tavily search starting for query: {}", query);
+
         let body = serde_json::json!({
             "query": query,
             "search_depth": "basic",
             "max_results": limit.min(20),
         });
 
+        let request_start = std::time::Instant::now();
         let response = self
             .client
             .post("https://api.tavily.com/search")
@@ -829,6 +878,7 @@ impl WebSearchTool {
             .map_err(|e| {
                 crate::error::SyscityError::Internal(format!("Tavily search failed: {}", e))
             })?;
+        debug!("Tavily request sent and response received in {:?}", request_start.elapsed());
 
         let status = response.status();
         if !status.is_success() {
@@ -839,9 +889,11 @@ impl WebSearchTool {
             )));
         }
 
+        let parse_start = std::time::Instant::now();
         let data: serde_json::Value = response.json().await.map_err(|e| {
             crate::error::SyscityError::Internal(format!("Failed to parse Tavily response: {}", e))
         })?;
+        debug!("Tavily response parsed in {:?}", parse_start.elapsed());
 
         let mut results = Vec::new();
         if let Some(items) = data["results"].as_array() {
@@ -854,6 +906,7 @@ impl WebSearchTool {
             }
         }
 
+        debug!("Tavily search completed in {:?} with {} results", start.elapsed(), results.len());
         Ok(results)
     }
 
@@ -1201,9 +1254,17 @@ impl Tool for WebSearchTool {
 
         info!("Searching for: {}", query);
 
+        let execute_start = std::time::Instant::now();
+        let providers = self.providers.read().await.clone();
         let mut last_error = None;
-        for (idx, provider) in self.providers.iter().enumerate() {
+        for (idx, provider) in providers.iter().enumerate() {
             let provider_name = provider_name(provider);
+            info!(
+                "Trying provider {} ({}): {}",
+                idx + 1,
+                providers.len(),
+                provider_name
+            );
             match self.search_with_provider(provider, query, limit).await {
                 Ok(results) if !results.is_empty() => {
                     if idx > 0 {
@@ -1213,6 +1274,7 @@ impl Tool for WebSearchTool {
                         );
                     }
                     let result_count = results.len();
+                    let format_start = std::time::Instant::now();
                     let formatted: Vec<String> = results
                         .iter()
                         .enumerate()
@@ -1222,6 +1284,13 @@ impl Tool for WebSearchTool {
                         .collect();
 
                     let output = formatted.join("\n\n");
+                    debug!("Formatted search results in {:?}", format_start.elapsed());
+                    info!(
+                        "web_search completed in {:?} with {} results from {}",
+                        execute_start.elapsed(),
+                        result_count,
+                        provider_name
+                    );
                     return Ok(ToolExecutionResult::success(output).with_data(serde_json::json!({
                         "query": query,
                         "result_count": result_count,
@@ -1243,6 +1312,8 @@ impl Tool for WebSearchTool {
                 }
             }
         }
+
+        info!("web_search exhausted all providers in {:?}", execute_start.elapsed());
 
         if let Some(e) = last_error {
             return Err(e);
