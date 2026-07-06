@@ -287,15 +287,37 @@ fn default_search_provider() -> String {
     "duckduckgo".to_string()
 }
 
+/// Default provider API keys map
+fn default_search_keys() -> std::collections::HashMap<String, String> {
+    std::collections::HashMap::new()
+}
+
 /// Web search provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
     /// Search provider name: "duckduckgo", "tavily", "serpapi", "exa", "firecrawl"
     #[serde(default = "default_search_provider")]
     pub provider: String,
-    /// API key for providers that require one (Tavily, SerpAPI, Exa, Firecrawl)
+    /// Legacy single API key field.
     #[serde(default)]
     pub api_key: String,
+    /// Per-provider API keys. Allows configuring multiple providers at once.
+    /// The active provider uses the key from `provider_key` or falls back to `api_key`.
+    #[serde(default = "default_search_keys")]
+    pub keys: std::collections::HashMap<String, String>,
+}
+
+impl SearchConfig {
+    /// Get the API key for a given provider name.
+    /// Prefers `keys[provider]`, then `provider_key`, then the legacy `api_key`.
+    pub fn api_key_for(&self, provider: &str) -> Option<String> {
+        self.keys
+            .get(provider)
+            .cloned()
+            .filter(|k| !k.is_empty())
+            .or_else(|| self.api_key.clone().into())
+            .filter(|k| !k.is_empty())
+    }
 }
 
 impl Default for SearchConfig {
@@ -303,6 +325,7 @@ impl Default for SearchConfig {
         Self {
             provider: default_search_provider(),
             api_key: String::new(),
+            keys: default_search_keys(),
         }
     }
 }

@@ -1006,16 +1006,16 @@ pub(crate) async fn create_default_tool_registry(
     // Register web tools
     let search_provider = match search_config.provider.as_str() {
         "tavily" => crate::tools::web::SearchProvider::Tavily {
-            api_key: search_config.api_key.clone(),
+            api_key: search_config.api_key_for("tavily").unwrap_or_default(),
         },
         "serpapi" => crate::tools::web::SearchProvider::SerpApi {
-            api_key: search_config.api_key.clone(),
+            api_key: search_config.api_key_for("serpapi").unwrap_or_default(),
         },
         "exa" => crate::tools::web::SearchProvider::Exa {
-            api_key: search_config.api_key.clone(),
+            api_key: search_config.api_key_for("exa").unwrap_or_default(),
         },
         "firecrawl" => crate::tools::web::SearchProvider::Firecrawl {
-            api_key: search_config.api_key.clone(),
+            api_key: search_config.api_key_for("firecrawl").unwrap_or_default(),
         },
         _ => crate::tools::web::SearchProvider::DuckDuckGo,
     };
