@@ -1004,22 +1004,50 @@ pub(crate) async fn create_default_tool_registry(
     )));
 
     // Register web tools
-    let search_provider = match search_config.provider.as_str() {
-        "tavily" => crate::tools::web::SearchProvider::Tavily {
-            api_key: search_config.api_key_for("tavily").unwrap_or_default(),
-        },
-        "serpapi" => crate::tools::web::SearchProvider::SerpApi {
-            api_key: search_config.api_key_for("serpapi").unwrap_or_default(),
-        },
-        "exa" => crate::tools::web::SearchProvider::Exa {
-            api_key: search_config.api_key_for("exa").unwrap_or_default(),
-        },
-        "firecrawl" => crate::tools::web::SearchProvider::Firecrawl {
-            api_key: search_config.api_key_for("firecrawl").unwrap_or_default(),
-        },
-        _ => crate::tools::web::SearchProvider::DuckDuckGo,
-    };
-    registry.register(Box::new(WebSearchTool::new().with_provider(search_provider)));
+    let mut search_providers = Vec::new();
+    for name in search_config.provider_list() {
+        let provider = match name.as_str() {
+            "tavily" => Some(crate::tools::web::SearchProvider::Tavily {
+                api_key: search_config.api_key_for("tavily").unwrap_or_default(),
+            }),
+            "serpapi" => Some(crate::tools::web::SearchProvider::SerpApi {
+                api_key: search_config.api_key_for("serpapi").unwrap_or_default(),
+            }),
+            "exa" => Some(crate::tools::web::SearchProvider::Exa {
+                api_key: search_config.api_key_for("exa").unwrap_or_default(),
+            }),
+            "firecrawl" => Some(crate::tools::web::SearchProvider::Firecrawl {
+                api_key: search_config.api_key_for("firecrawl").unwrap_or_default(),
+            }),
+            "duckduckgo" => Some(crate::tools::web::SearchProvider::DuckDuckGo),
+            "bing" => Some(crate::tools::web::SearchProvider::Bing {
+                api_key: search_config.api_key_for("bing").unwrap_or_default(),
+                endpoint: "https://api.bing.microsoft.com".to_string(),
+            }),
+            "google" => Some(crate::tools::web::SearchProvider::Google {
+                api_key: search_config.api_key_for("google").unwrap_or_default(),
+                cx: search_config
+                    .keys
+                    .get("google_cx")
+                    .cloned()
+                    .unwrap_or_default(),
+            }),
+            "brave" => Some(crate::tools::web::SearchProvider::Brave {
+                api_key: search_config.api_key_for("brave").unwrap_or_default(),
+            }),
+            _ => {
+                warn!("Unknown search provider '{}', skipping", name);
+                None
+            }
+        };
+        if let Some(provider) = provider {
+            search_providers.push(provider);
+        }
+    }
+    if search_providers.is_empty() {
+        search_providers.push(crate::tools::web::SearchProvider::DuckDuckGo);
+    }
+    registry.register(Box::new(WebSearchTool::new().with_providers(search_providers)));
     registry.register(Box::new(WebFetchTool::new()));
 
     // Register todo tool

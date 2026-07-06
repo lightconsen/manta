@@ -292,24 +292,44 @@ fn default_search_keys() -> std::collections::HashMap<String, String> {
     std::collections::HashMap::new()
 }
 
+/// Default ordered list of search providers for fallback.
+fn default_search_providers() -> Vec<String> {
+    vec![default_search_provider()]
+}
+
 /// Web search provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
-    /// Search provider name: "duckduckgo", "tavily", "serpapi", "exa", "firecrawl"
+    /// Legacy single search provider name.
+    /// Use `providers` for fallback ordering.
     #[serde(default = "default_search_provider")]
     pub provider: String,
+    /// Ordered list of search providers to try.
+    /// When empty, falls back to `[provider]`.
+    #[serde(default = "default_search_providers")]
+    pub providers: Vec<String>,
     /// Legacy single API key field.
     #[serde(default)]
     pub api_key: String,
     /// Per-provider API keys. Allows configuring multiple providers at once.
-    /// The active provider uses the key from `provider_key` or falls back to `api_key`.
+    /// The active provider uses the key from `keys[provider]` or falls back to `api_key`.
     #[serde(default = "default_search_keys")]
     pub keys: std::collections::HashMap<String, String>,
 }
 
 impl SearchConfig {
+    /// Return the ordered list of provider names to try.
+    /// Prefers `providers`; when empty, uses `[provider]`.
+    pub fn provider_list(&self) -> Vec<String> {
+        if self.providers.is_empty() {
+            vec![self.provider.clone()]
+        } else {
+            self.providers.clone()
+        }
+    }
+
     /// Get the API key for a given provider name.
-    /// Prefers `keys[provider]`, then `provider_key`, then the legacy `api_key`.
+    /// Prefers `keys[provider]`, then the legacy `api_key`.
     pub fn api_key_for(&self, provider: &str) -> Option<String> {
         self.keys
             .get(provider)
@@ -324,6 +344,7 @@ impl Default for SearchConfig {
     fn default() -> Self {
         Self {
             provider: default_search_provider(),
+            providers: default_search_providers(),
             api_key: String::new(),
             keys: default_search_keys(),
         }

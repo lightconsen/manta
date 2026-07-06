@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use crate::tools::sdk::ToolCapabilities;
@@ -326,8 +326,8 @@ impl Tool for WebFetchTool {
 pub struct WebSearchTool {
     /// HTTP client
     client: reqwest::Client,
-    /// Search provider configuration
-    provider: SearchProvider,
+    /// Search providers to try in order (fallback)
+    providers: Vec<SearchProvider>,
 }
 
 /// Search provider configuration
@@ -376,7 +376,7 @@ impl Default for WebSearchTool {
 
         Self {
             client,
-            provider: SearchProvider::DuckDuckGo,
+            providers: vec![SearchProvider::DuckDuckGo],
         }
     }
 }
@@ -387,10 +387,67 @@ impl WebSearchTool {
         Self::default()
     }
 
-    /// Set the search provider
+    /// Set a single search provider
     pub fn with_provider(mut self, provider: SearchProvider) -> Self {
-        self.provider = provider;
+        self.providers = vec![provider];
         self
+    }
+
+    /// Set multiple search providers to try in order
+    pub fn with_providers(mut self, providers: Vec<SearchProvider>) -> Self {
+        self.providers = providers;
+        self
+    }
+}
+
+/// Return a human-readable provider name for logging.
+fn provider_name(provider: &SearchProvider) -> &'static str {
+    match provider {
+        SearchProvider::DuckDuckGo => "duckduckgo",
+        SearchProvider::Bing { .. } => "bing",
+        SearchProvider::Google { .. } => "google",
+        SearchProvider::Brave { .. } => "brave",
+        SearchProvider::Tavily { .. } => "tavily",
+        SearchProvider::SerpApi { .. } => "serpapi",
+        SearchProvider::Exa { .. } => "exa",
+        SearchProvider::Firecrawl { .. } => "firecrawl",
+        SearchProvider::Custom { .. } => "custom",
+    }
+}
+
+impl WebSearchTool {
+    /// Execute a search against a single provider.
+    async fn search_with_provider(
+        &self,
+        provider: &SearchProvider,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        match provider {
+            SearchProvider::DuckDuckGo => self.search_duckduckgo(query, limit).await,
+            SearchProvider::Bing { api_key, endpoint } => {
+                self.search_bing(api_key, endpoint, query, limit).await
+            }
+            SearchProvider::Google { api_key, cx } => {
+                self.search_google(api_key, cx, query, limit).await
+            }
+            SearchProvider::Brave { api_key } => self.search_brave(api_key, query, limit).await,
+            SearchProvider::Tavily { api_key } => self.search_tavily(api_key, query, limit).await,
+            SearchProvider::SerpApi { api_key } => self.search_serpapi(api_key, query, limit).await,
+            SearchProvider::Exa { api_key } => self.search_exa(api_key, query, limit).await,
+            SearchProvider::Firecrawl { api_key } => {
+                self.search_firecrawl(api_key, query, limit).await
+            }
+            SearchProvider::Custom {
+                url,
+                api_key,
+                headers,
+                result_parser,
+            } => {
+                self.search_custom(url, api_key, headers, result_parser, query, limit)
+                    .await
+            }
+        }
     }
 
     /// Search using DuckDuckGo
@@ -1144,58 +1201,54 @@ impl Tool for WebSearchTool {
 
         info!("Searching for: {}", query);
 
-        let results = match &self.provider {
-            SearchProvider::DuckDuckGo => self.search_duckduckgo(query, limit).await,
-            SearchProvider::Bing { api_key, endpoint } => {
-                self.search_bing(api_key, endpoint, query, limit).await
-            }
-            SearchProvider::Google { api_key, cx } => {
-                self.search_google(api_key, cx, query, limit).await
-            }
-            SearchProvider::Brave { api_key } => self.search_brave(api_key, query, limit).await,
-            SearchProvider::Tavily { api_key } => self.search_tavily(api_key, query, limit).await,
-            SearchProvider::SerpApi { api_key } => self.search_serpapi(api_key, query, limit).await,
-            SearchProvider::Exa { api_key } => self.search_exa(api_key, query, limit).await,
-            SearchProvider::Firecrawl { api_key } => {
-                self.search_firecrawl(api_key, query, limit).await
-            }
-            SearchProvider::Custom {
-                url,
-                api_key,
-                headers,
-                result_parser,
-            } => {
-                self.search_custom(url, api_key, headers, result_parser, query, limit)
-                    .await
-            }
-        }?;
+        let mut last_error = None;
+        for (idx, provider) in self.providers.iter().enumerate() {
+            let provider_name = provider_name(provider);
+            match self.search_with_provider(provider, query, limit).await {
+                Ok(results) if !results.is_empty() => {
+                    if idx > 0 {
+                        info!(
+                            "Search fallback succeeded after {} provider(s): {}",
+                            idx, provider_name
+                        );
+                    }
+                    let result_count = results.len();
+                    let formatted: Vec<String> = results
+                        .iter()
+                        .enumerate()
+                        .map(|(i, r)| {
+                            format!("{}. {}\n   URL: {}\n   {}", i + 1, r.title, r.url, r.snippet)
+                        })
+                        .collect();
 
-        if results.is_empty() {
-            return Ok(ToolExecutionResult::success("No results found for the query.".to_string()));
+                    let output = formatted.join("\n\n");
+                    return Ok(ToolExecutionResult::success(output).with_data(serde_json::json!({
+                        "query": query,
+                        "result_count": result_count,
+                        "results": results.iter().map(|r| {
+                            serde_json::json!({
+                                "title": r.title,
+                                "url": r.url,
+                                "snippet": r.snippet
+                            })
+                        }).collect::<Vec<_>>()
+                    })));
+                }
+                Ok(_) => {
+                    debug!("Provider {} returned no results", provider_name);
+                }
+                Err(e) => {
+                    warn!("Provider {} search failed: {}", provider_name, e);
+                    last_error = Some(e);
+                }
+            }
         }
 
-        // Format results
-        let formatted: Vec<String> = results
-            .iter()
-            .enumerate()
-            .map(|(i, r)| format!("{}. {}\n   URL: {}\n   {}", i + 1, r.title, r.url, r.snippet))
-            .collect();
+        if let Some(e) = last_error {
+            return Err(e);
+        }
 
-        let output = formatted.join("\n\n");
-
-        info!("Found {} results for query", results.len());
-
-        Ok(ToolExecutionResult::success(output).with_data(serde_json::json!({
-            "query": query,
-            "result_count": results.len(),
-            "results": results.iter().map(|r| {
-                serde_json::json!({
-                    "title": r.title,
-                    "url": r.url,
-                    "snippet": r.snippet
-                })
-            }).collect::<Vec<_>>()
-        })))
+        Ok(ToolExecutionResult::success("No results found for the query.".to_string()))
     }
 }
 
