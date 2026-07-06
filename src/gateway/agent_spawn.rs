@@ -952,6 +952,8 @@ pub(crate) struct ToolRegistryArgs {
     pub audit_log: Arc<dyn crate::security::runtime_audit::AuditLogger>,
     /// Optional content filter.
     pub content_filter: Option<Arc<crate::security::content_filter::ContentFilter>>,
+    /// Search provider configuration.
+    pub search_config: crate::gateway::config::SearchConfig,
 }
 
 /// Create default tool registry with all built-in tools
@@ -969,6 +971,7 @@ pub(crate) async fn create_default_tool_registry(
         capabilities,
         audit_log,
         content_filter,
+        search_config,
     } = args;
 
     let mut registry = ToolRegistry::new()
@@ -1001,7 +1004,22 @@ pub(crate) async fn create_default_tool_registry(
     )));
 
     // Register web tools
-    registry.register(Box::new(WebSearchTool::new()));
+    let search_provider = match search_config.provider.as_str() {
+        "tavily" => crate::tools::web::SearchProvider::Tavily {
+            api_key: search_config.api_key.clone(),
+        },
+        "serpapi" => crate::tools::web::SearchProvider::SerpApi {
+            api_key: search_config.api_key.clone(),
+        },
+        "exa" => crate::tools::web::SearchProvider::Exa {
+            api_key: search_config.api_key.clone(),
+        },
+        "firecrawl" => crate::tools::web::SearchProvider::Firecrawl {
+            api_key: search_config.api_key.clone(),
+        },
+        _ => crate::tools::web::SearchProvider::DuckDuckGo,
+    };
+    registry.register(Box::new(WebSearchTool::new().with_provider(search_provider)));
     registry.register(Box::new(WebFetchTool::new()));
 
     // Register todo tool

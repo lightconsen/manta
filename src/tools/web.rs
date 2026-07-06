@@ -352,6 +352,18 @@ pub enum SearchProvider {
         headers: Option<std::collections::HashMap<String, String>>,
         result_parser: Option<fn(&str, usize) -> Vec<SearchResult>>,
     },
+    /// Tavily AI Search API (requires key)
+    /// https://docs.tavily.com/
+    Tavily { api_key: String },
+    /// SerpAPI Google Search API (requires key)
+    /// https://serpapi.com/
+    SerpApi { api_key: String },
+    /// Exa (formerly Metaphor) AI Search API (requires key)
+    /// https://docs.exa.ai/
+    Exa { api_key: String },
+    /// Firecrawl Search API (requires key)
+    /// https://docs.firecrawl.dev/
+    Firecrawl { api_key: String },
 }
 
 impl Default for WebSearchTool {
@@ -421,7 +433,10 @@ impl WebSearchTool {
                     .send()
                     .await
                     .map_err(|e| {
-                        crate::error::SyscityError::Internal(format!("Search request failed: {}", e))
+                        crate::error::SyscityError::Internal(format!(
+                            "Search request failed: {}",
+                            e
+                        ))
                     })?
             }
             Err(_) => {
@@ -434,7 +449,10 @@ impl WebSearchTool {
                     .send()
                     .await
                     .map_err(|e| {
-                        crate::error::SyscityError::Internal(format!("Search request failed: {}", e))
+                        crate::error::SyscityError::Internal(format!(
+                            "Search request failed: {}",
+                            e
+                        ))
                     })?
             }
         };
@@ -731,6 +749,204 @@ impl WebSearchTool {
         Ok(results)
     }
 
+    /// Search using Tavily AI Search API
+    async fn search_tavily(
+        &self,
+        api_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        let body = serde_json::json!({
+            "query": query,
+            "search_depth": "basic",
+            "max_results": limit.min(20),
+        });
+
+        let response = self
+            .client
+            .post("https://api.tavily.com/search")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Tavily search failed: {}", e))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(crate::error::SyscityError::Internal(format!(
+                "Tavily search failed: HTTP {} - {}",
+                status, body_text
+            )));
+        }
+
+        let data: serde_json::Value = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to parse Tavily response: {}", e))
+        })?;
+
+        let mut results = Vec::new();
+        if let Some(items) = data["results"].as_array() {
+            for item in items.iter().take(limit) {
+                results.push(SearchResult {
+                    title: item["title"].as_str().unwrap_or("").to_string(),
+                    url: item["url"].as_str().unwrap_or("").to_string(),
+                    snippet: item["content"].as_str().unwrap_or("").to_string(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Search using SerpAPI Google Search API
+    async fn search_serpapi(
+        &self,
+        api_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        let url = format!(
+            "https://serpapi.com/search?q={}&api_key={}&engine=google",
+            urlencoding::encode(query),
+            urlencoding::encode(api_key),
+        );
+
+        let response = self.client.get(&url).send().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("SerpAPI search failed: {}", e))
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(crate::error::SyscityError::Internal(format!(
+                "SerpAPI search failed: HTTP {} - {}",
+                status, body_text
+            )));
+        }
+
+        let data: serde_json::Value = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to parse SerpAPI response: {}", e))
+        })?;
+
+        let mut results = Vec::new();
+        if let Some(items) = data["organic_results"].as_array() {
+            for item in items.iter().take(limit) {
+                results.push(SearchResult {
+                    title: item["title"].as_str().unwrap_or("").to_string(),
+                    url: item["link"].as_str().unwrap_or("").to_string(),
+                    snippet: item["snippet"].as_str().unwrap_or("").to_string(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Search using Exa (formerly Metaphor) AI Search API
+    async fn search_exa(
+        &self,
+        api_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        let body = serde_json::json!({
+            "query": query,
+            "num_results": limit.min(20),
+        });
+
+        let response = self
+            .client
+            .post("https://api.exa.ai/search")
+            .header("x-api-key", api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Exa search failed: {}", e))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(crate::error::SyscityError::Internal(format!(
+                "Exa search failed: HTTP {} - {}",
+                status, body_text
+            )));
+        }
+
+        let data: serde_json::Value = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to parse Exa response: {}", e))
+        })?;
+
+        let mut results = Vec::new();
+        if let Some(items) = data["results"].as_array() {
+            for item in items.iter().take(limit) {
+                results.push(SearchResult {
+                    title: item["title"].as_str().unwrap_or("").to_string(),
+                    url: item["url"].as_str().unwrap_or("").to_string(),
+                    snippet: item["snippet"].as_str().unwrap_or("").to_string(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Search using Firecrawl Search API
+    async fn search_firecrawl(
+        &self,
+        api_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        let body = serde_json::json!({
+            "query": query,
+            "maxResults": limit.min(20),
+        });
+
+        let response = self
+            .client
+            .post("https://api.firecrawl.dev/v1/search")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Firecrawl search failed: {}", e))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(crate::error::SyscityError::Internal(format!(
+                "Firecrawl search failed: HTTP {} - {}",
+                status, body_text
+            )));
+        }
+
+        let data: serde_json::Value = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "Failed to parse Firecrawl response: {}",
+                e
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        if let Some(items) = data["data"].as_array() {
+            for item in items.iter().take(limit) {
+                results.push(SearchResult {
+                    title: item["title"].as_str().unwrap_or("").to_string(),
+                    url: item["url"].as_str().unwrap_or("").to_string(),
+                    snippet: item["description"].as_str().unwrap_or("").to_string(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Search using custom provider
     async fn search_custom(
         &self,
@@ -937,6 +1153,12 @@ impl Tool for WebSearchTool {
                 self.search_google(api_key, cx, query, limit).await
             }
             SearchProvider::Brave { api_key } => self.search_brave(api_key, query, limit).await,
+            SearchProvider::Tavily { api_key } => self.search_tavily(api_key, query, limit).await,
+            SearchProvider::SerpApi { api_key } => self.search_serpapi(api_key, query, limit).await,
+            SearchProvider::Exa { api_key } => self.search_exa(api_key, query, limit).await,
+            SearchProvider::Firecrawl { api_key } => {
+                self.search_firecrawl(api_key, query, limit).await
+            }
             SearchProvider::Custom {
                 url,
                 api_key,

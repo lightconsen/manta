@@ -95,6 +95,9 @@ pub struct GatewayConfig {
     /// Perception fusion layer configuration.
     #[serde(default)]
     pub perception: PerceptionConfig,
+    /// Web search provider configuration.
+    #[serde(default)]
+    pub search: SearchConfig,
 }
 
 /// A single device driver entry in the configuration.
@@ -275,6 +278,31 @@ impl Default for PerceptionConfig {
             enable_summary: false,
             summarizer_kind: SummarizerKind::default(),
             summary_refresh_secs: None,
+        }
+    }
+}
+
+/// Default search provider name
+fn default_search_provider() -> String {
+    "duckduckgo".to_string()
+}
+
+/// Web search provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchConfig {
+    /// Search provider name: "duckduckgo", "tavily", "serpapi", "exa", "firecrawl"
+    #[serde(default = "default_search_provider")]
+    pub provider: String,
+    /// API key for providers that require one (Tavily, SerpAPI, Exa, Firecrawl)
+    #[serde(default)]
+    pub api_key: String,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_search_provider(),
+            api_key: String::new(),
         }
     }
 }
@@ -703,6 +731,7 @@ impl Default for GatewayConfig {
             capabilities: crate::config::CapabilitiesConfig::default(),
             device: DeviceConfig::default(),
             perception: PerceptionConfig::default(),
+            search: SearchConfig::default(),
         }
     }
 }

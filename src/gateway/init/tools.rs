@@ -247,6 +247,7 @@ pub async fn init_tools(
                 capabilities: config.capabilities.clone(),
                 audit_log: audit_log_dyn,
                 content_filter: Some(Arc::new(ContentFilter::default())),
+                search_config: config.search.clone(),
             },
         )
         .await?,

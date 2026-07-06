@@ -431,15 +431,15 @@ pub(crate) async fn start_gateway(
     // token fires.  Stuck handles are aborted later by `stop_gateway`
     // (step 12 — abort remaining background tasks) so no separate drain
     // timeout is needed here.
-    let serve = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move { shutdown_token.cancelled().await });
-    serve.await.map_err(|e| crate::error::SyscityError::ExternalService {
-        source: "Gateway server error".to_string(),
-        cause: Some(Box::new(e)),
-    })?;
+    let serve =
+        axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .with_graceful_shutdown(async move { shutdown_token.cancelled().await });
+    serve
+        .await
+        .map_err(|e| crate::error::SyscityError::ExternalService {
+            source: "Gateway server error".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
 
     Ok(())
 }
