@@ -47,12 +47,12 @@ impl ReflectionResult {
 
         if !relevant.weaknesses.is_empty() {
             let w = relevant.weaknesses.join("; ");
-            parts.push(format!("缺点: {}", w));
+            parts.push(format!("Weaknesses: {}", w));
         }
 
         if !relevant.suggested_improvements.is_empty() {
             let s = relevant.suggested_improvements.join("; ");
-            parts.push(format!("改进方向: {}", s));
+            parts.push(format!("Improvements: {}", s));
         }
 
         if parts.is_empty() {
@@ -60,9 +60,9 @@ impl ReflectionResult {
         }
 
         format!(
-            "Reflection 发现回复中存在问题，经 {} 轮迭代后改进。{}",
+            "Response was improved over {} iteration(s). {}",
             self.iterations,
-            parts.join("。")
+            parts.join(" ")
         )
     }
 
@@ -213,6 +213,7 @@ impl ReflectionPipeline {
 mod tests {
     use super::*;
     use crate::providers::mock::MockProvider;
+    use crate::agent::reflection::QualityCriteria;
 
     fn mock_provider() -> Arc<dyn Provider> {
         Arc::new(MockProvider::new())
@@ -297,5 +298,91 @@ mod tests {
         // Mock provider always returns fixed text, so it'll get evaluated
         // and the loop runs at least once.
         assert_eq!(result.final_content, "test output");
+    }
+
+    #[test]
+    fn test_format_lesson_empty_history() {
+        let result = ReflectionResult {
+            final_content: "ok".to_string(),
+            iterations: 0,
+            critique_history: vec![],
+        };
+        assert!(result.format_lesson().is_empty());
+    }
+
+    #[test]
+    fn test_format_lesson_with_weaknesses() {
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("Factual Accuracy".to_string(), 0.5);
+        let critique = Critique {
+            dimension_scores: scores,
+            strengths: vec![],
+            weaknesses: vec!["Missing examples".to_string(), "Too verbose".to_string()],
+            suggested_improvements: vec!["Add concrete examples".to_string()],
+            overall_score: 0.0,
+            passed: false,
+        };
+
+        let result = ReflectionResult {
+            final_content: "improved".to_string(),
+            iterations: 1,
+            critique_history: vec![critique.finalize(&QualityCriteria::default())],
+        };
+
+        let lesson = result.format_lesson();
+        assert!(lesson.contains("Weaknesses:"));
+        assert!(lesson.contains("Missing examples"));
+        assert!(lesson.contains("Too verbose"));
+        assert!(lesson.contains("Improvements:"));
+        assert!(lesson.contains("Add concrete examples"));
+        assert!(lesson.contains("1 iteration"));
+    }
+
+    #[test]
+    fn test_importance_low_score_high_importance() {
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("Factual Accuracy".to_string(), 0.2);
+        let critique = Critique {
+            dimension_scores: scores,
+            strengths: vec![],
+            weaknesses: vec!["Bad".to_string()],
+            suggested_improvements: vec!["Fix it".to_string()],
+            overall_score: 0.0,
+            passed: false,
+        };
+
+        let result = ReflectionResult {
+            final_content: "fixed".to_string(),
+            iterations: 2,
+            critique_history: vec![critique.finalize(&QualityCriteria::default())],
+        };
+
+        let imp = result.importance();
+        // 0.2 score → importance should be high
+        assert!(imp > 0.8);
+    }
+
+    #[test]
+    fn test_importance_high_score_low_importance() {
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("Factual Accuracy".to_string(), 0.95);
+        let critique = Critique {
+            dimension_scores: scores,
+            strengths: vec![],
+            weaknesses: vec!["Minor nit".to_string()],
+            suggested_improvements: vec!["Polish".to_string()],
+            overall_score: 0.0,
+            passed: false,
+        };
+
+        let result = ReflectionResult {
+            final_content: "polished".to_string(),
+            iterations: 1,
+            critique_history: vec![critique.finalize(&QualityCriteria::default())],
+        };
+
+        let imp = result.importance();
+        // 0.95 score → importance should be low (near minimum 0.3)
+        assert!(imp < 0.35);
     }
 }

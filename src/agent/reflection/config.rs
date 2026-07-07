@@ -44,7 +44,14 @@ pub struct ReflectionConfig {
     /// Quality criteria for evaluating responses.
     #[serde(default)]
     pub criteria: QualityCriteria,
-    /// Maximum number of improvement iterations (default: 3).
+    /// Maximum number of evaluate–improve cycles.
+    ///
+    /// Each iteration runs one evaluation and (if the response doesn't pass)
+    /// one improvement. The total number of LLM calls is at most
+    /// `max_iterations` evaluations + `max_iterations - 1` improvements.
+    ///
+    /// Setting to `1` means "evaluate once, never improve" — useful for
+    /// measurement-only mode. Default: 3.
     #[serde(default = "default_max_iterations")]
     pub max_iterations: usize,
     /// Minimum overall score (0.0–1.0) required to pass (default: 0.7).

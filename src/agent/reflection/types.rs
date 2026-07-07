@@ -76,11 +76,16 @@ pub struct QualityCriteria {
 }
 
 impl QualityCriteria {
-    /// Create criteria with a single threshold for all dimensions.
-    pub fn new(dimensions: Vec<QualityDimension>, _default_threshold: f64) -> Self {
+    /// Create criteria with a default threshold for all dimensions.
+    /// Individual dimensions can be overridden via [`thresholds`](Self::thresholds).
+    pub fn new(dimensions: Vec<QualityDimension>, default_threshold: f64) -> Self {
+        let mut thresholds = HashMap::new();
+        for dim in &dimensions {
+            thresholds.insert(dim.label().to_string(), default_threshold);
+        }
         Self {
             dimensions,
-            thresholds: HashMap::new(),
+            thresholds,
         }
     }
 

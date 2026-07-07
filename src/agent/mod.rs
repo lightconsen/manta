@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime};
 
 use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio_stream::StreamExt;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::channels::thread_binding::ThreadBindingManager;
 use crate::channels::{IncomingMessage, OutgoingMessage};
@@ -1765,18 +1765,34 @@ impl Agent {
                     let improved = result.final_content;
 
                     // Persist reflection lessons to memory for cross-turn learning.
+                    // Before writing, check for similar existing lessons to avoid
+                    // accumulating redundant entries on similar mistakes.
                     if let Some(ref mm) = self.memory_manager {
                         if !lesson.is_empty() {
-                            if let Err(e) = mm
-                                .observe(
-                                    &user_id,
-                                    lesson,
-                                    "reflection_lesson",
-                                    importance,
-                                )
+                            let is_redundant = mm
+                                .retrieve(&user_id, None, &lesson, Some(3))
                                 .await
-                            {
-                                warn!("Failed to persist reflection lesson: {}", e);
+                                .ok()
+                                .map_or(false, |memories| {
+                                    memories
+                                        .iter()
+                                        .any(|m| m.importance_score > 0.45)
+                                });
+
+                            if !is_redundant {
+                                if let Err(e) = mm
+                                    .observe(
+                                        &user_id,
+                                        lesson,
+                                        "reflection_lesson",
+                                        importance,
+                                    )
+                                    .await
+                                {
+                                    warn!("Failed to persist reflection lesson: {}", e);
+                                }
+                            } else {
+                                trace!("Skipping redundant reflection lesson");
                             }
                         }
                     }
