@@ -4298,7 +4298,7 @@ mod tests {
             prompt
         );
         assert!(
-            prompt.contains("Weather - Weather Information"),
+            prompt.contains("**weather**") && prompt.contains("Get weather information for locations"),
             "Expected weather skill content in prompt, got: {}",
             prompt
         );

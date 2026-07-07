@@ -692,8 +692,7 @@ async fn tool_windows_screenshot_invoked_via_chat() {
 
 #[tokio::test]
 #[serial]
-#[cfg_attr(not(target_os = "windows"), ignore = "Windows-only test")]
-#[ignore = "Requires display server + desktop permissions"]
+#[ignore = "Requires display server + desktop permissions (Windows-only test)"]
 async fn tool_windows_desktop_control_invoked_via_chat() {
     let results = run_tool_chat_test(
         40145,

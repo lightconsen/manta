@@ -556,6 +556,7 @@ fn function_definition_serializes_to_openai_compatible_shape() {
             },
             "required": ["input"]
         }),
+        capabilities: None,
     };
 
     let json = serde_json::to_value(&def).unwrap();

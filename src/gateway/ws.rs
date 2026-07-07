@@ -2186,6 +2186,21 @@ async fn handle_config_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                 })
             }).collect::<Vec<_>>(),
             "auth_mode": config.security.auth_mode,
+            "search": {
+                "provider": config.search.provider,
+                "providers": config.search.providers,
+                "has_api_key": !config.search.api_key.is_empty(),
+                "keys": {
+                    "tavily": (!config.search.keys.get("tavily").map_or(true, |k| k.is_empty())).to_string(),
+                    "serpapi": (!config.search.keys.get("serpapi").map_or(true, |k| k.is_empty())).to_string(),
+                    "exa": (!config.search.keys.get("exa").map_or(true, |k| k.is_empty())).to_string(),
+                    "firecrawl": (!config.search.keys.get("firecrawl").map_or(true, |k| k.is_empty())).to_string(),
+                    "bing": (!config.search.keys.get("bing").map_or(true, |k| k.is_empty())).to_string(),
+                    "google": (!config.search.keys.get("google").map_or(true, |k| k.is_empty())).to_string(),
+                    "google_cx": (!config.search.keys.get("google_cx").map_or(true, |k| k.is_empty())).to_string(),
+                    "brave": (!config.search.keys.get("brave").map_or(true, |k| k.is_empty())).to_string(),
+                },
+            },
         }),
     )
 }
@@ -2393,6 +2408,29 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                         "CHANNEL_NOT_FOUND",
                         format!("Channel '{}' not found", payload.name),
                     )
+                }
+            }
+        }
+        "search.provider" => {
+            if let Some(v) = params.value.as_str() {
+                config.search.provider = v.to_string();
+            }
+        }
+        "search.providers" => {
+            if let Some(arr) = params.value.as_array() {
+                config.search.providers = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+            }
+        }
+        _ if params.path.starts_with("search.keys.") => {
+            let key_name = params.path.strip_prefix("search.keys.").unwrap_or("");
+            if !key_name.is_empty() {
+                match &params.value {
+                    serde_json::Value::String(v) if !v.is_empty() => {
+                        config.search.keys.insert(key_name.to_string(), v.clone());
+                    }
+                    _ => {
+                        config.search.keys.remove(key_name);
+                    }
                 }
             }
         }

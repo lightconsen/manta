@@ -32,7 +32,24 @@ interface SyscityConfig {
     max_consecutive_idle?: number;
   };
   channels?: ChannelConfig[];
+  search?: {
+    provider?: string;
+    providers?: string[];
+    has_api_key?: boolean;
+    keys?: Record<string, string>;
+  };
 }
+
+const SEARCH_PROVIDERS = [
+  { id: "duckduckgo", label: "DuckDuckGo", needsKey: false },
+  { id: "tavily", label: "Tavily", needsKey: true },
+  { id: "serpapi", label: "SerpAPI", needsKey: true },
+  { id: "exa", label: "Exa", needsKey: true },
+  { id: "firecrawl", label: "Firecrawl", needsKey: true },
+  { id: "bing", label: "Bing", needsKey: true },
+  { id: "google", label: "Google", needsKey: true },
+  { id: "brave", label: "Brave", needsKey: true },
+];
 
 const channelCredentialFields: Record<string, Array<{ key: string; label: string; type?: string }>> = {
   telegram: [{ key: "token", label: "Bot Token", type: "password" }],
@@ -454,6 +471,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     { id: "jobs", label: "Jobs" },
     { id: "sessions", label: "Sessions" },
     { id: "skills", label: "Skills" },
+    { id: "tools", label: "Tools" },
     { id: "logs", label: "Logs" },
   ];
 
@@ -1403,6 +1421,97 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                       })}
                     </div>
                   )}
+                </section>
+              </div>
+            )}
+
+            {activeTab === "tools" && (
+              <div className="space-y-5">
+                {/* Default Provider */}
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Default Search Provider</h3>
+                  <select
+                    value={config.search?.provider ?? "duckduckgo"}
+                    onChange={(e) => update("search.provider", e.target.value)}
+                    className="w-full text-sm border border-gray-200 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100"
+                  >
+                    {SEARCH_PROVIDERS.map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                </section>
+
+                {/* Fallback Provider Order */}
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Fallback Order</h3>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {(config.search?.providers ?? []).map((prov) => (
+                      <span key={prov} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-gray-100 dark:bg-neutral-800 text-gray-700 dark:text-neutral-300">
+                        {prov}
+                        <button
+                          onClick={() => {
+                            const updated = (config.search?.providers ?? []).filter((p) => p !== prov);
+                            update("search.providers", updated);
+                          }}
+                          className="hover:text-red-500 transition"
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val) {
+                          const current = config.search?.providers ?? [];
+                          if (!current.includes(val)) {
+                            update("search.providers", [...current, val]);
+                          }
+                        }
+                      }}
+                      className="text-sm border border-gray-200 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100"
+                    >
+                      <option value="">+ Add Provider</option>
+                      {SEARCH_PROVIDERS.filter((p) => !(config.search?.providers ?? []).includes(p.id)).map((p) => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </section>
+
+                {/* API Keys */}
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Provider API Keys</h3>
+                  <div className="space-y-3">
+                    {SEARCH_PROVIDERS.filter((p) => p.needsKey).map((p) => (
+                      <div key={p.id} className="flex items-center gap-3">
+                        <label className="w-28 text-sm text-gray-700 dark:text-neutral-300 shrink-0">{p.label}</label>
+                        <input
+                          type="password"
+                          placeholder={config.search?.keys?.[p.id] === "true" ? "••••••••" : ""}
+                          value=""
+                          onChange={(e) => update(`search.keys.${p.id}`, e.target.value)}
+                          onFocus={(e) => (e.target.value = "")}
+                          className="flex-1 text-sm border border-gray-200 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100 placeholder-gray-400"
+                        />
+                      </div>
+                    ))}
+                    {/* Google CX special case */}
+                    <div className="flex items-center gap-3">
+                      <label className="w-28 text-sm text-gray-700 dark:text-neutral-300 shrink-0">Google CX</label>
+                      <input
+                        type="password"
+                        placeholder={config.search?.keys?.google_cx === "true" ? "••••••••" : ""}
+                        value=""
+                        onChange={(e) => update("search.keys.google_cx", e.target.value)}
+                        onFocus={(e) => (e.target.value = "")}
+                        className="flex-1 text-sm border border-gray-200 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100 placeholder-gray-400"
+                      />
+                    </div>
+                  </div>
                 </section>
               </div>
             )}
