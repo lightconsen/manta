@@ -373,8 +373,8 @@ impl Provider for OpenAiProvider {
         crate::providers::merge_extra(&mut body_value, request.extra);
 
         // Debug: print the actual request body
-        let body_json = serde_json::to_string(&body_value).unwrap_or_default();
-        info!("OpenAI API streaming request body: {}", body_json);
+        // let body_json = serde_json::to_string(&body_value).unwrap_or_default();
+        // info!("OpenAI API streaming request body: {}", body_json);
 
         let request_url = self.url("/chat/completions");
 
