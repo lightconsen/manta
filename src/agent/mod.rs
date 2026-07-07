@@ -6,12 +6,13 @@
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::pin::Pin;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio_stream::StreamExt;
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::channels::thread_binding::ThreadBindingManager;
 use crate::channels::{IncomingMessage, OutgoingMessage};
@@ -625,8 +626,10 @@ pub struct Agent {
     computer_config: Option<crate::computer::LoopConfig>,
     /// Optional goal planner for complex multi-step tasks with DAG scheduling.
     pub(crate) goal_planner: Option<Arc<crate::planner::GoalPlanner>>,
-    /// Optional reflection pipeline for self-critique and output improvement.
-    reflection: Option<reflection::ReflectionPipeline>,
+    /// Nudge engine for periodic trajectory reflection (background).
+    nudge_engine: Option<reflection::NudgeEngine>,
+    /// Turn counter for nudge scheduling.
+    nudge_counter: Arc<AtomicU64>,
     /// Optional thread binding manager for tracking session/thread hierarchy
     /// with idle timeout, max age, and child-spawning policies.
     thread_binding_manager: Option<ThreadBindingManager>,
@@ -695,8 +698,12 @@ impl Agent {
     /// Create a new Agent
     pub fn new(config: AgentConfig, provider: Arc<dyn Provider>, tools: Arc<ToolRegistry>) -> Self {
         let provider_clone = provider.clone();
-        let reflection = config.reflection_config.as_ref().map(|rc| {
-            reflection::ReflectionPipeline::new(rc.clone(), provider.clone())
+        let nudge_engine = config.reflection_config.as_ref().and_then(|rc| {
+            if rc.nudge_enabled {
+                Some(reflection::NudgeEngine::new(rc.nudge.clone(), provider.clone()))
+            } else {
+                None
+            }
         });
 
         Self {
@@ -733,7 +740,8 @@ impl Agent {
             computer_adapter: None,
             computer_config: None,
             goal_planner: None,
-            reflection,
+            nudge_engine,
+            nudge_counter: Arc::new(AtomicU64::new(0)),
             thread_binding_manager: None,
             concurrency_guards: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -1734,73 +1742,7 @@ impl Agent {
             outgoing.usage = Some(*usage);
         }
 
-        // ── Reflection: self-critique & iterative improvement ─────────────
-        if let Some(ref pipeline) = self.reflection {
-            if pipeline.should_trigger(&content, &response) {
-                let tool_results: Vec<String> = response
-                    .message
-                    .tool_calls
-                    .as_ref()
-                    .map(|calls| {
-                        calls
-                            .iter()
-                            .map(|c| format!("{}: {}", c.function.name, c.function.arguments))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let result = pipeline
-                    .reflect(&outgoing.content, &content, &tool_results)
-                    .await;
-
-                if result.iterations > 0 {
-                    info!(
-                        "Reflection improved response in {} iteration(s)",
-                        result.iterations
-                    );
-
-                    // Extract memory data before moving fields from result.
-                    let lesson = result.format_lesson();
-                    let importance = result.importance();
-                    let improved = result.final_content;
-
-                    // Persist reflection lessons to memory for cross-turn learning.
-                    // Before writing, check for similar existing lessons to avoid
-                    // accumulating redundant entries on similar mistakes.
-                    if let Some(ref mm) = self.memory_manager {
-                        if !lesson.is_empty() {
-                            let is_redundant = mm
-                                .retrieve(&user_id, None, &lesson, Some(3))
-                                .await
-                                .ok()
-                                .map_or(false, |memories| {
-                                    memories
-                                        .iter()
-                                        .any(|m| m.importance_score > 0.45)
-                                });
-
-                            if !is_redundant {
-                                if let Err(e) = mm
-                                    .observe(
-                                        &user_id,
-                                        lesson,
-                                        "reflection_lesson",
-                                        importance,
-                                    )
-                                    .await
-                                {
-                                    warn!("Failed to persist reflection lesson: {}", e);
-                                }
-                            } else {
-                                trace!("Skipping redundant reflection lesson");
-                            }
-                        }
-                    }
-
-                    outgoing.content = improved;
-                }
-            }
-        }
+        // ── Note: trajectory reflection (nudge) runs in process_message_with_progress ──
 
         Ok(outgoing)
     }
@@ -2055,6 +1997,10 @@ impl Agent {
 
         let tools_used_this_turn = thread.context.tools_used().to_vec();
 
+        // Snapshot turns for nudge engine before moving the thread.
+        let nudge_turns: Vec<crate::agent::turns::Turn> = thread.turns.clone();
+        let nudge_turn_count = thread.turn_count();
+
         // ── Put thread back ───────────────────────────────────────────────────
         {
             let mut map = self.thread_map.lock().await;
@@ -2179,6 +2125,56 @@ impl Agent {
             }
         }
         outgoing.usage = response.usage;
+
+        // ── Nudge: background trajectory reflection ─────────────────────
+        if let Some(ref engine) = self.nudge_engine {
+            let counter = self.nudge_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            let interval = engine.config.interval as u64;
+            let min_turns = engine.config.min_turns as u64;
+
+            if counter >= min_turns && counter % interval == 0 {
+                let engine = engine.clone();
+                let mm = self.memory_manager.clone();
+                let uid = user_id.clone();
+                let criteria = self
+                    .config
+                    .reflection_config
+                    .as_ref()
+                    .map(|rc| rc.criteria.clone())
+                    .unwrap_or_default();
+                let turns = nudge_turns.clone();
+                let total = nudge_turn_count;
+
+                tokio::spawn(async move {
+                    match engine.nudge(&turns, total, &criteria).await {
+                        Ok(nudge_result) => {
+                            info!(
+                                "Nudge trajectory reflection at turn {}: {}",
+                                nudge_result.turn_count, nudge_result.observation
+                            );
+
+                            // Write observation to memory.
+                            if let Some(ref mm) = mm {
+                                if let Err(e) = mm
+                                    .observe(
+                                        &uid,
+                                        nudge_result.observation,
+                                        "interaction_pattern",
+                                        0.6,
+                                    )
+                                    .await
+                                {
+                                    warn!("Failed to persist interaction pattern: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Nudge trajectory reflection failed: {}", e);
+                        }
+                    }
+                });
+            }
+        }
 
         Ok(outgoing)
     }

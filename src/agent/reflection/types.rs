@@ -1,31 +1,11 @@
-//! Core types for the Reflection pattern.
+//! Core types for trajectory reflection.
 //!
-//! Defines what to reflect on, quality criteria, and the structured
-//! critique produced by the LLM judge.
+//! Defines quality criteria and the structured critique produced by the
+//! LLM judge during trajectory evaluation.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-
-/// What type of agent output to reflect on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReflectionTarget {
-    /// Free-form text response.
-    Response,
-    /// Code block in a specific language.
-    Code {
-        /// Optional language identifier (e.g. "python", "rust").
-        language: Option<String>,
-    },
-    /// Execution plan (from GoalPlanner).
-    Plan,
-    /// Result of a specific tool call.
-    ToolResult {
-        /// Name of the tool.
-        tool_name: String,
-    },
-}
 
 /// A dimension of quality used during evaluation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +120,10 @@ pub struct Critique {
     /// Whether this critique meets all thresholds.
     #[serde(default)]
     pub passed: bool,
+    /// Natural-language observation from trajectory evaluation.
+    /// Populated by [`Critic::evaluate_trajectory`].
+    #[serde(default, skip)]
+    pub observation: Option<String>,
 }
 
 impl Critique {
@@ -156,20 +140,6 @@ impl Critique {
         });
 
         self
-    }
-
-    /// A critique that immediately passes (used internally).
-    pub fn pass() -> Self {
-        let mut scores = HashMap::new();
-        scores.insert("Factual Accuracy".to_string(), 1.0);
-        Self {
-            dimension_scores: scores,
-            strengths: vec![],
-            weaknesses: vec![],
-            suggested_improvements: vec![],
-            overall_score: 1.0,
-            passed: true,
-        }
     }
 }
 
@@ -205,6 +175,7 @@ mod tests {
             suggested_improvements: vec![],
             overall_score: 0.0,
             passed: false,
+            observation: None,
         }
         .finalize(&criteria);
 
@@ -225,18 +196,10 @@ mod tests {
             suggested_improvements: vec![],
             overall_score: 0.0,
             passed: false,
+            observation: None,
         }
         .finalize(&criteria);
 
         assert!(!critique.passed);
-    }
-
-    #[test]
-    fn test_reflection_target_serde() {
-        let target = ReflectionTarget::Code {
-            language: Some("rust".to_string()),
-        };
-        let json = serde_json::to_value(&target).unwrap();
-        assert_eq!(json["code"]["language"], "rust");
     }
 }

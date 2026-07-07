@@ -1,8 +1,8 @@
-//! LLM-based critic for evaluating and improving agent output.
+//! LLM-based critic for trajectory evaluation.
 //!
-//! The [`Critic`] wraps an LLM provider and uses carefully crafted prompts
-//! to (1) evaluate agent output against quality criteria, and (2) generate
-//! improved versions based on the critique.
+//! The [`Critic`] wraps an LLM provider to evaluate conversation trajectories
+//! (multiple turns with tool calls and results) and produce structured
+//! critiques with natural-language observations.
 
 use std::sync::Arc;
 
@@ -11,34 +11,39 @@ use crate::Result;
 
 use super::types::{Critique, QualityCriteria};
 
-// ── Prompt Templates ───────────────────────────────────────────────────────
+// ── Prompt Template ─────────────────────────────────────────────────────────
 
-/// System prompt for the critic evaluation step.
-const CRITIC_SYSTEM_PROMPT: &str = r#"You are a quality critic evaluating AI assistant responses.
-Rate the output on each criterion from 0.0 (terrible) to 1.0 (perfect).
+/// System prompt for trajectory-level evaluation (nudge engine).
+const TRAJECTORY_CRITIC_PROMPT: &str = r#"You are analyzing a conversation trajectory to identify interaction patterns.
 
-You MUST respond with ONLY a valid JSON object (no markdown, no backticks):
+Review the full sequence of turns below — user messages, assistant responses,
+tool calls, and tool results — and evaluate:
+
+1. Tool usage effectiveness — are tools used appropriately and efficiently?
+2. Response quality across turns — are responses consistent and well-structured?
+3. Recurring themes — what patterns repeat across user requests?
+4. Improvement opportunities — where could the agent serve the user better?
+
+Output a JSON object with these fields:
 {
-  "dimension_scores": {"criterion_name": 0.85},
-  "strengths": ["..."],
-  "weaknesses": ["..."],
-  "suggested_improvements": ["..."]
-}"#;
+  "dimension_scores": {"Tool Usage": 0.85, "Response Quality": 0.9, "Pattern Recognition": 0.7},
+  "strengths": ["...", "..."],
+  "weaknesses": ["...", "..."],
+  "suggested_improvements": ["...", "..."],
+  "observation": "A single-sentence natural-language summary of the key interaction pattern or lesson learned from this window."
+}
 
-/// System prompt for the improvement step.
-const IMPROVE_SYSTEM_PROMPT: &str = r#"You are an AI assistant improving your previous response based on critique.
-Revise your answer to address each weakness and incorporate the suggested improvements.
-Output ONLY the improved response text, no additional commentary."#;
+Important: "observation" should be a concise, actionable insight that would help the agent in future conversations. Write it in English."#;
 
 // ── Critic ─────────────────────────────────────────────────────────────────
 
-/// LLM-based critic for the Reflection pattern.
+/// LLM-based critic for trajectory evaluation.
 ///
-/// Uses a provider to evaluate agent output against quality criteria and
-/// generate improved versions.
+/// Uses a provider to evaluate conversation trajectories and produce
+/// structured critiques with pattern observations.
 #[derive(Clone)]
 pub struct Critic {
-    /// The LLM provider used for evaluation and improvement.
+    /// The LLM provider used for evaluation.
     provider: Arc<dyn Provider>,
     /// Optional model override for the critic (defaults to provider default).
     model: Option<String>,
@@ -59,83 +64,43 @@ impl Critic {
         self
     }
 
-    /// Evaluate agent output against quality criteria.
+    /// Evaluate a full conversation trajectory.
     ///
-    /// Returns a structured [`Critique`] with dimension scores, strengths,
-    /// weaknesses, and suggested improvements.
-    pub async fn evaluate(
+    /// Reviews an interaction window (multiple turns with tool calls and results)
+    /// to identify patterns and overall effectiveness.
+    ///
+    /// Returns a [`Critique`] that includes an `observation` field extracted
+    /// from the LLM's response for memory persistence.
+    pub async fn evaluate_trajectory(
         &self,
-        output: &str,
-        user_request: &str,
+        trajectory: &str,
         criteria: &QualityCriteria,
     ) -> Result<Critique> {
         let user_prompt = format!(
-            r#"=== USER REQUEST ===
-{user_request}
-
-=== ASSISTANT RESPONSE ===
-{output}
+            r#"{trajectory}
 
 === EVALUATION CRITERIA ===
 {criteria_text}
 
-Evaluate the response."#,
+Evaluate the trajectory above."#,
             criteria_text = criteria.format_for_prompt(),
         );
 
-        let response = self.call_llm(CRITIC_SYSTEM_PROMPT, &user_prompt, Some(2000)).await?;
+        let response = self
+            .call_llm(TRAJECTORY_CRITIC_PROMPT, &user_prompt, Some(2000))
+            .await?;
 
         let raw = response.message.content.trim().to_string();
-        let critique = parse_critique_json(&raw, criteria);
+        let mut critique = parse_critique_json(&raw, criteria);
+
+        // Extract the natural-language observation from the LLM output.
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(obs) = parsed.get("observation").and_then(|v| v.as_str()) {
+                critique.observation = Some(obs.to_string());
+            }
+        }
 
         Ok(critique)
-    }
-
-    /// Improve agent output based on a critique.
-    ///
-    /// Returns the improved response text.
-    pub async fn improve(
-        &self,
-        previous_output: &str,
-        critique: &Critique,
-        user_request: &str,
-    ) -> Result<String> {
-        let weaknesses = critique
-            .weaknesses
-            .iter()
-            .map(|w| format!("- {}", w))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let suggestions = critique
-            .suggested_improvements
-            .iter()
-            .map(|s| format!("- {}", s))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let user_prompt = format!(
-            r#"=== ORIGINAL REQUEST ===
-{user_request}
-
-=== YOUR PREVIOUS RESPONSE ===
-{previous_output}
-
-=== CRITIQUE ===
-Weaknesses:
-{weaknesses}
-
-Suggested improvements:
-{suggestions}
-
-=== INSTRUCTIONS ===
-Revise your response to address each weakness."#,
-        );
-
-        let response = self.call_llm(IMPROVE_SYSTEM_PROMPT, &user_prompt, None).await?;
-
-        let improved = response.message.content.trim().to_string();
-        Ok(improved)
     }
 
     /// Internal helper to call the LLM provider.
@@ -230,6 +195,7 @@ fn parse_critique_json(raw: &str, criteria: &QualityCriteria) -> Critique {
         suggested_improvements,
         overall_score: 0.0,
         passed: false,
+        observation: None,
     }
     .finalize(criteria)
 }
@@ -258,6 +224,7 @@ fn default_critique(criteria: &QualityCriteria) -> Critique {
         suggested_improvements: vec![],
         overall_score: 0.5,
         passed: false,
+        observation: None,
     }
     .finalize(criteria)
 }
