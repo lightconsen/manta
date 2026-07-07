@@ -1,20 +1,20 @@
 //! Setup wizard for Syscity
 //!
-//! Interactive CLI wizard to configure ~/.syscity/syscity.toml.
+//! Interactive CLI wizard to configure ~/.syscity/config.toml.
 
 use dialoguer::{Input, Password, Select};
 
 use crate::error::Result;
 
 /// Run the interactive setup wizard.
-/// Reads existing ~/.syscity/syscity.toml if present and allows editing.
+/// Reads existing ~/.syscity/config.toml if present and allows editing.
 pub async fn run_setup() -> Result<()> {
     println!("🐙 Syscity Setup Wizard");
     println!("=====================");
     println!("   Use ↑/↓ arrows to select, Enter to confirm.\n");
 
     let syscity_dir = crate::dirs::syscity_dir();
-    let config_path = syscity_dir.join("syscity.toml");
+    let config_path = crate::dirs::default_config_file();
 
     // Ensure directory exists
     if !syscity_dir.exists() {

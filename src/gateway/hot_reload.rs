@@ -1,4 +1,4 @@
-//! Hot-reload handlers — watch syscity.toml / agent / channel / plugin /
+//! Hot-reload handlers — watch config.toml / agent / channel / plugin /
 //! gateway configs and apply changes without restarting the process.
 //!
 //! Extracted from `gateway/mod.rs`. Wired in `Gateway::start()` via
@@ -31,7 +31,7 @@ pub(crate) async fn register_hot_reload_handlers(
     let state_plugin = state.clone();
     let state_gateway = state.clone();
 
-    // Handler for main config changes (includes syscity.toml)
+    // Handler for main config changes (includes config.toml)
     hot_reload
         .register_handler(ConfigFileType::Main, move |_event| {
             let state = state.clone();
@@ -40,7 +40,7 @@ pub(crate) async fn register_hot_reload_handlers(
                 info!("Main config file changed - reloading configuration");
 
                 // Reload config from disk
-                let config_path = crate::dirs::syscity_dir().join("syscity.toml");
+                let config_path = crate::dirs::default_config_file();
                 if !config_path.exists() {
                     return Ok(());
                 }
@@ -48,7 +48,7 @@ pub(crate) async fn register_hot_reload_handlers(
                 let content = match tokio::fs::read_to_string(&config_path).await {
                     Ok(c) => c,
                     Err(e) => {
-                        error!("Failed to read syscity.toml: {}", e);
+                        error!("Failed to read config.toml: {}", e);
                         return Ok(());
                     }
                 };
@@ -56,7 +56,7 @@ pub(crate) async fn register_hot_reload_handlers(
                 let new_config: GatewayConfig = match toml::from_str(&content) {
                     Ok(cfg) => cfg,
                     Err(e) => {
-                        error!("Failed to parse syscity.toml: {}", e);
+                        error!("Failed to parse config.toml: {}", e);
                         return Ok(());
                     }
                 };

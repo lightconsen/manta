@@ -2569,7 +2569,7 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     .with_alias(payload.name.clone());
     state.infra.model_router.model_catalog.register(entry).await;
 
-    // Persist GatewayConfig to syscity.toml
+    // Persist GatewayConfig to config.toml
     if let Some(config_path) = state.config_path.clone() {
         let config_guard = state.config.read().await;
         if let Err(e) = persist_config_atomic(&config_guard, &config_path).await {
@@ -3395,7 +3395,7 @@ async fn handle_logs_unsubscribe(
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
 }
 
-/// Persist GatewayConfig to syscity.toml.
+/// Persist GatewayConfig to config.toml.
 async fn persist_config(state: &Arc<GatewayState>) -> Result<(), WsResponse> {
     if let Some(config_path) = state.config_path.clone() {
         let config_guard = state.config.read().await;

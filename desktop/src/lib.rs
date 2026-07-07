@@ -159,7 +159,7 @@ async fn start_gateway(
 
     // Ensure ~/.syscity directory exists.
     let syscity_dir = syscity::dirs::syscity_dir();
-    let config_path = syscity_dir.join("syscity.toml");
+    let config_path = syscity::dirs::default_config_file();
 
     if !syscity_dir.exists() {
         tokio::fs::create_dir_all(&syscity_dir)
@@ -173,12 +173,12 @@ async fn start_gateway(
             Ok(content) => match toml::from_str::<GatewayConfig>(&content) {
                 Ok(config) => config,
                 Err(e) => {
-                    eprintln!("Failed to parse syscity.toml: {}, using defaults", e);
+                    eprintln!("Failed to parse config.toml: {}, using defaults", e);
                     GatewayConfig::default()
                 }
             },
             Err(e) => {
-                eprintln!("Failed to read syscity.toml: {}, using defaults", e);
+                eprintln!("Failed to read config.toml: {}, using defaults", e);
                 GatewayConfig::default()
             }
         }

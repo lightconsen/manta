@@ -81,7 +81,7 @@ fn parse_key_val(s: &str) -> std::result::Result<(String, String), String> {
 
 /// Get the config path for the Gateway
 fn get_config_path() -> std::path::PathBuf {
-    crate::dirs::syscity_dir().join("syscity.toml")
+    crate::dirs::default_config_file()
 }
 
 /// Load Gateway configuration

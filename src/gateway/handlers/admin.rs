@@ -47,7 +47,7 @@ pub async fn reload_all_handler(
             let config_path = state
                 .config_path
                 .clone()
-                .unwrap_or_else(|| crate::dirs::syscity_dir().join("syscity.toml"));
+                .unwrap_or_else(|| crate::dirs::default_config_file());
 
             if config_path.exists() {
                 match tokio::fs::read_to_string(&config_path).await {
@@ -58,13 +58,13 @@ pub async fn reload_all_handler(
                                 Some(cfg)
                             }
                             Err(e) => {
-                                error!("Failed to parse syscity.toml: {}", e);
+                                error!("Failed to parse config.toml: {}", e);
                                 None
                             }
                         }
                     }
                     Err(e) => {
-                        error!("Failed to read syscity.toml: {}", e);
+                        error!("Failed to read config.toml: {}", e);
                         None
                     }
                 }
@@ -320,7 +320,7 @@ pub async fn reload_all_handler(
     // ── 7. Channels (document only — rely on file watcher for live reload) ─
     if scope == "all" || scope == "channels" {
         result["channels"] = serde_json::json!({
-            "note": "Channels are hot-reloaded automatically when syscity.toml or channel config files change. Use the file watcher or restart individual channels via API.",
+            "note": "Channels are hot-reloaded automatically when config.toml or channel config files change. Use the file watcher or restart individual channels via API.",
         });
     }
 

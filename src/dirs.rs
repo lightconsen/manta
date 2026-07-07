@@ -2,7 +2,7 @@
 //!
 //! All Syscity data is stored in ~/.syscity/ with the following structure:
 //! ~/.syscity/
-//! ├── syscity.toml # Configuration file
+//! ├── config.toml # Configuration file
 //! ├── data/ # SQLite database (syscity.db) - unified storage
 //! ├── logs/ # Log files (daemon.log)
 //! ├── skills/ # User-installed skills
@@ -173,9 +173,9 @@ pub fn pid_file() -> PathBuf {
     syscity_dir().join("daemon.pid")
 }
 
-/// Get the default config file path (~/.syscity/syscity.toml)
+/// Get the default config file path (~/.syscity/config.toml)
 pub fn default_config_file() -> PathBuf {
-    config_dir().join("syscity.toml")
+    config_dir().join("config.toml")
 }
 
 /// Get the default memory DB path (~/.syscity/data/syscity.db)
@@ -371,7 +371,7 @@ mod tests {
     fn test_path_for() {
         assert!(path_for(FileType::Config)
             .to_string_lossy()
-            .contains("syscity.toml"));
+            .contains("config.toml"));
         assert!(path_for(FileType::MemoryDb)
             .to_string_lossy()
             .contains("data/syscity.db"));

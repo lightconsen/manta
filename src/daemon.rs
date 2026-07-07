@@ -243,9 +243,9 @@ impl DaemonManager {
 
         use crate::gateway::{Gateway, GatewayConfig};
 
-        // ── Auto-initialize ~/.syscity directory and syscity.toml ──────────────
+        // ── Auto-initialize ~/.syscity directory and config.toml ──────────────
         let syscity_dir = crate::dirs::syscity_dir();
-        let config_path = syscity_dir.join("syscity.toml");
+        let config_path = crate::dirs::default_config_file();
 
         if !syscity_dir.exists() {
             println!("📁 Creating Syscity directory at {:?}...", syscity_dir);
@@ -255,7 +255,7 @@ impl DaemonManager {
         }
 
         if !config_path.exists() {
-            println!("📄 Creating default syscity.toml at {:?}...", config_path);
+            println!("📄 Creating default config.toml at {:?}...", config_path);
             let default_config = r#"# Syscity Configuration
 # Auto-generated on first start
 
@@ -321,7 +321,7 @@ workspace_only = true
             println!("✅ Default config created. Edit {:?} to customize.", config_path);
         }
 
-        // Try to load existing Gateway config from syscity.toml
+        // Try to load existing Gateway config from config.toml
         let mut gateway_config = if config_path.exists() {
             match tokio::fs::read_to_string(&config_path).await {
                 Ok(content) => {
@@ -338,10 +338,10 @@ workspace_only = true
                             config
                         }
                         Err(e) => {
-                            warn!("Failed to parse syscity.toml: {}, using defaults", e);
+                            warn!("Failed to parse config.toml: {}, using defaults", e);
                             let mut default_config = GatewayConfig::default();
                             // Attempt to extract [search] section separately, since the
-                            // syscity.toml uses [server] section format that doesn't
+                            // config.toml uses [server] section format that doesn't
                             // match GatewayConfig's flat host/port fields.
                             if let Ok(toml_value) = content.parse::<toml::Value>() {
                                 if let Some(search_section) = toml_value.get("search") {
@@ -354,7 +354,7 @@ workspace_only = true
                                     {
                                         default_config.search = search;
                                         info!(
-                                            "Extracted search config from syscity.toml: {:?}",
+                                            "Extracted search config from config.toml: {:?}",
                                             default_config.search.provider_list()
                                         );
                                     }
@@ -365,12 +365,12 @@ workspace_only = true
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to read syscity.toml: {}, using defaults", e);
+                    warn!("Failed to read config.toml: {}, using defaults", e);
                     GatewayConfig::default()
                 }
             }
         } else {
-            println!("📄 No syscity.toml found, using default config");
+            println!("📄 No config.toml found, using default config");
             GatewayConfig::default()
         };
 

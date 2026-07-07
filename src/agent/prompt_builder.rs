@@ -223,7 +223,7 @@ When working with system commands:
 - Use shell tool with appropriate timeout
 - Verify results after execution
 - For scheduling or recurring tasks, ALWAYS use the 'cron' tool — do NOT attempt to use shell commands for scheduling
-- NEVER modify Syscity's core configuration files (syscity.toml, GatewayConfig, or system-level ~/.syscity/ config). You MAY edit your own agent personality files (SOUL.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md, etc.) in your agent directory when explicitly asked by the user."#
+- NEVER modify Syscity's core configuration files (config.toml, GatewayConfig, or system-level ~/.syscity/ config). You MAY edit your own agent personality files (SOUL.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md, etc.) in your agent directory when explicitly asked by the user."#
             }
             TaskType::Planning => {
                 r#"## Planning Guidelines

@@ -58,13 +58,13 @@ pub async fn run_config_command(command: &ConfigCommands) -> Result<()> {
 }
 
 async fn show_config_file() -> Result<()> {
-    let path = crate::dirs::syscity_dir().join("syscity.toml");
+    let path = crate::dirs::default_config_file();
     println!("{}", path.display());
     Ok(())
 }
 
 async fn show_config(format: &super::ConfigFormat) -> Result<()> {
-    let config_path = crate::dirs::syscity_dir().join("syscity.toml");
+    let config_path = crate::dirs::default_config_file();
 
     if !config_path.exists() {
         println!("# No configuration file found at {:?}", config_path);
@@ -93,7 +93,7 @@ async fn show_config(format: &super::ConfigFormat) -> Result<()> {
 }
 
 async fn get_config_value(key: &str) -> Result<()> {
-    let config_path = crate::dirs::syscity_dir().join("syscity.toml");
+    let config_path = crate::dirs::default_config_file();
 
     if !config_path.exists() {
         eprintln!("Configuration file not found at {:?}", config_path);
@@ -123,7 +123,7 @@ async fn set_config_value(key_value: &str, file: Option<&PathBuf>) -> Result<()>
 
     let config_path = file
         .cloned()
-        .unwrap_or_else(|| crate::dirs::syscity_dir().join("syscity.toml"));
+        .unwrap_or_else(|| crate::dirs::default_config_file());
 
     let mut toml_value = if config_path.exists() {
         let content = tokio::fs::read_to_string(&config_path).await?;
@@ -145,7 +145,7 @@ async fn set_config_value(key_value: &str, file: Option<&PathBuf>) -> Result<()>
 async fn unset_config_value(key: &str, file: Option<&PathBuf>) -> Result<()> {
     let config_path = file
         .cloned()
-        .unwrap_or_else(|| crate::dirs::syscity_dir().join("syscity.toml"));
+        .unwrap_or_else(|| crate::dirs::default_config_file());
 
     if !config_path.exists() {
         eprintln!("Configuration file not found at {:?}", config_path);

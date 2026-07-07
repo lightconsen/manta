@@ -23,7 +23,7 @@ static RE_ENV_VAR: LazyLock<Regex> = LazyLock::new(|| {
 static RE_HHMM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d{2}:\d{2}$").unwrap());
 
 /// Default configuration file name
-pub const DEFAULT_CONFIG_FILE: &str = "syscity.toml";
+pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
 /// Environment variable prefix
 pub const ENV_PREFIX: &str = "SYSCITY";
@@ -767,7 +767,7 @@ impl Config {
     /// The configuration is loaded in the following order (later sources
     /// override earlier ones):
     /// 1. Default values
-    /// 2. Config file (syscity.toml or specified path)
+    /// 2. Config file (config.toml or specified path)
     /// 3. Environment variables (SYSCITY_*)
     pub fn load() -> Result<Self> {
         Self::load_with_file(None::<&std::path::Path>)
@@ -837,7 +837,7 @@ impl Config {
         let candidates = [
             PathBuf::from(DEFAULT_CONFIG_FILE),
             PathBuf::from(format!(".config/{}", DEFAULT_CONFIG_FILE)),
-            // Centralized ~/.syscity/syscity.toml
+            // Centralized ~/.syscity/config.toml
             crate::dirs::default_config_file(),
             // Legacy location for backwards compatibility
             dirs::config_dir()

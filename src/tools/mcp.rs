@@ -46,7 +46,7 @@ pub enum McpTransport {
 // Configuration types (9.1)
 // ─────────────────────────────────────────────
 
-/// Per-server MCP configuration (used in syscity.toml `[mcp.servers.*]`)
+/// Per-server MCP configuration (used in config.toml `[mcp.servers.*]`)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     /// Transport to use (default: stdio)
@@ -122,7 +122,7 @@ impl Default for McpServerConfig {
     }
 }
 
-/// Top-level `[mcp]` section in syscity.toml / GatewayConfig
+/// Top-level `[mcp]` section in config.toml / GatewayConfig
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpSettings {
     /// Named server configurations
