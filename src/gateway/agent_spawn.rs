@@ -483,7 +483,12 @@ async fn process_message_acp(
                             .unwrap_or(serde_json::Value::String(arguments)),
                     });
                 }
-                crate::agent::ProgressEvent::ToolResult { name, result, data } => {
+                crate::agent::ProgressEvent::ToolResult {
+                    name,
+                    result,
+                    data,
+                    execution_time_ms,
+                } => {
                     info!("ToolResult event: {} for session {}", name, session_id);
                     emit_event(
                         &state.events.tx,
@@ -501,7 +506,7 @@ async fn process_message_acp(
                         name: name.clone(),
                         result: serde_json::from_str(&result)
                             .unwrap_or(serde_json::Value::String(result)),
-                        duration_ms: 0,
+                        duration_ms: execution_time_ms,
                     });
                 }
                 crate::agent::ProgressEvent::Completed { response } => {
@@ -733,7 +738,7 @@ async fn process_message_direct(
                         },
                     );
                 }
-                crate::agent::ProgressEvent::ToolResult { name, result, data } => {
+                crate::agent::ProgressEvent::ToolResult { name, result, data, .. } => {
                     if verbose_mode.as_deref() == Some("off") {
                         return;
                     }

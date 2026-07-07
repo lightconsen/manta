@@ -398,7 +398,7 @@ async fn execute_child_task(
                     crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
                         debug!("Child {} calling tool {}: {}", cid, name, arguments);
                     }
-                    crate::agent::ProgressEvent::ToolResult { name, result, data: _ } => {
+                    crate::agent::ProgressEvent::ToolResult { name, result, .. } => {
                         debug!("Child {} tool {} result: {} chars", cid, name, result.len());
                     }
                     crate::agent::ProgressEvent::Error { message } => {

@@ -57,9 +57,9 @@ impl RetrospectEngine {
 
     /// Build a [`Trajectory`] from the last N turns.
     ///
-    /// Each turn's `user_message` and `assistant_response` are mapped to
-    /// [`TrajectoryStep`] entries. Turns beyond the configured window size
-    /// are discarded.
+    /// Each turn's `user_message`, `assistant_response`, `tool_calls`, and
+    /// `token_usage` are mapped to [`TrajectoryStep`] entries. Turns beyond the
+    /// configured window size are discarded.
     pub fn build_trajectory(&self, turns: &[Turn], total_turns: usize) -> Trajectory {
         let window = self.config.window_size.min(turns.len());
         let recent = &turns[turns.len().saturating_sub(window)..];
@@ -68,11 +68,36 @@ impl RetrospectEngine {
             .iter()
             .map(|turn| {
                 let mut steps = Vec::new();
+
+                // Tool calls and their results
+                for record in &turn.tool_calls {
+                    steps.push(TrajectoryStep::ToolCall {
+                        name: record.name.clone(),
+                        args: record.args.clone(),
+                        duration_ms: record.duration_ms,
+                    });
+                    steps.push(TrajectoryStep::ToolResult {
+                        name: record.name.clone(),
+                        content: record.result.clone(),
+                        success: record.success,
+                    });
+                }
+
                 if !turn.assistant_response.is_empty() {
                     steps.push(TrajectoryStep::AssistantResponse {
                         content: turn.assistant_response.clone(),
                     });
                 }
+
+                // Token usage
+                if let Some(usage) = &turn.token_usage {
+                    steps.push(TrajectoryStep::TokenUsage {
+                        prompt_tokens: usage.prompt_tokens,
+                        completion_tokens: usage.completion_tokens,
+                        total_tokens: usage.total_tokens,
+                    });
+                }
+
                 TrajectoryWindow {
                     index: turn.index,
                     user_message: turn.user_message.clone(),
@@ -125,6 +150,7 @@ impl RetrospectEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::turns::{ToolCallRecord, TurnUsage};
     use crate::providers::mock::MockProvider;
 
     fn make_turns(n: usize) -> Vec<Turn> {
@@ -237,5 +263,110 @@ mod tests {
 
         assert_eq!(trajectory.turns.len(), 1);
         assert!(trajectory.turns[0].steps.is_empty());
+    }
+
+    #[test]
+    fn test_build_trajectory_includes_tool_calls() {
+        let engine = RetrospectEngine::new(
+            RetrospectConfig {
+                interval: 10,
+                window_size: 1,
+                min_turns: 3,
+            },
+            Arc::new(MockProvider::new()),
+        );
+
+        let mut turn = Turn::new(0, "Search for Rust");
+        turn.tool_calls.push(ToolCallRecord {
+            name: "search_web".to_string(),
+            args: r#"{"query": "Rust"}"#.to_string(),
+            result: "Rust is a systems language…".to_string(),
+            success: true,
+            duration_ms: 1500,
+        });
+        turn.complete("Here's what I found.");
+
+        let trajectory = engine.build_trajectory(&[turn], 1);
+
+        assert_eq!(trajectory.turns[0].steps.len(), 3); // ToolCall + ToolResult + AssistantResponse + TokenUsage
+        match &trajectory.turns[0].steps[0] {
+            TrajectoryStep::ToolCall { name, args, duration_ms } => {
+                assert_eq!(name, "search_web");
+                assert!(args.contains("Rust"));
+                assert_eq!(*duration_ms, 1500);
+            }
+            _ => panic!("Expected ToolCall as first step"),
+        }
+        match &trajectory.turns[0].steps[1] {
+            TrajectoryStep::ToolResult { name, content, success } => {
+                assert_eq!(name, "search_web");
+                assert_eq!(content, "Rust is a systems language…");
+                assert!(*success);
+            }
+            _ => panic!("Expected ToolResult as second step"),
+        }
+    }
+
+    #[test]
+    fn test_build_trajectory_includes_token_usage() {
+        let engine = RetrospectEngine::new(
+            RetrospectConfig {
+                interval: 10,
+                window_size: 1,
+                min_turns: 3,
+            },
+            Arc::new(MockProvider::new()),
+        );
+
+        let mut turn = Turn::new(0, "Hello");
+        turn.token_usage = Some(TurnUsage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+        });
+        turn.complete("Hi there!");
+
+        let trajectory = engine.build_trajectory(&[turn], 1);
+
+        let token_steps: Vec<_> = trajectory.turns[0]
+            .steps
+            .iter()
+            .filter_map(|s| match s {
+                TrajectoryStep::TokenUsage { prompt_tokens, completion_tokens, total_tokens } => {
+                    Some((*prompt_tokens, *completion_tokens, *total_tokens))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(token_steps, vec![(100, 50, 150)]);
+    }
+
+    #[test]
+    fn test_build_trajectory_tool_calls_ordered_before_assistant() {
+        let engine = RetrospectEngine::new(
+            RetrospectConfig {
+                interval: 10,
+                window_size: 1,
+                min_turns: 3,
+            },
+            Arc::new(MockProvider::new()),
+        );
+
+        let mut turn = Turn::new(0, "Do something");
+        turn.tool_calls.push(ToolCallRecord {
+            name: "web_fetch".to_string(),
+            args: "{}".to_string(),
+            result: "data".to_string(),
+            success: false,
+            duration_ms: 500,
+        });
+        turn.complete("I did it.");
+
+        let trajectory = engine.build_trajectory(&[turn], 1);
+
+        let steps = &trajectory.turns[0].steps;
+        assert!(matches!(steps[0], TrajectoryStep::ToolCall { .. }));
+        assert!(matches!(steps[1], TrajectoryStep::ToolResult { .. }));
+        assert!(matches!(steps[2], TrajectoryStep::AssistantResponse { .. }));
     }
 }

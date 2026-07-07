@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, instrument, warn};
 
+use crate::agent::turns::ToolCallRecord;
 use crate::channels::thread_binding::ThreadBindingManager;
 use crate::channels::{IncomingMessage, OutgoingMessage};
 use crate::providers::{
@@ -33,6 +34,7 @@ pub enum ProgressEvent {
         name: String,
         result: String,
         data: Option<serde_json::Value>,
+        execution_time_ms: u64,
     },
     /// Incremental chunk from a streaming tool
     ToolResultDelta {
@@ -1995,6 +1997,13 @@ impl Agent {
             }
         };
 
+        // Transfer accumulated tool call records and token usage from context to this turn
+        let tool_records = thread.context.take_tool_call_records();
+        if !tool_records.is_empty() {
+            thread.turns[turn_idx].tool_calls = tool_records;
+        }
+        thread.turns[turn_idx].token_usage = thread.context.take_turn_token_usage();
+
         let tools_used_this_turn = thread.context.tools_used().to_vec();
 
         // Snapshot turns for retrospect engine before moving the thread.
@@ -2153,14 +2162,29 @@ impl Agent {
                                 retrospect_result.turn_count, retrospect_result.observation
                             );
 
+                            // Compute dynamic importance from critique scores
+                            let importance =
+                                crate::agent::reflection::critic::compute_retrospect_importance(
+                                    &retrospect_result.critique,
+                                );
+
+                            // Build metadata from critique for richer memory browsing
+                            let metadata = serde_json::json!({
+                                "turn_count": retrospect_result.turn_count,
+                                "dimension_scores": retrospect_result.critique.dimension_scores,
+                                "weaknesses": retrospect_result.critique.weaknesses,
+                                "suggested_improvements": retrospect_result.critique.suggested_improvements,
+                            });
+
                             // Write observation to memory.
                             if let Some(ref mm) = mm {
                                 if let Err(e) = mm
-                                    .observe(
+                                    .observe_with_metadata(
                                         &uid,
                                         retrospect_result.observation,
                                         "interaction_pattern",
-                                        0.6,
+                                        importance,
+                                        metadata,
                                     )
                                     .await
                                 {
@@ -2240,11 +2264,13 @@ impl Agent {
     ) -> ToolResult {
         let tool_name = tool_call.function.name.clone();
 
-        match self
+        let _start = std::time::Instant::now();
+        let result = self
             .tools
             .execute_call(&tool_call.function, tool_context)
-            .await
-        {
+            .await;
+        let execution_time_ms = _start.elapsed().as_millis() as u64;
+        match result {
             Ok(exec_result) => {
                 // Reset circuit-breaker on success
                 self.tools.reset_failure(&tool_name);
@@ -2260,6 +2286,7 @@ impl Agent {
                     name: tool_name.clone(),
                     result: result_str.chars().take(200).collect(), // Truncate for display
                     data: tool_data,
+                    execution_time_ms,
                 })
                 .await;
 
@@ -2276,6 +2303,7 @@ impl Agent {
                     name: tool_name.clone(),
                     result: error_msg.clone(),
                     data: None,
+                    execution_time_ms,
                 })
                 .await;
 
@@ -2296,6 +2324,7 @@ impl Agent {
         let tool_name = tool_call.function.name.clone();
         let progress_cb = progress_cb.clone();
 
+        let _start = std::time::Instant::now();
         let result = self
             .tools
             .execute_call_streaming(&tool_call.function, tool_context, |chunk| {
@@ -2316,6 +2345,7 @@ impl Agent {
                 }
             })
             .await;
+        let execution_time_ms = _start.elapsed().as_millis() as u64;
 
         match result {
             Ok(exec_result) => {
@@ -2330,6 +2360,7 @@ impl Agent {
                     name: tool_name.clone(),
                     result: result_str.chars().take(200).collect(),
                     data: tool_data,
+                    execution_time_ms,
                 })
                 .await;
 
@@ -2343,6 +2374,7 @@ impl Agent {
                     name: tool_name.clone(),
                     result: error_msg.clone(),
                     data: None,
+                    execution_time_ms,
                 })
                 .await;
                 error!("Streaming tool {} failed: {}", tool_name, e);
@@ -2887,6 +2919,15 @@ impl Agent {
         // Add assistant message to context
         context.add_message(response.message.clone());
 
+        // Accumulate token usage for non-tool-call responses
+        if let Some(ref usage) = response.usage {
+            context.accumulate_turn_token_usage(
+                usage.prompt_tokens as u32,
+                usage.completion_tokens as u32,
+                usage.total_tokens as u32,
+            );
+        }
+
         Ok(response)
     }
 
@@ -2899,6 +2940,15 @@ impl Agent {
         progress_cb: ProgressCallback,
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
+        // Accumulate token usage from the LLM response that produced these tool calls
+        if let Some(ref usage) = original_response.usage {
+            context.accumulate_turn_token_usage(
+                usage.prompt_tokens as u32,
+                usage.completion_tokens as u32,
+                usage.total_tokens as u32,
+            );
+        }
+
         // Check iteration limit before processing
         if !context.increment_tool_iteration() {
             warn!("Tool iteration limit reached ({}), stopping", context.tool_iterations());
@@ -2958,6 +3008,7 @@ impl Agent {
                             result: "[Duplicate tool call skipped - already executed with same parameters]"
                                 .to_string(),
                             data: None,
+                            execution_time_ms: 0,
                         })
                         .await;
                     });
@@ -3002,9 +3053,18 @@ impl Agent {
 
             debug!("Executing tool: {}", tool_name);
 
+            let _start = std::time::Instant::now();
             let result = self
                 .execute_single_tool(tool_call, &tool_context, &progress_cb, context.id())
                 .await;
+
+            context.push_tool_call_record(ToolCallRecord {
+                name: tool_name.clone(),
+                args: tool_call.function.arguments.to_string(),
+                result: result.content.clone(),
+                success: !result.is_error.unwrap_or(false),
+                duration_ms: _start.elapsed().as_millis() as u64,
+            });
 
             results.push(result);
         }
@@ -3065,6 +3125,15 @@ impl Agent {
         // Get final response with progress
         let mut final_response =
             Box::pin(self.get_completion_with_progress(context, progress_cb, user_id)).await?;
+
+        // Accumulate token usage from this LLM completion in the tool loop
+        if let Some(ref usage) = final_response.usage {
+            context.accumulate_turn_token_usage(
+                usage.prompt_tokens as u32,
+                usage.completion_tokens as u32,
+                usage.total_tokens as u32,
+            );
+        }
 
         // Preserve tool calls from the original assistant message so that
         // downstream consumers (session_store, etc.) can see what tools were invoked.

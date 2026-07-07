@@ -19,6 +19,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::providers::Message;
 
+/// A record of a single tool call and its result within a turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallRecord {
+    /// The tool name (e.g. "web_fetch", "search_web").
+    pub name: String,
+    /// Serialized arguments (truncated to 200 chars for storage).
+    pub args: String,
+    /// Result content (truncated to 500 chars for storage).
+    pub result: String,
+    /// Whether the tool executed successfully.
+    pub success: bool,
+    /// Wall-clock duration in milliseconds.
+    pub duration_ms: u64,
+}
+
+/// Token consumption for a single turn's LLM interactions.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TurnUsage {
+    /// Tokens consumed by the prompt(s).
+    pub prompt_tokens: u32,
+    /// Tokens consumed by the completion(s).
+    pub completion_tokens: u32,
+    /// Total tokens consumed across all LLM calls in this turn.
+    pub total_tokens: u32,
+}
+
 /// Lifecycle state of a single turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +76,12 @@ pub struct Turn {
     pub created_at: SystemTime,
     /// When this turn last changed state.
     pub updated_at: SystemTime,
+    /// Tool calls made during this turn, with timing and result data.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCallRecord>,
+    /// Token usage for this turn's LLM interactions.
+    #[serde(default)]
+    pub token_usage: Option<TurnUsage>,
 }
 
 impl Turn {
@@ -63,6 +95,8 @@ impl Turn {
             state: TurnState::Pending,
             created_at: now,
             updated_at: now,
+            tool_calls: Vec::new(),
+            token_usage: None,
         }
     }
 

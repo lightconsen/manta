@@ -386,6 +386,70 @@ impl MemoryManager {
         Ok(id)
     }
 
+    /// Observe a fact with associated metadata and store it with an embedding.
+    ///
+    /// Like [`observe`](Self::observe) but accepts an additional `metadata`
+    /// payload (e.g. dimension scores, weaknesses, suggestions from a
+    /// retrospect critique) that is stored alongside the memory.
+    pub async fn observe_with_metadata(
+        &self,
+        user_id: impl Into<String>,
+        content: impl Into<String>,
+        memory_type: impl Into<String>,
+        importance: f32,
+        metadata: serde_json::Value,
+    ) -> crate::Result<MemoryId> {
+        let user_id = user_id.into();
+        let content = content.into();
+        let memory_type = memory_type.into();
+
+        debug!(
+            "Observing memory with metadata: user={} type={} importance={}",
+            user_id, memory_type, importance
+        );
+
+        let embedding = if let Some(ref pipeline) = self.pipeline {
+            match pipeline.embed(&content).await {
+                Ok(emb) => Some(emb),
+                Err(e) => {
+                    warn!("Embedding failed, storing without embedding: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let memory = Memory::new(&user_id, content, memory_type)
+            .with_importance_score(importance)
+            .with_source("agent")
+            .with_metadata(metadata);
+
+        let memory = if let Some(emb) = embedding {
+            memory.with_embedding(emb)
+        } else {
+            memory
+        };
+
+        let id = self.store.store(memory.clone()).await?;
+
+        self.invalidate_cache().await;
+
+        if let Some(ref tier_index) = self.tier_index {
+            if let Some(tiered_store) = self.store.as_tiered_store() {
+                let entry_tier = tiered_store.evaluator().entry_tier(importance, 0);
+                tier_index.insert(id.to_string(), entry_tier);
+            } else {
+                let entry_tier = super::tier::TierEvaluator::new(TierSystemConfig::default())
+                    .entry_tier(importance, 0);
+                tier_index.insert(id.to_string(), entry_tier);
+            }
+        }
+
+        info!("Memory observed with metadata: {}", id);
+        Ok(id)
+    }
+
     /// Retrieve relevant memories for a query.
     ///
     /// **Hybrid path** (when both `vector_service` and `session_search` are
@@ -1244,10 +1308,33 @@ impl SessionContext {
             parts.push(format!("## Attached Files\n{}", self.multimodal_references.join("\n")));
         }
 
-        // Semantic memories
-        if !self.memories.is_empty() {
-            let mem_lines: Vec<String> = self
-                .memories
+        // Learned Interaction Patterns — group "interaction_pattern" memories
+        // separately with importance labels, before other context.
+        let (patterns, other_memories): (Vec<&Memory>, Vec<&Memory>) = self
+            .memories
+            .iter()
+            .partition(|m| m.memory_type.as_str() == "interaction_pattern");
+
+        if !patterns.is_empty() {
+            let pattern_lines: Vec<String> = patterns
+                .iter()
+                .map(|m| {
+                    let label = if m.importance_score >= 0.8 {
+                        "HIGH IMPORTANCE"
+                    } else if m.importance_score >= 0.5 {
+                        "medium importance"
+                    } else {
+                        "low importance"
+                    };
+                    format!("- [{}] {} ({})", m.memory_type, m.content, label)
+                })
+                .collect();
+            parts.push(format!("## Learned Interaction Patterns\n{}", pattern_lines.join("\n")));
+        }
+
+        // Other semantic memories
+        if !other_memories.is_empty() {
+            let mem_lines: Vec<String> = other_memories
                 .iter()
                 .map(|m| format!("- [{}] {}", m.memory_type, m.content))
                 .collect();

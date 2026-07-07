@@ -8,6 +8,8 @@ use std::time::SystemTime;
 
 use crate::providers::Message;
 
+use crate::agent::turns::{ToolCallRecord, TurnUsage};
+
 /// Conversation context
 #[derive(Debug, Clone)]
 pub struct Context {
@@ -37,6 +39,12 @@ pub struct Context {
     /// When set, `add_message` enforces this limit by dropping the oldest
     /// user/assistant pairs before the token-based prune runs.
     max_turns: Option<usize>,
+    /// Accumulated tool call records for the current turn.
+    /// Transferred to [`Turn::tool_calls`] when the turn completes.
+    pub tool_call_records: Vec<ToolCallRecord>,
+    /// Accumulated token usage for the current turn.
+    /// Transferred to [`Turn::token_usage`] when the turn completes.
+    pub turn_token_usage: Option<TurnUsage>,
 }
 
 impl Context {
@@ -59,6 +67,8 @@ impl Context {
             executed_tool_calls: HashSet::new(),
             tools_used: Vec::new(),
             max_turns: None,
+            tool_call_records: Vec::new(),
+            turn_token_usage: None,
         }
     }
 
@@ -140,6 +150,44 @@ impl Context {
     /// Clear the tools_used list (call at start of new turn)
     pub fn clear_tools_used(&mut self) {
         self.tools_used.clear();
+    }
+
+    /// Record a tool call and its result in the turn's accumulator.
+    pub fn push_tool_call_record(&mut self, record: ToolCallRecord) {
+        self.tool_call_records.push(record);
+    }
+
+    /// Take all accumulated tool call records (leaving the accumulator empty).
+    pub fn take_tool_call_records(&mut self) -> Vec<ToolCallRecord> {
+        std::mem::take(&mut self.tool_call_records)
+    }
+
+    /// Set the accumulated token usage for this turn.
+    pub fn set_turn_token_usage(&mut self, usage: TurnUsage) {
+        self.turn_token_usage = Some(usage);
+    }
+
+    /// Accumulate token counts into the turn's usage tracker.
+    pub fn accumulate_turn_token_usage(&mut self, prompt_tokens: u32, completion_tokens: u32, total_tokens: u32) {
+        match self.turn_token_usage {
+            Some(ref mut usage) => {
+                usage.prompt_tokens += prompt_tokens;
+                usage.completion_tokens += completion_tokens;
+                usage.total_tokens += total_tokens;
+            }
+            None => {
+                self.turn_token_usage = Some(TurnUsage {
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                });
+            }
+        }
+    }
+
+    /// Take the accumulated token usage (leaving it as None).
+    pub fn take_turn_token_usage(&mut self) -> Option<TurnUsage> {
+        self.turn_token_usage.take()
     }
 
     /// Increment tool iteration counter

@@ -561,7 +561,7 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
                         debug!("No receivers for ToolCalling event: {}", e);
                     }
                 }
-                crate::agent::ProgressEvent::ToolResult { name, result, data } => {
+                crate::agent::ProgressEvent::ToolResult { name, result, data, .. } => {
                     // Skip tool events if verbose is off
                     if verbose_mode.as_deref() == Some("off") {
                         return;

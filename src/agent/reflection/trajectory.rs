@@ -19,11 +19,19 @@ pub enum TrajectoryStep {
     ToolCall {
         name: String,
         args: String,
+        duration_ms: u64,
     },
     /// The result returned by a tool.
     ToolResult {
         name: String,
         content: String,
+        success: bool,
+    },
+    /// Token usage for an LLM completion in this turn.
+    TokenUsage {
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        total_tokens: u32,
     },
 }
 
@@ -70,23 +78,48 @@ impl Trajectory {
                     TrajectoryStep::AssistantResponse { content } => {
                         out.push_str(&format!("Assistant: {}\n", content));
                     }
-                    TrajectoryStep::ToolCall { name, args } => {
+                    TrajectoryStep::ToolCall {
+                        name,
+                        args,
+                        duration_ms,
+                    } => {
                         // Truncate long args for readability
                         let args_preview = if args.len() > 200 {
                             format!("{}…", &args[..200])
                         } else {
                             args.clone()
                         };
-                        out.push_str(&format!("[Tool call: {}({})]\n", name, args_preview));
+                        out.push_str(&format!(
+                            "[Tool call: {}({}) in {}ms]\n",
+                            name, args_preview, duration_ms
+                        ));
                     }
-                    TrajectoryStep::ToolResult { name, content } => {
+                    TrajectoryStep::ToolResult {
+                        name,
+                        content,
+                        success,
+                    } => {
                         // Truncate long results
                         let result_preview = if content.len() > 300 {
                             format!("{}…", &content[..300])
                         } else {
                             content.clone()
                         };
-                        out.push_str(&format!("[Tool result: {} → {}]\n", name, result_preview));
+                        let status = if *success { "OK" } else { "FAIL" };
+                        out.push_str(&format!(
+                            "[Tool result: {} → {} ({})]\n",
+                            name, result_preview, status
+                        ));
+                    }
+                    TrajectoryStep::TokenUsage {
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                    } => {
+                        out.push_str(&format!(
+                            "[Tokens: {} prompt + {} completion = {} total]\n",
+                            prompt_tokens, completion_tokens, total_tokens
+                        ));
                     }
                 }
             }
@@ -132,10 +165,12 @@ mod tests {
                     TrajectoryStep::ToolCall {
                         name: "search_web".to_string(),
                         args: r#"{"query": "Rust programming"}"#.to_string(),
+                        duration_ms: 1200,
                     },
                     TrajectoryStep::ToolResult {
                         name: "search_web".to_string(),
                         content: "Rust is a systems programming language…".to_string(),
+                        success: true,
                     },
                     TrajectoryStep::AssistantResponse {
                         content: "Here's what I found about Rust.".to_string(),
@@ -161,6 +196,7 @@ mod tests {
                 steps: vec![TrajectoryStep::ToolCall {
                     name: "big_tool".to_string(),
                     args: long_args,
+                    duration_ms: 0,
                 }],
             }],
             total_turns: 1,

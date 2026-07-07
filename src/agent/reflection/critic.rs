@@ -21,12 +21,14 @@ tool calls, and tool results — and evaluate:
 
 1. Tool usage effectiveness — are tools used appropriately and efficiently?
 2. Response quality across turns — are responses consistent and well-structured?
-3. Recurring themes — what patterns repeat across user requests?
-4. Improvement opportunities — where could the agent serve the user better?
+3. Efficiency — are tool calls completing quickly? Are repeated failures or
+   timeouts visible? Is the token consumption reasonable for the task?
+4. Recurring themes — what patterns repeat across user requests?
+5. Improvement opportunities — where could the agent serve the user better?
 
 Output a JSON object with these fields:
 {
-  "dimension_scores": {"Tool Usage": 0.85, "Response Quality": 0.9, "Pattern Recognition": 0.7},
+  "dimension_scores": {"Tool Usage": 0.85, "Response Quality": 0.9, "Efficiency": 0.75, "Pattern Recognition": 0.7},
   "strengths": ["...", "..."],
   "weaknesses": ["...", "..."],
   "suggested_improvements": ["...", "..."],
@@ -233,7 +235,26 @@ fn default_critique(criteria: &QualityCriteria) -> Critique {
 fn default_scores() -> std::collections::HashMap<String, f64> {
     let mut map = std::collections::HashMap::new();
     map.insert("Factual Accuracy".to_string(), 0.5);
+    map.insert("Efficiency".to_string(), 0.5);
     map
+}
+
+/// Compute dynamic memory importance from a critique.
+///
+/// Low scores in efficiency or tool usage signal costly / problematic
+/// patterns that should be remembered more strongly.
+pub fn compute_retrospect_importance(critique: &Critique) -> f32 {
+    let efficiency_score = critique.dimension_scores.get("Efficiency").copied().unwrap_or(0.5);
+    let tool_usage_score = critique.dimension_scores.get("Tool Usage").copied().unwrap_or(0.5);
+    let weakness_count = critique.weaknesses.len();
+    let suggestion_count = critique.suggested_improvements.len();
+
+    let mut importance = 0.5f32;
+    importance += (1.0 - efficiency_score as f32) * 0.25;
+    importance += (1.0 - tool_usage_score as f32) * 0.25;
+    importance += (suggestion_count as f32 * 0.05).min(0.15);
+    importance += (weakness_count as f32 * 0.03).min(0.10);
+    importance.clamp(0.1, 0.95)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -279,5 +300,99 @@ mod tests {
         let criteria = QualityCriteria::default();
         let critique = parse_critique_json(raw, &criteria);
         assert!((critique.dimension_scores.get("Factual Accuracy").copied().unwrap_or(0.0) - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_default_scores_includes_efficiency() {
+        let scores = default_scores();
+        assert!(scores.contains_key("Efficiency"));
+        assert!((scores.get("Efficiency").copied().unwrap_or(0.0) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_retrospect_importance_baseline() {
+        let critique = Critique {
+            dimension_scores: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("Efficiency".to_string(), 0.5);
+                m.insert("Tool Usage".to_string(), 0.5);
+                m
+            },
+            strengths: vec![],
+            weaknesses: vec![],
+            suggested_improvements: vec![],
+            overall_score: 0.0,
+            passed: false,
+            observation: None,
+        };
+        // Baseline 0.5 + (0.5*0.25 + 0.5*0.25) = 0.5 + 0.125 + 0.125 = 0.75
+        let importance = compute_retrospect_importance(&critique);
+        assert!((importance - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_retrospect_importance_high_scores_lower_importance() {
+        let critique = Critique {
+            dimension_scores: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("Efficiency".to_string(), 0.95);
+                m.insert("Tool Usage".to_string(), 0.95);
+                m
+            },
+            strengths: vec!["Good".to_string()],
+            weaknesses: vec![],
+            suggested_improvements: vec![],
+            overall_score: 0.0,
+            passed: true,
+            observation: None,
+        };
+        // 0.5 + (0.05*0.25 + 0.05*0.25) = 0.5 + 0.0125 + 0.0125 = 0.525
+        let importance = compute_retrospect_importance(&critique);
+        assert!((importance - 0.525).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_retrospect_importance_low_scores_higher_importance() {
+        let critique = Critique {
+            dimension_scores: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("Efficiency".to_string(), 0.1);
+                m.insert("Tool Usage".to_string(), 0.1);
+                m
+            },
+            strengths: vec![],
+            weaknesses: vec!["Slow".to_string(), "Errors".to_string(), "Verbose".to_string()],
+            suggested_improvements: vec!["Optimize".to_string(), "Retry".to_string()],
+            overall_score: 0.0,
+            passed: false,
+            observation: None,
+        };
+        // 0.5 + 0.9*0.25 + 0.9*0.25 + 2*0.05 + 3*0.03
+        // = 0.5 + 0.225 + 0.225 + 0.10(min 0.15→0.10) + 0.09(min 0.10→0.09)
+        // = 0.5 + 0.225 + 0.225 + 0.10 + 0.09 = 1.14 → clamped to 0.95
+        let importance = compute_retrospect_importance(&critique);
+        assert!((importance - 0.95).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_retrospect_importance_clamps() {
+        let critique = Critique {
+            dimension_scores: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("Efficiency".to_string(), 0.0);
+                m.insert("Tool Usage".to_string(), 0.0);
+                m
+            },
+            strengths: vec![],
+            weaknesses: vec!["a".to_string(); 10],
+            suggested_improvements: vec!["b".to_string(); 10],
+            overall_score: 0.0,
+            passed: false,
+            observation: None,
+        };
+        // Would be > 0.95 without clamp, should be clamped to 0.95
+        let importance = compute_retrospect_importance(&critique);
+        assert!(importance <= 0.95);
+        assert!(importance >= 0.1);
     }
 }

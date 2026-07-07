@@ -111,6 +111,7 @@ impl AcpControlPlane {
                                         name,
                                         result,
                                         data: _,
+                                        ..
                                     } => {
                                         debug!(
                                             "Subagent {} tool {} result: {} chars",
