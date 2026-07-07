@@ -2,7 +2,7 @@
   <img src="syscity.png" alt="Syscity" width="120" />
 </p>
 <h1 align="center">Syscity</h1>
-<p align="center"><strong>OS for Physical AI</strong></p>
+<p align="center"><strong>Agent System</strong></p>
 
 <p align="center">
   <a href="https://github.com/lightconsen/syscity/actions/workflows/ci.yml">
@@ -16,23 +16,24 @@
   </a>
 </p>
 
-Syscity is an **os for physical AI** — a runtime that lets AI agents perceive and act on your computer. Unlike chatbots that only read and write text, Syscity agents can **see your screen**, **control your desktop**, **execute code**, **operate your browser**, and **manage your files**.
+Syscity is an **agent system** — a runtime that lets AI agents act on your computer. Unlike chatbots that only read and write text, Syscity agents can **control your desktop**, **execute code**, **operate your browser**, and **manage your files**.
 
 Traditional AI lives inside a browser tab. Syscity lives inside your machine.
 
-## What is Physical AI?
+## What is an Agent System?
 
-Physical AI means AI agents that interact with the physical world through a computer's sensors and actuators:
+An agent system bridges language models with real computing environments:
 
-| Perception | Action |
+| Capability | Description |
 |---|---|
-| See the screen (screenshots) | Click, type, and send keyboard shortcuts |
-| Read the UI tree (accessibility) | Execute AppleScript / system automation |
-| Inspect files and processes | Run shell commands and code |
-| Browse the web | Control the browser programmatically |
-| Monitor system state | Manage services and scheduled tasks |
+| Desktop Control | Click, type, scroll, keyboard shortcuts |
+| System Automation | AppleScript / shell commands / services |
+| Code Execution | Run Python, JavaScript, shell scripts safely |
+| Browser Automation | Navigate, click, fill forms, scrape data |
+| File Management | Create, edit, move, delete, patch files |
+| Web Search | Search the internet for real-time information |
 
-Syscity provides the **perception layer**, **action layer**, **memory layer**, and **control plane** that turn a language model into a physical agent.
+Syscity provides the **action layer**, **memory layer**, and **control plane** that turn a language model into a capable software agent.
 
 ## Architecture
 
@@ -58,15 +59,6 @@ Syscity provides the **perception layer**, **action layer**, **memory layer**, a
 │  Shell · File System · Browser · Code Execution · Web Search │
 └─────────────────────────────────────────────────────────────┘
 ```
-
-## Perception
-
-- **Screenshot** — Capture the screen or a specific window so the agent can "see"
-- **Accessibility Tree** — Read the macOS UI hierarchy (window titles, buttons, text fields)
-- **File System** — List, read, write, and search files
-- **Process Monitor** — Inspect running processes and system state
-- **Browser Inspection** — Read page content, DOM, and execute JavaScript
-- **Web Search** — Search the internet for real-time information
 
 ## Action
 
@@ -117,7 +109,7 @@ syscity start --foreground
 
 Open `http://127.0.0.1:18080` for the Web UI.
 
-### Physical AI in Action
+### Agent in Action
 
 Open the Web UI, or attach the terminal client:
 
@@ -137,9 +129,9 @@ my screen"*. The agent can:
 
 See the [Getting Started guide](docs/getting-started.md) for a full walkthrough.
 
-## macOS Physical Control (Best Experience)
+## macOS Desktop Control (Best Experience)
 
-On macOS, Syscity unlocks the full physical AI stack:
+On macOS, Syscity unlocks the full desktop automation stack:
 
 | Tool | What it does |
 |---|---|
