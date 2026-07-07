@@ -16,7 +16,7 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::channels::thread_binding::ThreadBindingManager;
 use crate::channels::{IncomingMessage, OutgoingMessage};
 use crate::providers::{
-    CompletionRequest, ContentBlock, Message, Provider, Role, ToolCall, ToolResult,
+    CompletionRequest, Message, Provider, Role, ToolCall, ToolResult,
 };
 use crate::tools::{ToolContext, ToolExecutionChunk, ToolRegistry};
 
@@ -63,7 +63,6 @@ pub mod context;
 pub mod cost_guard;
 pub mod disk_budget;
 pub mod group;
-pub mod heuristics;
 pub mod personality;
 pub mod planner;
 pub mod prompt_builder;
@@ -121,7 +120,7 @@ pub use transcript::{
 };
 pub use turns::{Thread, ThreadManager, Turn, TurnState};
 
-use self::heuristics::{is_complex_task, is_desktop_task};
+
 use self::session_store::SessionStore;
 
 #[allow(clippy::unwrap_used)] // static regex literals validated at compile-time
@@ -130,228 +129,6 @@ static RE_CODE_BLOCK: std::sync::LazyLock<regex::Regex> =
 #[allow(clippy::unwrap_used)] // static regex literals validated at compile-time
 static RE_URL: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| regex::Regex::new(r#"https?://[^\s)\]>'"`]+"#).unwrap());
-
-/// Fast check for desktop-operation tasks that should use ComputerUseLoop.
-fn parse_loop_decision(text: &str) -> crate::Result<crate::computer::LoopDecision> {
-    let trimmed = text.trim();
-
-    if let Some(rest) = trimmed.strip_prefix("DONE:") {
-        return Ok(crate::computer::LoopDecision::Done {
-            message: rest.trim().to_string(),
-        });
-    }
-
-    if let Some(rest) = trimmed.strip_prefix("HELP:") {
-        return Ok(crate::computer::LoopDecision::NeedHelp {
-            reason: rest.trim().to_string(),
-        });
-    }
-
-    if let Some(rest) = trimmed.strip_prefix("ACTION:") {
-        let action_str = rest.trim();
-        let action = parse_desktop_action(action_str)?;
-        return Ok(crate::computer::LoopDecision::Action(action));
-    }
-
-    // Fallback: try to infer from the text
-    if trimmed.to_lowercase().starts_with("done") {
-        return Ok(crate::computer::LoopDecision::Done { message: trimmed.to_string() });
-    }
-    if trimmed.to_lowercase().starts_with("help") {
-        return Ok(crate::computer::LoopDecision::NeedHelp { reason: trimmed.to_string() });
-    }
-
-    // Default: try to parse as an action
-    let action = parse_desktop_action(trimmed)?;
-    Ok(crate::computer::LoopDecision::Action(action))
-}
-
-/// Parse a natural-language action description into a DesktopAction.
-fn parse_desktop_action(text: &str) -> crate::Result<crate::computer::DesktopAction> {
-    use crate::computer::{ClickTarget, DesktopAction, MouseButton, Point};
-
-    let lower = text.to_lowercase();
-
-    // Screenshot
-    if lower.contains("screenshot") || lower.contains("screen shot") {
-        return Ok(DesktopAction::Screenshot { region: None });
-    }
-
-    // Wait
-    if lower.contains("wait") {
-        let milliseconds = lower
-            .split_whitespace()
-            .find_map(|w| {
-                w.trim_end_matches(|c: char| !c.is_ascii_digit())
-                    .parse::<u64>()
-                    .ok()
-            })
-            .unwrap_or(1000);
-        return Ok(DesktopAction::Wait { milliseconds });
-    }
-
-    // Click with coordinates
-    if lower.contains("click") {
-        let coords: Vec<i32> = lower
-            .split(|c: char| !c.is_ascii_digit() && c != '-')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        if coords.len() >= 2 {
-            let button = if lower.contains("right") {
-                MouseButton::Right
-            } else {
-                // "double" also falls through to Left; DesktopAction click
-                // doesn't have double-click so we simulate via repeat
-                MouseButton::Left
-            };
-            return Ok(DesktopAction::Click {
-                target: ClickTarget::Coordinate(Point::new(coords[0], coords[1])),
-                button,
-            });
-        }
-    }
-
-    // Type text
-    if lower.contains("type") {
-        if let Some(start) = text.find('"') {
-            if let Some(end) = text[start + 1..].find('"') {
-                let typed = &text[start + 1..start + 1 + end];
-                return Ok(DesktopAction::Type { text: typed.to_string() });
-            }
-        }
-        // Fallback: everything after "type" is the text
-        if let Some(idx) = lower.find("type") {
-            let rest = text[idx + 4..].trim();
-            if !rest.is_empty() {
-                return Ok(DesktopAction::Type { text: rest.to_string() });
-            }
-        }
-    }
-
-    // Key press
-    if lower.contains("press") || lower.contains("key") {
-        let keys: Vec<String> = text
-            .split(['[', ']', ',', '"'])
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| {
-                !s.is_empty()
-                    && [
-                        "cmd",
-                        "command",
-                        "ctrl",
-                        "control",
-                        "alt",
-                        "option",
-                        "shift",
-                        "tab",
-                        "enter",
-                        "return",
-                        "esc",
-                        "escape",
-                        "space",
-                        "delete",
-                        "backspace",
-                        "up",
-                        "down",
-                        "left",
-                        "right",
-                        "home",
-                        "end",
-                        "pageup",
-                        "pagedown",
-                        "f1",
-                        "f2",
-                        "f3",
-                        "f4",
-                        "f5",
-                        "f6",
-                        "f7",
-                        "f8",
-                        "f9",
-                        "f10",
-                        "f11",
-                        "f12",
-                        "a",
-                        "b",
-                        "c",
-                        "d",
-                        "e",
-                        "f",
-                        "g",
-                        "h",
-                        "i",
-                        "j",
-                        "k",
-                        "l",
-                        "m",
-                        "n",
-                        "o",
-                        "p",
-                        "q",
-                        "r",
-                        "s",
-                        "t",
-                        "u",
-                        "v",
-                        "w",
-                        "x",
-                        "y",
-                        "z",
-                        "0",
-                        "1",
-                        "2",
-                        "3",
-                        "4",
-                        "5",
-                        "6",
-                        "7",
-                        "8",
-                        "9",
-                    ]
-                    .contains(&s.as_str())
-            })
-            .map(|s| match s.as_str() {
-                "command" => "cmd".to_string(),
-                "control" => "ctrl".to_string(),
-                "option" => "alt".to_string(),
-                "return" => "enter".to_string(),
-                "escape" => "esc".to_string(),
-                _ => s,
-            })
-            .collect();
-        if !keys.is_empty() {
-            return Ok(DesktopAction::KeyPress { keys });
-        }
-    }
-
-    // Launch app
-    if lower.contains("launch") || lower.contains("open app") || lower.contains("open application")
-    {
-        let app_name = text
-            .split_whitespace()
-            .last()
-            .unwrap_or("Unknown")
-            .trim_matches('"')
-            .to_string();
-        return Ok(DesktopAction::LaunchApp {
-            name: app_name,
-            args: Vec::new(),
-            wait_for_ready: true,
-        });
-    }
-
-    // Clipboard
-    if (lower.contains("clipboard") || lower.contains("copy"))
-        && (lower.contains("get") || lower.contains("read") || lower.contains("paste"))
-    {
-        return Ok(DesktopAction::ClipboardGet);
-    }
-
-    Err(crate::error::SyscityError::Validation(format!(
-        "Unable to parse action: '{}'",
-        text
-    )))
-}
 
 /// Fast check for obviously time-sensitive queries
 fn is_obviously_time_sensitive(message: &str) -> bool {
@@ -839,7 +616,7 @@ pub struct Agent {
     /// Configuration for the computer use loop.
     computer_config: Option<crate::computer::LoopConfig>,
     /// Optional goal planner for complex multi-step tasks with DAG scheduling.
-    goal_planner: Option<crate::planner::GoalPlanner>,
+    pub(crate) goal_planner: Option<Arc<crate::planner::GoalPlanner>>,
     /// Optional thread binding manager for tracking session/thread hierarchy
     /// with idle timeout, max age, and child-spawning policies.
     thread_binding_manager: Option<ThreadBindingManager>,
@@ -1179,7 +956,7 @@ impl Agent {
         // Pass ToolRegistry so GoalPlanner can execute device ToolCalls
         // and other tool-registered capabilities as plan steps.
         planner = planner.with_tool_registry(self.tools.clone());
-        self.goal_planner = Some(planner);
+        self.goal_planner = Some(Arc::new(planner));
         self
     }
 
@@ -1192,7 +969,8 @@ impl Agent {
     /// Attach a persistent state store to the goal planner for crash recovery.
     pub fn with_planner_state_store(mut self, store: crate::planner::TaskStateStore) -> Self {
         if let Some(ref mut planner) = self.goal_planner {
-            *planner = planner.clone().with_state_store(store);
+            let updated = (**planner).clone().with_state_store(store);
+            *planner = Arc::new(updated);
         }
         self
     }
@@ -1324,142 +1102,6 @@ impl Agent {
         } else {
             Ok(None)
         }
-    }
-
-    /// Run the Computer Use Loop for a desktop automation task.
-    ///
-    /// This method launches the canonical screenshot → decide → execute →
-    /// verify cycle. The `decide` closure calls the agent's LLM provider to
-    /// make decisions based on the current screenshot and history.
-    async fn run_computer_use_loop(
-        &self,
-        _conversation_id: &str,
-        _user_id: &str,
-        goal: &str,
-    ) -> crate::Result<String> {
-        let adapter = self.computer_adapter.clone().ok_or_else(|| {
-            crate::error::SyscityError::Internal("Computer adapter not configured".to_string())
-        })?;
-
-        let loop_config = self.computer_config.unwrap_or_default();
-        let loop_ = crate::computer::ComputerUseLoop::new(adapter).with_config(loop_config);
-
-        let provider = self.provider.clone();
-        let model = self.model.clone();
-
-        let result = loop_
-            .run(goal, |state: crate::computer::LoopState| {
-                let provider = provider.clone();
-                let model = model.clone();
-                async move {
-                    // Build a text prompt for the LLM decision maker.
-                    let mut history_text = String::new();
-                    for (i, step) in state.history.iter().enumerate() {
-                        history_text.push_str(&format!(
-                            "Step {}: {:?} -> {} (verified={})\n",
-                            i + 1,
-                            step.action,
-                            if step.result.success {
-                                "success"
-                            } else {
-                                "failed"
-                            },
-                            step.verified
-                        ));
-                    }
-
-                    let prompt = format!(
-                        r#"You are controlling a computer via desktop automation.
-
-GOAL: {}
-
-CURRENT STATE:
-- Step: {}/30
-- Screenshot: {}x{} pixels
-- Consecutive failures: {}
-
-HISTORY:
-{}
-
-Based on the goal and history, decide the NEXT action.
-Respond in EXACTLY ONE of these formats:
-
-1. ACTION: <action description>
-   Examples:
-   ACTION: click at coordinate (100, 200)
-   ACTION: type "hello world"
-   ACTION: press keys ["cmd", "space"]
-   ACTION: screenshot
-   ACTION: launch app "Calculator"
-   ACTION: wait 1000ms
-
-2. DONE: <summary of what was accomplished>
-   Use when the goal is fully achieved.
-
-3. HELP: <reason>
-   Use when stuck and need human assistance.
-
-Your response:"#,
-                        state.goal,
-                        state.step + 1,
-                        state.screenshot.width,
-                        state.screenshot.height,
-                        state.consecutive_failures,
-                        if history_text.is_empty() {
-                            "(none yet)"
-                        } else {
-                            &history_text
-                        }
-                    );
-
-                    let msg = Message::user("").with_content_blocks(vec![
-                        ContentBlock::text(prompt),
-                        ContentBlock::image_base64(state.screenshot.base64.clone(), "image/png"),
-                    ]);
-
-                    let request = CompletionRequest {
-                        model: model.clone(),
-                        messages: vec![msg],
-                        temperature: Some(0.1),
-                        max_tokens: Some(256),
-                        stream: false,
-                        requires_vision: true,
-                        ..Default::default()
-                    };
-
-                    match provider.complete(request).await {
-                        Ok(response) => {
-                            let text = response.message.content.trim();
-                            parse_loop_decision(text)
-                                .map_err(|e| crate::computer::ComputerError::Other(e.to_string()))
-                        }
-                        Err(e) => {
-                            warn!("LLM decision failed: {}", e);
-                            Ok(crate::computer::LoopDecision::NeedHelp {
-                                reason: format!("LLM error: {}", e),
-                            })
-                        }
-                    }
-                }
-            })
-            .await
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!("Computer use loop: {}", e))
-            })?;
-
-        let summary = if result.success {
-            format!(
-                "✅ Desktop task completed in {} steps.\n\n{}",
-                result.steps_taken, result.message
-            )
-        } else {
-            format!(
-                "⚠️ Desktop task stopped after {} steps.\n\n{}",
-                result.steps_taken, result.message
-            )
-        };
-
-        Ok(summary)
     }
 
     /// Build a fresh `Context` for a new conversation thread.
@@ -1686,56 +1328,6 @@ Your response:"#,
                     crate::channels::ConversationId(conversation_id),
                     cached.response.clone(),
                 ));
-            }
-        }
-
-        // ── Goal Planner (complex multi-step tasks) ───────────────────────────
-        if let Some(ref planner) = self.goal_planner {
-            if is_complex_task(&content) {
-                let tools = self.tools.list();
-                match planner.achieve(&content, &tools).await {
-                    Ok(result) => {
-                        let msg = format!(
-                            "Goal: {}\nSuccess: {}\nCompleted: {}, Failed: {}, Rolled back: {}\n{}",
-                            result.goal,
-                            if result.success { "Yes" } else { "No" },
-                            result.tasks_completed,
-                            result.tasks_failed,
-                            result.tasks_rolled_back,
-                            result.message
-                        );
-                        return Ok(OutgoingMessage::new(
-                            crate::channels::ConversationId(conversation_id),
-                            msg,
-                        ));
-                    }
-                    Err(e) => {
-                        warn!("GoalPlanner failed: {}, falling back to ComputerUseLoop", e);
-                    }
-                }
-            }
-        }
-
-        // ── Computer Use Loop (desktop automation) ────────────────────────────
-        if self.computer_adapter.is_some() && is_desktop_task(&content) {
-            info!(
-                "Desktop task detected for conversation {}, launching ComputerUseLoop",
-                conversation_id
-            );
-            match self
-                .run_computer_use_loop(&conversation_id, &user_id, &content)
-                .await
-            {
-                Ok(result) => {
-                    return Ok(OutgoingMessage::new(
-                        crate::channels::ConversationId(conversation_id),
-                        result,
-                    ));
-                }
-                Err(e) => {
-                    warn!("ComputerUseLoop failed: {}, falling back to normal processing", e);
-                    // Fall through to normal processing
-                }
             }
         }
 
@@ -2221,34 +1813,6 @@ Your response:"#,
                     crate::channels::ConversationId(conversation_id),
                     cached.response.clone(),
                 ));
-            }
-        }
-
-        // ── Goal Planner (complex multi-step tasks) ───────────────────────────
-        if let Some(ref planner) = self.goal_planner {
-            if is_complex_task(&content) {
-                let tools = self.tools.list();
-                match planner.achieve(&content, &tools).await {
-                    Ok(result) => {
-                        let msg = format!(
-                            "Goal: {}\nSuccess: {}\nCompleted: {}, Failed: {}, Rolled back: {}\n{}",
-                            result.goal,
-                            if result.success { "Yes" } else { "No" },
-                            result.tasks_completed,
-                            result.tasks_failed,
-                            result.tasks_rolled_back,
-                            result.message
-                        );
-                        (progress_cb)(ProgressEvent::Completed { response: msg.clone() }).await;
-                        return Ok(OutgoingMessage::new(
-                            crate::channels::ConversationId(conversation_id),
-                            msg,
-                        ));
-                    }
-                    Err(e) => {
-                        warn!("GoalPlanner failed: {}, falling back to normal processing", e);
-                    }
-                }
             }
         }
 

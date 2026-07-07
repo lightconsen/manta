@@ -53,8 +53,8 @@ async fn effective_model_for_spawn(state: &super::GatewayState) -> String {
 }
 
 /// Spawn a single agent, wire it into the Gateway's agent pool, register its
-/// perception adapter and computer adapter, and start the per-agent message
-/// processing loop. The loop's JoinHandle is owned by the task registry.
+/// computer adapter, and start the per-agent message processing loop. The
+/// loop's JoinHandle is owned by the task registry.
 pub(crate) async fn spawn_agent_inner(
     state: Arc<super::GatewayState>,
     id: String,
@@ -124,11 +124,6 @@ pub(crate) async fn spawn_agent_inner(
     };
     let computer_adapter = state.tools.computer_adapter.read().await.clone();
 
-    // Mint a per-agent perception adapter if the perception pipeline
-    // is initialized. Dispatches to the configured summarizer backend
-    // (Template / Local / Llm) and respects the master enable_summary
-    // switch so that the default deployment pays zero LLM tokens for
-    // the periodic `### Summary` block.
     let agent = if let Some(mm) = memory_manager {
         let chat_history = mm.chat_history();
         let mut builder = Agent::new(config.clone(), provider, tools)
@@ -179,6 +174,14 @@ pub(crate) async fn spawn_agent_inner(
         }
         Arc::new(builder)
     };
+
+    // Set the planner in the shared PlannerTool handle so the LLM can
+    // invoke the planner tool.
+    if let Some(planner) = &agent.goal_planner {
+        if let Ok(mut guard) = state.tools.planner_handle.write() {
+            *guard = Some(Arc::clone(planner));
+        }
+    }
 
     // Wire the new agent into the cron scheduler so routine (agent-target)
     // jobs can run. Only the first agent is wired; subsequent agents keep

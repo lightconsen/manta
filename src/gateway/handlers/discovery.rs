@@ -20,7 +20,7 @@ enum SpawnOutcome {
 /// Shared logic for spawning a discovered agent from the registry.
 ///
 /// Delegates to `spawn_agent_inner` so discovered agents get the same
-/// lifecycle wiring (self-repair loop, planner store, perception adapter,
+/// lifecycle wiring (self-repair loop, planner store,
 /// cron scheduler hook, task registry entry) as gateway-spawned agents.
 async fn spawn_discovered_agent(state: &Arc<GatewayState>, id: &str) -> SpawnOutcome {
     // Look up personality in registry

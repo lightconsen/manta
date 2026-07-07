@@ -363,6 +363,7 @@ impl Gateway {
                 computer_adapter: Arc::new(tokio::sync::RwLock::new(
                     tools_init.computer_adapter.clone(),
                 )),
+                planner_handle: tools_init.planner_handle.clone(),
             },
             pipelines: PipelineState {
                 inbound: pipelines_init.inbound_pipeline.clone(),

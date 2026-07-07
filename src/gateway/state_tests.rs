@@ -164,6 +164,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             skills_manager,
             canvas_manager: Arc::new(CanvasManager::new()),
             computer_adapter: Arc::new(tokio::sync::RwLock::new(None)),
+            planner_handle: Arc::new(std::sync::RwLock::new(None)),
         },
         pipelines: PipelineState {
             inbound: inbound_pipeline,

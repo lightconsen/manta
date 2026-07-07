@@ -122,6 +122,8 @@ pub struct ToolState {
     pub skills_manager: Arc<RwLock<SkillManager>>,
     pub canvas_manager: Arc<CanvasManager>,
     pub computer_adapter: Arc<RwLock<Option<Arc<dyn crate::computer::ComputerAdapter>>>>,
+    /// Shared handle for the PlannerTool — set during agent spawn.
+    pub planner_handle: Arc<std::sync::RwLock<Option<Arc<crate::planner::GoalPlanner>>>>,
 }
 
 /// Message routing pipelines and streaming infrastructure state.
