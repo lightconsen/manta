@@ -110,11 +110,8 @@ impl WebFetchTool {
         let pattern_end = format!("</{}>", tag);
 
         let mut result = html.to_string();
-        while let Some(start) = result.to_lowercase().find(&pattern_start.to_lowercase()) {
-            if let Some(end) = result[start..]
-                .to_lowercase()
-                .find(&pattern_end.to_lowercase())
-            {
+        while let Some(start) = find_ignore_ascii_case(&result, &pattern_start) {
+            if let Some(end) = find_ignore_ascii_case(&result[start..], &pattern_end) {
                 let end_pos = start + end + pattern_end.len();
                 result.replace_range(start..end_pos, "");
             } else {
@@ -139,8 +136,8 @@ impl WebFetchTool {
         let end_tag = format!("</{}>", tag);
 
         let mut result = html.to_string();
-        while let Some(start) = result.to_lowercase().find(&start_tag.to_lowercase()) {
-            if let Some(end) = result[start..].to_lowercase().find(&end_tag.to_lowercase()) {
+        while let Some(start) = find_ignore_ascii_case(&result, &start_tag) {
+            if let Some(end) = find_ignore_ascii_case(&result[start..], &end_tag) {
                 let content_start = start + start_tag.len();
                 let content_end = start + end;
                 let content = &result[content_start..content_end];
@@ -157,16 +154,16 @@ impl WebFetchTool {
         let mut result = html.to_string();
         let mut search_start = 0;
 
-        while let Some(start) = result[search_start..].to_lowercase().find("<a ") {
+        while let Some(start) = find_ignore_ascii_case(&result[search_start..], "<a ") {
             let actual_start = search_start + start;
-            if let Some(href_start) = result[actual_start..].to_lowercase().find("href=\"") {
+            if let Some(href_start) = find_ignore_ascii_case(&result[actual_start..], "href=\"") {
                 let href_pos = actual_start + href_start + 6;
                 if let Some(href_end) = result[href_pos..].find('"') {
                     let url = &result[href_pos..href_pos + href_end];
                     if let Some(tag_end) = result[actual_start..].find(">") {
                         let content_start = actual_start + tag_end + 1;
                         if let Some(content_end) =
-                            result[content_start..].to_lowercase().find("</a>")
+                            find_ignore_ascii_case(&result[content_start..], "</a>")
                         {
                             let text = &result[content_start..content_start + content_end];
                             let replacement = format!("[{}]({})", text.trim(), url);
@@ -203,9 +200,12 @@ impl WebFetchTool {
     /// Truncate content if it exceeds the limit
     fn truncate_content(content: String) -> String {
         if content.len() > MAX_CONTENT_SIZE {
+            // Find the nearest char boundary before MAX_CONTENT_SIZE to avoid
+            // panicking on multi-byte UTF-8 characters.
+            let cutoff = content.floor_char_boundary(MAX_CONTENT_SIZE);
             format!(
                 "{}\n\n[Content truncated: {} bytes total]",
-                &content[..MAX_CONTENT_SIZE],
+                &content[..cutoff],
                 content.len()
             )
         } else {
@@ -1321,6 +1321,18 @@ impl Tool for WebSearchTool {
 
         Ok(ToolExecutionResult::success("No results found for the query.".to_string()))
     }
+}
+
+/// Find a substring in `text` using ASCII case-insensitive comparison.
+///
+/// Returns the byte index of the first match in `text`, or `None`.
+/// Unlike `text.to_lowercase().find(&pat.to_lowercase())`, this preserves
+/// byte indices from the original string and works correctly even when
+/// `text` contains multi-byte UTF-8 characters before the match.
+fn find_ignore_ascii_case(text: &str, pat: &str) -> Option<usize> {
+    text.as_bytes()
+        .windows(pat.len())
+        .position(|window| window.eq_ignore_ascii_case(pat.as_bytes()))
 }
 
 #[cfg(test)]
