@@ -341,6 +341,7 @@ impl AgentPersonality {
             workspace_only: false,
             heartbeat: None,
             agent_id: None,
+            reflection_config: None,
         }
     }
 

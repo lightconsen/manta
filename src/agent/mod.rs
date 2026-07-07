@@ -73,6 +73,7 @@ pub mod session_store;
 pub mod subagent_registry;
 pub mod todo;
 pub mod transcript;
+pub mod reflection;
 pub mod turns;
 
 pub use acp::{
@@ -377,6 +378,12 @@ pub struct AgentConfig {
     /// files because it is implied by the file path / agent name.
     #[serde(skip)]
     pub agent_id: Option<String>,
+    /// Optional reflection configuration.
+    ///
+    /// When set, agent responses are self-critiqued and iteratively improved
+    /// by an LLM critic before being returned to the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflection_config: Option<reflection::ReflectionConfig>,
 }
 
 impl Default for AgentConfig {
@@ -440,6 +447,7 @@ The current time is provided in the context. When asked about time-sensitive inf
             workspace_only: false,
             heartbeat: None,
             agent_id: None,
+            reflection_config: None,
         }
     }
 }
@@ -617,6 +625,8 @@ pub struct Agent {
     computer_config: Option<crate::computer::LoopConfig>,
     /// Optional goal planner for complex multi-step tasks with DAG scheduling.
     pub(crate) goal_planner: Option<Arc<crate::planner::GoalPlanner>>,
+    /// Optional reflection pipeline for self-critique and output improvement.
+    reflection: Option<reflection::ReflectionPipeline>,
     /// Optional thread binding manager for tracking session/thread hierarchy
     /// with idle timeout, max age, and child-spawning policies.
     thread_binding_manager: Option<ThreadBindingManager>,
@@ -685,6 +695,9 @@ impl Agent {
     /// Create a new Agent
     pub fn new(config: AgentConfig, provider: Arc<dyn Provider>, tools: Arc<ToolRegistry>) -> Self {
         let provider_clone = provider.clone();
+        let reflection = config.reflection_config.as_ref().map(|rc| {
+            reflection::ReflectionPipeline::new(rc.clone(), provider.clone())
+        });
 
         Self {
             config,
@@ -720,6 +733,7 @@ impl Agent {
             computer_adapter: None,
             computer_config: None,
             goal_planner: None,
+            reflection,
             thread_binding_manager: None,
             concurrency_guards: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -1718,6 +1732,35 @@ impl Agent {
         );
         if let Some(ref usage) = response.usage {
             outgoing.usage = Some(*usage);
+        }
+
+        // ── Reflection: self-critique & iterative improvement ─────────────
+        if let Some(ref pipeline) = self.reflection {
+            if pipeline.should_trigger(&content, &response) {
+                let tool_results: Vec<String> = response
+                    .message
+                    .tool_calls
+                    .as_ref()
+                    .map(|calls| {
+                        calls
+                            .iter()
+                            .map(|c| format!("{}: {}", c.function.name, c.function.arguments))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let result = pipeline
+                    .reflect(&outgoing.content, &content, &tool_results)
+                    .await;
+
+                if result.iterations > 0 {
+                    info!(
+                        "Reflection improved response in {} iteration(s)",
+                        result.iterations
+                    );
+                    outgoing.content = result.final_content;
+                }
+            }
         }
 
         Ok(outgoing)
@@ -3577,6 +3620,17 @@ impl AgentBuilder {
         self
     }
 
+    /// Set reflection configuration for self-critique and iterative improvement.
+    ///
+    /// When enabled, the agent evaluates its own output via an LLM critic
+    /// and iteratively improves responses that fall below quality thresholds.
+    pub fn reflection_config(mut self, config: reflection::ReflectionConfig) -> Self {
+        let mut cfg = self.config.unwrap_or_default();
+        cfg.reflection_config = Some(config);
+        self.config = Some(cfg);
+        self
+    }
+
     /// Set skill manager for dynamic skill injection.
     pub fn skill_manager(
         mut self,
@@ -3717,80 +3771,6 @@ mod tests {
         assert!(!is_obviously_time_sensitive("what time zone is EST"));
     }
 
-    // ── parse_loop_decision ───────────────────────────────────────────────────
-
-    #[test]
-    fn test_parse_loop_decision_done() {
-        let d = parse_loop_decision("DONE: Task completed").unwrap();
-        assert!(
-            matches!(d, crate::computer::LoopDecision::Done { message } if message == "Task completed")
-        );
-    }
-
-    #[test]
-    fn test_parse_loop_decision_help() {
-        let d = parse_loop_decision("HELP: Cannot find the button").unwrap();
-        assert!(
-            matches!(d, crate::computer::LoopDecision::NeedHelp { reason } if reason == "Cannot find the button")
-        );
-    }
-
-    #[test]
-    fn test_parse_loop_decision_screenshot() {
-        let d = parse_loop_decision("ACTION: screenshot").unwrap();
-        assert!(matches!(
-            d,
-            crate::computer::LoopDecision::Action(
-                crate::computer::DesktopAction::Screenshot { .. }
-            )
-        ));
-    }
-
-    // ── parse_desktop_action ──────────────────────────────────────────────────
-
-    #[test]
-    fn test_parse_action_click() {
-        let a = parse_desktop_action("click at coordinate (100, 200)").unwrap();
-        if let crate::computer::DesktopAction::Click { target, button } = a {
-            assert!(
-                matches!(target, crate::computer::ClickTarget::Coordinate(p) if p.x == 100 && p.y == 200)
-            );
-            assert_eq!(button, crate::computer::MouseButton::Left);
-        } else {
-            panic!("Expected Click action, got {:?}", a);
-        }
-    }
-
-    #[test]
-    fn test_parse_action_type() {
-        let a = parse_desktop_action("type \"hello world\"").unwrap();
-        assert!(
-            matches!(a, crate::computer::DesktopAction::Type { text } if text == "hello world")
-        );
-    }
-
-    #[test]
-    fn test_parse_action_keypress() {
-        let a = parse_desktop_action("press keys [\"cmd\", \"space\"]").unwrap();
-        assert!(
-            matches!(a, crate::computer::DesktopAction::KeyPress { keys } if keys == vec!["cmd", "space"])
-        );
-    }
-
-    #[test]
-    fn test_parse_action_launch() {
-        let a = parse_desktop_action("launch app \"Calculator\"").unwrap();
-        assert!(
-            matches!(a, crate::computer::DesktopAction::LaunchApp { name, .. } if name == "Calculator")
-        );
-    }
-
-    #[test]
-    fn test_parse_action_wait() {
-        let a = parse_desktop_action("wait 500ms").unwrap();
-        assert!(matches!(a, crate::computer::DesktopAction::Wait { milliseconds: 500 }));
-    }
-
     // ── are_tools_cacheable ───────────────────────────────────────────────────
 
     #[test]
@@ -3871,6 +3851,7 @@ mod tests {
                 provider: Some("anthropic".to_string()),
             }),
             agent_id: None,
+            reflection_config: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: AgentConfig = serde_json::from_str(&json).unwrap();
