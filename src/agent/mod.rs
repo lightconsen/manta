@@ -1758,7 +1758,30 @@ impl Agent {
                         "Reflection improved response in {} iteration(s)",
                         result.iterations
                     );
-                    outgoing.content = result.final_content;
+
+                    // Extract memory data before moving fields from result.
+                    let lesson = result.format_lesson();
+                    let importance = result.importance();
+                    let improved = result.final_content;
+
+                    // Persist reflection lessons to memory for cross-turn learning.
+                    if let Some(ref mm) = self.memory_manager {
+                        if !lesson.is_empty() {
+                            if let Err(e) = mm
+                                .observe(
+                                    &user_id,
+                                    lesson,
+                                    "reflection_lesson",
+                                    importance,
+                                )
+                                .await
+                            {
+                                warn!("Failed to persist reflection lesson: {}", e);
+                            }
+                        }
+                    }
+
+                    outgoing.content = improved;
                 }
             }
         }

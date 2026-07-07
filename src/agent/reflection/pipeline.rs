@@ -25,6 +25,64 @@ pub struct ReflectionResult {
     pub critique_history: Vec<Critique>,
 }
 
+impl ReflectionResult {
+    /// Format the critique history into a concise lesson summary for memory.
+    ///
+    /// Extracts weaknesses and improvements from the last critique that
+    /// triggered an improvement, producing a single-paragraph lesson.
+    pub fn format_lesson(&self) -> String {
+        let last_critique = match self.critique_history.last() {
+            Some(c) => c,
+            None => return String::new(),
+        };
+
+        // If the last critique passed, use the previous iteration's data.
+        let relevant = if last_critique.passed && self.critique_history.len() > 1 {
+            &self.critique_history[self.critique_history.len() - 2]
+        } else {
+            last_critique
+        };
+
+        let mut parts: Vec<String> = Vec::new();
+
+        if !relevant.weaknesses.is_empty() {
+            let w = relevant.weaknesses.join("; ");
+            parts.push(format!("缺点: {}", w));
+        }
+
+        if !relevant.suggested_improvements.is_empty() {
+            let s = relevant.suggested_improvements.join("; ");
+            parts.push(format!("改进方向: {}", s));
+        }
+
+        if parts.is_empty() {
+            return String::new();
+        }
+
+        format!(
+            "Reflection 发现回复中存在问题，经 {} 轮迭代后改进。{}",
+            self.iterations,
+            parts.join("。")
+        )
+    }
+
+    /// Compute an importance score (0.0–1.0) for memory persistence.
+    ///
+    /// Uses the inverse of the first iteration's overall score so that
+    /// larger gaps (worse initial output) yield higher importance.
+    pub fn importance(&self) -> f32 {
+        let first_score = self
+            .critique_history
+            .first()
+            .map(|c| c.overall_score)
+            .unwrap_or(0.5);
+
+        // Map 0.0→1.0 → importance 1.0→0.3 (worse output = more important)
+        let raw = 1.0 - first_score;
+        (raw.max(0.0).min(1.0) * 0.7 + 0.3) as f32
+    }
+}
+
 /// The reflection pipeline that drives self-critique and improvement.
 #[derive(Clone)]
 pub struct ReflectionPipeline {
