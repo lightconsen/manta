@@ -13,7 +13,7 @@ use super::types::{Critique, QualityCriteria};
 
 // ── Prompt Template ─────────────────────────────────────────────────────────
 
-/// System prompt for trajectory-level evaluation (nudge engine).
+/// System prompt for trajectory-level evaluation (retrospect engine).
 const TRAJECTORY_CRITIC_PROMPT: &str = r#"You are analyzing a conversation trajectory to identify interaction patterns.
 
 Review the full sequence of turns below — user messages, assistant responses,

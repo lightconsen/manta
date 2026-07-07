@@ -2,7 +2,7 @@
 //!
 //! Represents a window of the interaction history — user messages, assistant
 //! responses, tool calls, and tool results — for trajectory-aware evaluation
-//! by the [`NudgeEngine`](super::nudge::NudgeEngine).
+//! by the [`RetrospectEngine`](super::retrospect::RetrospectEngine).
 
 /// A single step within a conversation turn.
 #[derive(Debug, Clone)]

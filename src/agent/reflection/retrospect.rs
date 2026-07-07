@@ -1,6 +1,6 @@
-//! Nudge engine — periodic, background trajectory reflection.
+//! Retrospect engine — periodic, background trajectory reflection.
 //!
-//! The nudge engine runs as a background task every N turns, reviewing the
+//! The retrospect engine runs as a background task every N turns, reviewing the
 //! last M turns of conversation and writing interaction patterns to memory.
 //! Unlike synchronous per-response refinement approaches,
 //! it never blocks the response and never modifies output content.
@@ -10,39 +10,39 @@ use std::sync::Arc;
 use crate::providers::Provider;
 use crate::Result;
 
-use super::config::NudgeConfig;
+use super::config::RetrospectConfig;
 use super::critic::Critic;
 use super::trajectory::{Trajectory, TrajectoryStep, TrajectoryWindow};
 use super::types::{Critique, QualityCriteria};
 use crate::agent::turns::Turn;
 
-/// Result of a nudge cycle — trajectory critique + observation for memory.
+/// Result of a retrospect cycle — trajectory critique + observation for memory.
 #[derive(Debug, Clone)]
-pub struct NudgeResult {
+pub struct RetrospectResult {
     /// The structured critique of the conversation window.
     pub critique: Critique,
     /// Natural-language observation extracted from the critique.
     /// This is the key output persisted to memory.
     pub observation: String,
-    /// Turn count at which this nudge fired.
+    /// Turn count at which this retrospect fired.
     pub turn_count: usize,
 }
 
 /// Periodic trajectory reflection engine.
 ///
-/// Runs every [`NudgeConfig::interval`] turns, reviewing the last
-/// [`NudgeConfig::window_size`] turns to identify interaction patterns.
+/// Runs every [`RetrospectConfig::interval`] turns, reviewing the last
+/// [`RetrospectConfig::window_size`] turns to identify interaction patterns.
 #[derive(Clone)]
-pub struct NudgeEngine {
-    /// Nudge scheduling and window configuration.
-    pub config: NudgeConfig,
+pub struct RetrospectEngine {
+    /// Retrospect scheduling and window configuration.
+    pub config: RetrospectConfig,
     /// The LLM critic used for trajectory evaluation.
     critic: Critic,
 }
 
-impl NudgeEngine {
-    /// Create a new nudge engine with the given config and provider.
-    pub fn new(config: NudgeConfig, provider: Arc<dyn Provider>) -> Self {
+impl RetrospectEngine {
+    /// Create a new retrospect engine with the given config and provider.
+    pub fn new(config: RetrospectConfig, provider: Arc<dyn Provider>) -> Self {
         Self {
             critic: Critic::new(provider),
             config,
@@ -94,13 +94,13 @@ impl NudgeEngine {
     /// 2. Formats it and sends to the LLM critic for evaluation.
     /// 3. Extracts the natural-language observation.
     ///
-    /// Returns a [`NudgeResult`] with the critique and observation.
-    pub async fn nudge(
+    /// Returns a [`RetrospectResult`] with the critique and observation.
+    pub async fn retrospect(
         &self,
         turns: &[Turn],
         total_turns: usize,
         criteria: &QualityCriteria,
-    ) -> Result<NudgeResult> {
+    ) -> Result<RetrospectResult> {
         let trajectory = self.build_trajectory(turns, total_turns);
         let formatted = trajectory.format_for_prompt();
 
@@ -114,7 +114,7 @@ impl NudgeEngine {
             .clone()
             .unwrap_or_else(|| "No specific observation from trajectory review.".to_string());
 
-        Ok(NudgeResult {
+        Ok(RetrospectResult {
             critique,
             observation,
             turn_count: total_turns,
@@ -139,8 +139,8 @@ mod tests {
 
     #[test]
     fn test_build_trajectory_respects_window() {
-        let engine = NudgeEngine::new(
-            NudgeConfig {
+        let engine = RetrospectEngine::new(
+            RetrospectConfig {
                 interval: 10,
                 window_size: 3,
                 min_turns: 3,
@@ -159,8 +159,8 @@ mod tests {
 
     #[test]
     fn test_build_trajectory_less_than_window() {
-        let engine = NudgeEngine::new(
-            NudgeConfig {
+        let engine = RetrospectEngine::new(
+            RetrospectConfig {
                 interval: 10,
                 window_size: 10,
                 min_turns: 3,
@@ -178,8 +178,8 @@ mod tests {
 
     #[test]
     fn test_build_trajectory_empty_turns() {
-        let engine = NudgeEngine::new(
-            NudgeConfig {
+        let engine = RetrospectEngine::new(
+            RetrospectConfig {
                 interval: 10,
                 window_size: 5,
                 min_turns: 3,
@@ -197,8 +197,8 @@ mod tests {
 
     #[test]
     fn test_build_trajectory_includes_assistant_response() {
-        let engine = NudgeEngine::new(
-            NudgeConfig {
+        let engine = RetrospectEngine::new(
+            RetrospectConfig {
                 interval: 10,
                 window_size: 1,
                 min_turns: 3,
@@ -222,8 +222,8 @@ mod tests {
 
     #[test]
     fn test_build_trajectory_empty_assistant_skips_step() {
-        let engine = NudgeEngine::new(
-            NudgeConfig {
+        let engine = RetrospectEngine::new(
+            RetrospectConfig {
                 interval: 10,
                 window_size: 1,
                 min_turns: 3,

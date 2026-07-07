@@ -626,10 +626,10 @@ pub struct Agent {
     computer_config: Option<crate::computer::LoopConfig>,
     /// Optional goal planner for complex multi-step tasks with DAG scheduling.
     pub(crate) goal_planner: Option<Arc<crate::planner::GoalPlanner>>,
-    /// Nudge engine for periodic trajectory reflection (background).
-    nudge_engine: Option<reflection::NudgeEngine>,
-    /// Turn counter for nudge scheduling.
-    nudge_counter: Arc<AtomicU64>,
+    /// Retrospect engine for periodic trajectory reflection (background).
+    retrospect_engine: Option<reflection::RetrospectEngine>,
+    /// Turn counter for retrospect scheduling.
+    retrospect_counter: Arc<AtomicU64>,
     /// Optional thread binding manager for tracking session/thread hierarchy
     /// with idle timeout, max age, and child-spawning policies.
     thread_binding_manager: Option<ThreadBindingManager>,
@@ -698,9 +698,9 @@ impl Agent {
     /// Create a new Agent
     pub fn new(config: AgentConfig, provider: Arc<dyn Provider>, tools: Arc<ToolRegistry>) -> Self {
         let provider_clone = provider.clone();
-        let nudge_engine = config.reflection_config.as_ref().and_then(|rc| {
-            if rc.nudge_enabled {
-                Some(reflection::NudgeEngine::new(rc.nudge.clone(), provider.clone()))
+        let retrospect_engine = config.reflection_config.as_ref().and_then(|rc| {
+            if rc.retrospect_enabled {
+                Some(reflection::RetrospectEngine::new(rc.retrospect.clone(), provider.clone()))
             } else {
                 None
             }
@@ -740,8 +740,8 @@ impl Agent {
             computer_adapter: None,
             computer_config: None,
             goal_planner: None,
-            nudge_engine,
-            nudge_counter: Arc::new(AtomicU64::new(0)),
+            retrospect_engine,
+            retrospect_counter: Arc::new(AtomicU64::new(0)),
             thread_binding_manager: None,
             concurrency_guards: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -1742,7 +1742,7 @@ impl Agent {
             outgoing.usage = Some(*usage);
         }
 
-        // ── Note: trajectory reflection (nudge) runs in process_message_with_progress ──
+        // ── Note: trajectory reflection (retrospect) runs in process_message_with_progress ──
 
         Ok(outgoing)
     }
@@ -1997,9 +1997,9 @@ impl Agent {
 
         let tools_used_this_turn = thread.context.tools_used().to_vec();
 
-        // Snapshot turns for nudge engine before moving the thread.
-        let nudge_turns: Vec<crate::agent::turns::Turn> = thread.turns.clone();
-        let nudge_turn_count = thread.turn_count();
+        // Snapshot turns for retrospect engine before moving the thread.
+        let retrospect_turns: Vec<crate::agent::turns::Turn> = thread.turns.clone();
+        let retrospect_turn_count = thread.turn_count();
 
         // ── Put thread back ───────────────────────────────────────────────────
         {
@@ -2126,9 +2126,9 @@ impl Agent {
         }
         outgoing.usage = response.usage;
 
-        // ── Nudge: background trajectory reflection ─────────────────────
-        if let Some(ref engine) = self.nudge_engine {
-            let counter = self.nudge_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        // ── Retrospect: background trajectory reflection ─────────────────
+        if let Some(ref engine) = self.retrospect_engine {
+            let counter = self.retrospect_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             let interval = engine.config.interval as u64;
             let min_turns = engine.config.min_turns as u64;
 
@@ -2142,15 +2142,15 @@ impl Agent {
                     .as_ref()
                     .map(|rc| rc.criteria.clone())
                     .unwrap_or_default();
-                let turns = nudge_turns.clone();
-                let total = nudge_turn_count;
+                let turns = retrospect_turns.clone();
+                let total = retrospect_turn_count;
 
                 tokio::spawn(async move {
-                    match engine.nudge(&turns, total, &criteria).await {
-                        Ok(nudge_result) => {
+                    match engine.retrospect(&turns, total, &criteria).await {
+                        Ok(retrospect_result) => {
                             info!(
-                                "Nudge trajectory reflection at turn {}: {}",
-                                nudge_result.turn_count, nudge_result.observation
+                                "Retrospect trajectory reflection at turn {}: {}",
+                                retrospect_result.turn_count, retrospect_result.observation
                             );
 
                             // Write observation to memory.
@@ -2158,7 +2158,7 @@ impl Agent {
                                 if let Err(e) = mm
                                     .observe(
                                         &uid,
-                                        nudge_result.observation,
+                                        retrospect_result.observation,
                                         "interaction_pattern",
                                         0.6,
                                     )
@@ -2169,7 +2169,7 @@ impl Agent {
                             }
                         }
                         Err(e) => {
-                            warn!("Nudge trajectory reflection failed: {}", e);
+                            warn!("Retrospect trajectory reflection failed: {}", e);
                         }
                     }
                 });
