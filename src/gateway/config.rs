@@ -281,7 +281,7 @@ pub struct AcpConfig {
 }
 
 fn default_max_iterations() -> usize {
-    50
+    100
 }
 
 impl Default for AcpConfig {

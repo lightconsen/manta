@@ -33,18 +33,19 @@ impl GatewayTool {
 /// Paths the gateway tool is allowed to mutate.  Fails closed — anything not
 /// listed here is rejected.  Patterns use `*` for single-segment wildcards.
 const ALLOWED_CONFIG_PATHS: &[&str] = &[
-    "agents.defaults.system_prompt_override",
-    "agents.defaults.prompt_overlays",
-    "agents.defaults.model",
-    "agents.defaults.thinking_default",
-    "agents.defaults.reasoning_default",
-    "agents.defaults.fast_mode_default",
-    "agents.list[].id",
-    "agents.list[].system_prompt_override",
-    "agents.list[].model",
-    "agents.list[].thinking_default",
-    "agents.list[].reasoning_default",
-    "agents.list[].fast_mode_default",
+    // default_agent subfields — map to AgentConfig struct fields
+    "default_agent.system_prompt",
+    "default_agent.max_context_tokens",
+    "default_agent.max_concurrent_tools",
+    "default_agent.temperature",
+    "default_agent.max_tokens",
+    "default_agent.skills_prompt",
+    "default_agent.max_turns",
+    "default_agent.compaction_model",
+    "default_agent.workspace_dir",
+    "default_agent.workspace_only",
+    "default_agent.reflection_config",
+    // Channel require_mention patterns — match ChannelConfig.require_mention
     "channels.*.require_mention",
     "channels.*.*.require_mention",
     "channels.*.*.*.require_mention",

@@ -850,7 +850,6 @@ mod tests {
                 name: "test".to_string(),
                 description: "A test".to_string(),
                 parameters: serde_json::json!({"type": "object"}),
-                capabilities: None,
             },
         };
         assert_eq!(td.tool_type, "function");
