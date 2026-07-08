@@ -11,6 +11,7 @@ agents perceive and act on your computer.
 | [Build from Source](build.md) | Prerequisites, feature flags, desktop app build |
 | [Architecture](arch.md) | System overview, control plane, pipelines |
 | [Slash Commands](command.md) | `/` commands available in chat, TUI, and channels |
+| [Goal-Based Execution](goal.md) | `/goal` autonomous execution with stop conditions |
 
 ## Core concepts
 
@@ -41,6 +42,7 @@ directory under `src/`.
 - [providers](modules/providers.md) — LLM provider integrations
 - [model_router](modules/model_router.md) — model selection / routing
 - [memory](modules/memory.md) — long-term + semantic memory
+- [goal](modules/goal.md) — goal-based execution with structured stop conditions
 - [planner](modules/planner.md) — goal decomposition + DAG execution
 - [skills](modules/skills.md) — skill storage + triggering
 
