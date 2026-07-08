@@ -448,15 +448,63 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
         )
     };
 
-    let agents = state.agents.agents.read().await;
-    let agent_handle = match agents.get(agent_id) {
-        Some(h) => h.clone(),
-        None => {
-            error!("Agent {} not found for session {}", agent_id, session_id);
-            return;
+    let agent_handle = {
+        let agents = state.agents.agents.read().await;
+        match agents.get(agent_id).cloned() {
+            Some(h) => {
+                drop(agents);
+                h
+            }
+            None => {
+                drop(agents);
+                // Agent not yet spawned — try on-demand spawn from personality registry.
+                let personality = {
+                    let registry = state.agents.registry.read().await;
+                    registry.get(agent_id).cloned()
+                };
+                let Some(personality) = personality else {
+                    error!("Agent {} not found in registry for session {}", agent_id, session_id);
+                    return;
+                };
+
+                let config = personality.to_agent_config();
+                info!(
+                    "On-demand spawning agent '{}' from personality (dispatch, session={})",
+                    agent_id, session_id
+                );
+
+                if let Err(e) = crate::gateway::agent_spawn::spawn_agent_inner(
+                    state.clone(),
+                    agent_id.to_string(),
+                    config,
+                )
+                .await
+                {
+                    error!("Failed to on-demand spawn agent {}: {}", agent_id, e);
+                    return;
+                }
+
+                // Wait briefly for the handle to appear (concurrent spawn may have finished).
+                let mut handle = None;
+                for _ in 0..10 {
+                    let agents = state.agents.agents.read().await;
+                    handle = agents.get(agent_id).cloned();
+                    drop(agents);
+                    if handle.is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                match handle {
+                    Some(h) => h,
+                    None => {
+                        error!("Agent {} spawned but handle never appeared", agent_id);
+                        return;
+                    }
+                }
+            }
         }
     };
-    drop(agents);
 
     // Apply thinking config from runtime settings
     let extra = think_level.and_then(|level| {
