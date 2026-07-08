@@ -798,16 +798,10 @@ pub trait Tool: Send + Sync + 'static {
 
     /// Convert to a function definition for LLM providers
     fn to_function_definition(&self) -> FunctionDefinition {
-        let caps = self.capabilities();
         FunctionDefinition {
             name: self.name().to_string(),
             description: self.description().to_string(),
             parameters: self.parameters_schema(),
-            capabilities: Some(crate::providers::FunctionCapabilities {
-                requires_approval: caps.requires_approval,
-                risk_level: format!("{:?}", caps.risk_level).to_lowercase(),
-                categories: caps.categories.clone(),
-            }),
         }
     }
 

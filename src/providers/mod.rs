@@ -389,18 +389,6 @@ pub struct ToolDefinition {
     pub function: FunctionDefinition,
 }
 
-/// Capabilities metadata attached to a function definition.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct FunctionCapabilities {
-    /// Whether this tool requires human approval before execution.
-    pub requires_approval: bool,
-    /// Risk level classification: "low", "medium", "high", or "critical".
-    pub risk_level: String,
-    /// Category tags (e.g. ["file", "system", "network"]).
-    pub categories: Vec<String>,
-}
-
 /// Definition of a function tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionDefinition {
@@ -410,9 +398,6 @@ pub struct FunctionDefinition {
     pub description: String,
     /// The parameters schema (JSON Schema)
     pub parameters: serde_json::Value,
-    /// Optional capabilities metadata for RBAC / risk-aware tool selection.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub capabilities: Option<FunctionCapabilities>,
 }
 
 /// A stream of completion chunks
