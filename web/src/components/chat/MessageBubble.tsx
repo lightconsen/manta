@@ -12,13 +12,18 @@ interface MessageBubbleProps {
   transport?: SyscityWebSocketTransport;
 }
 
+const centerStyle: Record<string, string> = {
+  paddingLeft: "calc((100% - var(--message-list-max-width)) / 2)",
+  paddingRight: "calc((100% - var(--message-list-max-width)) / 2)",
+};
+
 export function MessageBubble({ message, transport }: MessageBubbleProps) {
   const isUser = message.role === "user";
 
   if (isUser) {
     return (
-      <div className="py-4 px-4 sm:px-6 bg-white dark:bg-neutral-900">
-        <div className="max-w-3xl mx-auto flex gap-3 flex-row-reverse">
+      <div className="py-4">
+        <div className="flex gap-3 flex-row-reverse" style={centerStyle}>
           <Avatar role="user" />
           <div className="flex-1 min-w-0 text-right">
             <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
@@ -40,8 +45,8 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
   const hasMetadata = isAssistant && (message.durationMs !== undefined || message.toolCount !== undefined);
 
   return (
-    <div className="py-4 px-4 sm:px-6 bg-gray-50/60 dark:bg-neutral-800/30">
-      <div className="max-w-3xl mx-auto flex gap-3 flex-row">
+    <div className="py-4">
+      <div className="flex gap-3 flex-row" style={centerStyle}>
         <Avatar role="assistant" />
         <div className="flex-1 min-w-0">
           <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
@@ -67,7 +72,7 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
                 }
                 if (part.type === "text") {
                   return (
-                    <div className="rounded-2xl px-4 py-2.5 bg-white dark:bg-neutral-800 text-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm border border-gray-100 dark:border-neutral-700">
+                    <div className="text-gray-800 dark:text-gray-200">
                       <MarkdownMessage text={part.text || ""} />
                     </div>
                   );
@@ -76,7 +81,7 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
               })}
             </div>
           ) : (
-            <div className="rounded-2xl px-4 py-2.5 bg-white dark:bg-neutral-800 text-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm border border-gray-100 dark:border-neutral-700">
+            <div className="text-gray-800 dark:text-gray-200">
               <MarkdownMessage text={message.content} />
             </div>
           )}

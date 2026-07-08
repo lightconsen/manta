@@ -6,6 +6,7 @@
   --color-primary: #B22AC2;
   --color-primary-dark: #7A1684;
   --color-primary-light: #C44ED0;
+  --message-list-max-width: 48rem;
 }
 
 html, body, #root {
