@@ -75,6 +75,7 @@ export const FALLBACK_COMMANDS: CommandDef[] = [
   { key: "plugins", name: "plugins", description: "Inspect or toggle plugins", args: "list|install|enable|disable", category: "admin", tier: "power", local: false, requires_admin: true },
   { key: "restart", name: "restart", description: "Restart the gateway", category: "admin", tier: "power", local: false, requires_admin: true },
   { key: "bash", name: "bash", description: "Run a host shell command", args: "<command>", category: "admin", tier: "power", local: false, requires_admin: true },
+  { key: "goal", name: "goal", description: "Execute a goal with auto-check conditions", args: "<description> [--max-rounds N]", category: "agents", tier: "standard", local: false, requires_admin: false },
 ];
 
 /** Commands executed client-side without RPC. */

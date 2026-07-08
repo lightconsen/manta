@@ -255,6 +255,12 @@ pub enum GatewayEvent {
         status: String,
         message: Option<String>,
     },
+    /// Goal progress event from a sub-agent runner.
+    GoalProgress {
+        goal_id: String,
+        session_id: String,
+        event: crate::goal::GoalEvent,
+    },
 }
 
 /// Agent status

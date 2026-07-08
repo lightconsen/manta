@@ -138,6 +138,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             cost_guard: crate::agent::CostGuard::new(0, 0),
             repair_state: Arc::new(RepairState::new()),
             acp: Arc::new(AcpControlPlane::new(50)),
+            goal_cancellers: Arc::new(RwLock::new(HashMap::new())),
         },
         channels: ChannelState {
             channels: Arc::new(RwLock::new(HashMap::new())),

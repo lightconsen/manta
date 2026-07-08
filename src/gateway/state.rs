@@ -87,6 +87,8 @@ pub struct AgentState {
     pub cost_guard: Arc<CostGuard>,
     pub repair_state: Arc<RepairState>,
     pub acp: Arc<AcpControlPlane>,
+    /// Active goal runners mapped by goal_id for cancellation support.
+    pub goal_cancellers: Arc<RwLock<HashMap<String, CancellationToken>>>,
 }
 
 /// Channel adapters, extensions, and response dispatch state.

@@ -335,6 +335,7 @@ impl Gateway {
                 ),
                 repair_state: Arc::new(RepairState::new()),
                 acp: acp.clone(),
+                goal_cancellers: Arc::new(RwLock::new(HashMap::new())),
             },
             channels: ChannelState {
                 channels: tools_init.channels.clone(),

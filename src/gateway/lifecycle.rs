@@ -426,6 +426,71 @@ pub(crate) async fn start_gateway(
         info!("Log tail broadcaster started");
     }
 
+    // Resume persisted goals from disk (goal persistence/restore).
+    {
+        let goal_store = crate::goal::persist::GoalStore::new();
+        let persisted = goal_store.load_all().await;
+        if !persisted.is_empty() {
+            info!("Resuming {} persisted goal(s)...", persisted.len());
+        }
+        for persisted_state in &persisted {
+            let (goal_tx, mut goal_rx) = tokio::sync::mpsc::unbounded_channel();
+            let event_tx = state.events.tx.clone();
+            let gid = persisted_state.goal_id.clone();
+            let s_for_relay = persisted_state.parent_session_id.clone();
+
+            // Spawn event relay: GoalEvent → GatewayEvent.
+            tokio::spawn(async move {
+                while let Some(goal_event) = goal_rx.recv().await {
+                    let gw_event = crate::gateway::GatewayEvent::GoalProgress {
+                        goal_id: gid.clone(),
+                        session_id: s_for_relay.clone(),
+                        event: goal_event,
+                    };
+                    if let Err(e) = event_tx.send(gw_event) {
+                        warn!("[goal resume] Failed to broadcast event: {}", e);
+                        break;
+                    }
+                }
+            });
+
+            let (goal_id, parent_sid, plan, condition_history) =
+                crate::goal::persist::to_runner_params(persisted_state);
+
+            let runner = crate::goal::GoalRunner::new(
+                &goal_id,
+                &parent_sid,
+                plan,
+                state.tools.registry.clone(),
+                state.infra.model_router.clone(),
+                goal_tx,
+            )
+            .with_store(crate::goal::persist::shared_store())
+            .with_progress(
+                persisted_state.round,
+                condition_history,
+            );
+
+            let cancel_token = runner.cancel_token();
+            {
+                let mut cancellers = state.agents.goal_cancellers.write().await;
+                cancellers.insert(goal_id.clone(), cancel_token);
+            }
+
+            let gid2 = goal_id.clone();
+            let cancellers = state.agents.goal_cancellers.clone();
+            tokio::spawn(async move {
+                info!("[goal resume] Resuming goal: {}", gid2);
+                runner.run().await;
+                let mut c = cancellers.write().await;
+                c.remove(&gid2);
+            });
+        }
+        if !persisted.is_empty() {
+            info!("Resumed {} persisted goal(s) successfully", persisted.len());
+        }
+    }
+
     // Run the server until the shutdown token is cancelled.  Axum's
     // graceful-shutdown mechanism drains existing connections after the
     // token fires.  Stuck handles are aborted later by `stop_gateway`

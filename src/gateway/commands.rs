@@ -260,6 +260,8 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             .with_args("<command>")
             .admin()
             .power(),
+        CommandDef::new("goal", "goal", "Execute a goal with auto-check conditions", CommandCategory::Agents)
+            .with_args("<description> [--max-rounds N]"),
     ]
 }
 
@@ -519,6 +521,7 @@ pub async fn handle_commands_execute(
             "debug" => handle_debug(req, state, &params.args).await,
             "restart" => handle_restart(req, state).await,
             "bash" => handle_bash(req, &params.args).await,
+            "goal" => handle_goal(req, conn, state, &params.args).await,
             _ => WsResponse::err(
                 &req.id,
                 "NOT_HANDLED",
@@ -937,6 +940,173 @@ async fn handle_bash(req: &WsRequest, args: &str) -> WsResponse {
         }
         Err(e) => WsResponse::err(&req.id, "EXEC_FAILED", format!("Failed to execute: {}", e)),
     }
+}
+
+async fn handle_goal(
+    req: &WsRequest,
+    conn: &Arc<RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+    args: &str,
+) -> WsResponse {
+    let trimmed = args.trim();
+
+    // Parse subcommands (e.g., /goal cancel <id>).
+    let first_word = trimmed.split_whitespace().next().unwrap_or("");
+    if first_word == "cancel" || first_word == "list" {
+        let rest = trimmed.splitn(2, ' ').nth(1).unwrap_or("").trim();
+        match first_word {
+            "cancel" => {
+                if rest.is_empty() {
+                    return WsResponse::err(
+                        &req.id,
+                        "INVALID_ARGS",
+                        "Usage: /goal cancel <goal_id>",
+                    );
+                }
+                let cancelled = {
+                    let mut cancellers = state.agents.goal_cancellers.write().await;
+                    if let Some(token) = cancellers.remove(rest) {
+                        token.cancel();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if cancelled {
+                    return WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({ "text": format!("🎯 Goal `{}` cancelled.", rest) }),
+                    );
+                } else {
+                    return WsResponse::err(
+                        &req.id,
+                        "GOAL_NOT_FOUND",
+                        format!("Goal `{}` not found or already completed.", rest),
+                    );
+                }
+            }
+            "list" => {
+                let cancellers = state.agents.goal_cancellers.read().await;
+                let ids: Vec<&String> = cancellers.keys().collect();
+                if ids.is_empty() {
+                    return WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({ "text": "🎯 No active goals." }),
+                    );
+                }
+                return WsResponse::ok(
+                    &req.id,
+                    serde_json::json!({
+                        "text": format!("🎯 **Active Goals**\n\n{}", ids.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n")),
+                        "goals": ids,
+                    }),
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    let description = trimmed;
+    if description.is_empty() {
+        return WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /goal <description> [--max-rounds N]");
+    }
+
+    // Parse optional --max-rounds flag.
+    let mut description = trimmed.to_string();
+    let mut max_rounds: usize = 5;
+    if let Some(pos) = trimmed.rfind("--max-rounds") {
+        let before = &trimmed[..pos].trim();
+        let rest = trimmed[pos..].trim();
+        if let Some(val_str) = rest.split_whitespace().nth(1) {
+            if let Ok(n) = val_str.parse::<usize>() {
+                max_rounds = n.max(1);
+                description = before.to_string();
+            }
+        }
+    }
+
+    if description.is_empty() {
+        return WsResponse::err(&req.id, "INVALID_ARGS", "Description required");
+    }
+
+    // Resolve the real session_id from the connection's subscriptions.
+    let session_id = conn.read().await.subscriptions.first().cloned();
+
+    // Parse the goal description into structured conditions using the LLM.
+    let plan = match crate::goal::GoalPlan::parse_with_llm(
+        &state.infra.model_router,
+        &description,
+        Some(max_rounds),
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            return WsResponse::err(
+                &req.id,
+                "GOAL_PARSE_FAILED",
+                format!("Failed to parse goal: {}", e),
+            );
+        }
+    };
+
+    let goal_id = format!("goal_{}", uuid::Uuid::new_v4().to_string());
+    let sid = session_id.unwrap_or_else(|| "unknown".to_string());
+
+    // Create event channel between GoalRunner and gateway.
+    let (goal_tx, mut goal_rx) = tokio::sync::mpsc::unbounded_channel();
+    let event_tx = state.events.tx.clone();
+    let gid = goal_id.clone();
+    let s_for_relay = sid.clone();
+
+    // Spawn event relay: GoalEvent → GatewayEvent.
+    tokio::spawn(async move {
+        while let Some(goal_event) = goal_rx.recv().await {
+            let gw_event = crate::gateway::GatewayEvent::GoalProgress {
+                goal_id: gid.clone(),
+                session_id: s_for_relay.clone(),
+                event: goal_event,
+            };
+            if let Err(e) = event_tx.send(gw_event) {
+                warn!("[goal] Failed to broadcast event: {}", e);
+                break;
+            }
+        }
+    });
+
+    // Create goal store for persistence (checkpoint after each round).
+    let goal_store = crate::goal::persist::shared_store();
+
+    // Create the cancel token and register it for /goal cancel.
+    let runner = crate::goal::GoalRunner::new(
+        &goal_id,
+        &sid,
+        plan,
+        state.tools.registry.clone(),
+        state.infra.model_router.clone(),
+        goal_tx,
+    )
+    .with_store(goal_store.clone());
+    let cancel_token = runner.cancel_token();
+    {
+        let mut cancellers = state.agents.goal_cancellers.write().await;
+        cancellers.insert(goal_id.clone(), cancel_token);
+    }
+
+    // Spawn GoalRunner as background task — remove cancellers entry when done.
+    let gid2 = goal_id.clone();
+    let cancellers = state.agents.goal_cancellers.clone();
+    tokio::spawn(async move {
+        runner.run().await;
+        // Clean up cancellers entry on completion.
+        let mut c = cancellers.write().await;
+        c.remove(&gid2);
+    });
+
+    WsResponse::ok(&req.id, serde_json::json!({
+        "text": format!("🎯 Goal started: {}\nID: {}\nMax rounds: {}\n\nGoal events will appear in this session.", description, goal_id, max_rounds),
+        "goal_id": goal_id,
+    }))
 }
 
 async fn handle_subagents(

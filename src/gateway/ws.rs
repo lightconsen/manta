@@ -254,7 +254,8 @@ async fn handle_websocket(
                         | GatewayEvent::ToolResult { session_id, .. }
                         | GatewayEvent::Completed { session_id, .. }
                         | GatewayEvent::ProcessingError { session_id, .. }
-                        | GatewayEvent::Thinking { session_id, .. } => {
+                        | GatewayEvent::Thinking { session_id, .. }
+                        | GatewayEvent::GoalProgress { session_id, .. } => {
                             conn_guard.is_subscribed(session_id)
                         }
                         _ => true,

@@ -55,6 +55,7 @@ pub mod embed;
 pub mod error;
 pub mod export;
 pub mod gateway;
+pub mod goal;
 pub mod heartbeat;
 pub mod inbound;
 pub mod logs;

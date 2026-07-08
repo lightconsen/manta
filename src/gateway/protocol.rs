@@ -615,6 +615,14 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "message": message,
             }),
         )),
+        GatewayEvent::GoalProgress { goal_id, session_id, event } => Some((
+            "goal.progress".to_string(),
+            serde_json::json!({
+                "goal_id": goal_id,
+                "session_id": session_id,
+                "event": event,
+            }),
+        )),
     }
 }
 

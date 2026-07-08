@@ -133,6 +133,10 @@ pub fn teams_dir() -> PathBuf {
     syscity_dir().join("teams")
 }
 
+pub fn goals_dir() -> PathBuf {
+    syscity_dir().join("goals")
+}
+
 /// Get the plugins data directory (~/.syscity/plugins/data)
 pub fn plugins_data_dir() -> PathBuf {
     syscity_dir().join("plugins").join("data")
@@ -216,6 +220,7 @@ pub async fn init() -> crate::Result<PathBuf> {
         &skills_dir(),
         &agents_dir(),
         &cron_dir(),
+        &goals_dir(),
         &workspace_data_dir(),
         &todos_dir(),
         &transcripts_dir(),
@@ -266,6 +271,7 @@ pub fn init_sync() -> crate::Result<PathBuf> {
         &skills_dir(),
         &agents_dir(),
         &cron_dir(),
+        &goals_dir(),
         &workspace_data_dir(),
         &todos_dir(),
         &transcripts_dir(),

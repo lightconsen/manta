@@ -652,6 +652,7 @@ mod agent_tests;
 mod browser_chat_tests;
 mod command_tests;
 mod computer_tests;
+mod goal_tests;
 mod health_tests;
 mod llm_chat_tests;
 mod mock_chat_tests;

@@ -12,6 +12,8 @@ import { useChatStore } from "@/stores/chatStore";
 import { Sidebar } from "@/components/chat/Sidebar";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ChatContent } from "@/components/chat/ChatContent";
+import { useGoalStore } from "@/stores/goalStore";
+import { GoalPanel } from "@/components/chat/GoalPanel";
 
 /* ── ChatAppInner ── */
 function ChatAppInner({ transport }: { transport: SyscityWebSocketTransport }) {
@@ -140,6 +142,91 @@ function ChatApp() {
         const updated = [...transport.getMessages(), msg];
         transport.setMessages(updated);
       }
+      if (evt.event === "goal.progress") {
+        const p = evt.payload as Record<string, unknown> | undefined;
+        if (!p) return;
+        const goalId = (p.goal_id as string) || "";
+        const goalEvent = p.event as Record<string, unknown> | undefined;
+        if (!goalEvent) return;
+        const subEvent = (goalEvent.event as string) || "";
+
+        // Update goal store for the dedicated GoalPanel.
+        const updateGoal = useGoalStore.getState().updateGoal;
+        if (subEvent === "goal.started") {
+          const desc = (goalEvent.description as string) || "";
+          const conditions = (goalEvent.conditions as string[]) || [];
+          const maxRounds = (goalEvent.max_rounds as number) || 5;
+          useGoalStore.setState((s) => ({
+            goals: {
+              ...s.goals,
+              [goalId]: {
+                id: goalId,
+                description: desc,
+                conditions,
+                maxRounds,
+                round: 0,
+                passed: 0,
+                total: conditions.length,
+                status: "running",
+              },
+            },
+          }));
+        } else if (subEvent === "goal.check") {
+          updateGoal(goalId, {
+            round: (goalEvent.round as number) || 0,
+            passed: (goalEvent.passed as number) || 0,
+            total: (goalEvent.total as number) || 0,
+          });
+        } else if (subEvent === "goal.done") {
+          updateGoal(goalId, {
+            status: "done",
+            summary: (goalEvent.summary as string) || "",
+          });
+        } else if (subEvent === "goal.aborted") {
+          updateGoal(goalId, {
+            status: "aborted",
+            reason: (goalEvent.reason as string) || "",
+            round: (goalEvent.round as number) || 0,
+          });
+        }
+
+        // Build chat message (existing behavior).
+        let text = "";
+        if (subEvent === "goal.started") {
+          const desc = (goalEvent.description as string) || "";
+          const conditions = (goalEvent.conditions as string[]) || [];
+          const maxRounds = (goalEvent.max_rounds as number) || 5;
+          const condList = conditions.map((c: string) => `  - ${c}`).join("\n");
+          text = `🎯 **Goal Started**: ${desc}\n\n**Conditions** (must all pass):\n${condList}\n\n_Max rounds: ${maxRounds}_`;
+        } else if (subEvent === "goal.check") {
+          const round = (goalEvent.round as number) || 0;
+          const passed = (goalEvent.passed as number) || 0;
+          const total = (goalEvent.total as number) || 0;
+          text = `🔍 **Goal Check — Round ${round}**: ${passed}/${total} conditions passed`;
+        } else if (subEvent === "goal.retry") {
+          const round = (goalEvent.round as number) || 0;
+          const feedback = (goalEvent.feedback as string) || "";
+          text = `🔄 **Goal Retry — Round ${round}**\n\n${feedback}`;
+        } else if (subEvent === "goal.done") {
+          const summary = (goalEvent.summary as string) || "";
+          text = `✅ **Goal Complete**\n\n${summary}`;
+        } else if (subEvent === "goal.aborted") {
+          const reason = (goalEvent.reason as string) || "";
+          text = `⛔ **Goal Aborted**: ${reason}`;
+        }
+        if (text) {
+          const msg: ChatMessage = {
+            id: `goal_${Date.now()}`,
+            role: "assistant",
+            content: text,
+            parts: [{ type: "text", text }],
+            timestamp: Date.now(),
+          };
+          transport.saveMessage(msg);
+          const updated = [...transport.getMessages(), msg];
+          transport.setMessages(updated);
+        }
+      }
     });
   }, [transport, refreshSessions]);
 
@@ -185,7 +272,10 @@ function ChatApp() {
         {settingsOpen ? (
           <SettingsPanel transport={transport} onClose={() => setSettingsOpen(false)} />
         ) : (
-          <ChatAppInner key={sessionKey} transport={transport} />
+          <>
+            <ChatAppInner key={sessionKey} transport={transport} />
+            <GoalPanel />
+          </>
         )}
       </main>
     </div>
