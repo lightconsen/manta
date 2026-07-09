@@ -40,6 +40,7 @@ use crate::core::context::RequestContext;
 use crate::gateway::handlers::config::persist_config_atomic;
 use crate::gateway::protocol::*;
 use crate::gateway::{GatewayEvent, GatewayState};
+use crate::providers::Message as ProviderMessage;
 use crate::security::UserId;
 
 /// Query parameters for WebSocket upgrade
@@ -821,6 +822,63 @@ fn handle_ping(req: &WsRequest) -> WsResponse {
     WsResponse::ok(&req.id, serde_json::json!({}))
 }
 
+/// Generate a concise session title by asking an LLM to summarize the user's first message.
+async fn generate_session_title(
+    router: &crate::model_router::ModelRouter,
+    message: &str,
+) -> crate::Result<String> {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return Ok("New Session".to_string());
+    }
+
+    let prompt = format!(
+        "Summarize the following user message into a very short session title (at most 6 words, no punctuation, no explanation).\n\nMessage: {trimmed}\n\nTitle:"
+    );
+
+    let messages = vec![
+        ProviderMessage::system("You generate concise session titles."),
+        ProviderMessage::user(prompt),
+    ];
+
+    let response = router.complete("default", messages, None).await?;
+    let title = response
+        .message
+        .content
+        .trim()
+        .trim_matches(['"', '\'', '“', '”', '‘', '’'])
+        .to_string();
+
+    Ok(clean_session_title(&title))
+}
+
+/// Fallback title generation when LLM summarization fails.
+fn fallback_session_name(message: &str) -> String {
+    let name = message
+        .trim()
+        .split_whitespace()
+        .take(6)
+        .collect::<Vec<_>>()
+        .join(" ");
+    clean_session_title(&name)
+}
+
+/// Trim and truncate a session title to keep it sidebar-friendly.
+fn clean_session_title(name: &str) -> String {
+    let name = name
+        .replace('\n', " ")
+        .replace('\r', " ")
+        .trim()
+        .to_string();
+    if name.len() > 40 {
+        format!("{}...", &name[..40])
+    } else if name.is_empty() {
+        "New Session".to_string()
+    } else {
+        name
+    }
+}
+
 async fn handle_chat_send(
     req: &WsRequest,
     conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
@@ -889,27 +947,30 @@ async fn handle_chat_send(
 
     if should_name {
         let store = state.agents.store.clone();
+        let router = state.infra.model_router.clone();
+        let events = state.events.tx.clone();
         let sid = session_id.clone();
         let msg = params.message.clone();
-        let trimmed = msg.trim();
-        let name = trimmed
-            .split_whitespace()
-            .take(6)
-            .collect::<Vec<_>>()
-            .join(" ");
-        let name = if name.len() > 40 {
-            format!("{}...", &name[..40])
-        } else if name.is_empty() {
-            "New Session".to_string()
-        } else {
-            name
-        };
+
         let name_task = tokio::spawn(async move {
+            let name = generate_session_title(&router, &msg)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::debug!("LLM session title generation failed: {}, using fallback", e);
+                    fallback_session_name(&msg)
+                });
+
             if let Some(ref s) = store {
                 if let Err(e) = s.set_session_name(&sid, &name).await {
                     tracing::warn!("Failed to save session name for {}: {}", sid, e);
                 } else {
                     tracing::info!("Session {} named: '{}'", sid, name);
+                    if let Err(e) = events.send(GatewayEvent::SessionRenamed {
+                        session_id: sid.clone(),
+                        name: name.clone(),
+                    }) {
+                        tracing::debug!("No receivers for SessionRenamed event: {}", e);
+                    }
                 }
             }
         });
@@ -2419,7 +2480,10 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         }
         "search.providers" => {
             if let Some(arr) = params.value.as_array() {
-                config.search.providers = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+                config.search.providers = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
             }
         }
         _ if params.path.starts_with("search.keys.") => {
