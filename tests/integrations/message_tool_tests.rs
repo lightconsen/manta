@@ -136,6 +136,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             cost_guard: syscity::agent::CostGuard::new(0, 0),
             repair_state: Arc::new(syscity::gateway::RepairState::new()),
             acp: Arc::new(syscity::acp::AcpControlPlane::new(10)),
+            goal_cancellers: Arc::new(RwLock::new(HashMap::new())),
         },
         channels: syscity::gateway::state::ChannelState {
             channels: Arc::new(RwLock::new(HashMap::new())),

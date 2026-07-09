@@ -128,7 +128,6 @@ async fn openai_provider_handles_tool_calls() {
                 name: "shell".to_string(),
                 description: "Run shell commands".to_string(),
                 parameters: json!({"type": "object"}),
-                capabilities: None,
             },
         }]),
         ..Default::default()
