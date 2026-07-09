@@ -466,10 +466,7 @@ pub(crate) async fn start_gateway(
                 goal_tx,
             )
             .with_store(crate::goal::persist::shared_store())
-            .with_progress(
-                persisted_state.round,
-                condition_history,
-            );
+            .with_progress(persisted_state.round, condition_history);
 
             let cancel_token = runner.cancel_token();
             {

@@ -168,7 +168,12 @@ impl Context {
     }
 
     /// Accumulate token counts into the turn's usage tracker.
-    pub fn accumulate_turn_token_usage(&mut self, prompt_tokens: u32, completion_tokens: u32, total_tokens: u32) {
+    pub fn accumulate_turn_token_usage(
+        &mut self,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        total_tokens: u32,
+    ) {
         match self.turn_token_usage {
             Some(ref mut usage) => {
                 usage.prompt_tokens += prompt_tokens;

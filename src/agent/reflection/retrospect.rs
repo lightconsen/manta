@@ -332,9 +332,11 @@ mod tests {
             .steps
             .iter()
             .filter_map(|s| match s {
-                TrajectoryStep::TokenUsage { prompt_tokens, completion_tokens, total_tokens } => {
-                    Some((*prompt_tokens, *completion_tokens, *total_tokens))
-                }
+                TrajectoryStep::TokenUsage {
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                } => Some((*prompt_tokens, *completion_tokens, *total_tokens)),
                 _ => None,
             })
             .collect();

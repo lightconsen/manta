@@ -54,10 +54,7 @@ pub struct Critic {
 impl Critic {
     /// Create a new critic with the given provider.
     pub fn new(provider: Arc<dyn Provider>) -> Self {
-        Self {
-            provider,
-            model: None,
-        }
+        Self { provider, model: None }
     }
 
     /// Set a specific model for the critic to use.
@@ -113,10 +110,7 @@ Evaluate the trajectory above."#,
         max_tokens: Option<u32>,
     ) -> Result<CompletionResponse> {
         let request = CompletionRequest {
-            messages: vec![
-                Message::system(system),
-                Message::user(user),
-            ],
+            messages: vec![Message::system(system), Message::user(user)],
             model: self.model.clone(),
             temperature: Some(0.0), // deterministic for evaluation
             max_tokens,
@@ -244,8 +238,16 @@ fn default_scores() -> std::collections::HashMap<String, f64> {
 /// Low scores in efficiency or tool usage signal costly / problematic
 /// patterns that should be remembered more strongly.
 pub fn compute_retrospect_importance(critique: &Critique) -> f32 {
-    let efficiency_score = critique.dimension_scores.get("Efficiency").copied().unwrap_or(0.5);
-    let tool_usage_score = critique.dimension_scores.get("Tool Usage").copied().unwrap_or(0.5);
+    let efficiency_score = critique
+        .dimension_scores
+        .get("Efficiency")
+        .copied()
+        .unwrap_or(0.5);
+    let tool_usage_score = critique
+        .dimension_scores
+        .get("Tool Usage")
+        .copied()
+        .unwrap_or(0.5);
     let weakness_count = critique.weaknesses.len();
     let suggestion_count = critique.suggested_improvements.len();
 
@@ -281,7 +283,16 @@ mod tests {
         let criteria = QualityCriteria::default();
         let critique = parse_critique_json(raw, &criteria);
 
-        assert!((critique.dimension_scores.get("Factual Accuracy").copied().unwrap_or(0.0) - 0.9).abs() < 1e-6);
+        assert!(
+            (critique
+                .dimension_scores
+                .get("Factual Accuracy")
+                .copied()
+                .unwrap_or(0.0)
+                - 0.9)
+                .abs()
+                < 1e-6
+        );
         assert!(critique.strengths.contains(&"Good".to_string()));
         assert!(critique.weaknesses.contains(&"Missing details".to_string()));
     }
@@ -299,7 +310,16 @@ mod tests {
         let raw = "```\n{\"dimension_scores\":{\"Factual Accuracy\":0.8}}\n```";
         let criteria = QualityCriteria::default();
         let critique = parse_critique_json(raw, &criteria);
-        assert!((critique.dimension_scores.get("Factual Accuracy").copied().unwrap_or(0.0) - 0.8).abs() < 1e-6);
+        assert!(
+            (critique
+                .dimension_scores
+                .get("Factual Accuracy")
+                .copied()
+                .unwrap_or(0.0)
+                - 0.8)
+                .abs()
+                < 1e-6
+        );
     }
 
     #[test]
@@ -361,7 +381,11 @@ mod tests {
                 m
             },
             strengths: vec![],
-            weaknesses: vec!["Slow".to_string(), "Errors".to_string(), "Verbose".to_string()],
+            weaknesses: vec![
+                "Slow".to_string(),
+                "Errors".to_string(),
+                "Verbose".to_string(),
+            ],
             suggested_improvements: vec!["Optimize".to_string(), "Retry".to_string()],
             overall_score: 0.0,
             passed: false,

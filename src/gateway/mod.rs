@@ -567,7 +567,11 @@ impl Gateway {
     }
 
     /// Spawn a new agent
-    async fn spawn_agent(&self, id: String, config: crate::agent::AgentConfig) -> crate::Result<()> {
+    async fn spawn_agent(
+        &self,
+        id: String,
+        config: crate::agent::AgentConfig,
+    ) -> crate::Result<()> {
         spawn_agent_inner(self.state.clone(), id, config).await?;
         Ok(())
     }
@@ -761,4 +765,3 @@ use crate::canvas::CanvasManager;
 use crate::model_router::ModelRouter;
 #[cfg(test)]
 use crate::plugins::PluginManager;
-

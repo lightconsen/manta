@@ -17,9 +17,7 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::agent::turns::ToolCallRecord;
 use crate::channels::thread_binding::ThreadBindingManager;
 use crate::channels::{IncomingMessage, OutgoingMessage};
-use crate::providers::{
-    CompletionRequest, Message, Provider, Role, ToolCall, ToolResult,
-};
+use crate::providers::{CompletionRequest, Message, Provider, Role, ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolExecutionChunk, ToolRegistry};
 
 /// Progress events during message processing
@@ -69,6 +67,7 @@ pub mod group;
 pub mod personality;
 pub mod planner;
 pub mod prompt_builder;
+pub mod reflection;
 pub mod route_resolution;
 pub mod session;
 pub mod session_files;
@@ -76,7 +75,6 @@ pub mod session_store;
 pub mod subagent_registry;
 pub mod todo;
 pub mod transcript;
-pub mod reflection;
 pub mod turns;
 
 pub use acp::{
@@ -123,7 +121,6 @@ pub use transcript::{
     TranscriptStoreStats,
 };
 pub use turns::{Thread, ThreadManager, Turn, TurnState};
-
 
 use self::session_store::SessionStore;
 
@@ -2137,7 +2134,10 @@ impl Agent {
 
         // ── Retrospect: background trajectory reflection ─────────────────
         if let Some(ref engine) = self.retrospect_engine {
-            let counter = self.retrospect_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            let counter = self
+                .retrospect_counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1;
             let interval = engine.config.interval as u64;
             let min_turns = engine.config.min_turns as u64;
 
@@ -4298,7 +4298,8 @@ mod tests {
             prompt
         );
         assert!(
-            prompt.contains("**weather**") && prompt.contains("Get weather information for locations"),
+            prompt.contains("**weather**")
+                && prompt.contains("Get weather information for locations"),
             "Expected weather skill content in prompt, got: {}",
             prompt
         );

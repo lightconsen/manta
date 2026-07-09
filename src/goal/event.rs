@@ -26,10 +26,7 @@ pub enum GoalEvent {
     },
     /// Starting a new round with feedback from the previous one.
     #[serde(rename = "goal.retry")]
-    Retry {
-        round: usize,
-        feedback: String,
-    },
+    Retry { round: usize, feedback: String },
     /// Goal completed successfully.
     #[serde(rename = "goal.done")]
     Done {

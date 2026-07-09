@@ -63,10 +63,7 @@ impl QualityCriteria {
         for dim in &dimensions {
             thresholds.insert(dim.label().to_string(), default_threshold);
         }
-        Self {
-            dimensions,
-            thresholds,
-        }
+        Self { dimensions, thresholds }
     }
 
     /// Get the threshold for a given dimension label.
@@ -131,13 +128,13 @@ impl Critique {
     pub fn finalize(mut self, criteria: &QualityCriteria) -> Self {
         let count = self.dimension_scores.len();
         if count > 0 {
-            self.overall_score =
-                self.dimension_scores.values().sum::<f64>() / count as f64;
+            self.overall_score = self.dimension_scores.values().sum::<f64>() / count as f64;
         }
 
-        self.passed = self.dimension_scores.iter().all(|(label, score)| {
-            *score >= criteria.threshold_for(label)
-        });
+        self.passed = self
+            .dimension_scores
+            .iter()
+            .all(|(label, score)| *score >= criteria.threshold_for(label));
 
         self
     }

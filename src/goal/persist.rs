@@ -57,9 +57,7 @@ impl Default for GoalStore {
 impl GoalStore {
     /// Create a new goal store using the default goals directory.
     pub fn new() -> Self {
-        Self {
-            dir: goals_dir(),
-        }
+        Self { dir: goals_dir() }
     }
 
     /// Create a goal store with a custom directory (for testing).
@@ -92,12 +90,12 @@ impl GoalStore {
         let json = serde_json::to_string_pretty(state).map_err(|e| {
             crate::error::SyscityError::Internal(format!("Failed to serialize goal state: {}", e))
         })?;
-        tokio::fs::write(&path, &json).await.map_err(|e| {
-            crate::error::SyscityError::Storage {
+        tokio::fs::write(&path, &json)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to write goal state: {:?}", path),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
         Ok(())
     }
 
@@ -115,18 +113,12 @@ impl GoalStore {
                 continue;
             }
             match tokio::fs::read_to_string(&path).await {
-                Ok(content) => {
-                    match serde_json::from_str::<PersistedGoalState>(&content) {
-                        Ok(state) => states.push(state),
-                        Err(e) => {
-                            tracing::warn!(
-                                "[goal] Failed to parse persisted state {:?}: {}",
-                                path,
-                                e
-                            );
-                        }
+                Ok(content) => match serde_json::from_str::<PersistedGoalState>(&content) {
+                    Ok(state) => states.push(state),
+                    Err(e) => {
+                        tracing::warn!("[goal] Failed to parse persisted state {:?}: {}", path, e);
                     }
-                }
+                },
                 Err(e) => {
                     tracing::warn!("[goal] Failed to read persisted state {:?}: {}", path, e);
                 }
@@ -212,11 +204,12 @@ mod tests {
         PersistedGoalState {
             goal_id: goal_id.to_string(),
             parent_session_id: "session_abc".to_string(),
-            plan: crate::goal::GoalPlan::new("write tests")
-                .with_condition(crate::goal::GoalCondition::ExitCode {
+            plan: crate::goal::GoalPlan::new("write tests").with_condition(
+                crate::goal::GoalCondition::ExitCode {
                     command: "cargo test".to_string(),
                     expected: Some(0),
-                }),
+                },
+            ),
             round: 2,
             condition_history: vec![PersistedRoundResult {
                 round: 1,

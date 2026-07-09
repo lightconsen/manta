@@ -8,13 +8,9 @@
 #[derive(Debug, Clone)]
 pub enum TrajectoryStep {
     /// The user's input message.
-    UserMessage {
-        content: String,
-    },
+    UserMessage { content: String },
     /// The assistant's textual response.
-    AssistantResponse {
-        content: String,
-    },
+    AssistantResponse { content: String },
     /// A tool call made by the assistant.
     ToolCall {
         name: String,
@@ -78,11 +74,7 @@ impl Trajectory {
                     TrajectoryStep::AssistantResponse { content } => {
                         out.push_str(&format!("Assistant: {}\n", content));
                     }
-                    TrajectoryStep::ToolCall {
-                        name,
-                        args,
-                        duration_ms,
-                    } => {
+                    TrajectoryStep::ToolCall { name, args, duration_ms } => {
                         // Truncate long args for readability
                         let args_preview = if args.len() > 200 {
                             format!("{}…", &args[..200])
@@ -94,11 +86,7 @@ impl Trajectory {
                             name, args_preview, duration_ms
                         ));
                     }
-                    TrajectoryStep::ToolResult {
-                        name,
-                        content,
-                        success,
-                    } => {
+                    TrajectoryStep::ToolResult { name, content, success } => {
                         // Truncate long results
                         let result_preview = if content.len() > 300 {
                             format!("{}…", &content[..300])
@@ -206,7 +194,10 @@ mod tests {
         let formatted = trajectory.format_for_prompt();
         assert!(formatted.contains("…"));
         // Should be about 200 chars + ellipsis + label overhead
-        let tool_line = formatted.lines().find(|l| l.contains("[Tool call: big_tool(")).unwrap();
+        let tool_line = formatted
+            .lines()
+            .find(|l| l.contains("[Tool call: big_tool("))
+            .unwrap();
         assert!(tool_line.len() < 350, "args should be truncated: {}", tool_line.len());
     }
 

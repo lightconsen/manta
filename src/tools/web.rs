@@ -203,11 +203,7 @@ impl WebFetchTool {
             // Find the nearest char boundary before MAX_CONTENT_SIZE to avoid
             // panicking on multi-byte UTF-8 characters.
             let cutoff = content.floor_char_boundary(MAX_CONTENT_SIZE);
-            format!(
-                "{}\n\n[Content truncated: {} bytes total]",
-                &content[..cutoff],
-                content.len()
-            )
+            format!("{}\n\n[Content truncated: {} bytes total]", &content[..cutoff], content.len())
         } else {
             content
         }
@@ -462,8 +458,12 @@ impl WebSearchTool {
                     self.search_google(api_key, cx, query, limit).await
                 }
                 SearchProvider::Brave { api_key } => self.search_brave(api_key, query, limit).await,
-                SearchProvider::Tavily { api_key } => self.search_tavily(api_key, query, limit).await,
-                SearchProvider::SerpApi { api_key } => self.search_serpapi(api_key, query, limit).await,
+                SearchProvider::Tavily { api_key } => {
+                    self.search_tavily(api_key, query, limit).await
+                }
+                SearchProvider::SerpApi { api_key } => {
+                    self.search_serpapi(api_key, query, limit).await
+                }
                 SearchProvider::Exa { api_key } => self.search_exa(api_key, query, limit).await,
                 SearchProvider::Firecrawl { api_key } => {
                     self.search_firecrawl(api_key, query, limit).await
@@ -487,11 +487,7 @@ impl WebSearchTool {
             ))
         })?;
 
-        debug!(
-            "Provider {} search completed in {:?}",
-            provider_name,
-            start.elapsed()
-        );
+        debug!("Provider {} search completed in {:?}", provider_name, start.elapsed());
         result
     }
 
@@ -906,7 +902,11 @@ impl WebSearchTool {
             }
         }
 
-        debug!("Tavily search completed in {:?} with {} results", start.elapsed(), results.len());
+        debug!(
+            "Tavily search completed in {:?} with {} results",
+            start.elapsed(),
+            results.len()
+        );
         Ok(results)
     }
 
@@ -1259,12 +1259,7 @@ impl Tool for WebSearchTool {
         let mut last_error = None;
         for (idx, provider) in providers.iter().enumerate() {
             let provider_name = provider_name(provider);
-            info!(
-                "Trying provider {} ({}): {}",
-                idx + 1,
-                providers.len(),
-                provider_name
-            );
+            info!("Trying provider {} ({}): {}", idx + 1, providers.len(), provider_name);
             match self.search_with_provider(provider, query, limit).await {
                 Ok(results) if !results.is_empty() => {
                     if idx > 0 {

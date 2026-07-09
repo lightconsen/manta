@@ -111,12 +111,9 @@ For simple single-step operations, use the relevant individual tool instead."#
         // we pass an empty tool list here since the decomposer hint is optional.
         let available_tools: Vec<String> = vec![];
 
-        let result = planner
-            .achieve(goal, &available_tools)
-            .await
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!("GoalPlanner failed: {}", e))
-            })?;
+        let result = planner.achieve(goal, &available_tools).await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("GoalPlanner failed: {}", e))
+        })?;
 
         let summary = format!(
             "Goal: {}\nSuccess: {}\nCompleted: {}, Failed: {}, Rolled back: {}\n\n{}",

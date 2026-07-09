@@ -6,10 +6,7 @@ use super::*;
 /// but goal and other argument-driven commands expect `params.args`.
 async fn exec_goal(client: &mut FrontendSimulator, args: &str) -> serde_json::Value {
     client
-        .request(
-            "commands.execute",
-            json!({"command": "goal", "args": args}),
-        )
+        .request("commands.execute", json!({"command": "goal", "args": args}))
         .await
 }
 
@@ -127,7 +124,9 @@ async fn test_goal_full_lifecycle() {
     let retry_inner = retry.get("event").and_then(|v| v.as_object());
     assert!(retry_inner.is_some(), "Expected nested goal.retry event");
     assert_eq!(
-        retry_inner.and_then(|o| o.get("event")).and_then(|v| v.as_str()),
+        retry_inner
+            .and_then(|o| o.get("event"))
+            .and_then(|v| v.as_str()),
         Some("goal.retry")
     );
 
@@ -139,7 +138,9 @@ async fn test_goal_full_lifecycle() {
     let check_inner = check.get("event").and_then(|v| v.as_object());
     assert!(check_inner.is_some(), "Expected nested goal.check event");
     assert_eq!(
-        check_inner.and_then(|o| o.get("event")).and_then(|v| v.as_str()),
+        check_inner
+            .and_then(|o| o.get("event"))
+            .and_then(|v| v.as_str()),
         Some("goal.check")
     );
 
@@ -150,7 +151,9 @@ async fn test_goal_full_lifecycle() {
         .expect("Expected terminal goal event");
     let term_inner = terminal.get("event").and_then(|v| v.as_object());
     assert!(term_inner.is_some(), "Expected nested terminal event");
-    let term_type = term_inner.and_then(|o| o.get("event")).and_then(|v| v.as_str());
+    let term_type = term_inner
+        .and_then(|o| o.get("event"))
+        .and_then(|v| v.as_str());
     assert!(
         term_type == Some("goal.done") || term_type == Some("goal.aborted"),
         "Expected goal.done or goal.aborted, got: {:?}",
@@ -179,9 +182,7 @@ async fn test_goal_command_starts_and_completes() {
         .expect("Expected goal.progress event");
     let inner = started.get("event").and_then(|v| v.as_object());
     assert!(inner.is_some(), "Expected nested goal.started event");
-    let event_type = inner
-        .and_then(|o| o.get("event"))
-        .and_then(|v| v.as_str());
+    let event_type = inner.and_then(|o| o.get("event")).and_then(|v| v.as_str());
     assert_eq!(event_type, Some("goal.started"));
 }
 
@@ -199,20 +200,13 @@ async fn test_goal_command_creates_goal_id() {
     assert!(resp.get("ok").and_then(|v| v.as_bool()) == Some(true));
 
     let payload = resp.get("payload").and_then(|v| v.as_object()).cloned();
-    assert!(
-        payload.is_some(),
-        "Expected payload in response: {:?}",
-        resp
-    );
+    assert!(payload.is_some(), "Expected payload in response: {:?}", resp);
     let goal_id = payload
         .as_ref()
         .and_then(|p| p.get("goal_id"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    assert!(
-        goal_id.is_some(),
-        "Expected goal_id in response payload"
-    );
+    assert!(goal_id.is_some(), "Expected goal_id in response payload");
     let gid = goal_id.unwrap();
     assert!(gid.starts_with("goal_"), "goal_id should start with 'goal_'");
 }
@@ -243,11 +237,7 @@ async fn test_goal_list_shows_active_goals() {
         .and_then(|p| p.get("text"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    assert!(
-        text.contains("goal_"),
-        "Expected goal ID in list response: {}",
-        text
-    );
+    assert!(text.contains("goal_"), "Expected goal ID in list response: {}", text);
 }
 
 #[tokio::test]

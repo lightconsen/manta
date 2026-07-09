@@ -10,12 +10,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::goal::condition::CheckResult;
 use crate::goal::event::GoalEvent;
+use crate::goal::persist;
 use crate::goal::plan::GoalPlan;
 use crate::model_router::ModelRouter;
 use crate::providers::{Message, ToolDefinition};
 use crate::tools::ToolContext;
 use crate::tools::ToolRegistry;
-use crate::goal::persist;
 use crate::Result;
 
 /// Maximum consecutive identical failures before loop detection triggers.
@@ -89,11 +89,7 @@ impl GoalRunner {
     }
 
     /// Set the initial round and condition history (used when restoring from persistence).
-    pub fn with_progress(
-        mut self,
-        round: usize,
-        condition_history: Vec<RoundResult>,
-    ) -> Self {
+    pub fn with_progress(mut self, round: usize, condition_history: Vec<RoundResult>) -> Self {
         self.round = round;
         self.condition_history = condition_history;
         self
@@ -120,12 +116,8 @@ impl GoalRunner {
 
         if !is_resume {
             // Emit started event (fresh goal).
-            let conditions_desc: Vec<String> = self
-                .plan
-                .conditions
-                .iter()
-                .map(|c| c.to_string())
-                .collect();
+            let conditions_desc: Vec<String> =
+                self.plan.conditions.iter().map(|c| c.to_string()).collect();
             self.emit(GoalEvent::Started {
                 id: self.id.clone(),
                 description: self.plan.description.clone(),
@@ -139,16 +131,9 @@ impl GoalRunner {
                 id: self.id.clone(),
                 description: format!(
                     "{} (resumed, round {}/{})",
-                    self.plan.description,
-                    self.round,
-                    self.plan.max_rounds
+                    self.plan.description, self.round, self.plan.max_rounds
                 ),
-                conditions: self
-                    .plan
-                    .conditions
-                    .iter()
-                    .map(|c| c.to_string())
-                    .collect(),
+                conditions: self.plan.conditions.iter().map(|c| c.to_string()).collect(),
                 max_rounds: self.plan.max_rounds,
             });
         }
@@ -170,10 +155,7 @@ impl GoalRunner {
 
             // Emit retry event (or initial started feedback).
             if self.round > 1 || !feedback.is_empty() {
-                self.emit(GoalEvent::Retry {
-                    round: self.round,
-                    feedback,
-                });
+                self.emit(GoalEvent::Retry { round: self.round, feedback });
             }
 
             // Agent acts: run the agent with the goal context.
@@ -291,10 +273,7 @@ impl GoalRunner {
             Message::user(&user_message),
         ];
 
-        let model = self
-            .model_override
-            .as_deref()
-            .unwrap_or("default");
+        let model = self.model_override.as_deref().unwrap_or("default");
 
         // Create a tool context for tool execution.
         let tool_ctx = ToolContext::new("goal_runner", &self.id)
@@ -341,11 +320,7 @@ impl GoalRunner {
             }
 
             // Take the tool calls out of the response (clone to keep response.message valid).
-            let tool_calls = response
-                .message
-                .tool_calls
-                .clone()
-                .unwrap_or_default();
+            let tool_calls = response.message.tool_calls.clone().unwrap_or_default();
 
             // Push the assistant's response (with tool_calls) to the context.
             messages.push(response.message);
@@ -380,11 +355,7 @@ impl GoalRunner {
             }
         }
 
-        tracing::info!(
-            "[goal {}] Agent round {} completed",
-            self.id,
-            self.round
-        );
+        tracing::info!("[goal {}] Agent round {} completed", self.id, self.round);
         Ok(())
     }
 
@@ -544,14 +515,7 @@ mod tests {
 
     fn make_runner(plan: GoalPlan) -> GoalRunner {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        GoalRunner::new(
-            "test_goal",
-            "test_session",
-            plan,
-            make_tools(),
-            make_router(),
-            tx,
-        )
+        GoalRunner::new("test_goal", "test_session", plan, make_tools(), make_router(), tx)
     }
 
     fn make_plan(description: &str) -> GoalPlan {
@@ -564,8 +528,9 @@ mod tests {
     #[test]
     fn test_with_progress_sets_round_and_history() {
         let plan = make_plan("test");
-        let runner = make_runner(plan).with_progress(3, vec![
-            RoundResult {
+        let runner = make_runner(plan).with_progress(
+            3,
+            vec![RoundResult {
                 round: 1,
                 results: vec![CheckResult {
                     condition: GoalCondition::ExitCode {
@@ -576,8 +541,8 @@ mod tests {
                     actual: "exit code: 0".to_string(),
                     detail: "passed".to_string(),
                 }],
-            },
-        ]);
+            }],
+        );
         assert_eq!(runner.round, 3);
         assert_eq!(runner.condition_history.len(), 1);
         assert_eq!(runner.condition_history[0].round, 1);

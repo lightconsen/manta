@@ -804,7 +804,6 @@ pub trait Tool: Send + Sync + 'static {
             parameters: self.parameters_schema(),
         }
     }
-
 }
 
 /// A boxed tool for storage
@@ -817,12 +816,11 @@ pub mod agents_list;
 pub mod browser;
 pub mod canvas;
 pub mod code_exec;
-pub mod computer;
 pub mod command_detector;
 pub mod command_gate;
+pub mod computer;
 pub mod cron_tool;
 pub mod delegate_tool;
-pub mod planner;
 pub mod file;
 pub mod gateway;
 pub mod grep;
@@ -836,6 +834,7 @@ pub mod message;
 pub mod nodes;
 pub mod patch;
 pub mod pdf;
+pub mod planner;
 pub mod process;
 pub mod sandbox;
 pub mod sandbox_interceptor;
@@ -896,7 +895,8 @@ struct CacheEntry {
 /// Shared, mutable list of web search providers. Held by both WebSearchTool
 /// and ToolRegistry so hot-reload can update providers without rebuilding
 /// the registry.
-pub type WebSearchProviders = std::sync::Arc<tokio::sync::RwLock<Vec<crate::tools::web::SearchProvider>>>;
+pub type WebSearchProviders =
+    std::sync::Arc<tokio::sync::RwLock<Vec<crate::tools::web::SearchProvider>>>;
 
 /// Registry of tools with optional caching, circuit breaker, and trust-level
 /// filtering.
@@ -1427,10 +1427,7 @@ impl ToolRegistry {
     pub fn replace(&mut self, name: &str, tool: BoxedTool) -> Option<SharedTool> {
         let new_name = tool.name().to_string();
         if name != new_name {
-            warn!(
-                "Tool replacement name mismatch: replacing '{}' with '{}'",
-                name, new_name
-            );
+            warn!("Tool replacement name mismatch: replacing '{}' with '{}'", name, new_name);
         }
         let tool: SharedTool = tool.into();
         match self.tools.write() {

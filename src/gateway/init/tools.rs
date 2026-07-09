@@ -258,21 +258,19 @@ pub async fn init_tools(
 
     // Register ComputerTool with the adapter (or None if unavailable).
     if let Some(ref adapter) = computer_adapter {
-        tool_registry.register_dynamic(Arc::new(
-            crate::tools::computer::ComputerTool::new(Some(adapter.clone())),
-        ));
+        tool_registry.register_dynamic(Arc::new(crate::tools::computer::ComputerTool::new(Some(
+            adapter.clone(),
+        ))));
     } else {
-        tool_registry.register_dynamic(Arc::new(
-            crate::tools::computer::ComputerTool::new(None),
-        ));
+        tool_registry.register_dynamic(Arc::new(crate::tools::computer::ComputerTool::new(None)));
     }
 
     // Create shared planner handle and register PlannerTool.
     let planner_handle: Arc<std::sync::RwLock<Option<Arc<crate::planner::GoalPlanner>>>> =
         Arc::new(std::sync::RwLock::new(None));
-    tool_registry.register_dynamic(Arc::new(
-        crate::tools::planner::PlannerTool::new(planner_handle.clone()),
-    ));
+    tool_registry.register_dynamic(Arc::new(crate::tools::planner::PlannerTool::new(
+        planner_handle.clone(),
+    )));
 
     let channels = Arc::new(RwLock::new(HashMap::<String, Arc<dyn Channel>>::new()));
     let plugin_manager = init_plugin_manager(

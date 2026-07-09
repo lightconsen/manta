@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::computer::{
-    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton,
-    Point, Rect, ScrollDirection,
+    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton, Point,
+    Rect, ScrollDirection,
 };
 use crate::tools::{
     approval::RiskLevel, create_schema, sdk::ToolCapabilities, Tool, ToolContext,
@@ -179,7 +179,10 @@ Common workflows:
 
         let desktop_action = action_to_desktop_action(action, &args)?;
 
-        let result = adapter.execute(desktop_action).await.map_err(to_syscity_err)?;
+        let result = adapter
+            .execute(desktop_action)
+            .await
+            .map_err(to_syscity_err)?;
         Ok(action_result_to_tool_result(result))
     }
 }
@@ -227,11 +230,7 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
                 _ => ScrollDirection::Down,
             };
             let amount = args["amount"].as_i64().unwrap_or(3) as i32;
-            Ok(DesktopAction::Scroll {
-                target,
-                direction,
-                amount,
-            })
+            Ok(DesktopAction::Scroll { target, direction, amount })
         }
         "drag" => {
             let from_coords = (
@@ -251,11 +250,14 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
             Ok(DesktopAction::ReadUiTree { app })
         }
         "launch_app" => {
-            let name = args["app_name"].as_str().ok_or_else(|| {
-                crate::error::SyscityError::Validation(
-                    "Missing 'app_name' for launch_app action".to_string(),
-                )
-            })?.to_string();
+            let name = args["app_name"]
+                .as_str()
+                .ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "Missing 'app_name' for launch_app action".to_string(),
+                    )
+                })?
+                .to_string();
             let app_args = parse_string_array(args, "app_args");
             let wait_for_ready = args["wait_for_ready"].as_bool().unwrap_or(true);
             Ok(DesktopAction::LaunchApp {
@@ -265,19 +267,25 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
             })
         }
         "activate_window" => {
-            let title_pattern = args["title_pattern"].as_str().ok_or_else(|| {
-                crate::error::SyscityError::Validation(
-                    "Missing 'title_pattern' for activate_window action".to_string(),
-                )
-            })?.to_string();
+            let title_pattern = args["title_pattern"]
+                .as_str()
+                .ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "Missing 'title_pattern' for activate_window action".to_string(),
+                    )
+                })?
+                .to_string();
             Ok(DesktopAction::ActivateWindow { title_pattern })
         }
         "close_window" => {
-            let title_pattern = args["title_pattern"].as_str().ok_or_else(|| {
-                crate::error::SyscityError::Validation(
-                    "Missing 'title_pattern' for close_window action".to_string(),
-                )
-            })?.to_string();
+            let title_pattern = args["title_pattern"]
+                .as_str()
+                .ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "Missing 'title_pattern' for close_window action".to_string(),
+                    )
+                })?
+                .to_string();
             Ok(DesktopAction::CloseWindow { title_pattern })
         }
         "wait" => {
@@ -286,11 +294,14 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
         }
         "clipboard_get" => Ok(DesktopAction::ClipboardGet),
         "clipboard_set" => {
-            let text = args["text"].as_str().ok_or_else(|| {
-                crate::error::SyscityError::Validation(
-                    "Missing 'text' for clipboard_set action".to_string(),
-                )
-            })?.to_string();
+            let text = args["text"]
+                .as_str()
+                .ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "Missing 'text' for clipboard_set action".to_string(),
+                    )
+                })?
+                .to_string();
             Ok(DesktopAction::ClipboardSet { text })
         }
         "get_system_status" => Ok(DesktopAction::GetSystemStatus),
@@ -308,38 +319,36 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
         "list_ports" => {
             let filter_protocol = args["protocol"].as_str().map(|s| s.to_string());
             let filter_state = args["state"].as_str().map(|s| s.to_string());
-            Ok(DesktopAction::ListPorts {
-                filter_protocol,
-                filter_state,
-            })
+            Ok(DesktopAction::ListPorts { filter_protocol, filter_state })
         }
         "test_ping" => {
-            let target = args["target"].as_str().ok_or_else(|| {
-                crate::error::SyscityError::Validation(
-                    "Missing 'target' for test_ping action".to_string(),
-                )
-            })?.to_string();
+            let target = args["target"]
+                .as_str()
+                .ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "Missing 'target' for test_ping action".to_string(),
+                    )
+                })?
+                .to_string();
             let count = args["count"].as_u64().map(|n| n as u32);
             Ok(DesktopAction::TestPing { target, count })
         }
         "test_tcp_connect" => {
-            let target = args["target"].as_str().ok_or_else(|| {
-                crate::error::SyscityError::Validation(
-                    "Missing 'target' for test_tcp_connect action".to_string(),
-                )
-            })?.to_string();
+            let target = args["target"]
+                .as_str()
+                .ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "Missing 'target' for test_tcp_connect action".to_string(),
+                    )
+                })?
+                .to_string();
             let port = args["port"].as_u64().ok_or_else(|| {
                 crate::error::SyscityError::Validation(
                     "Missing 'port' for test_tcp_connect action".to_string(),
                 )
-            })?
-            as u16;
+            })? as u16;
             let timeout_ms = args["timeout_ms"].as_u64();
-            Ok(DesktopAction::TestTcpConnect {
-                target,
-                port,
-                timeout_ms,
-            })
+            Ok(DesktopAction::TestTcpConnect { target, port, timeout_ms })
         }
         "list_firewall_rules" => Ok(DesktopAction::ListFirewallRules),
         "restart_process" => {
@@ -352,11 +361,7 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
             let pid = args["pid"].as_u64().map(|n| n as u32);
             let name = args["name"].as_str().map(|s| s.to_string());
             let priority = args["priority"].as_i64().unwrap_or(0) as i32;
-            Ok(DesktopAction::SetProcessPriority {
-                pid,
-                name,
-                priority,
-            })
+            Ok(DesktopAction::SetProcessPriority { pid, name, priority })
         }
         "key_sequence" => {
             let keys = parse_string_array(args, "keys");
@@ -402,11 +407,14 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
             })
         }
         "browse_files" => {
-            let path = args["path"].as_str().ok_or_else(|| {
-                crate::error::SyscityError::Validation(
-                    "Missing 'path' for browse_files action".to_string(),
-                )
-            })?.to_string();
+            let path = args["path"]
+                .as_str()
+                .ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "Missing 'path' for browse_files action".to_string(),
+                    )
+                })?
+                .to_string();
             let filter_description = args["filter"].as_str().map(|s| s.to_string());
             let max_results = args["max_results"].as_u64().map(|n| n as usize);
             Ok(DesktopAction::BrowseFiles {
@@ -468,7 +476,11 @@ fn parse_button(args: &Value) -> MouseButton {
 fn parse_string_array(args: &Value, key: &str) -> Vec<String> {
     args[key]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -489,15 +501,9 @@ fn action_result_to_tool_result(result: ActionResult) -> ToolExecutionResult {
 
         let mut data_obj = data.unwrap_or_else(|| json!({}));
         if let Some(obj) = data_obj.as_object_mut() {
-            obj.insert(
-                "screenshot_base64".to_string(),
-                json!(screenshot.base64),
-            );
+            obj.insert("screenshot_base64".to_string(), json!(screenshot.base64));
             obj.insert("screenshot_width".to_string(), json!(screenshot.width));
-            obj.insert(
-                "screenshot_height".to_string(),
-                json!(screenshot.height),
-            );
+            obj.insert("screenshot_height".to_string(), json!(screenshot.height));
         }
         data = Some(data_obj);
     }
@@ -512,17 +518,13 @@ fn action_result_to_tool_result(result: ActionResult) -> ToolExecutionResult {
 /// Map [`ComputerError`] to [`SyscityError`].
 fn to_syscity_err(e: ComputerError) -> crate::error::SyscityError {
     match e {
-        ComputerError::UnsupportedPlatform(msg) => {
-            crate::error::SyscityError::Unsupported(msg)
-        }
+        ComputerError::UnsupportedPlatform(msg) => crate::error::SyscityError::Unsupported(msg),
         ComputerError::NoDisplay => {
             crate::error::SyscityError::Unsupported("No display server available".to_string())
         }
-        ComputerError::AccessibilityDenied => {
-            crate::error::SyscityError::Unsupported(
-                "Accessibility permission not granted".to_string(),
-            )
-        }
+        ComputerError::AccessibilityDenied => crate::error::SyscityError::Unsupported(
+            "Accessibility permission not granted".to_string(),
+        ),
         other => crate::error::SyscityError::Internal(other.to_string()),
     }
 }

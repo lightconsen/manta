@@ -105,8 +105,12 @@ impl GoalPlan {
             &content
         };
 
-        let mut plan: GoalPlan = serde_json::from_str(json_str)
-            .map_err(|e| SyscityError::Internal(format!("Failed to parse LLM response as GoalPlan: {}. Response: {}", e, content)))?;
+        let mut plan: GoalPlan = serde_json::from_str(json_str).map_err(|e| {
+            SyscityError::Internal(format!(
+                "Failed to parse LLM response as GoalPlan: {}. Response: {}",
+                e, content
+            ))
+        })?;
 
         if let Some(r) = max_rounds {
             plan.max_rounds = r;
@@ -144,9 +148,7 @@ mod tests {
                 command: "cargo test".to_string(),
                 expected: Some(0),
             })
-            .with_condition(GoalCondition::FileExists {
-                path: "Cargo.toml".to_string(),
-            });
+            .with_condition(GoalCondition::FileExists { path: "Cargo.toml".to_string() });
         assert_eq!(plan.conditions.len(), 2);
     }
 

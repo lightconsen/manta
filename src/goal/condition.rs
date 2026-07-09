@@ -47,9 +47,7 @@ pub enum GoalCondition {
         expected: Option<i32>,
     },
     #[serde(rename = "file_exists")]
-    FileExists {
-        path: String,
-    },
+    FileExists { path: String },
     #[serde(rename = "numeric")]
     Numeric {
         command: String,
@@ -110,13 +108,18 @@ impl GoalCondition {
             }
             GoalCondition::FileExists { path } => format!("`{}` exists", path),
             GoalCondition::Numeric { command, operator, threshold } => {
-                format!("`{}` {} {}", command, match operator {
-                    Comparison::Gt => ">",
-                    Comparison::Lt => "<",
-                    Comparison::Ge => ">=",
-                    Comparison::Le => "<=",
-                    Comparison::Eq => "==",
-                }, threshold)
+                format!(
+                    "`{}` {} {}",
+                    command,
+                    match operator {
+                        Comparison::Gt => ">",
+                        Comparison::Lt => "<",
+                        Comparison::Ge => ">=",
+                        Comparison::Le => "<=",
+                        Comparison::Eq => "==",
+                    },
+                    threshold
+                )
             }
             GoalCondition::Pattern { command, must_contain } => {
                 format!("`{}` contains {:?}", command, must_contain)
@@ -175,17 +178,23 @@ impl GoalCondition {
     }
 
     fn check_file_exists(path_str: &str) -> CheckResult {
-        let cond = GoalCondition::FileExists {
-            path: path_str.to_string(),
-        };
+        let cond = GoalCondition::FileExists { path: path_str.to_string() };
         let path = Path::new(path_str);
         let exists = path.exists();
         CheckResult {
             condition: cond,
             passed: exists,
-            actual: if exists { "found".to_string() } else { "not found".to_string() },
+            actual: if exists {
+                "found".to_string()
+            } else {
+                "not found".to_string()
+            },
             detail: if exists {
-                format!("{} exists ({} bytes)", path_str, std::fs::metadata(path_str).map(|m| m.len()).unwrap_or(0))
+                format!(
+                    "{} exists ({} bytes)",
+                    path_str,
+                    std::fs::metadata(path_str).map(|m| m.len()).unwrap_or(0)
+                )
             } else {
                 format!("{} does not exist", path_str)
             },
@@ -213,10 +222,14 @@ impl GoalCondition {
                 CheckResult {
                     passed,
                     actual: format!("{}", value),
-                    detail: format!("`{}` → {} (threshold: {}, {}: {})",
-                        command, value, threshold,
+                    detail: format!(
+                        "`{}` → {} (threshold: {}, {}: {})",
+                        command,
+                        value,
+                        threshold,
                         if passed { "PASS" } else { "FAIL" },
-                        trimmed),
+                        trimmed
+                    ),
                     condition: cond,
                 }
             }
@@ -247,7 +260,11 @@ impl GoalCondition {
                 CheckResult {
                     condition: cond,
                     passed: contains,
-                    actual: if contains { "matched".to_string() } else { "no match".to_string() },
+                    actual: if contains {
+                        "matched".to_string()
+                    } else {
+                        "no match".to_string()
+                    },
                     detail: if contains {
                         format!("output contains {:?}", must_contain)
                     } else {
@@ -316,11 +333,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_file_exists_found() {
-        let result = GoalCondition::FileExists {
-            path: "/tmp".to_string(),
-        }
-        .check()
-        .await;
+        let result = GoalCondition::FileExists { path: "/tmp".to_string() }
+            .check()
+            .await;
         assert!(result.passed, "expected /tmp to exist");
         assert_eq!(result.actual, "found");
     }
@@ -509,9 +524,7 @@ mod tests {
 
     #[test]
     fn test_display_file_exists() {
-        let cond = GoalCondition::FileExists {
-            path: "/tmp/test".to_string(),
-        };
+        let cond = GoalCondition::FileExists { path: "/tmp/test".to_string() };
         let s = cond.to_string();
         assert!(s.contains("/tmp/test"));
     }

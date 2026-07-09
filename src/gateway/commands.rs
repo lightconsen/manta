@@ -260,8 +260,13 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             .with_args("<command>")
             .admin()
             .power(),
-        CommandDef::new("goal", "goal", "Execute a goal with auto-check conditions", CommandCategory::Agents)
-            .with_args("<description> [--max-rounds N]"),
+        CommandDef::new(
+            "goal",
+            "goal",
+            "Execute a goal with auto-check conditions",
+            CommandCategory::Agents,
+        )
+        .with_args("<description> [--max-rounds N]"),
     ]
 }
 
@@ -1008,7 +1013,11 @@ async fn handle_goal(
 
     let description = trimmed;
     if description.is_empty() {
-        return WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /goal <description> [--max-rounds N]");
+        return WsResponse::err(
+            &req.id,
+            "INVALID_ARGS",
+            "Usage: /goal <description> [--max-rounds N]",
+        );
     }
 
     // Parse optional --max-rounds flag.
@@ -1103,10 +1112,13 @@ async fn handle_goal(
         c.remove(&gid2);
     });
 
-    WsResponse::ok(&req.id, serde_json::json!({
-        "text": format!("🎯 Goal started: {}\nID: {}\nMax rounds: {}\n\nGoal events will appear in this session.", description, goal_id, max_rounds),
-        "goal_id": goal_id,
-    }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "text": format!("🎯 Goal started: {}\nID: {}\nMax rounds: {}\n\nGoal events will appear in this session.", description, goal_id, max_rounds),
+            "goal_id": goal_id,
+        }),
+    )
 }
 
 async fn handle_subagents(
