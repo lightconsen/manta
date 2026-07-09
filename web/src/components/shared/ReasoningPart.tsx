@@ -100,11 +100,11 @@ export function ReasoningPart({ text }: { text: string }) {
     return (
       <button
         onClick={() => setExpanded(true)}
-        className="flex items-center gap-2 my-2 px-3 py-2 rounded-lg border border-violet-100 dark:border-violet-800/30 bg-violet-50/50 dark:bg-violet-950/10 text-xs text-violet-500 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 transition"
+        className="flex items-center gap-2 my-2 px-3 py-2 rounded-lg bg-sidebar text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] text-xs transition"
       >
         <BrainIcon className="w-3.5 h-3.5" />
         <span className="font-medium">Thinking</span>
-        <span className="text-violet-300 dark:text-violet-600">({text.length} chars)</span>
+        <span className="text-secondary/60">({text.length} chars)</span>
         <svg className="w-3 h-3 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
@@ -116,23 +116,23 @@ export function ReasoningPart({ text }: { text: string }) {
   const isTyping = displayedText.length < text.length && !done;
 
   return (
-    <div className="my-2 rounded-xl border border-violet-100 dark:border-violet-800/30 bg-gradient-to-br from-violet-50/80 to-indigo-50/40 dark:from-violet-950/20 dark:to-indigo-950/10 overflow-hidden shadow-sm">
+    <div className="my-2 rounded-lg border-l-2 border-primary-300 dark:border-primary-700 bg-sidebar overflow-hidden">
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-violet-600 dark:text-violet-300 hover:bg-violet-100/40 dark:hover:bg-violet-900/20 transition"
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] transition"
       >
         <BrainIcon className="w-3.5 h-3.5" />
         <span>Thinking</span>
         {isTyping && (
           <span className="ml-auto inline-flex gap-0.5 items-center">
-            <span className="w-1 h-1 rounded-full bg-violet-400 dark:bg-violet-500 animate-bounce [animation-delay:0ms]" />
-            <span className="w-1 h-1 rounded-full bg-violet-400 dark:bg-violet-500 animate-bounce [animation-delay:120ms]" />
-            <span className="w-1 h-1 rounded-full bg-violet-400 dark:bg-violet-500 animate-bounce [animation-delay:240ms]" />
+            <span className="w-1 h-1 rounded-full bg-primary-400 dark:bg-primary-500 animate-bounce [animation-delay:0ms]" />
+            <span className="w-1 h-1 rounded-full bg-primary-400 dark:bg-primary-500 animate-bounce [animation-delay:120ms]" />
+            <span className="w-1 h-1 rounded-full bg-primary-400 dark:bg-primary-500 animate-bounce [animation-delay:240ms]" />
           </span>
         )}
         {!isTyping && done && (
-          <span className="ml-auto flex items-center gap-1 text-violet-400 dark:text-violet-500">
+          <span className="ml-auto flex items-center gap-1 text-secondary/60">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
@@ -143,10 +143,10 @@ export function ReasoningPart({ text }: { text: string }) {
 
       {/* Content */}
       {expanded && (
-        <div className="px-3.5 py-2.5 text-[11px] text-violet-700 dark:text-violet-300 font-mono whitespace-pre-wrap leading-relaxed border-t border-violet-100/50 dark:border-violet-800/20">
+        <div className="px-3.5 py-2.5 text-[11px] text-secondary font-mono whitespace-pre-wrap leading-relaxed border-t border-subtle">
           {displayedText}
           {isTyping && (
-            <span className="inline-block w-1.5 h-3.5 ml-0.5 align-text-bottom bg-violet-500 dark:bg-violet-400 animate-pulse rounded-sm" />
+            <span className="inline-block w-1.5 h-3.5 ml-0.5 align-text-bottom bg-primary-500 dark:bg-primary-400 animate-pulse rounded-sm" />
           )}
         </div>
       )}

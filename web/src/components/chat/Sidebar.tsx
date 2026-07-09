@@ -28,12 +28,12 @@ export function Sidebar({
 
   return (
     <aside
-      className={`shrink-0 flex flex-col bg-gray-50 dark:bg-neutral-950 border-r border-gray-200 dark:border-neutral-800 transition-all duration-300 ${
+      className={`shrink-0 flex flex-col bg-sidebar transition-all duration-300 ${
         collapsed ? "w-16" : "w-64"
       }`}
     >
       {/* Top: Logo + Name + Collapse */}
-      <div className="h-14 flex items-center justify-between px-3 border-b border-gray-200 dark:border-neutral-800 shrink-0">
+      <div className="h-14 flex items-center justify-between px-3 shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
           <img
             src="/syscity.png"
@@ -42,14 +42,14 @@ export function Sidebar({
             draggable={false}
           />
           {!collapsed && (
-            <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 whitespace-nowrap">
+            <span className="text-sm font-semibold text-primary whitespace-nowrap">
               Syscity
             </span>
           )}
         </div>
         <button
           onClick={onToggle}
-          className="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-neutral-800 text-gray-500 dark:text-neutral-400 transition shrink-0"
+          className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary transition shrink-0"
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
@@ -65,7 +65,7 @@ export function Sidebar({
       <div className="flex-1 overflow-y-auto py-2" role="list">
         {!collapsed && sessions.length > 0 && (
           <div className="px-3 pb-1">
-            <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 font-medium">
+            <span className="text-[10px] uppercase tracking-wider text-secondary font-medium">
               Sessions
             </span>
           </div>
@@ -76,8 +76,8 @@ export function Sidebar({
             onClick={() => onSwitchSession(s.id)}
             className={`w-full text-left px-3 py-2 mx-1 rounded-lg text-sm transition flex items-center gap-2 ${
               s.id === currentSessionId
-                ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
-                : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-neutral-800"
+                ? "bg-black/[0.04] dark:bg-white/[0.06] text-primary-600 dark:text-primary-400"
+                : "text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
             } ${collapsed ? "justify-center" : ""}`}
             title={s.id}
             role="listitem"
@@ -94,7 +94,7 @@ export function Sidebar({
         ))}
         <button
           onClick={onNewSession}
-          className={`w-full text-left px-3 py-2 mx-1 mt-1 rounded-lg text-sm transition flex items-center gap-2 text-gray-500 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-800 ${
+          className={`w-full text-left px-3 py-2 mx-1 mt-1 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
             collapsed ? "justify-center" : ""
           }`}
           title="New session"
@@ -106,10 +106,10 @@ export function Sidebar({
       </div>
 
       {/* Bottom: Network + Theme + Settings */}
-      <div className="border-t border-gray-200 dark:border-neutral-800 p-3 shrink-0">
+      <div className="p-3 shrink-0">
         <div className={`flex items-center ${collapsed ? "justify-center" : "justify-between"}`}>
           {!collapsed && (
-            <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-neutral-400">
+            <div className="flex items-center gap-2 text-xs text-secondary">
               <StatusDot status={networkStatus} />
               <span className="capitalize">{networkStatus}</span>
             </div>
@@ -118,7 +118,7 @@ export function Sidebar({
           <div className="flex items-center gap-1">
             <button
               onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-              className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-neutral-800 text-gray-500 dark:text-neutral-400 transition"
+              className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary transition"
               title="Toggle theme"
               aria-label="Toggle theme"
             >
@@ -130,7 +130,7 @@ export function Sidebar({
             </button>
             <button
               onClick={onOpenSettings}
-              className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-neutral-800 text-gray-500 dark:text-neutral-400 transition"
+              className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary transition"
               title="Settings"
               aria-label="Settings"
             >

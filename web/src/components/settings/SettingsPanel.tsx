@@ -478,18 +478,18 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   const tabCls = (id: string) =>
     `w-full text-left px-3 py-1.5 rounded-md text-sm transition ${
       activeTab === id
-        ? "bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-400 font-medium"
-        : "text-gray-600 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-800"
+        ? "bg-primary-50/70 dark:bg-primary-900/20 text-primary-700 dark:text-primary-400 font-medium"
+        : "text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
     }`;
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-neutral-900">
+    <div className="flex-1 flex flex-col overflow-hidden bg-page">
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-neutral-800 shrink-0">
-        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Settings</h2>
+      <div className="flex items-center justify-between px-5 py-3 border-b border-subtle shrink-0">
+        <h2 className="text-base font-semibold text-primary">Settings</h2>
         <button
           onClick={onClose}
-          className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-400 dark:text-neutral-400 transition"
+          className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-secondary transition"
           title="Back to chat"
         >
           <X className="w-5 h-5" />
@@ -497,14 +497,14 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       </div>
 
       {loading ? (
-        <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-neutral-500">
-          <div className="w-6 h-6 border-2 border-gray-200 dark:border-neutral-600 border-t-primary-500 rounded-full animate-spin mb-3 mr-3" />
+        <div className="flex-1 flex items-center justify-center text-secondary">
+          <div className="w-6 h-6 border-2 border-subtle border-t-primary-500 rounded-full animate-spin mb-3 mr-3" />
           Loading configuration...
         </div>
       ) : (
         <div className="flex-1 flex overflow-hidden">
           {/* Left vertical tabs */}
-          <div className="w-44 border-r border-gray-200 dark:border-neutral-800 shrink-0 overflow-y-auto py-3 px-2 space-y-0.5">
+          <div className="w-44 border-r border-subtle shrink-0 overflow-y-auto py-3 px-2 space-y-0.5">
             {tabs.map((t) => (
               <button key={t.id} onClick={() => setActiveTab(t.id)} className={tabCls(t.id)}>
                 {t.label}
@@ -517,35 +517,35 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
             {activeTab === "general" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Gateway</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Gateway</h3>
                   <div className="space-y-2">
                     {(() => {
                       const si = transport.getServerInfo();
                       return (
                         <>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <span className="text-sm text-gray-500 dark:text-neutral-400">URL</span>
-                            <span className="text-sm text-gray-900 dark:text-gray-100 font-mono">{transport.getGatewayUrl() || "—"}</span>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                            <span className="text-sm text-secondary">URL</span>
+                            <span className="text-sm text-primary font-mono">{transport.getGatewayUrl() || "—"}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <span className="text-sm text-gray-500 dark:text-neutral-400">Version</span>
-                            <span className="text-sm text-gray-900 dark:text-gray-100 font-mono">{si.version || "—"}</span>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                            <span className="text-sm text-secondary">Version</span>
+                            <span className="text-sm text-primary font-mono">{si.version || "—"}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <span className="text-sm text-gray-500 dark:text-neutral-400">Connection</span>
-                            <span className="text-sm text-gray-900 dark:text-gray-100 font-mono">{si.conn_id || "—"}</span>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                            <span className="text-sm text-secondary">Connection</span>
+                            <span className="text-sm text-primary font-mono">{si.conn_id || "—"}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <span className="text-sm text-gray-500 dark:text-neutral-400">Features</span>
-                            <span className="text-sm text-gray-900 dark:text-gray-100">{(si.features || []).join(", ") || "—"}</span>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                            <span className="text-sm text-secondary">Features</span>
+                            <span className="text-sm text-primary">{(si.features || []).join(", ") || "—"}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <span className="text-sm text-gray-500 dark:text-neutral-400">Auth Mode</span>
-                            <span className="text-sm text-gray-900 dark:text-gray-100 font-mono capitalize">{String((config as Record<string, unknown>).auth_mode || "—")}</span>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                            <span className="text-sm text-secondary">Auth Mode</span>
+                            <span className="text-sm text-primary font-mono capitalize">{String((config as Record<string, unknown>).auth_mode || "—")}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <span className="text-sm text-gray-500 dark:text-neutral-400">Scopes</span>
-                            <span className="text-sm text-gray-900 dark:text-gray-100">{(si.scopes_granted || []).join(", ") || "—"}</span>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                            <span className="text-sm text-secondary">Scopes</span>
+                            <span className="text-sm text-primary">{(si.scopes_granted || []).join(", ") || "—"}</span>
                           </div>
                         </>
                       );
@@ -553,28 +553,28 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   </div>
                 </section>
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Model & Provider</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Model & Provider</h3>
                   <div className="space-y-3">
                     <div>
-                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Default Model</label>
-                      <select value={config.model || ""} onChange={(e) => update("model", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30">
+                      <label className="block text-sm text-secondary mb-1">Default Model</label>
+                      <select value={config.model || ""} onChange={(e) => update("model", e.target.value)} className="w-full rounded-lg border border-subtle bg-card px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20">
                         {models.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.provider})</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Provider</label>
-                      <input type="text" value={config.model_provider || ""} readOnly className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-100 dark:bg-neutral-800 px-3 py-2 text-sm text-gray-500 dark:text-neutral-400 cursor-not-allowed" />
+                      <label className="block text-sm text-secondary mb-1">Provider</label>
+                      <input type="text" value={config.model_provider || ""} readOnly className="w-full rounded-lg border border-subtle bg-sidebar px-3 py-2 text-sm text-secondary cursor-not-allowed" />
                     </div>
                   </div>
                 </section>
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Appearance</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Appearance</h3>
                   <div className="space-y-3">
                     <div>
-                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Theme Mode</label>
+                      <label className="block text-sm text-secondary mb-1">Theme Mode</label>
                       <div className="flex gap-2">
                         {(["system", "light", "dark"] as const).map((m) => (
-                          <button key={m} onClick={() => { localStorage.setItem("syscity-theme", m); document.documentElement.classList.toggle("dark", m === "dark" || (m === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)); }} className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-neutral-600 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-neutral-800 transition capitalize">
+                          <button key={m} onClick={() => { localStorage.setItem("syscity-theme", m); document.documentElement.classList.toggle("dark", m === "dark" || (m === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)); }} className="px-3 py-1.5 rounded-lg border border-subtle text-sm text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] transition capitalize">
                             {m}
                           </button>
                         ))}
@@ -583,33 +583,33 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   </div>
                 </section>
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Heartbeat</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Heartbeat</h3>
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm text-gray-700 dark:text-gray-300">Enable Heartbeat</label>
-                      <button onClick={() => update("heartbeat.enabled", !hb.enabled)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${hb.enabled ? "bg-primary-500" : "bg-gray-300 dark:bg-neutral-600"}`}>
+                      <label className="text-sm text-secondary">Enable Heartbeat</label>
+                      <button onClick={() => update("heartbeat.enabled", !hb.enabled)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${hb.enabled ? "bg-primary-500" : "bg-secondary/30 dark:bg-secondary/20"}`}>
                         <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${hb.enabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
                       </button>
                     </div>
                     <div>
-                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Interval (seconds)</label>
-                      <input type="number" value={hb.interval_seconds ?? 300} onChange={(e) => update("heartbeat.interval_seconds", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                      <label className="block text-sm text-secondary mb-1">Interval (seconds)</label>
+                      <input type="number" value={hb.interval_seconds ?? 300} onChange={(e) => update("heartbeat.interval_seconds", parseInt(e.target.value))} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active From</label>
-                        <input type="text" value={hb.active_hours_start || ""} onChange={(e) => update("heartbeat.active_hours_start", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                        <label className="block text-sm text-secondary mb-1">Active From</label>
+                        <input type="text" value={hb.active_hours_start || ""} onChange={(e) => update("heartbeat.active_hours_start", e.target.value)} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                       </div>
                       <div>
-                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active To</label>
-                        <input type="text" value={hb.active_hours_end || ""} onChange={(e) => update("heartbeat.active_hours_end", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                        <label className="block text-sm text-secondary mb-1">Active To</label>
+                        <input type="text" value={hb.active_hours_end || ""} onChange={(e) => update("heartbeat.active_hours_end", e.target.value)} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                       </div>
                     </div>
                   </div>
                 </section>
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Token Usage</h3>
-                  <div className="text-sm text-gray-500 dark:text-neutral-400">Token usage tracking coming soon.</div>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Token Usage</h3>
+                  <div className="text-sm text-secondary">Token usage tracking coming soon.</div>
                 </section>
               </div>
             )}
@@ -618,7 +618,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               <div className="space-y-5">
                 <section>
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Configured Channels</h3>
+                    <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider">Configured Channels</h3>
                     <button
                       onClick={() => { setShowAddChannel(!showAddChannel); setAddChannelError(""); }}
                       className="px-3 py-1 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition"
@@ -628,24 +628,24 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   </div>
 
                   {showAddChannel && (
-                    <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 space-y-3">
+                    <div className="mb-4 p-4 rounded-lg bg-card space-y-3">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Name</label>
+                          <label className="block text-xs text-secondary mb-1">Name</label>
                           <input
                             type="text"
                             value={newChannel.name}
                             onChange={(e) => setNewChannel({ ...newChannel, name: e.target.value })}
                             placeholder="my-bot"
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Type</label>
+                          <label className="block text-xs text-secondary mb-1">Type</label>
                           <select
                             value={newChannel.channel_type}
                             onChange={(e) => setNewChannel({ ...newChannel, channel_type: e.target.value, credentials: {} })}
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           >
                             <option value="telegram">Telegram</option>
                             <option value="discord">Discord</option>
@@ -663,13 +663,13 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Agent ID (optional)</label>
+                          <label className="block text-xs text-secondary mb-1">Agent ID (optional)</label>
                           <input
                             type="text"
                             value={newChannel.agent_id}
                             onChange={(e) => setNewChannel({ ...newChannel, agent_id: e.target.value })}
                             placeholder="default"
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           />
                         </div>
                         <div className="flex items-center gap-2 pt-5">
@@ -678,14 +678,14 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                             type="checkbox"
                             checked={newChannel.enabled}
                             onChange={(e) => setNewChannel({ ...newChannel, enabled: e.target.checked })}
-                            className="rounded border-gray-300 text-primary-500 focus:ring-primary-500"
+                            className="rounded border-subtle text-primary-500 focus:ring-primary-500"
                           />
-                          <label htmlFor="ch-enabled" className="text-sm text-gray-700 dark:text-gray-300">Enabled</label>
+                          <label htmlFor="ch-enabled" className="text-sm text-secondary">Enabled</label>
                         </div>
                       </div>
                       {channelCredentialFields[newChannel.channel_type]?.map((field) => (
                         <div key={field.key}>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">{field.label}</label>
+                          <label className="block text-xs text-secondary mb-1">{field.label}</label>
                           <input
                             type={field.type || "text"}
                             value={newChannel.credentials[field.key] || ""}
@@ -694,7 +694,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                               credentials: { ...newChannel.credentials, [field.key]: e.target.value },
                             })}
                             placeholder={field.label}
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           />
                         </div>
                       ))}
@@ -714,16 +714,16 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   )}
 
                   {channels.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">No channels configured.</div>
+                    <div className="text-sm text-secondary">No channels configured.</div>
                   ) : (
                     <div className="space-y-2">
                       {channels.map((ch) => (
-                        <div key={ch.name} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                        <div key={ch.name} className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
                           <div className="flex items-center gap-3">
-                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{ch.name}</span>
-                            <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-neutral-700 text-gray-600 dark:text-neutral-400 uppercase">{ch.channel_type}</span>
+                            <span className="text-sm text-primary font-medium">{ch.name}</span>
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-sidebar text-secondary uppercase">{ch.channel_type}</span>
                             {ch.agent_id && (
-                              <span className="text-xs text-gray-500 dark:text-neutral-400 font-mono">{ch.agent_id}</span>
+                              <span className="text-xs text-secondary font-mono">{ch.agent_id}</span>
                             )}
                             {ch.dm_policy && ch.dm_policy !== "open" && (
                               <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">{ch.dm_policy}</span>
@@ -742,7 +742,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                               className={`text-xs px-2 py-0.5 rounded-full transition ${
                                 ch.enabled
                                   ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 hover:bg-primary-200 dark:hover:bg-primary-900/50"
-                                  : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400 hover:bg-gray-200 dark:hover:bg-neutral-600"
+                                  : "bg-sidebar text-secondary hover:bg-black/[0.06] dark:hover:bg-white/[0.08]"
                               }`}
                             >
                               {channelActionLoading === ch.name ? "..." : ch.enabled ? "Enabled" : "Disabled"}
@@ -750,7 +750,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                             <button
                               onClick={() => handleRemoveChannel(ch.name)}
                               disabled={channelActionLoading === ch.name}
-                              className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-400 transition"
+                              className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-secondary/60 hover:text-red-600 dark:hover:text-red-400 transition"
                               title="Remove"
                             >
                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -771,7 +771,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               <div className="space-y-5">
                 <section>
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Available Models</h3>
+                    <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider">Available Models</h3>
                     <button
                       onClick={() => { setShowAddModel(!showAddModel); setAddModelError(""); }}
                       className="px-3 py-1 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition"
@@ -781,20 +781,20 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   </div>
 
                   {showAddModel && (
-                    <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 space-y-3">
+                    <div className="mb-4 p-4 rounded-lg bg-card space-y-3">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Alias</label>
+                          <label className="block text-xs text-secondary mb-1">Alias</label>
                           <input
                             type="text"
                             value={newModel.name}
                             onChange={(e) => setNewModel({ ...newModel, name: e.target.value })}
                             placeholder="smart"
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Provider</label>
+                          <label className="block text-xs text-secondary mb-1">Provider</label>
                           <select
                             value={newModel.provider}
                             onChange={(e) => {
@@ -807,7 +807,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                                 base_url: preset?.base_url || "",
                               });
                             }}
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           >
                             {modelPresets.map((p) => (
                               <option key={p.name} value={p.name}>{p.display_name}</option>
@@ -820,12 +820,12 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                         const hasModels = preset && preset.models.length > 0;
                         return (
                           <div>
-                            <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Model</label>
+                            <label className="block text-xs text-secondary mb-1">Model</label>
                             {hasModels ? (
                               <select
                                 value={newModel.model}
                                 onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
-                                className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                                className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                               >
                                 {preset.models.map((m) => (
                                   <option key={m} value={m}>{m}</option>
@@ -837,7 +837,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                                 value={newModel.model}
                                 onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
                                 placeholder="model-id"
-                                className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                                className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                               />
                             )}
                           </div>
@@ -845,23 +845,23 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                       })()}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">API Key</label>
+                          <label className="block text-xs text-secondary mb-1">API Key</label>
                           <input
                             type="password"
                             value={newModel.api_key}
                             onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
                             placeholder="sk-..."
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Base URL</label>
+                          <label className="block text-xs text-secondary mb-1">Base URL</label>
                           <input
                             type="text"
                             value={newModel.base_url}
                             onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
                             placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           />
                         </div>
                       </div>
@@ -881,14 +881,14 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   )}
 
                   {models.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">No models available.</div>
+                    <div className="text-sm text-secondary">No models available.</div>
                   ) : (
                     <div className="space-y-2">
                       {models.map((m) => (
-                        <div key={m.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                        <div key={m.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{m.name}</span>
-                            <span className="text-xs text-gray-500 dark:text-neutral-400">{m.provider}</span>
+                            <span className="text-sm text-primary font-medium">{m.name}</span>
+                            <span className="text-xs text-secondary">{m.provider}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             {config.model === m.id ? (
@@ -897,7 +897,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                               <button
                                 onClick={() => handleSetDefaultModel(m.id)}
                                 disabled={modelActionLoading === `default_${m.id}`}
-                                className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400 hover:bg-primary-100 dark:hover:bg-primary-900/30 hover:text-primary-700 dark:hover:text-primary-400 transition"
+                                className="text-xs px-2 py-0.5 rounded-full bg-sidebar text-secondary hover:bg-primary-100 dark:hover:bg-primary-900/30 hover:text-primary-700 dark:hover:text-primary-400 transition"
                               >
                                 {modelActionLoading === `default_${m.id}` ? "..." : "Set Default"}
                               </button>
@@ -905,7 +905,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                             <button
                               onClick={() => handleRemoveModel(m.id)}
                               disabled={modelActionLoading === m.id}
-                              className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-400 transition"
+                              className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-secondary/60 hover:text-red-600 dark:hover:text-red-400 transition"
                               title="Remove"
                             >
                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -925,9 +925,9 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
             {activeTab === "agents" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Select Agent</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Select Agent</h3>
                   {agentRegistry.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">No agents in registry.</div>
+                    <div className="text-sm text-secondary">No agents in registry.</div>
                   ) : (
                     <select
                       value={selectedAgentId}
@@ -936,7 +936,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                         setSelectedAgentId(id);
                         loadAgentDetail(id);
                       }}
-                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                      className="w-full rounded-lg border border-subtle bg-card px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                     >
                       {agentRegistry.map((a) => (
                         <option key={a.id} value={a.id}>
@@ -948,8 +948,8 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                 </section>
 
                 {agentDetailLoading && (
-                  <div className="text-sm text-gray-500 dark:text-neutral-400 flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-gray-200 dark:border-neutral-600 border-t-primary-500 rounded-full animate-spin" />
+                  <div className="text-sm text-secondary flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-subtle border-t-primary-500 rounded-full animate-spin" />
                     Loading agent details...
                   </div>
                 )}
@@ -958,40 +958,40 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   <section className="space-y-4">
                     {/* Agent header */}
                     <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <span className="text-sm font-medium text-primary">
                         {selectedAgentDetail.personality
                           ? String((selectedAgentDetail.personality as Record<string, unknown>).display_name ?? selectedAgentDetail.agent_id)
                           : selectedAgentDetail.agent_id}
                       </span>
-                      <span className="text-xs text-gray-400 dark:text-neutral-500 font-mono">({selectedAgentDetail.agent_id})</span>
+                      <span className="text-xs text-secondary/70 font-mono">({selectedAgentDetail.agent_id})</span>
                     </div>
 
                     {/* Config */}
                     {selectedAgentDetail.config && (
                       <div>
-                        <h4 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Configuration</h4>
+                        <h4 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Configuration</h4>
                         <div className="grid grid-cols-2 gap-3">
-                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Temperature</div>
-                            <div className="text-sm text-gray-900 dark:text-gray-100">{typeof (selectedAgentDetail.config as Record<string, unknown>).temperature === "number" ? ((selectedAgentDetail.config as Record<string, unknown>).temperature as number).toFixed(2) : "—"}</div>
+                          <div className="px-3 py-2 rounded-lg bg-card">
+                            <div className="text-[10px] uppercase tracking-wider text-secondary/70">Temperature</div>
+                            <div className="text-sm text-primary">{typeof (selectedAgentDetail.config as Record<string, unknown>).temperature === "number" ? ((selectedAgentDetail.config as Record<string, unknown>).temperature as number).toFixed(2) : "—"}</div>
                           </div>
-                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Max Tokens</div>
-                            <div className="text-sm text-gray-900 dark:text-gray-100">{String((selectedAgentDetail.config as Record<string, unknown>).max_tokens ?? "—")}</div>
+                          <div className="px-3 py-2 rounded-lg bg-card">
+                            <div className="text-[10px] uppercase tracking-wider text-secondary/70">Max Tokens</div>
+                            <div className="text-sm text-primary">{String((selectedAgentDetail.config as Record<string, unknown>).max_tokens ?? "—")}</div>
                           </div>
-                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Max Turns</div>
-                            <div className="text-sm text-gray-900 dark:text-gray-100">{String((selectedAgentDetail.config as Record<string, unknown>).max_turns ?? "—")}</div>
+                          <div className="px-3 py-2 rounded-lg bg-card">
+                            <div className="text-[10px] uppercase tracking-wider text-secondary/70">Max Turns</div>
+                            <div className="text-sm text-primary">{String((selectedAgentDetail.config as Record<string, unknown>).max_turns ?? "—")}</div>
                           </div>
-                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Max Concurrent Tools</div>
-                            <div className="text-sm text-gray-900 dark:text-gray-100">{String((selectedAgentDetail.config as Record<string, unknown>).max_concurrent_tools ?? "—")}</div>
+                          <div className="px-3 py-2 rounded-lg bg-card">
+                            <div className="text-[10px] uppercase tracking-wider text-secondary/70">Max Concurrent Tools</div>
+                            <div className="text-sm text-primary">{String((selectedAgentDetail.config as Record<string, unknown>).max_concurrent_tools ?? "—")}</div>
                           </div>
                         </div>
                         {"workspace_only" in (selectedAgentDetail.config as Record<string, unknown>) && (
-                          <div className="mt-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 flex items-center justify-between">
-                            <span className="text-sm text-gray-700 dark:text-gray-300">Workspace Only</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${(selectedAgentDetail.config as Record<string, unknown>).workspace_only ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
+                          <div className="mt-2 px-3 py-2 rounded-lg bg-card flex items-center justify-between">
+                            <span className="text-sm text-secondary">Workspace Only</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${(selectedAgentDetail.config as Record<string, unknown>).workspace_only ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-sidebar text-secondary"}`}>
                               {(selectedAgentDetail.config as Record<string, unknown>).workspace_only ? "Yes" : "No"}
                             </span>
                           </div>
@@ -1002,15 +1002,15 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                     {/* Personality */}
                     {selectedAgentDetail.personality && (
                       <div>
-                        <h4 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Personality</h4>
+                        <h4 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Personality</h4>
                         <div className="grid grid-cols-2 gap-3">
-                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Display Name</div>
-                            <div className="text-sm text-gray-900 dark:text-gray-100">{String((selectedAgentDetail.personality as Record<string, unknown>).display_name ?? "—")}</div>
+                          <div className="px-3 py-2 rounded-lg bg-card">
+                            <div className="text-[10px] uppercase tracking-wider text-secondary/70">Display Name</div>
+                            <div className="text-sm text-primary">{String((selectedAgentDetail.personality as Record<string, unknown>).display_name ?? "—")}</div>
                           </div>
-                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Valid</div>
-                            <div className="text-sm text-gray-900 dark:text-gray-100">{(selectedAgentDetail.personality as Record<string, unknown>).is_valid ? "Yes" : "No"}</div>
+                          <div className="px-3 py-2 rounded-lg bg-card">
+                            <div className="text-[10px] uppercase tracking-wider text-secondary/70">Valid</div>
+                            <div className="text-sm text-primary">{(selectedAgentDetail.personality as Record<string, unknown>).is_valid ? "Yes" : "No"}</div>
                           </div>
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1038,39 +1038,39 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                     const ac = (selectedAgentDetail?.config as Record<string, unknown> | null) ?? (da as Record<string, unknown>);
                     return (
                       <>
-                        <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">
+                        <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">
                           {hasAgentCfg ? `${selectedAgentDetail!.agent_id} Parameters` : "Global Default Parameters"}
                         </h3>
                         {hasAgentCfg && (
-                          <div className="text-[11px] text-gray-400 dark:text-neutral-500 mb-2">Editing individual agent parameters is not yet supported. Changes here affect the global default.</div>
+                          <div className="text-[11px] text-secondary/70 mb-2">Editing individual agent parameters is not yet supported. Changes here affect the global default.</div>
                         )}
                         <div className="space-y-3">
                           <div className="grid grid-cols-2 gap-3">
                             <div>
-                              <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
+                              <label className="block text-sm text-secondary mb-1">Temperature</label>
                               <div className="flex items-center gap-2">
-                                <input type="range" min="0" max="2" step="0.1" value={(ac.temperature as number | undefined) ?? 0.7} onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 dark:bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-primary-500" />
-                                <span className="text-sm text-gray-600 dark:text-neutral-400 w-10 text-right tabular-nums">{((ac.temperature as number | undefined) ?? 0.7).toFixed(2)}</span>
+                                <input type="range" min="0" max="2" step="0.1" value={(ac.temperature as number | undefined) ?? 0.7} onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))} className="flex-1 h-1.5 bg-secondary/20 dark:bg-secondary/20 rounded-lg appearance-none cursor-pointer accent-primary-500" />
+                                <span className="text-sm text-secondary w-10 text-right tabular-nums">{((ac.temperature as number | undefined) ?? 0.7).toFixed(2)}</span>
                               </div>
                             </div>
                             <div>
-                              <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
-                              <input type="number" value={(ac.max_tokens as number | undefined) ?? 2048} onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                              <label className="block text-sm text-secondary mb-1">Max Tokens</label>
+                              <input type="number" value={(ac.max_tokens as number | undefined) ?? 2048} onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                             </div>
                           </div>
                           <div className="grid grid-cols-2 gap-3">
                             <div>
-                              <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Turns</label>
-                              <input type="number" value={(ac.max_turns as number | undefined) ?? ""} placeholder="Unlimited" onChange={(e) => update("default_agent.max_turns", e.target.value ? parseInt(e.target.value) : null)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                              <label className="block text-sm text-secondary mb-1">Max Turns</label>
+                              <input type="number" value={(ac.max_turns as number | undefined) ?? ""} placeholder="Unlimited" onChange={(e) => update("default_agent.max_turns", e.target.value ? parseInt(e.target.value) : null)} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                             </div>
                             <div>
-                              <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Concurrent Tools</label>
-                              <input type="number" value={(ac.max_concurrent_tools as number | undefined) ?? 5} onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                              <label className="block text-sm text-secondary mb-1">Max Concurrent Tools</label>
+                              <input type="number" value={(ac.max_concurrent_tools as number | undefined) ?? 5} onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                             </div>
                           </div>
                           <div>
-                            <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">System Prompt</label>
-                            <textarea value={(ac.system_prompt as string | undefined) || ""} onChange={(e) => update("default_agent.system_prompt", e.target.value)} className="w-full h-[60vh] rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30 resize-none font-mono" />
+                            <label className="block text-sm text-secondary mb-1">System Prompt</label>
+                            <textarea value={(ac.system_prompt as string | undefined) || ""} onChange={(e) => update("default_agent.system_prompt", e.target.value)} className="w-full h-[60vh] rounded-lg border border-subtle bg-card px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20 resize-none font-mono" />
                           </div>
                         </div>
                       </>
@@ -1084,19 +1084,19 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               <div className="space-y-5">
                 <section>
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">MCP Servers</h3>
+                    <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider">MCP Servers</h3>
                     <button onClick={() => setShowAddMcp(true)} className="text-xs px-2 py-1 rounded bg-primary-500 text-white hover:bg-primary-600 transition">+ Add</button>
                   </div>
                   {showAddMcp && (
-                    <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 space-y-3">
+                    <div className="mb-4 p-4 rounded-lg bg-card space-y-3">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Server ID</label>
-                          <input type="text" value={newMcp.id} onChange={(e) => setNewMcp({ ...newMcp, id: e.target.value })} placeholder="filesystem" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                          <label className="block text-xs text-secondary mb-1">Server ID</label>
+                          <input type="text" value={newMcp.id} onChange={(e) => setNewMcp({ ...newMcp, id: e.target.value })} placeholder="filesystem" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Transport</label>
-                          <select value={newMcp.transport} onChange={(e) => setNewMcp({ ...newMcp, transport: e.target.value })} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30">
+                          <label className="block text-xs text-secondary mb-1">Transport</label>
+                          <select value={newMcp.transport} onChange={(e) => setNewMcp({ ...newMcp, transport: e.target.value })} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20">
                             <option value="stdio">stdio</option>
                             <option value="sse">sse</option>
                             <option value="streamable_http">streamable_http</option>
@@ -1106,23 +1106,23 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                       {newMcp.transport === "stdio" ? (
                         <>
                           <div>
-                            <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Command</label>
-                            <input type="text" value={newMcp.command} onChange={(e) => setNewMcp({ ...newMcp, command: e.target.value })} placeholder="npx -y @modelcontextprotocol/server-filesystem" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                            <label className="block text-xs text-secondary mb-1">Command</label>
+                            <input type="text" value={newMcp.command} onChange={(e) => setNewMcp({ ...newMcp, command: e.target.value })} placeholder="npx -y @modelcontextprotocol/server-filesystem" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Args (comma-separated)</label>
-                            <input type="text" value={newMcp.args} onChange={(e) => setNewMcp({ ...newMcp, args: e.target.value })} placeholder="/home/user/docs" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                            <label className="block text-xs text-secondary mb-1">Args (comma-separated)</label>
+                            <input type="text" value={newMcp.args} onChange={(e) => setNewMcp({ ...newMcp, args: e.target.value })} placeholder="/home/user/docs" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                           </div>
                         </>
                       ) : (
                         <div>
-                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">URL</label>
-                          <input type="text" value={newMcp.url} onChange={(e) => setNewMcp({ ...newMcp, url: e.target.value })} placeholder="http://localhost:3000/sse" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
+                          <label className="block text-xs text-secondary mb-1">URL</label>
+                          <input type="text" value={newMcp.url} onChange={(e) => setNewMcp({ ...newMcp, url: e.target.value })} placeholder="http://localhost:3000/sse" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                         </div>
                       )}
                       <div className="flex items-center gap-2">
-                        <input id="mcp-auto" type="checkbox" checked={newMcp.auto_connect} onChange={(e) => setNewMcp({ ...newMcp, auto_connect: e.target.checked })} className="rounded border-gray-300 text-primary-500 focus:ring-primary-500" />
-                        <label htmlFor="mcp-auto" className="text-sm text-gray-700 dark:text-gray-300">Auto-connect</label>
+                        <input id="mcp-auto" type="checkbox" checked={newMcp.auto_connect} onChange={(e) => setNewMcp({ ...newMcp, auto_connect: e.target.checked })} className="rounded border-subtle text-primary-500 focus:ring-primary-500" />
+                        <label htmlFor="mcp-auto" className="text-sm text-secondary">Auto-connect</label>
                       </div>
                       {addMcpError && <div className="text-xs text-red-600 dark:text-red-400">{addMcpError}</div>}
                       <div className="flex justify-end">
@@ -1133,23 +1133,23 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                     </div>
                   )}
                   {mcpServers.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">No MCP servers configured.</div>
+                    <div className="text-sm text-secondary">No MCP servers configured.</div>
                   ) : (
                     <div className="space-y-2">
                       {mcpServers.map((srv) => (
-                        <div key={srv.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                        <div key={srv.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
                           <div className="flex items-center gap-3">
-                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{srv.id}</span>
-                            <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-neutral-700 text-gray-600 dark:text-neutral-400 uppercase">{srv.transport}</span>
+                            <span className="text-sm text-primary font-medium">{srv.id}</span>
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-sidebar text-secondary uppercase">{srv.transport}</span>
                             {srv.connected ? (
                               <span className="text-xs px-1.5 py-0.5 rounded bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400">connected</span>
                             ) : (
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400">disconnected</span>
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-sidebar text-secondary">disconnected</span>
                             )}
                           </div>
                           <div className="flex items-center gap-2">
                             {srv.connected ? (
-                              <button onClick={() => handleDisconnectMcp(srv.id)} disabled={mcpActionLoading === srv.id} className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-700 text-gray-600 dark:text-neutral-400 hover:bg-gray-200 dark:hover:bg-neutral-600 transition">
+                              <button onClick={() => handleDisconnectMcp(srv.id)} disabled={mcpActionLoading === srv.id} className="text-xs px-2 py-0.5 rounded bg-sidebar text-secondary hover:bg-black/[0.06] dark:hover:bg-white/[0.08] transition">
                                 {mcpActionLoading === srv.id ? "..." : "Disconnect"}
                               </button>
                             ) : (
@@ -1157,7 +1157,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                                 {mcpActionLoading === srv.id ? "..." : "Connect"}
                               </button>
                             )}
-                            <button onClick={() => handleRemoveMcp(srv.id)} disabled={mcpActionLoading === srv.id} className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-400 transition" title="Remove">
+                            <button onClick={() => handleRemoveMcp(srv.id)} disabled={mcpActionLoading === srv.id} className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-secondary/60 hover:text-red-600 dark:hover:text-red-400 transition" title="Remove">
                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                             </button>
                           </div>
@@ -1172,9 +1172,9 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
             {activeTab === "jobs" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Jobs ({crons.length})</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Jobs ({crons.length})</h3>
                   {crons.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">No cron jobs configured.</div>
+                    <div className="text-sm text-secondary">No cron jobs configured.</div>
                   ) : (
                     <div className="space-y-2">
                       {crons.map((job, i) => {
@@ -1188,10 +1188,10 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                         const command = target?.command as string | undefined;
                         const prompt = target?.prompt as string | undefined;
                         return (
-                          <div key={i} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <div key={i} className="px-3 py-2 rounded-lg bg-card">
                             <div className="flex items-center justify-between">
-                              <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{(j.name as string) || "Unnamed"}</span>
-                              <span className={`text-xs px-2 py-0.5 rounded-full ${j.enabled ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
+                              <span className="text-sm text-primary font-medium">{(j.name as string) || "Unnamed"}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${j.enabled ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-sidebar text-secondary"}`}>
                                 {j.enabled ? "Enabled" : "Disabled"}
                               </span>
                             </div>
@@ -1202,49 +1202,49 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                                 if (!expr) return null;
                                 return (
                                   <div className="flex items-center gap-2">
-                                    <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Schedule</span>
-                                    <span className="text-xs text-gray-600 dark:text-neutral-300 font-mono">{expr}</span>
+                                    <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Schedule</span>
+                                    <span className="text-xs text-secondary font-mono">{expr}</span>
                                   </div>
                                 );
                               })()}
                               {nextRun && (
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Next Run</span>
-                                  <span className="text-xs text-gray-600 dark:text-neutral-300">{new Date(nextRun).toLocaleString()}</span>
+                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Next Run</span>
+                                  <span className="text-xs text-secondary">{new Date(nextRun).toLocaleString()}</span>
                                 </div>
                               )}
                               {lastRun && (
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Last Run</span>
-                                  <span className="text-xs text-gray-600 dark:text-neutral-300">{new Date(lastRun).toLocaleString()}</span>
+                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Last Run</span>
+                                  <span className="text-xs text-secondary">{new Date(lastRun).toLocaleString()}</span>
                                 </div>
                               )}
                               <div className="flex items-center gap-2">
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Target</span>
+                                <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Target</span>
                                 {targetType === "shell" ? (
-                                  <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-neutral-700 text-gray-700 dark:text-neutral-300">Shell</span>
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-sidebar text-secondary">Shell</span>
                                 ) : targetType === "agent" ? (
                                   <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">Agent</span>
                                 ) : (
-                                  <span className="text-xs text-gray-500 dark:text-neutral-400">{targetType || "Unknown"}</span>
+                                  <span className="text-xs text-secondary">{targetType || "Unknown"}</span>
                                 )}
                               </div>
                               {targetType === "agent" && agentId && (
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Agent</span>
-                                  <span className="text-xs text-gray-600 dark:text-neutral-300 font-mono">{agentId}</span>
+                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Agent</span>
+                                  <span className="text-xs text-secondary font-mono">{agentId}</span>
                                 </div>
                               )}
                               {targetType === "shell" && command && (
                                 <div className="flex items-start gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Command</span>
-                                  <span className="text-xs text-gray-600 dark:text-neutral-300 font-mono break-all">{command}</span>
+                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Command</span>
+                                  <span className="text-xs text-secondary font-mono break-all">{command}</span>
                                 </div>
                               )}
                               {targetType === "agent" && prompt && (
                                 <div className="flex items-start gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Prompt</span>
-                                  <span className="text-xs text-gray-600 dark:text-neutral-300 line-clamp-2">{prompt}</span>
+                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Prompt</span>
+                                  <span className="text-xs text-secondary line-clamp-2">{prompt}</span>
                                 </div>
                               )}
                             </div>
@@ -1260,9 +1260,9 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
             {activeTab === "sessions" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Active Sessions</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Active Sessions</h3>
                   {sessions.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">No sessions.</div>
+                    <div className="text-sm text-secondary">No sessions.</div>
                   ) : (
                     <div className="space-y-2">
                       {sessions.map((s) => {
@@ -1273,37 +1273,37 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                         const lastActivity = meta.last_activity as string | undefined;
                         const isActive = meta.is_active as boolean | undefined;
                         return (
-                          <div key={s.id} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <div key={s.id} className="px-3 py-2 rounded-lg bg-card">
                             <div className="flex items-center justify-between">
-                              <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{s.label || s.id}</span>
+                              <span className="text-sm text-primary font-medium">{s.label || s.id}</span>
                               <div className="flex items-center gap-1.5">
                                 {isActive !== undefined && (
-                                  <span className={`text-xs px-2 py-0.5 rounded-full ${isActive ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
+                                  <span className={`text-xs px-2 py-0.5 rounded-full ${isActive ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-sidebar text-secondary"}`}>
                                     {isActive ? "Active" : "Inactive"}
                                   </span>
                                 )}
                                 {msgCount !== undefined && (
-                                  <span className="text-xs text-gray-500 dark:text-neutral-400">{msgCount} msgs</span>
+                                  <span className="text-xs text-secondary">{msgCount} msgs</span>
                                 )}
                               </div>
                             </div>
                             <div className="mt-1.5 space-y-1">
                               {agentId && (
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Agent</span>
-                                  <span className="text-xs text-gray-600 dark:text-neutral-300 font-mono">{agentId}</span>
+                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Agent</span>
+                                  <span className="text-xs text-secondary font-mono">{agentId}</span>
                                 </div>
                               )}
                               {channel && (
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Channel</span>
-                                  <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-neutral-700 text-gray-600 dark:text-neutral-300">{channel}</span>
+                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Channel</span>
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-sidebar text-secondary">{channel}</span>
                                 </div>
                               )}
                               {lastActivity && (
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Last Active</span>
-                                  <span className="text-xs text-gray-600 dark:text-neutral-300">{new Date(lastActivity).toLocaleString()}</span>
+                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Last Active</span>
+                                  <span className="text-xs text-secondary">{new Date(lastActivity).toLocaleString()}</span>
                                 </div>
                               )}
                             </div>
@@ -1320,7 +1320,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               <div className="space-y-5">
                 <section>
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Skills ({skills.length})</h3>
+                    <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider">Skills ({skills.length})</h3>
                     <button
                       onClick={() => { setShowAddSkill(!showAddSkill); setAddSkillError(""); }}
                       className="px-3 py-1 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition"
@@ -1330,26 +1330,26 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   </div>
 
                   {showAddSkill && (
-                    <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 space-y-3">
+                    <div className="mb-4 p-4 rounded-lg bg-card space-y-3">
                       <div>
-                        <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Skill Name</label>
+                        <label className="block text-xs text-secondary mb-1">Skill Name</label>
                         <input
                           type="text"
                           value={newSkillName}
                           onChange={(e) => setNewSkillName(e.target.value)}
                           placeholder="my-skill"
-                          className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                          className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">ZIP File</label>
+                        <label className="block text-xs text-secondary mb-1">ZIP File</label>
                         <input
                           type="file"
                           accept=".zip"
                           onChange={(e) => setNewSkillZip(e.target.files?.[0] || null)}
-                          className="w-full text-sm text-gray-700 dark:text-neutral-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-primary-50 file:text-primary-700 dark:file:bg-primary-900/20 dark:file:text-primary-400 hover:file:bg-primary-100"
+                          className="w-full text-sm text-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-primary-50 file:text-primary-700 dark:file:bg-primary-900/20 dark:file:text-primary-400 hover:file:bg-primary-100"
                         />
-                        <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">ZIP must contain a SKILL.md file at the root.</p>
+                        <p className="text-[10px] text-secondary/70 mt-1">ZIP must contain a SKILL.md file at the root.</p>
                       </div>
                       {addSkillError && (
                         <div className="text-xs text-red-600 dark:text-red-400">{addSkillError}</div>
@@ -1367,7 +1367,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   )}
 
                   {skills.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">No skills loaded.</div>
+                    <div className="text-sm text-secondary">No skills loaded.</div>
                   ) : (
                     <div className="space-y-2">
                       {skills.map((s, i) => {
@@ -1377,18 +1377,18 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                         const provides = (sk.provides as string[]) || [];
                         const chain = (sk.chain as string[]) || [];
                         return (
-                          <div key={i} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <div key={i} className="px-3 py-2 rounded-lg bg-card">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
-                                <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{String(sk.name || "Unnamed")}</span>
-                                <span className="text-xs text-gray-500 dark:text-neutral-400">{String(sk.version || "")}</span>
+                                <span className="text-sm text-primary font-medium">{String(sk.name || "Unnamed")}</span>
+                                <span className="text-xs text-secondary">{String(sk.version || "")}</span>
                               </div>
                               {Boolean(sk.author) && (
-                                <span className="text-xs text-gray-400 dark:text-neutral-500">by {String(sk.author)}</span>
+                                <span className="text-xs text-secondary/70">by {String(sk.author)}</span>
                               )}
                             </div>
                             {Boolean(sk.description) && (
-                              <div className="text-xs text-gray-500 dark:text-neutral-400 mt-1">{String(sk.description)}</div>
+                              <div className="text-xs text-secondary mt-1">{String(sk.description)}</div>
                             )}
                             <div className="mt-1.5 flex flex-wrap gap-1.5">
                               {triggers.map((t, ti) => (
@@ -1407,12 +1407,12 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                               </div>
                             )}
                             {deps && Object.keys(deps).length > 0 && (
-                              <div className="mt-1 text-[10px] text-gray-400 dark:text-neutral-500">
+                              <div className="mt-1 text-[10px] text-secondary/70">
                                 deps: {Object.entries(deps).map(([k, v]) => `${k}@${v}`).join(", ")}
                               </div>
                             )}
                             {chain.length > 0 && (
-                              <div className="mt-1 text-[10px] text-gray-400 dark:text-neutral-500">
+                              <div className="mt-1 text-[10px] text-secondary/70">
                                 chain: {chain.join(" → ")}
                               </div>
                             )}
@@ -1429,11 +1429,11 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               <div className="space-y-5">
                 {/* Default Provider */}
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Default Search Provider</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Default Search Provider</h3>
                   <select
                     value={config.search?.provider ?? "duckduckgo"}
                     onChange={(e) => update("search.provider", e.target.value)}
-                    className="w-full text-sm border border-gray-200 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100"
+                    className="w-full text-sm border border-subtle rounded-lg px-3 py-2 bg-card text-primary"
                   >
                     {SEARCH_PROVIDERS.map((p) => (
                       <option key={p.id} value={p.id}>{p.label}</option>
@@ -1443,10 +1443,10 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
 
                 {/* Fallback Provider Order */}
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Fallback Order</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Fallback Order</h3>
                   <div className="flex flex-wrap gap-2 mb-2">
                     {(config.search?.providers ?? []).map((prov) => (
-                      <span key={prov} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-gray-100 dark:bg-neutral-800 text-gray-700 dark:text-neutral-300">
+                      <span key={prov} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-sidebar text-secondary">
                         {prov}
                         <button
                           onClick={() => {
@@ -1472,7 +1472,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                           }
                         }
                       }}
-                      className="text-sm border border-gray-200 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100"
+                      className="text-sm border border-subtle rounded-lg px-3 py-2 bg-card text-primary"
                     >
                       <option value="">+ Add Provider</option>
                       {SEARCH_PROVIDERS.filter((p) => !(config.search?.providers ?? []).includes(p.id)).map((p) => (
@@ -1484,31 +1484,31 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
 
                 {/* API Keys */}
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Provider API Keys</h3>
+                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Provider API Keys</h3>
                   <div className="space-y-3">
                     {SEARCH_PROVIDERS.filter((p) => p.needsKey).map((p) => (
                       <div key={p.id} className="flex items-center gap-3">
-                        <label className="w-28 text-sm text-gray-700 dark:text-neutral-300 shrink-0">{p.label}</label>
+                        <label className="w-28 text-sm text-secondary shrink-0">{p.label}</label>
                         <input
                           type="password"
                           placeholder={config.search?.keys?.[p.id] === "true" ? "••••••••" : ""}
                           value=""
                           onChange={(e) => update(`search.keys.${p.id}`, e.target.value)}
                           onFocus={(e) => (e.target.value = "")}
-                          className="flex-1 text-sm border border-gray-200 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100 placeholder-gray-400"
+                          className="flex-1 text-sm border border-subtle rounded-lg px-3 py-2 bg-card text-primary placeholder-gray-400"
                         />
                       </div>
                     ))}
                     {/* Google CX special case */}
                     <div className="flex items-center gap-3">
-                      <label className="w-28 text-sm text-gray-700 dark:text-neutral-300 shrink-0">Google CX</label>
+                      <label className="w-28 text-sm text-secondary shrink-0">Google CX</label>
                       <input
                         type="password"
                         placeholder={config.search?.keys?.google_cx === "true" ? "••••••••" : ""}
                         value=""
                         onChange={(e) => update("search.keys.google_cx", e.target.value)}
                         onFocus={(e) => (e.target.value = "")}
-                        className="flex-1 text-sm border border-gray-200 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100 placeholder-gray-400"
+                        className="flex-1 text-sm border border-subtle rounded-lg px-3 py-2 bg-card text-primary placeholder-gray-400"
                       />
                     </div>
                   </div>
@@ -1520,22 +1520,22 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               <div className="flex flex-col h-full">
                 <section className="flex flex-col flex-1">
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Logs</h3>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${logsSubscribed ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-neutral-800 dark:text-neutral-500'}`}>
+                    <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider">Logs</h3>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${logsSubscribed ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-sidebar text-secondary/70'}`}>
                       {logsSubscribed ? "Live" : "Disconnected"}
                     </span>
                   </div>
                   <div
                     ref={logListRef}
-                    className="bg-gray-50 dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-neutral-700 h-[90vh] overflow-y-auto font-mono text-[11px] leading-4 p-3"
+                    className="bg-sidebar rounded-lg h-[90vh] overflow-y-auto font-mono text-[11px] leading-4 p-3"
                   >
                     {logLines.length === 0 && (
-                      <div className="text-gray-400 dark:text-neutral-600 text-center py-20">
+                      <div className="text-secondary/50 text-center py-20">
                         {logsSubscribed ? "Waiting for logs..." : "Click the Logs tab to connect"}
                       </div>
                     )}
                     {logLines.map((line, i) => (
-                      <div key={i} className="text-gray-700 dark:text-neutral-300 whitespace-pre-wrap break-all py-0.5 border-b border-gray-100 dark:border-neutral-800/50 last:border-0">
+                      <div key={i} className="text-secondary whitespace-pre-wrap break-all py-0.5 border-b border-subtle last:border-0">
                         {line}
                       </div>
                     ))}
@@ -1543,7 +1543,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   <div className="flex gap-2 mt-2">
                     <button
                       onClick={() => setLogLines([])}
-                      className="px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 rounded-md text-gray-600 dark:text-neutral-400 transition-colors"
+                      className="px-3 py-1.5 text-xs bg-sidebar hover:bg-black/5 dark:hover:bg-white/5 rounded-md text-secondary transition-colors"
                     >
                       Clear
                     </button>
@@ -1558,7 +1558,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                         URL.revokeObjectURL(url);
                       }}
                       disabled={logLines.length === 0}
-                      className="px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 rounded-md text-gray-600 dark:text-neutral-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-3 py-1.5 text-xs bg-sidebar hover:bg-black/5 dark:hover:bg-white/5 rounded-md text-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Download
                     </button>

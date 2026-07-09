@@ -203,7 +203,7 @@ export function ChatContent({ transport }: ChatContentProps) {
       }
       return "text-orange-500 bg-orange-50 dark:bg-orange-900/20";
     }
-    return "text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50";
+    return "text-secondary hover:text-primary-600 dark:hover:text-primary-400 hover:bg-black/5 dark:hover:bg-white/5";
   };
 
   return (
@@ -221,10 +221,10 @@ export function ChatContent({ transport }: ChatContentProps) {
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-primary-500/20">
                 <Send className="w-6 h-6" />
               </div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
+              <h2 className="text-lg font-semibold text-primary mb-1">
                 Syscity
               </h2>
-              <p className="text-gray-400 dark:text-neutral-500 text-sm">
+              <p className="text-secondary text-sm">
                 Start a conversation
               </p>
             </div>
@@ -254,9 +254,9 @@ export function ChatContent({ transport }: ChatContentProps) {
         {isRunning && <MessageSkeleton />}
       </div>
 
-      <div className="bg-white dark:bg-neutral-900 px-4 py-3 shrink-0">
-        <ComposerPrimitive.Root className="max-w-3xl mx-auto w-full">
-          <div className="relative flex flex-col rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 focus-within:ring-2 focus-within:ring-primary-500/30 focus-within:border-primary-500/50 transition">
+      <div className="bg-page px-4 py-3 shrink-0">
+        <ComposerPrimitive.Root className="max-w-[var(--message-list-max-width)] mx-auto w-full">
+          <div className="relative flex flex-col rounded-2xl bg-card shadow-sm focus-within:ring-2 focus-within:ring-primary-500/20 transition">
             {/* Command palette */}
             {paletteOpen && (
               <CommandPalette
@@ -271,7 +271,7 @@ export function ChatContent({ transport }: ChatContentProps) {
               ref={inputRef}
               onInput={handleInput}
               onKeyDown={handleKeyDown}
-              className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-neutral-500 focus:outline-none min-h-[60px] max-h-[200px]"
+              className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-primary placeholder:text-secondary/60 focus:outline-none min-h-[60px] max-h-[200px]"
               placeholder="Message Syscity..."
               rows={1}
               aria-label="Message input"
@@ -294,7 +294,7 @@ export function ChatContent({ transport }: ChatContentProps) {
                   type="button"
                   title="Upload image"
                   aria-label="Upload image"
-                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
+                  className="p-2 rounded-lg text-secondary hover:text-primary-600 dark:hover:text-primary-400 hover:bg-black/5 dark:hover:bg-white/5 transition"
                   onClick={() => alert("Image upload coming soon")}
                 >
                   <Image className="w-5 h-5" />
@@ -303,7 +303,7 @@ export function ChatContent({ transport }: ChatContentProps) {
                   type="button"
                   title="Upload file"
                   aria-label="Upload file"
-                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
+                  className="p-2 rounded-lg text-secondary hover:text-primary-600 dark:hover:text-primary-400 hover:bg-black/5 dark:hover:bg-white/5 transition"
                   onClick={() => alert("File upload coming soon")}
                 >
                   <Paperclip className="w-5 h-5" />

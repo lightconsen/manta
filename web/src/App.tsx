@@ -257,7 +257,7 @@ function ChatApp() {
   );
 
   return (
-    <div className="h-screen flex bg-white dark:bg-neutral-900">
+    <div className="h-screen flex bg-page text-primary">
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((c) => !c)}

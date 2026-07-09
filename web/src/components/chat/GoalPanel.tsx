@@ -43,23 +43,23 @@ function GoalCard({
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 overflow-hidden">
+    <div className="rounded-lg bg-card overflow-hidden">
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-neutral-750 transition"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-black/[0.03] dark:hover:bg-white/[0.04] transition"
       >
         {goalStatusIcon(goal.status)}
-        <span className="flex-1 text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+        <span className="flex-1 text-sm font-medium text-primary truncate">
           {goal.description}
         </span>
-        <span className="text-xs text-gray-500 dark:text-neutral-400 shrink-0">
+        <span className="text-xs text-secondary shrink-0">
           {goal.passed}/{goal.total}
         </span>
         <span
           className={`text-xs px-1.5 py-0.5 rounded shrink-0 ${
             goal.status === "running"
-              ? "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400"
+              ? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400"
               : goal.status === "done"
               ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400"
               : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"
@@ -68,25 +68,25 @@ function GoalCard({
           {goalStatusText(goal.status)}
         </span>
         {expanded ? (
-          <ChevronUp className="w-4 h-4 text-gray-400" />
+          <ChevronUp className="w-4 h-4 text-secondary/60" />
         ) : (
-          <ChevronDown className="w-4 h-4 text-gray-400" />
+          <ChevronDown className="w-4 h-4 text-secondary/60" />
         )}
       </button>
 
       {/* Expanded details */}
       {expanded && (
-        <div className="px-3 pb-3 pt-1 border-t border-gray-100 dark:border-neutral-700">
-          <div className="text-xs text-gray-500 dark:text-neutral-400 mb-2">
+        <div className="px-3 pb-3 pt-1 border-t border-subtle">
+          <div className="text-xs text-secondary mb-2">
             Round {goal.round} / {goal.maxRounds} &middot; ID:{" "}
-            <code className="text-[10px] bg-gray-100 dark:bg-neutral-700 px-1 rounded">
+            <code className="text-[10px] bg-sidebar px-1 rounded">
               {goal.id}
             </code>
           </div>
 
           {goal.conditions.length > 0 && (
             <div className="space-y-1 mb-2">
-              <div className="text-[11px] font-medium text-gray-600 dark:text-neutral-400 uppercase tracking-wider">
+              <div className="text-[11px] font-medium text-secondary/70 uppercase tracking-wider">
                 Conditions
               </div>
               {goal.conditions.map((c, i) => {
@@ -101,13 +101,13 @@ function GoalCard({
                     className={`flex items-center gap-1.5 text-xs ${
                       condPassed
                         ? "text-green-600 dark:text-green-400"
-                        : "text-gray-600 dark:text-neutral-400"
+                        : "text-secondary/70"
                     }`}
                   >
                     {condPassed ? (
                       <CheckCircle2 className="w-3 h-3 shrink-0" />
                     ) : (
-                      <div className="w-3 h-3 shrink-0 rounded-full border border-gray-300 dark:border-neutral-500" />
+                      <div className="w-3 h-3 shrink-0 rounded-full border border-subtle" />
                     )}
                     <span className="truncate">{c}</span>
                   </div>
@@ -117,7 +117,7 @@ function GoalCard({
           )}
 
           {goal.summary && (
-            <div className="text-xs text-gray-500 dark:text-neutral-400 mt-1">
+            <div className="text-xs text-secondary mt-1">
               {goal.summary}
             </div>
           )}
@@ -142,17 +142,17 @@ export function GoalPanel() {
   const activeCount = goalList.filter((g) => isActive(g.status)).length;
 
   return (
-    <div className="shrink-0 border-t border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-900">
+    <div className="shrink-0 border-t border-subtle bg-page">
       {/* Collapse toggle bar */}
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-gray-500 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition"
+        className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] transition"
       >
         <Crosshair className="w-3.5 h-3.5" />
         <span className="font-medium">
           Goals
           {activeCount > 0 && (
-            <span className="ml-1 text-blue-500">({activeCount} active)</span>
+            <span className="ml-1 text-primary-500">({activeCount} active)</span>
           )}
         </span>
         <span className="flex-1" />

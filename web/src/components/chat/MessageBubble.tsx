@@ -26,10 +26,10 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
         <div className="flex gap-3 flex-row-reverse" style={centerStyle}>
           <Avatar role="user" />
           <div className="flex-1 min-w-0 text-right">
-            <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
+            <div className="text-[11px] font-medium text-secondary mb-1 uppercase tracking-wide">
               You
             </div>
-            <div className="inline-block text-left rounded-2xl px-4 py-2.5 bg-blue-600 text-white rounded-br-md">
+            <div className="inline-block text-left rounded-2xl px-4 py-2.5 bg-primary-600 text-white rounded-br-md">
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
                 {message.content}
               </p>
@@ -49,7 +49,7 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
       <div className="flex gap-3 flex-row" style={centerStyle}>
         <Avatar role="assistant" />
         <div className="flex-1 min-w-0">
-          <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
+          <div className="text-[11px] font-medium text-secondary mb-1 uppercase tracking-wide">
             Syscity
           </div>
           {hasParts ? (
@@ -72,7 +72,7 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
                 }
                 if (part.type === "text") {
                   return (
-                    <div className="text-gray-800 dark:text-gray-200">
+                    <div className="text-primary">
                       <MarkdownMessage text={part.text || ""} />
                     </div>
                   );
@@ -81,7 +81,7 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
               })}
             </div>
           ) : (
-            <div className="text-gray-800 dark:text-gray-200">
+            <div className="text-primary">
               <MarkdownMessage text={message.content} />
             </div>
           )}
@@ -93,7 +93,7 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
             />
           )}
           {!message.liveStatus && hasMetadata && (
-            <div className="mt-1.5 flex items-center gap-3 text-[10px] text-gray-400 dark:text-neutral-500">
+            <div className="mt-1.5 flex items-center gap-3 text-[10px] text-secondary">
               {message.durationMs !== undefined && (
                 <span className="flex items-center gap-1">
                   <Clock className="w-3 h-3" />

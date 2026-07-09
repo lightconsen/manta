@@ -38,13 +38,13 @@ export function CodeBlock({ code, language = "text" }: CodeBlockProps) {
 
   if (!html) {
     return (
-      <div className="relative rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/80 overflow-hidden my-3">
-        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-neutral-700 bg-gray-100 dark:bg-neutral-800">
-          <span className="text-[10px] font-medium text-gray-500 dark:text-neutral-400 uppercase tracking-wider">
+      <div className="relative rounded-xl bg-sidebar overflow-hidden my-3">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-subtle bg-card">
+          <span className="text-[10px] font-medium text-secondary uppercase tracking-wider">
             {language}
           </span>
         </div>
-        <pre className="p-4 overflow-x-auto text-xs font-mono leading-relaxed text-gray-800 dark:text-gray-200">
+        <pre className="p-4 overflow-x-auto text-xs font-mono leading-relaxed text-primary">
           <code>{code}</code>
         </pre>
       </div>
@@ -52,14 +52,14 @@ export function CodeBlock({ code, language = "text" }: CodeBlockProps) {
   }
 
   return (
-    <div className="relative rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/80 overflow-hidden my-3 group">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-neutral-700 bg-gray-100 dark:bg-neutral-800">
-        <span className="text-[10px] font-medium text-gray-500 dark:text-neutral-400 uppercase tracking-wider">
+    <div className="relative rounded-xl bg-sidebar overflow-hidden my-3 group">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-subtle bg-card">
+        <span className="text-[10px] font-medium text-secondary uppercase tracking-wider">
           {language}
         </span>
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] text-gray-500 dark:text-neutral-400 hover:bg-gray-200 dark:hover:bg-neutral-700 transition opacity-0 group-hover:opacity-100 focus:opacity-100"
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] text-secondary hover:bg-black/5 dark:hover:bg-white/5 transition opacity-0 group-hover:opacity-100 focus:opacity-100"
           aria-label="Copy code"
           title="Copy"
         >

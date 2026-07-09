@@ -45,7 +45,7 @@ export function MarkdownMessage({ text }: { text: string }) {
               return <CodeBlock code={code} language={language} />;
             }
             return (
-              <code className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-neutral-700 text-gray-800 dark:text-gray-200 text-xs font-mono">
+              <code className="px-1.5 py-0.5 rounded-md bg-sidebar text-primary text-xs font-mono">
                 {children}
               </code>
             );
@@ -56,13 +56,13 @@ export function MarkdownMessage({ text }: { text: string }) {
               return <>{children}</>;
             }
             return (
-              <pre className="rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/80 p-4 overflow-x-auto my-3 text-xs font-mono leading-relaxed">
+              <pre className="rounded-xl bg-sidebar p-4 overflow-x-auto my-3 text-xs font-mono leading-relaxed">
                 {children}
               </pre>
             );
           },
           blockquote: ({ children }) => (
-            <blockquote className="border-l-3 border-emerald-400 dark:border-emerald-600 pl-4 my-3 text-gray-600 dark:text-gray-400 italic">
+            <blockquote className="border-l-2 border-primary-400 dark:border-primary-600 pl-4 my-3 text-secondary italic">
               {children}
             </blockquote>
           ),
@@ -79,22 +79,22 @@ export function MarkdownMessage({ text }: { text: string }) {
             <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed mb-2 last:mb-0">{children}</p>
           ),
           a: ({ children, href }) => (
-            <a href={href} className="text-emerald-600 dark:text-emerald-400 hover:underline" target="_blank" rel="noopener noreferrer">
+            <a href={href} className="text-primary-600 dark:text-primary-400 hover:underline" target="_blank" rel="noopener noreferrer">
               {children}
             </a>
           ),
-          hr: () => <hr className="my-4 border-gray-200 dark:border-neutral-700" />,
+          hr: () => <hr className="my-4 border-subtle" />,
           table: ({ children }) => (
             <table className="w-full text-sm border-collapse my-3">{children}</table>
           ),
           thead: ({ children }) => (
-            <thead className="bg-gray-50 dark:bg-neutral-800">{children}</thead>
+            <thead className="bg-sidebar">{children}</thead>
           ),
           th: ({ children }) => (
-            <th className="border border-gray-200 dark:border-neutral-700 px-3 py-2 text-left text-xs font-semibold text-gray-700 dark:text-gray-300">{children}</th>
+            <th className="border-b border-subtle px-3 py-2 text-left text-xs font-semibold text-primary">{children}</th>
           ),
           td: ({ children }) => (
-            <td className="border border-gray-200 dark:border-neutral-700 px-3 py-2 text-sm text-gray-600 dark:text-gray-400">{children}</td>
+            <td className="border-b border-subtle px-3 py-2 text-sm text-secondary">{children}</td>
           ),
           img: ImageNode,
           video: VideoNode,
@@ -118,7 +118,7 @@ function ImageNode({ src, alt }: { src?: string; alt?: string }) {
 
   if (failed) {
     return (
-      <div className="rounded-xl border border-dashed border-gray-300 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-800/50 px-4 py-3 text-xs text-gray-400 dark:text-neutral-500 inline-block">
+      <div className="rounded-xl bg-sidebar px-4 py-3 text-xs text-secondary inline-block">
         (image not found: {src})
       </div>
     );
@@ -129,7 +129,7 @@ function ImageNode({ src, alt }: { src?: string; alt?: string }) {
       <img
         src={src}
         alt={alt || "image"}
-        className="rounded-xl border border-gray-200 dark:border-neutral-700 max-w-full max-h-[400px] object-contain cursor-zoom-in hover:opacity-90 transition"
+        className="rounded-xl max-w-full max-h-[400px] object-contain cursor-zoom-in hover:opacity-90 transition"
         onClick={() => setOpen(true)}
         loading="lazy"
         onError={() => setFailed(true)}
@@ -152,7 +152,7 @@ function VideoNode({ src }: { src?: string }) {
       src={src}
       controls
       preload="metadata"
-      className="rounded-xl border border-gray-200 dark:border-neutral-700 max-w-full max-h-[400px] my-2"
+      className="rounded-xl max-w-full max-h-[400px] my-2"
     />
   );
 }

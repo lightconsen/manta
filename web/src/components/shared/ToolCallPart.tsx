@@ -45,10 +45,10 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport 
   const needsPermission = isPermissionError(data);
 
   const statusColor = isError
-    ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400"
+    ? "border-l-red-400 bg-red-50/40 dark:bg-red-950/20 text-red-700 dark:text-red-400"
     : result !== undefined
-    ? "border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400"
-    : "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400";
+    ? "border-l-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400"
+    : "border-l-primary-400 bg-primary-50/40 dark:bg-primary-900/15 text-primary-700 dark:text-primary-400";
 
   const statusText = isError
     ? "Error"
@@ -71,7 +71,7 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport 
   };
 
   return (
-    <div className={`my-2 rounded-lg border overflow-hidden ${statusColor}`}>
+    <div className={`my-2 rounded-lg border-l-4 ${statusColor}`}>
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:opacity-80 transition"
@@ -88,23 +88,23 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport 
         <span className="ml-auto flex items-center gap-1.5 text-[10px] opacity-70">
           {result === undefined && !isError && (
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-500" />
             </span>
           )}
           {statusText}
         </span>
       </button>
       {expanded && (
-        <div className="px-3 py-2 text-xs border-t border-inherit border-opacity-50">
+        <div className="px-3 py-2 text-xs">
           <div className="mb-2">
             <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Arguments</div>
-            <pre className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
+            <pre className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
               {JSON.stringify(args, null, 2)}
             </pre>
           </div>
           {needsPermission ? (
-            <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-3">
+            <div className="rounded-lg bg-amber-50/60 dark:bg-amber-950/20 p-3">
               <div className="flex items-start gap-2">
                 <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -150,11 +150,11 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport 
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Result</div>
               {renderAsMarkdown ? (
-                <div className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto max-w-full">
+                <div className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full">
                   <MarkdownMessage text={resultString || ""} />
                 </div>
               ) : (
-                <pre className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
+                <pre className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
                   {resultString}
                 </pre>
               )}
