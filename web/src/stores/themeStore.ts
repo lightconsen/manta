@@ -16,18 +16,24 @@ const stored = localStorage.getItem("syscity_theme") as "light" | "dark" | "syst
 const initialTheme: "light" | "dark" | "system" =
   stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
 
+function applyThemeClass(theme: "light" | "dark" | "system") {
+  if (typeof document === "undefined") return;
+  if (resolveTheme(theme) === "dark") {
+    document.documentElement.classList.add("dark");
+  } else {
+    document.documentElement.classList.remove("dark");
+  }
+}
+
+applyThemeClass(initialTheme);
+
 export const useThemeStore = create<ThemeState>((set) => ({
   theme: initialTheme,
   resolvedTheme: resolveTheme(initialTheme),
 
   setTheme: (theme) => {
     localStorage.setItem("syscity_theme", theme);
-    const resolved = resolveTheme(theme);
-    if (resolved === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-    set({ theme, resolvedTheme: resolved });
+    applyThemeClass(theme);
+    set({ theme, resolvedTheme: resolveTheme(theme) });
   },
 }));
