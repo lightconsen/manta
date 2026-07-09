@@ -252,7 +252,8 @@ impl DatabaseStore {
             ),
             (
                 "idx_memories_user_importance_created",
-                "CREATE INDEX IF NOT EXISTS idx_memories_user_importance_created ON memories(user_id, importance_score DESC, created_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_memories_user_importance_created ON \
+                 memories(user_id, importance_score DESC, created_at DESC)",
             ),
             (
                 "idx_chat_conv",
@@ -623,7 +624,8 @@ impl MemoryStore for DatabaseStore {
 
         let row = sqlx::query(
             "SELECT id, user_id, conversation_id, content, memory_type, embedding, created_at, \
-             last_accessed, access_count, expires_at, metadata, importance_score, source FROM memories WHERE id = ?",
+             last_accessed, access_count, expires_at, metadata, importance_score, source FROM \
+             memories WHERE id = ?",
         )
         .bind(&id.0)
         .fetch_optional(&self.pool)
@@ -735,7 +737,8 @@ impl MemoryStore for DatabaseStore {
 
         let row = sqlx::query(
             "SELECT id, user_id, conversation_id, content, memory_type, embedding, created_at, \
-             last_accessed, access_count, expires_at, metadata, importance_score, source FROM memories WHERE id = ?",
+             last_accessed, access_count, expires_at, metadata, importance_score, source FROM \
+             memories WHERE id = ?",
         )
         .bind(&id.0)
         .fetch_optional(&mut *tx)
@@ -816,17 +819,20 @@ impl MemoryStore for DatabaseStore {
         }
 
         let last_accessed_secs = Self::system_time_to_secs(updated_memory.last_accessed);
-        let result = sqlx::query("UPDATE memories SET importance_score = ?, last_accessed = ?, access_count = ? WHERE id = ?")
-            .bind(new_score)
-            .bind(last_accessed_secs)
-            .bind(updated_memory.access_count as i64)
-            .bind(&id.0)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to update importance score".to_string(),
-                details: e.to_string(),
-            })?;
+        let result = sqlx::query(
+            "UPDATE memories SET importance_score = ?, last_accessed = ?, access_count = ? WHERE \
+             id = ?",
+        )
+        .bind(new_score)
+        .bind(last_accessed_secs)
+        .bind(updated_memory.access_count as i64)
+        .bind(&id.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to update importance score".to_string(),
+            details: e.to_string(),
+        })?;
 
         if result.rows_affected() == 0 {
             if let Err(e) = tx.rollback().await {
@@ -964,8 +970,8 @@ impl MemoryStore for DatabaseStore {
         debug!("Searching memories");
 
         let mut sql = "SELECT id, user_id, conversation_id, content, memory_type, embedding, \
-                       created_at, last_accessed, access_count, expires_at, metadata, importance_score, source FROM memories \
-                       WHERE 1=1"
+                       created_at, last_accessed, access_count, expires_at, metadata, \
+                       importance_score, source FROM memories WHERE 1=1"
             .to_string();
 
         if query.user_id.is_some() {

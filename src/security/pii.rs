@@ -4,9 +4,10 @@
 //! addresses in text. Supports redaction (masking), confidence scoring, and
 //! data classification tiers.
 
+use std::sync::LazyLock;
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
 
 /// Data classification tiers for detected content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

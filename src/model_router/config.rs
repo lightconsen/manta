@@ -152,7 +152,8 @@ impl ProviderConfig {
         self.api_key.clone()
     }
 
-    /// Build an AuthProfileConfig from this config if one is not explicitly set.
+    /// Build an AuthProfileConfig from this config if one is not explicitly
+    /// set.
     pub fn derived_auth_profile_config(&self) -> AuthProfileConfig {
         if let Some(ref profile) = self.auth_profile {
             return profile.clone();

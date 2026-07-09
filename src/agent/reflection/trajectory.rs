@@ -54,7 +54,8 @@ pub struct Trajectory {
 }
 
 impl Trajectory {
-    /// Format the trajectory into a human-readable string for the critic prompt.
+    /// Format the trajectory into a human-readable string for the critic
+    /// prompt.
     pub fn format_for_prompt(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(

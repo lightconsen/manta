@@ -7,14 +7,13 @@
 
 use std::sync::Arc;
 
-use crate::providers::Provider;
-use crate::Result;
-
 use super::config::RetrospectConfig;
 use super::critic::Critic;
 use super::trajectory::{Trajectory, TrajectoryStep, TrajectoryWindow};
 use super::types::{Critique, QualityCriteria};
 use crate::agent::turns::Turn;
+use crate::providers::Provider;
+use crate::Result;
 
 /// Result of a retrospect cycle — trajectory critique + observation for memory.
 #[derive(Debug, Clone)]

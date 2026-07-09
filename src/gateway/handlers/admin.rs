@@ -47,7 +47,7 @@ pub async fn reload_all_handler(
             let config_path = state
                 .config_path
                 .clone()
-                .unwrap_or_else(|| crate::dirs::default_config_file());
+                .unwrap_or_else(crate::dirs::default_config_file);
 
             if config_path.exists() {
                 match tokio::fs::read_to_string(&config_path).await {

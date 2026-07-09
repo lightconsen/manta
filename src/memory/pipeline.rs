@@ -212,14 +212,15 @@ async fn process_batch<P: PipelineEmbeddingProvider>(provider: &Arc<P>, batch: V
                     }
                     None => {
                         warn!(
-                            "Embedding provider returned more results than jobs; \
-                               extra results discarded."
+                            "Embedding provider returned more results than jobs; extra results \
+                             discarded."
                         );
                         break;
                     }
                 }
             }
-            // Send errors to orphaned jobs when embed_batch returned fewer results than expected.
+            // Send errors to orphaned jobs when embed_batch returned fewer results than
+            // expected.
             for job in jobs_iter {
                 warn!("Orphaned embedding job — provider returned insufficient results");
                 if job

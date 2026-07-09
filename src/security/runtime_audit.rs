@@ -332,8 +332,8 @@ mod tests {
     ///
     /// Verifies the basic invariants that every logger must satisfy:
     /// - A logged entry is immediately retrievable.
-    /// - The `log_entry` call completes within a short timeout
-    ///   (does not block the caller indefinitely).
+    /// - The `log_entry` call completes within a short timeout (does not block
+    ///   the caller indefinitely).
     #[allow(dead_code)]
     pub(crate) async fn test_audit_logger_contract(logger: &dyn AuditLogger) {
         // Contract: entry is retrievable after logging.

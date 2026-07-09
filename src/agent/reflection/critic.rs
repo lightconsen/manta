@@ -6,10 +6,9 @@
 
 use std::sync::Arc;
 
+use super::types::{Critique, QualityCriteria};
 use crate::providers::{CompletionRequest, CompletionResponse, Message, Provider};
 use crate::Result;
-
-use super::types::{Critique, QualityCriteria};
 
 // ── Prompt Template ─────────────────────────────────────────────────────────
 
@@ -65,8 +64,8 @@ impl Critic {
 
     /// Evaluate a full conversation trajectory.
     ///
-    /// Reviews an interaction window (multiple turns with tool calls and results)
-    /// to identify patterns and overall effectiveness.
+    /// Reviews an interaction window (multiple turns with tool calls and
+    /// results) to identify patterns and overall effectiveness.
     ///
     /// Returns a [`Critique`] that includes an `observation` field extracted
     /// from the LLM's response for memory persistence.

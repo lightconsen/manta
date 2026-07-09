@@ -24,8 +24,7 @@
 //!     },
 //!     ..Default::default()
 //! };
-//! let adapter =
-//!     RemoteControlAdapter::new(config).await?;
+//! let adapter = RemoteControlAdapter::new(config).await?;
 //! let screenshot = adapter.screenshot(None).await?;
 //! # Ok(())
 //! # }

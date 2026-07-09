@@ -737,8 +737,8 @@ impl SecurityAuditor {
                 description: format!("{}: {}", finding.pattern, finding.description),
                 location: format!("{}:{}", file_path.display(), finding.line_number),
                 severity,
-                recommendation: "Remove secrets from source code and use environment variables \
-                                 or a secrets manager"
+                recommendation: "Remove secrets from source code and use environment variables or \
+                                 a secrets manager"
                     .to_string(),
             });
             audit.leaks_found += 1;

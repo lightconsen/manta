@@ -499,9 +499,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_emits_events_via_bus() {
-        use crate::core::events::EventHandler;
-        use async_trait::async_trait;
         use std::sync::atomic::Ordering;
+
+        use async_trait::async_trait;
+
+        use crate::core::events::EventHandler;
 
         #[derive(Debug)]
         struct BusRecorder {

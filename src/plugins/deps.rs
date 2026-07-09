@@ -176,6 +176,7 @@ impl DependencyResolver {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+
     use tempfile::tempdir;
 
     use super::*;

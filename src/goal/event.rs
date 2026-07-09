@@ -1,10 +1,13 @@
-//! Goal events — progress updates emitted by the [`GoalRunner`](super::runner::GoalRunner).
+//! Goal events — progress updates emitted by the
+//! [`GoalRunner`](super::runner::GoalRunner).
 //!
-//! These events flow through the gateway's event system to the originating session.
+//! These events flow through the gateway's event system to the originating
+//! session.
 
 use crate::goal::condition::CheckResult;
 
-/// Events emitted by a [`GoalRunner`](super::runner::GoalRunner) during execution.
+/// Events emitted by a [`GoalRunner`](super::runner::GoalRunner) during
+/// execution.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "event")]
 pub enum GoalEvent {

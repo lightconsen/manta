@@ -389,7 +389,8 @@ impl ThreadBindingManager {
     ///
     /// Removes child bindings whose parent session no longer exists and cleans
     /// up stale references in the parent-child hierarchy. Scans are limited to
-    /// a maximum batch of 1000 orphans per call to prevent unbounded processing.
+    /// a maximum batch of 1000 orphans per call to prevent unbounded
+    /// processing.
     ///
     /// Returns the number of orphaned bindings removed.
     pub async fn cleanup_orphans(&self) -> usize {

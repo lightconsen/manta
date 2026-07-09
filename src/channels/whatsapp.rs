@@ -607,7 +607,8 @@ impl Channel for WhatsappChannel {
             crate::error::SyscityError::Validation(format!("Failed to serialize message: {}", e))
         })?;
 
-        // Send message with exponential backoff (start 1s, multiply by 2, max 30s, 3 retries)
+        // Send message with exponential backoff (start 1s, multiply by 2, max 30s, 3
+        // retries)
         let mut last_err = None;
         let mut delay = std::time::Duration::from_secs(1);
         for attempt in 0..3 {

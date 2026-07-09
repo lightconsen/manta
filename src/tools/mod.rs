@@ -2061,7 +2061,8 @@ impl ToolRegistry {
                         Err(e)
                     }
                     None => Err(crate::error::SyscityError::Validation(format!(
-                        "Tool '{}' was found but could not be executed (may have been deregistered)",
+                        "Tool '{}' was found but could not be executed (may have been \
+                         deregistered)",
                         tool_name,
                     ))),
                 };

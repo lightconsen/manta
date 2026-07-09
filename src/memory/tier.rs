@@ -388,7 +388,8 @@ impl TierIndex {
         Ok(())
     }
 
-    /// Load the index from `path`. Returns an empty index if the file does not exist.
+    /// Load the index from `path`. Returns an empty index if the file does not
+    /// exist.
     pub fn load(path: impl AsRef<Path>) -> crate::Result<Self> {
         let path = path.as_ref();
         if !path.exists() {

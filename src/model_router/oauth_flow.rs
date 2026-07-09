@@ -159,9 +159,10 @@ fn generate_state() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
 
     fn test_oauth_config(token_url: String, client_secret: Option<String>) -> OAuthConfig {
         OAuthConfig {

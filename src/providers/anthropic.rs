@@ -14,7 +14,6 @@ use super::{
     CompletionStream, FunctionCall, FunctionDefinition, Message, Provider, ProviderInstanceConfig,
     Role, ToolCall, Usage,
 };
-
 use crate::model_router::gateway_client::GatewayClient;
 use crate::model_router::HttpGatewayClient;
 
@@ -523,7 +522,8 @@ impl AnthropicProvider {
                                 // skip for now, message_stop signals completion
                             }
                             _ => {
-                                // Ignore other event types (message_start, ping, etc.)
+                                // Ignore other event types (message_start,
+                                // ping, etc.)
                             }
                         }
                     }

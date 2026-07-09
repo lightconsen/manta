@@ -177,7 +177,8 @@ mod tests {
 
     #[test]
     fn test_chunk_content_word_boundary() {
-        // "hello worl"[..10] = "hello worl", rfind(' ') = 5 → "hello " + "world foo bar"
+        // "hello worl"[..10] = "hello worl", rfind(' ') = 5 → "hello " + "world foo
+        // bar"
         let chunks = chunk_content("hello world foo bar", 10);
         assert_eq!(chunks, vec!["hello ", "world foo ", "bar"]);
     }

@@ -208,8 +208,8 @@ impl ContentFilter {
                 *pii_findings = findings.clone();
                 if self.block_restricted {
                     *action = FilterAction::Blocked;
-                    *output = "This response contains sensitive personal information and has \
-                               been blocked. Please review the content before sharing."
+                    *output = "This response contains sensitive personal information and has been \
+                               blocked. Please review the content before sharing."
                         .to_string();
                     *data = None;
                 } else if self.redact_confidential {

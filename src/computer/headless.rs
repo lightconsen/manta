@@ -983,7 +983,8 @@ impl ComputerAdapter for HeadlessComputerAdapter {
             }
             // ToolCall is processed at the GoalPlanner layer, not in platform adapters.
             DesktopAction::ToolCall { tool_name, .. } => Err(ComputerError::Other(format!(
-                "ToolCall '{}' must be dispatched through ToolRegistry, not through ComputerAdapter",
+                "ToolCall '{}' must be dispatched through ToolRegistry, not through \
+                 ComputerAdapter",
                 tool_name
             ))),
             _ => Err(ComputerError::Other("Action not available in headless mode".to_string())),

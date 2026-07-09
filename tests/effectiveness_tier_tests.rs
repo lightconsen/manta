@@ -347,7 +347,8 @@ async fn tiered_store_survives_process_restart() {
         std::env::temp_dir().join(format!("syscity_tier_crash_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
-    // Create some memories in persistent tiers (Working tier uses InMemoryStore and won't persist)
+    // Create some memories in persistent tiers (Working tier uses InMemoryStore and
+    // won't persist)
     let memory_ids = {
         let store = TieredStore::new(&temp_dir).await.unwrap();
 
@@ -374,7 +375,8 @@ async fn tiered_store_survives_process_restart() {
         (id1, id2, id3, id4)
     };
 
-    // Simulate process restart: create a new store instance with the same base directory
+    // Simulate process restart: create a new store instance with the same base
+    // directory
     let store2 = TieredStore::new(&temp_dir).await.unwrap();
 
     // Verify all memories are retrievable
@@ -421,7 +423,8 @@ async fn tiered_store_recovers_from_crash_duplicates() {
         id
     };
 
-    // Now, let's create a new store, get the memory, and manually store it in LongTerm too using the DatabaseStore directly
+    // Now, let's create a new store, get the memory, and manually store it in
+    // LongTerm too using the DatabaseStore directly
     let stored_mem = {
         let store2 = TieredStore::new(&temp_dir).await.unwrap();
         let mem = store2.get(&id).await.unwrap().unwrap();
@@ -440,7 +443,8 @@ async fn tiered_store_recovers_from_crash_duplicates() {
         mem
     };
 
-    // Now create a new store instance — it should recover from the duplicate when migrate_memory is called
+    // Now create a new store instance — it should recover from the duplicate when
+    // migrate_memory is called
     let store3 = TieredStore::new(&temp_dir).await.unwrap();
 
     // Verify memory is retrievable
@@ -484,7 +488,8 @@ async fn tiered_store_recovers_missing_index() {
         id
     };
 
-    // Create new store instance - it should fall back to empty index but still find the memory via scan
+    // Create new store instance - it should fall back to empty index but still find
+    // the memory via scan
     let store2 = TieredStore::new(&temp_dir).await.unwrap();
 
     // Memory should still be retrievable (via fallback scan when index misses)

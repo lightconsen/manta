@@ -43,6 +43,7 @@ pub struct AgentHandle {
 }
 
 /// Commands sent to agents
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentCommand {
     /// Process a message

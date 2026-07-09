@@ -65,8 +65,8 @@ pub async fn wait_for_callback(
 
             // Send a simple success response and close
             let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: \
-                        close\r\n\r\n<html><body><h2>Authorization successful</h2><p>You can \
-                        close this window.</p></body></html>";
+                            close\r\n\r\n<html><body><h2>Authorization successful</h2><p>You can \
+                            close this window.</p></body></html>";
             stream
                 .write_all(response.as_bytes())
                 .await

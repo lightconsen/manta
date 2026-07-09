@@ -798,14 +798,14 @@ impl DreamEngine {
             llm_tokens_output: ctx.output_tokens,
             summary: if cancelled {
                 format!(
-                    "Light Dream: cancelled after processing {} memories, removed {} duplicates/expired, promoted {}, \
-                     demoted {}",
+                    "Light Dream: cancelled after processing {} memories, removed {} \
+                     duplicates/expired, promoted {}, demoted {}",
                     processed, removed, promoted, demoted
                 )
             } else {
                 format!(
-                    "Light Dream: processed {} memories, removed {} duplicates/expired, promoted {}, \
-                     demoted {}",
+                    "Light Dream: processed {} memories, removed {} duplicates/expired, promoted \
+                     {}, demoted {}",
                     processed, removed, promoted, demoted
                 )
             },
@@ -1017,7 +1017,8 @@ impl DreamEngine {
             llm_tokens_output: ctx.output_tokens,
             summary: if cancelled {
                 format!(
-                    "Deep Dream: cancelled after processing {} memories, created {} topic summaries",
+                    "Deep Dream: cancelled after processing {} memories, created {} topic \
+                     summaries",
                     processed, created
                 )
             } else {
@@ -1096,11 +1097,12 @@ impl DreamEngine {
 
                     let prompt = format!(
                         "Extract entities (people, places, organizations, concepts) and their \
-                         relationships from the following memory content. Each memory is separated by \
-                         '---'.\n\nReturn ONLY a JSON object with this schema:\n{{\n  \"entities\": \
-                         [{{\"label\": \"name\", \"type\": \"person|place|organization|concept\", \
-                         \"confidence\": 0.9}}],\n  \"relationships\": [{{\"from\": \"entity_label\", \
-                         \"to\": \"entity_label\", \"relation\": \"verb_phrase\", \"confidence\": \
+                         relationships from the following memory content. Each memory is \
+                         separated by '---'.\n\nReturn ONLY a JSON object with this schema:\n{{\n  \
+                         \"entities\": [{{\"label\": \"name\", \"type\": \
+                         \"person|place|organization|concept\", \"confidence\": 0.9}}],\n  \
+                         \"relationships\": [{{\"from\": \"entity_label\", \"to\": \
+                         \"entity_label\", \"relation\": \"verb_phrase\", \"confidence\": \
                          0.8}}]\n}}\n\nMemory content:\n{}\n\nJSON:",
                         content_for_prompt.chars().take(8000).collect::<String>()
                     );
@@ -1174,7 +1176,8 @@ impl DreamEngine {
                                         });
                                     }
 
-                                    // Fall back to co-occurrence edges if LLM didn't provide relationships
+                                    // Fall back to co-occurrence edges if LLM didn't provide
+                                    // relationships
                                     if edges.is_empty() {
                                         for (i, n1) in nodes.iter().enumerate() {
                                             for n2 in nodes.iter().skip(i + 1) {
@@ -1304,14 +1307,14 @@ impl DreamEngine {
             llm_tokens_output: ctx.output_tokens,
             summary: if cancelled {
                 format!(
-                    "REM Dream: cancelled after processing {} memories, discovered {} entities, {} relations, created \
-                     {} patterns",
+                    "REM Dream: cancelled after processing {} memories, discovered {} entities, \
+                     {} relations, created {} patterns",
                     processed, node_count, edge_count, created
                 )
             } else {
                 format!(
-                    "REM Dream: processed {} memories, discovered {} entities, {} relations, created \
-                     {} patterns",
+                    "REM Dream: processed {} memories, discovered {} entities, {} relations, \
+                     created {} patterns",
                     processed, node_count, edge_count, created
                 )
             },
@@ -1632,7 +1635,8 @@ impl DreamReviewQueue {
                                     }
                                     Err(e) => {
                                         warn!(
-                                            "Dream apply: failed to delete memory {} during merge: {e}",
+                                            "Dream apply: failed to delete memory {} during \
+                                             merge: {e}",
                                             id
                                         );
                                         delete_ok = false;
@@ -1904,7 +1908,8 @@ impl DreamScheduler {
 
 /// Number of hyperplanes (bits) in each SimHash signature.
 const LSH_BITS: usize = 16;
-/// Number of bands the signature is split into (LSH_BITS = LSH_BANDS * LSH_ROWS).
+/// Number of bands the signature is split into (LSH_BITS = LSH_BANDS *
+/// LSH_ROWS).
 const LSH_BANDS: usize = 4;
 /// Bits per band.
 const LSH_ROWS: usize = LSH_BITS / LSH_BANDS;
@@ -1956,8 +1961,8 @@ fn simhash_signature(planes: &[Vec<f32>], emb: &[f32]) -> u32 {
 ///   banding: pairs colliding in **any** band become candidates.
 /// - Memories without an embedding fall back to grouping by the lowercased
 ///   50-character prefix (matches the pre-existing textual fallback).
-/// - Cross-group pairs are never emitted (mirrors the original loop's
-///   `(Some, None)` short-circuit).
+/// - Cross-group pairs are never emitted (mirrors the original loop's `(Some,
+///   None)` short-circuit).
 fn build_dedup_candidate_pairs(memories: &[Memory]) -> Vec<(usize, usize)> {
     let mut pairs: HashSet<(usize, usize)> = HashSet::new();
 

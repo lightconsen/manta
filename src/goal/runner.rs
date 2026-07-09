@@ -82,13 +82,15 @@ impl GoalRunner {
         }
     }
 
-    /// Attach a persistence store so the runner checkpoints state after each round.
+    /// Attach a persistence store so the runner checkpoints state after each
+    /// round.
     pub fn with_store(mut self, store: crate::goal::persist::SharedGoalStore) -> Self {
         self.store = Some(store);
         self
     }
 
-    /// Set the initial round and condition history (used when restoring from persistence).
+    /// Set the initial round and condition history (used when restoring from
+    /// persistence).
     pub fn with_progress(mut self, round: usize, condition_history: Vec<RoundResult>) -> Self {
         self.round = round;
         self.condition_history = condition_history;
@@ -220,7 +222,9 @@ impl GoalRunner {
             });
             if self.detect_loop() {
                 self.emit(GoalEvent::Aborted {
-                    reason: "loop_detected: same conditions failed 3 rounds in a row with identical output".to_string(),
+                    reason: "loop_detected: same conditions failed 3 rounds in a row with \
+                             identical output"
+                        .to_string(),
                     round: self.round,
                     results,
                 });
@@ -249,7 +253,8 @@ impl GoalRunner {
     ///
     /// Builds a goal-specific system prompt + current progress, sends it to the
     /// LLM via the model router, and executes any tool calls the LLM makes.
-    /// Repeats (LLM → tools → LLM → …) up to [`MAX_TOOL_ITERATIONS`] iterations.
+    /// Repeats (LLM → tools → LLM → …) up to [`MAX_TOOL_ITERATIONS`]
+    /// iterations.
     async fn run_agent_round(&self) -> Result<()> {
         // Build system prompt describing the goal and available tools.
         let system_prompt = self.build_agent_system_prompt();
@@ -307,7 +312,7 @@ impl GoalRunner {
                 .message
                 .tool_calls
                 .as_ref()
-                .map_or(false, |c: &Vec<crate::providers::ToolCall>| !c.is_empty());
+                .is_some_and(|c: &Vec<crate::providers::ToolCall>| !c.is_empty());
 
             if !has_tool_calls {
                 // No more tool calls — agent is done responding.
@@ -319,7 +324,8 @@ impl GoalRunner {
                 break;
             }
 
-            // Take the tool calls out of the response (clone to keep response.message valid).
+            // Take the tool calls out of the response (clone to keep response.message
+            // valid).
             let tool_calls = response.message.tool_calls.clone().unwrap_or_default();
 
             // Push the assistant's response (with tool_calls) to the context.
@@ -436,7 +442,10 @@ impl GoalRunner {
             );
         }
 
-        let last = self.condition_history.last().unwrap();
+        let last = match self.condition_history.last() {
+            Some(last) => last,
+            None => return "尚无执行记录".to_string(),
+        };
         let passed = last.results.iter().filter(|r| r.passed).count();
         let total = last.results.len();
 
@@ -459,7 +468,8 @@ impl GoalRunner {
     }
 
     /// Detect whether the runner is in a loop: same conditions failing with
-    /// identical failure signatures for MAX_CONSECUTIVE_IDENTICAL_FAILURES rounds.
+    /// identical failure signatures for MAX_CONSECUTIVE_IDENTICAL_FAILURES
+    /// rounds.
     fn detect_loop(&self) -> bool {
         if self.condition_history.len() < MAX_CONSECUTIVE_IDENTICAL_FAILURES {
             return false;

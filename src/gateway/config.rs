@@ -124,7 +124,8 @@ pub struct SearchConfig {
     #[serde(default)]
     pub api_key: String,
     /// Per-provider API keys. Allows configuring multiple providers at once.
-    /// The active provider uses the key from `keys[provider]` or falls back to `api_key`.
+    /// The active provider uses the key from `keys[provider]` or falls back to
+    /// `api_key`.
     #[serde(default = "default_search_keys")]
     pub keys: std::collections::HashMap<String, String>,
 }

@@ -44,7 +44,9 @@ remove_nested_parens = true
 format_code_in_doc_comments = true
 
 # Format strings
-format_strings = true
+# NOTE: disabled because nightly rustfmt can break string literals that
+# contain escaped quotes, producing invalid Rust (see anthropic.rs tests).
+format_strings = false
 
 # Wrap comments at max_width
 wrap_comments = true

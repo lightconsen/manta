@@ -242,7 +242,8 @@ impl ModelRouter {
             let model = config.aliases.get(alias).map(|a| a.model.clone());
             if model.is_none() {
                 warn!(
-                    "Fallback chain references alias '{}' which is not defined in aliases — model will be empty",
+                    "Fallback chain references alias '{}' which is not defined in aliases — model \
+                     will be empty",
                     alias
                 );
             }
@@ -806,7 +807,8 @@ impl ModelRouter {
                     let estimated = cost.estimate(usage);
                     cost_aware.daily_spend_usd += estimated;
                     info!(
-                        "Cost tracked: ${estimated:.4} for '{alias_name_for_cost}' (task: {task_type:?})"
+                        "Cost tracked: ${estimated:.4} for '{alias_name_for_cost}' (task: \
+                         {task_type:?})"
                     );
                 }
             }
@@ -815,7 +817,8 @@ impl ModelRouter {
         Ok(response)
     }
 
-    /// Get cheapest model alias when budget is exceeded, or `None` if within budget.
+    /// Get cheapest model alias when budget is exceeded, or `None` if within
+    /// budget.
     fn cheapest_model_on_budget_exceeded(cost_aware: &CostAwareConfig) -> Option<String> {
         let budget = cost_aware.budget_limit_usd?;
         let current_spend = cost_aware.daily_spend_usd;
@@ -841,7 +844,8 @@ impl ModelRouter {
         Some(cheapest)
     }
 
-    /// Resolve the model alias to use for a given task type based on routing rules.
+    /// Resolve the model alias to use for a given task type based on routing
+    /// rules.
     fn resolve_alias_for_task(
         cost_aware: &CostAwareConfig,
         task_type: &TaskType,

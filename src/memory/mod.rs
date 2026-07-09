@@ -428,7 +428,8 @@ pub trait MemoryStore: Send + Sync {
     /// Close the store (clean up resources)
     async fn close(&self) -> crate::Result<()>;
 
-    /// Atomically update a memory's importance score and return the updated memory.
+    /// Atomically update a memory's importance score and return the updated
+    /// memory.
     ///
     /// The default implementation is **not** atomic: it reads the memory, sets
     /// the new score, and calls [`Self::update`]. Backends that support atomic

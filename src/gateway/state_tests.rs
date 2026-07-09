@@ -633,7 +633,8 @@ async fn health_handler_degraded_without_agents() {
     assert_eq!(json["overall_healthy"], false);
 }
 
-// ── Drain path tests ──────────────────────────────────────────────────────────
+// ── Drain path tests
+// ──────────────────────────────────────────────────────────
 //
 // These tests verify that the shutdown drain path in dispatch.rs properly
 // invokes the pipeline for in-flight messages. If someone removes the
@@ -747,11 +748,13 @@ async fn test_drain_path_absorbs_message() {
     );
 }
 
-// ── Event emission contract tests (Phase 2B) ──────────────────────────────────
+// ── Event emission contract tests (Phase 2B)
+// ──────────────────────────────────
 //
 // These tests verify that broadcast channel edge cases are handled gracefully
-// without panicking. The production code already logs warnings via warn!/debug!,
-// so the test only needs to assert that error paths are reachable and non-fatal.
+// without panicking. The production code already logs warnings via
+// warn!/debug!, so the test only needs to assert that error paths are reachable
+// and non-fatal.
 
 #[tokio::test]
 async fn test_event_send_no_receivers_does_not_panic() {

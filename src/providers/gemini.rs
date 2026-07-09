@@ -18,7 +18,6 @@ use super::{
     CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, Message, Provider,
     ProviderInstanceConfig, Role, ToolCall, Usage,
 };
-
 use crate::model_router::gateway_client::GatewayClient;
 use crate::model_router::HttpGatewayClient;
 
@@ -29,7 +28,8 @@ pub struct GeminiProvider {
     base_url: String,
     /// Default model (default: gemini-2.0-flash)
     default_model: String,
-    /// Per-provider context window override from config (0 = use model-based estimate)
+    /// Per-provider context window override from config (0 = use model-based
+    /// estimate)
     max_context: usize,
     /// Unified HTTP client with retry/backoff, auth, and rate limiting
     gateway_client: std::sync::Arc<HttpGatewayClient>,

@@ -84,7 +84,8 @@ pub struct SideEffectContext {
     pub cron_scheduler: Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>,
     /// Webhook client for Webhook effects.
     pub webhook_client: Option<Arc<reqwest::Client>>,
-    /// Task registry for tracking spawned tasks (required by CLAUDE.md checklist).
+    /// Task registry for tracking spawned tasks (required by CLAUDE.md
+    /// checklist).
     pub task_registry: Option<Arc<TaskRegistry>>,
 }
 

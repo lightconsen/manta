@@ -958,7 +958,7 @@ async fn handle_goal(
     // Parse subcommands (e.g., /goal cancel <id>).
     let first_word = trimmed.split_whitespace().next().unwrap_or("");
     if first_word == "cancel" || first_word == "list" {
-        let rest = trimmed.splitn(2, ' ').nth(1).unwrap_or("").trim();
+        let rest = trimmed.split_once(' ').map(|x| x.1).unwrap_or("").trim();
         match first_word {
             "cancel" => {
                 if rest.is_empty() {
@@ -1059,7 +1059,7 @@ async fn handle_goal(
         }
     };
 
-    let goal_id = format!("goal_{}", uuid::Uuid::new_v4().to_string());
+    let goal_id = format!("goal_{}", uuid::Uuid::new_v4());
     let sid = session_id.unwrap_or_else(|| "unknown".to_string());
 
     // Create event channel between GoalRunner and gateway.

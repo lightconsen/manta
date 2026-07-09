@@ -6,9 +6,8 @@
 use std::collections::HashSet;
 use std::time::SystemTime;
 
-use crate::providers::Message;
-
 use crate::agent::turns::{ToolCallRecord, TurnUsage};
+use crate::providers::Message;
 
 /// Conversation context
 #[derive(Debug, Clone)]

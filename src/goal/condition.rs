@@ -1,4 +1,5 @@
-//! Goal conditions — structured, executable stop conditions for goal-based execution.
+//! Goal conditions — structured, executable stop conditions for goal-based
+//! execution.
 //!
 //! Each [`GoalCondition`] variant maps to a deterministic check that can be
 //! evaluated without an LLM. Conditions are ANDed — all must pass for the

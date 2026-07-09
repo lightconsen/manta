@@ -3,9 +3,8 @@
 //! Called during daemon / CLI startup to detect plans that were interrupted
 //! by a crash or shutdown and give the user the option to continue.
 
-use tracing::{info, warn};
-
 use tokio::io::AsyncBufReadExt;
+use tracing::{info, warn};
 
 use crate::planner::{GoalPlanner, PlanResult, TaskStateStore};
 

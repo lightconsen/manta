@@ -179,7 +179,8 @@ impl TrajectoryWriter {
                 } else {
                     // No valid JSON boundary found — skip the entire event.
                     tracing::warn!(
-                        "Trajectory entry too large ({} bytes) and no JSON boundary found, dropping",
+                        "Trajectory entry too large ({} bytes) and no JSON boundary found, \
+                         dropping",
                         json.len()
                     );
                     return Ok(());
@@ -530,7 +531,8 @@ mod tests {
             "stem should have exactly 3 parts: date, time, slug — got {parts:?}"
         );
         assert_eq!(parts[2], "test-session");
-        // parts[0] should be 8-digit date (YYYYMMDD), parts[1] should be 6-digit time (HHMMSS)
+        // parts[0] should be 8-digit date (YYYYMMDD), parts[1] should be 6-digit time
+        // (HHMMSS)
         assert_eq!(parts[0].len(), 8, "date part should be YYYYMMDD (8 digits)");
         assert_eq!(parts[1].len(), 6, "time part should be HHMMSS (6 digits)");
     }

@@ -3,21 +3,24 @@
 //! Loads and executes plugins using Wasmtime for sandboxing.
 //!
 //! Structure:
-//!   - `state.rs` — Type definitions (PluginSharedState, PluginState, PluginInstance, etc.)
+//!   - `state.rs` — Type definitions (PluginSharedState, PluginState,
+//!     PluginInstance, etc.)
 //!   - `host_functions.rs` — 16 WASM host function definitions
 
 #[cfg(feature = "plugins")]
 mod host_functions;
 mod state;
 
-pub use state::PluginInstance;
-#[cfg(feature = "plugins")]
-pub use state::{PluginEvent, PluginSharedState, PluginState};
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
+pub use state::PluginInstance;
+#[cfg(feature = "plugins")]
+use state::PluginPersistentState;
+use state::{get_migrations, MigrationRecord, CURRENT_SCHEMA_VERSION};
+#[cfg(feature = "plugins")]
+pub use state::{PluginEvent, PluginSharedState, PluginState};
 use tokio::sync::RwLock;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
@@ -25,9 +28,6 @@ use tracing::{debug, info, warn};
 use super::manifest::{PluginManifest, PluginPermission};
 use super::metrics::PluginMetricsRegistry;
 use crate::dirs;
-#[cfg(feature = "plugins")]
-use state::PluginPersistentState;
-use state::{get_migrations, MigrationRecord, CURRENT_SCHEMA_VERSION};
 
 /// Shared handle to the event subscriber map.
 #[cfg(feature = "plugins")]
@@ -43,7 +43,8 @@ pub struct PluginRuntime {
     linker: wasmtime::Linker<PluginState>,
     #[cfg(feature = "plugins")]
     shared_state: Arc<PluginSharedState>,
-    /// Event subscribers: plugin_id/wildcard → list of (subscription_id, sender)
+    /// Event subscribers: plugin_id/wildcard → list of (subscription_id,
+    /// sender)
     #[cfg(feature = "plugins")]
     event_subscribers: EventSubscribers,
     /// Monotonically increasing subscription ID counter for selective
@@ -239,8 +240,8 @@ impl PluginRuntime {
                         let current_ver = persistent.schema_version;
                         if current_ver > CURRENT_SCHEMA_VERSION {
                             warn!(
-                                "Plugin state for '{}' has schema v{} which is newer than supported \
-                                 v{}. Ignoring.",
+                                "Plugin state for '{}' has schema v{} which is newer than \
+                                 supported v{}. Ignoring.",
                                 plugin_id, current_ver, CURRENT_SCHEMA_VERSION
                             );
                             return (None, None);
@@ -263,7 +264,8 @@ impl PluginRuntime {
                                     }
                                     Err(e) => {
                                         warn!(
-                                            "Failed to migrate plugin '{}' state from v{} to v{}: {}",
+                                            "Failed to migrate plugin '{}' state from v{} to v{}: \
+                                             {}",
                                             plugin_id, from, to, e
                                         );
                                         return (None, None);

@@ -115,9 +115,10 @@ impl RegistryClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
 
     #[test]
     fn test_registry_index_deserialize() {

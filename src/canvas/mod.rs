@@ -462,8 +462,9 @@ impl CanvasManager {
     /// Get or create a canvas session tied to an external session_id.
     ///
     /// Used by the outbound pipeline to render UI for a specific conversation.
-    /// The event receiver is stored in the manager; call [`take_event_rx`](Self::take_event_rx)
-    /// to retrieve it for event processing.
+    /// The event receiver is stored in the manager; call
+    /// [`take_event_rx`](Self::take_event_rx) to retrieve it for event
+    /// processing.
     pub async fn get_or_create_for_session(&self, session_id: &str) -> Arc<CanvasSession> {
         // Use a single write lock for atomic check-and-insert to prevent TOCTOU race
         let mut map = self.session_map.write().await;
@@ -490,11 +491,12 @@ impl CanvasManager {
         session
     }
 
-    /// Take the event receiver for a session created via [`get_or_create_for_session`].
+    /// Take the event receiver for a session created via
+    /// [`get_or_create_for_session`].
     ///
-    /// Returns `None` if no receiver is registered for this session (e.g. if the
-    /// session was created via [`create_session`](Self::create_session) instead, or
-    /// if the receiver was already taken).
+    /// Returns `None` if no receiver is registered for this session (e.g. if
+    /// the session was created via [`create_session`](Self::create_session)
+    /// instead, or if the receiver was already taken).
     pub async fn take_event_rx(&self, session_id: &str) -> Option<mpsc::Receiver<CanvasEvent>> {
         self.event_rxs.write().await.remove(session_id)
     }

@@ -244,7 +244,8 @@ impl VectorStore for SqliteVecStore {
             })?
         } else {
             sqlx::query(
-                "SELECT rowid, id, source_id, text, embedding, position, total_chunks, metadata, distance
+                "SELECT rowid, id, source_id, text, embedding, position, total_chunks, metadata, \
+                 distance
                  FROM vec_chunks
                  WHERE embedding MATCH ? AND distance <= ?
                  ORDER BY distance

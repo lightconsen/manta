@@ -281,6 +281,6 @@ async fn goal_planner_fallback_when_no_adapter() {
 #[serial]
 #[ignore = "Requires device driver types that have been removed"]
 async fn goal_planner_tool_call_device() {
-    // Test skipped: device driver system (MockCapability, MockDeviceDriver, etc.)
-    // has been removed from the codebase.
+    // Test skipped: device driver system (MockCapability, MockDeviceDriver,
+    // etc.) has been removed from the codebase.
 }

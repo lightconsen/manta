@@ -7,18 +7,20 @@
 //! # Tools
 //!
 //! - `WatchableAuditLog`: wraps a `RuntimeAuditLog` and signals via
-//!   `broadcast::Sender` on each `log_entry` call. Tests can
-//!   `tokio::select!` on the receiver instead of polling.
+//!   `broadcast::Sender` on each `log_entry` call. Tests can `tokio::select!`
+//!   on the receiver instead of polling.
 //! - `CollectingAuditLog`: records every `log_entry` call into a
 //!   `Vec<AuditEntry>` accessible via `Arc<Mutex<...>>`.
-//! - `assert_eventually`: poll a predicate with backoff until it
-//!   returns `true` or a timeout elapses.
+//! - `assert_eventually`: poll a predicate with backoff until it returns `true`
+//!   or a timeout elapses.
 
-use crate::security::runtime_audit::{AuditEntry, AuditEventType, AuditLogger, RuntimeAuditLog};
 use std::sync::Arc;
 use std::time::Duration;
+
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
+
+use crate::security::runtime_audit::{AuditEntry, AuditEventType, AuditLogger, RuntimeAuditLog};
 
 /// Poll `f()` with geometric backoff until it returns `true` or
 /// `timeout` elapses.

@@ -175,8 +175,8 @@ impl Tool for ShellTool {
         // could chain additional commands beyond the allowed one.
         if !context.allowed_commands().is_empty() && contains_shell_control(command_str) {
             return Ok(ToolExecutionResult::error(format!(
-                "Command '{}' contains shell control operators which are not \
-                 permitted when command allowlisting is active",
+                "Command '{}' contains shell control operators which are not permitted when \
+                 command allowlisting is active",
                 command_str
             )));
         }

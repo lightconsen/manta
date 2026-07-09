@@ -145,8 +145,8 @@ impl Schedule {
                 let interval_secs = interval.as_secs();
                 if interval_secs == 0 {
                     warn!(
-                        "Schedule::Every interval is zero — job will never run \
-                         (interval must be >= 1 second)"
+                        "Schedule::Every interval is zero — job will never run (interval must be \
+                         >= 1 second)"
                     );
                     return None;
                 }
@@ -224,8 +224,8 @@ impl Schedule {
     pub fn warn_unsupported_fields(&self, job_name: &str) {
         if let Schedule::Cron { timezone: Some(tz), .. } = self {
             warn!(
-                "cron job '{}' specifies timezone={:?} which is currently \
-                 unsupported — schedule will be evaluated in UTC",
+                "cron job '{}' specifies timezone={:?} which is currently unsupported — schedule \
+                 will be evaluated in UTC",
                 job_name, tz
             );
         }
@@ -514,8 +514,8 @@ pub struct CronScheduler {
     ///
     /// Two paths register here:
     ///
-    /// - `CronCommand::Trigger` spawns `execute_job` as a detached task
-    ///   so the command actor is not blocked for the full job duration.
+    /// - `CronCommand::Trigger` spawns `execute_job` as a detached task so the
+    ///   command actor is not blocked for the full job duration.
     /// - `execute_job` spawns the agent inner future (so timeout aborts
     ///   propagate to the next `.await` inside the agent).
     ///
@@ -1340,16 +1340,15 @@ impl CronScheduler {
     ///
     /// 1. `kill_on_drop(true)` guarantees that if our caller's
     ///    `tokio::time::timeout` fires, the underlying `sh` process is
-    ///    SIGKILL'd as the `Child` is dropped. Without this, the timeout
-    ///    only stops *us* waiting; the child keeps running, holds FDs,
-    ///    and may spawn even more work.
-    /// 2. stdout/stderr are drained on background tasks but only the
-    ///    first `MAX_SHELL_OUTPUT_BYTES` are retained. Bytes past the cap
-    ///    are read and discarded so the child can keep writing without
-    ///    blocking on a full pipe buffer (which would otherwise cause
-    ///    SIGPIPE / non-zero exit on downstream tools in a pipeline, or
-    ///    hang the child indefinitely). The retained buffer cannot OOM
-    ///    the gateway because it is capped.
+    ///    SIGKILL'd as the `Child` is dropped. Without this, the timeout only
+    ///    stops *us* waiting; the child keeps running, holds FDs, and may spawn
+    ///    even more work.
+    /// 2. stdout/stderr are drained on background tasks but only the first
+    ///    `MAX_SHELL_OUTPUT_BYTES` are retained. Bytes past the cap are read
+    ///    and discarded so the child can keep writing without blocking on a
+    ///    full pipe buffer (which would otherwise cause SIGPIPE / non-zero exit
+    ///    on downstream tools in a pipeline, or hang the child indefinitely).
+    ///    The retained buffer cannot OOM the gateway because it is capped.
     async fn execute_shell(command: &str) -> Result<String> {
         use tokio::io::AsyncReadExt;
 
@@ -2618,8 +2617,7 @@ mod tests {
         // safe upper bound that fails serial but tolerates CI jitter.
         assert!(
             elapsed < Duration::from_millis(1500),
-            "4 due jobs each sleeping 500ms must run concurrently; \
-             actual elapsed: {:?}",
+            "4 due jobs each sleeping 500ms must run concurrently; actual elapsed: {:?}",
             elapsed
         );
 
@@ -2628,8 +2626,7 @@ mod tests {
         let remaining = jobs.read().await;
         assert!(
             remaining.is_empty(),
-            "all one-shot jobs should have been removed after execution; \
-             remaining: {:?}",
+            "all one-shot jobs should have been removed after execution; remaining: {:?}",
             remaining.keys().collect::<Vec<_>>()
         );
     }
@@ -2716,8 +2713,8 @@ mod tests {
         assert_eq!(
             entry.delivery_status,
             Some(DeliveryStatus::Failed("webhook 500".to_string())),
-            "delivery_status must reflect the caller-supplied outcome, \
-             not be synthesised from execution result"
+            "delivery_status must reflect the caller-supplied outcome, not be synthesised from \
+             execution result"
         );
     }
 

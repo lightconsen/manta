@@ -822,7 +822,8 @@ fn handle_ping(req: &WsRequest) -> WsResponse {
     WsResponse::ok(&req.id, serde_json::json!({}))
 }
 
-/// Generate a concise session title by asking an LLM to summarize the user's first message.
+/// Generate a concise session title by asking an LLM to summarize the user's
+/// first message.
 async fn generate_session_title(
     router: &crate::model_router::ModelRouter,
     message: &str,
@@ -833,7 +834,8 @@ async fn generate_session_title(
     }
 
     let prompt = format!(
-        "Summarize the following user message into a very short session title (at most 6 words, no punctuation, no explanation).\n\nMessage: {trimmed}\n\nTitle:"
+        "Summarize the following user message into a very short session title (at most 6 words, \
+         no punctuation, no explanation).\n\nMessage: {trimmed}\n\nTitle:"
     );
 
     let messages = vec![
@@ -855,7 +857,6 @@ async fn generate_session_title(
 /// Fallback title generation when LLM summarization fails.
 fn fallback_session_name(message: &str) -> String {
     let name = message
-        .trim()
         .split_whitespace()
         .take(6)
         .collect::<Vec<_>>()
@@ -865,11 +866,7 @@ fn fallback_session_name(message: &str) -> String {
 
 /// Trim and truncate a session title to keep it sidebar-friendly.
 fn clean_session_title(name: &str) -> String {
-    let name = name
-        .replace('\n', " ")
-        .replace('\r', " ")
-        .trim()
-        .to_string();
+    let name = name.replace(['\n', '\r'], " ").trim().to_string();
     if name.len() > 40 {
         format!("{}...", &name[..40])
     } else if name.is_empty() {
@@ -2253,14 +2250,14 @@ async fn handle_config_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                 "providers": config.search.providers,
                 "has_api_key": !config.search.api_key.is_empty(),
                 "keys": {
-                    "tavily": (!config.search.keys.get("tavily").map_or(true, |k| k.is_empty())).to_string(),
-                    "serpapi": (!config.search.keys.get("serpapi").map_or(true, |k| k.is_empty())).to_string(),
-                    "exa": (!config.search.keys.get("exa").map_or(true, |k| k.is_empty())).to_string(),
-                    "firecrawl": (!config.search.keys.get("firecrawl").map_or(true, |k| k.is_empty())).to_string(),
-                    "bing": (!config.search.keys.get("bing").map_or(true, |k| k.is_empty())).to_string(),
-                    "google": (!config.search.keys.get("google").map_or(true, |k| k.is_empty())).to_string(),
-                    "google_cx": (!config.search.keys.get("google_cx").map_or(true, |k| k.is_empty())).to_string(),
-                    "brave": (!config.search.keys.get("brave").map_or(true, |k| k.is_empty())).to_string(),
+                    "tavily": (!config.search.keys.get("tavily").is_none_or(|k| k.is_empty())).to_string(),
+                    "serpapi": (!config.search.keys.get("serpapi").is_none_or(|k| k.is_empty())).to_string(),
+                    "exa": (!config.search.keys.get("exa").is_none_or(|k| k.is_empty())).to_string(),
+                    "firecrawl": (!config.search.keys.get("firecrawl").is_none_or(|k| k.is_empty())).to_string(),
+                    "bing": (!config.search.keys.get("bing").is_none_or(|k| k.is_empty())).to_string(),
+                    "google": (!config.search.keys.get("google").is_none_or(|k| k.is_empty())).to_string(),
+                    "google_cx": (!config.search.keys.get("google_cx").is_none_or(|k| k.is_empty())).to_string(),
+                    "brave": (!config.search.keys.get("brave").is_none_or(|k| k.is_empty())).to_string(),
                 },
             },
         }),

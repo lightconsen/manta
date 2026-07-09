@@ -91,7 +91,8 @@ impl VectorStore for PgVectorStore {
             })?;
 
         let sql = format!(
-            "INSERT INTO {} (id, source_id, text, embedding, position, total_chunks, collection, metadata)
+            "INSERT INTO {} (id, source_id, text, embedding, position, total_chunks, collection, \
+             metadata)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT (id) DO UPDATE SET
                  source_id = EXCLUDED.source_id,

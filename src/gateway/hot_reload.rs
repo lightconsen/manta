@@ -453,7 +453,10 @@ pub(crate) async fn register_hot_reload_handlers(
                     config.hot_reload = new_config.hot_reload;
                     config.search = new_config.search;
                     drop(config_guard);
-                    info!("✅ Applied gateway config updates (security, providers, mcp, search settings)");
+                    info!(
+                        "✅ Applied gateway config updates (security, providers, mcp, search \
+                         settings)"
+                    );
 
                     // Rebuild just the WebSearchTool when search configuration changed so that
                     // new providers / API keys are picked up without a restart.
@@ -467,16 +470,22 @@ pub(crate) async fn register_hot_reload_handlers(
                         for name in search_config.provider_list() {
                             let provider = match name.as_str() {
                                 "tavily" => Some(crate::tools::web::SearchProvider::Tavily {
-                                    api_key: search_config.api_key_for("tavily").unwrap_or_default(),
+                                    api_key: search_config
+                                        .api_key_for("tavily")
+                                        .unwrap_or_default(),
                                 }),
                                 "serpapi" => Some(crate::tools::web::SearchProvider::SerpApi {
-                                    api_key: search_config.api_key_for("serpapi").unwrap_or_default(),
+                                    api_key: search_config
+                                        .api_key_for("serpapi")
+                                        .unwrap_or_default(),
                                 }),
                                 "exa" => Some(crate::tools::web::SearchProvider::Exa {
                                     api_key: search_config.api_key_for("exa").unwrap_or_default(),
                                 }),
                                 "firecrawl" => Some(crate::tools::web::SearchProvider::Firecrawl {
-                                    api_key: search_config.api_key_for("firecrawl").unwrap_or_default(),
+                                    api_key: search_config
+                                        .api_key_for("firecrawl")
+                                        .unwrap_or_default(),
                                 }),
                                 "duckduckgo" => Some(crate::tools::web::SearchProvider::DuckDuckGo),
                                 "bing" => Some(crate::tools::web::SearchProvider::Bing {
@@ -484,7 +493,9 @@ pub(crate) async fn register_hot_reload_handlers(
                                     endpoint: "https://api.bing.microsoft.com".to_string(),
                                 }),
                                 "google" => Some(crate::tools::web::SearchProvider::Google {
-                                    api_key: search_config.api_key_for("google").unwrap_or_default(),
+                                    api_key: search_config
+                                        .api_key_for("google")
+                                        .unwrap_or_default(),
                                     cx: search_config
                                         .keys
                                         .get("google_cx")
@@ -512,7 +523,10 @@ pub(crate) async fn register_hot_reload_handlers(
                             *guard = search_providers;
                             info!("✅ Updated web_search tool with new search config");
                         } else {
-                            warn!("web_search providers not found in registry, cannot apply search config hot-reload");
+                            warn!(
+                                "web_search providers not found in registry, cannot apply search \
+                                 config hot-reload"
+                            );
                         }
                     }
 

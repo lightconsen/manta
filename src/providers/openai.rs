@@ -17,7 +17,6 @@ use super::{
     CompletionStream, FunctionDefinition, Message, Provider, ProviderInstanceConfig, Role,
     ToolCall, Usage,
 };
-
 use crate::model_router::gateway_client::GatewayClient;
 use crate::model_router::HttpGatewayClient;
 

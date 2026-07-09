@@ -298,7 +298,8 @@ impl ArtifactStore {
         last.insert(session_id.to_string(), Utc::now());
     }
 
-    /// Evict the LRU session if we're at capacity (caller must hold `artifacts`).
+    /// Evict the LRU session if we're at capacity (caller must hold
+    /// `artifacts`).
     fn evict_lru(&self, artifacts: &mut HashMap<String, Vec<Artifact>>, new_session_id: &str) {
         if artifacts.len() <= self.max_sessions {
             return;

@@ -460,10 +460,11 @@ impl GatewayClient for HttpGatewayClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde::Serialize;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
 
     #[derive(Serialize)]
     struct TestBody {

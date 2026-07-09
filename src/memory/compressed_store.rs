@@ -5,18 +5,19 @@
 //! Each file is a daily shard: `archival/YYYY-MM-DD.jsonl.gz`.
 //!
 //! # Design
-//! - **Append-only writes**: each `store()` appends a single self-contained gzip
-//!   member to the current day's shard. No read-modify-write. Concatenated gzip
-//!   members are a valid gzip file per RFC 1952 and read transparently via
+//! - **Append-only writes**: each `store()` appends a single self-contained
+//!   gzip member to the current day's shard. No read-modify-write. Concatenated
+//!   gzip members are a valid gzip file per RFC 1952 and read transparently via
 //!   `MultiGzDecoder`.
-//! - **Side index** (`archival/_index.jsonl`): maps `memory_id →
-//!   (shard, byte_offset, byte_len)`. Allows `get()` to seek + decompress a
-//!   single member instead of loading all shards.
+//! - **Side index** (`archival/_index.jsonl`): maps `memory_id → (shard,
+//!   byte_offset, byte_len)`. Allows `get()` to seek + decompress a single
+//!   member instead of loading all shards.
 //! - **`update()` / `delete()` / `cleanup_expired`** still trigger a full-shard
 //!   rewrite (each entry becomes its own gzip member) and rebuild the index.
 //!   These operations are rare on cold archival data.
-//! - **`search()` / `stats()`** still walk all shards. Archival full-text search
-//!   is intentionally slow; hybrid search should reach warmer tiers first.
+//! - **`search()` / `stats()`** still walk all shards. Archival full-text
+//!   search is intentionally slow; hybrid search should reach warmer tiers
+//!   first.
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -72,8 +73,9 @@ pub struct CompressedJsonlStore {
     dir: PathBuf,
     /// Maximum memories per shard before rotating to next day.
     max_per_shard: usize,
-    /// Mutex for synchronising write operations (store, update, delete, cleanup).
-    /// Prevents concurrent read-modify-write cycles from silently losing data.
+    /// Mutex for synchronising write operations (store, update, delete,
+    /// cleanup). Prevents concurrent read-modify-write cycles from silently
+    /// losing data.
     write_lock: Arc<Mutex<()>>,
     /// In-memory cache of the side index. `None` = not yet loaded.
     index: Arc<RwLock<Option<HashMap<String, IndexEntry>>>>,
@@ -145,8 +147,8 @@ impl CompressedJsonlStore {
 
     /// Load (or return cached) side index.
     ///
-    /// If the index file is missing but shards exist (legacy data written before
-    /// the index existed), it is rebuilt by scanning shard contents.
+    /// If the index file is missing but shards exist (legacy data written
+    /// before the index existed), it is rebuilt by scanning shard contents.
     async fn load_index(&self) -> crate::Result<HashMap<String, IndexEntry>> {
         {
             let guard = self.index.read().await;
@@ -200,7 +202,8 @@ impl CompressedJsonlStore {
         *self.index.write().await = None;
     }
 
-    /// Append one entry to the on-disk index file and update the in-memory cache.
+    /// Append one entry to the on-disk index file and update the in-memory
+    /// cache.
     async fn append_index_entry(&self, entry: IndexEntry) -> crate::Result<()> {
         let idx_path = self.index_path();
         let line =
@@ -260,7 +263,8 @@ impl CompressedJsonlStore {
     }
 
     /// Rebuild the index by scanning every shard, decompressing each member,
-    /// and recording (id, shard, offset, len) for each entry, plus filterable metadata.
+    /// and recording (id, shard, offset, len) for each entry, plus filterable
+    /// metadata.
     ///
     /// Used when the index file is missing (legacy data) or after a rewrite.
     /// The rebuilt index is written atomically to `_index.jsonl`.
@@ -710,7 +714,8 @@ impl CompressedJsonlStore {
             }
         }
 
-        // Rename index last so a partial rewrite still leaves a consistent index-vs-shards state.
+        // Rename index last so a partial rewrite still leaves a consistent
+        // index-vs-shards state.
         if let Err(e) = fs::rename(&idx_tmp, self.index_path()).await {
             warn!(
                 "Failed to install rebuilt index at {:?}: {}. Cache invalidated; next \
@@ -902,8 +907,9 @@ impl MemoryStore for CompressedJsonlStore {
             }
         }
 
-        // Apply remaining filters (content_query and conversation_id, which aren't in index),
-        // plus double-check include_expired in case system time changed.
+        // Apply remaining filters (content_query and conversation_id, which aren't in
+        // index), plus double-check include_expired in case system time
+        // changed.
         let mut results: Vec<Memory> = candidates
             .into_iter()
             .filter(|m| {

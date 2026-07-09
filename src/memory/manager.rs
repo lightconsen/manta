@@ -1479,9 +1479,11 @@ impl MemoryManagerBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use async_trait::async_trait;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_memory_manager_observe_and_retrieve() {
@@ -1937,12 +1939,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_manager_retrieve_hybrid_tracking_id() {
+        use sqlx::sqlite::SqlitePool;
+
         use crate::memory::effectiveness::{EffectivenessConfig, EffectivenessTracker};
         use crate::memory::session_search::SessionSearch;
         use crate::memory::vector::{
             EmbeddingConfig, EmbeddingProvider, MemoryVectorStore, VectorMemoryService, VectorStore,
         };
-        use sqlx::sqlite::SqlitePool;
 
         struct FixedEmbeddingProvider;
         #[async_trait]

@@ -42,7 +42,8 @@ static RE_PREFERENCE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("hard-coded preference regex is valid")
 });
 
-// Threat-scanning regex patterns (compiled once for all PersonalityMemory instances).
+// Threat-scanning regex patterns (compiled once for all PersonalityMemory
+// instances).
 #[allow(clippy::expect_used)]
 static RE_SYSTEM_PROMPT_INJECTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:^|\n)\s*(system|assistant|user)\s*:\s*")

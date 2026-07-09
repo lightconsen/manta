@@ -16,7 +16,8 @@ pub struct RetrospectConfig {
     /// Evaluate conversation trajectory every N turns (default: 10).
     #[serde(default = "default_retrospect_interval")]
     pub interval: usize,
-    /// Number of recent turns to include in each trajectory review (default: 5).
+    /// Number of recent turns to include in each trajectory review (default:
+    /// 5).
     #[serde(default = "default_retrospect_window")]
     pub window_size: usize,
     /// Minimum turns before the first retrospect fires (default: 3).

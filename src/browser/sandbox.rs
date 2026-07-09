@@ -74,7 +74,8 @@ pub struct BrowserSandbox {
     config: SandboxConfig,
 }
 
-/// Validate that a Docker image or container name contains only safe characters.
+/// Validate that a Docker image or container name contains only safe
+/// characters.
 fn validate_docker_arg(value: &str) -> crate::Result<()> {
     // Allow alphanumeric, hyphens, underscores, dots, slashes, colons (for tags)
     if value.is_empty()

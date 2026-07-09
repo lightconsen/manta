@@ -75,8 +75,8 @@ pub async fn init_storage(config: &GatewayConfig) -> crate::Result<StorageInit> 
                         }
                         Err(e) => {
                             warn!(
-                                "Failed to initialize sqlite-vec vector store: {}. \
-                             Falling back to in-memory vector store.",
+                                "Failed to initialize sqlite-vec vector store: {}. Falling back \
+                                 to in-memory vector store.",
                                 e
                             );
                             None

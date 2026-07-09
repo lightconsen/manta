@@ -1,7 +1,8 @@
 //! Memory Event Log System
 //!
-//! Provides JSONL-based event logging for memory operations with date-partitioned storage.
-//! Events are appended to `{workspace}/memory/.dreams/events-YYYY-MM-DD.jsonl`.
+//! Provides JSONL-based event logging for memory operations with
+//! date-partitioned storage. Events are appended to
+//! `{workspace}/memory/.dreams/events-YYYY-MM-DD.jsonl`.
 //!
 //! Event types:
 //! - Recall: when memories are recalled into context
@@ -172,7 +173,8 @@ impl Default for MemoryEventBuilder {
     }
 }
 
-/// Helper to get event log file path for a given timestamp (in seconds since Unix epoch).
+/// Helper to get event log file path for a given timestamp (in seconds since
+/// Unix epoch).
 fn event_log_path_for_timestamp(
     workspace_dir: impl AsRef<std::path::Path>,
     timestamp_secs: u64,
@@ -187,7 +189,8 @@ fn event_log_path_for_timestamp(
         .join(format!("events-{}.jsonl", date_str))
 }
 
-/// Helper to get all event log files in the directory (sorted by date, oldest first).
+/// Helper to get all event log files in the directory (sorted by date, oldest
+/// first).
 async fn list_event_log_files(workspace_dir: impl AsRef<std::path::Path>) -> Vec<PathBuf> {
     let dir = workspace_dir.as_ref().join(MEMORY_EVENT_LOG_DIR);
     let mut files = Vec::new();
@@ -214,7 +217,8 @@ async fn list_event_log_files(workspace_dir: impl AsRef<std::path::Path>) -> Vec
         }
     }
 
-    // Sort files lexicographically (which works for ISO dates: events-2024-01-01.jsonl)
+    // Sort files lexicographically (which works for ISO dates:
+    // events-2024-01-01.jsonl)
     files.sort();
     files
 }
@@ -289,7 +293,8 @@ pub async fn append_memory_event(
     Ok(())
 }
 
-/// Read all memory events from all JSONL log files (including legacy), sorted by timestamp.
+/// Read all memory events from all JSONL log files (including legacy), sorted
+/// by timestamp.
 pub async fn read_memory_events(
     workspace_dir: impl AsRef<std::path::Path>,
 ) -> crate::Result<Vec<MemoryEvent>> {

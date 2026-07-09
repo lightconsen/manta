@@ -149,8 +149,8 @@ impl ReplyPrefixTemplate {
                     result.push(next);
                 } else {
                     warn!(
-                        "reply_prefix: trailing backslash at end of template — unescape \
-                         failed, original character '\\' passed through"
+                        "reply_prefix: trailing backslash at end of template — unescape failed, \
+                         original character '\\' passed through"
                     );
                     result.push(c);
                 }

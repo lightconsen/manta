@@ -1741,7 +1741,8 @@ impl Agent {
             outgoing.usage = Some(*usage);
         }
 
-        // ── Note: trajectory reflection (retrospect) runs in process_message_with_progress ──
+        // ── Note: trajectory reflection (retrospect) runs in
+        // process_message_with_progress ──
 
         Ok(outgoing)
     }
@@ -1994,7 +1995,8 @@ impl Agent {
             }
         };
 
-        // Transfer accumulated tool call records and token usage from context to this turn
+        // Transfer accumulated tool call records and token usage from context to this
+        // turn
         let tool_records = thread.context.take_tool_call_records();
         if !tool_records.is_empty() {
             thread.turns[turn_idx].tool_calls = tool_records;
@@ -2141,7 +2143,7 @@ impl Agent {
             let interval = engine.config.interval as u64;
             let min_turns = engine.config.min_turns as u64;
 
-            if counter >= min_turns && counter % interval == 0 {
+            if counter >= min_turns && counter.is_multiple_of(interval) {
                 let engine = engine.clone();
                 let mm = self.memory_manager.clone();
                 let uid = user_id.clone();
@@ -2922,9 +2924,9 @@ impl Agent {
         // Accumulate token usage for non-tool-call responses
         if let Some(ref usage) = response.usage {
             context.accumulate_turn_token_usage(
-                usage.prompt_tokens as u32,
-                usage.completion_tokens as u32,
-                usage.total_tokens as u32,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
             );
         }
 
@@ -2943,9 +2945,9 @@ impl Agent {
         // Accumulate token usage from the LLM response that produced these tool calls
         if let Some(ref usage) = original_response.usage {
             context.accumulate_turn_token_usage(
-                usage.prompt_tokens as u32,
-                usage.completion_tokens as u32,
-                usage.total_tokens as u32,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
             );
         }
 
@@ -3005,7 +3007,8 @@ impl Agent {
                     tokio::spawn(async move {
                         (cb)(ProgressEvent::ToolResult {
                             name,
-                            result: "[Duplicate tool call skipped - already executed with same parameters]"
+                            result: "[Duplicate tool call skipped - already executed with same \
+                                     parameters]"
                                 .to_string(),
                             data: None,
                             execution_time_ms: 0,
@@ -3129,9 +3132,9 @@ impl Agent {
         // Accumulate token usage from this LLM completion in the tool loop
         if let Some(ref usage) = final_response.usage {
             context.accumulate_turn_token_usage(
-                usage.prompt_tokens as u32,
-                usage.completion_tokens as u32,
-                usage.total_tokens as u32,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
             );
         }
 
@@ -3724,7 +3727,8 @@ impl AgentBuilder {
         self
     }
 
-    /// Set reflection configuration for self-critique and iterative improvement.
+    /// Set reflection configuration for self-critique and iterative
+    /// improvement.
     ///
     /// When enabled, the agent evaluates its own output via an LLM critic
     /// and iteratively improves responses that fall below quality thresholds.

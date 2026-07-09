@@ -623,7 +623,8 @@ pub struct ProviderInstanceConfig {
 /// Merge provider-specific `extra` parameters into a serialized request body.
 ///
 /// Both `body` and `extra` are expected to be JSON objects. Non-object values
-/// (including `None`) are silently ignored so this is safe to call unconditionally.
+/// (including `None`) are silently ignored so this is safe to call
+/// unconditionally.
 pub fn merge_extra(body: &mut serde_json::Value, extra: Option<serde_json::Value>) {
     let Some(serde_json::Value::Object(extra_map)) = extra else {
         return;
