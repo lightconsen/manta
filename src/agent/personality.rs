@@ -17,6 +17,12 @@ use tracing::{debug, info, warn};
 use crate::agent::AgentConfig;
 use crate::dirs;
 
+/// Regex for matching placeholder headings that should not be used as display names.
+static PLACEHOLDER_HEADING_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:IDENTITY|SOUL|BOOTSTRAP|USER|AGENTS|TOOLS|HEARTBEAT|MEMORY)\.md|我是谁|身份信息|agent\s*identity")
+        .expect("PLACEHOLDER_HEADING_RE is valid")
+});
+
 /// Regex for markdown list style name entries like `- **名称**: 小明`.
 static NAME_LIST_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*[-*]\s*\*\*\s*(?:名称|name|display\s*name)\s*\*\*\s*[:：]\s*(.+)\s*$")
@@ -24,8 +30,9 @@ static NAME_LIST_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Regex for YAML-style `name: 小明` entries.
-static NAME_YAML_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)^\s*name\s*[:：]\s*(.+?)\s*$").expect("NAME_YAML_RE is valid"));
+static NAME_YAML_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*name\s*[:：]\s*(.+?)\s*$").expect("NAME_YAML_RE is valid")
+});
 
 /// Regex for markdown list style emoji entries like `- **Emoji**: 🐼`.
 static EMOJI_LIST_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -499,13 +506,17 @@ impl AgentPersonality {
             }
         }
 
-        // 4. Fallback to first heading line
+        // 4. Fallback to first heading line, but ignore placeholder headings.
         identity
             .lines()
             .next()
             .and_then(|line| {
                 let trimmed = line.trim();
-                trimmed.strip_prefix("#").map(|s| s.trim().to_string())
+                let title = trimmed.strip_prefix("#").map(|s| s.trim())?;
+                if PLACEHOLDER_HEADING_RE.is_match(title) {
+                    return None;
+                }
+                Some(title.to_string())
             })
             .unwrap_or_else(|| self.id.clone())
     }
@@ -518,7 +529,8 @@ impl AgentPersonality {
         let emoji_from_text = |text: &str| -> Option<String> {
             for line in text.lines() {
                 let trimmed = line.trim();
-                if let Some(value) = trimmed.strip_prefix("emoji:")
+                if let Some(value) = trimmed
+                    .strip_prefix("emoji:")
                     .or_else(|| trimmed.strip_prefix("Emoji:"))
                     .or_else(|| trimmed.strip_prefix("emoji："))
                     .or_else(|| trimmed.strip_prefix("Emoji："))
@@ -840,6 +852,42 @@ mod tests {
         };
 
         assert_eq!(personality.display_name(), "My Agent Name");
+    }
+
+    #[test]
+    fn test_display_name_from_chinese_list() {
+        let identity = "# 身份信息\n\n- **名称**: 小明\n- **角色**: 翻译秘书".to_string();
+        let personality = AgentPersonality {
+            id: "secretary_xiaoming".to_string(),
+            identity,
+            ..Default::default()
+        };
+
+        assert_eq!(personality.display_name(), "小明");
+    }
+
+    #[test]
+    fn test_display_name_ignores_placeholder_heading() {
+        let identity = "# IDENTITY.md — 我是谁\n\n- **名称**: 小王 (xiaowang)".to_string();
+        let personality = AgentPersonality {
+            id: "xiaowang".to_string(),
+            identity,
+            ..Default::default()
+        };
+
+        assert_eq!(personality.display_name(), "小王 (xiaowang)");
+    }
+
+    #[test]
+    fn test_display_name_fallback_to_id() {
+        let identity = "# 身份信息\n\n- **角色**: 私人秘书".to_string();
+        let personality = AgentPersonality {
+            id: "secretary_xiaowang".to_string(),
+            identity,
+            ..Default::default()
+        };
+
+        assert_eq!(personality.display_name(), "secretary_xiaowang");
     }
 
     #[test]
