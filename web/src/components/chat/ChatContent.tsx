@@ -302,7 +302,11 @@ export function ChatContent({ transport }: ChatContentProps) {
                   transform: `translateY(${virtualItem.start}px)`,
                 }}
               >
-                <MessageBubble message={messages[virtualItem.index]} transport={transport} />
+                <MessageBubble
+                  message={messages[virtualItem.index]}
+                  transport={transport}
+                  onEdit={(id, text) => transport.editUserMessage(id, text)}
+                />
               </div>
             ))}
           </div>

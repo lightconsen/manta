@@ -3,13 +3,22 @@ import { ReasoningPart } from "@/components/shared/ReasoningPart";
 import { ToolCallPart } from "@/components/shared/ToolCallPart";
 import { Avatar } from "./Avatar";
 import { LiveStatusBar } from "./LiveStatusBar";
-import { Clock, Wrench } from "lucide-react";
+import {
+  Clock,
+  Wrench,
+  Copy,
+  Check,
+  Pencil,
+  RotateCcw,
+} from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import type { ChatMessage, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
+import { useState, useCallback, useRef } from "react";
 
 interface MessageBubbleProps {
   message: ChatMessage;
   transport?: SyscityWebSocketTransport;
+  onEdit?: (id: string, text: string) => void;
 }
 
 const centerStyle: Record<string, string> = {
@@ -17,23 +26,187 @@ const centerStyle: Record<string, string> = {
   paddingRight: "calc((100% - var(--message-list-max-width)) / 2)",
 };
 
-export function MessageBubble({ message, transport }: MessageBubbleProps) {
+function useCopied() {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+  return { copied, copy };
+}
+
+function ActionButton({
+  icon: Icon,
+  title,
+  onClick,
+  active,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  onClick: () => void;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className={`p-1 rounded-md transition ${
+        active
+          ? "text-primary-600 dark:text-primary-400 bg-primary-100 dark:bg-primary-900/20"
+          : "text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
+      }`}
+    >
+      <Icon className="w-3.5 h-3.5" />
+    </button>
+  );
+}
+
+function UserMessageActions({
+  content,
+  onEdit,
+}: {
+  content: string;
+  onEdit?: () => void;
+}) {
+  const { copied, copy } = useCopied();
+
+  return (
+    <div className="flex items-center justify-end gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <ActionButton
+        icon={copied ? Check : Copy}
+        title={copied ? "Copied" : "Copy"}
+        onClick={() => copy(content)}
+        active={copied}
+      />
+      {onEdit && (
+        <ActionButton icon={Pencil} title="Edit" onClick={onEdit} />
+      )}
+    </div>
+  );
+}
+
+function AssistantMessageActions({
+  content,
+  onRegenerate,
+}: {
+  content: string;
+  onRegenerate?: () => void;
+}) {
+  const { copied, copy } = useCopied();
+
+  return (
+    <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <ActionButton
+        icon={copied ? Check : Copy}
+        title={copied ? "Copied" : "Copy"}
+        onClick={() => copy(content)}
+        active={copied}
+      />
+      {onRegenerate && (
+        <ActionButton
+          icon={RotateCcw}
+          title="Regenerate"
+          onClick={onRegenerate}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Extract only the final assistant text, ignoring reasoning/tool-call parts. */
+function assistantReplyText(message: ChatMessage): string {
+  if (!message.parts || message.parts.length === 0) return message.content;
+  const textParts = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text || "");
+  return textParts.join("\n\n");
+}
+
+export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps) {
   const isUser = message.role === "user";
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(message.content);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleEditSubmit = useCallback(() => {
+    const trimmed = editText.trim();
+    if (trimmed && trimmed !== message.content && onEdit) {
+      onEdit(message.id, trimmed);
+    }
+    setIsEditing(false);
+  }, [editText, message.content, message.id, onEdit]);
+
+  const handleEditKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleEditSubmit();
+      } else if (e.key === "Escape") {
+        setIsEditing(false);
+        setEditText(message.content);
+      }
+    },
+    [handleEditSubmit, message.content]
+  );
+
+  const handleBlur = useCallback(() => {
+    // Small delay so clicks on other elements can be processed first
+    setTimeout(() => {
+      if (document.activeElement !== textareaRef.current) {
+        handleEditSubmit();
+      }
+    }, 150);
+  }, [handleEditSubmit]);
 
   if (isUser) {
     return (
-      <div className="py-4">
+      <div className="py-4 group">
         <div className="flex gap-3 flex-row-reverse" style={centerStyle}>
           <Avatar role="user" />
           <div className="flex-1 min-w-0 text-right">
             <div className="text-[11px] font-medium text-secondary mb-1 uppercase tracking-wide">
               You
             </div>
-            <div className="inline-block text-left rounded-2xl px-4 py-2.5 bg-primary-600 text-white rounded-br-md">
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                {message.content}
-              </p>
-            </div>
+            {isEditing ? (
+              <div className="inline-block text-left w-full max-w-xl">
+                <textarea
+                  ref={textareaRef}
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={handleEditKeyDown}
+                  onBlur={handleBlur}
+                  autoFocus
+                  rows={Math.min(6, editText.split("\n").length + 1)}
+                  className="w-full resize-none rounded-xl px-4 py-2.5 text-sm bg-card text-primary border border-subtle focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                />
+                <div className="mt-1 text-[10px] text-secondary text-right">
+                  Enter to save, Esc to cancel
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="inline-block text-left rounded-2xl px-4 py-2.5 bg-primary-600 text-white rounded-br-md">
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                    {message.content}
+                  </p>
+                </div>
+                <UserMessageActions
+                  content={message.content}
+                  onEdit={() => {
+                    setEditText(message.content);
+                    setIsEditing(true);
+                  }}
+                />
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -43,9 +216,14 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
   const hasParts = message.parts && message.parts.length > 0;
   const isAssistant = message.role === "assistant";
   const hasMetadata = isAssistant && (message.durationMs !== undefined || message.toolCount !== undefined);
+  const replyText = assistantReplyText(message);
+
+  const handleRegenerate = useCallback(() => {
+    transport?.regenerateAssistantMessage(message.id);
+  }, [message.id, transport]);
 
   return (
-    <div className="py-4">
+    <div className="py-4 group">
       <div className="flex gap-3 flex-row" style={centerStyle}>
         <Avatar role="assistant" />
         <div className="flex-1 min-w-0">
@@ -107,6 +285,12 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
                 </span>
               )}
             </div>
+          )}
+          {!message.liveStatus && (
+            <AssistantMessageActions
+              content={replyText}
+              onRegenerate={handleRegenerate}
+            />
           )}
         </div>
       </div>

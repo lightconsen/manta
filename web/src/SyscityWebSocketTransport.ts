@@ -334,7 +334,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     // Reuse an existing empty session if one exists
     const sessions = this.getLocalSessions();
     for (const sid of sessions) {
-      if (this.getHistory(sid).length === 0) {
+      const history = this.getHistory(sid);
+      if (history.length === 0) {
         this.sessionId = sid;
         localStorage.setItem("syscity_session", this.sessionId);
         this.subscribedSessions = [];
@@ -680,6 +681,72 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
 
   clearHistory(sessionId: string): void {
     localStorage.removeItem(this.historyKey(sessionId));
+  }
+
+  /** Replace the history for a session and persist it to localStorage. */
+  setHistory(sessionId: string, messages: ChatMessage[]): void {
+    this.saveHistory(sessionId, messages);
+    if (sessionId === this.sessionId) {
+      this.setMessages(messages);
+    }
+  }
+
+  private saveHistory(sessionId: string, messages: ChatMessage[]): void {
+    const key = this.historyKey(sessionId);
+    const trimmed = messages.slice(-200).map((m) => ({
+      ...m,
+      timestamp: m.timestamp ?? Date.now(),
+    }));
+    localStorage.setItem(key, JSON.stringify(trimmed));
+  }
+
+  /** Edit a user message: remove it and all following messages, then re-send. */
+  async editUserMessage(messageId: string, newText: string): Promise<void> {
+    const currentMessages = this.messages;
+    const idx = currentMessages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+
+    const kept = currentMessages.slice(0, idx);
+    const edited: ChatMessage = {
+      id: messageId,
+      role: "user",
+      content: newText,
+      timestamp: Date.now(),
+    };
+    const next = [...kept, edited];
+    this.setHistory(this.sessionId, next);
+
+    // Trigger assistant-ui to run again with the edited prompt
+    await this.resendLastUserMessage();
+  }
+
+  /** Remove the last assistant reply and re-send the preceding user message. */
+  async regenerateAssistantMessage(messageId: string): Promise<void> {
+    const currentMessages = this.messages;
+    const idx = currentMessages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+
+    const before = currentMessages.slice(0, idx);
+    this.setHistory(this.sessionId, before);
+
+    await this.resendLastUserMessage();
+  }
+
+  private async resendLastUserMessage(): Promise<void> {
+    const last = this.messages[this.messages.length - 1];
+    if (!last || last.role !== "user") return;
+
+    // Abort any in-flight generation
+    this.currentAbortController?.abort();
+    this.isRunningFlag = false;
+    this.runListeners.forEach((cb) => cb(false));
+
+    // Send via chat.send like a normal user turn. The assistant-ui runtime
+    // drives the streaming response via run() when messages change.
+    this.sendRequest("chat.send", {
+      session_id: this.sessionId,
+      message: last.content,
+    });
   }
 
   /* ── Config ── */
