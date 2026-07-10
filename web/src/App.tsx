@@ -23,10 +23,13 @@ function ChatAppInner({ transport }: { transport: SyscityWebSocketTransport }) {
     let cancelled = false;
     const doLoad = async () => {
       try {
-        const history = await transport.loadHistory(transport.getSessionId());
+        const { messages: history, hasMore } = await transport.loadHistory(
+          transport.getSessionId()
+        );
         if (cancelled) return;
         transport.setMessages(history);
         useChatStore.getState().setMessages(history);
+        useChatStore.getState().setHasMoreHistory(hasMore);
       } catch {
         /* ignore — will retry when connected */
       }
@@ -64,7 +67,18 @@ function ChatApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     return localStorage.getItem("syscity_sidebar_collapsed") === "true";
   });
-  const [sessions, setSessions] = useState<Array<{ id: string; label?: string }>>([]);
+  const [sessions, setSessions] = useState<
+    Array<{ id: string; label?: string; agent_id?: string }>
+  >([]);
+  const [agents, setAgents] = useState<
+    Array<{
+      id: string;
+      display_name: string;
+      emoji: string;
+      is_valid: boolean;
+      has_heartbeat: boolean;
+    }>
+  >([]);
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus>("connecting");
   const [sessionKey, setSessionKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -80,21 +94,36 @@ function ChatApp() {
     setSessions(list);
   }, [transport]);
 
+  // Load agents
+  const refreshAgents = useCallback(async () => {
+    const list = await transport.listAgentRegistry();
+    // Exclude the default agent and any invalid entries.
+    const filtered = list.filter(
+      (a) => a.is_valid && a.id !== "default"
+    );
+    setAgents(filtered);
+  }, [transport]);
+
   // Network status
   useEffect(() => {
     return transport.onStatusChange((status) => {
       setNetworkStatus(status);
       if (status === "connected") {
         refreshSessions();
+        refreshAgents();
       }
     });
-  }, [transport, refreshSessions]);
+  }, [transport, refreshSessions, refreshAgents]);
 
   useEffect(() => {
     refreshSessions();
-    const interval = setInterval(refreshSessions, 8000);
+    refreshAgents();
+    const interval = setInterval(() => {
+      refreshSessions();
+      refreshAgents();
+    }, 8000);
     return () => clearInterval(interval);
-  }, [refreshSessions]);
+  }, [refreshSessions, refreshAgents]);
 
   // Refresh session list immediately when transport creates/switches sessions
   useEffect(() => {
@@ -244,27 +273,66 @@ function ChatApp() {
     refreshSessions();
   }, [transport, refreshSessions]);
 
+  const handleCreateSessionWithAgent = useCallback(
+    async (agentId: string) => {
+      setSettingsOpen(false);
+
+      // If an empty session already exists for this agent, switch to it instead
+      // of creating another one.
+      const existing = sessions.find((s) => s.agent_id === agentId);
+      if (existing) {
+        const { messages: history } = await transport.loadHistory(existing.id);
+        if (history.length === 0) {
+          transport.switchSession(existing.id);
+          transport.setMessages([]);
+          useChatStore.getState().setHasMoreHistory(false);
+          setSessionKey((k) => k + 1);
+          await refreshSessions();
+          return;
+        }
+      }
+
+      transport.createSession(agentId);
+      transport.setMessages([]);
+      setSessionKey((k) => k + 1);
+      await refreshSessions();
+    },
+    [transport, refreshSessions, sessions]
+  );
+
   const handleSwitchSession = useCallback(
     async (id: string) => {
       setSettingsOpen(false);
       transport.switchSession(id);
       // Load history for the new session from backend
-      const history = await transport.loadHistory(id);
+      const { messages: history, hasMore } = await transport.loadHistory(id);
       transport.setMessages(history);
+      useChatStore.getState().setHasMoreHistory(hasMore);
       setSessionKey((k) => k + 1);
     },
     [transport]
   );
+
+  // Build session items enriched with agent info for sidebar badges.
+  const sessionItems = useMemo(() => {
+    return sessions.map((s) => ({
+      id: s.id,
+      label: s.label,
+      agent: agents.find((a) => a.id === s.agent_id),
+    }));
+  }, [sessions, agents]);
 
   return (
     <div className="h-screen flex bg-page text-primary">
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((c) => !c)}
-        sessions={sessions}
+        sessions={sessionItems}
         currentSessionId={transport.getSessionId()}
         onSwitchSession={handleSwitchSession}
         onNewSession={handleNewSession}
+        agents={agents}
+        onCreateSessionWithAgent={handleCreateSessionWithAgent}
         networkStatus={networkStatus}
         onOpenSettings={() => setSettingsOpen((s) => !s)}
       />

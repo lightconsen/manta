@@ -79,7 +79,7 @@ interface SettingsPanelProps {
 export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   const [config, setConfig] = useState<SyscityConfig>({});
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
-  const [agentRegistry, setAgentRegistry] = useState<Array<{ id: string; display_name: string; is_valid: boolean; has_heartbeat: boolean }>>([]);
+  const [agentRegistry, setAgentRegistry] = useState<Array<{ id: string; display_name: string; emoji?: string; is_valid: boolean; has_heartbeat: boolean }>>([]);
   const [sessions, setSessions] = useState<Array<{ id: string; label?: string }>>([]);
   const [crons, setCrons] = useState<Array<Record<string, unknown>>>([]);
   const [skills, setSkills] = useState<Array<Record<string, unknown>>>([]);
@@ -153,7 +153,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       .then(([cfg, mdl, reg, sess, cronRes, skillRes, presetRes, mcpRes]) => {
         setConfig(cfg as SyscityConfig);
         setModels(mdl.models || []);
-        const registry = reg.agents || [];
+        const registry = reg || [];
         setAgentRegistry(registry);
         setSessions(sess || []);
         setCrons(cronRes.jobs || []);
