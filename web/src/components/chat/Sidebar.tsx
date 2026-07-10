@@ -145,7 +145,7 @@ export function Sidebar({
       </div>
 
       {/* Agents: 40% */}
-      <div className="h-[40%] flex flex-col border-t border-border/50">
+      <div className="h-[40%] flex flex-col border-t border-subtle">
         {!collapsed && (
           <div className="px-3 py-2 shrink-0">
             <span className="text-[10px] uppercase tracking-wider text-secondary font-medium">
@@ -192,7 +192,7 @@ export function Sidebar({
       </div>
 
       {/* Bottom: Network + Theme + Settings */}
-      <div className="p-3 shrink-0 border-t border-border/50">
+      <div className="p-3 shrink-0 border-t border-subtle">
         <div
           className={`flex items-center ${
             collapsed ? "justify-center" : "justify-between"
