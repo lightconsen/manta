@@ -313,6 +313,23 @@ function ChatApp() {
     [transport]
   );
 
+  const handleRenameSession = useCallback(
+    async (id: string, name: string) => {
+      await transport.renameSession(id, name);
+      refreshSessions();
+    },
+    [transport, refreshSessions]
+  );
+
+  const handleDeleteSession = useCallback(
+    async (id: string) => {
+      await transport.deleteSession(id);
+      refreshSessions();
+      setSessionKey((k) => k + 1);
+    },
+    [transport, refreshSessions]
+  );
+
   // Build session items enriched with agent info for sidebar badges.
   const sessionItems = useMemo(() => {
     return sessions.map((s) => ({
@@ -335,6 +352,8 @@ function ChatApp() {
         onCreateSessionWithAgent={handleCreateSessionWithAgent}
         networkStatus={networkStatus}
         onOpenSettings={() => setSettingsOpen((s) => !s)}
+        onRenameSession={handleRenameSession}
+        onDeleteSession={handleDeleteSession}
       />
       <main className="flex-1 flex flex-col overflow-hidden">
         {settingsOpen ? (

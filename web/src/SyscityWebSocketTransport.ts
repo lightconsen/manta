@@ -448,6 +448,34 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
+  async renameSession(sessionId: string, name: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("sessions.rename", { session_id: sessionId, name });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async deleteSession(sessionId: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("sessions.delete", { session_id: sessionId });
+      // Clean up localStorage
+      const local = this.getLocalSessions().filter((id) => id !== sessionId);
+      localStorage.setItem("syscity_sessions", JSON.stringify(local));
+      this.clearHistory(sessionId);
+      if (this.sessionId === sessionId) {
+        this.sessionId = `web:${this.deviceId}_${Date.now()}`;
+        localStorage.setItem("syscity_session", this.sessionId);
+        this.setMessages([]);
+        this.notifySessionChange();
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private sessionLabel(id: string): string {
     const parts = id.split("_");
     const last = parts[parts.length - 1];

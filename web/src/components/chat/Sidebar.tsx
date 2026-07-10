@@ -7,10 +7,13 @@ import {
   Settings,
   Bot,
   HeartPulse,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { useThemeStore } from "@/stores/themeStore";
 import { StatusDot } from "./StatusDot";
 import type { NetworkStatus } from "@/SyscityWebSocketTransport";
+import { useState, useRef, useCallback } from "react";
 
 interface AgentItem {
   id: string;
@@ -37,6 +40,8 @@ interface SidebarProps {
   onCreateSessionWithAgent: (agentId: string) => void;
   networkStatus: NetworkStatus;
   onOpenSettings: () => void;
+  onRenameSession?: (id: string, name: string) => void | Promise<void>;
+  onDeleteSession?: (id: string) => void | Promise<void>;
 }
 
 export function Sidebar({
@@ -50,6 +55,8 @@ export function Sidebar({
   onCreateSessionWithAgent,
   networkStatus,
   onOpenSettings,
+  onRenameSession,
+  onDeleteSession,
 }: SidebarProps) {
   const { resolvedTheme, setTheme } = useThemeStore();
 
@@ -98,38 +105,15 @@ export function Sidebar({
           </div>
         )}
         {sessions.map((s) => (
-          <button
+          <SessionRow
             key={s.id}
-            onClick={() => onSwitchSession(s.id)}
-            className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 ${
-              s.id === currentSessionId
-                ? "bg-black/[0.04] dark:bg-white/[0.06] text-primary-600 dark:text-primary-400"
-                : "text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
-            } ${collapsed ? "justify-center" : ""}`}
-            title={s.id}
-            role="listitem"
-          >
-            {!collapsed && (
-              <>
-                <span className="text-base shrink-0" aria-hidden="true">
-                  {s.agent?.emoji || "🤖"}
-                </span>
-                <span className="truncate flex-1 min-w-0">
-                  {s.label || s.id}
-                </span>
-                {s.agent && (
-                  <span className="text-[10px] text-secondary truncate max-w-[4rem]">
-                    {s.agent.display_name}
-                  </span>
-                )}
-              </>
-            )}
-            {collapsed && (
-              <span className="text-[10px] font-medium truncate max-w-[2.5rem]">
-                {(s.label || s.id).slice(0, 3)}
-              </span>
-            )}
-          </button>
+            session={s}
+            currentSessionId={currentSessionId}
+            collapsed={collapsed}
+            onSwitch={() => onSwitchSession(s.id)}
+            onRename={onRenameSession}
+            onDelete={onDeleteSession}
+          />
         ))}
         <button
           onClick={onNewSession}
@@ -232,5 +216,153 @@ export function Sidebar({
         </div>
       </div>
     </aside>
+  );
+}
+
+interface SessionRowProps {
+  session: SessionItem;
+  currentSessionId: string;
+  collapsed: boolean;
+  onSwitch: () => void;
+  onRename?: (id: string, name: string) => void | Promise<void>;
+  onDelete?: (id: string) => void | Promise<void>;
+}
+
+function SessionRow({
+  session,
+  currentSessionId,
+  collapsed,
+  onSwitch,
+  onRename,
+  onDelete,
+}: SessionRowProps) {
+  const isActive = session.id === currentSessionId;
+  const displayName = session.label || session.agent?.display_name || "Untitled";
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(displayName);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleRename = useCallback(() => {
+    const trimmed = editName.trim();
+    if (trimmed && trimmed !== displayName && onRename) {
+      onRename(session.id, trimmed);
+    }
+    setIsEditing(false);
+  }, [editName, displayName, onRename, session.id]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleRename();
+      } else if (e.key === "Escape") {
+        setIsEditing(false);
+        setEditName(displayName);
+      }
+    },
+    [handleRename, displayName]
+  );
+
+  const handleBlur = useCallback(() => {
+    setTimeout(() => {
+      if (document.activeElement !== inputRef.current) {
+        handleRename();
+      }
+    }, 150);
+  }, [handleRename]);
+
+  const handleDelete = useCallback(() => {
+    if (!onDelete) return;
+    if (confirm(`Delete session "${displayName}"?`)) {
+      onDelete(session.id);
+    }
+  }, [displayName, onDelete, session.id]);
+
+  if (collapsed) {
+    return (
+      <button
+        onClick={onSwitch}
+        className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center justify-center ${
+          isActive
+            ? "bg-primary-100 dark:bg-primary-900/20 text-primary"
+            : "text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+        }`}
+        title={displayName}
+        aria-label={displayName}
+        role="listitem"
+      >
+        <span className="text-base shrink-0" aria-hidden="true">
+          {session.agent?.emoji || "💬"}
+        </span>
+      </button>
+    );
+  }
+
+  if (isEditing) {
+    return (
+      <div className="px-3 py-1.5">
+        <input
+          ref={inputRef}
+          type="text"
+          value={editName}
+          onChange={(e) => setEditName(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          autoFocus
+          className="w-full text-sm px-2 py-1 rounded-md bg-card text-primary border border-subtle focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`group flex items-center gap-1 px-1 py-0.5 rounded-lg transition ${
+        isActive
+          ? "bg-primary-100 dark:bg-primary-900/20"
+          : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+      }`}
+      role="listitem"
+    >
+      <button
+        onClick={onSwitch}
+        className={`flex-1 min-w-0 text-left px-2 py-1.5 rounded-md text-sm flex items-center gap-2 transition ${
+          isActive ? "text-primary" : "text-secondary"
+        }`}
+        title={displayName}
+      >
+        <span className="text-base shrink-0" aria-hidden="true">
+          {session.agent?.emoji || "💬"}
+        </span>
+        <span className="truncate flex-1 min-w-0">{displayName}</span>
+      </button>
+      {(onRename || onDelete) && (
+        <div className="flex items-center gap-0.5 pr-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {onRename && (
+            <button
+              onClick={() => {
+                setEditName(displayName);
+                setIsEditing(true);
+              }}
+              className="p-1 rounded-md text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition"
+              title="Rename session"
+              aria-label="Rename session"
+            >
+              <Pencil className="w-3 h-3" />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={handleDelete}
+              className="p-1 rounded-md text-secondary hover:text-red-500 hover:bg-red-500/10 transition"
+              title="Delete session"
+              aria-label="Delete session"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

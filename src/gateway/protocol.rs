@@ -244,6 +244,7 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         }
         "sessions.create"
         | "sessions.delete"
+        | "sessions.rename"
         | "sessions.reset"
         | "sessions.subscribe"
         | "sessions.unsubscribe"
