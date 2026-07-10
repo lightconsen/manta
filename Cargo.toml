@@ -180,7 +180,7 @@ rust-embed = "8"
 # System resource limits and signals (Unix only)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-nix = { version = "0.27", features = ["signal", "process", "socket"] }
+nix = { version = "0.28", features = ["signal", "process", "socket"] }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "migrate", "chrono"] }
