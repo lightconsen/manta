@@ -8,12 +8,30 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
+use regex::Regex;
 use tokio::fs;
 use tracing::{debug, info, warn};
 
 use crate::agent::AgentConfig;
 use crate::dirs;
+
+/// Regex for markdown list style name entries like `- **名称**: 小明`.
+static NAME_LIST_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*[-*]\s*\*\*\s*(?:名称|name|display\s*name)\s*\*\*\s*[:：]\s*(.+)\s*$")
+        .expect("NAME_LIST_RE is valid")
+});
+
+/// Regex for YAML-style `name: 小明` entries.
+static NAME_YAML_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^\s*name\s*[:：]\s*(.+?)\s*$").expect("NAME_YAML_RE is valid"));
+
+/// Regex for markdown list style emoji entries like `- **Emoji**: 🐼`.
+static EMOJI_LIST_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*[-*]\s*\*\*\s*[Ee]moji\s*\*\*\s*[:：]\s*(.+)\s*$")
+        .expect("EMOJI_LIST_RE is valid")
+});
 
 /// Maximum size for personality files (4KB default)
 const DEFAULT_MAX_FILE_SIZE: usize = 4096;
@@ -433,14 +451,18 @@ impl AgentPersonality {
         }
     }
 
-    /// Get the agent's display name from identity
+    /// Get the agent's display name from identity.
+    ///
+    /// Supports multiple common formats:
+    /// 1. `## name` / `##name` / `name:` followed by the name on the next line
+    /// 2. Markdown list items like `- **名称**: 小明` or `- **Name**: Xiao Ming`
+    /// 3. YAML-style `name: 小明`
+    /// 4. First heading `# Title` as a fallback
     pub fn display_name(&self) -> String {
-        let lines: Vec<&str> = self.identity.lines().collect();
+        let identity = &self.identity;
 
-        // 1. Try structured format:
-        // # Agent Identity
-        // ## name
-        // 小王
+        // 1. Structured format: ## name / ##name / name:
+        let lines: Vec<&str> = identity.lines().collect();
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
             if trimmed.eq_ignore_ascii_case("## name")
@@ -456,18 +478,71 @@ impl AgentPersonality {
             }
         }
 
-        // 2. Fallback to first heading line
-        lines
-            .first()
+        // 2. Markdown list: `- **名称**: 小明` or `- **Name**: Xiao Ming`
+        for line in identity.lines() {
+            if let Some(caps) = NAME_LIST_RE.captures(line) {
+                let name = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                if !name.is_empty() {
+                    return name.to_string();
+                }
+            }
+        }
+
+        // 3. YAML-style inline: `name: 小明`
+        for line in identity.lines() {
+            if let Some(caps) = NAME_YAML_RE.captures(line) {
+                let name = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                // Avoid catching the `## name` marker itself.
+                if !name.is_empty() && !name.eq_ignore_ascii_case("name") {
+                    return name.to_string();
+                }
+            }
+        }
+
+        // 4. Fallback to first heading line
+        identity
+            .lines()
+            .next()
             .and_then(|line| {
                 let trimmed = line.trim();
-                // # Title → "Title"
                 trimmed.strip_prefix("#").map(|s| s.trim().to_string())
             })
             .unwrap_or_else(|| self.id.clone())
     }
 
-    /// Check if this agent can handle a specific task type
+    /// Get the agent's emoji.
+    ///
+    /// Checks SOUL.md YAML frontmatter first, then IDENTITY.md for `Emoji:` or
+    /// `- **Emoji**: ...` style entries, and falls back to 🤖.
+    pub fn emoji(&self) -> String {
+        let emoji_from_text = |text: &str| -> Option<String> {
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if let Some(value) = trimmed.strip_prefix("emoji:")
+                    .or_else(|| trimmed.strip_prefix("Emoji:"))
+                    .or_else(|| trimmed.strip_prefix("emoji："))
+                    .or_else(|| trimmed.strip_prefix("Emoji："))
+                {
+                    let value = value.trim().trim_matches('"').trim_matches('\'');
+                    if !value.is_empty() {
+                        return Some(value.to_string());
+                    }
+                }
+                // Markdown list: `- **Emoji**: 🐼`
+                if let Some(caps) = EMOJI_LIST_RE.captures(line) {
+                    let value = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                    if !value.is_empty() {
+                        return Some(value.to_string());
+                    }
+                }
+            }
+            None
+        };
+
+        emoji_from_text(&self.soul)
+            .or_else(|| emoji_from_text(&self.identity))
+            .unwrap_or_else(|| "🤖".to_string())
+    }
     pub fn can_handle(&self, task_type: &str) -> bool {
         let content = format!("{} {} {}", self.soul, self.identity, self.bootstrap);
         let keywords: Vec<&str> = match task_type {
