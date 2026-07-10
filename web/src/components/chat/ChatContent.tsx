@@ -31,6 +31,11 @@ export function ChatContent({ transport }: ChatContentProps) {
   const isRunning = useChatStore((s) => s.isRunning);
   const voiceMode = useChatStore((s) => s.voiceMode);
   const setVoiceMode = useChatStore((s) => s.setVoiceMode);
+  const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
+  const hasMoreHistory = useChatStore((s) => s.hasMoreHistory);
+  const setIsLoadingHistory = useChatStore((s) => s.setIsLoadingHistory);
+  const setHasMoreHistory = useChatStore((s) => s.setHasMoreHistory);
+  const prependMessages = useChatStore((s) => s.prependMessages);
 
   /* ── TTS: auto-read AI replies in voice mode ── */
   const {
@@ -121,14 +126,60 @@ export function ChatContent({ transport }: ChatContentProps) {
     });
   }, [transport]);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive (but not when prepending history)
+  const prevMessagesLengthRef = useRef(messages.length);
   useEffect(() => {
-    if (messages.length > 0) {
+    const prevLength = prevMessagesLengthRef.current;
+    prevMessagesLengthRef.current = messages.length;
+    if (messages.length > prevLength) {
       requestAnimationFrame(() => {
         virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
       });
     }
   }, [messages.length, virtualizer]);
+
+  // Load more history when scrolling to the top
+  const isLoadingHistoryRef = useRef(isLoadingHistory);
+  useEffect(() => {
+    isLoadingHistoryRef.current = isLoadingHistory;
+  }, [isLoadingHistory]);
+
+  const hasMoreHistoryRef = useRef(hasMoreHistory);
+  useEffect(() => {
+    hasMoreHistoryRef.current = hasMoreHistory;
+  }, [hasMoreHistory]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const handleScroll = () => {
+      if (isLoadingHistoryRef.current || !hasMoreHistoryRef.current) return;
+      if (el.scrollTop > 80) return;
+
+      const first = messages[0];
+      if (!first?.timestamp) return;
+
+      setIsLoadingHistory(true);
+      transport
+        .loadMoreHistory(transport.getSessionId(), first.timestamp)
+        .then(({ messages: older, hasMore }) => {
+          if (older.length > 0) {
+            prependMessages(older);
+          }
+          setHasMoreHistory(hasMore);
+        })
+        .catch(() => {
+          setHasMoreHistory(false);
+        })
+        .finally(() => {
+          setIsLoadingHistory(false);
+        });
+    };
+
+    el.addEventListener("scroll", handleScroll);
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, [messages, prependMessages, setHasMoreHistory, setIsLoadingHistory, transport]);
 
   const handleInput = useCallback(() => {
     const val = inputRef.current?.value || "";
@@ -233,6 +284,11 @@ export function ChatContent({ transport }: ChatContentProps) {
 
         {messages.length > 0 && (
           <div style={{ height: `${totalHeight}px`, position: "relative" }}>
+            {isLoadingHistory && (
+              <div className="py-3 text-center text-secondary text-sm">
+                Loading older messages…
+              </div>
+            )}
             {virtualItems.map((virtualItem) => (
               <div
                 key={virtualItem.key}

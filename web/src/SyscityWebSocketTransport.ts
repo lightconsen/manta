@@ -330,7 +330,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     return id;
   }
 
-  createSession(): string {
+  createSession(agentId?: string): string {
     // Reuse an existing empty session if one exists
     const sessions = this.getLocalSessions();
     for (const sid of sessions) {
@@ -340,6 +340,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         this.subscribedSessions = [];
         this.sendRequest("sessions.create", {
           session_id: this.sessionId,
+          agent_id: agentId,
         });
         this.notifySessionChange();
         return this.sessionId;
@@ -352,6 +353,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     this.subscribedSessions = [];
     this.sendRequest("sessions.create", {
       session_id: this.sessionId,
+      agent_id: agentId,
     });
     // Persist session in local list
     if (!sessions.includes(newSessionId)) {
@@ -362,6 +364,38 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     return this.sessionId;
   }
 
+  async listAgentRegistry(): Promise<
+    Array<{
+      id: string;
+      display_name: string;
+      emoji: string;
+      is_valid: boolean;
+      has_heartbeat: boolean;
+    }>
+  > {
+    try {
+      await this.waitForConnected(8000);
+      const res = (await this.sendRequestAndWait("agents.registry", {})) as
+        | {
+            agents?: Array<{
+              id: string;
+              display_name: string;
+              emoji?: string;
+              is_valid: boolean;
+              has_heartbeat: boolean;
+            }>;
+            count?: number;
+          }
+        | undefined;
+      return (res?.agents || []).map((a) => ({
+        ...a,
+        emoji: a.emoji || "🤖",
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   getLocalSessions(): string[] {
     try {
       return JSON.parse(localStorage.getItem("syscity_sessions") || "[]");
@@ -370,26 +404,43 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
-  async listSessions(): Promise<Array<{ id: string; label?: string }>> {
+  async listSessions(): Promise<
+    Array<{ id: string; label?: string; agent_id?: string }>
+  > {
     const local = this.getLocalSessions();
     if (this.currentStatus !== "connected") {
       return local.map((id) => ({ id, label: this.sessionLabel(id) }));
     }
     try {
       const payload = (await this.sendRequestAndWait("sessions.list", {})) as
-        | { sessions?: Array<{ session_id: string; name?: string }> }
+        | {
+            sessions?: Array<{
+              session_id: string;
+              name?: string;
+              agent_id?: string;
+            }>;
+          }
         | undefined;
       const remote = payload?.sessions || [];
-      const merged = new Map<string, string>();
+      const merged = new Map<
+        string,
+        { label: string; agent_id?: string }
+      >();
       for (const s of remote) {
-        merged.set(s.session_id, s.name || this.sessionLabel(s.session_id));
+        merged.set(s.session_id, {
+          label: s.name || this.sessionLabel(s.session_id),
+          agent_id: s.agent_id,
+        });
       }
       for (const id of local) {
-        if (!merged.has(id)) merged.set(id, this.sessionLabel(id));
+        if (!merged.has(id)) {
+          merged.set(id, { label: this.sessionLabel(id) });
+        }
       }
-      return Array.from(merged.entries()).map(([id, label]) => ({
+      return Array.from(merged.entries()).map(([id, data]) => ({
         id,
-        label,
+        label: data.label,
+        agent_id: data.agent_id,
       }));
     } catch {
       return local.map((id) => ({ id, label: this.sessionLabel(id) }));
@@ -489,61 +540,141 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
-  async loadHistory(sessionId: string): Promise<ChatMessage[]> {
+  private parseHistoryMessages(
+    raw: Array<{
+      id: string;
+      role: string;
+      content: string;
+      reasoning_content?: string;
+      tool_calls?: Array<{
+        id: string;
+        call_type: string;
+        function: { name: string; arguments: string };
+        result?: string;
+      }>;
+      timestamp: number;
+      duration_ms?: number;
+      tool_count?: number;
+    }>
+  ): ChatMessage[] {
+    return raw.map((m) => {
+      const parts: ChatMessagePart[] = [];
+      // Build parts: reasoning → tool calls → text
+      if (m.reasoning_content) {
+        parts.push({ type: "reasoning", text: m.reasoning_content });
+      }
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        for (const tc of m.tool_calls) {
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(tc.function.arguments);
+          } catch {
+            args = { raw: tc.function.arguments };
+          }
+          parts.push({
+            type: "tool-call",
+            toolName: tc.function.name,
+            args,
+            result: tc.result,
+          });
+        }
+      }
+      if (m.content) {
+        parts.push({ type: "text", text: m.content });
+      }
+      return {
+        id: m.id,
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        parts: parts.length > 0 ? parts : undefined,
+        timestamp: m.timestamp,
+        durationMs: m.duration_ms,
+        toolCount: m.tool_count,
+      };
+    });
+  }
+
+  async loadHistory(sessionId: string): Promise<{
+    messages: ChatMessage[];
+    hasMore: boolean;
+  }> {
     try {
       // Wait for WebSocket to connect before requesting history
       // so we get the full backend data (reasoning + tool_calls)
       // instead of falling back to the text-only localStorage copy.
       await this.waitForConnected(8000);
-      const res = await this.sendRequestAndWait("chat.history", {
+      const res = (await this.sendRequestAndWait("chat.history", {
         session_id: sessionId,
-        limit: 200,
-      }) as { messages?: Array<{
-        id: string;
-        role: string;
-        content: string;
-        reasoning_content?: string;
-        tool_calls?: Array<{ id: string; call_type: string; function: { name: string; arguments: string }; result?: string }>;
-        timestamp: number;
-      }> } | undefined;
-      const msgs = res?.messages || [];
-      return msgs.map((m) => {
-        const parts: ChatMessagePart[] = [];
-        // Build parts: reasoning → tool calls → text
-        if (m.reasoning_content) {
-          parts.push({ type: "reasoning", text: m.reasoning_content });
-        }
-        if (m.tool_calls && m.tool_calls.length > 0) {
-          for (const tc of m.tool_calls) {
-            let args: Record<string, unknown> = {};
-            try {
-              args = JSON.parse(tc.function.arguments);
-            } catch {
-              args = { raw: tc.function.arguments };
-            }
-            parts.push({
-              type: "tool-call",
-              toolName: tc.function.name,
-              args,
-              result: tc.result,
-            });
+        limit: 100,
+      })) as
+        | {
+            messages?: Array<{
+              id: string;
+              role: string;
+              content: string;
+              reasoning_content?: string;
+              tool_calls?: Array<{
+                id: string;
+                call_type: string;
+                function: { name: string; arguments: string };
+                result?: string;
+              }>;
+              timestamp: number;
+              duration_ms?: number;
+              tool_count?: number;
+            }>;
+            has_more?: boolean;
           }
-        }
-        if (m.content) {
-          parts.push({ type: "text", text: m.content });
-        }
-        return {
-          id: m.id,
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          parts: parts.length > 0 ? parts : undefined,
-          durationMs: (m as any).duration_ms,
-          toolCount: (m as any).tool_count,
-        };
-      });
+        | undefined;
+      const msgs = this.parseHistoryMessages(res?.messages || []);
+      return {
+        messages: msgs,
+        hasMore: res?.has_more ?? msgs.length === 100,
+      };
     } catch {
       // Fallback to localStorage (already stores full ChatMessage with parts)
-      return this.getHistory(sessionId);
+      const msgs = this.getHistory(sessionId);
+      return { messages: msgs, hasMore: false };
+    }
+  }
+
+  async loadMoreHistory(
+    sessionId: string,
+    before: number
+  ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
+    try {
+      await this.waitForConnected(8000);
+      const res = (await this.sendRequestAndWait("chat.history", {
+        session_id: sessionId,
+        limit: 100,
+        before,
+      })) as
+        | {
+            messages?: Array<{
+              id: string;
+              role: string;
+              content: string;
+              reasoning_content?: string;
+              tool_calls?: Array<{
+                id: string;
+                call_type: string;
+                function: { name: string; arguments: string };
+                result?: string;
+              }>;
+              timestamp: number;
+              duration_ms?: number;
+              tool_count?: number;
+            }>;
+            has_more?: boolean;
+          }
+        | undefined;
+      const msgs = this.parseHistoryMessages(res?.messages || []);
+      return {
+        messages: msgs,
+        hasMore: res?.has_more ?? msgs.length === 100,
+      };
+    } catch {
+      return { messages: [], hasMore: false };
     }
   }
 
@@ -574,11 +705,6 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   async listAgents(): Promise<{ agents: string[] }> {
     const res = await this.sendRequestAndWait("agents.list", {}) as { agents: string[] } | undefined;
     return res || { agents: [] };
-  }
-
-  async listAgentRegistry(): Promise<{ agents: Array<{ id: string; display_name: string; is_valid: boolean; has_heartbeat: boolean }>; count: number }> {
-    const res = await this.sendRequestAndWait("agents.registry", {}) as { agents: Array<{ id: string; display_name: string; is_valid: boolean; has_heartbeat: boolean }>; count: number } | undefined;
-    return res || { agents: [], count: 0 };
   }
 
   async getAgent(agentId: string): Promise<{

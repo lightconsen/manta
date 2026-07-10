@@ -25,6 +25,7 @@ use axum::{
     response::IntoResponse,
 };
 use base64::Engine;
+use chrono::DateTime;
 use futures::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt,
@@ -1103,10 +1104,15 @@ async fn handle_chat_history(
         session_id: String,
         #[serde(default = "default_limit")]
         limit: usize,
+        /// Optional timestamp in milliseconds. If provided, only messages with
+        /// `created_at` strictly less than this value are returned (older
+        /// messages).
+        #[serde(default)]
+        before: Option<i64>,
     }
 
     fn default_limit() -> usize {
-        50
+        100
     }
 
     let params: HistoryParams = match parse_params(req) {
@@ -1114,9 +1120,11 @@ async fn handle_chat_history(
         Err(res) => return res,
     };
 
+    let before = params.before.and_then(DateTime::from_timestamp_millis);
+
     let messages = if let Some(ref store) = state.agents.store {
         match store
-            .get_messages(&params.session_id, params.limit as i64, None)
+            .get_messages(&params.session_id, params.limit as i64, before)
             .await
         {
             Ok(rows) => rows
@@ -1140,7 +1148,7 @@ async fn handle_chat_history(
                             "content": content,
                             "reasoning_content": reasoning,
                             "tool_calls": tool_calls,
-                            "timestamp": dt.timestamp(),
+                            "timestamp": dt.timestamp_millis(),
                         })
                     },
                 )
@@ -1156,6 +1164,7 @@ async fn handle_chat_history(
         serde_json::json!({
             "session_id": params.session_id,
             "messages": messages,
+            "has_more": messages.len() == params.limit,
         }),
     )
 }
@@ -1252,6 +1261,8 @@ async fn handle_sessions_create(
     struct CreateParams {
         #[serde(default)]
         session_id: Option<String>,
+        #[serde(default)]
+        agent_id: Option<String>,
     }
 
     let params: CreateParams = match parse_params(req) {
@@ -1268,10 +1279,30 @@ async fn handle_sessions_create(
         mgr.create_session(session_id.clone());
     }
 
+    let mut metadata = crate::agent::session_store::SessionMetadata::new(
+        &session_id,
+        params.agent_id.as_deref().unwrap_or(""),
+        &channel,
+        &user,
+    );
+    metadata.bound_agent_id = params.agent_id.clone();
+
     if let Some(ref store) = state.agents.store {
-        let metadata = crate::agent::session_store::SessionMetadata::new(&session_id, "", "", "");
         if let Err(e) = store.save_session(&session_id, &metadata, "{}").await {
             warn!("Failed to save session {}: {}", session_id, e);
+        }
+    }
+
+    // Bind the session to the requested agent so future messages route there.
+    if let Some(agent_id) = params.agent_id {
+        if !agent_id.is_empty() {
+            let route = crate::inbound::RouteResult {
+                agent_id,
+                workspace_id: None,
+                persisted_binding: true,
+                is_fallback: false,
+            };
+            state.agents.router.bind_session(&session_id, &route).await;
         }
     }
 
@@ -1516,6 +1547,7 @@ async fn handle_agents_registry(req: &WsRequest, state: &Arc<GatewayState>) -> W
             entries.push(serde_json::json!({
                 "id": p.id,
                 "display_name": p.display_name(),
+                "emoji": p.emoji(),
                 "is_valid": p.is_valid,
                 "has_heartbeat": !p.heartbeat.is_empty(),
             }));
@@ -1530,6 +1562,7 @@ async fn handle_agents_registry(req: &WsRequest, state: &Arc<GatewayState>) -> W
                 entries.push(serde_json::json!({
                     "id": id,
                     "display_name": id.as_str(),
+                    "emoji": "🤖",
                     "is_valid": true,
                     "has_heartbeat": false,
                 }));

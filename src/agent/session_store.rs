@@ -789,7 +789,12 @@ impl SessionStore {
         Ok(result.last_insert_rowid())
     }
 
-    /// Get messages for a session, ordered oldest first.
+    /// Get messages for a session, ordered newest first.
+    ///
+    /// Returns the most recent `limit` messages whose `created_at` is strictly
+    /// less than `before`. Results are ordered newest first so callers can
+    /// prepend older chunks to an existing list.
+    ///
     /// Returns `(id, role, content, reasoning_content, tool_calls_json,
     /// created_at, transcript_id, run_id)`.
     #[allow(clippy::type_complexity)]
@@ -818,7 +823,7 @@ impl SessionStore {
             SELECT id, role, content, reasoning_content, tool_calls_json, created_at, transcript_id, run_id
             FROM session_messages
             WHERE session_id = ? AND created_at < ?
-            ORDER BY created_at ASC
+            ORDER BY created_at DESC
             LIMIT ?
             "#,
         )
@@ -832,7 +837,7 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
-        let messages = rows
+        let mut messages: Vec<_> = rows
             .into_iter()
             .map(|row| {
                 let id: i64 = row.get("id");
@@ -847,6 +852,9 @@ impl SessionStore {
                 (id, role, content, reasoning, tool_calls, dt, transcript_id, run_id)
             })
             .collect();
+
+        // Reverse to newest-first order so callers can prepend older chunks.
+        messages.reverse();
 
         Ok(messages)
     }
@@ -1678,7 +1686,7 @@ mod tests {
             .expect("Failed to get messages");
 
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].1, "user"); // Oldest first
+        assert_eq!(messages[0].1, "user"); // Newest first
         assert_eq!(messages[0].2, "Hello");
         assert_eq!(messages[1].1, "assistant");
         assert_eq!(messages[1].2, "Hi there!");
@@ -1892,6 +1900,8 @@ mod tests {
 
         let msgs = store.get_messages("limit-test", 2, None).await.unwrap();
         assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].2, "msg3");
+        assert_eq!(msgs[1].2, "msg4");
     }
 
     #[tokio::test]

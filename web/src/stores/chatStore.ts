@@ -8,8 +8,11 @@ interface ChatState {
   networkStatus: NetworkStatus;
   isRunning: boolean;
   voiceMode: boolean;
+  isLoadingHistory: boolean;
+  hasMoreHistory: boolean;
 
   setMessages: (messages: ChatMessage[]) => void;
+  prependMessages: (messages: ChatMessage[]) => void;
   appendMessage: (message: ChatMessage) => void;
   updateMessage: (id: string, updater: (msg: ChatMessage) => ChatMessage) => void;
   setSessions: (sessions: Array<{ id: string; label?: string }>) => void;
@@ -17,6 +20,8 @@ interface ChatState {
   setNetworkStatus: (status: NetworkStatus) => void;
   setIsRunning: (running: boolean) => void;
   setVoiceMode: (enabled: boolean) => void;
+  setIsLoadingHistory: (loading: boolean) => void;
+  setHasMoreHistory: (hasMore: boolean) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -26,8 +31,11 @@ export const useChatStore = create<ChatState>((set) => ({
   networkStatus: "connecting",
   isRunning: false,
   voiceMode: false,
+  isLoadingHistory: false,
+  hasMoreHistory: false,
 
   setMessages: (messages) => set({ messages }),
+  prependMessages: (messages) => set((s) => ({ messages: [...messages, ...s.messages] })),
   appendMessage: (message) => set((s) => ({ messages: [...s.messages, message] })),
   updateMessage: (id, updater) =>
     set((s) => ({
@@ -38,4 +46,6 @@ export const useChatStore = create<ChatState>((set) => ({
   setNetworkStatus: (status) => set({ networkStatus: status }),
   setIsRunning: (running) => set({ isRunning: running }),
   setVoiceMode: (voiceMode) => set({ voiceMode }),
+  setIsLoadingHistory: (isLoadingHistory) => set({ isLoadingHistory }),
+  setHasMoreHistory: (hasMoreHistory) => set({ hasMoreHistory }),
 }));
