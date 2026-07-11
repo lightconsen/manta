@@ -11,8 +11,7 @@ pub async fn web_terminal_html_handler() -> Html<String> {
     let html = match crate::embed::get_asset_string("index.html") {
         Some(html) => html,
         None => {
-            "<h1>Syscity Chat UI</h1><p>Build not found. Run: cd web and pnpm build</p>"
-                .to_string()
+            "<h1>Syscity Chat UI</h1><p>Build not found. Run: cd web and pnpm build</p>".to_string()
         }
     };
     Html(html.replace("{VERSION}", crate::VERSION))
