@@ -252,12 +252,14 @@ pub struct StorageConfig {
     pub database: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Storage type
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageType {
     Memory,
     File,
-    #[serde(alias = "sqlite")]
+    Sqlite,
+    #[serde(alias = "db")]
     Database,
 }
 
@@ -891,6 +893,7 @@ impl Config {
             self.storage.storage_type = match storage_type.to_lowercase().as_str() {
                 "memory" => StorageType::Memory,
                 "file" => StorageType::File,
+                "sqlite" => StorageType::Sqlite,
                 "database" | "db" => StorageType::Database,
                 _ => {
                     return Err(ConfigError::InvalidValue {
@@ -1088,7 +1091,7 @@ impl Config {
 
         // ── Cross-field validation ────────────────────────────────────
 
-        // Storage: database type requires a connection string
+        // Storage: external database type requires a connection string
         if matches!(self.storage.storage_type, StorageType::Database)
             && self.storage.connection.is_none()
         {
