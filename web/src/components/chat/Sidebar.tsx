@@ -9,11 +9,13 @@ import {
   HeartPulse,
   Pencil,
   Trash2,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { useThemeStore } from "@/stores/themeStore";
 import { StatusDot } from "./StatusDot";
 import type { NetworkStatus } from "@/SyscityWebSocketTransport";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 
 interface AgentItem {
   id: string;
@@ -26,6 +28,8 @@ interface AgentItem {
 interface SessionItem {
   id: string;
   label?: string;
+  pinned?: boolean;
+  last_activity?: number;
   agent?: AgentItem;
 }
 
@@ -42,6 +46,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onRenameSession?: (id: string, name: string) => void | Promise<void>;
   onDeleteSession?: (id: string) => void | Promise<void>;
+  onPinSession?: (id: string, pinned: boolean) => void | Promise<void>;
 }
 
 export function Sidebar({
@@ -57,8 +62,67 @@ export function Sidebar({
   onOpenSettings,
   onRenameSession,
   onDeleteSession,
+  onPinSession,
 }: SidebarProps) {
   const { resolvedTheme, setTheme } = useThemeStore();
+
+  const groups = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    ).getTime();
+
+    const pinned = sessions
+      .filter((s) => s.pinned)
+      .sort((a, b) => (b.last_activity || 0) - (a.last_activity || 0));
+
+    const buckets = new Map<string, SessionItem[]>();
+    for (const s of sessions) {
+      if (s.pinned) continue;
+      const ts = s.last_activity || 0;
+      const d = new Date(ts);
+      const dayStart = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate()
+      ).getTime();
+      const diffDays = Math.floor(
+        (startOfToday - dayStart) / (1000 * 60 * 60 * 24)
+      );
+      let key: string;
+      if (diffDays <= 0) {
+        key = "Today";
+      } else if (diffDays === 1) {
+        key = "Yesterday";
+      } else if (diffDays <= 7) {
+        key = "Last 7 days";
+      } else if (diffDays <= 30) {
+        key = "Last 30 days";
+      } else {
+        key = "Older";
+      }
+      if (!buckets.has(key)) {
+        buckets.set(key, []);
+      }
+      buckets.get(key)!.push(s);
+    }
+
+    const order = ["Today", "Yesterday", "Last 7 days", "Last 30 days", "Older"];
+    const result: { label: string; sessions: SessionItem[] }[] = [];
+    if (pinned.length > 0) {
+      result.push({ label: "Pinned", sessions: pinned });
+    }
+    for (const key of order) {
+      const list = buckets.get(key);
+      if (list && list.length > 0) {
+        list.sort((a, b) => (b.last_activity || 0) - (a.last_activity || 0));
+        result.push({ label: key, sessions: list });
+      }
+    }
+    return result;
+  }, [sessions]);
 
   return (
     <aside
@@ -97,24 +161,41 @@ export function Sidebar({
 
       {/* Sessions: 60% */}
       <div className="h-[60%] overflow-y-auto overflow-x-hidden px-1 py-2" role="list">
-        {!collapsed && sessions.length > 0 && (
-          <div className="px-3 pb-1">
-            <span className="text-[10px] uppercase tracking-wider text-secondary font-medium">
-              Sessions
-            </span>
-          </div>
-        )}
-        {sessions.map((s) => (
-          <SessionRow
-            key={s.id}
-            session={s}
-            currentSessionId={currentSessionId}
-            collapsed={collapsed}
-            onSwitch={() => onSwitchSession(s.id)}
-            onRename={onRenameSession}
-            onDelete={onDeleteSession}
-          />
-        ))}
+        {!collapsed &&
+          groups.map((group) => (
+            <div key={group.label} className="mb-2">
+              <div className="px-3 pb-1">
+                <span className="text-[10px] uppercase tracking-wider text-secondary font-medium">
+                  {group.label}
+                </span>
+              </div>
+              {group.sessions.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  currentSessionId={currentSessionId}
+                  collapsed={collapsed}
+                  onSwitch={() => onSwitchSession(s.id)}
+                  onRename={onRenameSession}
+                  onDelete={onDeleteSession}
+                  onPin={onPinSession}
+                />
+              ))}
+            </div>
+          ))}
+        {collapsed &&
+          sessions.map((s) => (
+            <SessionRow
+              key={s.id}
+              session={s}
+              currentSessionId={currentSessionId}
+              collapsed={collapsed}
+              onSwitch={() => onSwitchSession(s.id)}
+              onRename={onRenameSession}
+              onDelete={onDeleteSession}
+              onPin={onPinSession}
+            />
+          ))}
         <button
           onClick={onNewSession}
           className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
@@ -226,6 +307,7 @@ interface SessionRowProps {
   onSwitch: () => void;
   onRename?: (id: string, name: string) => void | Promise<void>;
   onDelete?: (id: string) => void | Promise<void>;
+  onPin?: (id: string, pinned: boolean) => void | Promise<void>;
 }
 
 function SessionRow({
@@ -235,6 +317,7 @@ function SessionRow({
   onSwitch,
   onRename,
   onDelete,
+  onPin,
 }: SessionRowProps) {
   const isActive = session.id === currentSessionId;
   const displayName = session.label || session.agent?.display_name || "Untitled";
@@ -277,6 +360,11 @@ function SessionRow({
       onDelete(session.id);
     }
   }, [displayName, onDelete, session.id]);
+
+  const handlePin = useCallback(() => {
+    if (!onPin) return;
+    onPin(session.id, !session.pinned);
+  }, [onPin, session.id, session.pinned]);
 
   if (collapsed) {
     return (
@@ -336,8 +424,26 @@ function SessionRow({
         </span>
         <span className="truncate flex-1 min-w-0">{displayName}</span>
       </button>
-      {(onRename || onDelete) && (
+      {(onPin || onRename || onDelete) && (
         <div className="flex items-center gap-0.5 pr-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {onPin && (
+            <button
+              onClick={handlePin}
+              className={`p-1 rounded-md transition ${
+                session.pinned
+                  ? "text-primary hover:text-primary"
+                  : "text-secondary hover:text-primary"
+              } hover:bg-black/5 dark:hover:bg-white/5`}
+              title={session.pinned ? "Unpin session" : "Pin session"}
+              aria-label={session.pinned ? "Unpin session" : "Pin session"}
+            >
+              {session.pinned ? (
+                <PinOff className="w-3 h-3" />
+              ) : (
+                <Pin className="w-3 h-3" />
+              )}
+            </button>
+          )}
           {onRename && (
             <button
               onClick={() => {

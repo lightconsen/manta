@@ -32,6 +32,9 @@ pub struct SessionMetadata {
     pub last_activity: DateTime<Utc>,
     /// Whether session is active
     pub is_active: bool,
+    /// Whether session is pinned in the UI
+    #[serde(default)]
+    pub pinned: bool,
     /// Message count
     #[serde(default)]
     pub message_count: usize,
@@ -63,6 +66,7 @@ impl SessionMetadata {
             created_at: now,
             last_activity: now,
             is_active: true,
+            pinned: false,
             message_count: 0,
             name: None,
             bound_agent_id: None,
@@ -211,6 +215,7 @@ impl SessionStore {
                 created_at INTEGER NOT NULL,
                 last_activity INTEGER NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
+                pinned INTEGER NOT NULL DEFAULT 0,
                 state_json TEXT,
                 message_count INTEGER NOT NULL DEFAULT 0,
                 name TEXT,
@@ -243,6 +248,17 @@ impl SessionStore {
         {
             if !e.to_string().contains("duplicate column name") {
                 warn!("Failed to add bound_agent_id column to sessions: {}", e);
+            }
+        }
+
+        // Migrate: add pinned column if it doesn't exist
+        if let Err(e) =
+            sqlx::query("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+                .execute(&self.pool)
+                .await
+        {
+            if !e.to_string().contains("duplicate column name") {
+                warn!("Failed to add pinned column to sessions: {}", e);
             }
         }
 
@@ -315,6 +331,12 @@ impl SessionStore {
             .execute(&self.pool)
             .await
             .map_err(|e| warn!("Failed to create session store index idx_sessions_activity: {}", e))
+            .ok();
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_pinned ON sessions(pinned)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| warn!("Failed to create session store index idx_sessions_pinned: {}", e))
             .ok();
 
         sqlx::query(
@@ -529,14 +551,15 @@ impl SessionStore {
 
         sqlx::query(
             r#"
-            INSERT INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count, name, bound_agent_id, transcript_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, pinned, state_json, message_count, name, bound_agent_id, transcript_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 channel = excluded.channel,
                 channel_id = excluded.channel_id,
                 last_activity = excluded.last_activity,
                 is_active = excluded.is_active,
+                pinned = excluded.pinned,
                 state_json = excluded.state_json,
                 name = excluded.name,
                 bound_agent_id = excluded.bound_agent_id,
@@ -550,6 +573,7 @@ impl SessionStore {
         .bind(created_at)
         .bind(now)
         .bind(metadata.is_active)
+        .bind(metadata.pinned)
         .bind(state_json)
         .bind(metadata.message_count as i64)
         .bind(&metadata.name)
@@ -572,7 +596,7 @@ impl SessionStore {
     pub async fn load_session(&self, session_id: &str) -> Result<Option<PersistedSession>> {
         let row = sqlx::query(
             r#"
-            SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count, name, bound_agent_id, transcript_id
+            SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, pinned, state_json, message_count, name, bound_agent_id, transcript_id
             FROM sessions
             WHERE id = ?
             "#,
@@ -596,6 +620,7 @@ impl SessionStore {
                     )
                     .unwrap_or_else(Utc::now),
                     is_active: row.get::<i64, _>("is_active") != 0,
+                    pinned: row.get::<i64, _>("pinned") != 0,
                     message_count: row.get::<i64, _>("message_count") as usize,
                     name: row.get("name"),
                     bound_agent_id: row.get("bound_agent_id"),
@@ -634,7 +659,7 @@ impl SessionStore {
     ) -> Result<Vec<SessionMetadata>> {
         let mut query = String::from(
             "SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, \
-             message_count, name, bound_agent_id, transcript_id FROM sessions WHERE 1=1",
+             pinned, message_count, name, bound_agent_id, transcript_id FROM sessions WHERE 1=1",
         );
 
         if agent_id.is_some() {
@@ -650,7 +675,7 @@ impl SessionStore {
             query.push_str(" AND is_active = 1");
         }
 
-        query.push_str(" ORDER BY last_activity DESC");
+        query.push_str(" ORDER BY pinned DESC, last_activity DESC");
 
         let mut sql_query = sqlx::query_as::<
             _,
@@ -659,6 +684,7 @@ impl SessionStore {
                 String,
                 String,
                 String,
+                i64,
                 i64,
                 i64,
                 i64,
@@ -698,6 +724,7 @@ impl SessionStore {
                     created_at,
                     last_activity,
                     is_active,
+                    pinned,
                     message_count,
                     name,
                     bound_agent_id,
@@ -713,6 +740,7 @@ impl SessionStore {
                         last_activity: DateTime::from_timestamp_millis(last_activity)
                             .unwrap_or_else(Utc::now),
                         is_active: is_active != 0,
+                        pinned: pinned != 0,
                         message_count: message_count as usize,
                         name,
                         bound_agent_id,
@@ -869,6 +897,21 @@ impl SessionStore {
             .await
             .map_err(|e| SyscityError::Storage {
                 context: "Failed to update session status".to_string(),
+                details: e.to_string(),
+            })?;
+
+        Ok(())
+    }
+
+    /// Set session pinned status
+    pub async fn set_session_pinned(&self, session_id: &str, pinned: bool) -> Result<()> {
+        sqlx::query("UPDATE sessions SET pinned = ? WHERE id = ?")
+            .bind(if pinned { 1 } else { 0 })
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SyscityError::Storage {
+                context: "Failed to update session pinned status".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -2093,6 +2136,42 @@ mod tests {
 
         let final_session = store.load_session(session_id).await.unwrap().unwrap();
         assert_eq!(final_session.message_count, 10, "all 10 concurrent appends should be recorded");
+    }
+
+    /// Simulate N concurrent sessions to measure throughput (RPS and memory).
+    #[tokio::test]
+    async fn test_set_session_pinned_and_find_order() {
+        let store = create_test_store().await;
+
+        let mut meta1 = SessionMetadata::new("pinned-test", "main", "cli", "local");
+        meta1.pinned = true;
+        store
+            .save_session("pinned-test", &meta1, "{}")
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let meta2 = SessionMetadata::new("recent-test", "main", "cli", "local");
+        store
+            .save_session("recent-test", &meta2, "{}")
+            .await
+            .unwrap();
+
+        store.set_session_pinned("recent-test", true).await.unwrap();
+
+        let all = store.find_sessions(None, None, None, false).await.unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all[0].pinned);
+        assert!(all[1].pinned);
+
+        store
+            .set_session_pinned("recent-test", false)
+            .await
+            .unwrap();
+        let after = store.find_sessions(None, None, None, false).await.unwrap();
+        assert!(after[0].pinned);
+        assert!(!after[1].pinned);
     }
 
     /// Simulate N concurrent sessions to measure throughput (RPS and memory).

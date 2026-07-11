@@ -245,6 +245,7 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         "sessions.create"
         | "sessions.delete"
         | "sessions.rename"
+        | "sessions.set_pinned"
         | "sessions.reset"
         | "sessions.subscribe"
         | "sessions.unsubscribe"
@@ -515,6 +516,13 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
             serde_json::json!({
                 "session_id": session_id,
                 "name": name,
+            }),
+        )),
+        GatewayEvent::SessionPinned { session_id, pinned } => Some((
+            "session.pinned".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "pinned": pinned,
             }),
         )),
         GatewayEvent::AcpSpawned {

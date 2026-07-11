@@ -68,7 +68,13 @@ function ChatApp() {
     return localStorage.getItem("syscity_sidebar_collapsed") === "true";
   });
   const [sessions, setSessions] = useState<
-    Array<{ id: string; label?: string; agent_id?: string }>
+    Array<{
+      id: string;
+      label?: string;
+      agent_id?: string;
+      pinned?: boolean;
+      last_activity?: number;
+    }>
   >([]);
   const [agents, setAgents] = useState<
     Array<{
@@ -148,6 +154,17 @@ function ChatApp() {
             s.id === renamedSessionId
               ? { ...s, label: newName }
               : s
+          )
+        );
+      }
+      if (evt.event === "session.pinned") {
+        const p = evt.payload as Record<string, unknown> | undefined;
+        if (!p) return;
+        const pinnedSessionId = p.session_id as string;
+        const pinned = !!p.pinned;
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === pinnedSessionId ? { ...s, pinned } : s
           )
         );
       }
@@ -330,11 +347,21 @@ function ChatApp() {
     [transport, refreshSessions]
   );
 
+  const handlePinSession = useCallback(
+    async (id: string, pinned: boolean) => {
+      await transport.setSessionPinned(id, pinned);
+      refreshSessions();
+    },
+    [transport, refreshSessions]
+  );
+
   // Build session items enriched with agent info for sidebar badges.
   const sessionItems = useMemo(() => {
     return sessions.map((s) => ({
       id: s.id,
       label: s.label,
+      pinned: s.pinned,
+      last_activity: s.last_activity,
       agent: agents.find((a) => a.id === s.agent_id),
     }));
   }, [sessions, agents]);
@@ -354,6 +381,7 @@ function ChatApp() {
         onOpenSettings={() => setSettingsOpen((s) => !s)}
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
+        onPinSession={handlePinSession}
       />
       <main className="flex-1 flex flex-col overflow-hidden">
         {settingsOpen ? (

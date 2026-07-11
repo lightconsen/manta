@@ -3,7 +3,12 @@ import type { ChatMessage, NetworkStatus } from "@/SyscityWebSocketTransport";
 
 interface ChatState {
   messages: ChatMessage[];
-  sessions: Array<{ id: string; label?: string }>;
+  sessions: Array<{
+    id: string;
+    label?: string;
+    pinned?: boolean;
+    last_activity?: number;
+  }>;
   currentSessionId: string;
   networkStatus: NetworkStatus;
   isRunning: boolean;
@@ -15,7 +20,14 @@ interface ChatState {
   prependMessages: (messages: ChatMessage[]) => void;
   appendMessage: (message: ChatMessage) => void;
   updateMessage: (id: string, updater: (msg: ChatMessage) => ChatMessage) => void;
-  setSessions: (sessions: Array<{ id: string; label?: string }>) => void;
+  setSessions: (
+    sessions: Array<{
+      id: string;
+      label?: string;
+      pinned?: boolean;
+      last_activity?: number;
+    }>
+  ) => void;
   setCurrentSessionId: (id: string) => void;
   setNetworkStatus: (status: NetworkStatus) => void;
   setIsRunning: (running: boolean) => void;

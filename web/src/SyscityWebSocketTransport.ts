@@ -406,7 +406,13 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   }
 
   async listSessions(): Promise<
-    Array<{ id: string; label?: string; agent_id?: string }>
+    Array<{
+      id: string;
+      label?: string;
+      agent_id?: string;
+      pinned?: boolean;
+      last_activity?: number;
+    }>
   > {
     const local = this.getLocalSessions();
     if (this.currentStatus !== "connected") {
@@ -419,18 +425,29 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
               session_id: string;
               name?: string;
               agent_id?: string;
+              pinned?: boolean;
+              last_activity?: string;
             }>;
           }
         | undefined;
       const remote = payload?.sessions || [];
       const merged = new Map<
         string,
-        { label: string; agent_id?: string }
+        {
+          label: string;
+          agent_id?: string;
+          pinned?: boolean;
+          last_activity?: number;
+        }
       >();
       for (const s of remote) {
         merged.set(s.session_id, {
           label: s.name || this.sessionLabel(s.session_id),
           agent_id: s.agent_id,
+          pinned: s.pinned,
+          last_activity: s.last_activity
+            ? new Date(s.last_activity).getTime()
+            : undefined,
         });
       }
       for (const id of local) {
@@ -442,9 +459,26 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         id,
         label: data.label,
         agent_id: data.agent_id,
+        pinned: data.pinned,
+        last_activity: data.last_activity,
       }));
     } catch {
       return local.map((id) => ({ id, label: this.sessionLabel(id) }));
+    }
+  }
+
+  async setSessionPinned(
+    sessionId: string,
+    pinned: boolean
+  ): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("sessions.set_pinned", {
+        session_id: sessionId,
+        pinned,
+      });
+      return true;
+    } catch {
+      return false;
     }
   }
 

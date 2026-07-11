@@ -167,6 +167,8 @@ pub enum GatewayEvent {
     },
     /// Session display name was auto-generated or updated
     SessionRenamed { session_id: String, name: String },
+    /// Session pin status changed
+    SessionPinned { session_id: String, pinned: bool },
     /// ACP subagent spawned
     AcpSpawned {
         session_id: String,

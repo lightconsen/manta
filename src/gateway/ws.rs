@@ -524,6 +524,7 @@ async fn dispatch_method(
         "sessions.create" => handle_sessions_create(req, conn, state).await,
         "sessions.delete" => handle_sessions_delete(req, conn, state).await,
         "sessions.rename" => handle_sessions_rename(req, conn, state).await,
+        "sessions.set_pinned" => handle_sessions_set_pinned(req, conn, state).await,
         "sessions.reset" => handle_sessions_reset(req, conn, state).await,
         "sessions.subscribe" => handle_sessions_subscribe(req, conn, cmd_tx).await,
         "sessions.unsubscribe" => handle_sessions_unsubscribe(req, conn, cmd_tx).await,
@@ -1218,6 +1219,7 @@ async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
                         "message_count": meta.message_count,
                         "last_activity": meta.last_activity.to_rfc3339(),
                         "is_active": meta.is_active,
+                        "pinned": meta.pinned,
                         "created_at": meta.created_at.to_rfc3339(),
                     })
                 })
@@ -1342,7 +1344,10 @@ async fn handle_sessions_delete(
         }
     }
 
-    WsResponse::ok(&req.id, serde_json::json!({ "status": "deleted", "session_id": params.session_id }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "status": "deleted", "session_id": params.session_id }),
+    )
 }
 
 async fn handle_sessions_rename(
@@ -1389,6 +1394,42 @@ async fn handle_sessions_rename(
             "name": trimmed,
         }),
     )
+}
+
+async fn handle_sessions_set_pinned(
+    req: &WsRequest,
+    _conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct SetPinnedParams {
+        session_id: String,
+        pinned: bool,
+    }
+
+    let params: SetPinnedParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    if let Some(ref store) = state.agents.store {
+        if let Err(e) = store
+            .set_session_pinned(&params.session_id, params.pinned)
+            .await
+        {
+            warn!("Failed to set pinned status for session {}: {}", params.session_id, e);
+            return WsResponse::err(&req.id, "INTERNAL_ERROR", &e.to_string());
+        }
+    }
+
+    if let Err(e) = state.events.tx.send(GatewayEvent::SessionPinned {
+        session_id: params.session_id.clone(),
+        pinned: params.pinned,
+    }) {
+        tracing::debug!("No receivers for SessionPinned event: {}", e);
+    }
+
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "ok" }))
 }
 
 async fn handle_sessions_reset(
