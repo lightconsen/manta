@@ -35,7 +35,13 @@ pub fn get_asset(path: &str) -> Option<(Vec<u8>, &'static str)> {
     }
 
     // Filesystem fallback for development or when embedding is disabled.
+    // Vite outputs the built app to ../dist, so look there rather than the cwd.
     for key in &keys {
+        let dist_key = format!("dist/{}", key);
+        if let Ok(data) = std::fs::read(&dist_key) {
+            let mime = guess_mime(&dist_key);
+            return Some((data, mime));
+        }
         if let Ok(data) = std::fs::read(key) {
             let mime = guess_mime(key);
             return Some((data, mime));
@@ -57,7 +63,9 @@ pub fn get_asset_string(path: &str) -> Option<String> {
         }
     }
 
-    std::fs::read_to_string(path).ok()
+    std::fs::read_to_string(format!("dist/{}", path))
+        .ok()
+        .or_else(|| std::fs::read_to_string(path).ok())
 }
 
 /// Guess MIME type from file extension for embedded assets.

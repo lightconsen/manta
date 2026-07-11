@@ -38,10 +38,18 @@ function looksLikeMarkdown(text: string): boolean {
   return markdownPatterns.some((re) => re.test(text));
 }
 
-export function ToolCallPart({ toolName, args, result, data, isError, transport, nonCollapsible }: ToolCallPartProps) {
+/** Detect tool result that reports an error by shape. */
+function isErrorResult(result: unknown): boolean {
+  if (typeof result !== "object" || result === null) return false;
+  return "error" in result;
+}
+
+export function ToolCallPart({ toolName, args, result, data, isError: isErrorProp, transport, nonCollapsible }: ToolCallPartProps) {
   const [expanded, setExpanded] = useState(true);
   const [requesting, setRequesting] = useState(false);
   const [requestDone, setRequestDone] = useState(false);
+
+  const isError = isErrorProp || isErrorResult(result);
 
   const needsPermission = isPermissionError(data);
 
@@ -50,6 +58,12 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport,
     : result !== undefined
     ? "border-l-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400"
     : "border-l-primary-400 bg-primary-50/40 dark:bg-primary-900/15 text-primary-700 dark:text-primary-400";
+
+  const toolNameBadgeClass = "bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300";
+
+  const resultBoxClass = isError
+    ? "bg-red-50 dark:bg-red-950/20 text-red-800 dark:text-red-200"
+    : "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-200";
 
   const statusText = isError
     ? "Error"
@@ -126,11 +140,11 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport,
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Result</div>
           {renderAsMarkdown ? (
-            <div className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full">
+            <div className={`rounded-lg p-2 overflow-x-auto max-w-full ${resultBoxClass}`}>
               <MarkdownMessage text={resultString || ""} />
             </div>
           ) : (
-            <pre className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
+            <pre className={`rounded-lg p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px] ${resultBoxClass}`}>
               {resultString}
             </pre>
           )}
@@ -143,7 +157,9 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport,
     return (
       <div className="my-3">
         <div className="flex items-center gap-2 text-[11px] font-medium text-secondary mb-2">
-          <span className="font-mono">{toolName}</span>
+          <span className={`font-mono px-1.5 py-0.5 rounded ${toolNameBadgeClass}`}>
+            {toolName}
+          </span>
           <span className="ml-auto flex items-center gap-1.5 text-[10px] opacity-70">
             {result === undefined && !isError && (
               <span className="relative flex h-2 w-2">
@@ -174,7 +190,9 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport,
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <span className="font-mono">{toolName}</span>
+        <span className={`font-mono px-1.5 py-0.5 rounded ${toolNameBadgeClass}`}>
+          {toolName}
+        </span>
         <span className="ml-auto flex items-center gap-1.5 text-[10px] opacity-70">
           {result === undefined && !isError && (
             <span className="relative flex h-2 w-2">
