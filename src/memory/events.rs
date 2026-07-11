@@ -439,15 +439,33 @@ mod tests {
         let events = log.read_all().await.unwrap();
         assert_eq!(events.len(), 50, "all 50 concurrent appends should produce exactly 50 events");
 
-        // Verify we can deserialize all events and they have the expected content
-        for (i, event) in events.iter().enumerate() {
+        // Verify we can deserialize all events and they have the expected content.
+        // Order is not guaranteed because events share one-second-granularity timestamps.
+        let mut by_id = std::collections::HashMap::new();
+        for event in &events {
             match event {
                 MemoryEvent::RecallRecorded { recall_id, content_summary, .. } => {
-                    assert_eq!(recall_id, &format!("r{}", i));
-                    assert_eq!(content_summary, &format!("content {}", i));
+                    by_id.insert(recall_id.clone(), content_summary.clone());
                 }
                 _ => panic!("Unexpected event type"),
             }
+        }
+
+        assert_eq!(
+            by_id.len(),
+            50,
+            "all 50 concurrent appends should produce exactly 50 unique events"
+        );
+
+        for i in 0..50 {
+            let expected_id = format!("r{}", i);
+            let expected_summary = format!("content {}", i);
+            assert_eq!(
+                by_id.get(&expected_id),
+                Some(&expected_summary),
+                "missing or mismatched event {}",
+                expected_id
+            );
         }
     }
 }

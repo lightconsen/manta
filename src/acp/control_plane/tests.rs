@@ -1,4 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::*;
 use crate::acp::config::{
@@ -24,23 +26,24 @@ fn mock_agent_builder() -> impl Fn() -> crate::Result<Agent> + Send + Sync + 'st
 /// recovered.
 #[tokio::test]
 async fn test_subagent_crash_auto_recovery() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    static CRASHED: AtomicBool = AtomicBool::new(false);
+    let crashed = Arc::new(AtomicBool::new(false));
+    let crashed_for_builder = crashed.clone();
     let acp = AcpControlPlane::new(50)
         .with_recovery(CrashRecoveryConfig {
             enabled: true,
             max_retries: 1,
             backoff_seconds: vec![0],
         })
-        .with_agent_builder(|| {
-            let provider =
-                Arc::new(crate::providers::mock::MockProvider::new().with_callback(|_messages| {
-                    if !CRASHED.swap(true, Ordering::SeqCst) {
+        .with_agent_builder(move || {
+            let crashed = crashed_for_builder.clone();
+            let provider = Arc::new(crate::providers::mock::MockProvider::new().with_callback(
+                move |_messages| {
+                    if !crashed.swap(true, Ordering::SeqCst) {
                         panic!("simulated subagent crash")
                     }
                     crate::providers::Message::assistant("recovered")
-                }));
+                },
+            ));
             let tools = Arc::new(crate::tools::ToolRegistry::new());
             let config = AgentConfig::default();
             Ok(Agent::new(config, provider, tools))
@@ -65,8 +68,23 @@ async fn test_subagent_crash_auto_recovery() {
     );
     let _ = acp.send_message(&handle.id, msg).await.ok();
 
-    // Wait long enough for the panic + recovery to complete.
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    // Poll until recovery completes or a timeout is reached.
+    let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let subs = acp.list_session_subagents(&session_id).await;
+            if let Some(candidate) = subs.first() {
+                if candidate.id != handle.id
+                    && candidate.crash_count == 1
+                    && candidate.status == SubagentStatus::Ready
+                {
+                    return candidate.clone();
+                }
+            }
+        }
+    })
+    .await
+    .expect("recovery should complete within 5 seconds");
 
     // The original handle is replaced during recovery; it may no longer be
     // present in the subagent map.
@@ -76,13 +94,8 @@ async fn test_subagent_crash_auto_recovery() {
         "original handle should be removed or marked Crashed"
     );
 
-    // Session should contain a recovered subagent with a different id.
-    let session_subagents = acp.list_session_subagents(&session_id).await;
-    assert_eq!(session_subagents.len(), 1);
-    let recovered = &session_subagents[0];
-    assert_ne!(recovered.id, handle.id);
-    assert_eq!(recovered.crash_count, 1);
     assert_eq!(recovered.status, SubagentStatus::Ready);
+    assert_eq!(recovered.crash_count, 1);
 
     // Cleanup
     acp.shutdown_subagent(&recovered.id)

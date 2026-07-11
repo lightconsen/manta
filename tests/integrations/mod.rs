@@ -6,6 +6,7 @@ pub use std::sync::Arc;
 pub use std::time::Duration;
 
 pub use serde_json::json;
+pub use syscity::tools::web::SearchProvider;
 pub use syscity::tools::{
     AcpSessionTool, AcpSpawnTool, ApplyPatchTool, BrowserTool, CanvasTool, CodeExecutionTool,
     CronTool, DelegateTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool,

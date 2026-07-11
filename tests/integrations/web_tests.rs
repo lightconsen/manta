@@ -1,4 +1,8 @@
 use super::*;
+use wiremock::{
+    matchers::{method, path, query_param},
+    Mock, MockServer, ResponseTemplate,
+};
 
 #[tokio::test]
 async fn web_fetch_tool_fetches_example_com() {
@@ -96,32 +100,59 @@ async fn web_search_query_too_long_fails() {
 
 #[tokio::test]
 async fn web_search_returns_structured_results() {
-    let tool = WebSearchTool::new();
+    let server = MockServer::start().await;
+
+    let mock_response = json!({
+        "results": [
+            {
+                "title": "The Rust Programming Language",
+                "url": "https://www.rust-lang.org/",
+                "snippet": "A language empowering everyone to build reliable and efficient software."
+            }
+        ]
+    });
+
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .and(query_param("q", "Rust programming language"))
+        .and(query_param("limit", "3"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_response))
+        .mount(&server)
+        .await;
+
+    let tool = WebSearchTool::new().with_provider(SearchProvider::Custom {
+        url: format!("{}/search?q={{query}}&limit={{limit}}", server.uri()),
+        api_key: None,
+        headers: None,
+        result_parser: None,
+    });
     let ctx = test_context();
     let result = tool
         .execute(json!({"query": "Rust programming language", "limit": 3}), &ctx)
         .await;
 
     match result {
+        Ok(output) if output.success => {
+            let results = output
+                .data
+                .as_ref()
+                .and_then(|d| d.get("results"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            assert_eq!(results.len(), 1, "Expected one structured result");
+            assert_eq!(
+                results[0].get("title").and_then(|v| v.as_str()),
+                Some("The Rust Programming Language")
+            );
+            assert_eq!(
+                results[0].get("url").and_then(|v| v.as_str()),
+                Some("https://www.rust-lang.org/")
+            );
+        }
         Ok(output) => {
-            if output.success {
-                let results = output
-                    .data
-                    .as_ref()
-                    .and_then(|d| d.get("results"))
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                assert!(!results.is_empty(), "Expected structured results array");
-            } else {
-                println!(
-                    "Web search returned error (network may be unavailable): {:?}",
-                    output.error
-                );
-            }
+            panic!("Expected success from mocked search, got: {:?}", output.error);
         }
-        Err(e) => {
-            println!("Web search failed (network may be unavailable): {}", e);
-        }
+        Err(e) => panic!("Expected success from mocked search, got: {}", e),
     }
 }
