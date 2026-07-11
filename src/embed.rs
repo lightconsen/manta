@@ -1,11 +1,14 @@
 //! Embedded web frontend assets
 //!
-//! Uses rust-embed to compile the built React app (`dist/`) into the binary.
-//! This allows distributing Syscity as a single executable without requiring
-//! the `dist/` directory at runtime.
+//! Uses rust-embed to compile the built React app (`dist/`) into the binary
+//! when the `embedded-assets` feature is enabled. Without the feature, assets
+//! are read from the filesystem at runtime, which avoids recompiling the Rust
+//! binary on every frontend change during development.
 
+#[cfg(feature = "embedded-assets")]
 use rust_embed::Embed;
 
+#[cfg(feature = "embedded-assets")]
 #[derive(Embed)]
 #[folder = "dist/"]
 pub struct WebAssets;
@@ -15,15 +18,46 @@ pub struct WebAssets;
 /// Vite places hashed JS/CSS under `dist/assets/`, so the embedded key
 /// is either the direct path or `"assets/{path}"`.  This helper tries both
 /// and returns `(bytes, mime_type)` on success.
+///
+/// When `embedded-assets` is enabled, assets are served from the compiled-in
+/// bundle. Otherwise they are read from the `dist/` directory at runtime.
 pub fn get_asset(path: &str) -> Option<(Vec<u8>, &'static str)> {
     let keys = [path.to_string(), format!("assets/{}", path)];
-    for key in &keys {
-        if let Some(file) = WebAssets::get(key) {
-            let mime = guess_mime(key);
-            return Some((file.data.to_vec(), mime));
+
+    #[cfg(feature = "embedded-assets")]
+    {
+        for key in &keys {
+            if let Some(file) = WebAssets::get(key) {
+                let mime = guess_mime(key);
+                return Some((file.data.to_vec(), mime));
+            }
         }
     }
+
+    // Filesystem fallback for development or when embedding is disabled.
+    for key in &keys {
+        if let Ok(data) = std::fs::read(key) {
+            let mime = guess_mime(key);
+            return Some((data, mime));
+        }
+    }
+
     None
+}
+
+/// Read an asset as a UTF-8 string.
+///
+/// Tries embedded assets first when the feature is enabled, then falls back to
+/// the filesystem.
+pub fn get_asset_string(path: &str) -> Option<String> {
+    #[cfg(feature = "embedded-assets")]
+    {
+        if let Some(file) = WebAssets::get(path) {
+            return Some(String::from_utf8_lossy(file.data.as_ref()).to_string());
+        }
+    }
+
+    std::fs::read_to_string(path).ok()
 }
 
 /// Guess MIME type from file extension for embedded assets.

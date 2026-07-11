@@ -174,8 +174,8 @@ tar = "0.4"
 # Audio capture (cross-platform I/O)
 cpal = "0.15"
 
-# Embed frontend assets into binary for single-file distribution
-rust-embed = "8"
+# Embed frontend assets into binary for single-file distribution (optional)
+rust-embed = { version = "8", optional = true }
 
 # System resource limits and signals (Unix only)
 [target.'cfg(unix)'.dependencies]
@@ -242,6 +242,7 @@ hot-reload = ["notify-debouncer-full"]
 vision = ["ort", "image", "ndarray"]
 pgvector = ["dep:pgvector", "pgvector/sqlx", "sqlx/postgres"]
 sqlite-vec = ["dep:sqlite-vec", "dep:libsqlite3-sys"]
+embedded-assets = ["dep:rust-embed"]
 
 # Note: Discord and Slack use reqwest for HTTP API calls
 # WhatsApp, QQ, Lark use reqwest with custom implementations

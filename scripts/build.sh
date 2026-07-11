@@ -36,9 +36,9 @@ fi
 echo "🧹 Cleaning Rust build artifacts..."
 cargo clean
 
-# Build release binary
+# Build release binary with embedded assets for single-file distribution
 echo "🔨 Building release binary..."
-cargo build --release
+cargo build --release --features embedded-assets
 
 echo "✅ Build complete!"
 echo "📍 Binary location: ./target/release/syscity"
