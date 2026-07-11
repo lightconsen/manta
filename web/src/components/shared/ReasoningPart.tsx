@@ -9,7 +9,7 @@ function BrainIcon({ className }: { className?: string }) {
   );
 }
 
-export function ReasoningPart({ text }: { text: string }) {
+export function ReasoningPart({ text, nonCollapsible }: { text: string; nonCollapsible?: boolean }) {
   const [expanded, setExpanded] = useState(true);
   const [displayedText, setDisplayedText] = useState("");
   const [done, setDone] = useState(false);
@@ -93,6 +93,21 @@ export function ReasoningPart({ text }: { text: string }) {
   // Don't show anything while waiting for reasoning content to arrive.
   if (isWaiting) {
     return null;
+  }
+
+  // ── Non-collapsible: always show full content ───────────────────
+  if (nonCollapsible) {
+    return (
+      <div className="my-2 rounded-lg border-l-2 border-primary-300 dark:border-primary-700 bg-sidebar overflow-hidden">
+        <div className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-secondary">
+          <BrainIcon className="w-3.5 h-3.5" />
+          <span>Thinking</span>
+        </div>
+        <div className="px-3.5 py-2.5 text-[11px] text-secondary font-mono whitespace-pre-wrap leading-relaxed border-t border-subtle">
+          {text}
+        </div>
+      </div>
+    );
   }
 
   // ── Done (collapsed) ────────────────────────────────────────────

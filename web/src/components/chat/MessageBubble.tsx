@@ -199,7 +199,7 @@ function InternalsToggle({
       aria-expanded={expanded}
     >
       <BrainCircuit className="w-3.5 h-3.5" />
-      <span>{expanded ? "Hide" : "Show"} {parts.join(" · ")}</span>
+      <span>{parts.join(" · ")}</span>
       {expanded ? (
         <ChevronUp className="w-3 h-3" />
       ) : (
@@ -333,7 +333,7 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
                           : "max-h-0 opacity-0"
                       }`}
                     >
-                      <ReasoningPart text={part.text || ""} />
+                      <ReasoningPart text={part.text || ""} nonCollapsible />
                     </div>
                   );
                 }
@@ -353,6 +353,7 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
                         result={part.result}
                         data={part.data}
                         transport={transport}
+                        nonCollapsible
                       />
                     </div>
                   );

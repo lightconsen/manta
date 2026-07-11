@@ -9,6 +9,7 @@ interface ToolCallPartProps {
   data?: unknown;
   isError?: boolean;
   transport?: SyscityWebSocketTransport;
+  nonCollapsible?: boolean;
 }
 
 /** Detect macOS Accessibility permission error from tool result. */
@@ -37,7 +38,7 @@ function looksLikeMarkdown(text: string): boolean {
   return markdownPatterns.some((re) => re.test(text));
 }
 
-export function ToolCallPart({ toolName, args, result, data, isError, transport }: ToolCallPartProps) {
+export function ToolCallPart({ toolName, args, result, data, isError, transport, nonCollapsible }: ToolCallPartProps) {
   const [expanded, setExpanded] = useState(true);
   const [requesting, setRequesting] = useState(false);
   const [requestDone, setRequestDone] = useState(false);
@@ -70,6 +71,102 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport 
     }
   };
 
+  const content = (
+    <div className="px-3 py-2 text-xs">
+      <div className="mb-2">
+        <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Arguments</div>
+        <pre className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
+          {JSON.stringify(args, null, 2)}
+        </pre>
+      </div>
+      {needsPermission ? (
+        <div className="rounded-lg bg-amber-50/60 dark:bg-amber-950/20 p-3">
+          <div className="flex items-start gap-2">
+            <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-amber-800 dark:text-amber-300 mb-1">
+                macOS Accessibility Permission Required
+              </div>
+              <div className="text-amber-700 dark:text-amber-400/80 mb-2 leading-relaxed">
+                Desktop control tools need Accessibility access to inspect UI elements.
+                Click the button below to open System Settings and trigger the permission dialog.
+              </div>
+              {!requestDone ? (
+                <button
+                  onClick={handleRequestPermission}
+                  disabled={requesting}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-[11px] font-medium transition"
+                >
+                  {requesting ? (
+                    <>
+                      <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Requesting...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      Open System Settings
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="text-green-700 dark:text-green-400 text-[11px] font-medium">
+                  Permission dialog triggered. Please allow access in System Settings, then restart Syscity.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : result !== undefined && (
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Result</div>
+          {renderAsMarkdown ? (
+            <div className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full">
+              <MarkdownMessage text={resultString || ""} />
+            </div>
+          ) : (
+            <pre className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
+              {resultString}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  if (nonCollapsible) {
+    return (
+      <div className={`my-2 rounded-lg border-l-4 ${statusColor}`}>
+        <div className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium">
+          <svg
+            className="w-3.5 h-3.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="font-mono">{toolName}</span>
+          <span className="ml-auto flex items-center gap-1.5 text-[10px] opacity-70">
+            {result === undefined && !isError && (
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-500" />
+              </span>
+            )}
+            {statusText}
+          </span>
+        </div>
+        {content}
+      </div>
+    );
+  }
+
   return (
     <div className={`my-2 rounded-lg border-l-4 ${statusColor}`}>
       <button
@@ -95,73 +192,7 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport 
           {statusText}
         </span>
       </button>
-      {expanded && (
-        <div className="px-3 py-2 text-xs">
-          <div className="mb-2">
-            <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Arguments</div>
-            <pre className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
-              {JSON.stringify(args, null, 2)}
-            </pre>
-          </div>
-          {needsPermission ? (
-            <div className="rounded-lg bg-amber-50/60 dark:bg-amber-950/20 p-3">
-              <div className="flex items-start gap-2">
-                <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-amber-800 dark:text-amber-300 mb-1">
-                    macOS Accessibility Permission Required
-                  </div>
-                  <div className="text-amber-700 dark:text-amber-400/80 mb-2 leading-relaxed">
-                    Desktop control tools need Accessibility access to inspect UI elements.
-                    Click the button below to open System Settings and trigger the permission dialog.
-                  </div>
-                  {!requestDone ? (
-                    <button
-                      onClick={handleRequestPermission}
-                      disabled={requesting}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-[11px] font-medium transition"
-                    >
-                      {requesting ? (
-                        <>
-                          <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Requesting...
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          </svg>
-                          Open System Settings
-                        </>
-                      )}
-                    </button>
-                  ) : (
-                    <div className="text-green-700 dark:text-green-400 text-[11px] font-medium">
-                      Permission dialog triggered. Please allow access in System Settings, then restart Syscity.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : result !== undefined && (
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Result</div>
-              {renderAsMarkdown ? (
-                <div className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full">
-                  <MarkdownMessage text={resultString || ""} />
-                </div>
-              ) : (
-                <pre className="bg-black/5 dark:bg-white/5 rounded-lg p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
-                  {resultString}
-                </pre>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      {expanded && content}
     </div>
   );
 }
