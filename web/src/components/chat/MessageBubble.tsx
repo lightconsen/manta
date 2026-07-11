@@ -10,6 +10,9 @@ import {
   Check,
   Pencil,
   RotateCcw,
+  ChevronDown,
+  ChevronUp,
+  BrainCircuit,
 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import type { ChatMessage, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
@@ -130,6 +133,82 @@ function assistantReplyText(message: ChatMessage): string {
   return textParts.join("\n\n");
 }
 
+function countInternalParts(message: ChatMessage): {
+  reasoning: number;
+  toolCalls: number;
+} {
+  if (!message.parts) return { reasoning: 0, toolCalls: 0 };
+  return message.parts.reduce(
+    (acc, part) => {
+      if (part.type === "reasoning") acc.reasoning += 1;
+      if (part.type === "tool-call") acc.toolCalls += 1;
+      return acc;
+    },
+    { reasoning: 0, toolCalls: 0 }
+  );
+}
+
+const INTERNALS_EXPANDED_KEY = "syscity_show_ai_internals";
+
+function useShowInternals() {
+  const [expanded, setExpanded] = useState(() => {
+    try {
+      return localStorage.getItem(INTERNALS_EXPANDED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggle = useCallback(() => {
+    setExpanded((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(INTERNALS_EXPANDED_KEY, String(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
+  return { expanded, toggle };
+}
+
+function InternalsToggle({
+  reasoning,
+  toolCalls,
+  expanded,
+  onToggle,
+}: {
+  reasoning: number;
+  toolCalls: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  if (reasoning === 0 && toolCalls === 0) return null;
+
+  const parts: string[] = [];
+  if (reasoning > 0) parts.push(`${reasoning} thinking`);
+  if (toolCalls > 0) parts.push(`${toolCalls} tool${toolCalls !== 1 ? "s" : ""}`);
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex items-center gap-1.5 text-[11px] text-secondary hover:text-primary transition mb-1.5"
+      aria-expanded={expanded}
+    >
+      <BrainCircuit className="w-3.5 h-3.5" />
+      <span>{expanded ? "Hide" : "Show"} {parts.join(" · ")}</span>
+      {expanded ? (
+        <ChevronUp className="w-3 h-3" />
+      ) : (
+        <ChevronDown className="w-3 h-3" />
+      )}
+    </button>
+  );
+}
+
 export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const [isEditing, setIsEditing] = useState(false);
@@ -217,6 +296,9 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
   const isAssistant = message.role === "assistant";
   const hasMetadata = isAssistant && (message.durationMs !== undefined || message.toolCount !== undefined);
   const replyText = assistantReplyText(message);
+  const internalCounts = countInternalParts(message);
+  const hasInternals = internalCounts.reasoning > 0 || internalCounts.toolCalls > 0;
+  const { expanded: showInternals, toggle: toggleInternals } = useShowInternals();
 
   const handleRegenerate = useCallback(() => {
     transport?.regenerateAssistantMessage(message.id);
@@ -230,27 +312,54 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
           <div className="text-[11px] font-medium text-secondary mb-1 uppercase tracking-wide">
             Syscity
           </div>
+          {hasInternals && (
+            <InternalsToggle
+              reasoning={internalCounts.reasoning}
+              toolCalls={internalCounts.toolCalls}
+              expanded={showInternals}
+              onToggle={toggleInternals}
+            />
+          )}
           {hasParts ? (
             <div className="space-y-1">
               {message.parts!.map((part, i) => {
                 if (part.type === "reasoning") {
-                  return <ReasoningPart key={i} text={part.text || ""} />;
+                  return (
+                    <div
+                      key={i}
+                      className={`overflow-hidden transition-all duration-200 ${
+                        showInternals
+                          ? "max-h-[2000px] opacity-100"
+                          : "max-h-0 opacity-0"
+                      }`}
+                    >
+                      <ReasoningPart text={part.text || ""} />
+                    </div>
+                  );
                 }
                 if (part.type === "tool-call") {
                   return (
-                    <ToolCallPart
+                    <div
                       key={i}
-                      toolName={part.toolName || "tool"}
-                      args={part.args || {}}
-                      result={part.result}
-                      data={part.data}
-                      transport={transport}
-                    />
+                      className={`overflow-hidden transition-all duration-200 ${
+                        showInternals
+                          ? "max-h-[2000px] opacity-100"
+                          : "max-h-0 opacity-0"
+                      }`}
+                    >
+                      <ToolCallPart
+                        toolName={part.toolName || "tool"}
+                        args={part.args || {}}
+                        result={part.result}
+                        data={part.data}
+                        transport={transport}
+                      />
+                    </div>
                   );
                 }
                 if (part.type === "text") {
                   return (
-                    <div className="text-primary">
+                    <div key={i} className="text-primary">
                       <MarkdownMessage text={part.text || ""} />
                     </div>
                   );
