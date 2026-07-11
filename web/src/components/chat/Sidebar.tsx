@@ -214,6 +214,17 @@ export function Sidebar({
           style={{ flexBasis: `${sessionRatio * 100}%`, flexShrink: 0, flexGrow: 0 }}
           role="list"
         >
+          <button
+            onClick={onNewSession}
+            className={`w-full text-left px-3 py-2 mb-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
+              collapsed ? "justify-center" : ""
+            }`}
+            title="New session"
+            aria-label="New session"
+          >
+            <Plus className="w-4 h-4 shrink-0" />
+            {!collapsed && <span>New Session</span>}
+          </button>
           {!collapsed &&
             groups.map((group) => (
               <div key={group.label} className="mb-2">
@@ -249,17 +260,6 @@ export function Sidebar({
                 onPin={onPinSession}
               />
             ))}
-          <button
-            onClick={onNewSession}
-            className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
-              collapsed ? "justify-center" : ""
-            }`}
-            title="New session"
-            aria-label="New session"
-          >
-            <Plus className="w-4 h-4 shrink-0" />
-            {!collapsed && <span>New Session</span>}
-          </button>
         </div>
 
         {/* Resize handle */}
