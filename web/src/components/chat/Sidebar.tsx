@@ -15,7 +15,7 @@ import {
 import { useThemeStore } from "@/stores/themeStore";
 import { StatusDot } from "./StatusDot";
 import type { NetworkStatus } from "@/SyscityWebSocketTransport";
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 
 interface AgentItem {
   id: string;
@@ -65,6 +65,51 @@ export function Sidebar({
   onPinSession,
 }: SidebarProps) {
   const { resolvedTheme, setTheme } = useThemeStore();
+
+  const listContainerRef = useRef<HTMLDivElement>(null);
+  const [sessionRatio, setSessionRatio] = useState<number>(() => {
+    const saved = localStorage.getItem("syscity_sidebar_session_ratio");
+    if (saved) {
+      const v = parseFloat(saved);
+      if (!isNaN(v)) return Math.max(0.2, Math.min(0.8, v));
+    }
+    return 0.6;
+  });
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("syscity_sidebar_session_ratio", String(sessionRatio));
+  }, [sessionRatio]);
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (collapsed) return;
+      e.preventDefault();
+      setIsDragging(true);
+      document.body.style.userSelect = "none";
+
+      const container = listContainerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const y = moveEvent.clientY - rect.top;
+        const ratio = Math.max(0.15, Math.min(0.85, y / rect.height));
+        setSessionRatio(ratio);
+      };
+
+      const handleMouseUp = () => {
+        setIsDragging(false);
+        document.body.style.userSelect = "";
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    },
+    [collapsed]
+  );
 
   const groups = useMemo(() => {
     const now = new Date();
@@ -159,100 +204,132 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Sessions: 60% */}
-      <div className="h-[60%] overflow-y-auto overflow-x-hidden px-1 py-2" role="list">
-        {!collapsed &&
-          groups.map((group) => (
-            <div key={group.label} className="mb-2">
-              <div className="px-3 pb-1">
-                <span className="text-[10px] uppercase tracking-wider text-secondary font-medium">
-                  {group.label}
-                </span>
-              </div>
-              {group.sessions.map((s) => (
-                <SessionRow
-                  key={s.id}
-                  session={s}
-                  currentSessionId={currentSessionId}
-                  collapsed={collapsed}
-                  onSwitch={() => onSwitchSession(s.id)}
-                  onRename={onRenameSession}
-                  onDelete={onDeleteSession}
-                  onPin={onPinSession}
-                />
-              ))}
-            </div>
-          ))}
-        {collapsed &&
-          sessions.map((s) => (
-            <SessionRow
-              key={s.id}
-              session={s}
-              currentSessionId={currentSessionId}
-              collapsed={collapsed}
-              onSwitch={() => onSwitchSession(s.id)}
-              onRename={onRenameSession}
-              onDelete={onDeleteSession}
-              onPin={onPinSession}
-            />
-          ))}
-        <button
-          onClick={onNewSession}
-          className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
-            collapsed ? "justify-center" : ""
-          }`}
-          title="New session"
-          aria-label="New session"
+      <div
+        ref={listContainerRef}
+        className="flex-1 flex flex-col min-h-0 overflow-hidden"
+      >
+        {/* Sessions */}
+        <div
+          className="overflow-y-auto overflow-x-hidden px-1 py-2"
+          style={{ flexBasis: `${sessionRatio * 100}%`, flexShrink: 0, flexGrow: 0 }}
+          role="list"
         >
-          <Plus className="w-4 h-4 shrink-0" />
-          {!collapsed && <span>New Session</span>}
-        </button>
-      </div>
+          {!collapsed &&
+            groups.map((group) => (
+              <div key={group.label} className="mb-2">
+                <div className="px-3 pb-1">
+                  <span className="text-[10px] uppercase tracking-wider text-secondary font-medium">
+                    {group.label}
+                  </span>
+                </div>
+                {group.sessions.map((s) => (
+                  <SessionRow
+                    key={s.id}
+                    session={s}
+                    currentSessionId={currentSessionId}
+                    collapsed={collapsed}
+                    onSwitch={() => onSwitchSession(s.id)}
+                    onRename={onRenameSession}
+                    onDelete={onDeleteSession}
+                    onPin={onPinSession}
+                  />
+                ))}
+              </div>
+            ))}
+          {collapsed &&
+            sessions.map((s) => (
+              <SessionRow
+                key={s.id}
+                session={s}
+                currentSessionId={currentSessionId}
+                collapsed={collapsed}
+                onSwitch={() => onSwitchSession(s.id)}
+                onRename={onRenameSession}
+                onDelete={onDeleteSession}
+                onPin={onPinSession}
+              />
+            ))}
+          <button
+            onClick={onNewSession}
+            className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
+              collapsed ? "justify-center" : ""
+            }`}
+            title="New session"
+            aria-label="New session"
+          >
+            <Plus className="w-4 h-4 shrink-0" />
+            {!collapsed && <span>New Session</span>}
+          </button>
+        </div>
 
-      {/* Agents: 40% */}
-      <div className="h-[40%] flex flex-col border-t border-subtle">
+        {/* Resize handle */}
         {!collapsed && (
-          <div className="px-3 py-2 shrink-0">
-            <span className="text-[10px] uppercase tracking-wider text-secondary font-medium">
-              Agents
-            </span>
+          <div
+            onMouseDown={handleMouseDown}
+            className={`relative h-1 shrink-0 cursor-ns-resize bg-transparent hover:bg-primary/10 transition-colors ${
+              isDragging ? "bg-primary/20" : ""
+            }`}
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize sessions and agents panels"
+            title="Drag to resize"
+          >
+            <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 w-8 h-0.5 rounded-full bg-subtle" />
           </div>
         )}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden px-1 py-1" role="list">
-          {agents.length === 0 && !collapsed && (
-            <div className="px-3 py-4 text-xs text-secondary text-center">
-              <Bot className="w-5 h-5 mx-auto mb-2 opacity-50" />
-              <p>No agents yet</p>
-              <p className="mt-1 opacity-70">
-                Create an agent in ~/.syscity/agents
-              </p>
+
+        {/* Agents */}
+        <div
+          className="flex flex-col min-h-0 border-t border-subtle"
+          style={{
+            flexBasis: `${(1 - sessionRatio) * 100}%`,
+            flexShrink: 0,
+            flexGrow: 0,
+          }}
+        >
+          {!collapsed && (
+            <div className="px-3 py-2 shrink-0">
+              <span className="text-[10px] uppercase tracking-wider text-secondary font-medium">
+                Agents
+              </span>
             </div>
           )}
-          {agents.map((agent) => (
-            <button
-              key={agent.id}
-              onClick={() => onCreateSessionWithAgent(agent.id)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
-                collapsed ? "justify-center" : ""
-              }`}
-              title={`New session with ${agent.display_name}`}
-              role="listitem"
-            >
-              <span className="text-base shrink-0" aria-hidden="true">
-                {agent.emoji}
-              </span>
-              {!collapsed && (
-                <>
-                  <span className="truncate flex-1 min-w-0">
-                    {agent.display_name}
-                  </span>
-                  {agent.has_heartbeat && (
-                    <HeartPulse className="w-3 h-3 text-emerald-500 shrink-0" />
-                  )}
-                </>
-              )}
-            </button>
-          ))}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden px-1 py-1" role="list">
+            {agents.length === 0 && !collapsed && (
+              <div className="px-3 py-4 text-xs text-secondary text-center">
+                <Bot className="w-5 h-5 mx-auto mb-2 opacity-50" />
+                <p>No agents yet</p>
+                <p className="mt-1 opacity-70">
+                  Create an agent in ~/.syscity/agents
+                </p>
+              </div>
+            )}
+            {agents.map((agent) => (
+              <button
+                key={agent.id}
+                onClick={() => onCreateSessionWithAgent(agent.id)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
+                  collapsed ? "justify-center" : ""
+                }`}
+                title={`New session with ${agent.display_name}`}
+                role="listitem"
+              >
+                <span className="text-base shrink-0" aria-hidden="true">
+                  {agent.emoji}
+                </span>
+                {!collapsed && (
+                  <>
+                    <span className="truncate flex-1 min-w-0">
+                      {agent.display_name}
+                    </span>
+                    {agent.has_heartbeat && (
+                      <HeartPulse className="w-3 h-3 text-emerald-500 shrink-0" />
+                    )}
+                  </>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
