@@ -38,8 +38,11 @@ function looksLikeMarkdown(text: string): boolean {
   return markdownPatterns.some((re) => re.test(text));
 }
 
-/** Detect tool result that reports an error by shape. */
+/** Detect tool result that reports an error by shape or string prefix. */
 function isErrorResult(result: unknown): boolean {
+  if (typeof result === "string") {
+    return result.startsWith("Error:") || result.toLowerCase().startsWith("error");
+  }
   if (typeof result !== "object" || result === null) return false;
   return "error" in result;
 }
@@ -63,7 +66,7 @@ export function ToolCallPart({ toolName, args, result, data, isError: isErrorPro
 
   const resultBoxClass = isError
     ? "bg-red-50 dark:bg-red-950/20 text-red-800 dark:text-red-200"
-    : "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-200";
+    : "bg-black/5 dark:bg-white/5";
 
   const statusText = isError
     ? "Error"

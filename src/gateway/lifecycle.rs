@@ -800,7 +800,7 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
     // SPA frontend routes (serve built React app from embedded assets)
     let frontend_router = Router::new()
         .route("/", get(super::web_terminal_html_handler))
-        .route("/favicon.svg", get(super::favicon_handler))
+        .route("/favicon.ico", get(super::favicon_handler))
         .route("/syscity.png", get(super::syscity_png_handler))
         .route("/manifest.webmanifest", get(super::manifest_handler))
         .route("/registerSW.js", get(super::register_sw_handler))
