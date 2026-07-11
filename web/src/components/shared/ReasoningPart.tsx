@@ -98,12 +98,13 @@ export function ReasoningPart({ text, nonCollapsible }: { text: string; nonColla
   // ── Non-collapsible: always show full content ───────────────────
   if (nonCollapsible) {
     return (
-      <div className="my-2 rounded-lg border-l-2 border-primary-300 dark:border-primary-700 bg-sidebar overflow-hidden">
-        <div className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-secondary">
+      <div className="my-3">
+        <div className="flex items-center gap-2 text-[11px] font-medium text-secondary mb-2">
           <BrainIcon className="w-3.5 h-3.5" />
           <span>Thinking</span>
         </div>
-        <div className="px-3.5 py-2.5 text-[11px] text-secondary font-mono whitespace-pre-wrap leading-relaxed border-t border-subtle">
+        <hr className="border-subtle mb-2" />
+        <div className="text-[11px] text-secondary font-mono whitespace-pre-wrap leading-relaxed">
           {text}
         </div>
       </div>

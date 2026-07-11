@@ -141,16 +141,8 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport,
 
   if (nonCollapsible) {
     return (
-      <div className={`my-2 rounded-lg border-l-4 ${statusColor}`}>
-        <div className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium">
-          <svg
-            className="w-3.5 h-3.5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
+      <div className="my-3">
+        <div className="flex items-center gap-2 text-[11px] font-medium text-secondary mb-2">
           <span className="font-mono">{toolName}</span>
           <span className="ml-auto flex items-center gap-1.5 text-[10px] opacity-70">
             {result === undefined && !isError && (
@@ -162,6 +154,7 @@ export function ToolCallPart({ toolName, args, result, data, isError, transport,
             {statusText}
           </span>
         </div>
+        <hr className="border-subtle mb-2" />
         {content}
       </div>
     );
