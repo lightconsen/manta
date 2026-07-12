@@ -15,7 +15,7 @@ interface ChatState {
   voiceMode: boolean;
   isLoadingHistory: boolean;
   hasMoreHistory: boolean;
-  showAiInternals: boolean;
+  aiInternalsVisibility: Record<string, boolean>;
 
   setMessages: (messages: ChatMessage[]) => void;
   prependMessages: (messages: ChatMessage[]) => void;
@@ -35,16 +35,8 @@ interface ChatState {
   setVoiceMode: (enabled: boolean) => void;
   setIsLoadingHistory: (loading: boolean) => void;
   setHasMoreHistory: (hasMore: boolean) => void;
-  setShowAiInternals: (show: boolean) => void;
+  setAiInternalsVisibility: (messageId: string, visible: boolean) => void;
 }
-
-const loadShowAiInternals = () => {
-  try {
-    return localStorage.getItem("syscity_show_ai_internals") === "true";
-  } catch {
-    return false;
-  }
-};
 
 export const useChatStore = create<ChatState>((set) => ({
   messages: [],
@@ -55,7 +47,7 @@ export const useChatStore = create<ChatState>((set) => ({
   voiceMode: false,
   isLoadingHistory: false,
   hasMoreHistory: false,
-  showAiInternals: loadShowAiInternals(),
+  aiInternalsVisibility: {},
 
   setMessages: (messages) => set({ messages }),
   prependMessages: (messages) => set((s) => ({ messages: [...messages, ...s.messages] })),
@@ -71,12 +63,11 @@ export const useChatStore = create<ChatState>((set) => ({
   setVoiceMode: (voiceMode) => set({ voiceMode }),
   setIsLoadingHistory: (isLoadingHistory) => set({ isLoadingHistory }),
   setHasMoreHistory: (hasMoreHistory) => set({ hasMoreHistory }),
-  setShowAiInternals: (showAiInternals) => {
-    try {
-      localStorage.setItem("syscity_show_ai_internals", String(showAiInternals));
-    } catch {
-      /* ignore */
-    }
-    set({ showAiInternals });
-  },
+  setAiInternalsVisibility: (messageId, visible) =>
+    set((s) => ({
+      aiInternalsVisibility: {
+        ...s.aiInternalsVisibility,
+        [messageId]: visible,
+      },
+    })),
 }));

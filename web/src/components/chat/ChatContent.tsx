@@ -102,11 +102,6 @@ export function ChatContent({ transport }: ChatContentProps) {
     const wasRunning = prevIsRunningRef.current;
     prevIsRunningRef.current = isRunning;
 
-    if (!wasRunning && isRunning) {
-      // Whenever the AI starts a new response, show thinking/tools.
-      useChatStore.getState().setShowAiInternals(true);
-    }
-
     if (wasRunning && !isRunning && voiceMode) {
       const msgs = useChatStore.getState().messages;
       const last = msgs[msgs.length - 1];
@@ -115,6 +110,24 @@ export function ChatContent({ transport }: ChatContentProps) {
       }
     }
   }, [isRunning, voiceMode, speak]);
+
+  // Default new assistant messages to show their thinking/tools.
+  const lastAutoShownAssistantIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (
+      last?.role === "assistant" &&
+      last.id !== lastAutoShownAssistantIdRef.current
+    ) {
+      const hasInternals = last.parts?.some(
+        (p) => p.type === "reasoning" || p.type === "tool-call"
+      );
+      if (hasInternals) {
+        useChatStore.getState().setAiInternalsVisibility(last.id, true);
+        lastAutoShownAssistantIdRef.current = last.id;
+      }
+    }
+  }, [messages]);
 
   const virtualizer = useVirtualizer({
     count: messages.length,

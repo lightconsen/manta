@@ -273,11 +273,11 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
   const replyText = assistantReplyText(message);
   const internalCounts = countInternalParts(message);
   const hasInternals = internalCounts.reasoning > 0 || internalCounts.toolCalls > 0;
-  const showInternals = useChatStore((s) => s.showAiInternals);
-  const setShowInternals = useChatStore((s) => s.setShowAiInternals);
+  const showInternals = useChatStore((s) => s.aiInternalsVisibility[message.id] ?? false);
+  const setAiInternalsVisibility = useChatStore((s) => s.setAiInternalsVisibility);
   const toggleInternals = useCallback(() => {
-    setShowInternals(!showInternals);
-  }, [showInternals, setShowInternals]);
+    setAiInternalsVisibility(message.id, !showInternals);
+  }, [message.id, showInternals, setAiInternalsVisibility]);
 
   const handleRegenerate = useCallback(() => {
     transport?.regenerateAssistantMessage(message.id);
