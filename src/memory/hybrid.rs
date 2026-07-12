@@ -145,7 +145,9 @@ fn _source_match_key(source_id: Option<&str>, message_id: Option<&str>) -> Optio
 /// Run hybrid search over `vector_service` (semantic) and `session_search`
 /// (FTS5), merge results, and return up to `config.max_results` entries.
 ///
-/// Both backends are queried concurrently via `tokio::join!`.
+/// Both backends are queried concurrently via `tokio::join!`. The search is
+/// scoped to the provided `user_id` and `conversation_id` so results from
+/// other sessions are not injected into the current prompt.
 ///
 /// # Example
 ///
@@ -158,6 +160,8 @@ fn _source_match_key(source_id: Option<&str>, message_id: Option<&str>) -> Optio
 /// # ) {
 /// let results = hybrid_search(
 ///     "what did we decide about the API?",
+///     "user-123",
+///     "conv-456",
 ///     &vector,
 ///     &fts,
 ///     &HybridSearchConfig::default(),
@@ -170,6 +174,8 @@ fn _source_match_key(source_id: Option<&str>, message_id: Option<&str>) -> Optio
 /// ```
 pub async fn hybrid_search(
     query: &str,
+    user_id: &str,
+    conversation_id: &str,
     vector_service: &VectorMemoryService,
     session_search: &SessionSearch,
     config: &HybridSearchConfig,
@@ -178,7 +184,12 @@ pub async fn hybrid_search(
     let threshold = 0.0; // we apply min_score ourselves after merging
 
     // ── Launch both searches concurrently ─────────────────────────────────────
-    let fts_query = SessionSearchQuery::new(query).limit(fetch_limit);
+    // Scope FTS to the current user/session so we never inject messages from
+    // unrelated conversations.
+    let fts_query = SessionSearchQuery::new(query)
+        .for_user(user_id)
+        .for_conversation(conversation_id)
+        .limit(fetch_limit);
 
     let (vector_res, fts_res) = tokio::join!(
         vector_service.search(query, fetch_limit, threshold),

@@ -485,7 +485,9 @@ impl MemoryManager {
             let mut cfg = self.config.hybrid_config.clone();
             cfg.max_results = limit;
 
-            let hybrid_results = hybrid_search(&query_text, vs, ss, &cfg).await;
+            let hybrid_results =
+                hybrid_search(&query_text, user_id, conversation_id.unwrap_or(""), vs, ss, &cfg)
+                    .await;
 
             memories = hybrid_results
                 .into_iter()

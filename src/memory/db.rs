@@ -1196,10 +1196,10 @@ impl ChatHistoryStore for DatabaseStore {
 
         let rows = sqlx::query(
             r#"
-            SELECT id, conversation_id, user_id, role, content, created_at, metadata
+            SELECT id, conversation_id, user_id, role, content, created_at, metadata, rowid
             FROM chat_messages
             WHERE conversation_id = ?
-            ORDER BY created_at ASC
+            ORDER BY created_at DESC, rowid DESC
             LIMIT ?
             "#,
         )
@@ -1240,6 +1240,9 @@ impl ChatHistoryStore for DatabaseStore {
                     })?,
             });
         }
+
+        // Return messages in chronological order (oldest first).
+        messages.reverse();
 
         Ok(messages)
     }

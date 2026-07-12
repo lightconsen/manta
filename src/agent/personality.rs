@@ -18,23 +18,28 @@ use crate::agent::AgentConfig;
 use crate::dirs;
 
 /// Regex for matching placeholder headings that should not be used as display names.
+#[allow(clippy::expect_used)] // Static regex with a known-valid pattern.
 static PLACEHOLDER_HEADING_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:IDENTITY|SOUL|BOOTSTRAP|USER|AGENTS|TOOLS|HEARTBEAT|MEMORY)\.md|我是谁|身份信息|agent\s*identity")
         .expect("PLACEHOLDER_HEADING_RE is valid")
 });
 
 /// Regex for markdown list style name entries like `- **名称**: 小明`.
+#[allow(clippy::expect_used)] // Static regex with a known-valid pattern.
 static NAME_LIST_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*[-*]\s*\*\*\s*(?:名称|name|display\s*name)\s*\*\*\s*[:：]\s*(.+)\s*$")
         .expect("NAME_LIST_RE is valid")
 });
 
 /// Regex for YAML-style `name: 小明` entries.
+#[allow(clippy::expect_used)] // Static regex with a known-valid pattern.
 static NAME_YAML_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*name\s*[:：]\s*(.+?)\s*$").expect("NAME_YAML_RE is valid")
+    Regex::new(r"(?i)^\s*name\s*[:：]\s*(.+?)\s*$")
+        .expect("NAME_YAML_RE is valid")
 });
 
 /// Regex for markdown list style emoji entries like `- **Emoji**: 🐼`.
+#[allow(clippy::expect_used)] // Static regex with a known-valid pattern.
 static EMOJI_LIST_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*[-*]\s*\*\*\s*[Ee]moji\s*\*\*\s*[:：]\s*(.+)\s*$")
         .expect("EMOJI_LIST_RE is valid")

@@ -1054,8 +1054,16 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   }
 
   setMessages(msgs: ChatMessage[]): void {
-    this.messages = msgs;
-    this.messagesListeners.forEach((cb) => cb(msgs));
+    const seen = new Set<string>();
+    const deduped: ChatMessage[] = [];
+    for (const m of msgs) {
+      if (!seen.has(m.id)) {
+        seen.add(m.id);
+        deduped.push(m);
+      }
+    }
+    this.messages = deduped;
+    this.messagesListeners.forEach((cb) => cb(deduped));
   }
 
   onMessagesChange(callback: MessagesCallback): () => void {

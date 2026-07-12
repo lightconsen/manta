@@ -1241,6 +1241,47 @@ impl Agent {
             context = context.with_max_turns(max_turns);
         }
 
+        // Restore prior conversation messages so the LLM sees real history
+        // instead of relying only on the memory-injected summary (which can
+        // leak wrong/stale context from other sessions).
+        if let Some(ref store) = self.chat_history {
+            match store
+                .get_conversation_history(conversation_id, self.config.max_turns.unwrap_or(50) * 2)
+                .await
+            {
+                Ok(history) => {
+                    for msg in history {
+                        let role = match msg.role.as_str() {
+                            "user" => crate::providers::Role::User,
+                            "assistant" => crate::providers::Role::Assistant,
+                            _ => continue,
+                        };
+                        let mut message = crate::providers::Message {
+                            role,
+                            content: msg.content,
+                            content_blocks: None,
+                            reasoning_content: None,
+                            name: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                            metadata: None,
+                        };
+                        if role == crate::providers::Role::User && !msg.user_id.is_empty() {
+                            message.name = Some(msg.user_id);
+                        }
+                        context.add_message(message);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load conversation history for {}: {}",
+                        conversation_id,
+                        e
+                    );
+                }
+            }
+        }
+
         // Set dynamic tool iteration limit based on message complexity
         let dynamic_limit = Context::calculate_dynamic_limit(user_message);
         context.set_max_tool_iterations(dynamic_limit);

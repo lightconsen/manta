@@ -1374,7 +1374,7 @@ async fn handle_sessions_rename(
     if let Some(ref store) = state.agents.store {
         if let Err(e) = store.set_session_name(&params.session_id, trimmed).await {
             warn!("Failed to rename session {}: {}", params.session_id, e);
-            return WsResponse::err(&req.id, "INTERNAL_ERROR", &e.to_string());
+            return WsResponse::err(&req.id, "INTERNAL_ERROR", e.to_string());
         }
     }
 
@@ -1418,7 +1418,7 @@ async fn handle_sessions_set_pinned(
             .await
         {
             warn!("Failed to set pinned status for session {}: {}", params.session_id, e);
-            return WsResponse::err(&req.id, "INTERNAL_ERROR", &e.to_string());
+            return WsResponse::err(&req.id, "INTERNAL_ERROR", e.to_string());
         }
     }
 
