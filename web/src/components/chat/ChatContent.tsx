@@ -102,6 +102,11 @@ export function ChatContent({ transport }: ChatContentProps) {
     const wasRunning = prevIsRunningRef.current;
     prevIsRunningRef.current = isRunning;
 
+    if (!wasRunning && isRunning) {
+      // Whenever the AI starts a new response, show thinking/tools.
+      useChatStore.getState().setShowAiInternals(true);
+    }
+
     if (wasRunning && !isRunning && voiceMode) {
       const msgs = useChatStore.getState().messages;
       const last = msgs[msgs.length - 1];

@@ -17,6 +17,7 @@ import {
 import { formatDuration } from "@/lib/utils";
 import type { ChatMessage, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 import { useState, useCallback, useRef } from "react";
+import { useChatStore } from "@/stores/chatStore";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -148,32 +149,6 @@ function countInternalParts(message: ChatMessage): {
   );
 }
 
-const INTERNALS_EXPANDED_KEY = "syscity_show_ai_internals";
-
-function useShowInternals() {
-  const [expanded, setExpanded] = useState(() => {
-    try {
-      return localStorage.getItem(INTERNALS_EXPANDED_KEY) === "true";
-    } catch {
-      return false;
-    }
-  });
-
-  const toggle = useCallback(() => {
-    setExpanded((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(INTERNALS_EXPANDED_KEY, String(next));
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  }, []);
-
-  return { expanded, toggle };
-}
-
 function InternalsToggle({
   reasoning,
   toolCalls,
@@ -298,7 +273,11 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
   const replyText = assistantReplyText(message);
   const internalCounts = countInternalParts(message);
   const hasInternals = internalCounts.reasoning > 0 || internalCounts.toolCalls > 0;
-  const { expanded: showInternals, toggle: toggleInternals } = useShowInternals();
+  const showInternals = useChatStore((s) => s.showAiInternals);
+  const setShowInternals = useChatStore((s) => s.setShowAiInternals);
+  const toggleInternals = useCallback(() => {
+    setShowInternals(!showInternals);
+  }, [showInternals, setShowInternals]);
 
   const handleRegenerate = useCallback(() => {
     transport?.regenerateAssistantMessage(message.id);
