@@ -12,7 +12,7 @@ tasks:
     expected_behavior: "调用 web_search 获取实时价格，给出具体数值和来源"
     conditions:
       - type: pattern
-        command: "grep -c 'web_search' /tmp/eval_trace.log"
+        command: "grep -c 'web_search' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [factual_accuracy, completeness, clarity]
@@ -26,7 +26,7 @@ tasks:
     expected_behavior: "调用 web_fetch 工具获取 URL 内容，返回摘要"
     conditions:
       - type: pattern
-        command: "grep -c 'web_fetch' /tmp/eval_trace.log"
+        command: "grep -c 'web_fetch' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [factual_accuracy, instruction_following]
@@ -39,10 +39,10 @@ tasks:
     expected_behavior: "必须调用 web_search 获取最新信息，不能凭训练数据回答"
     conditions:
       - type: pattern
-        command: "grep -c 'web_search' /tmp/eval_trace.log"
+        command: "grep -c 'web_search' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: exit_code
-        command: "grep -c '2026.*世界杯.*卡塔尔\\|2026.*World Cup.*Qatar' /tmp/response.txt"
+        command: "grep -c '2026.*世界杯.*卡塔尔\\|2026.*World Cup.*Qatar' ${trial_dir}/response.txt"
         expected: 0
     criteria:
       dimensions: [factual_accuracy, safety]

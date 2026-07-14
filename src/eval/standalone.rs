@@ -13,7 +13,6 @@ use tracing::{info, warn};
 
 use crate::acp::AcpControlPlane;
 use crate::agent::reflection::critic::Critic;
-use crate::agent::session_store::SessionStore;
 use crate::agent::Agent;
 use crate::eval::harness::EvalHarness;
 use crate::eval::loader::{default_evals_dir, load_suite};
@@ -34,6 +33,7 @@ use crate::Result;
 /// 2. Creates a provider, tool registry, Agent, and optional Critic.
 /// 3. Runs `EvalHarness` for each task in the suite.
 /// 4. Prints per-task and summary results.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_standalone_suite(
     _config: &crate::config::Config,
     suite_name: &str,

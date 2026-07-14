@@ -41,7 +41,7 @@ tasks:
     expected_behavior: "理解混合语言需求，正确实现"
     conditions:
       - type: pattern
-        command: "grep -c 'def\\|function\\|fibonacci\\|Fibonacci' /tmp/response.txt"
+        command: "grep -c 'def\\|function\\|fibonacci\\|Fibonacci' ${trial_dir}/response.txt"
         must_contain: 1
     criteria:
       dimensions: [completeness, instruction_following]
@@ -68,7 +68,7 @@ tasks:
     expected_behavior: "正确提取核心需求（Rust async/await），忽略无关信息"
     conditions:
       - type: pattern
-        command: "grep -ciE '(async|await|异步)' /tmp/response.txt"
+        command: "grep -ciE '(async|await|异步)' ${trial_dir}/response.txt"
         must_contain: 1
     criteria:
       dimensions: [completeness, clarity]

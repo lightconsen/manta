@@ -12,7 +12,7 @@ tasks:
     expected_behavior: "调用 computer 工具截取屏幕截图"
     conditions:
       - type: pattern
-        command: "grep -cE 'computer' /tmp/eval_trace.log"
+        command: "grep -cE 'computer' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -25,7 +25,7 @@ tasks:
     expected_behavior: "调用 planner 工具分解并执行任务"
     conditions:
       - type: pattern
-        command: "grep -cE 'planner' /tmp/eval_trace.log"
+        command: "grep -cE 'planner' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]

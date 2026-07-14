@@ -81,6 +81,36 @@ pub struct CheckResult {
 }
 
 impl GoalCondition {
+    /// Replace `${trial_dir}` placeholders in command strings and paths with
+    /// the actual trial directory path.
+    ///
+    /// Returns a new `GoalCondition` with all substitutions applied. The
+    /// original is not modified.
+    pub fn substitute_trial_dir(&self, trial_dir: impl AsRef<Path>) -> Self {
+        let td = trial_dir.as_ref().to_string_lossy().to_string();
+        match self {
+            GoalCondition::ExitCode { command, expected } => GoalCondition::ExitCode {
+                command: command.replace("${trial_dir}", &td),
+                expected: *expected,
+            },
+            GoalCondition::FileExists { path } => GoalCondition::FileExists {
+                path: path.replace("${trial_dir}", &td),
+            },
+            GoalCondition::Numeric { command, operator, threshold } => GoalCondition::Numeric {
+                command: command.replace("${trial_dir}", &td),
+                operator: operator.clone(),
+                threshold: *threshold,
+            },
+            GoalCondition::Pattern { command, must_contain } => GoalCondition::Pattern {
+                command: command.replace("${trial_dir}", &td),
+                must_contain: must_contain.clone(),
+            },
+            GoalCondition::StaticAnalysis { command } => GoalCondition::StaticAnalysis {
+                command: command.replace("${trial_dir}", &td),
+            },
+        }
+    }
+
     /// Check whether this condition is currently met.
     ///
     /// Runs the command / check and returns a [`CheckResult`] with the output.

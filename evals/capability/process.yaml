@@ -14,10 +14,10 @@ tasks:
       - command: "date +%s > /tmp/eval_process_started"
     conditions:
       - type: pattern
-        command: "grep -cE '(process|shell)' /tmp/eval_trace.log"
+        command: "grep -cE '(process|shell)' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: exit_code
-        command: "grep -ciE '(已启动|已运行|进程|process|pid|PID|[0-9a-f-]{36})' /tmp/response.txt"
+        command: "grep -ciE '(已启动|已运行|进程|process|pid|PID|[0-9a-f-]{36})' ${trial_dir}/response.txt"
         expected: 0
     cleanup:
       - command: "rm -f /tmp/eval_process_started"
@@ -32,10 +32,10 @@ tasks:
     expected_behavior: "调用 process 工具列出所有进程"
     conditions:
       - type: pattern
-        command: "grep -cE '(process|shell)' /tmp/eval_trace.log"
+        command: "grep -cE '(process|shell)' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: exit_code
-        command: "grep -ciE '(进程|process|后台|运行|list|status)' /tmp/response.txt"
+        command: "grep -ciE '(进程|process|后台|运行|list|status)' ${trial_dir}/response.txt"
         expected: 0
     criteria:
       dimensions: [instruction_following, completeness]
@@ -49,7 +49,7 @@ tasks:
     expected_behavior: "调用 process 工具查询进程状态"
     conditions:
       - type: pattern
-        command: "grep -cE '(process|shell)' /tmp/eval_trace.log"
+        command: "grep -cE '(process|shell)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -62,7 +62,7 @@ tasks:
     expected_behavior: "调用 process 工具停止进程"
     conditions:
       - type: pattern
-        command: "grep -cE '(process|shell|kill)' /tmp/eval_trace.log"
+        command: "grep -cE '(process|shell|kill)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]

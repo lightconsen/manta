@@ -13,10 +13,10 @@ tasks:
       - command: "echo 'hello eval world' > /tmp/test_read.txt"
     conditions:
       - type: pattern
-        command: "grep -c 'file_read\\|read' /tmp/eval_trace.log"
+        command: "grep -c 'file_read\\|read' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: exit_code
-        command: "grep -c 'hello eval world' /tmp/response.txt"
+        command: "grep -c 'hello eval world' ${trial_dir}/response.txt"
         expected: 0   # 需要在响应中出现
     cleanup:
       - command: "rm -f /tmp/test_read.txt"
@@ -42,7 +42,7 @@ tasks:
       - command: "echo 'name: app\nversion: 1.0\nenv: prod' > /tmp/config.txt"
     conditions:
       - type: pattern
-        command: "grep -c 'file_edit\\|edit' /tmp/eval_trace.log"
+        command: "grep -c 'file_edit\\|edit' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: pattern
         command: "grep 'version:' /tmp/config.txt"
@@ -58,10 +58,10 @@ tasks:
       - command: "touch /tmp/test_eval_1.log /tmp/test_eval_2.log"
     conditions:
       - type: pattern
-        command: "grep -c 'glob' /tmp/eval_trace.log"
+        command: "grep -c 'glob' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: exit_code
-        command: "grep -c 'test_eval_1.log' /tmp/response.txt"
+        command: "grep -c 'test_eval_1.log' ${trial_dir}/response.txt"
         expected: 0   # 响应应包含文件名
     cleanup:
       - command: "rm -f /tmp/test_eval_1.log /tmp/test_eval_2.log"

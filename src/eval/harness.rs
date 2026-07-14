@@ -376,7 +376,7 @@ impl EvalHarness {
             all_tool_summaries
         };
 
-        // Write artifacts for conditions that read files
+        // Write artifacts to trial-specific directory
         tokio::fs::write(&response_path, &outgoing.content).await?;
         tokio::fs::write(
             &tools_path,
@@ -384,13 +384,14 @@ impl EvalHarness {
         )
         .await?;
 
-        // Also write to canonical paths referenced by YAML conditions
-        tokio::fs::write("/tmp/response.txt", &outgoing.content).await?;
-        tokio::fs::write("/tmp/eval_trace.log", format!("{:?}", tool_calls)).await?;
+        // Also write to eval_trace.log in trial dir (replaces old /tmp/ paths)
+        tokio::fs::write(tmp.join("eval_trace.log"), format!("{:?}", tool_calls)).await?;
 
+        // Check conditions with trial_dir substitution
         let mut condition_results = Vec::new();
         for condition in &task.conditions {
-            let result = condition.check().await;
+            let substituted = condition.substitute_trial_dir(&tmp);
+            let result = substituted.check().await;
             condition_results.push(result);
         }
 

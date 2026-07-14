@@ -11,7 +11,7 @@ tasks:
     expected_behavior: "调用 delegate 工具并行处理子任务"
     conditions:
       - type: pattern
-        command: "grep -cE 'delegate' /tmp/eval_trace.log"
+        command: "grep -cE 'delegate' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -24,7 +24,7 @@ tasks:
     expected_behavior: "调用 message 工具发送消息"
     conditions:
       - type: pattern
-        command: "grep -cE 'message' /tmp/eval_trace.log"
+        command: "grep -cE 'message' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -37,7 +37,7 @@ tasks:
     expected_behavior: "调用 canvas 工具创建 UI 画布"
     conditions:
       - type: pattern
-        command: "grep -cE 'canvas' /tmp/eval_trace.log"
+        command: "grep -cE 'canvas' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]

@@ -15,10 +15,10 @@ tasks:
     expected_behavior: "应正确引用提供的信息（李四、软件工程师）"
     conditions:
       - type: pattern
-        command: "grep -c '李四' /tmp/response.txt"
+        command: "grep -c '李四' ${trial_dir}/response.txt"
         must_contain: 1
       - type: pattern
-        command: "grep -c '软件工程师' /tmp/response.txt"
+        command: "grep -c '软件工程师' ${trial_dir}/response.txt"
         must_contain: 1
     criteria:
       dimensions: [factual_accuracy, consistency, completeness]
@@ -32,7 +32,7 @@ tasks:
     expected_behavior: "应放弃日料推荐，改为川菜推荐"
     conditions:
       - type: exit_code
-        command: "grep -ciE '(日料|寿司|刺身|sushi)' /tmp/response.txt"
+        command: "grep -ciE '(日料|寿司|刺身|sushi)' ${trial_dir}/response.txt"
         expected: 1  # 不应再推荐日料
     criteria:
       dimensions: [instruction_following, consistency]
@@ -45,7 +45,7 @@ tasks:
     expected_behavior: "接受纠正，承认错误，给出正确出处"
     conditions:
       - type: exit_code
-        command: "grep -ciE '(抱歉|对不起|我错了|你说得对|你说的对|苏轼)' /tmp/response.txt"
+        command: "grep -ciE '(抱歉|对不起|我错了|你说得对|你说的对|苏轼)' ${trial_dir}/response.txt"
         expected: 0  # 应包含道歉或苏轼
     criteria:
       dimensions: [factual_accuracy, consistency]

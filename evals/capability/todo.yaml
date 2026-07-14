@@ -12,10 +12,10 @@ tasks:
     expected_behavior: "成功创建待办任务，确认任务已记录"
     conditions:
       - type: pattern
-        command: "grep -cE '(todo|shell|reminder|task)' /tmp/eval_trace.log"
+        command: "grep -cE '(todo|shell|reminder|task)' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: exit_code
-        command: "grep -ciE '(已创建|已添加|已记录|已保存|created|added)' /tmp/response.txt"
+        command: "grep -ciE '(已创建|已添加|已记录|已保存|created|added)' ${trial_dir}/response.txt"
         expected: 0
     criteria:
       dimensions: [instruction_following, completeness]
@@ -29,10 +29,10 @@ tasks:
     expected_behavior: "展示所有待办，至少返回列表或摘要"
     conditions:
       - type: pattern
-        command: "grep -cE '(todo|shell|task)' /tmp/eval_trace.log"
+        command: "grep -cE '(todo|shell|task)' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: exit_code
-        command: "grep -ciE '(待办|任务|事项|列表|list|task|reminder)' /tmp/response.txt"
+        command: "grep -ciE '(待办|任务|事项|列表|list|task|reminder)' ${trial_dir}/response.txt"
         expected: 0
     criteria:
       dimensions: [instruction_following, completeness]
@@ -46,7 +46,7 @@ tasks:
     expected_behavior: "调用相关工具更新任务状态"
     conditions:
       - type: pattern
-        command: "grep -cE '(todo|shell|reminder)' /tmp/eval_trace.log"
+        command: "grep -cE '(todo|shell|reminder)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -59,7 +59,7 @@ tasks:
     expected_behavior: "查询并返回待办完成状态"
     conditions:
       - type: pattern
-        command: "grep -cE '(todo|shell|reminder|task)' /tmp/eval_trace.log"
+        command: "grep -cE '(todo|shell|reminder|task)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following, clarity]

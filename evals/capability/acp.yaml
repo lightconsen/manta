@@ -13,7 +13,7 @@ tasks:
     expected_behavior: "调用 acp_spawn 工具创建子 Agent 执行计算"
     conditions:
       - type: pattern
-        command: "grep -cE 'acp_spawn' /tmp/eval_trace.log"
+        command: "grep -cE 'acp_spawn' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -26,7 +26,7 @@ tasks:
     expected_behavior: "调用 acp_spawn 工具，mode 设置为 session"
     conditions:
       - type: pattern
-        command: "grep -cE 'acp_spawn' /tmp/eval_trace.log"
+        command: "grep -cE 'acp_spawn' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -39,7 +39,7 @@ tasks:
     expected_behavior: "调用 acp_session 工具列出会话"
     conditions:
       - type: pattern
-        command: "grep -cE 'acp_session' /tmp/eval_trace.log"
+        command: "grep -cE 'acp_session' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -52,7 +52,7 @@ tasks:
     expected_behavior: "调用 sessions_send 或 acp_session 工具发送消息"
     conditions:
       - type: pattern
-        command: "grep -cE '(sessions_send|acp_session.*message)' /tmp/eval_trace.log"
+        command: "grep -cE '(sessions_send|acp_session.*message)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]

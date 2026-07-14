@@ -21,7 +21,7 @@ tasks:
       - command: "echo 'hello' > /tmp/eval_patch_target.txt"
     conditions:
       - type: pattern
-        command: "grep -cE '(apply_patch|patch|git apply)' /tmp/eval_trace.log"
+        command: "grep -cE '(apply_patch|patch|git apply)' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: pattern
         command: "grep -c 'hello world' /tmp/eval_patch_target.txt"

@@ -131,7 +131,9 @@ async fn cmd_validate(dir: Option<PathBuf>) -> Result<()> {
             match serde_yml::from_str::<serde_yml::Value>(&content) {
                 Ok(_) => {
                     total_files += 1;
-                    println!("  ✓ {} (suite)", path.file_name().unwrap().to_string_lossy());
+                    if let Some(name) = path.file_name() {
+                        println!("  ✓ {} (suite)", name.to_string_lossy());
+                    }
                 }
                 Err(e) => {
                     errors.push(format!("{}: {}", path.display(), e));
@@ -143,8 +145,9 @@ async fn cmd_validate(dir: Option<PathBuf>) -> Result<()> {
                 Ok(tasks) => {
                     total_files += 1;
                     total_tasks += tasks.len();
-                    let name = path.file_name().unwrap().to_string_lossy();
-                    println!("  ✓ {} ({} tasks)", name, tasks.len());
+                    if let Some(name) = path.file_name() {
+                        println!("  ✓ {} ({} tasks)", name.to_string_lossy(), tasks.len());
+                    }
                 }
                 Err(e) => {
                     errors.push(format!("{}: {}", path.display(), e));
@@ -175,6 +178,7 @@ async fn cmd_validate(dir: Option<PathBuf>) -> Result<()> {
 }
 
 /// `eval run <suite>` — load and optionally execute a suite.
+#[allow(clippy::too_many_arguments)]
 async fn cmd_run(
     config: &Config,
     suite: String,
@@ -260,7 +264,7 @@ where
             if path.is_dir() {
                 dirs.push(path.clone());
             } else if path.extension().map(|e| e == "yaml").unwrap_or(false) {
-                f(&path).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                f(&path).map_err(|e| io::Error::other(e.to_string()))?;
             }
         }
     }
@@ -271,7 +275,7 @@ where
             if path.is_dir() {
                 dirs.push(path);
             } else if path.extension().map(|e| e == "yaml").unwrap_or(false) {
-                f(&path).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                f(&path).map_err(|e| io::Error::other(e.to_string()))?;
             }
         }
     }

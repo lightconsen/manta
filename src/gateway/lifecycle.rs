@@ -235,7 +235,7 @@ pub(crate) async fn start_gateway(
         }
     }
 
-    // Start standing orders manager if configured
+    // Initialize standing orders manager if configured
     if config.standing_orders.enabled {
         let mut manager = crate::standing_orders::StandingOrderManager::new(
             config.standing_orders.clone(),
@@ -244,6 +244,15 @@ pub(crate) async fn start_gateway(
         manager.start().await;
         info!("Standing orders manager started");
         *state.memory.standing_order_manager.write().await = Some(manager);
+    }
+
+    // Run quality gate check if enabled
+    if config.quality_gate.enabled {
+        if let Err(e) = run_quality_gate_check(state.clone(), &config).await {
+            if config.quality_gate.shutdown_on_failure {
+                return Err(e);
+            }
+        }
     }
 
     // Start browser bridge server if enabled
@@ -825,6 +834,129 @@ async fn spawn_agent_in_lifecycle(
 ) -> crate::Result<()> {
     spawn_agent_inner(state, id, config).await?;
     Ok(())
+}
+
+/// Run the quality gate check during startup.
+///
+/// Creates a temporary eval agent, runs all configured suites, and evaluates
+/// criteria. If the gate fails, the error message includes details of which
+/// criteria did not pass. Gate `shutdown_on_failure` determines whether this
+/// error is fatal (blocking startup) or just a warning.
+async fn run_quality_gate_check(
+    _state: Arc<GatewayState>,
+    config: &GatewayConfig,
+) -> crate::Result<()> {
+    info!("═══ Quality Gate: {} ═══", config.quality_gate.name);
+
+    // 1. Resolve provider from config
+    let provider_type = config.model_provider.clone();
+    let api_key = config
+        .providers
+        .get(&provider_type)
+        .and_then(|p| {
+            if !p.api_key.is_empty() {
+                Some(p.api_key.clone())
+            } else {
+                p.api_keys.first().cloned()
+            }
+        })
+        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+
+    let base_url = config
+        .providers
+        .get(&provider_type)
+        .and_then(|p| p.base_url.clone())
+        .or_else(|| std::env::var("SYSCITY_BASE_URL").ok());
+
+    let model = Some(config.model.clone());
+
+    let provider = crate::providers::resolver::resolve_provider(
+        &provider_type,
+        api_key,
+        base_url,
+        model.clone(),
+        None,
+    )
+    .map_err(|e| {
+        crate::error::SyscityError::Validation(format!(
+            "Quality gate: failed to create provider '{}': {}",
+            provider_type, e
+        ))
+    })?;
+
+    // 2. Create eval tool registry
+    let tool_registry = Arc::new(create_eval_tool_registry(None));
+
+    // 3. Create a temporary agent for eval
+    let agent_config = config.default_agent.clone();
+    let agent = Arc::new(crate::agent::Agent::new(
+        agent_config,
+        provider.clone(),
+        tool_registry.clone(),
+    ));
+
+    // 4. Create critic (if needed for criteria)
+    let mut critic = crate::agent::reflection::critic::Critic::new(provider);
+    if let Some(ref model_name) = model {
+        critic = critic.with_model(model_name.clone());
+    }
+
+    // 5. Build harness and gate
+    let harness = crate::eval::harness::EvalHarness::new(agent.clone(), Some(critic));
+    let evals_dir = crate::eval::loader::default_evals_dir();
+
+    let gate = match crate::gateway::quality_gate::QualityGate::from_config(
+        &config.quality_gate,
+        harness,
+        evals_dir,
+    ) {
+        Some(g) => g,
+        None => {
+            info!("Quality gate not configured — skipping");
+            return Ok(());
+        }
+    };
+
+    // 6. Run the gate
+    let result = gate.check().await;
+
+    // 7. Print results
+    info!("{}", result);
+
+    // 8. Cleanup
+    agent.shutdown().await?;
+
+    if result.passed {
+        info!("✅ Quality gate passed — proceeding with startup");
+        Ok(())
+    } else {
+        Err(crate::error::SyscityError::Validation(format!(
+            "Quality gate FAILED: {}",
+            result
+        )))
+    }
+}
+
+/// Create a minimal tool registry for quality gate eval.
+fn create_eval_tool_registry(acp: Option<Arc<crate::acp::AcpControlPlane>>) -> crate::tools::ToolRegistry {
+    let mut registry = crate::tools::ToolRegistry::new();
+    registry.register(Box::new(crate::tools::shell::ShellTool::new()));
+    registry.register(Box::new(crate::tools::file::FileReadTool::new()));
+    registry.register(Box::new(crate::tools::file::FileWriteTool::new()));
+    registry.register(Box::new(crate::tools::file::FileEditTool::new()));
+    registry.register(Box::new(crate::tools::grep::GrepTool::new()));
+    registry.register(Box::new(crate::tools::file::GlobTool::new()));
+    registry.register(Box::new(crate::tools::web::WebSearchTool::new()));
+    registry.register(Box::new(crate::tools::web::WebFetchTool::new()));
+    registry.register(Box::new(crate::tools::todo_tool::TodoTool::new()));
+    registry.register(Box::new(crate::tools::time::TimeTool::new()));
+    if let Some(acp) = acp {
+        registry.register(Box::new(crate::tools::AcpSpawnTool::new(acp.clone(), None)));
+        registry.register(Box::new(crate::tools::AcpSessionTool::new(acp.clone())));
+        registry.register(Box::new(crate::tools::SessionsSendTool::new(acp)));
+    }
+    registry
 }
 
 /// Auto-connect MCP servers from config and register their tools.

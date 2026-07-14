@@ -11,7 +11,7 @@ tasks:
     expected_behavior: "调用 time 工具获取当前时间并格式化返回"
     conditions:
       - type: pattern
-        command: "grep -c 'time' /tmp/eval_trace.log"
+        command: "grep -c 'time' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [factual_accuracy, clarity]
@@ -24,7 +24,7 @@ tasks:
     expected_behavior: "调用 time 获取今天日期，然后推算 7 天后的星期"
     conditions:
       - type: pattern
-        command: "grep -c 'time' /tmp/eval_trace.log"
+        command: "grep -c 'time' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [factual_accuracy, clarity]
@@ -39,7 +39,7 @@ tasks:
     expected_behavior: "调用 planner 工具分解为多步骤任务"
     conditions:
       - type: pattern
-        command: "grep -c 'planner\\|update_plan' /tmp/eval_trace.log"
+        command: "grep -c 'planner\\|update_plan' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [completeness, clarity, actionable]
@@ -53,7 +53,7 @@ tasks:
     expected_behavior: "调用 todo 或 cron 工具创建提醒/待办"
     conditions:
       - type: pattern
-        command: "grep -c 'todo\\|cron' /tmp/eval_trace.log"
+        command: "grep -c 'todo\\|cron' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following, completeness]

@@ -26,6 +26,7 @@
 //! # }
 //! ```
 
+pub(crate) mod comparison;
 pub(crate) mod dataset;
 pub(crate) mod harness;
 pub(crate) mod loader;
@@ -43,6 +44,9 @@ pub use harness::{
     EvalHarness, TrialResult, ToolCallSummary, EvalSummary,
 };
 pub use loader::{list_suites, load_suite, load_tasks, default_evals_dir};
+pub use comparison::{
+    compare_versions, VersionComparison, ComparisonVerdict, extract_trial_results,
+};
 pub use rca::{
     RcaPipeline, RcaInput, RcaResult, RcaKnowledgeBase, RcaKnowledgeBaseEntry,
     ProblemPhenomenon, CandidateModule, BadcaseEntry, ModuleVerdict,

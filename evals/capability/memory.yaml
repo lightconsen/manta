@@ -12,7 +12,7 @@ tasks:
     expected_behavior: "调用 memory 工具存储用户信息"
     conditions:
       - type: pattern
-        command: "grep -c 'memory' /tmp/eval_trace.log"
+        command: "grep -c 'memory' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following, completeness]
@@ -23,7 +23,7 @@ tasks:
     expected_behavior: "调用 memory_search 或 memory_get 工具检索用户信息"
     conditions:
       - type: pattern
-        command: "grep -cE '(memory_search|memory_get|memory)' /tmp/eval_trace.log"
+        command: "grep -cE '(memory_search|memory_get|memory)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [factual_accuracy, completeness]
@@ -36,7 +36,7 @@ tasks:
     expected_behavior: "调用 memory_get 或 memory 工具列出记忆"
     conditions:
       - type: pattern
-        command: "grep -cE '(memory_get|memory)' /tmp/eval_trace.log"
+        command: "grep -cE '(memory_get|memory)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following, completeness]
@@ -47,7 +47,7 @@ tasks:
     expected_behavior: "调用 memory_search 进行语义搜索"
     conditions:
       - type: pattern
-        command: "grep -cE '(memory_search|memory)' /tmp/eval_trace.log"
+        command: "grep -cE '(memory_search|memory)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [factual_accuracy]
@@ -60,7 +60,7 @@ tasks:
     expected_behavior: "调用 memory_get 或 memory 工具删除记忆"
     conditions:
       - type: pattern
-        command: "grep -cE '(memory_get|memory)' /tmp/eval_trace.log"
+        command: "grep -cE '(memory_get|memory)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]

@@ -11,7 +11,7 @@ tasks:
     expected_behavior: "成功创建定时任务（cron 工具或系统 crontab）"
     conditions:
       - type: pattern
-        command: "grep -cE '(cron|crontab|at|launchctl)' /tmp/eval_trace.log"
+        command: "grep -cE '(cron|crontab|at|launchctl)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -24,7 +24,7 @@ tasks:
     expected_behavior: "调用工具列出定时任务"
     conditions:
       - type: pattern
-        command: "grep -cE '(cron|crontab|launchctl)' /tmp/eval_trace.log"
+        command: "grep -cE '(cron|crontab|launchctl)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following, completeness]
@@ -38,7 +38,7 @@ tasks:
     expected_behavior: "调用 cron 或系统工具暂停定时任务"
     conditions:
       - type: pattern
-        command: "grep -cE '(cron|crontab|launchctl)' /tmp/eval_trace.log"
+        command: "grep -cE '(cron|crontab|launchctl)' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]

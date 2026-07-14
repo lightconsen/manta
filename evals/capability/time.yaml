@@ -12,7 +12,7 @@ tasks:
     expected_behavior: "返回当前具体时间"
     conditions:
       - type: exit_code
-        command: "grep -cE '(时间|[0-9]{1,2}:[0-9]{2}|[0-9]{4}-[0-9]{2}-[0-9]{2})' /tmp/response.txt"
+        command: "grep -cE '(时间|[0-9]{1,2}:[0-9]{2}|[0-9]{4}-[0-9]{2}-[0-9]{2})' ${trial_dir}/response.txt"
         expected: 0   # 响应应包含时间信息
     criteria:
       dimensions: [factual_accuracy, clarity]
@@ -23,10 +23,10 @@ tasks:
     expected_behavior: "调用 time 或 shell 工具转换时间戳"
     conditions:
       - type: pattern
-        command: "grep -cE '(time|shell|date)' /tmp/eval_trace.log"
+        command: "grep -cE '(time|shell|date)' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: exit_code
-        command: "grep -cE '(202[3-9]|203[0-9]|11月|14日|November)' /tmp/response.txt"
+        command: "grep -cE '(202[3-9]|203[0-9]|11月|14日|November)' ${trial_dir}/response.txt"
         expected: 0   # 响应应包含正确日期
     criteria:
       dimensions: [factual_accuracy]
@@ -37,10 +37,10 @@ tasks:
     expected_behavior: "解析自然语言时间并返回具体时间"
     conditions:
       - type: pattern
-        command: "grep -cE '(time|shell|date)' /tmp/eval_trace.log"
+        command: "grep -cE '(time|shell|date)' ${trial_dir}/eval_trace.log"
         must_contain: 1
       - type: exit_code
-        command: "grep -ciE '(明天|tomorrow|10:|10点|202[5-9])' /tmp/response.txt"
+        command: "grep -ciE '(明天|tomorrow|10:|10点|202[5-9])' ${trial_dir}/response.txt"
         expected: 0   # 响应应包含明天的时间信息
     criteria:
       dimensions: [instruction_following, clarity]

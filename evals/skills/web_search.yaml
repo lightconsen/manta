@@ -16,7 +16,7 @@ tasks:
     expected_behavior: "触发 web_search 获取最新体育赛事结果"
     conditions:
       - type: pattern
-        command: "grep -c 'web_search' /tmp/eval_trace.log"
+        command: "grep -c 'web_search' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following]
@@ -27,7 +27,7 @@ tasks:
     expected_behavior: "不调用 web_search，直接回答"
     conditions:
       - type: exit_code
-        command: "grep -c 'web_search' /tmp/eval_trace.log"
+        command: "grep -c 'web_search' ${trial_dir}/eval_trace.log"
         expected: 0   # 不应触发搜索
     criteria:
       dimensions: [instruction_following]
@@ -39,7 +39,7 @@ tasks:
     expected_behavior: "搜索参数包含 'Rust' 和 '版本' 或 'release'"
     conditions:
       - type: pattern
-        command: "grep 'web_search' /tmp/eval_trace.log"
+        command: "grep 'web_search' ${trial_dir}/eval_trace.log"
         must_contain: 1
     criteria:
       dimensions: [instruction_following, completeness]

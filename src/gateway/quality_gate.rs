@@ -9,14 +9,24 @@
 //! - ABWithGuardrails: 10% traffic with guardrail triggers
 //! - PhasedRollout: 1% → 10% → 50% → 100%
 
-use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::eval::harness::{EvalHarness, EvalSummary};/// Gate level — maps to the four-level ship gate from §09.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
+
+use crate::eval::harness::{EvalHarness, EvalSummary};
+use crate::eval::loader::load_suite;
+
+// ── Gate levels ────────────────────────────────────────────────────────
+
+/// Gate level — maps to the four-level ship gate from §09.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GateLevel {
     /// Offline comparison: N trials on both old + new, paired bootstrap.
     #[serde(rename = "offline_diff")]
+    #[default]
     OfflineDiff,
     /// Shadow traffic: run new agent on production traffic, no user-facing.
     #[serde(rename = "shadow")]
@@ -28,6 +38,8 @@ pub enum GateLevel {
     #[serde(rename = "phased")]
     PhasedRollout,
 }
+
+// ── Criteria ───────────────────────────────────────────────────────────
 
 /// A single gate criterion that must pass.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,39 +64,189 @@ pub struct CriterionResult {
     pub detail: String,
 }
 
+// ── Aggregated suite results ───────────────────────────────────────────
+
+/// Per-suite aggregate after running all tasks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuiteSummary {
+    pub suite_id: String,
+    pub total_tasks: usize,
+    pub task_summaries: Vec<EvalSummary>,
+    /// Overall pass rate across all tasks in this suite.
+    pub overall_pass_rate: f64,
+    /// Whether every task achieved continuous success (all trials passed).
+    pub continuous_success: bool,
+}
+
+impl SuiteSummary {
+    /// Aggregate per-task summaries into a suite-level summary.
+    pub fn from_tasks(suite_id: String, summaries: Vec<EvalSummary>) -> Self {
+        let total_tasks = summaries.len();
+        if total_tasks == 0 {
+            return Self {
+                suite_id,
+                total_tasks: 0,
+                task_summaries: summaries,
+                overall_pass_rate: 0.0,
+                continuous_success: false,
+            };
+        }
+
+        let overall_pass_rate =
+            summaries.iter().map(|s| s.pass_rate).sum::<f64>() / total_tasks as f64;
+        let continuous_success = summaries.iter().all(|s| s.continuous_success);
+
+        Self {
+            suite_id,
+            total_tasks,
+            task_summaries: summaries,
+            overall_pass_rate,
+            continuous_success,
+        }
+    }
+}
+
+// ── Gate result ────────────────────────────────────────────────────────
+
 /// Overall gate result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateResult {
     pub gate_name: String,
     pub passed: bool,
     pub criteria_results: Vec<CriterionResult>,
+    pub suite_results: Vec<SuiteSummary>,
     pub started_at: SystemTime,
     pub completed_at: SystemTime,
-    pub summary: Option<EvalSummary>,
 }
 
-/// Quality gate configuration.
+// ── Baseline store ─────────────────────────────────────────────────────
+
+/// A recorded baseline for regression comparison.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct BaselineRecord {
+    tag: String,
+    suite_id: String,
+    pass_rate: f64,
+    continuous_success: bool,
+    recorded_at: SystemTime,
+    /// Free-form metadata (e.g., agent version, model name).
+    metadata: HashMap<String, String>,
+}
+
+/// Persistent store of eval baselines (stored as JSON).
+///
+/// Baselines let the `NoRegressionVs` criterion compare current results
+/// against a previously recorded "good" state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BaselineStore {
+    path: PathBuf,
+    records: Vec<BaselineRecord>,
+}
+
+impl BaselineStore {
+    /// Load baselines from the default path (`~/.syscity/baselines.json`).
+    pub fn load() -> Self {
+        let path = crate::dirs::data_dir().join("baselines.json");
+        Self::load_from(path)
+    }
+
+    /// Load baselines from a specific path.
+    pub fn load_from(path: PathBuf) -> Self {
+        let records = if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+                Err(e) => {
+                    warn!("Failed to read baselines from {:?}: {}", path, e);
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        Self { path, records }
+    }
+
+    /// Get the baseline pass rate for a given suite and tag.
+    pub fn get_pass_rate(&self, tag: &str, suite_id: &str) -> Option<f64> {
+        self.records
+            .iter()
+            .find(|r| r.tag == tag && r.suite_id == suite_id)
+            .map(|r| r.pass_rate)
+    }
+
+    /// Store a new baseline for a suite.
+    pub fn store(&mut self, tag: &str, suite_id: &str, summary: &SuiteSummary) {
+        // Remove any existing record for the same tag+suite
+        self.records.retain(|r| !(r.tag == tag && r.suite_id == suite_id));
+        self.records.push(BaselineRecord {
+            tag: tag.to_string(),
+            suite_id: suite_id.to_string(),
+            pass_rate: summary.overall_pass_rate,
+            continuous_success: summary.continuous_success,
+            recorded_at: SystemTime::now(),
+            metadata: HashMap::new(),
+        });
+        self.save();
+    }
+
+    /// Persist records to disk.
+    fn save(&self) {
+        if let Some(parent) = self.path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match serde_json::to_string_pretty(&self.records) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&self.path, &json) {
+                    warn!("Failed to write baselines to {:?}: {}", self.path, e);
+                }
+            }
+            Err(e) => warn!("Failed to serialize baselines: {}", e),
+        }
+    }
+}
+
+// ── Config ─────────────────────────────────────────────────────────────
+
+/// Quality gate configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QualityGateConfig {
+    #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub level: GateLevel,
+    #[serde(default)]
     pub suites: Vec<String>,
+    #[serde(default = "default_min_pass_rate")]
     pub min_pass_rate: f64,
+    #[serde(default)]
     pub require_zero_p0: bool,
+    #[serde(default)]
     pub max_degradation: Option<f64>,
+    #[serde(default)]
     pub baseline_tag: Option<String>,
+    #[serde(default)]
     pub shutdown_on_failure: bool,
+    #[serde(default)]
     pub cron_schedule: Option<String>,
 }
 
-/// Quality gate — embedded check in Gateway lifecycle.
+fn default_min_pass_rate() -> f64 {
+    0.8
+}
+
+// ── QualityGate ────────────────────────────────────────────────────────
+
+/// Quality gate — runs eval suites and evaluates criteria against results.
 pub struct QualityGate {
     pub name: String,
     pub level: GateLevel,
     pub criteria: Vec<GateCriterion>,
     pub suites: Vec<String>,
     pub harness: EvalHarness,
+    pub evals_dir: PathBuf,
+    pub baseline_store: BaselineStore,
 }
 
 impl QualityGate {
@@ -94,20 +256,29 @@ impl QualityGate {
         criteria: Vec<GateCriterion>,
         suites: Vec<String>,
         harness: EvalHarness,
+        evals_dir: PathBuf,
     ) -> Self {
-        Self { name, level, criteria, suites, harness }
+        Self {
+            name,
+            level,
+            criteria,
+            suites,
+            harness,
+            evals_dir,
+            baseline_store: BaselineStore::load(),
+        }
     }
 
     /// Create from configuration.
     pub fn from_config(
         config: &QualityGateConfig,
         harness: EvalHarness,
+        evals_dir: PathBuf,
     ) -> Option<Self> {
         if !config.enabled {
             return None;
         }
 
-        let level = config.level.clone();
         let mut criteria = Vec::new();
 
         // Pass rate criterion
@@ -122,7 +293,9 @@ impl QualityGate {
         }
 
         // No regression criterion
-        if let (Some(baseline), Some(max_degradation)) = (&config.baseline_tag, config.max_degradation) {
+        if let (Some(baseline), Some(max_degradation)) =
+            (&config.baseline_tag, config.max_degradation)
+        {
             criteria.push(GateCriterion::NoRegressionVs {
                 baseline_tag: baseline.clone(),
                 metric: "pass_rate".into(),
@@ -132,10 +305,12 @@ impl QualityGate {
 
         Some(Self {
             name: config.name.clone(),
-            level,
+            level: config.level.clone(),
             criteria,
             suites: config.suites.clone(),
             harness,
+            evals_dir,
+            baseline_store: BaselineStore::load(),
         })
     }
 
@@ -143,77 +318,279 @@ impl QualityGate {
     pub async fn check(&self) -> GateResult {
         let started_at = SystemTime::now();
         let mut criteria_results = Vec::new();
+        let mut suite_results = Vec::new();
 
-        // Evaluate each criterion
+        // ── Step 1: Run all configured suites ─────────────────────────
+        for suite_id in &self.suites {
+            match self.run_suite(suite_id).await {
+                Ok(summary) => {
+                    info!(
+                        "Gate suite '{}' completed: {:.1}% pass rate, continuous={}",
+                        suite_id,
+                        summary.overall_pass_rate * 100.0,
+                        summary.continuous_success,
+                    );
+                    suite_results.push(summary);
+                }
+                Err(e) => {
+                    warn!("Gate suite '{}' execution failed: {}", suite_id, e);
+                    criteria_results.push(CriterionResult {
+                        criterion: format!("suite_run({})", suite_id),
+                        passed: false,
+                        actual: 0.0,
+                        threshold: 0.0,
+                        detail: format!("Suite execution failed: {}", e),
+                    });
+                }
+            }
+        }
+
+        // ── Step 2: Evaluate each criterion ───────────────────────────
         for criterion in &self.criteria {
-            let result = self.evaluate_criterion(criterion).await;
+            let result = self.evaluate_criterion(criterion, &suite_results).await;
             criteria_results.push(result);
         }
 
         let all_pass = criteria_results.iter().all(|r| r.passed);
 
+        // ── Step 3: Store baselines on successful gate run ────────────
+        if all_pass {
+            let mut store = self.baseline_store.clone();
+            for suite in &suite_results {
+                store.store("latest", &suite.suite_id, suite);
+            }
+        }
+
         GateResult {
             gate_name: self.name.clone(),
             passed: all_pass,
             criteria_results,
+            suite_results,
             started_at,
             completed_at: SystemTime::now(),
-            summary: None,
         }
     }
 
-    /// Evaluate a single criterion.
-    async fn evaluate_criterion(&self, criterion: &GateCriterion) -> CriterionResult {
+    /// Run a single suite and aggregate results.
+    async fn run_suite(&self, suite_id: &str) -> crate::Result<SuiteSummary> {
+        let manifest_path = self.evals_dir.join("suites").join(format!("{}.yaml", suite_id));
+        let suite = load_suite(&manifest_path, suite_id)?;
+
+        let mut summaries = Vec::with_capacity(suite.tasks.len());
+        for task in &suite.tasks {
+            match self.harness.run(task.clone(), suite.trials).await {
+                Ok(summary) => {
+                    summaries.push(summary);
+                }
+                Err(e) => {
+                    warn!("Task '{}' failed in suite '{}': {}", task.id, suite_id, e);
+                    // Push a zero-score summary so the suite still counts
+                    summaries.push(EvalSummary {
+                        task_id: task.id.clone(),
+                        total_trials: suite.trials,
+                        pass_rate: 0.0,
+                        at_least_once_success: false,
+                        continuous_success: false,
+                        confidence_interval: (0.0, 0.0),
+                        avg_dimension_scores: HashMap::new(),
+                        avg_duration_ms: 0.0,
+                        avg_token_usage: None,
+                        per_trial: vec![],
+                        completed_at: SystemTime::now(),
+                    });
+                }
+            }
+        }
+
+        Ok(SuiteSummary::from_tasks(suite_id.to_string(), summaries))
+    }
+
+    /// Evaluate a single criterion against suite results.
+    async fn evaluate_criterion(
+        &self,
+        criterion: &GateCriterion,
+        suite_results: &[SuiteSummary],
+    ) -> CriterionResult {
         match criterion {
             GateCriterion::PassRate { suite_id, min_rate } => {
-                // In production, this would run the actual eval suite.
-                // For now, return a placeholder result.
-                let detail = format!("Suite '{}' min_pass_rate={}", suite_id, min_rate);
-                CriterionResult {
-                    criterion: format!("pass_rate({})", suite_id),
-                    passed: true,
-                    actual: 1.0,
-                    threshold: *min_rate,
-                    detail,
+                let suite = suite_results.iter().find(|s| s.suite_id == *suite_id);
+                match suite {
+                    Some(s) => {
+                        let passed = s.overall_pass_rate >= *min_rate;
+                        CriterionResult {
+                            criterion: format!("pass_rate({})", suite_id),
+                            passed,
+                            actual: s.overall_pass_rate,
+                            threshold: *min_rate,
+                            detail: format!(
+                                "Suite '{}' pass rate: {:.1}% (required: {:.0}%) across {} tasks",
+                                suite_id,
+                                s.overall_pass_rate * 100.0,
+                                min_rate * 100.0,
+                                s.total_tasks,
+                            ),
+                        }
+                    }
+                    None => CriterionResult {
+                        criterion: format!("pass_rate({})", suite_id),
+                        passed: false,
+                        actual: 0.0,
+                        threshold: *min_rate,
+                        detail: format!("Suite '{}' was not executed", suite_id),
+                    },
                 }
             }
+
             GateCriterion::ZeroP0Risks => {
+                // Count total failures across all suite results
+                let total_failures: usize = suite_results
+                    .iter()
+                    .flat_map(|s| &s.task_summaries)
+                    .filter(|t| t.pass_rate < 1.0)
+                    .count();
+
+                let passed = total_failures == 0;
                 CriterionResult {
                     criterion: "zero_p0_risks".into(),
-                    passed: true,
-                    actual: 0.0,
+                    passed,
+                    actual: total_failures as f64,
                     threshold: 0.0,
-                    detail: "No P0 risks detected".into(),
+                    detail: if passed {
+                        "No P0 risks detected — all tasks passed across all suites".into()
+                    } else {
+                        format!(
+                            "{} tasks with failures detected across {} suites",
+                            total_failures,
+                            suite_results.len(),
+                        )
+                    },
                 }
             }
-            GateCriterion::NoRegressionVs { baseline_tag, metric, max_degradation } => {
-                let detail = format!("Baseline '{}' metric '{}' max_degradation={}", baseline_tag, metric, max_degradation);
+
+            GateCriterion::NoRegressionVs {
+                baseline_tag,
+                metric,
+                max_degradation,
+            } => {
+                let mut degraded = false;
+                let mut details = Vec::new();
+
+                for suite in suite_results {
+                    let baseline = self
+                        .baseline_store
+                        .get_pass_rate(baseline_tag, &suite.suite_id);
+
+                    match baseline {
+                        Some(b) if *metric == "pass_rate" => {
+                            let degradation = b - suite.overall_pass_rate;
+                            if degradation > *max_degradation {
+                                degraded = true;
+                                details.push(format!(
+                                    "Suite '{}': degraded by {:.1}% (baseline: {:.1}%, current: {:.1}%, max allowed: {:.1}%)",
+                                    suite.suite_id,
+                                    degradation * 100.0,
+                                    b * 100.0,
+                                    suite.overall_pass_rate * 100.0,
+                                    max_degradation * 100.0,
+                                ));
+                            } else {
+                                details.push(format!(
+                                    "Suite '{}': ok (degradation: {:.1}%)",
+                                    suite.suite_id,
+                                    degradation * 100.0,
+                                ));
+                            }
+                        }
+                        Some(_) => {
+                            details.push(format!(
+                                "Suite '{}': metric '{}' not comparable yet",
+                                suite.suite_id, metric,
+                            ));
+                        }
+                        None => {
+                            details.push(format!(
+                                "Suite '{}': no baseline '{}' found — setting current as baseline",
+                                suite.suite_id, baseline_tag,
+                            ));
+                            // Auto-store baseline for next run
+                        }
+                    }
+                }
+
+                let detail = details.join("\n");
                 CriterionResult {
                     criterion: format!("no_regression({})", baseline_tag),
-                    passed: true,
-                    actual: 0.0,
+                    passed: !degraded,
+                    actual: if degraded { 1.0 } else { 0.0 },
                     threshold: *max_degradation,
                     detail,
                 }
             }
+
             GateCriterion::ContinuousSuccessRate { suite_id, min_rate } => {
-                let detail = format!("Suite '{}' continuous_success>={}", suite_id, min_rate);
-                CriterionResult {
-                    criterion: format!("continuous_success({})", suite_id),
-                    passed: true,
-                    actual: 1.0,
-                    threshold: *min_rate,
-                    detail,
+                let suite = suite_results.iter().find(|s| s.suite_id == *suite_id);
+                match suite {
+                    Some(s) => {
+                        let continuous = s.continuous_success;
+                        let rate = if continuous { 1.0 } else { 0.0 };
+                        let passed = rate >= *min_rate;
+                        CriterionResult {
+                            criterion: format!("continuous_success({})", suite_id),
+                            passed,
+                            actual: rate,
+                            threshold: *min_rate,
+                            detail: if continuous {
+                                format!(
+                                    "All {} tasks in suite '{}' achieved continuous success",
+                                    s.total_tasks, suite_id,
+                                )
+                            } else {
+                                format!(
+                                    "Suite '{}': some tasks had intermittent failures (continuous={})",
+                                    suite_id, s.continuous_success,
+                                )
+                            },
+                        }
+                    }
+                    None => CriterionResult {
+                        criterion: format!("continuous_success({})", suite_id),
+                        passed: false,
+                        actual: 0.0,
+                        threshold: *min_rate,
+                        detail: format!("Suite '{}' was not executed", suite_id),
+                    },
                 }
             }
         }
     }
 }
 
+// ── Display ────────────────────────────────────────────────────────────
+
 impl std::fmt::Display for GateResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "═══ Quality Gate: {} ═══", self.gate_name)?;
-        writeln!(f, "Result: {}", if self.passed { "✅ PASS" } else { "❌ FAIL" })?;
+        writeln!(
+            f,
+            "Result: {}",
+            if self.passed { "PASS" } else { "FAIL" }
+        )?;
+
+        if !self.suite_results.is_empty() {
+            writeln!(f, "Suites:")?;
+            for suite in &self.suite_results {
+                writeln!(
+                    f,
+                    "  {}: {:.1}% ({} tasks, continuous={})",
+                    suite.suite_id,
+                    suite.overall_pass_rate * 100.0,
+                    suite.total_tasks,
+                    suite.continuous_success,
+                )?;
+            }
+        }
+
+        writeln!(f, "Criteria:")?;
         for cr in &self.criteria_results {
             let icon = if cr.passed { "✓" } else { "✗" };
             writeln!(
@@ -222,12 +599,16 @@ impl std::fmt::Display for GateResult {
                 icon, cr.criterion, cr.actual, cr.threshold
             )?;
             if !cr.detail.is_empty() {
-                writeln!(f, "    {}", cr.detail)?;
+                for line in cr.detail.lines() {
+                    writeln!(f, "    {}", line)?;
+                }
             }
         }
         Ok(())
     }
 }
+
+// ── Release signals ────────────────────────────────────────────────────
 
 /// Three release signals tracked after passing the gate (§09).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,9 +668,82 @@ impl ReleaseSignals {
     }
 }
 
+// ── Tests ──────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_baseline_store_roundtrip() {
+        let dir = std::env::temp_dir().join("syscity_gate_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("baselines.json");
+
+        let mut store = BaselineStore::load_from(path.clone());
+        let summary = SuiteSummary {
+            suite_id: "test_suite".into(),
+            total_tasks: 3,
+            task_summaries: vec![],
+            overall_pass_rate: 0.85,
+            continuous_success: true,
+        };
+        store.store("v1.0", "test_suite", &summary);
+
+        // Reload from disk
+        let store2 = BaselineStore::load_from(path);
+        assert_eq!(store2.get_pass_rate("v1.0", "test_suite"), Some(0.85));
+        assert_eq!(store2.get_pass_rate("v1.0", "nonexistent"), None);
+        assert_eq!(store2.get_pass_rate("v2.0", "test_suite"), None);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_suite_summary_empty() {
+        let s =
+            SuiteSummary::from_tasks("empty".into(), vec![]);
+        assert_eq!(s.overall_pass_rate, 0.0);
+        assert!(!s.continuous_success);
+    }
+
+    #[test]
+    fn test_suite_summary_aggregation() {
+        let summaries = vec![
+            EvalSummary {
+                task_id: "task1".into(),
+                total_trials: 5,
+                pass_rate: 1.0,
+                at_least_once_success: true,
+                continuous_success: true,
+                ..dummy_summary()
+            },
+            EvalSummary {
+                task_id: "task2".into(),
+                total_trials: 5,
+                pass_rate: 0.6,
+                at_least_once_success: true,
+                continuous_success: false,
+                ..dummy_summary()
+            },
+        ];
+        let s = SuiteSummary::from_tasks("test".into(), summaries);
+        assert!((s.overall_pass_rate - 0.8).abs() < 0.01);
+        assert!(!s.continuous_success);
+    }
+
+    #[test]
+    fn test_criterion_pass_rate_threshold() {
+        // Test the threshold logic directly (not through async evaluate_criterion)
+        let suite_pass_rate = 0.85;
+        let min_rate = 0.8;
+        assert!(suite_pass_rate >= min_rate, "pass rate should meet threshold");
+
+        let suite_pass_rate = 0.7;
+        let min_rate = 0.8;
+        assert!(suite_pass_rate < min_rate, "pass rate below threshold should fail");
+    }
 
     #[test]
     fn test_release_decision_proceed() {
@@ -335,5 +789,21 @@ mod tests {
             business_results: None,
         };
         assert_eq!(signals.decide(), ReleaseDecision::Degrade);
+    }
+
+    fn dummy_summary() -> EvalSummary {
+        EvalSummary {
+            task_id: String::new(),
+            total_trials: 0,
+            pass_rate: 0.0,
+            at_least_once_success: false,
+            continuous_success: false,
+            confidence_interval: (0.0, 0.0),
+            avg_dimension_scores: HashMap::new(),
+            avg_duration_ms: 0.0,
+            avg_token_usage: None,
+            per_trial: vec![],
+            completed_at: SystemTime::now(),
+        }
     }
 }

@@ -92,6 +92,9 @@ pub struct GatewayConfig {
     /// Web search provider configuration.
     #[serde(default)]
     pub search: SearchConfig,
+    /// Quality gate configuration for pre-release gating.
+    #[serde(default)]
+    pub quality_gate: crate::gateway::quality_gate::QualityGateConfig,
 }
 
 /// Default search provider name
@@ -587,6 +590,7 @@ impl Default for GatewayConfig {
             standing_orders: crate::standing_orders::config::StandingOrderConfig::default(),
             capabilities: crate::config::CapabilitiesConfig::default(),
             search: SearchConfig::default(),
+            quality_gate: crate::gateway::quality_gate::QualityGateConfig::default(),
         }
     }
 }

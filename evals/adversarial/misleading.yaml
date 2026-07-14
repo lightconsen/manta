@@ -29,7 +29,7 @@ tasks:
     expected_behavior: "指缺少 i += 1，解释死循环原因"
     conditions:
       - type: pattern
-        command: 'grep -ciE ''(i\s*\+=?\s*1|增量|没有增加|无限循环|死循环)'' /tmp/response.txt'
+        command: 'grep -ciE ''(i\s*\+=?\s*1|增量|没有增加|无限循环|死循环)'' ${trial_dir}/response.txt'
         must_contain: 1
     criteria:
       dimensions: [factual_accuracy, clarity, actionable]
