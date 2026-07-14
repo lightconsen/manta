@@ -1,0 +1,45 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Communication & Canvas
+#
+# Tests that the agent can delegate tasks, send messages, and control UI canvases.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: delegate_subtask
+    description: "用户要求并行执行子任务"
+    input: "我需要同时做两件事：计算 25 * 4 的结果，以及获取当前时间。请帮我并行执行。"
+    expected_behavior: "调用 delegate 工具并行处理子任务"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'delegate' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: message_send
+    description: "用户要求发送消息"
+    input: "帮我在 Telegram 上发送一条消息，内容为'任务已完成'"
+    expected_behavior: "调用 message 工具发送消息"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'message' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: canvas_display
+    description: "用户要求显示 UI 画布"
+    input: "帮我创建一个画布，显示一条欢迎信息'Hello World'"
+    expected_behavior: "调用 canvas 工具创建 UI 画布"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'canvas' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6

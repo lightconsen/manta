@@ -322,10 +322,10 @@ impl Provider for OpenAiProvider {
 
         // Debug: print the actual request body
         let body_json = serde_json::to_string(&body_value).unwrap_or_default();
-        info!("OpenAI API request body: {}", body_json);
+        debug!("OpenAI API request body: {}", body_json);
 
         let request_url = self.url("/chat/completions");
-        info!("OpenAI API full URL: {}", request_url);
+        debug!("OpenAI API full URL: {}", request_url);
 
         let openai_resp: OpenAiResponse = self
             .gateway_client

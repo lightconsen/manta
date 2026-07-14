@@ -1,0 +1,27 @@
+name: "Batch 7 — Sessions & System"
+description: "Session and system tool capability tests: sessions_list, sessions_history, sessions_yield, session_status, heartbeat, nodes, list_capabilities"
+trials: 1
+min_pass_rate: 0.0
+
+tasks:
+  - id: test_sessions_list
+    path: "../capability/sessions.yaml"
+    task_filter: "sessions_list"
+  - id: test_sessions_history
+    path: "../capability/sessions.yaml"
+    task_filter: "sessions_history"
+  - id: test_sessions_yield
+    path: "../capability/sessions.yaml"
+    task_filter: "sessions_yield"
+  - id: test_session_status
+    path: "../capability/sessions.yaml"
+    task_filter: "session_status"
+  - id: test_heartbeat
+    path: "../capability/sessions.yaml"
+    task_filter: "heartbeat_list"
+  - id: test_nodes
+    path: "../capability/sessions.yaml"
+    task_filter: "nodes_status"
+  - id: test_capabilities
+    path: "../capability/sessions.yaml"
+    task_filter: "list_capabilities"

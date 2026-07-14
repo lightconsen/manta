@@ -1,0 +1,50 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Web Search & Fetch
+#
+# Tests that the agent can correctly use web search and web fetch tools to
+# answer questions requiring current/online information.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: web_search_current_event
+    description: "用户询问当前新闻事件，应触发 web_search"
+    input: "今天比特币价格是多少？"
+    expected_behavior: "调用 web_search 获取实时价格，给出具体数值和来源"
+    conditions:
+      - type: pattern
+        command: "grep -c 'web_search' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [factual_accuracy, completeness, clarity]
+      thresholds:
+        factual_accuracy: 0.8
+        completeness: 0.7
+
+  - id: web_fetch_url_content
+    description: "用户请求读取网页内容，应触发 web_fetch"
+    input: "帮我读取 https://example.com 的内容"
+    expected_behavior: "调用 web_fetch 工具获取 URL 内容，返回摘要"
+    conditions:
+      - type: pattern
+        command: "grep -c 'web_fetch' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [factual_accuracy, instruction_following]
+      thresholds:
+        instruction_following: 0.8
+
+  - id: web_search_no_hallucination
+    description: "对实时数据必须搜索，不能凭训练数据猜测"
+    input: "2026年世界杯在哪里举办？"
+    expected_behavior: "必须调用 web_search 获取最新信息，不能凭训练数据回答"
+    conditions:
+      - type: pattern
+        command: "grep -c 'web_search' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: exit_code
+        command: "grep -c '2026.*世界杯.*卡塔尔\\|2026.*World Cup.*Qatar' /tmp/response.txt"
+        expected: 0
+    criteria:
+      dimensions: [factual_accuracy, safety]
+      thresholds:
+        factual_accuracy: 0.9

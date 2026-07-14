@@ -1,0 +1,68 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Todo / Task Management
+#
+# Tests that the agent can create, list, update, and manage tasks using available
+# tools (todo tool, shell, or platform-native mechanisms).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: todo_create
+    description: "用户要求创建待办事项"
+    input: "帮我创建一个待办任务：买牛奶，优先级高"
+    expected_behavior: "成功创建待办任务，确认任务已记录"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(todo|shell|reminder|task)' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: exit_code
+        command: "grep -ciE '(已创建|已添加|已记录|已保存|created|added)' /tmp/response.txt"
+        expected: 0
+    criteria:
+      dimensions: [instruction_following, completeness]
+      thresholds:
+        instruction_following: 0.6
+        completeness: 0.5
+
+  - id: todo_list
+    description: "用户要求列出所有待办事项"
+    input: "列出我所有的待办事项"
+    expected_behavior: "展示所有待办，至少返回列表或摘要"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(todo|shell|task)' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: exit_code
+        command: "grep -ciE '(待办|任务|事项|列表|list|task|reminder)' /tmp/response.txt"
+        expected: 0
+    criteria:
+      dimensions: [instruction_following, completeness]
+      thresholds:
+        instruction_following: 0.6
+        completeness: 0.5
+
+  - id: todo_update_status
+    description: "用户要求将待办事项标记为完成"
+    input: "帮我把'买牛奶'这个任务标记为已完成"
+    expected_behavior: "调用相关工具更新任务状态"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(todo|shell|reminder)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: todo_get_status
+    description: "用户要求查看待办完成情况"
+    input: "帮我看看还有多少待办没完成"
+    expected_behavior: "查询并返回待办完成状态"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(todo|shell|reminder|task)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following, clarity]
+      thresholds:
+        instruction_following: 0.6
+        clarity: 0.5

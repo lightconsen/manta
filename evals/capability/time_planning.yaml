@@ -1,0 +1,59 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Time Awareness & Planning
+#
+# Tests that the agent correctly uses time tools and planning capabilities.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: time_current_query
+    description: "用户询问当前时间"
+    input: "现在几点了？"
+    expected_behavior: "调用 time 工具获取当前时间并格式化返回"
+    conditions:
+      - type: pattern
+        command: "grep -c 'time' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [factual_accuracy, clarity]
+      thresholds:
+        factual_accuracy: 0.9
+
+  - id: time_date_calculation
+    description: "日期计算 — 需要 time 工具获取基准日期"
+    input: "7天后是星期几？"
+    expected_behavior: "调用 time 获取今天日期，然后推算 7 天后的星期"
+    conditions:
+      - type: pattern
+        command: "grep -c 'time' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [factual_accuracy, clarity]
+      thresholds:
+        factual_accuracy: 0.9
+
+  - id: planner_decompose
+    description: "复杂任务应触发 planner 工具进行目标分解"
+    input: >
+      我需要分析过去一个月的网站访问日志，找出访问量最高的 10 个页面，
+      然后生成一份 PDF 报告，最后发送到团队邮箱。请帮我规划这个任务。
+    expected_behavior: "调用 planner 工具分解为多步骤任务"
+    conditions:
+      - type: pattern
+        command: "grep -c 'planner\\|update_plan' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [completeness, clarity, actionable]
+      thresholds:
+        completeness: 0.7
+        actionable: 0.7
+
+  - id: todo_task_tracking
+    description: "用户要求创建待办事项"
+    input: "帮我记下来：明天下午3点开会，需要准备季度报告"
+    expected_behavior: "调用 todo 或 cron 工具创建提醒/待办"
+    conditions:
+      - type: pattern
+        command: "grep -c 'todo\\|cron' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following, completeness]

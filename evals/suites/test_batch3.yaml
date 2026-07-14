@@ -1,0 +1,15 @@
+name: "Batch 3 — Memory"
+description: "Memory capability tests"
+trials: 1
+min_pass_rate: 0.0
+
+tasks:
+  - id: test_mem_list
+    path: "../capability/memory.yaml"
+    task_filter: "memory_get_list"
+  - id: test_mem_semantic
+    path: "../capability/memory.yaml"
+    task_filter: "memory_search_semantic"
+  - id: test_mem_delete
+    path: "../capability/memory.yaml"
+    task_filter: "memory_delete"

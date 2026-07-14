@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: File System Operations
+#
+# Tests that the agent can correctly read, write, edit, glob, and grep files.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: file_read_basic
+    description: "用户要求读取文件"
+    input: "读取 /tmp/test_read.txt 的内容"
+    expected_behavior: "调用 file_read 工具并返回文件内容"
+    setup:
+      - command: "echo 'hello eval world' > /tmp/test_read.txt"
+    conditions:
+      - type: pattern
+        command: "grep -c 'file_read\\|read' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: exit_code
+        command: "grep -c 'hello eval world' /tmp/response.txt"
+        expected: 0   # 需要在响应中出现
+    cleanup:
+      - command: "rm -f /tmp/test_read.txt"
+
+  - id: file_write_code
+    description: "用户要求创建 Python 脚本"
+    input: "创建一个 Python 脚本 /tmp/hello.py，打印 Hello Eval"
+    expected_behavior: "调用 file_write 创建文件，内容正确"
+    conditions:
+      - type: file_exists
+        path: "/tmp/hello.py"
+      - type: pattern
+        command: "cat /tmp/hello.py"
+        must_contain: "Hello Eval"
+    cleanup:
+      - command: "rm -f /tmp/hello.py"
+
+  - id: file_edit_replace
+    description: "用户要求修改现有文件中的内容"
+    input: "将 /tmp/config.txt 中的 version: 1.0 改为 version: 2.0"
+    expected_behavior: "调用 file_edit 工具进行精确替换"
+    setup:
+      - command: "echo 'name: app\nversion: 1.0\nenv: prod' > /tmp/config.txt"
+    conditions:
+      - type: pattern
+        command: "grep -c 'file_edit\\|edit' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: pattern
+        command: "grep 'version:' /tmp/config.txt"
+        must_contain: "2.0"
+    cleanup:
+      - command: "rm -f /tmp/config.txt"
+
+  - id: file_glob_search
+    description: "用户要求查找特定模式的文件"
+    input: "在 /tmp 目录下查找所有 .log 文件"
+    expected_behavior: "调用 glob 工具搜索 .log 文件"
+    setup:
+      - command: "touch /tmp/test_eval_1.log /tmp/test_eval_2.log"
+    conditions:
+      - type: pattern
+        command: "grep -c 'glob' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: exit_code
+        command: "grep -c 'test_eval_1.log' /tmp/response.txt"
+        expected: 0   # 响应应包含文件名
+    cleanup:
+      - command: "rm -f /tmp/test_eval_1.log /tmp/test_eval_2.log"

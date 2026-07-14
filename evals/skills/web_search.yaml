@@ -1,0 +1,57 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Skill Evaluation: WebSearchTool
+#
+# Four-dimensional evaluation per article §04:
+#   Trigger — 正确触发 / 不该触发时不触发
+#   Execution — 参数构造正确
+#   Resilience — 超时/失败时优雅降级
+#   Edge Cases — 边界条件处理
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  # ── Trigger: Should trigger ────────────────────────────────────────────
+  - id: skill_ws_trigger_should
+    description: "Skill 触发：需要搜索最新信息时调用 web_search"
+    input: "2026年NBA总冠军是哪支球队？"
+    expected_behavior: "触发 web_search 获取最新体育赛事结果"
+    conditions:
+      - type: pattern
+        command: "grep -c 'web_search' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+
+  - id: skill_ws_trigger_should_not
+    description: "Skill 触发：简单计算不应触发搜索"
+    input: "1+1等于几？"
+    expected_behavior: "不调用 web_search，直接回答"
+    conditions:
+      - type: exit_code
+        command: "grep -c 'web_search' /tmp/eval_trace.log"
+        expected: 0   # 不应触发搜索
+    criteria:
+      dimensions: [instruction_following]
+
+  # ── Execution: Parameter correctness ───────────────────────────────────
+  - id: skill_ws_param_query
+    description: "Skill 执行：搜索参数包含核心查询词"
+    input: "查找最新的 Rust 语言版本和更新日志"
+    expected_behavior: "搜索参数包含 'Rust' 和 '版本' 或 'release'"
+    conditions:
+      - type: pattern
+        command: "grep 'web_search' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following, completeness]
+      thresholds:
+        instruction_following: 0.8
+
+  # ── Resilience: Error handling ─────────────────────────────────────────
+  - id: skill_ws_resilience_fail
+    description: "Skill 韧性：搜索失败时友好提示"
+    input: "搜索 asdfghjklzxcvbnm12345 这个不存在的关键词"
+    expected_behavior: "搜索可能返回空结果，应友好提示"
+    criteria:
+      dimensions: [clarity, actionable]
+      thresholds:
+        clarity: 0.7

@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Process Management
+#
+# Tests that the agent can start, list, check status, and stop background
+# processes using the process tool.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: process_start
+    description: "用户要求后台运行一个进程"
+    input: "帮我后台运行一个 sleep 10 的进程"
+    expected_behavior: "调用 process 工具启动后台进程，返回进程 ID"
+    setup:
+      - command: "date +%s > /tmp/eval_process_started"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(process|shell)' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: exit_code
+        command: "grep -ciE '(已启动|已运行|进程|process|pid|PID|[0-9a-f-]{36})' /tmp/response.txt"
+        expected: 0
+    cleanup:
+      - command: "rm -f /tmp/eval_process_started"
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: process_list
+    description: "用户要求列出所有后台进程"
+    input: "帮我看看有哪些后台进程在运行"
+    expected_behavior: "调用 process 工具列出所有进程"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(process|shell)' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: exit_code
+        command: "grep -ciE '(进程|process|后台|运行|list|status)' /tmp/response.txt"
+        expected: 0
+    criteria:
+      dimensions: [instruction_following, completeness]
+      thresholds:
+        instruction_following: 0.6
+        completeness: 0.5
+
+  - id: process_status
+    description: "用户要求查看特定进程状态"
+    input: "帮我检查进程 status 的状态"
+    expected_behavior: "调用 process 工具查询进程状态"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(process|shell)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: process_stop
+    description: "用户要求停止一个后台进程"
+    input: "帮我停止进程 status"
+    expected_behavior: "调用 process 工具停止进程"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(process|shell|kill)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6

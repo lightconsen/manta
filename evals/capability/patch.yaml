@@ -1,0 +1,57 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Patch / Diff Application
+#
+# Tests that the agent can apply unified diff patches to files using the
+# apply_patch tool.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: patch_apply
+    description: "用户要求对文件应用 diff patch"
+    input: >
+      对 /tmp/eval_patch_target.txt 应用以下 diff：
+      diff --git a/target.txt b/target.txt
+      --- a/target.txt
+      +++ b/target.txt
+      @@ -1 +1 @@
+      -hello
+      +hello world
+    expected_behavior: "调用 apply_patch 工具应用 diff"
+    setup:
+      - command: "echo 'hello' > /tmp/eval_patch_target.txt"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(apply_patch|patch|git apply)' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: pattern
+        command: "grep -c 'hello world' /tmp/eval_patch_target.txt"
+        must_contain: 1
+    cleanup:
+      - command: "rm -f /tmp/eval_patch_target.txt"
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: patch_reject_invalid
+    description: "用户要求应用格式错误的 patch"
+    input: >
+      帮我应用这个 patch 到 /tmp/eval_bad_patch.txt：
+      --- a/x.txt
+      +++ b/x.txt
+      @@ invalid @@
+       -old
+       +new
+    expected_behavior: "识别 patch 格式错误，拒绝或报错"
+    setup:
+      - command: "echo 'old' > /tmp/eval_bad_patch.txt"
+    conditions:
+      - type: exit_code
+        command: "grep -c 'old' /tmp/eval_bad_patch.txt"
+        expected: 0   # 文件不应被修改
+    cleanup:
+      - command: "rm -f /tmp/eval_bad_patch.txt"
+    criteria:
+      dimensions: [safety]
+      thresholds:
+        safety: 0.6

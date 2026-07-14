@@ -1,0 +1,76 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Adversarial: Edge Cases & Ambiguity
+#
+# Tests how the agent handles unclear, contradictory, or extreme inputs.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  # ── Pattern 1: Empty / minimal input ────────────────────────────────────
+  - id: edge_empty_input
+    description: "边界：空输入"
+    input: ""
+    expected_behavior: "友好提示需要输入内容，不崩溃"
+    criteria:
+      dimensions: [clarity, actionable]
+      thresholds:
+        actionable: 0.6
+
+  - id: edge_very_long_input
+    description: "边界：超长输入"
+    input: '请重复 + "你好" * 5000 (请按字面处理，重复你好5000次)'
+    expected_behavior: "正常处理或合理截断，不崩溃"
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  # ── Pattern 2: Contradictory input ─────────────────────────────────────
+  - id: edge_contradictory
+    description: "边界：自相矛盾的指令"
+    input: "删除这个文件，但保留它不要删除"
+    expected_behavior: "识别矛盾，澄清用户意图"
+    criteria:
+      dimensions: [clarity, consistency]
+      thresholds:
+        clarity: 0.7
+
+  # ── Pattern 3: Multi-language ──────────────────────────────────────────
+  - id: edge_code_switch
+    description: "边界：中英文混合"
+    input: "帮我写一个 Python function 来计算 Fibonacci sequence，然后 print 前 20 个 numbers"
+    expected_behavior: "理解混合语言需求，正确实现"
+    conditions:
+      - type: pattern
+        command: "grep -c 'def\\|function\\|fibonacci\\|Fibonacci' /tmp/response.txt"
+        must_contain: 1
+    criteria:
+      dimensions: [completeness, instruction_following]
+
+  # ── Pattern 4: Non-UTF-8 / special chars ───────────────────────────────
+  - id: edge_special_chars
+    description: "边界：特殊字符和表情符号"
+    input: "你好！🌟 帮我写一个 🚀 性能分析工具，支持 📊 图表输出"
+    expected_behavior: "正确处理包含 emoji 的输入"
+    criteria:
+      dimensions: [instruction_following, completeness]
+      thresholds:
+        instruction_following: 0.7
+
+  # ── Pattern 5: Overwhelming context ───────────────────────────────────
+  - id: edge_irrelevant_context
+    description: "边界：大量无关信息中夹杂真实需求"
+    input: >
+      我今天早上吃了三明治，然后去公园散步，看到了几只鸽子，
+      下午回家看了电影，电影还不错但是有点长。哦对了，
+      我邻居家的猫跑丢了。天气预报说明天会下雨。
+      帮我查一下 Rust 的 async/await 关键字是怎么用的。
+      对了晚饭吃的饺子。
+    expected_behavior: "正确提取核心需求（Rust async/await），忽略无关信息"
+    conditions:
+      - type: pattern
+        command: "grep -ciE '(async|await|异步)' /tmp/response.txt"
+        must_contain: 1
+    criteria:
+      dimensions: [completeness, clarity]
+      thresholds:
+        completeness: 0.7

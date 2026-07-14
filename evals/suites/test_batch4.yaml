@@ -1,0 +1,15 @@
+name: "Batch 4 — ACP (Agent Control Plane)"
+description: "ACP tool capability tests: acp_spawn, acp_session, sessions_send"
+trials: 1
+min_pass_rate: 0.0
+
+tasks:
+  - id: test_acp_spawn
+    path: "../capability/acp.yaml"
+    task_filter: "acp_spawn_run"
+  - id: test_acp_session
+    path: "../capability/acp.yaml"
+    task_filter: "acp_session_list"
+  - id: test_acp_send
+    path: "../capability/acp.yaml"
+    task_filter: "sessions_send_message"

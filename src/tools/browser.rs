@@ -1269,8 +1269,9 @@ impl Tool for BrowserTool {
 
     fn description(&self) -> &str {
         "Automate web browser interactions. Navigate to URLs, click elements, fill forms, take \
-         screenshots, extract content, and execute JavaScript. Requires Chrome/Chromium to be \
-         installed."
+         screenshots, extract content, and execute JavaScript. Use this tool when the user asks \
+         to open a webpage, browse the web, take a website screenshot, or automate browser actions \
+         (打开网页/浏览/网页截图). Requires Chrome/Chromium to be installed."
     }
 
     fn parameters_schema(&self) -> Value {

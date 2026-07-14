@@ -1,0 +1,33 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Platform
+#
+# Tests that the agent can perform desktop automation (computer tool) and
+# decompose complex goals (planner tool).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: computer_screenshot
+    description: "用户要求截屏"
+    input: "帮我截取当前屏幕并保存到 /tmp/eval_screenshot.png"
+    expected_behavior: "调用 computer 工具截取屏幕截图"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'computer' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: planner_decompose
+    description: "用户要求使用 planner 分解复杂任务"
+    input: "我需要部署一个 Web 应用：先拉取代码，然后安装依赖，最后启动服务。请用 planner 帮我规划这个流程。"
+    expected_behavior: "调用 planner 工具分解并执行任务"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'planner' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6

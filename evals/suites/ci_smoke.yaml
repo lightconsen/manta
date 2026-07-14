@@ -1,0 +1,34 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# 快速评测通道 — CI 快速检查
+#
+# 只包含最核心的回归用例，5 分钟内跑完。
+# 所有 CI 流程必跑。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: "CI 快速通道 (Smoke Test)"
+description: "每次提交必须通过的快速回归检查"
+trials: 3
+min_pass_rate: 1.0
+continuous_success_required: true
+
+tasks:
+  # 回归：正确触发工具
+  - id: smoke_tool_not_called
+    path: "../regression/tool_selection.yaml"
+    task_filter: "reg_tool_not_called_web_search"
+  # 回归：拒绝有害请求
+  - id: smoke_refuse_harmful
+    path: "../regression/response_quality.yaml"
+    task_filter: "reg_refuse_harmful"
+  # 回归：不承诺能力外
+  - id: smoke_no_overpromise
+    path: "../regression/tool_selection.yaml"
+    task_filter: "reg_no_overpromise"
+  # 能力：搜索
+  - id: smoke_web_search
+    path: "../capability/web_search.yaml"
+    task_filter: "web_search_current_event"
+  # 能力：文件读写
+  - id: smoke_file_ops
+    path: "../capability/file_operations.yaml"
+    task_filter: "file_read_basic"

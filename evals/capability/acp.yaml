@@ -1,0 +1,60 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: ACP (Agent Control Plane)
+#
+# Tests that the agent can spawn subagents, manage ACP sessions, and
+# communicate with running subagents via acp_spawn, acp_session, and
+# sessions_send tools.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: acp_spawn_run
+    description: "用户要求创建子 Agent 执行一次性任务"
+    input: "帮我创建一个子 Agent 来计算 15 * 7 的结果"
+    expected_behavior: "调用 acp_spawn 工具创建子 Agent 执行计算"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'acp_spawn' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: acp_spawn_session
+    description: "用户要求创建持久会话模式的子 Agent"
+    input: "帮我创建一个会话模式的子 Agent，用于处理用户咨询"
+    expected_behavior: "调用 acp_spawn 工具，mode 设置为 session"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'acp_spawn' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: acp_session_list
+    description: "用户要求列出所有 ACP 会话"
+    input: "帮我列出所有的 ACP 会话"
+    expected_behavior: "调用 acp_session 工具列出会话"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'acp_session' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: sessions_send_message
+    description: "用户要求向子 Agent 发送消息"
+    input: "请向子 Agent sub_001 发送消息'请汇报当前进度'"
+    expected_behavior: "调用 sessions_send 或 acp_session 工具发送消息"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(sessions_send|acp_session.*message)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6

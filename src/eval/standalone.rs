@@ -1,0 +1,304 @@
+//! Standalone eval mode — creates Agent + Critic inline (no daemon needed).
+//!
+//! Entry point: [`run_standalone_suite`].
+//!
+//! ```bash
+//! syscity eval run ci_smoke --full --trials 3
+//! ```
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use tracing::{info, warn};
+
+use crate::acp::AcpControlPlane;
+use crate::agent::reflection::critic::Critic;
+use crate::agent::session_store::SessionStore;
+use crate::agent::Agent;
+use crate::eval::harness::EvalHarness;
+use crate::eval::loader::{default_evals_dir, load_suite};
+use crate::gateway::config::GatewayConfig;
+use crate::providers::resolver::resolve_provider;
+use crate::tools::file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
+use crate::tools::grep::GrepTool;
+use crate::tools::shell::ShellTool;
+use crate::tools::time::TimeTool;
+use crate::tools::todo_tool::TodoTool;
+use crate::tools::web::{WebFetchTool, WebSearchTool};
+use crate::tools::{AcpSessionTool, AcpSpawnTool, SessionsSendTool, ToolRegistry};
+use crate::Result;
+
+/// Run a full eval suite standalone (no daemon needed).
+///
+/// 1. Loads GatewayConfig from the config file (or env var fallback).
+/// 2. Creates a provider, tool registry, Agent, and optional Critic.
+/// 3. Runs `EvalHarness` for each task in the suite.
+/// 4. Prints per-task and summary results.
+pub async fn run_standalone_suite(
+    _config: &crate::config::Config,
+    suite_name: &str,
+    evals_dir: Option<PathBuf>,
+    trials_override: Option<usize>,
+    provider_override: Option<String>,
+    model_override: Option<String>,
+    api_key_override: Option<String>,
+    base_url_override: Option<String>,
+) -> Result<()> {
+    let evals_dir = evals_dir.unwrap_or_else(default_evals_dir);
+    let manifest_path = evals_dir.join("suites").join(format!("{}.yaml", suite_name));
+
+    if !manifest_path.exists() {
+        return Err(crate::error::SyscityError::Validation(format!(
+            "Suite '{}' not found at {:?}",
+            suite_name, manifest_path
+        )));
+    }
+
+    let suite = load_suite(&manifest_path, suite_name)?;
+
+    println!("\n═══ Eval Suite: {} ═══", suite.name);
+    println!("  Tasks:    {}", suite.tasks.len());
+    println!("  Min pass: {:.0}%", suite.min_pass_rate * 100.0);
+    println!("  Trials:   {}\n", trials_override.unwrap_or(suite.trials));
+
+    // ── Step 1: Try to load GatewayConfig from the config file ──────────────
+    let gateway_cfg = try_load_gateway_config().await;
+
+    // ── Step 2: Resolve provider config ─────────────────────────────────────
+    let provider_type = provider_override.clone().unwrap_or_else(|| {
+        gateway_cfg
+            .as_ref()
+            .map(|g| g.model_provider.clone())
+            .unwrap_or_else(|| "anthropic".to_string())
+    });
+
+    let model = model_override.clone().or_else(|| {
+        gateway_cfg.as_ref().map(|g| g.model.clone())
+    });
+
+    let api_key = api_key_override.or_else(|| {
+        // Try the configured provider's api_key from GatewayConfig
+        gateway_cfg
+            .as_ref()
+            .and_then(|g| g.providers.get(&provider_type))
+            .and_then(|p| {
+                if !p.api_key.is_empty() {
+                    Some(p.api_key.clone())
+                } else {
+                    p.api_keys.first().cloned()
+                }
+            })
+            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+    });
+
+    let base_url = base_url_override.or_else(|| {
+        gateway_cfg
+            .as_ref()
+            .and_then(|g| g.providers.get(&provider_type))
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("SYSCITY_BASE_URL").ok())
+    });
+
+    // ── Step 3: Create provider ─────────────────────────────────────────────
+    let provider = match resolve_provider(&provider_type, api_key, base_url, model.clone(), None) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(crate::error::SyscityError::Validation(format!(
+                "Failed to create provider '{}': {}\n\
+                 Set ANTHROPIC_API_KEY or OPENAI_API_KEY env var, or provide --api-key",
+                provider_type, e
+            )));
+        }
+    };
+
+    info!(
+        "Eval provider: {} (model: {})",
+        provider_type,
+        model.as_deref().unwrap_or("default")
+    );
+
+    // ── Step 4: Create ACP control plane (for subagent spawning) ────────────
+    let acp = Arc::new(AcpControlPlane::new(50));
+
+    // ── Step 5: Create tool registry ────────────────────────────────────────
+    let tool_registry = create_eval_tool_registry(Some(acp.clone()));
+    let tool_registry = Arc::new(tool_registry);
+
+    // ── Step 6: Set up agent builder on ACP (needed for acp_spawn) ──────────
+    {
+        let tools_for_builder = tool_registry.clone();
+        let provider_for_builder = provider.clone();
+        acp.set_agent_builder(move || {
+            Ok(Agent::new(
+                crate::agent::AgentConfig::default(),
+                provider_for_builder.clone(),
+                tools_for_builder.clone(),
+            ))
+        })
+        .await;
+    }
+
+    // ── Step 7: Create Agent ────────────────────────────────────────────────
+    let mut agent_config = gateway_cfg
+        .as_ref()
+        .map(|g| g.default_agent.clone())
+        .unwrap_or_default();
+    agent_config.system_prompt.push_str(
+        "\n\n## Tool Usage Guidelines\n\n\
+         Always prefer using dedicated tools over shell commands. \
+         Each tool is purpose-built for its specific task. When a dedicated \
+         tool exists for what the user is asking, use it instead of the shell. \
+         For example: use 'pdf' for PDF generation, 'image' for image viewing, \
+         'image_generate' for image creation, 'tts' for text-to-speech, \
+         'stt' for transcription, and 'browser' for web automation."
+    );
+
+    let agent = Arc::new(Agent::new(
+        agent_config,
+        provider.clone(),
+        tool_registry.clone(),
+    ));
+
+    // ── Step 6: Create Critic (only if at least one task has criteria) ──────
+    let has_criteria = suite.tasks.iter().any(|t| t.criteria.is_some());
+    let critic = if has_criteria {
+        let mut c = Critic::new(provider);
+        if let Some(ref model) = model {
+            c = c.with_model(model.clone());
+        }
+        Some(c)
+    } else {
+        None
+    };
+
+    // ── Step 7: Build harness ───────────────────────────────────────────────
+    let effective_trials = trials_override.unwrap_or(suite.trials);
+    let harness = EvalHarness::new(agent.clone(), critic)
+        .with_default_trials(effective_trials);
+
+    // ── Step 8: Run each task ───────────────────────────────────────────────
+    let mut all_passed = true;
+    let mut total_trials = 0usize;
+    let mut total_passed = 0usize;
+
+    for task in &suite.tasks {
+        println!("── Task: {} — {} ──", task.id, task.description);
+        print!("  Running {} trials...", effective_trials);
+        // Flush stdout so the message appears before potentially long execution
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+
+        match harness.run(task.clone(), effective_trials).await {
+            Ok(summary) => {
+                println!(" done\n");
+                println!("{}", summary);
+                total_trials += summary.total_trials;
+                total_passed += (summary.pass_rate * summary.total_trials as f64).round() as usize;
+                if summary.pass_rate < suite.min_pass_rate {
+                    all_passed = false;
+                }
+            }
+            Err(e) => {
+                println!(" failed\n");
+                warn!("Task '{}' failed: {}", task.id, e);
+                all_passed = false;
+            }
+        }
+        println!();
+    }
+
+    // ── Step 9: Summary ────────────────────────────────────────────────────
+    let overall_pass_rate = if total_trials > 0 {
+        total_passed as f64 / total_trials as f64
+    } else {
+        0.0
+    };
+
+    println!("═══ Suite Summary: {} ═══", suite.name);
+    println!("  Overall pass rate: {:.1}%", overall_pass_rate * 100.0);
+    println!("  Total trials:      {}", total_trials);
+    println!("  Total passed:      {}", total_passed);
+    println!("  Min required:      {:.0}%", suite.min_pass_rate * 100.0);
+    println!(
+        "  Result:            {}",
+        if all_passed { "PASS" } else { "FAIL" }
+    );
+
+    // ── Step 10: Shutdown ──────────────────────────────────────────────────
+    agent.shutdown().await?;
+
+    if !all_passed {
+        return Err(crate::error::SyscityError::Validation(
+            "Suite did not meet minimum pass rate".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Find and parse the config file as `GatewayConfig`.
+///
+/// Searches the same locations as the daemon:
+/// 1. `./config.toml` (CWD)
+/// 2. `.config/config.toml` (CWD)
+/// 3. `~/.syscity/config.toml`
+///
+/// Returns `None` if no config file is found or parsing fails.
+async fn try_load_gateway_config() -> Option<GatewayConfig> {
+    let candidates = [
+        PathBuf::from("config.toml"),
+        PathBuf::from(".config/config.toml"),
+        crate::dirs::default_config_file(),
+    ];
+
+    for path in &candidates {
+        if path.exists() {
+            match tokio::fs::read_to_string(path).await {
+                Ok(content) => match toml::from_str::<GatewayConfig>(&content) {
+                    Ok(cfg) => {
+                        info!("Loaded GatewayConfig from {:?}", path);
+                        return Some(cfg);
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse {:?} as GatewayConfig: {}", path, e);
+                        // Continue to next candidate
+                    }
+                },
+                Err(e) => {
+                    warn!("Failed to read {:?}: {}", path, e);
+                }
+            }
+        }
+    }
+
+    info!("No GatewayConfig found — using env var defaults");
+    None
+}
+
+/// Create a tool registry for eval tasks.
+///
+/// Registers shell, file operations, search, web, todo, time tools, and
+/// optionally ACP tools (acp_spawn, acp_session, sessions_send) when an
+/// `AcpControlPlane` is provided.
+fn create_eval_tool_registry(acp: Option<Arc<AcpControlPlane>>) -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(ShellTool::new()));
+    registry.register(Box::new(FileReadTool::new()));
+    registry.register(Box::new(FileWriteTool::new()));
+    registry.register(Box::new(FileEditTool::new()));
+    registry.register(Box::new(GrepTool::new()));
+    registry.register(Box::new(GlobTool::new()));
+    registry.register(Box::new(WebSearchTool::new()));
+    registry.register(Box::new(WebFetchTool::new()));
+    registry.register(Box::new(TodoTool::new()));
+    registry.register(Box::new(TimeTool::new()));
+
+    if let Some(acp) = acp {
+        registry.register(Box::new(AcpSpawnTool::new(acp.clone(), None)));
+        registry.register(Box::new(AcpSessionTool::new(acp.clone())));
+        registry.register(Box::new(SessionsSendTool::new(acp)));
+    }
+
+    registry
+}

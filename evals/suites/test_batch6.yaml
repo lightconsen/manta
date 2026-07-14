@@ -1,0 +1,12 @@
+name: "Batch 6 — Platform"
+description: "Platform tool capability tests: computer, planner"
+trials: 1
+min_pass_rate: 0.0
+
+tasks:
+  - id: test_computer
+    path: "../capability/platform.yaml"
+    task_filter: "computer_screenshot"
+  - id: test_planner
+    path: "../capability/platform.yaml"
+    task_filter: "planner_decompose"

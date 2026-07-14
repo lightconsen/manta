@@ -1,0 +1,66 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Memory
+#
+# Tests that the agent can store, recall, search, list, update, and delete
+# memories across conversations using memory, memory_search, and memory_get.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: memory_store_and_retrieve
+    description: "用户要求记住信息并稍后回取 — 单轮内"
+    input: "记住我的名字是张三。我喜欢的颜色是蓝色。"
+    expected_behavior: "调用 memory 工具存储用户信息"
+    conditions:
+      - type: pattern
+        command: "grep -c 'memory' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following, completeness]
+
+  - id: memory_search
+    description: "用户要求搜索之前存储的信息"
+    input: "我之前说过我喜欢什么颜色？"
+    expected_behavior: "调用 memory_search 或 memory_get 工具检索用户信息"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(memory_search|memory_get|memory)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [factual_accuracy, completeness]
+      thresholds:
+        factual_accuracy: 0.8
+
+  - id: memory_get_list
+    description: "用户要求列出所有已存储的记忆"
+    input: "帮我列出你记得的关于我的所有信息"
+    expected_behavior: "调用 memory_get 或 memory 工具列出记忆"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(memory_get|memory)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following, completeness]
+
+  - id: memory_search_semantic
+    description: "用户进行语义搜索 — 不精确匹配关键词"
+    input: "我上次说过的关于颜色的信息是什么？"
+    expected_behavior: "调用 memory_search 进行语义搜索"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(memory_search|memory)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [factual_accuracy]
+      thresholds:
+        factual_accuracy: 0.7
+
+  - id: memory_delete
+    description: "用户要求删除一条记忆"
+    input: "把我最喜欢的颜色的那条记忆删掉"
+    expected_behavior: "调用 memory_get 或 memory 工具删除记忆"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(memory_get|memory)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]

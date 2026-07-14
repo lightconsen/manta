@@ -559,7 +559,7 @@ pub struct Agent {
     /// Per-conversation Thread (replaces flat `contexts` map).
     /// Thread owns the Context AND the turn log — conversation continuity lives
     /// here.
-    thread_map: Arc<Mutex<HashMap<String, Thread>>>,
+    pub(crate) thread_map: Arc<Mutex<HashMap<String, Thread>>>,
     /// Session store for turn persistence (optional).
     session_store: Option<Arc<SessionStore>>,
     /// Session ID used as namespace for turn persistence.
@@ -570,7 +570,7 @@ pub struct Agent {
     /// compaction)
     memory_manager: Option<Arc<crate::memory::MemoryManager>>,
     /// Memory store for persistence (legacy, prefer memory_manager)
-    memory_store: Option<Arc<dyn crate::memory::MemoryStore>>,
+    pub(crate) memory_store: Option<Arc<dyn crate::memory::MemoryStore>>,
     /// Chat history store for conversation persistence (legacy, prefer
     /// memory_manager)
     chat_history: Option<Arc<dyn crate::memory::ChatHistoryStore>>,
@@ -2877,18 +2877,34 @@ impl Agent {
                         .iter_mut()
                         .find(|c| c.index == Some(key) || (c.index.is_none() && c.id == call.id))
                     {
-                        // Fill in id/type/name from first chunk if they were empty
+                        // Fill in id/type/name from first chunk if they were empty.
+                        // Note: some providers (DeepSeek) send the function name
+                        // in every delta chunk; unconditionally appending with
+                        // push_str would duplicate it (file_readfile_read).
                         if existing.id.is_empty() && !call.id.is_empty() {
                             existing.id = call.id.clone();
                         }
                         if existing.call_type.is_empty() && !call.call_type.is_empty() {
                             existing.call_type = call.call_type.clone();
                         }
-                        existing.function.name.push_str(&call.function.name);
-                        existing
-                            .function
-                            .arguments
-                            .push_str(&call.function.arguments);
+                        if existing.function.name.is_empty() && !call.function.name.is_empty() {
+                            existing.function.name = call.function.name.clone();
+                        }
+                        // Some providers (DeepSeek) send the complete JSON
+                        // arguments in every delta chunk. If the incoming
+                        // chunk looks like a complete JSON value (starts
+                        // with `{`/`[` and ends with `}`/`]`), replace the
+                        // existing arguments rather than appending.
+                        let incoming = &call.function.arguments;
+                        let is_complete_json = incoming.starts_with(['{', '['])
+                            && incoming.ends_with(['}', ']']);
+                        if is_complete_json
+                            && !existing.function.arguments.is_empty()
+                        {
+                            existing.function.arguments = incoming.clone();
+                        } else {
+                            existing.function.arguments.push_str(incoming);
+                        }
                     } else {
                         accumulated_tool_calls.push(call.clone());
                     }

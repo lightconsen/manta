@@ -1,0 +1,24 @@
+name: "Batch 5 — Multimedia"
+description: "Multimedia tool capability tests: pdf, image, image_generate, tts, stt, browser"
+trials: 1
+min_pass_rate: 0.0
+
+tasks:
+  - id: test_pdf
+    path: "../capability/multimedia.yaml"
+    task_filter: "pdf_generate"
+  - id: test_image
+    path: "../capability/multimedia.yaml"
+    task_filter: "image_view"
+  - id: test_image_gen
+    path: "../capability/multimedia.yaml"
+    task_filter: "image_generate"
+  - id: test_tts
+    path: "../capability/multimedia.yaml"
+    task_filter: "tts_speak"
+  - id: test_stt
+    path: "../capability/multimedia.yaml"
+    task_filter: "stt_transcribe"
+  - id: test_browser
+    path: "../capability/multimedia.yaml"
+    task_filter: "browser_navigate"

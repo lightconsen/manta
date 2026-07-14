@@ -46,8 +46,9 @@ impl Tool for ImageTool {
     }
 
     fn description(&self) -> &str {
-        "View image file information (dimensions, format, file size). Supports common formats: \
-         PNG, JPG, GIF, WebP, SVG."
+        "View or inspect image file information — dimensions, format, file size, metadata. \
+         Use this tool when the user asks to view, check, read, or inspect images (查看/读取图片信息). \
+         Supports common formats: PNG, JPG, GIF, WebP, SVG."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -239,8 +240,9 @@ impl Tool for ImageGenerateTool {
     }
 
     fn description(&self) -> &str {
-        "Generate an image using an AI image generation API (e.g., DALL-E, Stable Diffusion). \
-         Requires an API key configured in the environment."
+        "Generate an image from a text description using an AI image generation API (e.g., DALL-E, \
+         Stable Diffusion). Use this tool when the user asks to generate, create, draw, or produce \
+         an image (生成/创建/画图). Requires an API key configured in the environment."
     }
 
     fn parameters_schema(&self) -> Value {

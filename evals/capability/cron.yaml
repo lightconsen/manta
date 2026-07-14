@@ -1,0 +1,46 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Cron / Scheduled Tasks
+#
+# Tests that the agent can create, list, and manage scheduled cron jobs.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: cron_create
+    description: "用户要求创建一个定时任务"
+    input: "帮我创建一个定时任务，每天早上8点执行备份脚本 backup.sh"
+    expected_behavior: "成功创建定时任务（cron 工具或系统 crontab）"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(cron|crontab|at|launchctl)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: cron_list
+    description: "用户要求查看所有定时任务"
+    input: "列出所有正在运行的定时任务"
+    expected_behavior: "调用工具列出定时任务"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(cron|crontab|launchctl)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following, completeness]
+      thresholds:
+        instruction_following: 0.6
+        completeness: 0.5
+
+  - id: cron_disable
+    description: "用户要求暂停一个定时任务"
+    input: "帮我暂停名为 'daily_backup' 的定时任务"
+    expected_behavior: "调用 cron 或系统工具暂停定时任务"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(cron|crontab|launchctl)' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6

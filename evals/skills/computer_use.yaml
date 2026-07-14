@@ -1,0 +1,31 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Skill Evaluation: ComputerTool
+#
+# Tests desktop automation: screenshot, click, type, etc.
+# Only runs on platforms with a ComputerAdapter configured.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  # ── Trigger: Screen operation request ──────────────────────────────────
+  - id: skill_cu_trigger_screenshot
+    description: "Skill 触发：用户要求截图"
+    input: "帮我截一张屏幕截图"
+    expected_behavior: "调用 computer 工具的 screenshot 动作"
+    conditions:
+      - type: pattern
+        command: "grep -c 'computer.*screenshot\\|screenshot.*computer' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+
+  # ── Trigger: Mouse/keyboard ──────────────────────────────────────────
+  - id: skill_cu_trigger_mouse
+    description: "Skill 触发：用户要求点击屏幕位置"
+    input: "帮我在屏幕中央点击一下"
+    expected_behavior: "调用 computer 工具的 mouse_move + click 动作"
+    conditions:
+      - type: pattern
+        command: "grep -c 'computer' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]

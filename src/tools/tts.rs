@@ -45,8 +45,9 @@ impl Tool for TtsTool {
     }
 
     fn description(&self) -> &str {
-        "Convert text to speech audio. Supports OpenAI TTS API (requires OPENAI_API_KEY) or local \
-         system TTS (macOS say, Linux espeak/festival)."
+        "Convert text to speech audio. Use this tool when the user asks to read aloud, speak, \
+         or convert text to speech/audio (文字转语音/朗读). Requires OPENAI_API_KEY or uses \
+         local system TTS."
     }
 
     fn parameters_schema(&self) -> Value {

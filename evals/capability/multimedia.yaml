@@ -1,0 +1,95 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Multimedia
+#
+# Tests that the agent can generate PDFs, view images, generate images,
+# use text-to-speech, speech-to-text, and browser automation tools.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: pdf_generate
+    description: "用户要求生成 PDF 文档"
+    input: "帮我生成一个 PDF 文件，内容为'Hello, World!'，保存到 /tmp/eval_hello.pdf"
+    expected_behavior: "调用 pdf 工具生成 PDF 文档"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'name.*\"pdf\"|ToolCall.*\"pdf\"' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: image_view
+    description: "用户要求查看图片信息"
+    input: "帮我查看 /tmp/eval_test.png 图片的尺寸和格式信息"
+    setup:
+      - command: "convert -size 100x50 xc:blue /tmp/eval_test.png 2>/dev/null || python3 -c 'from PIL import Image; Image.new(\"RGB\", (100,50), \"blue\").save(\"/tmp/eval_test.png\")' 2>/dev/null || echo 'blue' > /tmp/eval_test.png"
+    expected_behavior: "调用 image 工具读取图片信息"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'name.*\"image\"[^_]|ToolCall.*\"image\"[^_]' /tmp/eval_trace.log"
+        must_contain: 1
+    cleanup:
+      - command: "rm -f /tmp/eval_test.png"
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: image_generate
+    description: "用户要求生成图片"
+    input: "帮我生成一张'一只可爱的猫'的图片，保存到 /tmp/eval_cat.png"
+    expected_behavior: "调用 image_generate 工具生成图片"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'name.*\"image_generate\"' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: tts_speak
+    description: "用户要求将文字转为语音"
+    input: "帮我把'你好，世界'这段文字转成语音，保存到 /tmp/eval_hello.wav"
+    expected_behavior: "调用 tts 工具生成语音"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'name.*\"tts\"' /tmp/eval_trace.log"
+        must_contain: 1
+    cleanup:
+      - command: "rm -f /tmp/eval_hello.wav"
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: stt_transcribe
+    description: "用户要求转录音频为文字"
+    input: "帮我转录 /tmp/eval_test.mp3 音频文件的内容"
+    setup:
+      - command: "python3 -c 'import struct; f=open(\"/tmp/eval_test.mp3\",\"wb\"); f.write(struct.pack(\"4sI\", b\"RIFF\", 0)); f.write(b\"MP3 \")' 2>/dev/null; echo 'dummy' >> /tmp/eval_test.mp3"
+    expected_behavior: "调用 stt 工具转录音频"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'name.*\"stt\"' /tmp/eval_trace.log"
+        must_contain: 1
+    cleanup:
+      - command: "rm -f /tmp/eval_test.mp3"
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: browser_navigate
+    description: "用户要求打开网页"
+    input: "帮我打开 https://example.com 并截图保存"
+    expected_behavior: "调用 browser 工具导航到 URL"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'name.*\"browser\"' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6

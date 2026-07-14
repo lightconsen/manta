@@ -1,0 +1,15 @@
+name: "Batch 8 — Communication & Canvas"
+description: "Communication and canvas tool capability tests: delegate, message, canvas"
+trials: 1
+min_pass_rate: 0.0
+
+tasks:
+  - id: test_delegate
+    path: "../capability/comm_canvas.yaml"
+    task_filter: "delegate_subtask"
+  - id: test_message
+    path: "../capability/comm_canvas.yaml"
+    task_filter: "message_send"
+  - id: test_canvas
+    path: "../capability/comm_canvas.yaml"
+    task_filter: "canvas_display"

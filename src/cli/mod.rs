@@ -22,6 +22,7 @@ mod cron;
 mod daemon;
 mod device;
 mod doctor;
+mod eval;
 mod entity;
 mod export;
 mod mcp;
@@ -44,6 +45,7 @@ pub use device::DeviceCommands;
 pub use doctor::DoctorCommands;
 pub use doctor::{DiagnosticHint, HintSeverity};
 pub use entity::EntityCommands;
+pub use eval::EvalCommands;
 pub use export::ExportCommands;
 pub use mcp::McpCommands;
 pub use memory::MemoryCommands;
@@ -79,6 +81,12 @@ pub enum Commands {
         /// Entity subcommand
         #[command(subcommand)]
         command: EntityCommands,
+    },
+    /// Evaluation commands (list suites, validate YAML, run evals)
+    Eval {
+        /// Eval subcommand
+        #[command(subcommand)]
+        command: EvalCommands,
     },
     /// Export conversations and memories to files
     Export {
@@ -355,6 +363,7 @@ impl Cli {
     pub async fn execute(&self, config: &Config) -> Result<()> {
         match &self.command {
             Commands::Entity { command } => entity::run_entity_command(command).await,
+            Commands::Eval { command } => command.run(config).await,
             Commands::Export { command } => export::run_export_command(command).await,
             Commands::Config { command } => match command {
                 Some(cmd) => config_cmd::run_config_command(cmd).await,

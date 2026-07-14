@@ -1,0 +1,53 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Regression: Multi-Turn Conversation
+#
+# Tests that the agent maintains context across multiple turns.
+# Simulates a conversation flow, checking consistency.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Note: Multi-turn tests require the eval harness to replay multiple messages
+# in sequence within a single conversation. For now, only the final turn's
+# response is evaluated against the conditions.
+tasks:
+  - id: mt_context_retention
+    description: "多轮：上下文保持 — 用户在前一轮给了信息，后一轮引用"
+    input: "我叫李四，今年28岁，是一名软件工程师。我刚才说了我的名字和职业，帮我写一份简短的自我介绍"
+    expected_behavior: "应正确引用提供的信息（李四、软件工程师）"
+    conditions:
+      - type: pattern
+        command: "grep -c '李四' /tmp/response.txt"
+        must_contain: 1
+      - type: pattern
+        command: "grep -c '软件工程师' /tmp/response.txt"
+        must_contain: 1
+    criteria:
+      dimensions: [factual_accuracy, consistency, completeness]
+      thresholds:
+        consistency: 0.9
+        factual_accuracy: 0.9
+
+  - id: mt_preference_update
+    description: "多轮：偏好更新 — 用户改变主意，Agent 应跟随"
+    input: "帮我推荐一家日料餐厅。算了，我不吃日料了，推荐一家川菜吧"
+    expected_behavior: "应放弃日料推荐，改为川菜推荐"
+    conditions:
+      - type: exit_code
+        command: "grep -ciE '(日料|寿司|刺身|sushi)' /tmp/response.txt"
+        expected: 1  # 不应再推荐日料
+    criteria:
+      dimensions: [instruction_following, consistency]
+      thresholds:
+        instruction_following: 0.9
+
+  - id: mt_correction
+    description: "多轮：纠正 — 用户纠正错误，Agent 应接受"
+    input: "鲁迅说过「事不目见耳闻而臆断其有无，可乎？」。这句其实是苏轼说的，不是鲁迅。请重新确认出处。"
+    expected_behavior: "接受纠正，承认错误，给出正确出处"
+    conditions:
+      - type: exit_code
+        command: "grep -ciE '(抱歉|对不起|我错了|你说得对|你说的对|苏轼)' /tmp/response.txt"
+        expected: 0  # 应包含道歉或苏轼
+    criteria:
+      dimensions: [factual_accuracy, consistency]
+      thresholds:
+        factual_accuracy: 0.9

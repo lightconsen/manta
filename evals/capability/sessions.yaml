@@ -1,0 +1,98 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Sessions & System
+#
+# Tests that the agent can manage sessions, check heartbeats, discover nodes,
+# and list capabilities.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: sessions_list
+    description: "用户要求列出所有会话"
+    input: "帮我列出所有的会话记录"
+    expected_behavior: "调用 sessions_list 工具列出会话"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'sessions_list' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: sessions_history
+    description: "用户要求查看会话历史消息"
+    input: "帮我查看会话 session_001 的历史消息"
+    expected_behavior: "调用 sessions_history 工具获取历史消息"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'sessions_history' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: sessions_yield
+    description: "用户要求暂停子 Agent"
+    input: "帮我暂停子 Agent sub_agent_001 的执行"
+    expected_behavior: "调用 sessions_yield 工具暂停子 Agent"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'sessions_yield' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: session_status
+    description: "用户要求查看会话状态"
+    input: "帮我查看当前会话的状态"
+    expected_behavior: "调用 session_status 工具查询会话状态"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'session_status' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: heartbeat_list
+    description: "用户要求列出心跳任务"
+    input: "帮我列出所有的心跳任务"
+    expected_behavior: "调用 heartbeat 工具列出任务"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'heartbeat' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: nodes_status
+    description: "用户要求查看节点状态"
+    input: "帮我查看所有 Tailscale 节点的状态"
+    expected_behavior: "调用 nodes 工具查询节点状态"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'nodes' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6
+
+  - id: list_capabilities
+    description: "用户要求列出系统能力"
+    input: "你有哪些能力？帮我列出所有可用的工具和能力集"
+    expected_behavior: "调用 list_capabilities 工具列出能力"
+    conditions:
+      - type: pattern
+        command: "grep -cE 'list_capabilities' /tmp/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following]
+      thresholds:
+        instruction_following: 0.6

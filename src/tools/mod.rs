@@ -17,6 +17,7 @@ use tracing::warn;
 use crate::providers::{FunctionCall, FunctionDefinition, ToolResult};
 
 pub mod approval;
+pub mod eval;
 pub mod rbac;
 
 // Re-export approval types for convenience
@@ -1946,7 +1947,17 @@ impl ToolRegistry {
         let args: Value = if call.arguments.trim().is_empty() {
             serde_json::json!({})
         } else {
-            serde_json::from_str(&call.arguments).map_err(|e| {
+            // Some providers (DeepSeek) append trailing text after the JSON
+            // object. Strip everything after the last `}` or `]`.
+            let sanitized = {
+                let s = call.arguments.trim();
+                if let Some(end) = s.rfind(['}', ']']) {
+                    &s[..=end]
+                } else {
+                    s
+                }
+            };
+            serde_json::from_str(sanitized).map_err(|e| {
                 crate::error::SyscityError::Validation(format!(
                     "Invalid arguments for tool {}: {}",
                     call.name, e
@@ -2019,7 +2030,17 @@ impl ToolRegistry {
         let args: Value = if call.arguments.trim().is_empty() {
             serde_json::json!({})
         } else {
-            serde_json::from_str(&call.arguments).map_err(|e| {
+            // Some providers (DeepSeek) append trailing text after the JSON
+            // object. Strip everything after the last `}` or `]`.
+            let sanitized = {
+                let s = call.arguments.trim();
+                if let Some(end) = s.rfind(['}', ']']) {
+                    &s[..=end]
+                } else {
+                    s
+                }
+            };
+            serde_json::from_str(sanitized).map_err(|e| {
                 crate::error::SyscityError::Validation(format!(
                     "Invalid arguments for tool {}: {}",
                     call.name, e

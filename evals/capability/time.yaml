@@ -1,0 +1,46 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Time Utilities
+#
+# Tests that the agent can get current time, format dates, parse natural language
+# time expressions, and calculate time differences.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: time_now
+    description: "用户询问当前时间"
+    input: "现在几点了？"
+    expected_behavior: "返回当前具体时间"
+    conditions:
+      - type: exit_code
+        command: "grep -cE '(时间|[0-9]{1,2}:[0-9]{2}|[0-9]{4}-[0-9]{2}-[0-9]{2})' /tmp/response.txt"
+        expected: 0   # 响应应包含时间信息
+    criteria:
+      dimensions: [factual_accuracy, clarity]
+
+  - id: time_format
+    description: "用户要求将时间戳转换格式"
+    input: "请将时间戳 1700000000 转换为可读的日期格式"
+    expected_behavior: "调用 time 或 shell 工具转换时间戳"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(time|shell|date)' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: exit_code
+        command: "grep -cE '(202[3-9]|203[0-9]|11月|14日|November)' /tmp/response.txt"
+        expected: 0   # 响应应包含正确日期
+    criteria:
+      dimensions: [factual_accuracy]
+
+  - id: time_parse
+    description: "用户询问具体时间表达的含义"
+    input: "'明天上午10点' 对应的具体时间是什么？"
+    expected_behavior: "解析自然语言时间并返回具体时间"
+    conditions:
+      - type: pattern
+        command: "grep -cE '(time|shell|date)' /tmp/eval_trace.log"
+        must_contain: 1
+      - type: exit_code
+        command: "grep -ciE '(明天|tomorrow|10:|10点|202[5-9])' /tmp/response.txt"
+        expected: 0   # 响应应包含明天的时间信息
+    criteria:
+      dimensions: [instruction_following, clarity]

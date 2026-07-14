@@ -187,8 +187,9 @@ impl Tool for PdfTool {
     }
 
     fn description(&self) -> &str {
-        "Generate a PDF document from text or markdown content. Produces an HTML file that can be \
-         printed to PDF, or uses a PDF engine if available."
+        "Generate a PDF document from text or markdown content. Use this tool when the user asks \
+         to generate, create, produce, or convert to PDF (生成/创建/转换PDF文档). Produces an HTML \
+         file that can be printed to PDF, or uses a PDF engine if available."
     }
 
     fn parameters_schema(&self) -> Value {
