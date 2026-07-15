@@ -68,8 +68,8 @@ pub use rca::{
     RcaKnowledgeBase, RcaKnowledgeBaseEntry, RcaPipeline, RcaResult,
 };
 pub use recycle::{
-    extract_rca_results_from_badcases, load_badcase_suite,
-    BadcaseCluster, BadcaseCollector, BadcaseFixStatus, BadcaseRecord,
+    extract_rca_results_from_badcases, load_badcase_suite, load_governed_badcase_suite,
+    BadcaseCluster, BadcaseCollector, BadcaseFixStatus, BadcaseGovernance, BadcaseRecord,
 };
 pub use scorer::{LayeredScorer, RiskSignalChecker, ScoringOutput, ScreeningLayer, Verdict};
 pub use skill_scorer::{

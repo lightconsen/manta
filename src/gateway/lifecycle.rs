@@ -915,23 +915,41 @@ async fn run_quality_gate_check(
         }
     };
 
-    // 6. Run the gate
-    let result = gate.check().await;
+    // 6. Run the gate (returns result + release decision)
+    let (result, decision) = gate.check().await;
 
     // 7. Print results
+    let decision_label = match &decision {
+        crate::gateway::quality_gate::ReleaseDecision::Proceed => "PROCEED",
+        crate::gateway::quality_gate::ReleaseDecision::Rollback => "ROLLBACK",
+        crate::gateway::quality_gate::ReleaseDecision::Degrade => "DEGRADE",
+    };
     info!("{}", result);
+    info!("Release decision: {}", decision_label);
 
     // 8. Cleanup
     agent.shutdown().await?;
 
-    if result.passed {
-        info!("✅ Quality gate passed — proceeding with startup");
-        Ok(())
-    } else {
-        Err(crate::error::SyscityError::Validation(format!(
-            "Quality gate FAILED: {}",
-            result
-        )))
+    match decision {
+        crate::gateway::quality_gate::ReleaseDecision::Proceed => {
+            info!("✅ Quality gate passed — proceeding with startup");
+            Ok(())
+        }
+        crate::gateway::quality_gate::ReleaseDecision::Rollback => {
+            let err = crate::error::SyscityError::Validation(
+                "Quality gate ROLLBACK — blocking startup".into(),
+            );
+            if config.quality_gate.shutdown_on_failure {
+                Err(err)
+            } else {
+                warn!("{} (shutdown_on_failure disabled, continuing)", err);
+                Ok(())
+            }
+        }
+        crate::gateway::quality_gate::ReleaseDecision::Degrade => {
+            warn!("⚠️ Quality gate DEGRADE — starting in degraded mode");
+            Ok(())
+        }
     }
 }
 

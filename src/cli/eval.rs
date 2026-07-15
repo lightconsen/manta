@@ -130,6 +130,17 @@ pub enum EvalCommands {
         #[arg(long)]
         verbose: bool,
     },
+    /// View feedback pipeline status (eval/ops/model channels)
+    Feedback {
+        /// Path to evals directory (defaults to `./evals`)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+        /// Channel: "eval", "ops", or "model"
+        channel: Option<String>,
+        /// Show verbose details per channel
+        #[arg(long)]
+        verbose: bool,
+    },
     /// Run Critic calibration against known-answer cases
     Calibrate {
         /// Path to evals directory (defaults to `./evals`)
@@ -226,6 +237,9 @@ impl EvalCommands {
                 generate,
                 verbose,
             } => cmd_action_items(dir.clone(), *generate, *verbose).await,
+            Self::Feedback { dir, channel, verbose } => {
+                cmd_feedback(dir.clone(), channel.clone(), *verbose).await
+            }
             Self::Calibrate {
                 dir,
                 file,
@@ -615,6 +629,15 @@ async fn cmd_badcase_submit(
     Ok(())
 }
 
+/// Generate a compact timestamp for manual submission IDs.
+fn chrono_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{:x}", dur.as_secs())
+}
+
 /// `eval action-items` — list or generate action items from badcase RCA results.
 async fn cmd_action_items(dir: Option<PathBuf>, generate: bool, verbose: bool) -> Result<()> {
     use crate::eval::action::{generate_action_items, load_action_items, write_action_items};
@@ -679,13 +702,82 @@ async fn cmd_action_items(dir: Option<PathBuf>, generate: bool, verbose: bool) -
     Ok(())
 }
 
-/// Generate a compact timestamp for manual submission IDs.
-fn chrono_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let dur = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{:x}", dur.as_secs())
+/// `eval feedback` — view feedback pipeline stats for eval/ops/model channels.
+async fn cmd_feedback(dir: Option<PathBuf>, channel: Option<String>, verbose: bool) -> Result<()> {
+    use crate::eval::recycle::{extract_rca_results_from_badcases, load_all_badcase_records, BadcaseGovernance};
+    use crate::eval::action::load_action_items;
+
+    let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
+
+    let channel = channel.as_deref().unwrap_or("eval");
+
+    match channel {
+        "eval" => {
+            let badcases_dir = evals_dir.join("badcases");
+            let records = load_all_badcase_records(&evals_dir);
+            let action_items = load_action_items(&evals_dir.join("actions")).unwrap_or_default();
+            let rca_results = extract_rca_results_from_badcases(&evals_dir).unwrap_or_default();
+
+            println!("═══ Feedback Pipeline: Eval ═══");
+            println!("  Badcase records:   {}", records.len());
+            println!("  RCA results:       {}", rca_results.len());
+            println!("  Action items:      {}", action_items.len());
+            println!("  Badcases directory: {:?}", badcases_dir);
+
+            if verbose {
+                let governance = BadcaseGovernance::default();
+                let active = governance.filter_expired(&records);
+                let expired = records.len().saturating_sub(active.len());
+                println!();
+                println!("  Governance:");
+                println!("    Active records: {}", active.len());
+                println!("    Expired (>{} days): {}", governance.max_age_days, expired);
+                println!("    Max duplicates: {}", governance.max_duplicate_inputs);
+
+                if !rca_results.is_empty() {
+                    println!();
+                    println!("  RCA modules:");
+                    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                    for r in &rca_results {
+                        *counts.entry(format!("{:?}", r.responsibility_module)).or_insert(0) += 1;
+                    }
+                    for (module, count) in &counts {
+                        println!("    {}: {}", module, count);
+                    }
+                }
+
+                if !action_items.is_empty() {
+                    println!();
+                    println!("  Recent action items:");
+                    for item in action_items.iter().take(5) {
+                        println!("    [{}] {} — owner: {}", item.id, item.problem_summary, item.owner);
+                    }
+                }
+            }
+        }
+        "ops" => {
+            println!("═══ Feedback Pipeline: Ops ═══");
+            println!("  Online experience signals: not connected");
+            println!("  Human takeover rate:       N/A");
+            println!("  Repeat query rate:         N/A");
+            println!("  Complaint rate:            N/A");
+            println!();
+            println!("  Wire `FeedbackCollector::update_online()` to populate.");
+        }
+        "model" => {
+            println!("═══ Feedback Pipeline: Model ═══");
+            println!("  Model quality signals: not connected");
+            println!("  Task completion rate:   N/A");
+            println!("  Order closure rate:     N/A");
+            println!();
+            println!("  Wire `FeedbackCollector::update_business()` to populate.");
+        }
+        _ => {
+            eprintln!("❌ Unknown channel '{}'. Use: eval, ops, or model", channel);
+        }
+    }
+
+    Ok(())
 }
 
 /// `eval review` — list and manage human review cases.

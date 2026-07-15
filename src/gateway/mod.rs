@@ -30,6 +30,10 @@ pub mod init;
 pub mod middleware;
 pub mod protocol;
 pub mod quality_gate;
+pub use quality_gate::{
+    ABReport, FeedbackCollector, PhaseStore, ProdTurn, ReleaseDecision, ReleaseSignals,
+    ShadowReport,
+};
 pub mod rate_limit;
 pub mod send_policy;
 pub mod state;

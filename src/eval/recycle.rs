@@ -87,6 +87,73 @@ pub struct BadcaseCluster {
     pub common_failure_reason: String,
 }
 
+/// Governance rules for badcase regression suite (§09).
+///
+/// Controls deduplication, expiry, and downgrade of recycled badcases
+/// to prevent suite bloat and ensure signal quality.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BadcaseGovernance {
+    /// Badcases older than this many days are excluded from the regression suite.
+    pub max_age_days: u64,
+    /// Maximum number of badcase records with the same input before dedup kicks in.
+    pub max_duplicate_inputs: usize,
+    /// After a task_id appears this many times across badcase files,
+    /// its effective min_pass_rate is lowered to `downgraded_pass_rate`.
+    pub downgrade_threshold: usize,
+    /// The reduced pass rate applied to downgraded tasks.
+    pub downgraded_pass_rate: f64,
+}
+
+impl Default for BadcaseGovernance {
+    fn default() -> Self {
+        Self {
+            max_age_days: 90,
+            max_duplicate_inputs: 3,
+            downgrade_threshold: 10,
+            downgraded_pass_rate: 0.7,
+        }
+    }
+}
+
+impl BadcaseGovernance {
+    /// Filter out expired records (older than `max_age_days`).
+    pub fn filter_expired(&self, records: &[BadcaseRecord]) -> Vec<BadcaseRecord> {
+        let cutoff = std::time::Duration::from_secs(self.max_age_days * 86400);
+        let now = SystemTime::now();
+        records
+            .iter()
+            .filter(|r| {
+                now.duration_since(r.collected_at)
+                    .map(|age| age < cutoff)
+                    .unwrap_or(true) // if clock went backwards, keep it
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Check if a new record is a duplicate (same `input` already exists too many times).
+    pub fn is_duplicate(&self, input: &str, existing: &[BadcaseRecord]) -> bool {
+        let count = existing.iter().filter(|r| r.input == input).count();
+        count >= self.max_duplicate_inputs
+    }
+
+    /// Compute the effective min_pass_rate for a task, applying downgrade
+    /// if the task has appeared in too many badcase records.
+    pub fn effective_pass_rate(
+        &self,
+        task_id: &str,
+        records: &[BadcaseRecord],
+        default_min: f64,
+    ) -> f64 {
+        let count = records.iter().filter(|r| r.task_id == task_id).count();
+        if count >= self.downgrade_threshold {
+            self.downgraded_pass_rate.min(default_min)
+        } else {
+            default_min
+        }
+    }
+}
+
 // ── Collector ───────────────────────────────────────────────────────────
 
 /// Collects failed trials from an eval run and persists them as badcase YAML.
@@ -178,6 +245,80 @@ impl BadcaseCollector {
 
         if count > 0 {
             info!("Collected {} badcases for task '{}'", count, task.id);
+        }
+
+        Ok(count)
+    }
+
+    /// Collect badcases with governance rules applied (§09).
+    ///
+    /// Same as `collect()`, but skips duplicates and expired records.
+    pub async fn collect_and_govern(
+        &self,
+        summary: &EvalSummary,
+        task: &EvalTask,
+        governance: &BadcaseGovernance,
+    ) -> Result<usize> {
+        let failed_trials: Vec<&TrialResult> =
+            summary.per_trial.iter().filter(|t| !t.passed).collect();
+
+        if failed_trials.is_empty() {
+            return Ok(0);
+        }
+
+        // Load existing records for dedup check
+        // output_dir is evals/badcases/, so parent() is the evals directory
+        let evals_dir = self.output_dir.parent().map(|p| p.to_path_buf())
+            .unwrap_or_else(default_evals_dir);
+        let existing_records = load_all_badcase_records(&evals_dir);
+
+        let mut count = 0usize;
+
+        for trial in &failed_trials {
+            if governance.is_duplicate(&task.input, &existing_records) {
+                info!(
+                    "Skipping duplicate badcase for task='{}' (input already recorded {} times)",
+                    task.id, governance.max_duplicate_inputs
+                );
+                continue;
+            }
+
+            info!("Collecting badcase: task={}, trial={}", task.id, trial.trial_index);
+            let failure_reason = determine_failure_reason(trial);
+
+            let (rca_performed, rca_result) = if let Some(ref rca) = self.rca_pipeline {
+                let input = rca_input_from_trial(&task.id, trial, &task.input);
+                match rca.analyze(input).await {
+                    Ok(result) => (true, Some(result)),
+                    Err(e) => {
+                        warn!("RCA failed for task={}: {}", task.id, e);
+                        (false, None)
+                    }
+                }
+            } else {
+                (false, None)
+            };
+
+            let record = BadcaseRecord {
+                id: format!("{}_{}", task.id, short_timestamp()),
+                task_id: task.id.clone(),
+                input: task.input.clone(),
+                description: task.description.clone(),
+                failure_reason,
+                response: trial.response.clone(),
+                rca_performed,
+                rca_result,
+                collected_at: SystemTime::now(),
+                fix_status: BadcaseFixStatus::Unconfirmed,
+                entry: BadcaseEntry::AutoDetected,
+            };
+
+            write_badcase_yaml(&record, task, &self.output_dir)?;
+            count += 1;
+        }
+
+        if count > 0 {
+            info!("Collected {} badcases for task '{}' (governance applied)", count, task.id);
         }
 
         Ok(count)
@@ -543,6 +684,71 @@ pub fn load_badcase_suite(evals_dir: &Path) -> Result<EvalSuite> {
     })
 }
 
+/// Load all `BadcaseRecord`s from badcase YAML files.
+///
+/// Walks all YAML files in `{evals_dir}/badcases/`, parses each `BadcaseRecord`.
+/// Returns an empty vec on any error or missing directory.
+pub(crate) fn load_all_badcase_records(evals_dir: &Path) -> Vec<BadcaseRecord> {
+    let badcases_dir = evals_dir.join("badcases");
+    if !badcases_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut records = Vec::new();
+    let read_dir = match std::fs::read_dir(&badcases_dir) {
+        Ok(d) => d,
+        Err(_) => return records,
+    };
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "yaml").unwrap_or(false) {
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let doc: serde_yml::Value = match serde_yml::from_str(&content) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let tasks = match doc.get("tasks").and_then(|v| v.as_sequence()) {
+                Some(t) => t,
+                None => continue,
+            };
+            for task in tasks {
+                match serde_yml::from_value::<BadcaseRecord>(task.clone()) {
+                    Ok(r) => records.push(r),
+                    Err(_) => {} // skip entries that don't deserialize as BadcaseRecord
+                }
+            }
+        }
+    }
+    records
+}
+
+/// Load the badcase regression suite with governance rules applied.
+///
+/// Filters expired records, applies downgraded pass rates to frequently
+/// failing tasks. See `BadcaseGovernance` for rule details.
+pub fn load_governed_badcase_suite(evals_dir: &Path, governance: &BadcaseGovernance) -> Result<EvalSuite> {
+    let mut suite = load_badcase_suite(evals_dir)?;
+
+    // ── Apply expiry ──
+    let all_records = load_all_badcase_records(evals_dir);
+    let active_records = governance.filter_expired(&all_records);
+
+    if active_records.len() < all_records.len() {
+        let expired = all_records.len() - active_records.len();
+        info!("Filtered {} expired badcase records", expired);
+    }
+
+    // ── Apply downgrade ──
+    let downgraded_min = governance.effective_pass_rate("__suite__", &active_records, suite.min_pass_rate);
+    suite.min_pass_rate = downgraded_min;
+
+    Ok(suite)
+}
+
 /// Extract all `RcaResult` entries from badcase YAML files in `{evals_dir}/badcases/`.
 ///
 /// Walks each YAML file, parses `rca_result` keys, and collects non-None results.
@@ -822,5 +1028,90 @@ mod tests {
         // First cluster should be the largest (2 records)
         assert_eq!(clusters[0].count, 2);
         assert_eq!(clusters[1].count, 1);
+    }
+
+    #[test]
+    fn test_governance_defaults() {
+        let g = BadcaseGovernance::default();
+        assert_eq!(g.max_age_days, 90);
+        assert_eq!(g.max_duplicate_inputs, 3);
+        assert_eq!(g.downgrade_threshold, 10);
+        assert!((g.downgraded_pass_rate - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_governance_filter_expired() {
+        let g = BadcaseGovernance {
+            max_age_days: 1,  // 1 day
+            ..Default::default()
+        };
+
+        // Record from 2 days ago should be expired
+        let two_days_ago = SystemTime::now()
+            .checked_sub(std::time::Duration::from_secs(2 * 86400))
+            .unwrap();
+        let now_record = BadcaseRecord {
+            id: "fresh".into(), task_id: "t1".into(), input: "hi".into(),
+            description: "".into(), failure_reason: "fail".into(),
+            response: "".into(), rca_performed: false, rca_result: None,
+            collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+            entry: BadcaseEntry::AutoDetected,
+        };
+        let old_record = BadcaseRecord {
+            id: "stale".into(), collected_at: two_days_ago,
+            ..now_record.clone()
+        };
+
+        let filtered = g.filter_expired(&[now_record.clone(), old_record]);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "fresh");
+    }
+
+    #[test]
+    fn test_governance_is_duplicate() {
+        let g = BadcaseGovernance {
+            max_duplicate_inputs: 2,
+            ..Default::default()
+        };
+
+        let records = vec![
+            BadcaseRecord { id: "r1".into(), input: "hello".into(), ..make_record() },
+            BadcaseRecord { id: "r2".into(), input: "hello".into(), ..make_record() },
+        ];
+
+        assert!(g.is_duplicate("hello", &records));
+        assert!(!g.is_duplicate("world", &records));
+    }
+
+    #[test]
+    fn test_governance_effective_pass_rate() {
+        let g = BadcaseGovernance {
+            downgrade_threshold: 3,
+            downgraded_pass_rate: 0.5,
+            ..Default::default()
+        };
+
+        let records = vec![
+            BadcaseRecord { id: "r1".into(), task_id: "frequent_fail".into(), ..make_record() },
+            BadcaseRecord { id: "r2".into(), task_id: "frequent_fail".into(), ..make_record() },
+            BadcaseRecord { id: "r3".into(), task_id: "frequent_fail".into(), ..make_record() },
+        ];
+
+        let rate = g.effective_pass_rate("frequent_fail", &records, 1.0);
+        assert!((rate - 0.5).abs() < 1e-6);
+
+        let rate_normal = g.effective_pass_rate("rare_fail", &records, 0.9);
+        assert!((rate_normal - 0.9).abs() < 1e-6);
+    }
+
+    /// Helper: minimal BadcaseRecord for tests.
+    fn make_record() -> BadcaseRecord {
+        BadcaseRecord {
+            id: String::new(), task_id: String::new(), input: String::new(),
+            description: String::new(), failure_reason: String::new(),
+            response: String::new(), rca_performed: false, rca_result: None,
+            collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+            entry: BadcaseEntry::AutoDetected,
+        }
     }
 }

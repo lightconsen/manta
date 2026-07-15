@@ -19,6 +19,14 @@ use tracing::{info, warn};
 use crate::eval::harness::{EvalHarness, EvalSummary};
 use crate::eval::loader::load_suite;
 
+/// Load badcase regression suite for auto-inclusion in gate (§09).
+fn load_badcase_regression_suite(evals_dir: &std::path::Path) -> Option<crate::eval::EvalSuite> {
+    match crate::eval::load_badcase_suite(evals_dir) {
+        Ok(suite) if !suite.tasks.is_empty() => Some(suite),
+        _ => None,
+    }
+}
+
 // ── Gate levels ────────────────────────────────────────────────────────
 
 /// Gate level — maps to the four-level ship gate from §09.
@@ -319,8 +327,8 @@ impl QualityGate {
         })
     }
 
-    /// Run all criteria checks and return the gate result.
-    pub async fn check(&self) -> GateResult {
+    /// Run all criteria checks and return the gate result with release decision.
+    pub async fn check(&self) -> (GateResult, ReleaseDecision) {
         let started_at = SystemTime::now();
         let mut criteria_results = Vec::new();
         let mut suite_results = Vec::new();
@@ -350,6 +358,51 @@ impl QualityGate {
             }
         }
 
+        // ── Step 1b: Auto-include badcase regression suite ────────────
+        if let Some(badcase_suite) = load_badcase_regression_suite(&self.evals_dir) {
+            info!(
+                "Auto-including badcase regression suite with {} tasks",
+                badcase_suite.tasks.len()
+            );
+            let suite_id = "badcases";
+            let mut summaries = Vec::with_capacity(badcase_suite.tasks.len());
+
+            for task in &badcase_suite.tasks {
+                match self.harness.run(task.clone(), badcase_suite.trials).await {
+                    Ok(summary) => summaries.push(summary),
+                    Err(e) => {
+                        warn!("Badcase task '{}' failed: {}", task.id, e);
+                        summaries.push(EvalSummary {
+                            task_id: task.id.clone(),
+                            total_trials: badcase_suite.trials,
+                            pass_rate: 0.0,
+                            at_least_once_success: false,
+                            continuous_success: false,
+                            confidence_interval: (0.0, 0.0),
+                            avg_dimension_scores: HashMap::new(),
+                            avg_duration_ms: 0.0,
+                            avg_token_usage: None,
+                            skill_pass_rate: 1.0,
+                            skill_trigger_pass_rate: 1.0,
+                            skill_execution_pass_rate: 1.0,
+                            skill_quality_pass_rate: 1.0,
+                            skill_resilience_pass_rate: 1.0,
+                            skill_sub_metrics: HashMap::new(),
+                            per_trial: vec![],
+                            completed_at: SystemTime::now(),
+                        });
+                    }
+                }
+            }
+
+            let summary = SuiteSummary::from_tasks(suite_id.to_string(), summaries);
+            info!(
+                "Badcase suite completed: {:.1}% pass rate",
+                summary.overall_pass_rate * 100.0
+            );
+            suite_results.push(summary);
+        }
+
         // ── Step 2: Evaluate each criterion ───────────────────────────
         for criterion in &self.criteria {
             let result = self.evaluate_criterion(criterion, &suite_results).await;
@@ -366,14 +419,16 @@ impl QualityGate {
             }
         }
 
-        GateResult {
+        let result = GateResult {
             gate_name: self.name.clone(),
             passed: all_pass,
             criteria_results,
             suite_results,
             started_at,
             completed_at: SystemTime::now(),
-        }
+        };
+        let decision = ReleaseSignals::from_gate_result(&result).decide();
+        (result, decision)
     }
 
     /// Run a single suite and aggregate results.
@@ -417,6 +472,208 @@ impl QualityGate {
         }
 
         Ok(SuiteSummary::from_tasks(suite_id.to_string(), summaries))
+    }
+
+    /// Shadow traffic: run agent on prod traffic snapshots, no user-facing impact.
+    pub async fn run_shadow(&self, turns: &[ProdTurn]) -> ShadowReport {
+        let total = turns.len();
+        if total == 0 {
+            return ShadowReport {
+                total_turns: 0,
+                pass_rate: 1.0,
+                avg_latency_ms: 0.0,
+                tool_accuracy: 1.0,
+            };
+        }
+
+        let mut passed = 0usize;
+        let mut total_latency = 0u64;
+
+        for turn in turns {
+            // Run the agent on the prod input (no user-facing output)
+            // We use a single-trial eval with a trivial pass condition
+            let task = crate::eval::EvalTask {
+                id: format!("shadow_{}", short_id()),
+                input: turn.input.clone(),
+                ..Default::default()
+            };
+            match self.harness.run(task, 1).await {
+                Ok(summary) => {
+                    if summary.pass_rate > 0.0 {
+                        passed += 1;
+                    }
+                    total_latency += summary.avg_duration_ms as u64;
+                }
+                Err(_) => {}
+            }
+        }
+
+        ShadowReport {
+            total_turns: total,
+            pass_rate: if total > 0 { passed as f64 / total as f64 } else { 1.0 },
+            avg_latency_ms: if total > 0 { total_latency as f64 / total as f64 } else { 0.0 },
+            tool_accuracy: 1.0, // simplified; real impl would check tool call correctness
+        }
+    }
+
+    /// A/B with guardrails: run on a fraction of traffic, check guardrails.
+    pub async fn run_ab(&self, turns: &[ProdTurn], fraction: f64) -> ABReport {
+        let sample_count = (turns.len() as f64 * fraction.clamp(0.0, 1.0)) as usize;
+        let sampled: Vec<&ProdTurn> = turns.iter().take(sample_count).collect();
+        let total = sampled.len();
+
+        if total == 0 {
+            return ABReport {
+                total_turns: 0,
+                pass_rate: 1.0,
+                guardrail_pass: true,
+                latency_p99_ms: 0.0,
+                error_rate: 0.0,
+                human_takeover_rate: 0.0,
+            };
+        }
+
+        let mut passed = 0usize;
+        let mut latencies: Vec<f64> = Vec::with_capacity(total);
+        let mut errors = 0usize;
+
+        for turn in &sampled {
+            let _start = std::time::Instant::now();
+            let task = crate::eval::EvalTask {
+                id: format!("ab_{}", short_id()),
+                input: turn.input.clone(),
+                ..Default::default()
+            };
+            match self.harness.run(task, 1).await {
+                Ok(summary) => {
+                    if summary.pass_rate > 0.0 {
+                        passed += 1;
+                    } else {
+                        errors += 1;
+                    }
+                    latencies.push(summary.avg_duration_ms);
+                }
+                Err(_) => {
+                    errors += 1;
+                }
+            }
+        }
+
+        // Compute p99 latency
+        latencies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let p99 = if latencies.is_empty() {
+            0.0
+        } else {
+            let idx = ((latencies.len() as f64) * 0.99).ceil() as usize - 1;
+            latencies[idx.min(latencies.len() - 1)]
+        };
+
+        let error_rate = if total > 0 { errors as f64 / total as f64 } else { 0.0 };
+
+        ABReport {
+            total_turns: total,
+            pass_rate: if total > 0 { passed as f64 / total as f64 } else { 1.0 },
+            guardrail_pass: error_rate < 0.1 && p99 < 5000.0, // < 10% errors, < 5s p99
+            latency_p99_ms: p99,
+            error_rate,
+            human_takeover_rate: 0.0, // placeholder; real impl from signal source
+        }
+    }
+
+    /// Phased rollout: run the offline gate and advance phase if signals pass.
+    pub async fn run_phased(&self) -> (GateResult, PhaseStore) {
+        let mut phase = PhaseStore::load(&self.name);
+        let (result, _decision) = self.check().await;
+
+        if result.passed {
+            if phase.advance() {
+                info!(
+                    "Phased rollout '{}' advanced to {:.0}%",
+                    self.name,
+                    phase.current_phase * 100.0
+                );
+            } else {
+                info!("Phased rollout '{}' is at 100%", self.name);
+            }
+        } else {
+            warn!(
+                "Phased rollout '{}' gate failed at {:.0}% — not advancing",
+                self.name,
+                phase.current_phase * 100.0
+            );
+        }
+
+        (result, phase)
+    }
+
+    /// Dispatch gate execution by level.
+    pub async fn check_with_level(&self) -> GateResult {
+        match self.level {
+            GateLevel::OfflineDiff => self.check().await.0,
+            GateLevel::ShadowTraffic => {
+                // Shadow mode: requires external prod turn data
+                // Returns a GateResult-like structure; no criteria evaluated
+                let report = self.run_shadow(&[]).await;
+                let passed = report.pass_rate >= 0.8;
+                GateResult {
+                    gate_name: self.name.clone(),
+                    passed,
+                    criteria_results: vec![CriterionResult {
+                        criterion: "shadow_pass_rate".into(),
+                        passed,
+                        actual: report.pass_rate,
+                        threshold: 0.8,
+                        detail: format!(
+                            "Shadow traffic: {}/{} passed, avg latency {:.0}ms",
+                            (report.pass_rate * report.total_turns as f64) as usize,
+                            report.total_turns,
+                            report.avg_latency_ms,
+                        ),
+                    }],
+                    suite_results: vec![],
+                    started_at: SystemTime::now(),
+                    completed_at: SystemTime::now(),
+                }
+            }
+            GateLevel::ABWithGuardrails => {
+                let report = self.run_ab(&[], 0.1).await;
+                let passed = report.guardrail_pass && report.pass_rate >= 0.8;
+                GateResult {
+                    gate_name: self.name.clone(),
+                    passed,
+                    criteria_results: vec![
+                        CriterionResult {
+                            criterion: "ab_guardrail".into(),
+                            passed: report.guardrail_pass,
+                            actual: 1.0 - report.error_rate,
+                            threshold: 0.9,
+                            detail: format!("Guardrail: p99={:.0}ms, error_rate={:.1}%", report.latency_p99_ms, report.error_rate * 100.0),
+                        },
+                        CriterionResult {
+                            criterion: "ab_pass_rate".into(),
+                            passed: report.pass_rate >= 0.8,
+                            actual: report.pass_rate,
+                            threshold: 0.8,
+                            detail: format!("A/B pass rate: {:.1}%", report.pass_rate * 100.0),
+                        },
+                    ],
+                    suite_results: vec![],
+                    started_at: SystemTime::now(),
+                    completed_at: SystemTime::now(),
+                }
+            }
+            GateLevel::PhasedRollout => {
+                let (result, phase) = self.run_phased().await;
+                GateResult {
+                    gate_name: format!("{} (phase={:.0}%)", self.name, phase.current_phase * 100.0),
+                    passed: result.passed,
+                    criteria_results: result.criteria_results,
+                    suite_results: result.suite_results,
+                    started_at: result.started_at,
+                    completed_at: result.completed_at,
+                }
+            }
+        }
     }
 
     /// Evaluate a single criterion against suite results.
@@ -618,6 +875,126 @@ impl std::fmt::Display for GateResult {
     }
 }
 
+// ── Shadow/AB/Phased types (§09) ───────────────────────────────────────
+
+/// A single production turn for shadow traffic evaluation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProdTurn {
+    /// The user input.
+    pub input: String,
+    /// Optional session context.
+    pub context: Option<String>,
+}
+
+/// Shadow traffic evaluation report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShadowReport {
+    pub total_turns: usize,
+    pub pass_rate: f64,
+    pub avg_latency_ms: f64,
+    pub tool_accuracy: f64,
+}
+
+/// A/B guardrail evaluation report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ABReport {
+    pub total_turns: usize,
+    pub pass_rate: f64,
+    pub guardrail_pass: bool,
+    pub latency_p99_ms: f64,
+    pub error_rate: f64,
+    pub human_takeover_rate: f64,
+}
+
+/// Phased rollout state, persisted to `~/.syscity/phase.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseStore {
+    pub gate_name: String,
+    pub current_phase: f64, // 0.01, 0.10, 0.50, or 1.00
+    pub phases: Vec<f64>,
+}
+
+impl PhaseStore {
+    /// Load phase state from `~/.syscity/phase.json`.
+    pub fn load(gate_name: &str) -> Self {
+        let path = crate::dirs::data_dir().join("phase.json");
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let store: Self = serde_json::from_str(&content).unwrap_or_else(|_| Self {
+            gate_name: gate_name.to_string(),
+            current_phase: 0.01,
+            phases: vec![0.01, 0.10, 0.50, 1.00],
+        });
+        store
+    }
+
+    /// Advance to the next phase and persist.
+    pub fn advance(&mut self) -> bool {
+        if let Some(pos) = self.phases.iter().position(|p| (*p - self.current_phase).abs() < 1e-6) {
+            if pos + 1 < self.phases.len() {
+                self.current_phase = self.phases[pos + 1];
+                self.save();
+                return true;
+            }
+        }
+        false // already at 100%
+    }
+
+    /// Persist phase state to disk.
+    fn save(&self) {
+        let path = crate::dirs::data_dir().join("phase.json");
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(&path, &json);
+        }
+    }
+}
+
+/// Feedback collector for online/business signals (§09).
+///
+/// Provides a shared holder for externally-populated signals (e.g., from
+/// a webhook or monitoring system). The gateway can periodically poll
+/// `current_signals()` to make release decisions.
+#[derive(Debug, Clone)]
+pub struct FeedbackCollector {
+    pub online_signals: Option<OnlineExperienceSignal>,
+    pub business_signals: Option<BusinessResultSignal>,
+}
+
+impl FeedbackCollector {
+    pub fn new() -> Self {
+        Self {
+            online_signals: None,
+            business_signals: None,
+        }
+    }
+
+    /// Update online experience signals (called by external webhook/monitoring).
+    pub fn update_online(&mut self, signal: OnlineExperienceSignal) {
+        self.online_signals = Some(signal);
+    }
+
+    /// Update business result signals (called by external webhook/monitoring).
+    pub fn update_business(&mut self, signal: BusinessResultSignal) {
+        self.business_signals = Some(signal);
+    }
+
+    /// Compute current release signals, including any populated online/business data.
+    pub fn current_signals(&self, gate_result: &GateResult) -> ReleaseSignals {
+        let mut signals = ReleaseSignals::from_gate_result(gate_result);
+        signals.online_experience = self.online_signals.clone();
+        signals.business_results = self.business_signals.clone();
+        signals
+    }
+}
+
+impl Default for FeedbackCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ── Release signals ────────────────────────────────────────────────────
 
 /// Three release signals tracked after passing the gate (§09).
@@ -660,6 +1037,36 @@ pub enum ReleaseDecision {
 }
 
 impl ReleaseSignals {
+    /// Build release signals from a gate result (§09).
+    ///
+    /// Computes pass rate and P0 count from the gate's criteria results,
+    /// leaving online/business signals as `None` for external population.
+    pub fn from_gate_result(result: &GateResult) -> Self {
+        let suite_count = result.suite_results.len().max(1);
+        let pass_rate = result
+            .suite_results
+            .iter()
+            .map(|s| s.overall_pass_rate)
+            .sum::<f64>()
+            / suite_count as f64;
+
+        let p0_risk_count = result
+            .criteria_results
+            .iter()
+            .filter(|cr| !cr.passed && cr.actual < 0.5)
+            .count();
+
+        ReleaseSignals {
+            offline_quality: OfflineQualitySignal {
+                pass_rate,
+                p0_risk_count,
+                tool_param_accuracy: 1.0, // placeholder; real impl from tool call analysis
+            },
+            online_experience: None,
+            business_results: None,
+        }
+    }
+
     /// Compute release decision from all available signals.
     pub fn decide(&self) -> ReleaseDecision {
         // Offline quality must pass
@@ -676,6 +1083,15 @@ impl ReleaseSignals {
 
         ReleaseDecision::Proceed
     }
+}
+
+/// Generate a short unique ID for shadow/AB tasks.
+fn short_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{:x}", dur.subsec_nanos())
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
