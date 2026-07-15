@@ -49,7 +49,11 @@ pub enum GateCriterion {
     /// Zero P0 risks.
     ZeroP0Risks,
     /// No regression vs baseline beyond max_degradation.
-    NoRegressionVs { baseline_tag: String, metric: String, max_degradation: f64 },
+    NoRegressionVs {
+        baseline_tag: String,
+        metric: String,
+        max_degradation: f64,
+    },
     /// Continuous success rate >= min_rate.
     ContinuousSuccessRate { suite_id: String, min_rate: f64 },
 }
@@ -177,7 +181,8 @@ impl BaselineStore {
     /// Store a new baseline for a suite.
     pub fn store(&mut self, tag: &str, suite_id: &str, summary: &SuiteSummary) {
         // Remove any existing record for the same tag+suite
-        self.records.retain(|r| !(r.tag == tag && r.suite_id == suite_id));
+        self.records
+            .retain(|r| !(r.tag == tag && r.suite_id == suite_id));
         self.records.push(BaselineRecord {
             tag: tag.to_string(),
             suite_id: suite_id.to_string(),
@@ -373,7 +378,10 @@ impl QualityGate {
 
     /// Run a single suite and aggregate results.
     async fn run_suite(&self, suite_id: &str) -> crate::Result<SuiteSummary> {
-        let manifest_path = self.evals_dir.join("suites").join(format!("{}.yaml", suite_id));
+        let manifest_path = self
+            .evals_dir
+            .join("suites")
+            .join(format!("{}.yaml", suite_id));
         let suite = load_suite(&manifest_path, suite_id)?;
 
         let mut summaries = Vec::with_capacity(suite.tasks.len());
@@ -576,11 +584,7 @@ impl QualityGate {
 impl std::fmt::Display for GateResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "═══ Quality Gate: {} ═══", self.gate_name)?;
-        writeln!(
-            f,
-            "Result: {}",
-            if self.passed { "PASS" } else { "FAIL" }
-        )?;
+        writeln!(f, "Result: {}", if self.passed { "PASS" } else { "FAIL" })?;
 
         if !self.suite_results.is_empty() {
             writeln!(f, "Suites:")?;
@@ -708,8 +712,7 @@ mod tests {
 
     #[test]
     fn test_suite_summary_empty() {
-        let s =
-            SuiteSummary::from_tasks("empty".into(), vec![]);
+        let s = SuiteSummary::from_tasks("empty".into(), vec![]);
         assert_eq!(s.overall_pass_rate, 0.0);
         assert!(!s.continuous_success);
     }

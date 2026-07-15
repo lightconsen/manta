@@ -160,7 +160,6 @@ pub struct RcaInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RcaResult {
     // ── Three-layer attribution ──
-
     /// Phenomenon: what the user sees.
     pub phenomenon: String,
     /// Process: which step first deviated in the trace.
@@ -169,20 +168,17 @@ pub struct RcaResult {
     pub responsibility: String,
 
     // ── Structured attribution ──
-
     pub problem_category: String,
     pub problem_enumeration: String,
     pub responsibility_module: CandidateModule,
     pub sub_responsibility: Option<CandidateModule>,
 
     // ── Evidence & fix ──
-
     pub evidence_chain: Vec<String>,
     pub fix_suggestion: String,
     pub confidence: f64,
 
     // ── Meta ──
-
     pub analysis_duration_ms: u64,
     pub entry: BadcaseEntry,
     pub completed_at: SystemTime,
@@ -212,10 +208,14 @@ impl RcaKnowledgeBase {
     }
 
     /// Look up known fixes for a given problem enumeration + module.
-    pub fn lookup(&self, enumeration: &str, module: &CandidateModule) -> Option<&RcaKnowledgeBaseEntry> {
-        self.entries.iter().find(|e| {
-            e.problem_enumeration == enumeration && e.responsibility_module == *module
-        })
+    pub fn lookup(
+        &self,
+        enumeration: &str,
+        module: &CandidateModule,
+    ) -> Option<&RcaKnowledgeBaseEntry> {
+        self.entries
+            .iter()
+            .find(|e| e.problem_enumeration == enumeration && e.responsibility_module == *module)
     }
 
     /// Add or update an entry.
@@ -248,39 +248,57 @@ impl RcaPipeline {
     /// Build the mapping table (ProblemPhenomenon × CandidateModule).
     pub fn build_module_mapping() -> HashMap<ProblemPhenomenon, Vec<CandidateModule>> {
         let mut m = HashMap::new();
-        m.insert(ProblemPhenomenon::NonResponsive, vec![
-            CandidateModule::IntentRecognition,
-            CandidateModule::ContextMemory,
-        ]);
-        m.insert(ProblemPhenomenon::OrderNotClarified, vec![
-            CandidateModule::SlotFilling,
-            CandidateModule::ContextMemory,
-        ]);
-        m.insert(ProblemPhenomenon::FactualError, vec![
-            CandidateModule::Retrieval,
-            CandidateModule::Reasoning,
-            CandidateModule::ResponseGeneration,
-        ]);
-        m.insert(ProblemPhenomenon::OverPromise, vec![
-            CandidateModule::PolicyEnforcement,
-            CandidateModule::ResponseGeneration,
-        ]);
-        m.insert(ProblemPhenomenon::ToolNotCalled, vec![
-            CandidateModule::ToolSelection,
-            CandidateModule::IntentRecognition,
-        ]);
-        m.insert(ProblemPhenomenon::ToolWrongOrder, vec![
-            CandidateModule::ToolSelection,
-            CandidateModule::Reasoning,
-        ]);
-        m.insert(ProblemPhenomenon::Hallucination, vec![
-            CandidateModule::Retrieval,
-            CandidateModule::ResponseGeneration,
-        ]);
-        m.insert(ProblemPhenomenon::RefusalError, vec![
-            CandidateModule::PolicyEnforcement,
-            CandidateModule::IntentRecognition,
-        ]);
+        m.insert(
+            ProblemPhenomenon::NonResponsive,
+            vec![
+                CandidateModule::IntentRecognition,
+                CandidateModule::ContextMemory,
+            ],
+        );
+        m.insert(
+            ProblemPhenomenon::OrderNotClarified,
+            vec![CandidateModule::SlotFilling, CandidateModule::ContextMemory],
+        );
+        m.insert(
+            ProblemPhenomenon::FactualError,
+            vec![
+                CandidateModule::Retrieval,
+                CandidateModule::Reasoning,
+                CandidateModule::ResponseGeneration,
+            ],
+        );
+        m.insert(
+            ProblemPhenomenon::OverPromise,
+            vec![
+                CandidateModule::PolicyEnforcement,
+                CandidateModule::ResponseGeneration,
+            ],
+        );
+        m.insert(
+            ProblemPhenomenon::ToolNotCalled,
+            vec![
+                CandidateModule::ToolSelection,
+                CandidateModule::IntentRecognition,
+            ],
+        );
+        m.insert(
+            ProblemPhenomenon::ToolWrongOrder,
+            vec![CandidateModule::ToolSelection, CandidateModule::Reasoning],
+        );
+        m.insert(
+            ProblemPhenomenon::Hallucination,
+            vec![
+                CandidateModule::Retrieval,
+                CandidateModule::ResponseGeneration,
+            ],
+        );
+        m.insert(
+            ProblemPhenomenon::RefusalError,
+            vec![
+                CandidateModule::PolicyEnforcement,
+                CandidateModule::IntentRecognition,
+            ],
+        );
         m
     }
 
@@ -302,15 +320,13 @@ impl RcaPipeline {
 
         // ── Step 2: Scope narrowing ────────────────────────────────
         let phenomenon = self.detect_phenomenon(&input).await;
-        let candidates = self.module_mapping
+        let candidates = self
+            .module_mapping
             .get(&phenomenon)
             .cloned()
             .unwrap_or_else(CandidateModule::all);
 
-        info!(
-            "RCA: phenomenon={:?}, candidates={:?}",
-            phenomenon, candidates
-        );
+        info!("RCA: phenomenon={:?}, candidates={:?}", phenomenon, candidates);
 
         // ── Step 3: Module diagnosis ───────────────────────────────
         let mut diagnoses = Vec::new();
@@ -321,7 +337,9 @@ impl RcaPipeline {
 
         // ── Step 4: Responsibility determination ───────────────────
         // Layer 1: Direct FAIL attribution
-        let primary_fail = diagnoses.iter().find(|(_, v)| matches!(v, ModuleVerdict::Fail(_)));
+        let primary_fail = diagnoses
+            .iter()
+            .find(|(_, v)| matches!(v, ModuleVerdict::Fail(_)));
         // Layer 2: Rule matching (if no direct fail)
         let rule_match = if primary_fail.is_none() {
             self.match_rules(&input).await
@@ -337,9 +355,17 @@ impl RcaPipeline {
                 rm
             } else {
                 // Layer 3: LLM summarization
-                let first_fail = diagnoses.first().map(|(m, _)| m.clone())
+                let first_fail = diagnoses
+                    .first()
+                    .map(|(m, _)| m.clone())
                     .unwrap_or(CandidateModule::ResponseGeneration);
-                (first_fail, None, "语义理解".into(), "无法明确归因".into(), "请人工分析此案例".into())
+                (
+                    first_fail,
+                    None,
+                    "语义理解".into(),
+                    "无法明确归因".into(),
+                    "请人工分析此案例".into(),
+                )
             };
 
         let elapsed = start.elapsed();
@@ -384,10 +410,7 @@ impl RcaPipeline {
         if let Some(thread) = map.get(&conv_id) {
             for turn in &thread.turns {
                 if !turn.assistant_response.is_empty() {
-                    ev.push(format!(
-                        "Turn {} response: {}",
-                        turn.index, turn.assistant_response
-                    ));
+                    ev.push(format!("Turn {} response: {}", turn.index, turn.assistant_response));
                 }
             }
         }
@@ -415,7 +438,8 @@ impl RcaPipeline {
                     if wl.contains("承诺") || wl.contains("overpromise") {
                         return ProblemPhenomenon::OverPromise;
                     }
-                    if wl.contains("幻觉") || wl.contains("hallucination") || wl.contains("编造") {
+                    if wl.contains("幻觉") || wl.contains("hallucination") || wl.contains("编造")
+                    {
                         return ProblemPhenomenon::Hallucination;
                     }
                     if wl.contains("事实") || wl.contains("factual") || wl.contains("错误") {
@@ -475,7 +499,9 @@ impl RcaPipeline {
             CandidateModule::Retrieval => {
                 // Check if any search/retrieval tool was called
                 let has_search = input.tool_calls.iter().any(|t| {
-                    t.name.contains("search") || t.name.contains("fetch") || t.name.contains("memory")
+                    t.name.contains("search")
+                        || t.name.contains("fetch")
+                        || t.name.contains("memory")
                 });
                 if !has_search && input.response.len() > 50 {
                     return ModuleVerdict::SoftPass("可能需要检索但未调用检索工具".into());
@@ -528,7 +554,10 @@ impl RcaPipeline {
 
     // ── Layer 2: Rule matching ─────────────────────────────────────
 
-    async fn match_rules(&self, input: &RcaInput) -> Option<(CandidateModule, Option<CandidateModule>, String, String, String)> {
+    async fn match_rules(
+        &self,
+        input: &RcaInput,
+    ) -> Option<(CandidateModule, Option<CandidateModule>, String, String, String)> {
         let tool_names: Vec<&str> = input.tool_calls.iter().map(|t| t.name.as_str()).collect();
 
         // If no tools were called and response is short → likely Policy issue
@@ -571,10 +600,8 @@ impl RcaPipeline {
             _ => "未分类错误",
         };
 
-        let fix = format!(
-            "模块 {:?} 诊断失败: {}。请检查模块配置、Prompt 或实现。",
-            module, reason
-        );
+        let fix =
+            format!("模块 {:?} 诊断失败: {}。请检查模块配置、Prompt 或实现。", module, reason);
 
         (category.into(), enumeration.into(), fix)
     }
@@ -603,7 +630,10 @@ impl RcaPipeline {
         if let Some(ref _store) = self.agent.memory_store {
             // Persist to memory store for later querying
             let content = serde_json::to_string(&result)?;
-            info!("RCA result persisted: {} ({})", result.problem_enumeration, result.responsibility_module);
+            info!(
+                "RCA result persisted: {} ({})",
+                result.problem_enumeration, result.responsibility_module
+            );
             // In a full implementation, this would write to MemoryStore.
             // For now, log the result.
             tracing::debug!("RCA content: {}", content);
@@ -613,11 +643,7 @@ impl RcaPipeline {
 }
 
 /// Helper: generate RcaInput from EvalHarness TrialResult.
-pub fn rca_input_from_trial(
-    task_id: &str,
-    trial: &TrialResult,
-    task_input: &str,
-) -> RcaInput {
+pub fn rca_input_from_trial(task_id: &str, trial: &TrialResult, task_input: &str) -> RcaInput {
     let tool_records: Vec<ToolCallRecord> = trial
         .tool_calls
         .iter()
@@ -660,11 +686,7 @@ mod tests {
             ProblemPhenomenon::RefusalError,
         ];
         for p in phenomena {
-            assert!(
-                map.contains_key(&p),
-                "Missing mapping for {:?}",
-                p
-            );
+            assert!(map.contains_key(&p), "Missing mapping for {:?}", p);
             assert!(!map[&p].is_empty(), "Empty candidate list for {:?}", p);
         }
     }

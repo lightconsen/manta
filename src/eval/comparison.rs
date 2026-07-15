@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn test_compare_improved() {
         let old = vec![true, false, false, false, false]; // 20%
-        let new = vec![true, true, true, true, false];    // 80%
+        let new = vec![true, true, true, true, false]; // 80%
         let comp = compare_versions(&old, &new, 5_000, 0.95);
         // With only 5 trials each, the bootstrap CI might still contain 0.
         // We test that the delta is positive and the pass rates are correct.

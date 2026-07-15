@@ -890,11 +890,8 @@ async fn run_quality_gate_check(
 
     // 3. Create a temporary agent for eval
     let agent_config = config.default_agent.clone();
-    let agent = Arc::new(crate::agent::Agent::new(
-        agent_config,
-        provider.clone(),
-        tool_registry.clone(),
-    ));
+    let agent =
+        Arc::new(crate::agent::Agent::new(agent_config, provider.clone(), tool_registry.clone()));
 
     // 4. Create critic (if needed for criteria)
     let mut critic = crate::agent::reflection::critic::Critic::new(provider);
@@ -939,7 +936,9 @@ async fn run_quality_gate_check(
 }
 
 /// Create a minimal tool registry for quality gate eval.
-fn create_eval_tool_registry(acp: Option<Arc<crate::acp::AcpControlPlane>>) -> crate::tools::ToolRegistry {
+fn create_eval_tool_registry(
+    acp: Option<Arc<crate::acp::AcpControlPlane>>,
+) -> crate::tools::ToolRegistry {
     let mut registry = crate::tools::ToolRegistry::new();
     registry.register(Box::new(crate::tools::shell::ShellTool::new()));
     registry.register(Box::new(crate::tools::file::FileReadTool::new()));

@@ -75,7 +75,6 @@ pub struct TrialResult {
     pub duration_ms: u64,
 
     // ── Scoring ──
-
     /// Per-condition check results from GoalCondition.
     pub condition_results: Vec<CheckResult>,
     /// Whether all GoalConditions passed.
@@ -93,7 +92,6 @@ pub struct TrialResult {
     pub passed: bool,
 
     // ── Session-level (§03) ──
-
     /// Per-turn results for multi-turn tasks.
     #[serde(default)]
     pub turn_results: Vec<TurnResult>,
@@ -121,7 +119,6 @@ pub struct EvalSummary {
     pub total_trials: usize,
 
     // ── Core metrics ──
-
     /// Fraction of trials that passed.
     pub pass_rate: f64,
     /// Whether at least one trial passed (capability upper bound).
@@ -140,7 +137,6 @@ pub struct EvalSummary {
     pub avg_token_usage: Option<TurnUsage>,
 
     // ── Skill sub-metrics (§04) ──
-
     /// Overall skill pass rate across all trials with skill designs.
     #[serde(default)]
     pub skill_pass_rate: f64,
@@ -273,15 +269,21 @@ impl EvalSummary {
         // 6 named sub-metrics from §04
         let mut sub_metrics = HashMap::new();
         sub_metrics.insert("trigger_precision_recall".into(), skill_trig);
-        sub_metrics.insert("parameter_accuracy".into(), skill_dim_pass_rate(&trials_with_skills, |sr| {
-            sr.execution_results.iter().all(|e| {
-                // A parameter check was involved — pass if all required params satisfied
-                e.passed
-            })
-        }));
-        sub_metrics.insert("required_steps_pass_rate".into(), skill_dim_pass_rate(&trials_with_skills, |sr| {
-            sr.execution_results.iter().all(|e| e.passed)
-        }));
+        sub_metrics.insert(
+            "parameter_accuracy".into(),
+            skill_dim_pass_rate(&trials_with_skills, |sr| {
+                sr.execution_results.iter().all(|e| {
+                    // A parameter check was involved — pass if all required params satisfied
+                    e.passed
+                })
+            }),
+        );
+        sub_metrics.insert(
+            "required_steps_pass_rate".into(),
+            skill_dim_pass_rate(&trials_with_skills, |sr| {
+                sr.execution_results.iter().all(|e| e.passed)
+            }),
+        );
         let violation_rate = skill_dim_pass_rate(&trials_with_skills, |sr| {
             sr.execution_results.iter().all(|e| e.passed)
         });
@@ -324,18 +326,12 @@ impl EvalSummary {
         let denominator = 1.0 + z2 / n;
         let centre = (p + z2 / (2.0 * n)) / denominator;
         let margin = z * ((p * (1.0 - p) / n + z2 / (4.0 * n * n)).sqrt()) / denominator;
-        (
-            (centre - margin).max(0.0),
-            (centre + margin).min(1.0),
-        )
+        ((centre - margin).max(0.0), (centre + margin).min(1.0))
     }
 }
 
 /// Helper: compute fraction of skill trials where a dimension predicate passes.
-fn skill_dim_pass_rate(
-    trials: &[&TrialResult],
-    pred: impl Fn(&SkillCheckResult) -> bool,
-) -> f64 {
+fn skill_dim_pass_rate(trials: &[&TrialResult], pred: impl Fn(&SkillCheckResult) -> bool) -> f64 {
     if trials.is_empty() {
         return 1.0;
     }
@@ -365,39 +361,73 @@ impl std::fmt::Display for EvalSummary {
         }
         writeln!(f, "  Avg duration:        {:.1}s", self.avg_duration_ms / 1000.0)?;
         if let Some(ref tu) = self.avg_token_usage {
-            writeln!(f, "  Avg tokens:          {} ({} prompt + {} completion)", tu.total_tokens, tu.prompt_tokens, tu.completion_tokens)?;
+            writeln!(
+                f,
+                "  Avg tokens:          {} ({} prompt + {} completion)",
+                tu.total_tokens, tu.prompt_tokens, tu.completion_tokens
+            )?;
         }
         writeln!(f, "  Per trial:")?;
         for (i, trial) in self.per_trial.iter().enumerate() {
             let status = if trial.passed { "PASS" } else { "FAIL" };
-            let cond_s = if trial.conditions_passed { "✓" } else { "✗" };
+            let cond_s = if trial.conditions_passed {
+                "✓"
+            } else {
+                "✗"
+            };
             let crit_s = trial
                 .critique
                 .as_ref()
                 .map(|c| format!("{:.2}", c.overall_score))
                 .unwrap_or_else(|| "N/A".to_string());
             let skill_s = if trial.skill_passed { "✓" } else { "✗" };
-            let session_s = if trial.session_conditions_passed { "✓" } else { "✗" };
+            let session_s = if trial.session_conditions_passed {
+                "✓"
+            } else {
+                "✗"
+            };
             let turn_info = if trial.turn_results.len() > 1 {
                 format!(" {} turns", trial.turn_results.len())
             } else {
                 String::new()
             };
-            writeln!(f, "    #{:<3} {}  (cond={}, critique={}, skill={}, session={}){}", i, status, cond_s, crit_s, skill_s, session_s, turn_info)?;
+            writeln!(
+                f,
+                "    #{:<3} {}  (cond={}, critique={}, skill={}, session={}){}",
+                i, status, cond_s, crit_s, skill_s, session_s, turn_info
+            )?;
         }
 
         // ── Skill breakdown (§04) ──
-        if self.skill_sub_metrics.is_empty() && self.per_trial.iter().any(|t| t.skill_results.is_some()) {
+        if self.skill_sub_metrics.is_empty()
+            && self.per_trial.iter().any(|t| t.skill_results.is_some())
+        {
             // Only skill pass rate available
             writeln!(f, "  Skill metrics:")?;
             writeln!(f, "    Skill pass rate:          {:.1}%", self.skill_pass_rate * 100.0)?;
         } else if !self.skill_sub_metrics.is_empty() {
             writeln!(f, "  Skill metrics:")?;
             writeln!(f, "    Skill pass rate:          {:.1}%", self.skill_pass_rate * 100.0)?;
-            writeln!(f, "    Trigger:                  {:.1}%", self.skill_trigger_pass_rate * 100.0)?;
-            writeln!(f, "    Execution:                {:.1}%", self.skill_execution_pass_rate * 100.0)?;
-            writeln!(f, "    Quality:                  {:.1}%", self.skill_quality_pass_rate * 100.0)?;
-            writeln!(f, "    Resilience:               {:.1}%", self.skill_resilience_pass_rate * 100.0)?;
+            writeln!(
+                f,
+                "    Trigger:                  {:.1}%",
+                self.skill_trigger_pass_rate * 100.0
+            )?;
+            writeln!(
+                f,
+                "    Execution:                {:.1}%",
+                self.skill_execution_pass_rate * 100.0
+            )?;
+            writeln!(
+                f,
+                "    Quality:                  {:.1}%",
+                self.skill_quality_pass_rate * 100.0
+            )?;
+            writeln!(
+                f,
+                "    Resilience:               {:.1}%",
+                self.skill_resilience_pass_rate * 100.0
+            )?;
             let mut metrics: Vec<(&String, &f64)> = self.skill_sub_metrics.iter().collect();
             metrics.sort_by_key(|(k, _)| *k);
             for (key, val) in &metrics {
@@ -455,7 +485,11 @@ impl EvalHarness {
 
     /// Run a single task for N trials.
     pub async fn run(&self, task: EvalTask, n_trials: usize) -> Result<EvalSummary> {
-        let n = if n_trials > 0 { n_trials } else { self.default_trials };
+        let n = if n_trials > 0 {
+            n_trials
+        } else {
+            self.default_trials
+        };
         info!("Running eval task '{}' ({} trials)", task.id, n);
 
         let mut results = Vec::with_capacity(n);
@@ -470,7 +504,13 @@ impl EvalHarness {
 
             match result {
                 Ok(r) => {
-                    debug!("Trial {}/{} for '{}': {}", trial_index + 1, n, task.id, if r.passed { "PASS" } else { "FAIL" });
+                    debug!(
+                        "Trial {}/{} for '{}': {}",
+                        trial_index + 1,
+                        n,
+                        task.id,
+                        if r.passed { "PASS" } else { "FAIL" }
+                    );
                     results.push(r);
                 }
                 Err(e) => {
@@ -548,7 +588,10 @@ impl EvalHarness {
                 },
                 mention: MentionState::DirectMessage,
             };
-            let outgoing = self.agent.process_message_with_progress(msg, noop_cb.clone()).await?;
+            let outgoing = self
+                .agent
+                .process_message_with_progress(msg, noop_cb.clone())
+                .await?;
 
             // 2b. Collect tool calls for this turn from the outgoing message
             let turn_tool_calls = Self::collect_tool_calls_from_outgoing(&outgoing);
@@ -561,11 +604,8 @@ impl EvalHarness {
             let turn_dir = tmp.join(format!("turn_{}", i));
             tokio::fs::create_dir_all(&turn_dir).await?;
             tokio::fs::write(turn_dir.join("response.txt"), &outgoing.content).await?;
-            tokio::fs::write(
-                turn_dir.join("tools.json"),
-                serde_json::to_string(&turn_tool_calls)?,
-            )
-            .await?;
+            tokio::fs::write(turn_dir.join("tools.json"), serde_json::to_string(&turn_tool_calls)?)
+                .await?;
 
             // 2d. Check per-turn conditions
             let mut turn_condition_results = Vec::new();
@@ -593,11 +633,7 @@ impl EvalHarness {
 
         // ── Step 3: Write session-level artifacts ──────────────────────
         tokio::fs::write(tmp.join("response.txt"), &final_response).await?;
-        tokio::fs::write(
-            tmp.join("tools.json"),
-            serde_json::to_string(&all_tool_calls)?,
-        )
-        .await?;
+        tokio::fs::write(tmp.join("tools.json"), serde_json::to_string(&all_tool_calls)?).await?;
         tokio::fs::write(tmp.join("eval_trace.log"), format!("{:?}", all_tool_calls)).await?;
 
         // ── Step 4: GoalCondition checks (backward compat) ─────────────
@@ -627,7 +663,9 @@ impl EvalHarness {
         };
 
         // ── Step 7: Skill evaluation (§02 / §04) ───────────────────────
-        let (skill_results, skill_passed) = self.evaluate_skills(&real_tool_calls, &final_response).await;
+        let (skill_results, skill_passed) = self
+            .evaluate_skills(&real_tool_calls, &final_response)
+            .await;
 
         // ── Step 8: Build trajectory ──────────────────────────────────
         let critique = if let Some(ref turns) = turns {
@@ -672,7 +710,10 @@ impl EvalHarness {
             critique_passed,
             skill_results,
             skill_passed,
-            passed: conditions_passed && critique_passed && skill_passed && session_conditions_passed,
+            passed: conditions_passed
+                && critique_passed
+                && skill_passed
+                && session_conditions_passed,
             turn_results,
             session_condition_results,
             session_conditions_passed,
@@ -796,16 +837,9 @@ impl EvalHarness {
     ///
     /// Called automatically by the harness after a failed trial if
     /// an RcaPipeline is configured.
-    pub async fn on_badcase_detected(
-        &self,
-        result: TrialResult,
-        task: &EvalTask,
-    ) {
+    pub async fn on_badcase_detected(&self, result: TrialResult, task: &EvalTask) {
         if !result.passed {
-            debug!(
-                "Badcase detected: task={}, trial={}",
-                task.id, result.trial_index
-            );
+            debug!("Badcase detected: task={}, trial={}", task.id, result.trial_index);
             // RCA pipeline integration point — called from
             // downstream code that constructs an RcaPipeline.
         }

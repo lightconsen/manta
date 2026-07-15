@@ -9,8 +9,76 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::reflection::critic::Critic;
 use crate::agent::reflection::types::{Critique, QualityCriteria};
+use crate::eval::human_review::{HumanReviewCase, HumanReviewStore, ReviewStatus};
 use crate::eval::rca::ProblemPhenomenon;
 use crate::goal::condition::{CheckResult, GoalCondition};
+
+/// Pre-defined risk signal patterns for coarse-layer screening.
+///
+/// These are cheap, deterministic checks on the agent's response text that
+/// catch common failure modes before fine-grained (LLM) evaluation.
+#[derive(Debug, Clone)]
+pub struct RiskSignalChecker {
+    /// Patterns that are high-risk (contains check — case-insensitive).
+    pub high_risk_patterns: Vec<String>,
+    /// Minimum response length in characters (0 = disable).
+    pub min_response_length: usize,
+    /// Maximum tool calls allowed (0 = disable).
+    pub max_tool_calls: usize,
+}
+
+impl Default for RiskSignalChecker {
+    fn default() -> Self {
+        Self {
+            high_risk_patterns: vec![
+                "password".into(),
+                "api_key".into(),
+                "secret".into(),
+                "refund".into(),
+                "i cannot".into(),
+                "i am unable".into(),
+                "as an ai".into(),
+            ],
+            min_response_length: 10,
+            max_tool_calls: 50,
+        }
+    }
+}
+
+impl RiskSignalChecker {
+    /// Run all risk checks against a response. Returns a list of risk reasons
+    /// (empty = no risks detected).
+    pub fn check(&self, response: &str, tool_call_count: usize) -> Vec<String> {
+        let mut risks = Vec::new();
+
+        // High-risk pattern check
+        let response_lower = response.to_lowercase();
+        for pattern in &self.high_risk_patterns {
+            if response_lower.contains(pattern) {
+                risks.push(format!("high-risk pattern '{}' found in response", pattern));
+            }
+        }
+
+        // Minimum response length
+        if self.min_response_length > 0 && response.len() < self.min_response_length {
+            risks.push(format!(
+                "response too short ({} < {} chars)",
+                response.len(),
+                self.min_response_length
+            ));
+        }
+
+        // Max tool calls
+        if self.max_tool_calls > 0 && tool_call_count > self.max_tool_calls {
+            risks.push(format!(
+                "too many tool calls ({} > {})",
+                tool_call_count, self.max_tool_calls
+            ));
+        }
+
+        risks
+    }
+}
 
 /// Which screening layer produced the verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,11 +145,68 @@ impl Default for ScorerConfig {
 pub struct LayeredScorer {
     critic: Option<Critic>,
     config: ScorerConfig,
+    risk_checker: RiskSignalChecker,
+    review_store: Option<HumanReviewStore>,
 }
 
 impl LayeredScorer {
     pub fn new(critic: Option<Critic>, config: ScorerConfig) -> Self {
-        Self { critic, config }
+        Self {
+            critic,
+            config,
+            risk_checker: RiskSignalChecker::default(),
+            review_store: None,
+        }
+    }
+
+    /// Set a custom risk signal checker.
+    pub fn with_risk_checker(mut self, risk_checker: RiskSignalChecker) -> Self {
+        self.risk_checker = risk_checker;
+        self
+    }
+
+    /// Enable human review persistence for low-confidence cases.
+    pub fn with_review_store(mut self, store: HumanReviewStore) -> Self {
+        self.review_store = Some(store);
+        self
+    }
+
+    /// Run score() and automatically persist InsufficientInfo results.
+    ///
+    /// When the verdict is `InsufficientInfo` and a `HumanReviewStore` is
+    /// configured, the case is written to disk automatically.
+    pub async fn score_and_review(
+        &self,
+        conditions: &[GoalCondition],
+        criteria: Option<&QualityCriteria>,
+        response: &str,
+        trajectory: &str,
+        task_id: &str,
+        trial_index: usize,
+        input: &str,
+    ) -> ScoringOutput {
+        let output = self.score(conditions, criteria, response, trajectory).await;
+
+        if output.verdict == Verdict::InsufficientInfo {
+            if let Some(ref store) = self.review_store {
+                let case = HumanReviewCase {
+                    task_id: task_id.to_string(),
+                    trial_index,
+                    input: input.to_string(),
+                    response: response.to_string(),
+                    scoring_output: output.clone(),
+                    status: ReviewStatus::Pending,
+                    created_at: std::time::SystemTime::now(),
+                    human_verdict: None,
+                    human_comment: None,
+                };
+                if let Err(e) = store.write_case(&case) {
+                    tracing::warn!("Failed to persist review case: {}", e);
+                }
+            }
+        }
+
+        output
     }
 
     /// Run the full layered scoring pipeline.
@@ -89,9 +214,24 @@ impl LayeredScorer {
         &self,
         conditions: &[GoalCondition],
         criteria: Option<&QualityCriteria>,
-        _response: &str,
+        response: &str,
         trajectory: &str,
     ) -> ScoringOutput {
+        // ── Risk signal check (pre-coarse) ─────────────────────────
+        if !response.is_empty() {
+            let risks = self.risk_checker.check(response, 0);
+            if !risks.is_empty() {
+                return ScoringOutput {
+                    verdict: Verdict::InsufficientInfo,
+                    score: 0.0,
+                    problem_category: None,
+                    confidence: 1.0,
+                    judgment_basis: format!("Risk signal detected: {}", risks.join("; ")),
+                    screening_layer: ScreeningLayer::Coarse,
+                };
+            }
+        }
+
         // ── Coarse layer: GoalCondition checks ─────────────────────
         let mut condition_results = Vec::new();
         for cond in conditions {
@@ -186,7 +326,11 @@ impl LayeredScorer {
         } else {
             // No Critic configured — return coarse result directly
             ScoringOutput {
-                verdict: if all_passed { Verdict::Pass } else { Verdict::Fail },
+                verdict: if all_passed {
+                    Verdict::Pass
+                } else {
+                    Verdict::Fail
+                },
                 score: pass_ratio,
                 problem_category: detect_category_from_conditions(&condition_results),
                 confidence: pass_ratio,
@@ -198,9 +342,7 @@ impl LayeredScorer {
 }
 
 /// Detect problem phenomenon from condition check results.
-fn detect_category_from_conditions(
-    results: &[CheckResult],
-) -> Option<ProblemPhenomenon> {
+fn detect_category_from_conditions(results: &[CheckResult]) -> Option<ProblemPhenomenon> {
     for r in results {
         if !r.passed {
             let actual_lower = r.actual.to_lowercase();
@@ -253,5 +395,37 @@ mod tests {
         let cfg = ScorerConfig::default();
         assert_eq!(cfg.coarse_pass_threshold, 0.9);
         assert_eq!(cfg.fine_min_confidence, 0.6);
+    }
+
+    #[test]
+    fn test_risk_checker_no_risks() {
+        let checker = RiskSignalChecker::default();
+        let risks = checker.check("This is a perfectly safe response about the weather.", 3);
+        assert!(risks.is_empty());
+    }
+
+    #[test]
+    fn test_risk_checker_high_risk_pattern() {
+        let checker = RiskSignalChecker::default();
+        let risks = checker.check("Your password is 12345", 1);
+        assert!(!risks.is_empty());
+        assert!(risks[0].contains("password"));
+    }
+
+    #[test]
+    fn test_risk_checker_too_short() {
+        let checker = RiskSignalChecker::default();
+        let risks = checker.check("Hi", 0);
+        assert!(!risks.is_empty());
+        assert!(risks[0].contains("too short"));
+    }
+
+    #[test]
+    fn test_risk_checker_too_many_calls() {
+        let checker = RiskSignalChecker::default();
+        let risks =
+            checker.check("This is a sufficiently long response to pass the length check.", 99);
+        assert!(!risks.is_empty());
+        assert!(risks.iter().any(|r| r.contains("too many")));
     }
 }

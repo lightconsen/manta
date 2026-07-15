@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::eval::dataset::{
-    DegradeExpectation, ExecutionCase, FailureMode, ParamMatcher, QualityCase,
-    ResilienceCase, SkillEvalDesign, TriggerCase,
+    DegradeExpectation, ExecutionCase, FailureMode, ParamMatcher, QualityCase, ResilienceCase,
+    SkillEvalDesign, TriggerCase,
 };
 use crate::eval::harness::ToolCallSummary;
 
@@ -131,10 +131,7 @@ impl SkillScorer {
 
     // ── Trigger ──────────────────────────────────────────────────────
 
-    fn evaluate_trigger(
-        tc: &TriggerCase,
-        tool_calls: &[ToolCallSummary],
-    ) -> TriggerCheckResult {
+    fn evaluate_trigger(tc: &TriggerCase, tool_calls: &[ToolCallSummary]) -> TriggerCheckResult {
         if let Some(ref st) = tc.should_trigger {
             let found = tool_calls.iter().any(|t| t.name == st.expect_tool);
             let label = format!("should_trigger({})", st.expect_tool);
@@ -180,10 +177,7 @@ impl SkillScorer {
                     detail: if passed {
                         format!("Tool '{}' was correctly not called", nt.expect_no_tool)
                     } else {
-                        format!(
-                            "Tool '{}' was called but should not have been",
-                            nt.expect_no_tool
-                        )
+                        format!("Tool '{}' was called but should not have been", nt.expect_no_tool)
                     },
                 }
             }
@@ -228,9 +222,10 @@ impl SkillScorer {
         }
         if !ec.forbidden_tools.is_empty() {
             // Only add "no forbidden tools called" if we didn't already detect one
-            let has_forbidden_fail = ec.forbidden_tools.iter().any(|f| {
-                tool_calls.iter().any(|t| t.name == *f)
-            });
+            let has_forbidden_fail = ec
+                .forbidden_tools
+                .iter()
+                .any(|f| tool_calls.iter().any(|t| t.name == *f));
             if !has_forbidden_fail {
                 details.push("No forbidden tools were called".into());
             }
@@ -241,10 +236,7 @@ impl SkillScorer {
             let param_pass = Self::check_param(param, tool_calls);
             if !param_pass {
                 all_pass = false;
-                details.push(format!(
-                    "Parameter '{}' not satisfied in any tool call",
-                    param.key
-                ));
+                details.push(format!("Parameter '{}' not satisfied in any tool call", param.key));
             }
         }
         if !ec.required_params.is_empty() && !details.iter().any(|d| d.contains("Parameter")) {
@@ -270,7 +262,8 @@ impl SkillScorer {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&tc.args) {
                 if let Some(field) = val.get(&param.key) {
                     if let Some(expected) = &param.equals {
-                        if field.as_str() == Some(expected) || field == &serde_json::json!(expected) {
+                        if field.as_str() == Some(expected) || field == &serde_json::json!(expected)
+                        {
                             return true;
                         }
                     }
@@ -390,17 +383,13 @@ impl SkillScorer {
     /// Detect whether a specific `FailureMode` occurred in tool call results.
     fn detect_failure(mode: &FailureMode, tool_calls: &[ToolCallSummary]) -> bool {
         match mode {
-            FailureMode::Timeout => {
-                tool_calls.iter().any(|tc| {
-                    !tc.success && tc.result.is_empty() || tc.duration_ms > 30_000
-                })
-            }
-            FailureMode::Error(pattern) => {
-                tool_calls.iter().any(|tc| !tc.success && tc.result.contains(pattern.as_str()))
-            }
-            FailureMode::EmptyResult => {
-                tool_calls.iter().any(|tc| tc.result.trim().is_empty())
-            }
+            FailureMode::Timeout => tool_calls
+                .iter()
+                .any(|tc| !tc.success && tc.result.is_empty() || tc.duration_ms > 30_000),
+            FailureMode::Error(pattern) => tool_calls
+                .iter()
+                .any(|tc| !tc.success && tc.result.contains(pattern.as_str())),
+            FailureMode::EmptyResult => tool_calls.iter().any(|tc| tc.result.trim().is_empty()),
         }
     }
 
@@ -519,7 +508,10 @@ mod tests {
 
     #[test]
     fn test_execution_required_tools_pass() {
-        let calls = vec![make_tool("web_search", "query"), make_tool("web_fetch", "url")];
+        let calls = vec![
+            make_tool("web_search", "query"),
+            make_tool("web_fetch", "url"),
+        ];
         let ec = ExecutionCase {
             scenario: "test".into(),
             required_tools: vec!["web_search".into()],
@@ -561,10 +553,7 @@ mod tests {
 
     #[test]
     fn test_execution_param_match() {
-        let calls = vec![make_tool(
-            "web_search",
-            r#"{"query": "latest AI news"}"#,
-        )];
+        let calls = vec![make_tool("web_search", r#"{"query": "latest AI news"}"#)];
         let ec = ExecutionCase {
             scenario: "param check".into(),
             required_tools: vec![],
@@ -582,10 +571,7 @@ mod tests {
 
     #[test]
     fn test_execution_param_fail() {
-        let calls = vec![make_tool(
-            "web_search",
-            r#"{"query": "weather"}"#,
-        )];
+        let calls = vec![make_tool("web_search", r#"{"query": "weather"}"#)];
         let ec = ExecutionCase {
             scenario: "param check".into(),
             required_tools: vec![],
@@ -686,46 +672,40 @@ mod tests {
     #[test]
     fn test_evaluate_full_design() {
         let design = SkillEvalDesign {
-            trigger: vec![
-                TriggerCase {
-                    should_trigger: Some(crate::eval::dataset::ShouldTriggerCase {
-                        input: "search test".into(),
-                        expect_tool: "web_search".into(),
-                    }),
-                    should_not_trigger: None,
-                },
-            ],
-            execution: vec![
-                ExecutionCase {
-                    scenario: "core path".into(),
-                    required_tools: vec!["web_search".into()],
-                    forbidden_tools: vec!["shell".into()],
-                    required_params: vec![ParamMatcher {
-                        key: "query".into(),
-                        contains: Some("test".into()),
-                        equals: None,
-                    }],
-                    evidence_consistency: false,
-                },
-            ],
-            quality: vec![
-                QualityCase {
-                    name: "response quality".into(),
-                    must_contain: vec!["result".into()],
-                    must_not_contain: vec![],
-                    min_length: Some(10),
-                },
-            ],
+            trigger: vec![TriggerCase {
+                should_trigger: Some(crate::eval::dataset::ShouldTriggerCase {
+                    input: "search test".into(),
+                    expect_tool: "web_search".into(),
+                }),
+                should_not_trigger: None,
+            }],
+            execution: vec![ExecutionCase {
+                scenario: "core path".into(),
+                required_tools: vec!["web_search".into()],
+                forbidden_tools: vec!["shell".into()],
+                required_params: vec![ParamMatcher {
+                    key: "query".into(),
+                    contains: Some("test".into()),
+                    equals: None,
+                }],
+                evidence_consistency: false,
+            }],
+            quality: vec![QualityCase {
+                name: "response quality".into(),
+                must_contain: vec!["result".into()],
+                must_not_contain: vec![],
+                min_length: Some(10),
+            }],
             resilience: vec![],
         };
-        let calls = vec![make_tool(
-            "web_search",
-            r#"{"query": "test search"}"#,
-        )];
+        let calls = vec![make_tool("web_search", r#"{"query": "test search"}"#)];
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(SkillScorer::evaluate(&design, &calls, "here is the result"));
-        assert!(result.passed, "trigger={:?}, exec={:?}, quality={:?}",
-            result.trigger_results, result.execution_results, result.quality_results);
+        assert!(
+            result.passed,
+            "trigger={:?}, exec={:?}, quality={:?}",
+            result.trigger_results, result.execution_results, result.quality_results
+        );
     }
 
     // ── Resilience ────────────────────────────────────────────────────
@@ -754,20 +734,18 @@ mod tests {
 
     #[test]
     fn test_detect_error() {
-        let calls = vec![make_failed_tool("web_search", "API rate limit exceeded", 100)];
-        assert!(SkillScorer::detect_failure(
-            &FailureMode::Error("rate limit".into()),
-            &calls,
-        ));
+        let calls = vec![make_failed_tool(
+            "web_search",
+            "API rate limit exceeded",
+            100,
+        )];
+        assert!(SkillScorer::detect_failure(&FailureMode::Error("rate limit".into()), &calls,));
     }
 
     #[test]
     fn test_detect_error_no_match() {
         let calls = vec![make_failed_tool("web_search", "connection refused", 100)];
-        assert!(!SkillScorer::detect_failure(
-            &FailureMode::Error("timeout".into()),
-            &calls,
-        ));
+        assert!(!SkillScorer::detect_failure(&FailureMode::Error("timeout".into()), &calls,));
     }
 
     #[test]
@@ -805,11 +783,7 @@ mod tests {
             make_tool("web_fetch", "url"),
             make_tool("web_search", "query"), // retry
         ];
-        assert!(SkillScorer::check_degradation(
-            &DegradeExpectation::Retry,
-            &calls,
-            "",
-        ));
+        assert!(SkillScorer::check_degradation(&DegradeExpectation::Retry, &calls, "",));
     }
 
     #[test]
@@ -818,11 +792,7 @@ mod tests {
             make_tool("web_search", "query"),
             make_tool("web_fetch", "url"),
         ];
-        assert!(!SkillScorer::check_degradation(
-            &DegradeExpectation::Retry,
-            &calls,
-            "",
-        ));
+        assert!(!SkillScorer::check_degradation(&DegradeExpectation::Retry, &calls, "",));
     }
 
     #[test]

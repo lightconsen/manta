@@ -31,6 +31,8 @@ pub enum QualityDimension {
     GoalSwitch,
     /// Emotion & sentiment handling in responses (§03).
     EmotionHandling,
+    /// Evidence consistency — response claims match tool result evidence (§06).
+    EvidenceConsistency,
     /// A custom dimension with a user-provided name.
     Custom(String),
 }
@@ -49,6 +51,7 @@ impl QualityDimension {
             Self::ContextRetention => "Context Retention",
             Self::GoalSwitch => "Goal Switch",
             Self::EmotionHandling => "Emotion Handling",
+            Self::EvidenceConsistency => "Evidence Consistency",
             Self::Custom(name) => name.as_str(),
         }
     }

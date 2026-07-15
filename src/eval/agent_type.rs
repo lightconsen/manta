@@ -107,7 +107,9 @@ impl AgentType {
             Self::KnowledgeQA => "Accuracy, Citation Faithfulness, Hallucination Avoidance",
             Self::TaskExecution => "Tool Selection, Parameter Accuracy, Error Recovery",
             Self::ReasoningDecision => "Logical Soundness, Evidence Use, Trade-off Analysis",
-            Self::MultiTurnGuide => "Context Retention, Emotion Handling, Goal Switching, Persona Consistency",
+            Self::MultiTurnGuide => {
+                "Context Retention, Emotion Handling, Goal Switching, Persona Consistency"
+            }
             Self::CreativeGeneration => "Format Compliance, Creativity, Structural Completeness",
             Self::MultiAgent => "Sub-agent Delegation, Role Separation, Message Fidelity",
         }

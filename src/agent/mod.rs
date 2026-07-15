@@ -2896,11 +2896,9 @@ impl Agent {
                         // with `{`/`[` and ends with `}`/`]`), replace the
                         // existing arguments rather than appending.
                         let incoming = &call.function.arguments;
-                        let is_complete_json = incoming.starts_with(['{', '['])
-                            && incoming.ends_with(['}', ']']);
-                        if is_complete_json
-                            && !existing.function.arguments.is_empty()
-                        {
+                        let is_complete_json =
+                            incoming.starts_with(['{', '[']) && incoming.ends_with(['}', ']']);
+                        if is_complete_json && !existing.function.arguments.is_empty() {
                             existing.function.arguments = incoming.clone();
                         } else {
                             existing.function.arguments.push_str(incoming);

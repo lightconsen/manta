@@ -79,6 +79,48 @@ pub enum EvalCommands {
         #[arg(short, long)]
         dir: Option<PathBuf>,
     },
+    /// List and manage human review cases
+    Review {
+        /// Path to evals directory (defaults to `./evals`)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+        /// Show only pending cases
+        #[arg(long)]
+        pending: bool,
+        /// Show detailed case content
+        #[arg(long)]
+        verbose: bool,
+        /// Mark a specific case as reviewed (by filename)
+        #[arg(long)]
+        mark_reviewed: Option<String>,
+    },
+    /// Run Critic calibration against known-answer cases
+    Calibrate {
+        /// Path to evals directory (defaults to `./evals`)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+        /// Calibration YAML file (defaults to `evals/calibration/default.yaml`)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        /// Show calibration history instead of running
+        #[arg(long)]
+        history: bool,
+        /// Check for drift compared to previous run
+        #[arg(long)]
+        drift: bool,
+        /// LLM provider (e.g. "anthropic", "openai")
+        #[arg(long)]
+        provider: Option<String>,
+        /// Model name for the Critic
+        #[arg(long)]
+        model: Option<String>,
+        /// API key
+        #[arg(long)]
+        api_key: Option<String>,
+        /// API base URL
+        #[arg(long)]
+        base_url: Option<String>,
+    },
 }
 
 impl EvalCommands {
@@ -113,11 +155,37 @@ impl EvalCommands {
                 )
                 .await
             }
-            Self::BadcaseList { dir, verbose } => {
-                cmd_badcase_list(dir.clone(), *verbose).await
-            }
+            Self::BadcaseList { dir, verbose } => cmd_badcase_list(dir.clone(), *verbose).await,
             Self::BadcaseShow { filter, dir } => {
                 cmd_badcase_show(filter.clone(), dir.clone()).await
+            }
+            Self::Review {
+                dir,
+                pending,
+                verbose,
+                mark_reviewed,
+            } => cmd_review(dir.clone(), *pending, *verbose, mark_reviewed.clone()).await,
+            Self::Calibrate {
+                dir,
+                file,
+                history,
+                drift,
+                provider,
+                model,
+                api_key,
+                base_url,
+            } => {
+                cmd_calibrate(
+                    dir.clone(),
+                    file.clone(),
+                    *history,
+                    *drift,
+                    provider.clone(),
+                    model.clone(),
+                    api_key.clone(),
+                    base_url.clone(),
+                )
+                .await
             }
         }
     }
@@ -159,8 +227,7 @@ async fn cmd_validate(dir: Option<PathBuf>) -> Result<()> {
 
         if is_suite {
             // Validate suite manifest structure
-            let content = std::fs::read_to_string(path)
-                .map_err(crate::error::SyscityError::Io)?;
+            let content = std::fs::read_to_string(path).map_err(crate::error::SyscityError::Io)?;
             match serde_yml::from_str::<serde_yml::Value>(&content) {
                 Ok(_) => {
                     total_files += 1;
@@ -200,11 +267,7 @@ async fn cmd_validate(dir: Option<PathBuf>) -> Result<()> {
         for err in &errors {
             eprintln!("❌ {}", err);
         }
-        eprintln!(
-            "❌ {}/{} files have errors",
-            errors.len(),
-            total_files + errors.len()
-        );
+        eprintln!("❌ {}/{} files have errors", errors.len(), total_files + errors.len());
     }
 
     Ok(())
@@ -314,11 +377,23 @@ async fn cmd_badcase_list(dir: Option<PathBuf>, verbose: bool) -> Result<()> {
     println!("Badcases in {:?}:", badcases_dir);
     for entry in &files {
         let path = entry.path();
-        let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
         match eval::load_tasks(&path) {
             Ok(loaded) => {
-                let badcase_count = loaded.tasks.iter().filter(|t| t.failure_reason.is_some()).count();
-                println!("  {:30} {} tasks ({} badcases)", file_name, loaded.tasks.len(), badcase_count);
+                let badcase_count = loaded
+                    .tasks
+                    .iter()
+                    .filter(|t| t.failure_reason.is_some())
+                    .count();
+                println!(
+                    "  {:30} {} tasks ({} badcases)",
+                    file_name,
+                    loaded.tasks.len(),
+                    badcase_count
+                );
                 if verbose {
                     for task in &loaded.tasks {
                         let reason = task.failure_reason.as_deref().unwrap_or("none");
@@ -367,14 +442,235 @@ async fn cmd_badcase_show(filter: String, dir: Option<PathBuf>) -> Result<()> {
         return Ok(());
     }
 
-    let content = std::fs::read_to_string(&file_path)
-        .map_err(crate::error::SyscityError::Io)?;
+    let content = std::fs::read_to_string(&file_path).map_err(crate::error::SyscityError::Io)?;
     println!("=== {} ===\n{}", file_path.display(), content);
     Ok(())
 }
 
+/// `eval review` — list and manage human review cases.
+async fn cmd_review(
+    dir: Option<PathBuf>,
+    pending_only: bool,
+    verbose: bool,
+    mark_reviewed: Option<String>,
+) -> Result<()> {
+    use eval::human_review::{HumanReviewStore, ReviewStatus};
+
+    let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
+    let store = HumanReviewStore::new(&evals_dir);
+
+    // ── Mark a case as reviewed ─────────────────────────────────────
+    if let Some(filename) = mark_reviewed {
+        let review_dir = evals_dir.join("review");
+        let file_path = if filename.ends_with(".json") {
+            review_dir.join(&filename)
+        } else {
+            review_dir.join(format!("{}.json", filename))
+        };
+
+        if !file_path.exists() {
+            eprintln!("❌ Review case not found: {:?}", file_path);
+            return Ok(());
+        }
+
+        store.update_status(&file_path, ReviewStatus::Reviewed)?;
+        let case = HumanReviewStore::load_case(&file_path)?;
+        println!("✓ Marked as reviewed: {} (trial #{})", case.task_id, case.trial_index);
+        return Ok(());
+    }
+
+    // ── List cases ──────────────────────────────────────────────────
+    let filter = if pending_only {
+        Some(ReviewStatus::Pending)
+    } else {
+        None
+    };
+
+    let cases = store.list_cases(filter)?;
+    let (pending, reviewed, skipped) = store.count_by_status()?;
+
+    if cases.is_empty() {
+        println!("No review cases found in {:?}", evals_dir.join("review"));
+        println!("  Pending: {}, Reviewed: {}, Skipped: {}", pending, reviewed, skipped);
+        return Ok(());
+    }
+
+    println!(
+        "Review cases ({} pending / {} reviewed / {} skipped):",
+        pending, reviewed, skipped
+    );
+
+    for path in &cases {
+        match HumanReviewStore::load_case(path) {
+            Ok(case) => {
+                let file_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                println!();
+                println!("  File: {}", file_name);
+                println!("  Task: {} (trial #{})", case.task_id, case.trial_index);
+                println!("  Status: {:?}", case.status);
+                println!("  Confidence: {:.2}", case.scoring_output.confidence);
+                println!("  Layer: {:?}", case.scoring_output.screening_layer);
+
+                if verbose {
+                    println!("  Input: {}", &case.input.chars().take(120).collect::<String>());
+                    println!(
+                        "  Response: {}",
+                        &case.response.chars().take(200).collect::<String>()
+                    );
+                    println!("  Judgment: {}", &case.scoring_output.judgment_basis);
+                    if let Some(ref v) = case.human_verdict {
+                        println!("  Human verdict: {}", v);
+                    }
+                    if let Some(ref c) = case.human_comment {
+                        println!("  Human comment: {}", c);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  {:?}: error loading: {}", path, e);
+            }
+        }
+    }
+
+    println!();
+    println!("Use --mark-reviewed=<filename> to mark a case as reviewed.");
+    println!("Use --verbose to see case details.");
+
+    Ok(())
+}
+
+/// `eval calibrate` — run Critic calibration against known-answer cases.
+#[allow(clippy::too_many_arguments)]
+async fn cmd_calibrate(
+    dir: Option<PathBuf>,
+    file: Option<PathBuf>,
+    show_history: bool,
+    check_drift: bool,
+    provider: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+    base_url: Option<String>,
+) -> Result<()> {
+    use crate::eval::calibration;
+    use crate::providers::resolver::resolve_provider;
+    use std::sync::Arc;
+
+    let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
+
+    // ── History / drift mode (no Critic needed) ─────────────────────
+    if show_history || check_drift {
+        let history = calibration::load_calibration_history(&evals_dir)?;
+
+        if history.is_empty() {
+            println!("No calibration history found in {:?}", evals_dir.join("calibration"));
+            return Ok(());
+        }
+
+        println!("Calibration history ({} runs):", history.len());
+        for (i, r) in history.iter().enumerate() {
+            println!(
+                "  #{:<3} verdict_acc={:.1}% dim_acc={:.1}% ({} cases)",
+                i + 1,
+                r.verdict_accuracy * 100.0,
+                r.avg_dimension_accuracy * 100.0,
+                r.total_cases,
+            );
+        }
+
+        if check_drift {
+            if let Some(msg) = calibration::detect_drift(&history) {
+                println!("\n⚠️  Drift detected: {}", msg);
+            } else {
+                println!("\n✓ No significant drift detected.");
+            }
+        }
+
+        return Ok(());
+    }
+
+    // ── Load calibration cases ──────────────────────────────────────
+    let cal_file = file.unwrap_or_else(|| evals_dir.join("calibration").join("default.yaml"));
+    if !cal_file.exists() {
+        eprintln!("❌ Calibration file not found: {:?}", cal_file);
+        println!("   Create a calibration file at evals/calibration/default.yaml");
+        return Ok(());
+    }
+
+    let cases = calibration::load_calibration_cases(&cal_file)?;
+    if cases.is_empty() {
+        println!("No calibration cases found in {:?}", cal_file);
+        return Ok(());
+    }
+
+    println!("═══ Critic Calibration ═══");
+    println!("  File:  {:?}", cal_file);
+    println!("  Cases: {}", cases.len());
+
+    // ── Resolve provider & create Critic ────────────────────────────
+    let provider_type = provider.unwrap_or_else(|| "anthropic".to_string());
+    let provider = match resolve_provider(&provider_type, api_key, base_url, model.clone(), None) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(crate::error::SyscityError::Validation(format!(
+                "Failed to create provider '{}': {}",
+                provider_type, e
+            )));
+        }
+    };
+
+    let mut critic = crate::agent::reflection::critic::Critic::new(provider);
+    if let Some(ref m) = model {
+        critic = critic.with_model(m.clone());
+    }
+
+    // ── Run calibration ─────────────────────────────────────────────
+    println!("  Running {} cases...", cases.len());
+    let report = calibration::calibrate(Arc::new(critic), &cases).await;
+
+    // ── Print results ───────────────────────────────────────────────
+    println!();
+    println!("  Verdict accuracy:      {:.1}%", report.verdict_accuracy * 100.0);
+    println!("  Avg dim accuracy:      {:.1}%", report.avg_dimension_accuracy * 100.0);
+    println!("  Avg score deviation:   {:.3}", report.avg_score_deviation);
+    println!("  Matching verdicts:     {}/{}", report.matching_verdicts, report.total_cases);
+    println!();
+
+    for result in &report.per_case {
+        let icon = if result.verdict_match { "✓" } else { "✗" };
+        println!(
+            "  {} {} — exp={}, act={}, dim_acc={:.0}%",
+            icon,
+            result.case_id,
+            result.expected_verdict,
+            result.actual_verdict,
+            result.dimension_accuracy * 100.0,
+        );
+    }
+
+    // ── Persist ─────────────────────────────────────────────────────
+    match calibration::save_calibration_report(&evals_dir, &report) {
+        Ok(path) => println!("\n✓ Report saved to {:?}", path),
+        Err(e) => eprintln!("Warning: failed to save report: {}", e),
+    }
+
+    // ── Check drift against last run ────────────────────────────────
+    let history = calibration::load_calibration_history(&evals_dir)?;
+    if let Some(msg) = calibration::detect_drift(&history) {
+        println!("\n⚠️  Drift detected: {}", msg);
+    }
+
+    Ok(())
+}
+
 /// Recursively collect all `.yaml` files under a directory and call `f` on each.
-fn collect_yaml_files<F>(dir: &std::path::Path, dirs: &mut Vec<std::path::PathBuf>, f: &mut F) -> std::io::Result<()>
+fn collect_yaml_files<F>(
+    dir: &std::path::Path,
+    dirs: &mut Vec<std::path::PathBuf>,
+    f: &mut F,
+) -> std::io::Result<()>
 where
     F: FnMut(&std::path::Path) -> std::result::Result<(), crate::error::SyscityError>,
 {

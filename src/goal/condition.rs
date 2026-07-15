@@ -60,6 +60,11 @@ pub enum GoalCondition {
         command: String,
         must_contain: String,
     },
+    #[serde(rename = "must_not_contain")]
+    MustNotContain {
+        command: String,
+        must_not_contain: String,
+    },
     #[serde(rename = "static_analysis")]
     StaticAnalysis {
         #[serde(default = "default_clippy_command")]
@@ -105,6 +110,12 @@ impl GoalCondition {
                 command: command.replace("${trial_dir}", &td),
                 must_contain: must_contain.clone(),
             },
+            GoalCondition::MustNotContain { command, must_not_contain } => {
+                GoalCondition::MustNotContain {
+                    command: command.replace("${trial_dir}", &td),
+                    must_not_contain: must_not_contain.clone(),
+                }
+            }
             GoalCondition::StaticAnalysis { command } => GoalCondition::StaticAnalysis {
                 command: command.replace("${trial_dir}", &td),
             },
@@ -125,6 +136,9 @@ impl GoalCondition {
             }
             GoalCondition::Pattern { command, must_contain } => {
                 Self::check_pattern(command, must_contain).await
+            }
+            GoalCondition::MustNotContain { command, must_not_contain } => {
+                Self::check_must_not_contain(command, must_not_contain).await
             }
             GoalCondition::StaticAnalysis { command } => {
                 Self::check_exit_code(command, Some(0)).await
@@ -154,6 +168,9 @@ impl GoalCondition {
             }
             GoalCondition::Pattern { command, must_contain } => {
                 format!("`{}` contains {:?}", command, must_contain)
+            }
+            GoalCondition::MustNotContain { command, must_not_contain } => {
+                format!("`{}` does NOT contain {:?}", command, must_not_contain)
             }
             GoalCondition::StaticAnalysis { command } => {
                 format!("`{}` passes", command)
@@ -311,6 +328,48 @@ impl GoalCondition {
             },
         }
     }
+
+    async fn check_must_not_contain(command: &str, must_not_contain: &str) -> CheckResult {
+        let cond = GoalCondition::MustNotContain {
+            command: command.to_string(),
+            must_not_contain: must_not_contain.to_string(),
+        };
+
+        match tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .output()
+            .await
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let contains = stdout.contains(must_not_contain);
+                CheckResult {
+                    condition: cond,
+                    passed: !contains,
+                    actual: if contains {
+                        "contains_forbidden".to_string()
+                    } else {
+                        "clean".to_string()
+                    },
+                    detail: if contains {
+                        format!(
+                            "output contains forbidden pattern {:?}\n---\n{}",
+                            must_not_contain, stdout
+                        )
+                    } else {
+                        format!("output does not contain {:?}", must_not_contain)
+                    },
+                }
+            }
+            Err(e) => CheckResult {
+                condition: cond,
+                passed: false,
+                actual: format!("error: {}", e),
+                detail: String::new(),
+            },
+        }
+    }
 }
 
 impl std::fmt::Display for GoalCondition {
@@ -440,6 +499,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_check_must_not_contain_clean() {
+        let result = GoalCondition::MustNotContain {
+            command: "echo hello world".to_string(),
+            must_not_contain: "goodbye".to_string(),
+        }
+        .check()
+        .await;
+        assert!(result.passed);
+        assert_eq!(result.actual, "clean");
+    }
+
+    #[tokio::test]
+    async fn test_check_must_not_contain_forbidden() {
+        let result = GoalCondition::MustNotContain {
+            command: "echo hello world".to_string(),
+            must_not_contain: "hello".to_string(),
+        }
+        .check()
+        .await;
+        assert!(!result.passed);
+        assert_eq!(result.actual, "contains_forbidden");
+    }
+
+    #[tokio::test]
     async fn test_check_numeric_ge() {
         let result = GoalCondition::Numeric {
             command: "echo 5".to_string(),
@@ -505,6 +588,19 @@ mod tests {
         let json = r#"{"type":"numeric","command":"wc -l","operator":">=","threshold":5.0}"#;
         let cond: GoalCondition = serde_json::from_str(json).unwrap();
         assert!(matches!(cond, GoalCondition::Numeric { .. }));
+    }
+
+    #[test]
+    fn test_deserialize_must_not_contain() {
+        let json = r#"{"type":"must_not_contain","command":"echo hi","must_not_contain":"secret"}"#;
+        let cond: GoalCondition = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            cond,
+            GoalCondition::MustNotContain {
+                command: "echo hi".to_string(),
+                must_not_contain: "secret".to_string(),
+            }
+        );
     }
 
     #[test]

@@ -34,8 +34,7 @@ static NAME_LIST_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// Regex for YAML-style `name: 小明` entries.
 #[allow(clippy::expect_used)] // Static regex with a known-valid pattern.
 static NAME_YAML_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*name\s*[:：]\s*(.+?)\s*$")
-        .expect("NAME_YAML_RE is valid")
+    Regex::new(r"(?i)^\s*name\s*[:：]\s*(.+?)\s*$").expect("NAME_YAML_RE is valid")
 });
 
 /// Regex for markdown list style emoji entries like `- **Emoji**: 🐼`.

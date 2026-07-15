@@ -26,42 +26,50 @@
 //! # }
 //! ```
 
+pub(crate) mod action;
+pub(crate) mod agent_type;
 pub(crate) mod comparison;
 pub(crate) mod dataset;
 pub(crate) mod harness;
 pub(crate) mod loader;
 pub(crate) mod rca;
-pub(crate) mod scorer;
-pub(crate) mod action;
-pub(crate) mod standalone;
-pub(crate) mod agent_type;
-pub(crate) mod skill_scorer;
 pub(crate) mod recycle;
+pub(crate) mod scorer;
+pub(crate) mod skill_scorer;
+pub(crate) mod standalone;
 
-pub use dataset::{
-    EvalSuite, EvalTask, EvalTaskSource, SuiteCategory, SkillEvalDesign,
-    TriggerCase, ExecutionCase, QualityCase, ResilienceCase,
-    FailureMode, DegradeExpectation, ParamMatcher,
+pub(crate) mod calibration;
+pub(crate) mod human_review;
+pub(crate) mod multi_judge;
+
+pub use action::{ActionItem, ActionLevel, ImpactScope, Priority};
+pub use agent_type::AgentType;
+pub use calibration::{
+    calibrate, detect_drift, load_calibration_cases, load_calibration_history,
+    save_calibration_report, CalibrationCase, CalibrationReport, CalibrationResult,
 };
-pub use harness::{
-    EvalHarness, TrialResult, TurnResult, ToolCallSummary, EvalSummary,
+pub use comparison::{
+    compare_versions, extract_trial_results, ComparisonVerdict, VersionComparison,
 };
 pub use dataset::TurnInput;
-pub use loader::{list_suites, load_suite, load_tasks, default_evals_dir, LoadedTaskFile};
-pub use agent_type::AgentType;
-pub use skill_scorer::{SkillScorer, SkillCheckResult, TriggerCheckResult, ExecutionCheckResult, QualityCheckResult, ResilienceCheckResult};pub use comparison::{
-    compare_versions, VersionComparison, ComparisonVerdict, extract_trial_results,
+pub use dataset::{
+    DegradeExpectation, EvalSuite, EvalTask, EvalTaskSource, ExecutionCase, FailureMode,
+    ParamMatcher, QualityCase, ResilienceCase, SkillEvalDesign, SuiteCategory, TriggerCase,
+};
+pub use harness::{EvalHarness, EvalSummary, ToolCallSummary, TrialResult, TurnResult};
+pub use human_review::{HumanReviewCase, HumanReviewStore, ReviewStatus};
+pub use loader::{default_evals_dir, list_suites, load_suite, load_tasks, LoadedTaskFile};
+pub use multi_judge::{
+    AggregatedResult, AggregatedVerdict, AggregationMode, JudgeConfig, JudgeResult,
+    MultiJudgeConfig, MultiJudgeScorer,
 };
 pub use rca::{
-    RcaPipeline, RcaInput, RcaResult, RcaKnowledgeBase, RcaKnowledgeBaseEntry,
-    ProblemPhenomenon, CandidateModule, BadcaseEntry, ModuleVerdict,
+    BadcaseEntry, CandidateModule, ModuleVerdict, ProblemPhenomenon, RcaInput, RcaKnowledgeBase,
+    RcaKnowledgeBaseEntry, RcaPipeline, RcaResult,
 };
-pub use scorer::{
-    LayeredScorer, ScoringOutput, ScreeningLayer, Verdict,
-};
-pub use action::{
-    ActionItem, ActionLevel, ImpactScope, Priority,
-};
-pub use recycle::{
-    BadcaseCollector, BadcaseRecord, BadcaseFixStatus, load_badcase_suite,
+pub use recycle::{load_badcase_suite, BadcaseCollector, BadcaseFixStatus, BadcaseRecord};
+pub use scorer::{LayeredScorer, RiskSignalChecker, ScoringOutput, ScreeningLayer, Verdict};
+pub use skill_scorer::{
+    ExecutionCheckResult, QualityCheckResult, ResilienceCheckResult, SkillCheckResult, SkillScorer,
+    TriggerCheckResult,
 };

@@ -49,7 +49,9 @@ pub async fn run_standalone_suite(
     collect_badcases: bool,
 ) -> Result<()> {
     let evals_dir = evals_dir.unwrap_or_else(default_evals_dir);
-    let manifest_path = evals_dir.join("suites").join(format!("{}.yaml", suite_name));
+    let manifest_path = evals_dir
+        .join("suites")
+        .join(format!("{}.yaml", suite_name));
 
     if !manifest_path.exists() {
         return Err(crate::error::SyscityError::Validation(format!(
@@ -76,9 +78,9 @@ pub async fn run_standalone_suite(
             .unwrap_or_else(|| "anthropic".to_string())
     });
 
-    let model = model_override.clone().or_else(|| {
-        gateway_cfg.as_ref().map(|g| g.model.clone())
-    });
+    let model = model_override
+        .clone()
+        .or_else(|| gateway_cfg.as_ref().map(|g| g.model.clone()));
 
     let api_key = api_key_override.or_else(|| {
         // Try the configured provider's api_key from GatewayConfig
@@ -155,14 +157,10 @@ pub async fn run_standalone_suite(
          tool exists for what the user is asking, use it instead of the shell. \
          For example: use 'pdf' for PDF generation, 'image' for image viewing, \
          'image_generate' for image creation, 'tts' for text-to-speech, \
-         'stt' for transcription, and 'browser' for web automation."
+         'stt' for transcription, and 'browser' for web automation.",
     );
 
-    let agent = Arc::new(Agent::new(
-        agent_config,
-        provider.clone(),
-        tool_registry.clone(),
-    ));
+    let agent = Arc::new(Agent::new(agent_config, provider.clone(), tool_registry.clone()));
 
     // ── Step 6: Create Critic (only if at least one task has criteria) ──────
     let has_criteria = suite.tasks.iter().any(|t| t.criteria.is_some());
@@ -178,7 +176,9 @@ pub async fn run_standalone_suite(
 
     // ── Step 6b: Create optional RcaPipeline for badcase collection ─────────
     let rca_pipeline = if collect_badcases {
-        critic.clone().map(|c| Arc::new(RcaPipeline::new(agent.clone(), Some(c))))
+        critic
+            .clone()
+            .map(|c| Arc::new(RcaPipeline::new(agent.clone(), Some(c))))
     } else {
         None
     };
@@ -215,17 +215,20 @@ pub async fn run_standalone_suite(
                                 || !sr.quality_results.is_empty()
                                 || !sr.resilience_results.is_empty()
                             {
-                                println!(
-                                    "  Trial #{} skill details:",
-                                    trial.trial_index
-                                );
+                                println!("  Trial #{} skill details:", trial.trial_index);
                                 for r in &sr.trigger_results {
                                     let icon = if r.passed { "✓" } else { "✗" };
-                                    println!("    {} Trigger [{}]: {}", icon, r.case_label, r.detail);
+                                    println!(
+                                        "    {} Trigger [{}]: {}",
+                                        icon, r.case_label, r.detail
+                                    );
                                 }
                                 for r in &sr.execution_results {
                                     let icon = if r.passed { "✓" } else { "✗" };
-                                    println!("    {} Execution [{}]: {}", icon, r.scenario, r.detail);
+                                    println!(
+                                        "    {} Execution [{}]: {}",
+                                        icon, r.scenario, r.detail
+                                    );
                                 }
                                 for r in &sr.quality_results {
                                     let icon = if r.passed { "✓" } else { "✗" };
@@ -283,10 +286,7 @@ pub async fn run_standalone_suite(
     println!("  Total trials:      {}", total_trials);
     println!("  Total passed:      {}", total_passed);
     println!("  Min required:      {:.0}%", suite.min_pass_rate * 100.0);
-    println!(
-        "  Result:            {}",
-        if all_passed { "PASS" } else { "FAIL" }
-    );
+    println!("  Result:            {}", if all_passed { "PASS" } else { "FAIL" });
 
     // ── Step 10: Shutdown ──────────────────────────────────────────────────
     agent.shutdown().await?;

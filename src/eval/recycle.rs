@@ -23,7 +23,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::eval::dataset::{EvalTask, EvalTaskSource, EvalSuite, SuiteCategory};
+use crate::eval::dataset::{EvalSuite, EvalTask, EvalTaskSource, SuiteCategory};
 use crate::eval::harness::{EvalSummary, TrialResult};
 use crate::eval::loader::{default_evals_dir, load_tasks};
 use crate::eval::rca::{rca_input_from_trial, BadcaseEntry, RcaPipeline, RcaResult};
@@ -106,11 +106,8 @@ impl BadcaseCollector {
     ///
     /// Returns the number of badcases collected (written to YAML).
     pub async fn collect(&self, summary: &EvalSummary, task: &EvalTask) -> Result<usize> {
-        let failed_trials: Vec<&TrialResult> = summary
-            .per_trial
-            .iter()
-            .filter(|t| !t.passed)
-            .collect();
+        let failed_trials: Vec<&TrialResult> =
+            summary.per_trial.iter().filter(|t| !t.passed).collect();
 
         if failed_trials.is_empty() {
             return Ok(0);
@@ -119,10 +116,7 @@ impl BadcaseCollector {
         let mut count = 0usize;
 
         for trial in &failed_trials {
-            info!(
-                "Collecting badcase: task={}, trial={}",
-                task.id, trial.trial_index
-            );
+            info!("Collecting badcase: task={}, trial={}", task.id, trial.trial_index);
 
             // Determine failure reason from trial results
             let failure_reason = determine_failure_reason(trial);
@@ -132,7 +126,10 @@ impl BadcaseCollector {
                 let input = rca_input_from_trial(&task.id, trial, &task.input);
                 match rca.analyze(input).await {
                     Ok(result) => {
-                        info!("RCA complete for task={}: {:?}", task.id, result.responsibility_module);
+                        info!(
+                            "RCA complete for task={}: {:?}",
+                            task.id, result.responsibility_module
+                        );
                         (true, Some(result))
                     }
                     Err(e) => {
@@ -240,10 +237,9 @@ pub fn write_badcase_yaml(
 
     // Load existing tasks if file exists
     let mut existing_tasks: Vec<serde_yml::Value> = if file_path.exists() {
-        let content = std::fs::read_to_string(&file_path)
-            .map_err(crate::error::SyscityError::Io)?;
-        let doc: serde_yml::Value = serde_yml::from_str(&content)
-            .unwrap_or(serde_yml::Value::Null);
+        let content =
+            std::fs::read_to_string(&file_path).map_err(crate::error::SyscityError::Io)?;
+        let doc: serde_yml::Value = serde_yml::from_str(&content).unwrap_or(serde_yml::Value::Null);
         doc.get("tasks")
             .and_then(|v| v.as_sequence())
             .cloned()
@@ -265,8 +261,7 @@ pub fn write_badcase_yaml(
 
     let yaml_str = serde_yml::to_string(&root)
         .map_err(|e| crate::error::SyscityError::Validation(e.to_string()))?;
-    std::fs::write(&file_path, yaml_str)
-        .map_err(crate::error::SyscityError::Io)?;
+    std::fs::write(&file_path, yaml_str).map_err(crate::error::SyscityError::Io)?;
 
     info!("Badcase written to {:?}", file_path);
     Ok(file_path)
@@ -279,7 +274,10 @@ fn build_badcase_yaml_task(record: &BadcaseRecord, original: &EvalTask) -> serde
     let mut task = serde_yml::Mapping::new();
 
     // id: append suffix to avoid collision with original task id
-    task.insert("id".into(), format!("{}_bc", &record.task_id[.. record.task_id.len().min(50)]).into());
+    task.insert(
+        "id".into(),
+        format!("{}_bc", &record.task_id[..record.task_id.len().min(50)]).into(),
+    );
 
     // input
     task.insert("input".into(), record.input.clone().into());
@@ -302,7 +300,11 @@ fn build_badcase_yaml_task(record: &BadcaseRecord, original: &EvalTask) -> serde
 
     // conditions (converted from GoalCondition to YamlCondition format)
     if !original.conditions.is_empty() {
-        let conds: Vec<Value> = original.conditions.iter().map(goal_condition_to_yaml).collect();
+        let conds: Vec<Value> = original
+            .conditions
+            .iter()
+            .map(goal_condition_to_yaml)
+            .collect();
         task.insert("conditions".into(), conds.into());
     }
 
@@ -352,15 +354,16 @@ fn goal_condition_to_yaml(cond: &GoalCondition) -> serde_yml::Value {
             m.insert("type".into(), "file_exists".into());
             m.insert("path".into(), path.clone().into());
         }
-        GoalCondition::Numeric {
-            command,
-            operator,
-            threshold,
-        } => {
+        GoalCondition::Numeric { command, operator, threshold } => {
             m.insert("type".into(), "numeric".into());
             m.insert("command".into(), command.clone().into());
             m.insert("operator".into(), format!("{:?}", operator).into());
             m.insert("threshold".into(), Value::Number(serde_yml::Number::from(*threshold)));
+        }
+        GoalCondition::MustNotContain { command, must_not_contain } => {
+            m.insert("type".into(), "must_not_contain".into());
+            m.insert("command".into(), command.clone().into());
+            m.insert("must_not_contain".into(), must_not_contain.clone().into());
         }
         GoalCondition::StaticAnalysis { command } => {
             m.insert("type".into(), "static_analysis".into());
@@ -395,8 +398,7 @@ pub fn load_badcase_suite(evals_dir: &Path) -> Result<EvalSuite> {
     }
 
     let mut tasks = Vec::new();
-    let mut read_dir = std::fs::read_dir(&badcases_dir)
-        .map_err(crate::error::SyscityError::Io)?;
+    let mut read_dir = std::fs::read_dir(&badcases_dir).map_err(crate::error::SyscityError::Io)?;
 
     while let Some(entry) = read_dir.next().transpose()? {
         let path = entry.path();
@@ -445,7 +447,13 @@ fn short_timestamp() -> String {
 /// Sanitize a task ID for use as a filename.
 fn sanitize_id(id: &str) -> String {
     id.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .trim_matches('_')
         .to_string()

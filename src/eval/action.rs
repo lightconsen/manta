@@ -81,12 +81,24 @@ impl ActionItem {
 /// Optimization strategy mapping (§08 table).
 pub fn optimization_for_root_cause(root_cause: &str) -> &'static str {
     match root_cause {
-        r if r.contains("Prompt") || r.contains("策略") => "修改系统 Prompt、工具选择说明、思考步骤约束、拒答和接管策略",
-        r if r.contains("RAG") || r.contains("知识") || r.contains("检索") => "补知识、更新文档、改 chunk、改召回重排、增加引用校验",
-        r if r.contains("Tool") || r.contains("工具") || r.contains("API") => "优化工具描述、参数 Schema、错误码、幂等、超时和降级",
-        r if r.contains("SOP") || r.contains("流程") || r.contains("业务") => "将 SOP 显式化为状态机、规则、工作流或可校验节点",
-        r if r.contains("交互") || r.contains("产品") => "增加澄清入口、确认步骤、人工接管、风险提示",
-        r if r.contains("模型") || r.contains("Model") => "换模型、蒸馏/微调、增加 few-shot、拆分复杂任务",
+        r if r.contains("Prompt") || r.contains("策略") => {
+            "修改系统 Prompt、工具选择说明、思考步骤约束、拒答和接管策略"
+        }
+        r if r.contains("RAG") || r.contains("知识") || r.contains("检索") => {
+            "补知识、更新文档、改 chunk、改召回重排、增加引用校验"
+        }
+        r if r.contains("Tool") || r.contains("工具") || r.contains("API") => {
+            "优化工具描述、参数 Schema、错误码、幂等、超时和降级"
+        }
+        r if r.contains("SOP") || r.contains("流程") || r.contains("业务") => {
+            "将 SOP 显式化为状态机、规则、工作流或可校验节点"
+        }
+        r if r.contains("交互") || r.contains("产品") => {
+            "增加澄清入口、确认步骤、人工接管、风险提示"
+        }
+        r if r.contains("模型") || r.contains("Model") => {
+            "换模型、蒸馏/微调、增加 few-shot、拆分复杂任务"
+        }
         _ => "需要人工分析确定优化方向",
     }
 }

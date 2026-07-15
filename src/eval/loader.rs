@@ -252,12 +252,14 @@ pub fn list_suites(evals_dir: &Path) -> Result<Vec<(String, String)>> {
 
 /// Return suite entries for the "ci_smoke" suite — first checks for YAML with that name.
 fn resolve_included_manifest(incl_path: &Path, sections: &[String]) -> Result<Vec<ResolvedEntry>> {
-    let content = std::fs::read_to_string(incl_path)
-        .map_err(crate::error::SyscityError::Io)?;
-    let manifest: YamlManifest = serde_yml::from_str(&content)
-        .map_err(|e| crate::error::SyscityError::Validation(format!(
-            "Cannot parse included {}: {}", incl_path.display(), e
-        )))?;
+    let content = std::fs::read_to_string(incl_path).map_err(crate::error::SyscityError::Io)?;
+    let manifest: YamlManifest = serde_yml::from_str(&content).map_err(|e| {
+        crate::error::SyscityError::Validation(format!(
+            "Cannot parse included {}: {}",
+            incl_path.display(),
+            e
+        ))
+    })?;
     let incl_dir = incl_path.parent().unwrap_or(Path::new("."));
 
     let mut entries = Vec::new();
@@ -289,12 +291,14 @@ pub struct LoadedTaskFile {
 /// Each YAML file contains a `tasks:` list. Returns a `LoadedTaskFile` with
 /// one entry per task and an optional skill evaluation design.
 pub fn load_tasks(yaml_path: &Path) -> Result<LoadedTaskFile> {
-    let content = std::fs::read_to_string(yaml_path)
-        .map_err(crate::error::SyscityError::Io)?;
-    let file: YamlTaskFile = serde_yml::from_str(&content)
-        .map_err(|e| crate::error::SyscityError::Validation(format!(
-            "Cannot parse {}: {}", yaml_path.display(), e
-        )))?;
+    let content = std::fs::read_to_string(yaml_path).map_err(crate::error::SyscityError::Io)?;
+    let file: YamlTaskFile = serde_yml::from_str(&content).map_err(|e| {
+        crate::error::SyscityError::Validation(format!(
+            "Cannot parse {}: {}",
+            yaml_path.display(),
+            e
+        ))
+    })?;
 
     let tasks: Result<Vec<EvalTask>> = file.tasks.into_iter().map(|yt| convert_task(yt)).collect();
     Ok(LoadedTaskFile {
@@ -311,12 +315,14 @@ pub fn load_tasks(yaml_path: &Path) -> Result<LoadedTaskFile> {
 /// (e.g. `"capability"`, `"regression"`); for flat manifests
 /// (ci_smoke.yaml) it is ignored — the entire file is loaded.
 pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
-    let content = std::fs::read_to_string(manifest_path)
-        .map_err(crate::error::SyscityError::Io)?;
-    let manifest: YamlManifest = serde_yml::from_str(&content)
-        .map_err(|e| crate::error::SyscityError::Validation(format!(
-            "Cannot parse {}: {}", manifest_path.display(), e
-        )))?;
+    let content = std::fs::read_to_string(manifest_path).map_err(crate::error::SyscityError::Io)?;
+    let manifest: YamlManifest = serde_yml::from_str(&content).map_err(|e| {
+        crate::error::SyscityError::Validation(format!(
+            "Cannot parse {}: {}",
+            manifest_path.display(),
+            e
+        ))
+    })?;
 
     let manifest_dir = manifest_path.parent().unwrap_or(Path::new("."));
 
@@ -329,7 +335,8 @@ pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
     for task_ref in &manifest.tasks {
         let task_path = resolve_path(manifest_dir, &task_ref.path);
         let loaded = load_tasks(&task_path)?;
-        let filtered: Vec<(String, String)> = loaded.tasks
+        let filtered: Vec<(String, String)> = loaded
+            .tasks
             .into_iter()
             .filter_map(|t| {
                 let id = t.id.clone();
@@ -382,7 +389,11 @@ pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
     }
 
     // Deduplicate by task_path + task_filter
-    all_entries.sort_by(|a, b| a.task_path.cmp(&b.task_path).then(a.task_filter.cmp(&b.task_filter)));
+    all_entries.sort_by(|a, b| {
+        a.task_path
+            .cmp(&b.task_path)
+            .then(a.task_filter.cmp(&b.task_filter))
+    });
     all_entries.dedup_by(|a, b| a.task_path == b.task_path && a.task_filter == b.task_filter);
 
     // Load all tasks
@@ -475,11 +486,8 @@ fn convert_task(yt: YamlTask) -> Result<EvalTask> {
         .collect();
 
     let criteria = yt.criteria.map(|yc| {
-        let dimensions: Vec<QualityDimension> = yc
-            .dimensions
-            .iter()
-            .map(|d| parse_dimension(d))
-            .collect();
+        let dimensions: Vec<QualityDimension> =
+            yc.dimensions.iter().map(|d| parse_dimension(d)).collect();
         QualityCriteria {
             dimensions,
             thresholds: yc.thresholds,
@@ -504,10 +512,18 @@ fn convert_task(yt: YamlTask) -> Result<EvalTask> {
         _ => EvalTaskSource::ExpertDesign,
     };
 
-    let turns: Vec<TurnInput> = yt.turns.into_iter().map(|yti| TurnInput {
-        user_message: yti.user_message,
-        conditions: yti.conditions.into_iter().filter_map(convert_condition).collect(),
-    }).collect();
+    let turns: Vec<TurnInput> = yt
+        .turns
+        .into_iter()
+        .map(|yti| TurnInput {
+            user_message: yti.user_message,
+            conditions: yti
+                .conditions
+                .into_iter()
+                .filter_map(convert_condition)
+                .collect(),
+        })
+        .collect();
 
     let session_conditions: Vec<GoalCondition> = yt
         .session_conditions
@@ -553,6 +569,16 @@ fn convert_condition(yc: YamlCondition) -> Option<GoalCondition> {
             })
         }
         "file_exists" => Some(GoalCondition::FileExists { path: yc.path }),
+        "must_not_contain" => {
+            let must_not_contain = yc
+                .must_contain
+                .map(|v| yaml_value_to_string(&v))
+                .unwrap_or_default();
+            Some(GoalCondition::MustNotContain {
+                command: yc.command,
+                must_not_contain,
+            })
+        }
         "numeric" => {
             let operator = parse_operator(&yc.operator);
             Some(GoalCondition::Numeric {
@@ -581,7 +607,7 @@ fn yaml_value_to_string(v: &serde_yml::Value) -> String {
 }
 
 /// Parse a dimension label into a `QualityDimension`.
-fn parse_dimension(s: &str) -> QualityDimension {
+pub fn parse_dimension(s: &str) -> QualityDimension {
     match s {
         "factual_accuracy" => QualityDimension::FactualAccuracy,
         "completeness" => QualityDimension::Completeness,
@@ -593,6 +619,7 @@ fn parse_dimension(s: &str) -> QualityDimension {
         "context_retention" => QualityDimension::ContextRetention,
         "goal_switch" => QualityDimension::GoalSwitch,
         "emotion_handling" => QualityDimension::EmotionHandling,
+        "evidence_consistency" => QualityDimension::EvidenceConsistency,
         other => QualityDimension::Custom(other.to_string()),
     }
 }
@@ -722,7 +749,10 @@ mod tests {
     fn test_parse_dimension_known() {
         assert_eq!(parse_dimension("factual_accuracy"), QualityDimension::FactualAccuracy);
         assert_eq!(parse_dimension("safety"), QualityDimension::Safety);
-        assert_eq!(parse_dimension("instruction_following"), QualityDimension::InstructionFollowing);
+        assert_eq!(
+            parse_dimension("instruction_following"),
+            QualityDimension::InstructionFollowing
+        );
     }
 
     #[test]
