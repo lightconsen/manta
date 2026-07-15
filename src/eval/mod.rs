@@ -34,6 +34,8 @@ pub(crate) mod rca;
 pub(crate) mod scorer;
 pub(crate) mod action;
 pub(crate) mod standalone;
+pub(crate) mod agent_type;
+pub(crate) mod skill_scorer;
 
 pub use dataset::{
     EvalSuite, EvalTask, EvalTaskSource, SuiteCategory, SkillEvalDesign,
@@ -43,8 +45,9 @@ pub use dataset::{
 pub use harness::{
     EvalHarness, TrialResult, ToolCallSummary, EvalSummary,
 };
-pub use loader::{list_suites, load_suite, load_tasks, default_evals_dir};
-pub use comparison::{
+pub use loader::{list_suites, load_suite, load_tasks, default_evals_dir, LoadedTaskFile};
+pub use agent_type::AgentType;
+pub use skill_scorer::{SkillScorer, SkillCheckResult, TriggerCheckResult, ExecutionCheckResult, QualityCheckResult, ResilienceCheckResult};pub use comparison::{
     compare_versions, VersionComparison, ComparisonVerdict, extract_trial_results,
 };
 pub use rca::{

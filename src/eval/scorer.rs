@@ -140,7 +140,7 @@ impl LayeredScorer {
 
         // ── Fine layer: LLM Judge ─────────────────────────────────
         if let (Some(ref critic), Some(criteria)) = (&self.critic, criteria) {
-            match critic.evaluate_trajectory(trajectory, criteria).await {
+            match critic.evaluate_trajectory(trajectory, criteria, None).await {
                 Ok(critique) => {
                     let confidence = critique.overall_score;
                     let passed = critique.passed;

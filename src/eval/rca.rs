@@ -495,7 +495,7 @@ impl RcaPipeline {
                     );
                     // Use a simple evaluation prompt
                     let criteria = crate::agent::reflection::types::QualityCriteria::default();
-                    match critic.evaluate_trajectory(&prompt, &criteria).await {
+                    match critic.evaluate_trajectory(&prompt, &criteria, None).await {
                         Ok(c) if !c.passed => {
                             return ModuleVerdict::Fail("回复未忠实于工具执行结果".into());
                         }

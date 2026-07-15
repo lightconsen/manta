@@ -130,7 +130,7 @@ impl RetrospectEngine {
 
         let critique = self
             .critic
-            .evaluate_trajectory(&formatted, criteria)
+            .evaluate_trajectory(&formatted, criteria, None)
             .await?;
 
         let observation = critique

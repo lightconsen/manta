@@ -142,11 +142,11 @@ async fn cmd_validate(dir: Option<PathBuf>) -> Result<()> {
         } else {
             // Validate task file — parse as EvalTask
             match eval::load_tasks(path) {
-                Ok(tasks) => {
+                Ok(loaded) => {
                     total_files += 1;
-                    total_tasks += tasks.len();
+                    total_tasks += loaded.tasks.len();
                     if let Some(name) = path.file_name() {
-                        println!("  ✓ {} ({} tasks)", name.to_string_lossy(), tasks.len());
+                        println!("  ✓ {} ({} tasks)", name.to_string_lossy(), loaded.tasks.len());
                     }
                 }
                 Err(e) => {

@@ -5,6 +5,7 @@
 //!   ExpertDesign, Extended, Online, BadcaseRecycle.
 
 use crate::agent::reflection::types::QualityCriteria;
+use crate::eval::agent_type::AgentType;
 use crate::goal::condition::GoalCondition;
 
 /// Source category for an evaluation task.
@@ -79,6 +80,9 @@ pub struct EvalTask {
     /// Optional cleanup commands to run after the trial.
     #[serde(default)]
     pub cleanup: Vec<SetupCommand>,
+    /// Agent type for type-specific scoring emphasis (§02).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<AgentType>,
 }
 
 fn default_user_id() -> String {
@@ -99,6 +103,7 @@ impl Default for EvalTask {
             failure_reason: None,
             setup: Vec::new(),
             cleanup: Vec::new(),
+            agent_type: None,
         }
     }
 }
@@ -136,6 +141,12 @@ pub struct EvalSuite {
     /// Optional tags for filtering.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Default agent type for tasks in this suite (§02).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<AgentType>,
+    /// Skill evaluation designs collected from referenced task files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_designs: Vec<SkillEvalDesign>,
 }
 
 fn default_min_pass_rate() -> f64 {

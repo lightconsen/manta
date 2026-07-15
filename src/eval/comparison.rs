@@ -303,6 +303,8 @@ mod tests {
             conditions_passed: false,
             critique: None,
             critique_passed: false,
+            skill_results: None,
+            skill_passed: true,
             passed: false,
         }
     }

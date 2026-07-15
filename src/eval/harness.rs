@@ -24,7 +24,8 @@ use crate::channels::{
     OutgoingMessage, UserId,
 };
 use crate::core::models::Id;
-use crate::eval::dataset::EvalTask;
+use crate::eval::dataset::{EvalTask, SkillEvalDesign};
+use crate::eval::skill_scorer::{SkillCheckResult, SkillScorer};
 use crate::goal::condition::CheckResult;
 use crate::Result;
 
@@ -64,8 +65,12 @@ pub struct TrialResult {
     pub critique: Option<Critique>,
     /// Whether the critique passed all thresholds.
     pub critique_passed: bool,
+    /// Skill evaluation results (optional — only when skill designs exist).
+    pub skill_results: Option<SkillCheckResult>,
+    /// Whether skill checks passed (true when no skill designs).
+    pub skill_passed: bool,
 
-    /// Composite pass/fail (conditions_passed && critique_passed).
+    /// Composite pass/fail (conditions_passed && critique_passed && skill_passed).
     pub passed: bool,
 }
 
@@ -248,7 +253,8 @@ impl std::fmt::Display for EvalSummary {
                 .as_ref()
                 .map(|c| format!("{:.2}", c.overall_score))
                 .unwrap_or_else(|| "N/A".to_string());
-            writeln!(f, "    #{:<3} {}  (cond={}, critique={})", i, status, cond_s, crit_s)?;
+            let skill_s = if trial.skill_passed { "✓" } else { "✗" };
+            writeln!(f, "    #{:<3} {}  (cond={}, critique={}, skill={})", i, status, cond_s, crit_s, skill_s)?;
         }
         Ok(())
     }
@@ -268,6 +274,8 @@ pub struct EvalHarness {
     critic: Option<Critic>,
     /// Default number of trials (can be overridden per run).
     default_trials: usize,
+    /// Skill evaluation designs to check per trial (§02).
+    skill_designs: Vec<SkillEvalDesign>,
 }
 
 impl EvalHarness {
@@ -280,12 +288,19 @@ impl EvalHarness {
             agent,
             critic,
             default_trials: 5,
+            skill_designs: Vec::new(),
         }
     }
 
     /// Set the default number of trials.
     pub fn with_default_trials(mut self, n: usize) -> Self {
         self.default_trials = n;
+        self
+    }
+
+    /// Set skill evaluation designs to check per trial.
+    pub fn with_skill_designs(mut self, designs: Vec<SkillEvalDesign>) -> Self {
+        self.skill_designs = designs;
         self
     }
 
@@ -321,6 +336,8 @@ impl EvalHarness {
                         conditions_passed: false,
                         critique: None,
                         critique_passed: false,
+                        skill_results: None,
+                        skill_passed: true,
                         passed: false,
                     });
                 }
@@ -397,6 +414,9 @@ impl EvalHarness {
 
         let conditions_passed = condition_results.iter().all(|r| r.passed);
 
+        // ── Step 2b: Skill evaluation (§02) ───────────────────────────
+        let (skill_results, skill_passed) = self.evaluate_skills(&tool_calls, &outgoing.content).await;
+
         // ── Step 3: Build trajectory ──────────────────────────────────
         let turns = self.get_thread_turns(&conv_id.0).await;
 
@@ -408,7 +428,7 @@ impl EvalHarness {
             if let Some(ref critic) = self.critic {
                 if let Some(ref criteria) = task.criteria {
                     critic
-                        .evaluate_trajectory(&trajectory_text, criteria)
+                        .evaluate_trajectory(&trajectory_text, criteria, task.agent_type.as_ref())
                         .await
                         .ok()
                 } else {
@@ -441,8 +461,32 @@ impl EvalHarness {
             conditions_passed,
             critique,
             critique_passed,
-            passed: conditions_passed && critique_passed,
+            skill_results,
+            skill_passed,
+            passed: conditions_passed && critique_passed && skill_passed,
         })
+    }
+
+    // ── Skill evaluation (§02) ────────────────────────────────────────
+
+    /// Evaluate all skill designs against trial tool calls and response.
+    ///
+    /// Returns `(Option<SkillCheckResult>, passed)` — `passed` is `true`
+    /// when there are no skill designs to check.
+    async fn evaluate_skills(
+        &self,
+        tool_calls: &[ToolCallSummary],
+        response: &str,
+    ) -> (Option<SkillCheckResult>, bool) {
+        if self.skill_designs.is_empty() {
+            return (None, true);
+        }
+
+        // For now, evaluate against the first design only (multi-design
+        // aggregation can be added later).
+        let design = &self.skill_designs[0];
+        let result = SkillScorer::evaluate(design, tool_calls, response).await;
+        (Some(result.clone()), result.passed)
     }
 
     // ── Helper methods ─────────────────────────────────────────────────
@@ -601,6 +645,8 @@ mod tests {
                 conditions_passed: true,
                 critique: None,
                 critique_passed: true,
+                skill_results: None,
+                skill_passed: true,
                 passed: true,
             },
             TrialResult {
@@ -613,6 +659,8 @@ mod tests {
                 conditions_passed: true,
                 critique: None,
                 critique_passed: true,
+                skill_results: None,
+                skill_passed: true,
                 passed: true,
             },
         ];
@@ -655,6 +703,8 @@ mod tests {
             conditions_passed: false,
             critique: None,
             critique_passed: false,
+            skill_results: None,
+            skill_passed: true,
             passed: false,
         }
     }

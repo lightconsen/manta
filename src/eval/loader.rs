@@ -23,8 +23,9 @@ use serde::Deserialize;
 use tracing::warn;
 
 use crate::agent::reflection::types::{QualityCriteria, QualityDimension};
+use crate::eval::agent_type::AgentType;
 use crate::eval::dataset::{
-    EvalSuite, EvalTask, EvalTaskSource, SetupCommand, SuiteCategory,
+    EvalSuite, EvalTask, EvalTaskSource, SetupCommand, SkillEvalDesign, SuiteCategory,
 };
 use crate::goal::condition::GoalCondition;
 use crate::Result;
@@ -37,6 +38,9 @@ use crate::Result;
 #[derive(Debug, Deserialize)]
 struct YamlTaskFile {
     tasks: Vec<YamlTask>,
+    /// Optional skill evaluation design (§02 / §04).
+    #[serde(default)]
+    skill_eval_design: Option<SkillEvalDesign>,
 }
 
 /// A single task in a task YAML file.
@@ -60,6 +64,9 @@ struct YamlTask {
     source: Option<String>,
     #[serde(default)]
     failure_reason: Option<String>,
+    /// Optional agent type for type-specific scoring emphasis (§02).
+    #[serde(default)]
+    agent_type: Option<String>,
 }
 
 /// A condition entry within a task.
@@ -172,6 +179,8 @@ struct YamlManifest {
     #[serde(default)]
     continuous_success_required: Option<bool>,
     #[serde(default)]
+    agent_type: Option<String>,
+    #[serde(default)]
     tasks: Vec<YamlTaskRef>,
     #[serde(flatten)]
     categories: HashMap<String, YamlCategory>,
@@ -255,11 +264,17 @@ fn resolve_included_manifest(incl_path: &Path, sections: &[String]) -> Result<Ve
     Ok(entries)
 }
 
+/// Result of loading a task YAML file — tasks + optional skill evaluation design.
+pub struct LoadedTaskFile {
+    pub tasks: Vec<EvalTask>,
+    pub skill_design: Option<SkillEvalDesign>,
+}
+
 /// Load tasks from a single YAML task file.
 ///
-/// Each YAML file contains a `tasks:` list. Returns a `Vec<EvalTask>` with
-/// one entry per task, converted from the YAML schema.
-pub fn load_tasks(yaml_path: &Path) -> Result<Vec<EvalTask>> {
+/// Each YAML file contains a `tasks:` list. Returns a `LoadedTaskFile` with
+/// one entry per task and an optional skill evaluation design.
+pub fn load_tasks(yaml_path: &Path) -> Result<LoadedTaskFile> {
     let content = std::fs::read_to_string(yaml_path)
         .map_err(crate::error::SyscityError::Io)?;
     let file: YamlTaskFile = serde_yml::from_str(&content)
@@ -267,7 +282,11 @@ pub fn load_tasks(yaml_path: &Path) -> Result<Vec<EvalTask>> {
             "Cannot parse {}: {}", yaml_path.display(), e
         )))?;
 
-    file.tasks.into_iter().map(|yt| convert_task(yt)).collect()
+    let tasks: Result<Vec<EvalTask>> = file.tasks.into_iter().map(|yt| convert_task(yt)).collect();
+    Ok(LoadedTaskFile {
+        tasks: tasks?,
+        skill_design: file.skill_eval_design,
+    })
 }
 
 /// Load a named suite from a manifest file, resolving all referenced task
@@ -295,8 +314,8 @@ pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
     // 1. Flat `tasks:` list (ci_smoke.yaml style)
     for task_ref in &manifest.tasks {
         let task_path = resolve_path(manifest_dir, &task_ref.path);
-        let tasks = load_tasks(&task_path)?;
-        let filtered: Vec<(String, String)> = tasks
+        let loaded = load_tasks(&task_path)?;
+        let filtered: Vec<(String, String)> = loaded.tasks
             .into_iter()
             .filter_map(|t| {
                 let id = t.id.clone();
@@ -354,16 +373,20 @@ pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
 
     // Load all tasks
     let mut tasks = Vec::new();
+    let mut skill_designs = Vec::new();
     for entry in &all_entries {
-        let file_tasks = load_tasks(&entry.task_path)?;
+        let loaded = load_tasks(&entry.task_path)?;
+        if let Some(skill) = loaded.skill_design {
+            skill_designs.push(skill);
+        }
         if let Some(ref filter) = entry.task_filter {
-            for t in file_tasks {
+            for t in loaded.tasks {
                 if t.id.contains(filter) {
                     tasks.push(t);
                 }
             }
         } else {
-            tasks.extend(file_tasks);
+            tasks.extend(loaded.tasks);
         }
     }
 
@@ -389,6 +412,8 @@ pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
         SuiteCategory::Capability
     };
 
+    let agent_type = manifest.agent_type.as_deref().map(parse_agent_type);
+
     Ok(EvalSuite {
         id: suite_id,
         name: manifest.name.unwrap_or_default(),
@@ -398,6 +423,8 @@ pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
         trials: default_trials,
         continuous_success_required: manifest.continuous_success_required.unwrap_or(false),
         tags: vec![],
+        agent_type,
+        skill_designs,
     })
 }
 
@@ -475,6 +502,7 @@ fn convert_task(yt: YamlTask) -> Result<EvalTask> {
         failure_reason: yt.failure_reason,
         setup,
         cleanup,
+        agent_type: yt.agent_type.as_deref().map(parse_agent_type),
     })
 }
 
@@ -561,6 +589,22 @@ fn parse_category(s: &str) -> SuiteCategory {
     }
 }
 
+/// Parse an agent type string into `AgentType`.
+fn parse_agent_type(s: &str) -> AgentType {
+    match s {
+        "knowledge_qa" => AgentType::KnowledgeQA,
+        "task_execution" => AgentType::TaskExecution,
+        "reasoning_decision" => AgentType::ReasoningDecision,
+        "multi_turn_guide" => AgentType::MultiTurnGuide,
+        "creative_generation" => AgentType::CreativeGeneration,
+        "multi_agent" => AgentType::MultiAgent,
+        other => {
+            warn!("Unknown agent_type '{}' — defaulting to KnowledgeQA", other);
+            AgentType::KnowledgeQA
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════
@@ -636,7 +680,8 @@ mod tests {
     fn test_load_web_search_tasks() {
         let path = project_root().join("evals/capability/web_search.yaml");
         if path.exists() {
-            let tasks = load_tasks(&path).unwrap();
+            let loaded = load_tasks(&path).unwrap();
+            let tasks = loaded.tasks;
             assert!(!tasks.is_empty(), "Should load tasks");
             let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
             assert!(ids.contains(&"web_search_current_event"));

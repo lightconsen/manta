@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use super::types::{Critique, QualityCriteria};
+use crate::eval::agent_type::AgentType;
 use crate::providers::{CompletionRequest, CompletionResponse, Message, Provider};
 use crate::Result;
 
@@ -67,13 +68,27 @@ impl Critic {
     /// Reviews an interaction window (multiple turns with tool calls and
     /// results) to identify patterns and overall effectiveness.
     ///
+    /// `agent_type` optionally provides type-specific scoring emphasis (§02)
+    /// that guides the LLM Judge toward the most relevant quality dimensions.
+    ///
     /// Returns a [`Critique`] that includes an `observation` field extracted
     /// from the LLM's response for memory persistence.
     pub async fn evaluate_trajectory(
         &self,
         trajectory: &str,
         criteria: &QualityCriteria,
+        agent_type: Option<&AgentType>,
     ) -> Result<Critique> {
+        // Build system prompt, optionally augmented with agent-type emphasis
+        let system_prompt = if let Some(at) = agent_type {
+            format!(
+                "{}\n\n### Scoring Emphasis\n{}\n\nPay particular attention to the dimensions above when evaluating.",
+                TRAJECTORY_CRITIC_PROMPT,
+                at.scoring_emphasis(),
+            )
+        } else {
+            TRAJECTORY_CRITIC_PROMPT.to_string()
+        };
         let user_prompt = format!(
             r#"{trajectory}
 
@@ -85,7 +100,7 @@ Evaluate the trajectory above."#,
         );
 
         let response = self
-            .call_llm(TRAJECTORY_CRITIC_PROMPT, &user_prompt, Some(2000))
+            .call_llm(&system_prompt, &user_prompt, Some(2000))
             .await?;
 
         let raw = response.message.content.trim().to_string();
