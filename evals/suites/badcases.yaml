@@ -1,0 +1,11 @@
+# Badcase Regression Suite
+#
+# Tasks are loaded dynamically from evals/badcases/ by load_badcase_suite().
+# This manifest is a placeholder — actual badcase tasks are auto-collected
+# via `syscity eval run <suite> --full --collect-badcases`.
+name: "Badcase Regression Suite"
+description: "Auto-collected badcase regression suite"
+category: regression
+trials: 3
+min_pass_rate: 1.0
+tasks: []

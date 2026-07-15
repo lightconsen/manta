@@ -58,6 +58,26 @@ pub enum EvalCommands {
         /// Show detailed skill evaluation breakdown per dimension
         #[arg(long)]
         skill_breakdown: bool,
+        /// Collect badcases from failed trials into evals/badcases/
+        #[arg(long)]
+        collect_badcases: bool,
+    },
+    /// List collected badcases
+    BadcaseList {
+        /// Path to evals directory (defaults to `./evals`)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+        /// Show RCA details
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Show details of a specific badcase file
+    BadcaseShow {
+        /// Badcase task file stem (e.g. "tool_selection")
+        filter: String,
+        /// Path to evals directory (defaults to `./evals`)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
     },
 }
 
@@ -76,6 +96,7 @@ impl EvalCommands {
                 api_key,
                 base_url,
                 skill_breakdown,
+                collect_badcases,
             } => {
                 cmd_run(
                     config,
@@ -88,8 +109,15 @@ impl EvalCommands {
                     api_key.clone(),
                     base_url.clone(),
                     *skill_breakdown,
+                    *collect_badcases,
                 )
                 .await
+            }
+            Self::BadcaseList { dir, verbose } => {
+                cmd_badcase_list(dir.clone(), *verbose).await
+            }
+            Self::BadcaseShow { filter, dir } => {
+                cmd_badcase_show(filter.clone(), dir.clone()).await
             }
         }
     }
@@ -195,6 +223,7 @@ async fn cmd_run(
     api_key: Option<String>,
     base_url: Option<String>,
     skill_breakdown: bool,
+    collect_badcases: bool,
 ) -> Result<()> {
     let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
     let manifest_path = evals_dir.join("suites").join(format!("{}.yaml", suite));
@@ -219,6 +248,7 @@ async fn cmd_run(
             api_key,
             base_url,
             skill_breakdown,
+            collect_badcases,
         )
         .await;
     }
@@ -255,6 +285,91 @@ async fn cmd_run(
     );
     println!("  Use --full flag to execute (standalone, no daemon needed).");
 
+    Ok(())
+}
+
+/// `eval badcase-list` — show collected badcases.
+async fn cmd_badcase_list(dir: Option<PathBuf>, verbose: bool) -> Result<()> {
+    let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
+    let badcases_dir = evals_dir.join("badcases");
+
+    if !badcases_dir.is_dir() {
+        println!("No badcases directory found at {:?}", badcases_dir);
+        println!("  Run `syscity eval run <suite> --full --collect-badcases` to collect badcases.");
+        return Ok(());
+    }
+
+    let mut files: Vec<_> = std::fs::read_dir(&badcases_dir)
+        .map_err(crate::error::SyscityError::Io)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "yaml").unwrap_or(false))
+        .collect();
+    files.sort_by_key(|e| e.path());
+
+    if files.is_empty() {
+        println!("No badcase files found in {:?}", badcases_dir);
+        return Ok(());
+    }
+
+    println!("Badcases in {:?}:", badcases_dir);
+    for entry in &files {
+        let path = entry.path();
+        let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        match eval::load_tasks(&path) {
+            Ok(loaded) => {
+                let badcase_count = loaded.tasks.iter().filter(|t| t.failure_reason.is_some()).count();
+                println!("  {:30} {} tasks ({} badcases)", file_name, loaded.tasks.len(), badcase_count);
+                if verbose {
+                    for task in &loaded.tasks {
+                        let reason = task.failure_reason.as_deref().unwrap_or("none");
+                        println!("      {} — {}", task.id, reason);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  {:30} error: {}", file_name, e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// `eval badcase-show` — display a specific badcase file.
+async fn cmd_badcase_show(filter: String, dir: Option<PathBuf>) -> Result<()> {
+    let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
+    let badcases_dir = evals_dir.join("badcases");
+    let file_path = badcases_dir.join(format!("{}.yaml", filter));
+
+    if !file_path.exists() {
+        // Try fuzzy match
+        let mut found = false;
+        if badcases_dir.is_dir() {
+            for entry in std::fs::read_dir(&badcases_dir).map_err(crate::error::SyscityError::Io)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().map(|e| e == "yaml").unwrap_or(false) {
+                    if let Some(stem) = path.file_stem() {
+                        if stem.to_string_lossy().contains(&filter) {
+                            let content = std::fs::read_to_string(&path)
+                                .map_err(crate::error::SyscityError::Io)?;
+                            println!("=== {} ===\n{}", path.display(), content);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if !found {
+            eprintln!("❌ No badcase file matching '{}' found in {:?}", filter, badcases_dir);
+        }
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&file_path)
+        .map_err(crate::error::SyscityError::Io)?;
+    println!("=== {} ===\n{}", file_path.display(), content);
     Ok(())
 }
 

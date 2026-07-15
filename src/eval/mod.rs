@@ -36,6 +36,7 @@ pub(crate) mod action;
 pub(crate) mod standalone;
 pub(crate) mod agent_type;
 pub(crate) mod skill_scorer;
+pub(crate) mod recycle;
 
 pub use dataset::{
     EvalSuite, EvalTask, EvalTaskSource, SuiteCategory, SkillEvalDesign,
@@ -60,4 +61,7 @@ pub use scorer::{
 };
 pub use action::{
     ActionItem, ActionLevel, ImpactScope, Priority,
+};
+pub use recycle::{
+    BadcaseCollector, BadcaseRecord, BadcaseFixStatus, load_badcase_suite,
 };

@@ -16,6 +16,8 @@ use crate::agent::reflection::critic::Critic;
 use crate::agent::Agent;
 use crate::eval::harness::EvalHarness;
 use crate::eval::loader::{default_evals_dir, load_suite};
+use crate::eval::rca::RcaPipeline;
+use crate::eval::recycle::BadcaseCollector;
 use crate::gateway::config::GatewayConfig;
 use crate::providers::resolver::resolve_provider;
 use crate::tools::file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
@@ -44,6 +46,7 @@ pub async fn run_standalone_suite(
     api_key_override: Option<String>,
     base_url_override: Option<String>,
     skill_breakdown: bool,
+    collect_badcases: bool,
 ) -> Result<()> {
     let evals_dir = evals_dir.unwrap_or_else(default_evals_dir);
     let manifest_path = evals_dir.join("suites").join(format!("{}.yaml", suite_name));
@@ -173,6 +176,13 @@ pub async fn run_standalone_suite(
         None
     };
 
+    // ── Step 6b: Create optional RcaPipeline for badcase collection ─────────
+    let rca_pipeline = if collect_badcases {
+        critic.clone().map(|c| Arc::new(RcaPipeline::new(agent.clone(), Some(c))))
+    } else {
+        None
+    };
+
     // ── Step 7: Build harness ───────────────────────────────────────────────
     let effective_trials = trials_override.unwrap_or(suite.trials);
     let harness = EvalHarness::new(agent.clone(), critic)
@@ -227,6 +237,22 @@ pub async fn run_standalone_suite(
                                 }
                             }
                         }
+                    }
+                }
+
+                // ── Badcase collection ──
+                if collect_badcases {
+                    let collector = BadcaseCollector::new(
+                        rca_pipeline.clone(),
+                        Some(evals_dir.join("badcases")),
+                    );
+                    match collector.collect(&summary, task).await {
+                        Ok(n) => {
+                            if n > 0 {
+                                info!("Collected {} badcases for task '{}'", n, task.id);
+                            }
+                        }
+                        Err(e) => warn!("Badcase collection failed: {}", e),
                     }
                 }
 
