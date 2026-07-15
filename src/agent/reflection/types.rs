@@ -25,6 +25,12 @@ pub enum QualityDimension {
     Safety,
     /// How well the response follows given instructions.
     InstructionFollowing,
+    /// Context retention and anaphora resolution across turns (§03).
+    ContextRetention,
+    /// Goal switching adaptability when user changes topic (§03).
+    GoalSwitch,
+    /// Emotion & sentiment handling in responses (§03).
+    EmotionHandling,
     /// A custom dimension with a user-provided name.
     Custom(String),
 }
@@ -40,6 +46,9 @@ impl QualityDimension {
             Self::Actionable => "Actionable",
             Self::Safety => "Safety",
             Self::InstructionFollowing => "Instruction Following",
+            Self::ContextRetention => "Context Retention",
+            Self::GoalSwitch => "Goal Switch",
+            Self::EmotionHandling => "Emotion Handling",
             Self::Custom(name) => name.as_str(),
         }
     }

@@ -43,8 +43,9 @@ pub use dataset::{
     FailureMode, DegradeExpectation, ParamMatcher,
 };
 pub use harness::{
-    EvalHarness, TrialResult, ToolCallSummary, EvalSummary,
+    EvalHarness, TrialResult, TurnResult, ToolCallSummary, EvalSummary,
 };
+pub use dataset::TurnInput;
 pub use loader::{list_suites, load_suite, load_tasks, default_evals_dir, LoadedTaskFile};
 pub use agent_type::AgentType;
 pub use skill_scorer::{SkillScorer, SkillCheckResult, TriggerCheckResult, ExecutionCheckResult, QualityCheckResult, ResilienceCheckResult};pub use comparison::{

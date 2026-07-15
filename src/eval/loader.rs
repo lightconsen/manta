@@ -25,7 +25,7 @@ use tracing::warn;
 use crate::agent::reflection::types::{QualityCriteria, QualityDimension};
 use crate::eval::agent_type::AgentType;
 use crate::eval::dataset::{
-    EvalSuite, EvalTask, EvalTaskSource, SetupCommand, SkillEvalDesign, SuiteCategory,
+    EvalSuite, EvalTask, EvalTaskSource, SetupCommand, SkillEvalDesign, SuiteCategory, TurnInput,
 };
 use crate::goal::condition::GoalCondition;
 use crate::Result;
@@ -67,6 +67,12 @@ struct YamlTask {
     /// Optional agent type for type-specific scoring emphasis (§02).
     #[serde(default)]
     agent_type: Option<String>,
+    /// Multi-turn input sequence (§03).
+    #[serde(default)]
+    turns: Vec<YamlTurnInput>,
+    /// Session-level conditions (§03).
+    #[serde(default)]
+    session_conditions: Vec<YamlCondition>,
 }
 
 /// A condition entry within a task.
@@ -103,6 +109,14 @@ struct YamlCriteria {
 #[derive(Debug, Deserialize)]
 struct YamlCommand {
     command: String,
+}
+
+/// A single turn in a multi-turn task YAML (§03).
+#[derive(Debug, Deserialize)]
+struct YamlTurnInput {
+    user_message: String,
+    #[serde(default)]
+    conditions: Vec<YamlCondition>,
 }
 
 // ── Suite-manifest intermediate types ───────────────────────────────────
@@ -490,6 +504,17 @@ fn convert_task(yt: YamlTask) -> Result<EvalTask> {
         _ => EvalTaskSource::ExpertDesign,
     };
 
+    let turns: Vec<TurnInput> = yt.turns.into_iter().map(|yti| TurnInput {
+        user_message: yti.user_message,
+        conditions: yti.conditions.into_iter().filter_map(convert_condition).collect(),
+    }).collect();
+
+    let session_conditions: Vec<GoalCondition> = yt
+        .session_conditions
+        .into_iter()
+        .filter_map(convert_condition)
+        .collect();
+
     Ok(EvalTask {
         id: yt.id,
         description: yt.description,
@@ -503,6 +528,8 @@ fn convert_task(yt: YamlTask) -> Result<EvalTask> {
         setup,
         cleanup,
         agent_type: yt.agent_type.as_deref().map(parse_agent_type),
+        turns,
+        session_conditions,
     })
 }
 
@@ -563,6 +590,9 @@ fn parse_dimension(s: &str) -> QualityDimension {
         "actionable" => QualityDimension::Actionable,
         "safety" => QualityDimension::Safety,
         "instruction_following" => QualityDimension::InstructionFollowing,
+        "context_retention" => QualityDimension::ContextRetention,
+        "goal_switch" => QualityDimension::GoalSwitch,
+        "emotion_handling" => QualityDimension::EmotionHandling,
         other => QualityDimension::Custom(other.to_string()),
     }
 }

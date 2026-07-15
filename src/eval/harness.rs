@@ -26,7 +26,7 @@ use crate::channels::{
 use crate::core::models::Id;
 use crate::eval::dataset::{EvalTask, SkillEvalDesign};
 use crate::eval::skill_scorer::{SkillCheckResult, SkillScorer};
-use crate::goal::condition::CheckResult;
+use crate::goal::condition::{CheckResult, GoalCondition};
 use crate::Result;
 
 // ── Trial-level types ───────────────────────────────────────────────────
@@ -38,6 +38,25 @@ pub struct ToolCallSummary {
     pub args: String,
     pub result: String,
     pub success: bool,
+    pub duration_ms: u64,
+}
+
+/// Result of a single turn within a multi-turn trial (§03).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnResult {
+    /// 0-based turn index within the trial.
+    pub turn_index: usize,
+    /// The user message that initiated this turn.
+    pub user_message: String,
+    /// Agent's text response for this turn.
+    pub response: String,
+    /// Tool calls made during this turn.
+    pub tool_calls: Vec<ToolCallSummary>,
+    /// Per-turn condition check results.
+    pub condition_results: Vec<CheckResult>,
+    /// Whether all per-turn conditions passed.
+    pub conditions_passed: bool,
+    /// Wall-clock duration for this turn in milliseconds.
     pub duration_ms: u64,
 }
 
@@ -70,8 +89,19 @@ pub struct TrialResult {
     /// Whether skill checks passed (true when no skill designs).
     pub skill_passed: bool,
 
-    /// Composite pass/fail (conditions_passed && critique_passed && skill_passed).
+    /// Composite pass/fail (conditions_passed && critique_passed && skill_passed && session_conditions_passed).
     pub passed: bool,
+
+    // ── Session-level (§03) ──
+
+    /// Per-turn results for multi-turn tasks.
+    #[serde(default)]
+    pub turn_results: Vec<TurnResult>,
+    /// Session-level condition results.
+    #[serde(default)]
+    pub session_condition_results: Vec<CheckResult>,
+    /// Whether all session-level conditions passed.
+    pub session_conditions_passed: bool,
 }
 
 /// Simplified token usage for reporting.
@@ -254,7 +284,13 @@ impl std::fmt::Display for EvalSummary {
                 .map(|c| format!("{:.2}", c.overall_score))
                 .unwrap_or_else(|| "N/A".to_string());
             let skill_s = if trial.skill_passed { "✓" } else { "✗" };
-            writeln!(f, "    #{:<3} {}  (cond={}, critique={}, skill={})", i, status, cond_s, crit_s, skill_s)?;
+            let session_s = if trial.session_conditions_passed { "✓" } else { "✗" };
+            let turn_info = if trial.turn_results.len() > 1 {
+                format!(" {} turns", trial.turn_results.len())
+            } else {
+                String::new()
+            };
+            writeln!(f, "    #{:<3} {}  (cond={}, critique={}, skill={}, session={}){}", i, status, cond_s, crit_s, skill_s, session_s, turn_info)?;
         }
         Ok(())
     }
@@ -338,6 +374,9 @@ impl EvalHarness {
                         critique_passed: false,
                         skill_results: None,
                         skill_passed: true,
+                        turn_results: vec![],
+                        session_condition_results: vec![],
+                        session_conditions_passed: true,
                         passed: false,
                     });
                 }
@@ -350,81 +389,133 @@ impl EvalHarness {
     }
 
     /// Execute a single trial with a fresh conversation context.
+    ///
+    /// For multi-turn tasks (EvalTask.turns non-empty), sends each turn
+    /// sequentially within the same conversation and collects per-turn
+    /// results. For single-turn tasks (backward compat), behavior is
+    /// identical to the previous implementation.
     async fn run_single_trial(&self, task: &EvalTask, trial: usize) -> Result<TrialResult> {
         let start = std::time::Instant::now();
         let conv_id = ConversationId::new(format!("eval_{}_{}", task.id, trial));
-
-        // ── Step 1: Send message to agent with tool execution ──────────
-        let msg = IncomingMessage {
-            id: Id::new(),
-            user_id: UserId::new(task.user_id.clone()),
-            conversation_id: conv_id.clone(),
-            content: task.input.clone(),
-            attachments: vec![],
-            metadata: MessageMetadata::new(),
-            provenance: InputProvenance::ExternalUser {
-                channel: "eval".into(),
-                is_direct: true,
-            },
-            mention: MentionState::DirectMessage,
-        };
-        // Use process_message_with_progress (not plain process_message)
-        // because process_message calls get_completion which skips the
-        // tool-calling loop — no tools would be executed.
-        let noop_cb: crate::agent::ProgressCallback = Arc::new(|_| {
-            Box::pin(async {})
-        });
-        let outgoing = self.agent.process_message_with_progress(msg, noop_cb).await?;
-
-        // ── Step 2: GoalCondition checks ──────────────────────────────
-        // Write response and tool info to temp files for condition checks
         let tmp = std::env::temp_dir().join(format!("eval_{}_{}", task.id, trial));
         tokio::fs::create_dir_all(&tmp).await?;
-        let response_path = tmp.join("response.txt");
-        let tools_path = tmp.join("tools.json");
 
-        let tool_summaries = Self::collect_tool_calls_from_outgoing(&outgoing);
-        let all_tool_summaries = self.collect_all_tool_calls(&task.id, trial).await;
+        let noop_cb: crate::agent::ProgressCallback = Arc::new(|_| Box::pin(async {}));
 
-        // Use the richer summaries from thread_map if available
-        let tool_calls = if all_tool_summaries.is_empty() {
-            tool_summaries
+        // ── Step 1: Determine turns to execute ────────────────────────
+        let is_multi_turn = !task.turns.is_empty();
+        let turn_specs: Vec<(&str, Option<&Vec<GoalCondition>>)> = if is_multi_turn {
+            task.turns
+                .iter()
+                .map(|t| (t.user_message.as_str(), Some(&t.conditions)))
+                .collect()
         } else {
-            all_tool_summaries
+            vec![(&task.input, None)]
         };
 
-        // Write artifacts to trial-specific directory
-        tokio::fs::write(&response_path, &outgoing.content).await?;
+        // ── Step 2: Execute turns sequentially ─────────────────────────
+        let mut turn_results: Vec<TurnResult> = Vec::new();
+        let mut all_tool_calls: Vec<ToolCallSummary> = Vec::new();
+        let mut final_response = String::new();
+
+        for (i, (user_message, per_turn_conds)) in turn_specs.iter().enumerate() {
+            let turn_start = std::time::Instant::now();
+
+            // 2a. Send message (same conversation_id across all turns)
+            let msg = IncomingMessage {
+                id: Id::new(),
+                user_id: UserId::new(task.user_id.clone()),
+                conversation_id: conv_id.clone(),
+                content: user_message.to_string(),
+                attachments: vec![],
+                metadata: MessageMetadata::new(),
+                provenance: InputProvenance::ExternalUser {
+                    channel: "eval".into(),
+                    is_direct: true,
+                },
+                mention: MentionState::DirectMessage,
+            };
+            let outgoing = self.agent.process_message_with_progress(msg, noop_cb.clone()).await?;
+
+            // 2b. Collect tool calls for this turn from the outgoing message
+            let turn_tool_calls = Self::collect_tool_calls_from_outgoing(&outgoing);
+            final_response = outgoing.content.clone();
+
+            // Accumulate all tool calls
+            all_tool_calls.extend(turn_tool_calls.clone());
+
+            // 2c. Write per-turn artifacts
+            let turn_dir = tmp.join(format!("turn_{}", i));
+            tokio::fs::create_dir_all(&turn_dir).await?;
+            tokio::fs::write(turn_dir.join("response.txt"), &outgoing.content).await?;
+            tokio::fs::write(
+                turn_dir.join("tools.json"),
+                serde_json::to_string(&turn_tool_calls)?,
+            )
+            .await?;
+
+            // 2d. Check per-turn conditions
+            let mut turn_condition_results = Vec::new();
+            if let Some(conds) = per_turn_conds {
+                for condition in *conds {
+                    let substituted = condition.substitute_trial_dir(&tmp);
+                    let result = substituted.check().await;
+                    turn_condition_results.push(result);
+                }
+            }
+            let turn_conditions_passed = turn_condition_results.iter().all(|r| r.passed);
+
+            // 2e. Accumulate turn-level result
+            let turn_ms = turn_start.elapsed().as_millis() as u64;
+            turn_results.push(TurnResult {
+                turn_index: i,
+                user_message: user_message.to_string(),
+                response: outgoing.content,
+                tool_calls: turn_tool_calls,
+                condition_results: turn_condition_results,
+                conditions_passed: turn_conditions_passed,
+                duration_ms: turn_ms,
+            });
+        }
+
+        // ── Step 3: Write session-level artifacts ──────────────────────
+        tokio::fs::write(tmp.join("response.txt"), &final_response).await?;
         tokio::fs::write(
-            &tools_path,
-            serde_json::to_string(&tool_calls)?,
+            tmp.join("tools.json"),
+            serde_json::to_string(&all_tool_calls)?,
         )
         .await?;
+        tokio::fs::write(tmp.join("eval_trace.log"), format!("{:?}", all_tool_calls)).await?;
 
-        // Also write to eval_trace.log in trial dir (replaces old /tmp/ paths)
-        tokio::fs::write(tmp.join("eval_trace.log"), format!("{:?}", tool_calls)).await?;
-
-        // Check conditions with trial_dir substitution
+        // ── Step 4: GoalCondition checks (backward compat) ─────────────
         let mut condition_results = Vec::new();
         for condition in &task.conditions {
             let substituted = condition.substitute_trial_dir(&tmp);
             let result = substituted.check().await;
             condition_results.push(result);
         }
-
         let conditions_passed = condition_results.iter().all(|r| r.passed);
 
-        // ── Step 2b: Skill evaluation (§02) ───────────────────────────
-        let (skill_results, skill_passed) = self.evaluate_skills(&tool_calls, &outgoing.content).await;
+        // ── Step 5: Session-level condition checks (§03) ───────────────
+        let mut session_condition_results = Vec::new();
+        for condition in &task.session_conditions {
+            let substituted = condition.substitute_trial_dir(&tmp);
+            let result = substituted.check().await;
+            session_condition_results.push(result);
+        }
+        let session_conditions_passed = session_condition_results.iter().all(|r| r.passed);
 
-        // ── Step 3: Build trajectory ──────────────────────────────────
+        // ── Step 6: Skill evaluation (§02) ─────────────────────────────
+        let (skill_results, skill_passed) = self.evaluate_skills(&all_tool_calls, &final_response).await;
+
+        // ── Step 7: Build trajectory ──────────────────────────────────
         let turns = self.get_thread_turns(&conv_id.0).await;
 
         let critique = if let Some(ref turns) = turns {
             let trajectory = Self::build_trajectory_from_turns(turns);
             let trajectory_text = trajectory.format_for_prompt();
 
-            // ── Step 4: Critic evaluation ─────────────────────────────
+            // ── Step 8: Critic evaluation ────────────────────────────
             if let Some(ref critic) = self.critic {
                 if let Some(ref criteria) = task.criteria {
                     critic
@@ -444,8 +535,7 @@ impl EvalHarness {
         let critique_passed = critique.as_ref().map(|c| c.passed).unwrap_or(true);
         let elapsed = start.elapsed();
 
-        // ── Step 5: Cleanup ───────────────────────────────────────────
-        // Remove trial conversation from thread_map
+        // ── Step 9: Cleanup ──────────────────────────────────────────
         {
             let mut map = self.agent.thread_map.lock().await;
             map.remove(&conv_id.0);
@@ -453,8 +543,8 @@ impl EvalHarness {
 
         Ok(TrialResult {
             trial_index: trial,
-            response: outgoing.content,
-            tool_calls,
+            response: final_response,
+            tool_calls: all_tool_calls,
             token_usage: None,
             duration_ms: elapsed.as_millis() as u64,
             condition_results,
@@ -463,7 +553,10 @@ impl EvalHarness {
             critique_passed,
             skill_results,
             skill_passed,
-            passed: conditions_passed && critique_passed && skill_passed,
+            passed: conditions_passed && critique_passed && skill_passed && session_conditions_passed,
+            turn_results,
+            session_condition_results,
+            session_conditions_passed,
         })
     }
 
@@ -514,31 +607,6 @@ impl EvalHarness {
                     success: true,
                     duration_ms: 0,
                 });
-            }
-        }
-        summaries
-    }
-
-    /// Collect detailed tool call records from thread_map turns.
-    ///
-    /// `process_message_with_progress` transfers records from the context's
-    /// accumulator into `turn.tool_calls` before returning, so we read from
-    /// the turn-level field here.
-    async fn collect_all_tool_calls(&self, task_id: &str, trial: usize) -> Vec<ToolCallSummary> {
-        let conv_id = format!("eval_{}_{}", task_id, trial);
-        let mut summaries = vec![];
-
-        if let Some(turns) = self.get_thread_turns(&conv_id).await {
-            for turn in &turns {
-                for tc in &turn.tool_calls {
-                    summaries.push(ToolCallSummary {
-                        name: tc.name.clone(),
-                        args: tc.args.clone(),
-                        result: tc.result.clone(),
-                        success: tc.success,
-                        duration_ms: tc.duration_ms,
-                    });
-                }
             }
         }
         summaries
@@ -647,6 +715,9 @@ mod tests {
                 critique_passed: true,
                 skill_results: None,
                 skill_passed: true,
+                turn_results: vec![],
+                session_condition_results: vec![],
+                session_conditions_passed: true,
                 passed: true,
             },
             TrialResult {
@@ -661,6 +732,9 @@ mod tests {
                 critique_passed: true,
                 skill_results: None,
                 skill_passed: true,
+                turn_results: vec![],
+                session_condition_results: vec![],
+                session_conditions_passed: true,
                 passed: true,
             },
         ];
@@ -705,6 +779,9 @@ mod tests {
             critique_passed: false,
             skill_results: None,
             skill_passed: true,
+            turn_results: vec![],
+            session_condition_results: vec![],
+            session_conditions_passed: true,
             passed: false,
         }
     }

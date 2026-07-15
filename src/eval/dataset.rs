@@ -44,9 +44,21 @@ pub enum SuiteCategory {
     MultiTurnHard,
 }
 
+/// A single turn in a multi-turn evaluation task (§03).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TurnInput {
+    /// User message for this turn.
+    pub user_message: String,
+    /// Per-turn GoalCondition checks (e.g. tool was called in this turn).
+    #[serde(default)]
+    pub conditions: Vec<GoalCondition>,
+}
+
 /// A single evaluation task.
 ///
-/// Maps to one `Agent.process_message()` invocation across N trials.
+/// For single-turn tasks (the default), `input` is used directly.
+/// For multi-turn tasks, `turns` overrides `input` and each turn is sent
+/// sequentially within the same conversation for session-level evaluation (§03).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EvalTask {
     /// Unique task identifier.
@@ -54,7 +66,7 @@ pub struct EvalTask {
     /// Human-readable description of the scenario.
     #[serde(default)]
     pub description: String,
-    /// User message sent to the agent.
+    /// User message sent to the agent (single-turn, backward compat).
     pub input: String,
     /// Optional user ID (defaults to "eval_user").
     #[serde(default = "default_user_id")]
@@ -83,6 +95,12 @@ pub struct EvalTask {
     /// Agent type for type-specific scoring emphasis (§02).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_type: Option<AgentType>,
+    /// Multi-turn input sequence (§03). Overrides `input` when non-empty.
+    #[serde(default)]
+    pub turns: Vec<TurnInput>,
+    /// Session-level conditions checked after all turns complete (§03).
+    #[serde(default)]
+    pub session_conditions: Vec<GoalCondition>,
 }
 
 fn default_user_id() -> String {
@@ -104,6 +122,8 @@ impl Default for EvalTask {
             setup: Vec::new(),
             cleanup: Vec::new(),
             agent_type: None,
+            turns: Vec::new(),
+            session_conditions: Vec::new(),
         }
     }
 }

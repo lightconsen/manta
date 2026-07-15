@@ -305,6 +305,9 @@ mod tests {
             critique_passed: false,
             skill_results: None,
             skill_passed: true,
+            turn_results: vec![],
+            session_condition_results: vec![],
+            session_conditions_passed: true,
             passed: false,
         }
     }

@@ -82,7 +82,11 @@ impl AgentType {
                 "Focus on context retention, persona consistency, and \
                  progressive understanding across turns. Penalize forgetting \
                  earlier context, inconsistent responses, or failing to \
-                 track user preferences."
+                 track user preferences. Additionally evaluate emotion and \
+                 sentiment handling — does the agent acknowledge user \
+                 frustration, excitement, or hesitation? Also detect goal \
+                 switching adaptability — when the user changes topic, does \
+                 the agent smoothly transition without losing previous context?"
             }
             Self::CreativeGeneration => {
                 "Focus on format compliance, creativity within constraints, \
@@ -103,7 +107,7 @@ impl AgentType {
             Self::KnowledgeQA => "Accuracy, Citation Faithfulness, Hallucination Avoidance",
             Self::TaskExecution => "Tool Selection, Parameter Accuracy, Error Recovery",
             Self::ReasoningDecision => "Logical Soundness, Evidence Use, Trade-off Analysis",
-            Self::MultiTurnGuide => "Context Retention, Persona Consistency, Progressive Understanding",
+            Self::MultiTurnGuide => "Context Retention, Emotion Handling, Goal Switching, Persona Consistency",
             Self::CreativeGeneration => "Format Compliance, Creativity, Structural Completeness",
             Self::MultiAgent => "Sub-agent Delegation, Role Separation, Message Fidelity",
         }
