@@ -55,6 +55,9 @@ pub enum EvalCommands {
         /// API base URL (for custom/self-hosted providers)
         #[arg(long)]
         base_url: Option<String>,
+        /// Show detailed skill evaluation breakdown per dimension
+        #[arg(long)]
+        skill_breakdown: bool,
     },
 }
 
@@ -72,6 +75,7 @@ impl EvalCommands {
                 model,
                 api_key,
                 base_url,
+                skill_breakdown,
             } => {
                 cmd_run(
                     config,
@@ -83,6 +87,7 @@ impl EvalCommands {
                     model.clone(),
                     api_key.clone(),
                     base_url.clone(),
+                    *skill_breakdown,
                 )
                 .await
             }
@@ -189,6 +194,7 @@ async fn cmd_run(
     model: Option<String>,
     api_key: Option<String>,
     base_url: Option<String>,
+    skill_breakdown: bool,
 ) -> Result<()> {
     let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
     let manifest_path = evals_dir.join("suites").join(format!("{}.yaml", suite));
@@ -212,6 +218,7 @@ async fn cmd_run(
             model,
             api_key,
             base_url,
+            skill_breakdown,
         )
         .await;
     }

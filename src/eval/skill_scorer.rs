@@ -4,15 +4,18 @@
 //! 1. **Trigger** — did the agent call (or not call) the expected tool?
 //! 2. **Execution** — required tools present? forbidden tools absent? params correct?
 //! 3. **Quality** — does the response meet must_contain / must_not_contain / min_length?
-//! 4. **Resilience** — (stub) fault injection checks.
+//! 4. **Resilience** — retroactive detection of tool failures and degradation checks.
 //!
 //! This runs alongside GoalCondition (Code Scorer) and Critic (LLM Judge)
 //! as an additional scoring layer within `EvalHarness`.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::eval::dataset::{
-    ExecutionCase, ParamMatcher, QualityCase, SkillEvalDesign, TriggerCase,
+    DegradeExpectation, ExecutionCase, FailureMode, ParamMatcher, QualityCase,
+    ResilienceCase, SkillEvalDesign, TriggerCase,
 };
 use crate::eval::harness::ToolCallSummary;
 
@@ -116,12 +119,10 @@ impl SkillScorer {
             result.quality_results.push(r);
         }
 
-        // 4. Resilience checks (stub)
-        for _rc in &design.resilience {
-            result.resilience_results.push(ResilienceCheckResult {
-                passed: true,
-                detail: "Resilience check not yet implemented (fault injection required)".into(),
-            });
+        // 4. Resilience checks (retroactive — detect failures from tool call results)
+        for rc in &design.resilience {
+            let r = Self::evaluate_resilience(rc, tool_calls, response);
+            result.resilience_results.push(r);
         }
 
         result.compute_passed();
@@ -338,6 +339,91 @@ impl SkillScorer {
             name: qc.name.clone(),
             passed: all_pass,
             detail: details.join("; "),
+        }
+    }
+
+    // ── Resilience (§04) ───────────────────────────────────────────────
+
+    /// Evaluate a single resilience case via retroactive failure detection.
+    ///
+    /// Checks whether the expected failure mode occurred in the tool call
+    /// results, and whether the agent handled it with the expected degradation.
+    fn evaluate_resilience(
+        rc: &ResilienceCase,
+        tool_calls: &[ToolCallSummary],
+        response: &str,
+    ) -> ResilienceCheckResult {
+        let failure_occurred = Self::detect_failure(&rc.inject, tool_calls);
+
+        if !failure_occurred {
+            return ResilienceCheckResult {
+                passed: true,
+                detail: format!(
+                    "Failure mode '{:?}' not observed — tool calls all succeeded. \
+                     Consider whether the test input triggers the expected failure.",
+                    rc.inject
+                ),
+            };
+        }
+
+        let handled = Self::check_degradation(&rc.expect, tool_calls, response);
+
+        if handled {
+            ResilienceCheckResult {
+                passed: true,
+                detail: format!(
+                    "Failure '{:?}' occurred and was handled with expected degradation '{:?}'",
+                    rc.inject, rc.expect
+                ),
+            }
+        } else {
+            ResilienceCheckResult {
+                passed: false,
+                detail: format!(
+                    "Failure '{:?}' occurred but expected degradation '{:?}' was not observed",
+                    rc.inject, rc.expect
+                ),
+            }
+        }
+    }
+
+    /// Detect whether a specific `FailureMode` occurred in tool call results.
+    fn detect_failure(mode: &FailureMode, tool_calls: &[ToolCallSummary]) -> bool {
+        match mode {
+            FailureMode::Timeout => {
+                tool_calls.iter().any(|tc| {
+                    !tc.success && tc.result.is_empty() || tc.duration_ms > 30_000
+                })
+            }
+            FailureMode::Error(pattern) => {
+                tool_calls.iter().any(|tc| !tc.success && tc.result.contains(pattern.as_str()))
+            }
+            FailureMode::EmptyResult => {
+                tool_calls.iter().any(|tc| tc.result.trim().is_empty())
+            }
+        }
+    }
+
+    /// Check whether the agent's degradation behavior meets expectations.
+    fn check_degradation(
+        expect: &DegradeExpectation,
+        tool_calls: &[ToolCallSummary],
+        response: &str,
+    ) -> bool {
+        match expect {
+            DegradeExpectation::GracefulMessage(expected_msg) => {
+                response.contains(expected_msg.as_str())
+            }
+            DegradeExpectation::Retry => {
+                let mut name_counts: HashMap<&str, usize> = HashMap::new();
+                for tc in tool_calls {
+                    *name_counts.entry(tc.name.as_str()).or_insert(0) += 1;
+                }
+                name_counts.values().any(|&count| count > 1)
+            }
+            DegradeExpectation::Fallback(fallback_tool) => {
+                tool_calls.iter().any(|tc| tc.name == *fallback_tool)
+            }
         }
     }
 }
@@ -640,5 +726,146 @@ mod tests {
         let result = rt.block_on(SkillScorer::evaluate(&design, &calls, "here is the result"));
         assert!(result.passed, "trigger={:?}, exec={:?}, quality={:?}",
             result.trigger_results, result.execution_results, result.quality_results);
+    }
+
+    // ── Resilience ────────────────────────────────────────────────────
+
+    fn make_failed_tool(name: &str, result: &str, duration_ms: u64) -> ToolCallSummary {
+        ToolCallSummary {
+            name: name.into(),
+            args: String::new(),
+            result: result.into(),
+            success: false,
+            duration_ms,
+        }
+    }
+
+    #[test]
+    fn test_detect_timeout_by_duration() {
+        let calls = vec![make_failed_tool("web_search", "timeout", 35_000)];
+        assert!(SkillScorer::detect_failure(&FailureMode::Timeout, &calls));
+    }
+
+    #[test]
+    fn test_detect_timeout_by_empty_result() {
+        let calls = vec![make_failed_tool("web_search", "", 0)];
+        assert!(SkillScorer::detect_failure(&FailureMode::Timeout, &calls));
+    }
+
+    #[test]
+    fn test_detect_error() {
+        let calls = vec![make_failed_tool("web_search", "API rate limit exceeded", 100)];
+        assert!(SkillScorer::detect_failure(
+            &FailureMode::Error("rate limit".into()),
+            &calls,
+        ));
+    }
+
+    #[test]
+    fn test_detect_error_no_match() {
+        let calls = vec![make_failed_tool("web_search", "connection refused", 100)];
+        assert!(!SkillScorer::detect_failure(
+            &FailureMode::Error("timeout".into()),
+            &calls,
+        ));
+    }
+
+    #[test]
+    fn test_detect_empty_result() {
+        let mut tc = make_failed_tool("web_search", "", 100);
+        tc.success = true; // succeeded but returned nothing
+        let calls = vec![tc];
+        assert!(SkillScorer::detect_failure(&FailureMode::EmptyResult, &calls));
+    }
+
+    #[test]
+    fn test_degradation_graceful_message() {
+        let calls = vec![];
+        assert!(SkillScorer::check_degradation(
+            &DegradeExpectation::GracefulMessage("抱歉，没有找到".into()),
+            &calls,
+            "抱歉，没有找到相关结果",
+        ));
+    }
+
+    #[test]
+    fn test_degradation_graceful_message_fail() {
+        let calls = vec![];
+        assert!(!SkillScorer::check_degradation(
+            &DegradeExpectation::GracefulMessage("try again".into()),
+            &calls,
+            "some unrelated response",
+        ));
+    }
+
+    #[test]
+    fn test_degradation_retry() {
+        let calls = vec![
+            make_tool("web_search", "query"),
+            make_tool("web_fetch", "url"),
+            make_tool("web_search", "query"), // retry
+        ];
+        assert!(SkillScorer::check_degradation(
+            &DegradeExpectation::Retry,
+            &calls,
+            "",
+        ));
+    }
+
+    #[test]
+    fn test_degradation_no_retry() {
+        let calls = vec![
+            make_tool("web_search", "query"),
+            make_tool("web_fetch", "url"),
+        ];
+        assert!(!SkillScorer::check_degradation(
+            &DegradeExpectation::Retry,
+            &calls,
+            "",
+        ));
+    }
+
+    #[test]
+    fn test_degradation_fallback() {
+        let calls = vec![make_tool("web_fetch", "url")];
+        assert!(SkillScorer::check_degradation(
+            &DegradeExpectation::Fallback("web_fetch".into()),
+            &calls,
+            "",
+        ));
+    }
+
+    #[test]
+    fn test_resilience_no_failure_detected() {
+        let rc = crate::eval::dataset::ResilienceCase {
+            inject: FailureMode::Timeout,
+            expect: DegradeExpectation::GracefulMessage("sorry".into()),
+        };
+        let calls = vec![make_tool("web_search", "query")]; // all healthy
+        let r = SkillScorer::evaluate_resilience(&rc, &calls, "hello");
+        assert!(r.passed, "{}", r.detail);
+        assert!(r.detail.contains("not observed"));
+    }
+
+    #[test]
+    fn test_resilience_failure_handled() {
+        let rc = crate::eval::dataset::ResilienceCase {
+            inject: FailureMode::Timeout,
+            expect: DegradeExpectation::GracefulMessage("sorry".into()),
+        };
+        let calls = vec![make_failed_tool("web_search", "", 35_000)];
+        let r = SkillScorer::evaluate_resilience(&rc, &calls, "sorry, something went wrong");
+        assert!(r.passed, "{}", r.detail);
+    }
+
+    #[test]
+    fn test_resilience_failure_unhandled() {
+        let rc = crate::eval::dataset::ResilienceCase {
+            inject: FailureMode::Error("timeout".into()),
+            expect: DegradeExpectation::GracefulMessage("please retry".into()),
+        };
+        let calls = vec![make_failed_tool("web_search", "timeout error", 1_000)];
+        let r = SkillScorer::evaluate_resilience(&rc, &calls, "unrelated response");
+        assert!(!r.passed, "{}", r.detail);
     }
 }

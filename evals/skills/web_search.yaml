@@ -8,6 +8,34 @@
 #   Edge Cases — 边界条件处理
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Four-dimensional skill evaluation design for SkillScorer (§04).
+skill_eval_design:
+  trigger:
+    - should_trigger:
+        input: "2026年NBA总冠军是哪支球队？"
+        expect_tool: "web_search"
+    - should_not_trigger:
+        input: "1+1等于几？"
+        expect_no_tool: "web_search"
+  execution:
+    - scenario: "搜索参数包含核心查询词"
+      required_tools: ["web_search"]
+      forbidden_tools: ["shell"]
+      required_params:
+        - key: "query"
+          contains: "Rust"
+    - scenario: "不使用危险命令"
+      forbidden_tools: ["shell"]
+  quality:
+    - name: "回复应包含搜索结果"
+      must_contain: ["NBA"]
+      min_length: 10
+  resilience:
+    - inject: !empty_result
+      expect: !graceful "抱歉"
+    - inject: !timeout
+      expect: !retry
+
 tasks:
   # ── Trigger: Should trigger ────────────────────────────────────────────
   - id: skill_ws_trigger_should

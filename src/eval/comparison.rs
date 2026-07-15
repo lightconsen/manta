@@ -323,6 +323,12 @@ mod tests {
             avg_dimension_scores: std::collections::HashMap::new(),
             avg_duration_ms: 0.0,
             avg_token_usage: None,
+            skill_pass_rate: 1.0,
+            skill_trigger_pass_rate: 1.0,
+            skill_execution_pass_rate: 1.0,
+            skill_quality_pass_rate: 1.0,
+            skill_resilience_pass_rate: 1.0,
+            skill_sub_metrics: std::collections::HashMap::new(),
             per_trial: vec![],
             completed_at: SystemTime::now(),
         }

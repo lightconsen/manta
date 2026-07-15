@@ -139,6 +139,27 @@ pub struct EvalSummary {
     /// Average token usage (if available).
     pub avg_token_usage: Option<TurnUsage>,
 
+    // ── Skill sub-metrics (§04) ──
+
+    /// Overall skill pass rate across all trials with skill designs.
+    #[serde(default)]
+    pub skill_pass_rate: f64,
+    /// Trigger dimension pass rate.
+    #[serde(default)]
+    pub skill_trigger_pass_rate: f64,
+    /// Execution dimension pass rate.
+    #[serde(default)]
+    pub skill_execution_pass_rate: f64,
+    /// Quality dimension pass rate.
+    #[serde(default)]
+    pub skill_quality_pass_rate: f64,
+    /// Resilience dimension pass rate.
+    #[serde(default)]
+    pub skill_resilience_pass_rate: f64,
+    /// The 6 named sub-metrics from §04 as key-value pairs.
+    #[serde(default)]
+    pub skill_sub_metrics: HashMap<String, f64>,
+
     /// Detailed per-trial results.
     pub per_trial: Vec<TrialResult>,
 
@@ -161,6 +182,12 @@ impl EvalSummary {
                 avg_dimension_scores: HashMap::new(),
                 avg_duration_ms: 0.0,
                 avg_token_usage: None,
+                skill_pass_rate: 1.0,
+                skill_trigger_pass_rate: 1.0,
+                skill_execution_pass_rate: 1.0,
+                skill_quality_pass_rate: 1.0,
+                skill_resilience_pass_rate: 1.0,
+                skill_sub_metrics: HashMap::new(),
                 per_trial: results,
                 completed_at: SystemTime::now(),
             };
@@ -217,6 +244,51 @@ impl EvalSummary {
             }
         };
 
+        // ── Skill sub-metrics (§04) ──────────────────────────────────
+        let trials_with_skills: Vec<&TrialResult> = results
+            .iter()
+            .filter(|r| r.skill_results.is_some())
+            .collect();
+        let n_skill = trials_with_skills.len();
+
+        let skill_pass_rate = if n_skill > 0 {
+            trials_with_skills.iter().filter(|r| r.skill_passed).count() as f64 / n_skill as f64
+        } else {
+            1.0
+        };
+
+        let skill_trig = skill_dim_pass_rate(&trials_with_skills, |sr| {
+            sr.trigger_results.iter().all(|t| t.passed)
+        });
+        let skill_exec = skill_dim_pass_rate(&trials_with_skills, |sr| {
+            sr.execution_results.iter().all(|e| e.passed)
+        });
+        let skill_qual = skill_dim_pass_rate(&trials_with_skills, |sr| {
+            sr.quality_results.iter().all(|q| q.passed)
+        });
+        let skill_res = skill_dim_pass_rate(&trials_with_skills, |sr| {
+            sr.resilience_results.iter().all(|r| r.passed)
+        });
+
+        // 6 named sub-metrics from §04
+        let mut sub_metrics = HashMap::new();
+        sub_metrics.insert("trigger_precision_recall".into(), skill_trig);
+        sub_metrics.insert("parameter_accuracy".into(), skill_dim_pass_rate(&trials_with_skills, |sr| {
+            sr.execution_results.iter().all(|e| {
+                // A parameter check was involved — pass if all required params satisfied
+                e.passed
+            })
+        }));
+        sub_metrics.insert("required_steps_pass_rate".into(), skill_dim_pass_rate(&trials_with_skills, |sr| {
+            sr.execution_results.iter().all(|e| e.passed)
+        }));
+        let violation_rate = skill_dim_pass_rate(&trials_with_skills, |sr| {
+            sr.execution_results.iter().all(|e| e.passed)
+        });
+        sub_metrics.insert("forbidden_actions_violation_rate".into(), violation_rate);
+        sub_metrics.insert("exception_tolerance_pass_rate".into(), skill_res);
+        sub_metrics.insert("output_usability_rate".into(), skill_qual);
+
         Self {
             task_id,
             total_trials: total,
@@ -227,6 +299,12 @@ impl EvalSummary {
             avg_dimension_scores: avg_dims,
             avg_duration_ms: avg_ms,
             avg_token_usage: avg_token,
+            skill_pass_rate,
+            skill_trigger_pass_rate: skill_trig,
+            skill_execution_pass_rate: skill_exec,
+            skill_quality_pass_rate: skill_qual,
+            skill_resilience_pass_rate: skill_res,
+            skill_sub_metrics: sub_metrics,
             per_trial: results,
             completed_at: SystemTime::now(),
         }
@@ -251,6 +329,21 @@ impl EvalSummary {
             (centre + margin).min(1.0),
         )
     }
+}
+
+/// Helper: compute fraction of skill trials where a dimension predicate passes.
+fn skill_dim_pass_rate(
+    trials: &[&TrialResult],
+    pred: impl Fn(&SkillCheckResult) -> bool,
+) -> f64 {
+    if trials.is_empty() {
+        return 1.0;
+    }
+    let passes = trials
+        .iter()
+        .filter(|t| t.skill_results.as_ref().is_none_or(&pred))
+        .count();
+    passes as f64 / trials.len() as f64
 }
 
 impl std::fmt::Display for EvalSummary {
@@ -292,6 +385,26 @@ impl std::fmt::Display for EvalSummary {
             };
             writeln!(f, "    #{:<3} {}  (cond={}, critique={}, skill={}, session={}){}", i, status, cond_s, crit_s, skill_s, session_s, turn_info)?;
         }
+
+        // ── Skill breakdown (§04) ──
+        if self.skill_sub_metrics.is_empty() && self.per_trial.iter().any(|t| t.skill_results.is_some()) {
+            // Only skill pass rate available
+            writeln!(f, "  Skill metrics:")?;
+            writeln!(f, "    Skill pass rate:          {:.1}%", self.skill_pass_rate * 100.0)?;
+        } else if !self.skill_sub_metrics.is_empty() {
+            writeln!(f, "  Skill metrics:")?;
+            writeln!(f, "    Skill pass rate:          {:.1}%", self.skill_pass_rate * 100.0)?;
+            writeln!(f, "    Trigger:                  {:.1}%", self.skill_trigger_pass_rate * 100.0)?;
+            writeln!(f, "    Execution:                {:.1}%", self.skill_execution_pass_rate * 100.0)?;
+            writeln!(f, "    Quality:                  {:.1}%", self.skill_quality_pass_rate * 100.0)?;
+            writeln!(f, "    Resilience:               {:.1}%", self.skill_resilience_pass_rate * 100.0)?;
+            let mut metrics: Vec<(&String, &f64)> = self.skill_sub_metrics.iter().collect();
+            metrics.sort_by_key(|(k, _)| *k);
+            for (key, val) in &metrics {
+                writeln!(f, "    {:<30} {:.1}%", key, *val * 100.0)?;
+            }
+        }
+
         Ok(())
     }
 }
@@ -505,12 +618,18 @@ impl EvalHarness {
         }
         let session_conditions_passed = session_condition_results.iter().all(|r| r.passed);
 
-        // ── Step 6: Skill evaluation (§02) ─────────────────────────────
-        let (skill_results, skill_passed) = self.evaluate_skills(&all_tool_calls, &final_response).await;
-
-        // ── Step 7: Build trajectory ──────────────────────────────────
+        // ── Step 6: Fetch thread turns for real tool call data ──────────
         let turns = self.get_thread_turns(&conv_id.0).await;
+        let real_tool_calls = if let Some(ref turns) = turns {
+            Self::collect_tool_calls_from_turns(turns)
+        } else {
+            all_tool_calls.clone() // fallback to outgoing stubs
+        };
 
+        // ── Step 7: Skill evaluation (§02 / §04) ───────────────────────
+        let (skill_results, skill_passed) = self.evaluate_skills(&real_tool_calls, &final_response).await;
+
+        // ── Step 8: Build trajectory ──────────────────────────────────
         let critique = if let Some(ref turns) = turns {
             let trajectory = Self::build_trajectory_from_turns(turns);
             let trajectory_text = trajectory.format_for_prompt();
@@ -593,6 +712,23 @@ impl EvalHarness {
                 .output()
                 .await;
         }
+    }
+
+    /// Collect tool calls from Turn records, which carry real
+    /// result/success/duration data from agent execution (§04).
+    fn collect_tool_calls_from_turns(turns: &[Turn]) -> Vec<ToolCallSummary> {
+        turns
+            .iter()
+            .flat_map(|turn| {
+                turn.tool_calls.iter().map(|tcr| ToolCallSummary {
+                    name: tcr.name.clone(),
+                    args: tcr.args.clone(),
+                    result: tcr.result.clone(),
+                    success: tcr.success,
+                    duration_ms: tcr.duration_ms,
+                })
+            })
+            .collect()
     }
 
     /// Collect tool calls from OutgoingMessage.

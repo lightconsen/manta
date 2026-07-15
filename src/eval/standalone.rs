@@ -43,6 +43,7 @@ pub async fn run_standalone_suite(
     model_override: Option<String>,
     api_key_override: Option<String>,
     base_url_override: Option<String>,
+    skill_breakdown: bool,
 ) -> Result<()> {
     let evals_dir = evals_dir.unwrap_or_else(default_evals_dir);
     let manifest_path = evals_dir.join("suites").join(format!("{}.yaml", suite_name));
@@ -175,7 +176,8 @@ pub async fn run_standalone_suite(
     // ── Step 7: Build harness ───────────────────────────────────────────────
     let effective_trials = trials_override.unwrap_or(suite.trials);
     let harness = EvalHarness::new(agent.clone(), critic)
-        .with_default_trials(effective_trials);
+        .with_default_trials(effective_trials)
+        .with_skill_designs(suite.skill_designs.clone());
 
     // ── Step 8: Run each task ───────────────────────────────────────────────
     let mut all_passed = true;
@@ -193,6 +195,41 @@ pub async fn run_standalone_suite(
             Ok(summary) => {
                 println!(" done\n");
                 println!("{}", summary);
+
+                // ── Skill breakdown (verbose) ──
+                if skill_breakdown {
+                    for trial in &summary.per_trial {
+                        if let Some(sr) = &trial.skill_results {
+                            if !sr.trigger_results.is_empty()
+                                || !sr.execution_results.is_empty()
+                                || !sr.quality_results.is_empty()
+                                || !sr.resilience_results.is_empty()
+                            {
+                                println!(
+                                    "  Trial #{} skill details:",
+                                    trial.trial_index
+                                );
+                                for r in &sr.trigger_results {
+                                    let icon = if r.passed { "✓" } else { "✗" };
+                                    println!("    {} Trigger [{}]: {}", icon, r.case_label, r.detail);
+                                }
+                                for r in &sr.execution_results {
+                                    let icon = if r.passed { "✓" } else { "✗" };
+                                    println!("    {} Execution [{}]: {}", icon, r.scenario, r.detail);
+                                }
+                                for r in &sr.quality_results {
+                                    let icon = if r.passed { "✓" } else { "✗" };
+                                    println!("    {} Quality [{}]: {}", icon, r.name, r.detail);
+                                }
+                                for r in &sr.resilience_results {
+                                    let icon = if r.passed { "✓" } else { "✗" };
+                                    println!("    {} Resilience: {}", icon, r.detail);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 total_trials += summary.total_trials;
                 total_passed += (summary.pass_rate * summary.total_trials as f64).round() as usize;
                 if summary.pass_rate < suite.min_pass_rate {
