@@ -42,7 +42,7 @@ pub(crate) mod calibration;
 pub(crate) mod human_review;
 pub(crate) mod multi_judge;
 
-pub use action::{ActionItem, ActionLevel, ImpactScope, Priority};
+pub use action::{generate_action_items, load_action_items, write_action_items, ActionItem, ActionLevel, ImpactScope, Priority};
 pub use agent_type::AgentType;
 pub use calibration::{
     calibrate, detect_drift, load_calibration_cases, load_calibration_history,
@@ -64,10 +64,13 @@ pub use multi_judge::{
     MultiJudgeConfig, MultiJudgeScorer,
 };
 pub use rca::{
-    BadcaseEntry, CandidateModule, ModuleVerdict, ProblemPhenomenon, RcaInput, RcaKnowledgeBase,
-    RcaKnowledgeBaseEntry, RcaPipeline, RcaResult,
+    module_to_owner, BadcaseEntry, CandidateModule, ModuleVerdict, ProblemPhenomenon, RcaInput,
+    RcaKnowledgeBase, RcaKnowledgeBaseEntry, RcaPipeline, RcaResult,
 };
-pub use recycle::{load_badcase_suite, BadcaseCluster, BadcaseCollector, BadcaseFixStatus, BadcaseRecord};
+pub use recycle::{
+    extract_rca_results_from_badcases, load_badcase_suite,
+    BadcaseCluster, BadcaseCollector, BadcaseFixStatus, BadcaseRecord,
+};
 pub use scorer::{LayeredScorer, RiskSignalChecker, ScoringOutput, ScreeningLayer, Verdict};
 pub use skill_scorer::{
     ExecutionCheckResult, QualityCheckResult, ResilienceCheckResult, SkillCheckResult, SkillScorer,

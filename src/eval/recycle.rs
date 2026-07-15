@@ -401,6 +401,13 @@ fn build_badcase_yaml_task(record: &BadcaseRecord, original: &EvalTask) -> serde
     // failure_reason
     task.insert("failure_reason".into(), record.failure_reason.clone().into());
 
+    // rca_result (if available)
+    if let Some(ref rca) = record.rca_result {
+        if let Ok(val) = serde_yml::to_value(rca) {
+            task.insert("rca_result".into(), val);
+        }
+    }
+
     // conditions (converted from GoalCondition to YamlCondition format)
     if !original.conditions.is_empty() {
         let conds: Vec<Value> = original
@@ -534,6 +541,65 @@ pub fn load_badcase_suite(evals_dir: &Path) -> Result<EvalSuite> {
         agent_type: None,
         skill_designs: Vec::new(),
     })
+}
+
+/// Extract all `RcaResult` entries from badcase YAML files in `{evals_dir}/badcases/`.
+///
+/// Walks each YAML file, parses `rca_result` keys, and collects non-None results.
+/// Returns an empty vec if the directory doesn't exist or no RCA data is found.
+pub fn extract_rca_results_from_badcases(evals_dir: &Path) -> Result<Vec<RcaResult>> {
+    let badcases_dir = evals_dir.join("badcases");
+
+    if !badcases_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut results = Vec::new();
+    let mut read_dir = std::fs::read_dir(&badcases_dir).map_err(crate::error::SyscityError::Io)?;
+
+    while let Some(entry) = read_dir.next().transpose()? {
+        let path = entry.path();
+        if path.extension().map(|e| e == "yaml").unwrap_or(false) {
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("Failed to read badcase file {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            let doc: serde_yml::Value = match serde_yml::from_str(&content) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("Failed to parse badcase file {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            let tasks = match doc.get("tasks").and_then(|v| v.as_sequence()) {
+                Some(t) => t,
+                None => continue,
+            };
+
+            for task in tasks {
+                if let Some(rca_val) = task.get("rca_result") {
+                    match serde_yml::from_value::<RcaResult>(rca_val.clone()) {
+                        Ok(rca) => results.push(rca),
+                        Err(e) => {
+                            warn!("Failed to deserialize rca_result in {:?}: {}", path, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    info!(
+        "Extracted {} RCA results from badcase files in {:?}",
+        results.len(),
+        badcases_dir
+    );
+    Ok(results)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────

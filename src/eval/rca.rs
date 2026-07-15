@@ -818,6 +818,23 @@ fn module_category(module: &CandidateModule) -> &'static str {
     }
 }
 
+/// Map a CandidateModule to its responsible owner/team string.
+pub fn module_to_owner(module: &CandidateModule) -> &'static str {
+    match module {
+        CandidateModule::IntentRecognition => "nlp_team",
+        CandidateModule::SlotFilling => "nlp_team",
+        CandidateModule::ContextMemory => "memory_team",
+        CandidateModule::Retrieval => "knowledge_team",
+        CandidateModule::ToolSelection => "tool_team",
+        CandidateModule::ToolExecution => "tool_team",
+        CandidateModule::ParameterConstruction => "tool_team",
+        CandidateModule::Reasoning => "reasoning_team",
+        CandidateModule::ResponseGeneration => "generation_team",
+        CandidateModule::PolicyEnforcement => "policy_team",
+        CandidateModule::SystemInfra => "infra_team",
+    }
+}
+
 /// Helper: generate RcaInput from EvalHarness TrialResult.
 pub fn rca_input_from_trial(task_id: &str, trial: &TrialResult, task_input: &str) -> RcaInput {
     let tool_records: Vec<ToolCallRecord> = trial
@@ -912,5 +929,29 @@ mod tests {
         let result = kb.lookup("关键工具未调用", &CandidateModule::ToolSelection);
         assert!(result.is_some());
         assert_eq!(result.unwrap().known_fixes[0], "修改工具选择 Prompt");
+    }
+
+    #[test]
+    fn test_module_to_owner_all_modules() {
+        for m in CandidateModule::all() {
+            let owner = module_to_owner(&m);
+            assert!(!owner.is_empty(), "No owner for {:?}", m);
+        }
+    }
+
+    #[test]
+    fn test_module_to_owner_consistency() {
+        // module_to_owner should return stable, consistent results
+        assert_eq!(module_to_owner(&CandidateModule::ToolSelection), "tool_team");
+        assert_eq!(module_to_owner(&CandidateModule::ToolExecution), "tool_team");
+        assert_eq!(module_to_owner(&CandidateModule::ParameterConstruction), "tool_team");
+        assert_eq!(module_to_owner(&CandidateModule::IntentRecognition), "nlp_team");
+        assert_eq!(module_to_owner(&CandidateModule::SlotFilling), "nlp_team");
+        assert_eq!(module_to_owner(&CandidateModule::ContextMemory), "memory_team");
+        assert_eq!(module_to_owner(&CandidateModule::Retrieval), "knowledge_team");
+        assert_eq!(module_to_owner(&CandidateModule::Reasoning), "reasoning_team");
+        assert_eq!(module_to_owner(&CandidateModule::ResponseGeneration), "generation_team");
+        assert_eq!(module_to_owner(&CandidateModule::PolicyEnforcement), "policy_team");
+        assert_eq!(module_to_owner(&CandidateModule::SystemInfra), "infra_team");
     }
 }

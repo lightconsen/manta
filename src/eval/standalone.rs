@@ -17,7 +17,8 @@ use crate::agent::Agent;
 use crate::eval::harness::EvalHarness;
 use crate::eval::loader::{default_evals_dir, load_suite};
 use crate::eval::rca::RcaPipeline;
-use crate::eval::recycle::BadcaseCollector;
+use crate::eval::recycle::{extract_rca_results_from_badcases, BadcaseCollector};
+use crate::eval::{generate_action_items, write_action_items};
 use crate::gateway::config::GatewayConfig;
 use crate::providers::resolver::resolve_provider;
 use crate::tools::file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
@@ -257,6 +258,21 @@ pub async fn run_standalone_suite(
                             }
                         }
                         Err(e) => warn!("Badcase collection failed: {}", e),
+                    }
+
+                    // ── Action items from RCA results ──
+                    match extract_rca_results_from_badcases(&evals_dir) {
+                        Ok(results) => {
+                            if !results.is_empty() {
+                                let items = generate_action_items(&results);
+                                if let Err(e) = write_action_items(&items, &evals_dir.join("actions")) {
+                                    warn!("Failed to write action items: {}", e);
+                                } else {
+                                    info!("Generated {} action items", items.len());
+                                }
+                            }
+                        }
+                        Err(e) => warn!("Failed to extract RCA results for action items: {}", e),
                     }
                 }
 

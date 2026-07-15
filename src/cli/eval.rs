@@ -118,6 +118,18 @@ pub enum EvalCommands {
         #[arg(long)]
         mark_reviewed: Option<String>,
     },
+    /// List and generate action items from badcase RCA results
+    ActionItems {
+        /// Path to evals directory (defaults to `./evals`)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+        /// Generate action items by extracting RCA results from badcases
+        #[arg(long)]
+        generate: bool,
+        /// Show detailed action item information
+        #[arg(long)]
+        verbose: bool,
+    },
     /// Run Critic calibration against known-answer cases
     Calibrate {
         /// Path to evals directory (defaults to `./evals`)
@@ -209,6 +221,11 @@ impl EvalCommands {
                 verbose,
                 mark_reviewed,
             } => cmd_review(dir.clone(), *pending, *verbose, mark_reviewed.clone()).await,
+            Self::ActionItems {
+                dir,
+                generate,
+                verbose,
+            } => cmd_action_items(dir.clone(), *generate, *verbose).await,
             Self::Calibrate {
                 dir,
                 file,
@@ -595,6 +612,70 @@ async fn cmd_badcase_submit(
 
     let path = write_badcase_yaml(&record, &stub_task, &badcases_dir)?;
     println!("✓ Badcase submitted: {:?}", path);
+    Ok(())
+}
+
+/// `eval action-items` — list or generate action items from badcase RCA results.
+async fn cmd_action_items(dir: Option<PathBuf>, generate: bool, verbose: bool) -> Result<()> {
+    use crate::eval::action::{generate_action_items, load_action_items, write_action_items};
+    use crate::eval::recycle::extract_rca_results_from_badcases;
+
+    let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
+    let actions_dir = evals_dir.join("actions");
+
+    // ── Generate mode ────────────────────────────────────────────────
+    if generate {
+        let results = extract_rca_results_from_badcases(&evals_dir)?;
+        if results.is_empty() {
+            println!("No RCA results found in badcases at {:?}", evals_dir.join("badcases"));
+            println!("  Run `syscity eval run <suite> --full --collect-badcases` first.");
+            return Ok(());
+        }
+
+        let items = generate_action_items(&results);
+        let path = write_action_items(&items, &actions_dir)?;
+
+        println!("Generated {} action items from {} RCA results", items.len(), results.len());
+        println!("  Saved to: {:?}", path);
+
+        if verbose {
+            for item in &items {
+                println!();
+                println!("  [{}] {}", item.id, item.problem_summary);
+                println!("       Priority: {:?}", item.priority);
+                println!("       Level:    {:?}", item.level);
+                println!("       Owner:    {}", item.owner);
+                println!("       Failures: {}", item.impact_scope.failure_count);
+                println!("       Action:   {}", item.suggested_action);
+            }
+        }
+
+        return Ok(());
+    }
+
+    // ── List mode ────────────────────────────────────────────────────
+    if !actions_dir.join("actions.json").exists() {
+        println!("No action items found at {:?}", actions_dir.join("actions.json"));
+        println!("  Use `syscity eval action-items --generate` to generate from badcases.");
+        return Ok(());
+    }
+
+    let items = load_action_items(&actions_dir)?;
+    println!("═══ Action Items ({}) ═══", items.len());
+
+    for item in &items {
+        println!(
+            "  [{}] [{:?}] {:?} — {} (owner: {})",
+            item.id, item.priority, item.level, item.problem_summary, item.owner
+        );
+        if verbose {
+            println!("         Root cause: {}", item.root_cause);
+            println!("         Evidence:   {}", item.evidence.join("; "));
+            println!("         Action:     {}", item.suggested_action);
+            println!("         Failures:   {}", item.impact_scope.failure_count);
+        }
+    }
+
     Ok(())
 }
 
