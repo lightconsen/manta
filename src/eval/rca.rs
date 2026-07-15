@@ -204,7 +204,104 @@ pub struct RcaKnowledgeBase {
 
 impl RcaKnowledgeBase {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        let mut kb = Self { entries: Vec::new() };
+        kb.seed_defaults();
+        kb
+    }
+
+    /// Seed the KB with common failure patterns and known fixes.
+    fn seed_defaults(&mut self) {
+        let defaults = vec![
+            RcaKnowledgeBaseEntry {
+                problem_enumeration: "关键工具未调用".into(),
+                responsibility_module: CandidateModule::ToolSelection,
+                known_fixes: vec![
+                    "检查工具选择 prompt 中是否包含所有必需工具".into(),
+                    "确认工具注册列表包含目标工具".into(),
+                    "添加工具选择约束词 (必须/应当调用)".into(),
+                ],
+                hit_count: 0,
+                last_resolution: None,
+            },
+            RcaKnowledgeBaseEntry {
+                problem_enumeration: "意图识别错误".into(),
+                responsibility_module: CandidateModule::IntentRecognition,
+                known_fixes: vec![
+                    "增强意图识别 prompt 中的边界案例描述".into(),
+                    "添加否定/排除规则以避免误匹配".into(),
+                ],
+                hit_count: 0,
+                last_resolution: None,
+            },
+            RcaKnowledgeBaseEntry {
+                problem_enumeration: "知识召回不足".into(),
+                responsibility_module: CandidateModule::Retrieval,
+                known_fixes: vec![
+                    "增加检索工具的结果数量限制".into(),
+                    "优化检索 query 构造方式".into(),
+                    "添加 fallback 检索策略".into(),
+                ],
+                hit_count: 0,
+                last_resolution: None,
+            },
+            RcaKnowledgeBaseEntry {
+                problem_enumeration: "回复质量缺陷".into(),
+                responsibility_module: CandidateModule::ResponseGeneration,
+                known_fixes: vec![
+                    "优化回复模板约束条件".into(),
+                    "添加事实一致性检查 prompt".into(),
+                    "限制回复长度和格式要求".into(),
+                ],
+                hit_count: 0,
+                last_resolution: None,
+            },
+            RcaKnowledgeBaseEntry {
+                problem_enumeration: "策略违规".into(),
+                responsibility_module: CandidateModule::PolicyEnforcement,
+                known_fixes: vec![
+                    "更新策略规则定义".into(),
+                    "添加 guardrail 检查逻辑".into(),
+                    "实现拒绝响应模板".into(),
+                ],
+                hit_count: 0,
+                last_resolution: None,
+            },
+            RcaKnowledgeBaseEntry {
+                problem_enumeration: "过度承诺".into(),
+                responsibility_module: CandidateModule::PolicyEnforcement,
+                known_fixes: vec![
+                    "在系统 prompt 中添加权限边界描述".into(),
+                    "禁止使用确定性/保证性词汇".into(),
+                    "添加知识库权限校验机制".into(),
+                ],
+                hit_count: 0,
+                last_resolution: None,
+            },
+            RcaKnowledgeBaseEntry {
+                problem_enumeration: "幻觉回复".into(),
+                responsibility_module: CandidateModule::ResponseGeneration,
+                known_fixes: vec![
+                    "强制要求回复仅基于工具返回结果".into(),
+                    "添加来源引用要求".into(),
+                    "实施事实验证步骤".into(),
+                ],
+                hit_count: 0,
+                last_resolution: None,
+            },
+            RcaKnowledgeBaseEntry {
+                problem_enumeration: "拒绝策略不当".into(),
+                responsibility_module: CandidateModule::PolicyEnforcement,
+                known_fixes: vec![
+                    "细化拒绝策略分类 (可回答/需澄清/坚决拒绝)".into(),
+                    "添加可回答场景的豁免规则".into(),
+                ],
+                hit_count: 0,
+                last_resolution: None,
+            },
+        ];
+        for entry in defaults {
+            self.entries.push(entry);
+        }
     }
 
     /// Look up known fixes for a given problem enumeration + module.
@@ -369,19 +466,20 @@ impl RcaPipeline {
             };
 
         let elapsed = start.elapsed();
+        let confidence = self.compute_confidence(&diagnoses);
 
         // ── Step 5: Return structured result ───────────────────────
         Ok(RcaResult {
             phenomenon: format!("{:?}", phenomenon),
-            process_deviation: self.describe_deviation(&diagnoses),
-            responsibility: format!("{:?}", main_module),
+            process_deviation: self.describe_process_deviation(&input),
+            responsibility: self.determine_responsibility(&diagnoses),
             problem_category: category,
             problem_enumeration: enumeration,
             responsibility_module: main_module,
             sub_responsibility: sub_module,
             evidence_chain: evidence,
             fix_suggestion: fix,
-            confidence: 0.85,
+            confidence,
             analysis_duration_ms: elapsed.as_millis() as u64,
             entry: input.entry,
             completed_at: SystemTime::now(),
@@ -577,20 +675,31 @@ impl RcaPipeline {
     // ── Fix lookup ─────────────────────────────────────────────────
 
     fn lookup_fix(&self, module: &CandidateModule, reason: &str) -> (String, String, String) {
-        let category = match module {
-            CandidateModule::ToolSelection => "工具执行",
-            CandidateModule::IntentRecognition => "语义理解",
-            CandidateModule::Retrieval => "知识召回",
-            CandidateModule::ResponseGeneration => "回复生成",
-            CandidateModule::PolicyEnforcement => "风险防控",
-            CandidateModule::SlotFilling => "槽位抽取",
-            CandidateModule::ContextMemory => "上下文记忆",
-            CandidateModule::ToolExecution => "工具执行",
-            CandidateModule::ParameterConstruction => "参数构造",
-            CandidateModule::Reasoning => "推理决策",
-            CandidateModule::SystemInfra => "系统基础设施",
+        // Try knowledge base first
+        let enumeration = match module {
+            CandidateModule::ToolSelection => "关键工具未调用",
+            CandidateModule::IntentRecognition => "意图识别错误",
+            CandidateModule::Retrieval => "知识召回不足",
+            CandidateModule::ResponseGeneration => "回复质量缺陷",
+            CandidateModule::PolicyEnforcement => "策略违规",
+            _ => "未分类错误",
         };
 
+        if let Some(entry) = self.knowledge_base.lookup(enumeration, module) {
+            let fix = if entry.known_fixes.is_empty() {
+                format!("模块 {:?} 诊断失败: {}. 请检查配置、Prompt 或实现。", module, reason)
+            } else {
+                format!(
+                    "建议修复: {}。诊断详情: {}",
+                    entry.known_fixes.join("; "),
+                    reason
+                )
+            };
+            let category = module_category(module);
+            return (category.into(), enumeration.into(), fix);
+        }
+
+        let category = module_category(module);
         let enumeration = match module {
             CandidateModule::ToolSelection => "关键工具未调用",
             CandidateModule::IntentRecognition => "意图识别错误",
@@ -606,22 +715,72 @@ impl RcaPipeline {
         (category.into(), enumeration.into(), fix)
     }
 
-    // ── Deviation description ─────────────────────────────────────
+    /// Analyze process deviation — trace through tool calls to find where
+    /// execution first diverged from expected flow.
+    fn describe_process_deviation(&self, input: &RcaInput) -> String {
+        let mut details = Vec::new();
 
-    fn describe_deviation(&self, diagnoses: &[(CandidateModule, ModuleVerdict)]) -> String {
-        let fails: Vec<String> = diagnoses
+        // Check for missing tool calls
+        if input.tool_calls.is_empty() && !input.response.is_empty() {
+            return "过程偏离: 未调用任何工具就直接生成回复".into();
+        }
+
+        // Analyze each tool call for failures
+        for tc in &input.tool_calls {
+            if !tc.success {
+                details.push(format!(
+                    "工具调用失败: {}(参数: {}) - 耗时 {}ms",
+                    tc.name, tc.args, tc.duration_ms
+                ));
+            }
+        }
+
+        // Check response-to-tool ratio
+        if !input.tool_calls.is_empty() && input.response.len() < 10 {
+            details.push("过程偏离: 调用了工具但回复过短".into());
+        }
+
+        if details.is_empty() {
+            "未检测到明显过程偏离".into()
+        } else {
+            details.join("; ")
+        }
+    }
+
+    /// Determine responsibility layer — which functional module should
+    /// own this failure, based on evidence strength.
+    fn determine_responsibility(&self, diagnoses: &[(CandidateModule, ModuleVerdict)]) -> String {
+        let fails: Vec<&CandidateModule> = diagnoses
             .iter()
-            .filter_map(|(m, v)| match v {
-                ModuleVerdict::Fail(r) => Some(format!("{:?}: {}", m, r)),
-                ModuleVerdict::SoftPass(r) => Some(format!("{:?}: {} (soft)", m, r)),
-                _ => None,
-            })
+            .filter_map(|(m, v)| matches!(v, ModuleVerdict::Fail(_)).then_some(m))
             .collect();
 
         if fails.is_empty() {
-            "未检测到明显偏离".into()
+            "无法明确归因 — 需要人工分析".into()
+        } else if fails.len() == 1 {
+            format!("{:?}", fails[0])
         } else {
-            fails.join("; ")
+            format!("{:?} (主导), {:?} (协同)", fails[0], fails[1])
+        }
+    }
+
+    /// Compute confidence based on evidence strength.
+    fn compute_confidence(&self, diagnoses: &[(CandidateModule, ModuleVerdict)]) -> f64 {
+        let has_fail = diagnoses.iter().any(|(_, v)| matches!(v, ModuleVerdict::Fail(_)));
+        let has_soft = diagnoses.iter().any(|(_, v)| matches!(v, ModuleVerdict::SoftPass(_)));
+        let fail_count = diagnoses
+            .iter()
+            .filter(|(_, v)| matches!(v, ModuleVerdict::Fail(_)))
+            .count();
+
+        if has_fail && fail_count == 1 {
+            0.85 // Single clear root cause
+        } else if has_fail {
+            0.70 // Multiple failures — less certain
+        } else if has_soft {
+            0.50 // Only soft signals
+        } else {
+            0.30 // No clear signals
         }
     }
 
@@ -639,6 +798,23 @@ impl RcaPipeline {
             tracing::debug!("RCA content: {}", content);
         }
         Ok(())
+    }
+}
+
+/// Map a CandidateModule to its Chinese category label.
+fn module_category(module: &CandidateModule) -> &'static str {
+    match module {
+        CandidateModule::ToolSelection => "工具执行",
+        CandidateModule::IntentRecognition => "语义理解",
+        CandidateModule::Retrieval => "知识召回",
+        CandidateModule::ResponseGeneration => "回复生成",
+        CandidateModule::PolicyEnforcement => "风险防控",
+        CandidateModule::SlotFilling => "槽位抽取",
+        CandidateModule::ContextMemory => "上下文记忆",
+        CandidateModule::ToolExecution => "工具执行",
+        CandidateModule::ParameterConstruction => "参数构造",
+        CandidateModule::Reasoning => "推理决策",
+        CandidateModule::SystemInfra => "系统基础设施",
     }
 }
 
@@ -689,6 +865,37 @@ mod tests {
             assert!(map.contains_key(&p), "Missing mapping for {:?}", p);
             assert!(!map[&p].is_empty(), "Empty candidate list for {:?}", p);
         }
+    }
+
+    #[test]
+    fn test_knowledge_base_seeded() {
+        let kb = RcaKnowledgeBase::new();
+        // KB should have default entries
+        assert!(kb.lookup("关键工具未调用", &CandidateModule::ToolSelection).is_some());
+        assert!(kb.lookup("意图识别错误", &CandidateModule::IntentRecognition).is_some());
+        assert!(kb.lookup("知识召回不足", &CandidateModule::Retrieval).is_some());
+        assert!(kb.lookup("回复质量缺陷", &CandidateModule::ResponseGeneration).is_some());
+        assert!(kb.lookup("策略违规", &CandidateModule::PolicyEnforcement).is_some());
+        // Unknown pair should return None
+        assert!(kb.lookup("不存在的问题", &CandidateModule::SystemInfra).is_none());
+    }
+
+    #[test]
+    fn test_knowledge_base_record_updates_hit_count() {
+        let mut kb = RcaKnowledgeBase::new();
+        let existing = kb.lookup("关键工具未调用", &CandidateModule::ToolSelection);
+        let initial_hits = existing.map(|e| e.hit_count).unwrap_or(0);
+
+        kb.record(RcaKnowledgeBaseEntry {
+            problem_enumeration: "关键工具未调用".into(),
+            responsibility_module: CandidateModule::ToolSelection,
+            known_fixes: vec!["测试修复".into()],
+            hit_count: 0,
+            last_resolution: None,
+        });
+
+        let updated = kb.lookup("关键工具未调用", &CandidateModule::ToolSelection);
+        assert_eq!(updated.unwrap().hit_count, initial_hits + 1);
     }
 
     #[test]

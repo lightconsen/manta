@@ -70,11 +70,35 @@ pub enum EvalCommands {
         /// Show RCA details
         #[arg(long)]
         verbose: bool,
+        /// Show badcase clusters grouped by phenomenon × module
+        #[arg(long)]
+        cluster: bool,
     },
     /// Show details of a specific badcase file
     BadcaseShow {
         /// Badcase task file stem (e.g. "tool_selection")
         filter: String,
+        /// Path to evals directory (defaults to `./evals`)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+    },
+    /// Manually submit a badcase for RCA and regression tracking
+    BadcaseSubmit {
+        /// Eval task ID
+        #[arg(long)]
+        task_id: String,
+        /// The user input that caused the failure
+        #[arg(long)]
+        input: String,
+        /// The agent's response
+        #[arg(long)]
+        response: String,
+        /// Optional description
+        #[arg(long)]
+        description: Option<String>,
+        /// Optional failure reason
+        #[arg(long)]
+        failure_reason: Option<String>,
         /// Path to evals directory (defaults to `./evals`)
         #[arg(short, long)]
         dir: Option<PathBuf>,
@@ -155,9 +179,29 @@ impl EvalCommands {
                 )
                 .await
             }
-            Self::BadcaseList { dir, verbose } => cmd_badcase_list(dir.clone(), *verbose).await,
+            Self::BadcaseList { dir, verbose, cluster } => {
+                cmd_badcase_list(dir.clone(), *verbose, *cluster).await
+            }
             Self::BadcaseShow { filter, dir } => {
                 cmd_badcase_show(filter.clone(), dir.clone()).await
+            }
+            Self::BadcaseSubmit {
+                task_id,
+                input,
+                response,
+                description,
+                failure_reason,
+                dir,
+            } => {
+                cmd_badcase_submit(
+                    task_id.clone(),
+                    input.clone(),
+                    response.clone(),
+                    description.clone(),
+                    failure_reason.clone(),
+                    dir.clone(),
+                )
+                .await
             }
             Self::Review {
                 dir,
@@ -352,7 +396,7 @@ async fn cmd_run(
 }
 
 /// `eval badcase-list` — show collected badcases.
-async fn cmd_badcase_list(dir: Option<PathBuf>, verbose: bool) -> Result<()> {
+async fn cmd_badcase_list(dir: Option<PathBuf>, verbose: bool, cluster: bool) -> Result<()> {
     let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
     let badcases_dir = evals_dir.join("badcases");
 
@@ -360,6 +404,11 @@ async fn cmd_badcase_list(dir: Option<PathBuf>, verbose: bool) -> Result<()> {
         println!("No badcases directory found at {:?}", badcases_dir);
         println!("  Run `syscity eval run <suite> --full --collect-badcases` to collect badcases.");
         return Ok(());
+    }
+
+    // ── Cluster mode ───────────────────────────────────────────────
+    if cluster {
+        return cmd_badcase_clusters(badcases_dir).await;
     }
 
     let mut files: Vec<_> = std::fs::read_dir(&badcases_dir)
@@ -410,6 +459,61 @@ async fn cmd_badcase_list(dir: Option<PathBuf>, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+/// Show badcase clusters grouped by failure reason.
+async fn cmd_badcase_clusters(badcases_dir: std::path::PathBuf) -> Result<()> {
+    use std::collections::BTreeMap;
+
+    let mut files: Vec<_> = std::fs::read_dir(&badcases_dir)
+        .map_err(crate::error::SyscityError::Io)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "yaml").unwrap_or(false))
+        .collect();
+    files.sort_by_key(|e| e.path());
+
+    // Group tasks by failure_reason
+    let mut clusters: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut total = 0usize;
+
+    for entry in &files {
+        let path = entry.path();
+        match eval::load_tasks(&path) {
+            Ok(loaded) => {
+                for task in &loaded.tasks {
+                    let reason = task
+                        .failure_reason
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    clusters.entry(reason).or_default().push(task.id.clone());
+                    total += 1;
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    if clusters.is_empty() {
+        println!("No badcases found in {:?}", badcases_dir);
+        return Ok(());
+    }
+
+    // Sort clusters by size (descending)
+    let mut sorted: Vec<_> = clusters.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    println!("═══ Badcase Clusters ({}) ═══", total);
+    for (reason, task_ids) in &sorted {
+        println!(
+            "  [{:>2}] {}",
+            task_ids.len(),
+            reason.chars().take(100).collect::<String>()
+        );
+        for tid in task_ids {
+            println!("         └ {}", tid);
+        }
+    }
+    Ok(())
+}
+
 /// `eval badcase-show` — display a specific badcase file.
 async fn cmd_badcase_show(filter: String, dir: Option<PathBuf>) -> Result<()> {
     let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
@@ -445,6 +549,62 @@ async fn cmd_badcase_show(filter: String, dir: Option<PathBuf>) -> Result<()> {
     let content = std::fs::read_to_string(&file_path).map_err(crate::error::SyscityError::Io)?;
     println!("=== {} ===\n{}", file_path.display(), content);
     Ok(())
+}
+
+/// `eval badcase-submit` — manually submit a badcase.
+async fn cmd_badcase_submit(
+    task_id: String,
+    input: String,
+    response: String,
+    description: Option<String>,
+    failure_reason: Option<String>,
+    dir: Option<PathBuf>,
+) -> Result<()> {
+    use crate::eval::recycle::{write_badcase_yaml, BadcaseFixStatus, BadcaseRecord};
+    use crate::eval::rca::BadcaseEntry;
+    use std::time::SystemTime;
+
+    let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
+    let badcases_dir = evals_dir.join("badcases");
+    std::fs::create_dir_all(&badcases_dir)?;
+
+    // Build a minimal EvalTask for the YAML writer
+    let stub_task = crate::eval::EvalTask {
+        id: task_id.clone(),
+        input: input.clone(),
+        description: description.unwrap_or_default(),
+        ..Default::default()
+    };
+
+    let record = BadcaseRecord {
+        id: format!("manual_{}_{}", task_id, chrono_timestamp()),
+        task_id,
+        input,
+        description: stub_task.description.clone(),
+        failure_reason: failure_reason.unwrap_or_else(|| "Manual submission".into()),
+        response,
+        rca_performed: false,
+        rca_result: None,
+        collected_at: SystemTime::now(),
+        fix_status: BadcaseFixStatus::Unconfirmed,
+        entry: BadcaseEntry::ManualSubmit {
+            reporter: "cli".into(),
+            description: "Submitted via syscity eval badcase-submit".into(),
+        },
+    };
+
+    let path = write_badcase_yaml(&record, &stub_task, &badcases_dir)?;
+    println!("✓ Badcase submitted: {:?}", path);
+    Ok(())
+}
+
+/// Generate a compact timestamp for manual submission IDs.
+fn chrono_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{:x}", dur.as_secs())
 }
 
 /// `eval review` — list and manage human review cases.

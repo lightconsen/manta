@@ -26,7 +26,7 @@ use tracing::{info, warn};
 use crate::eval::dataset::{EvalSuite, EvalTask, EvalTaskSource, SuiteCategory};
 use crate::eval::harness::{EvalSummary, TrialResult};
 use crate::eval::loader::{default_evals_dir, load_tasks};
-use crate::eval::rca::{rca_input_from_trial, BadcaseEntry, RcaPipeline, RcaResult};
+use crate::eval::rca::{rca_input_from_trial, BadcaseEntry, CandidateModule, ProblemPhenomenon, RcaPipeline, RcaResult};
 use crate::goal::condition::GoalCondition;
 use crate::Result;
 
@@ -70,6 +70,21 @@ pub struct BadcaseRecord {
     pub fix_status: BadcaseFixStatus,
     /// Badcase entry source.
     pub entry: BadcaseEntry,
+}
+
+/// A cluster of similar badcases grouped by phenomenon and module.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BadcaseCluster {
+    /// The problem phenomenon (what the user sees).
+    pub phenomenon: Option<ProblemPhenomenon>,
+    /// The primary responsible module.
+    pub primary_module: Option<CandidateModule>,
+    /// Number of badcases in this cluster.
+    pub count: usize,
+    /// Task IDs of clustered badcases.
+    pub task_ids: Vec<String>,
+    /// Common failure reason summary.
+    pub common_failure_reason: String,
 }
 
 // ── Collector ───────────────────────────────────────────────────────────
@@ -218,6 +233,94 @@ fn determine_failure_reason(trial: &TrialResult) -> String {
     } else {
         reasons.join("; ")
     }
+}
+
+// ── Clustering ──────────────────────────────────────────────────────────
+
+/// Cluster badcase records by phenomenon and primary module.
+///
+/// Groups records that share the same phenomenon × module pair, making it
+/// easy to identify systemic issues vs one-off failures.
+pub fn cluster_badcases(records: &[BadcaseRecord]) -> Vec<BadcaseCluster> {
+    use std::collections::HashMap;
+
+    #[derive(Hash, Eq, PartialEq, Clone)]
+    struct ClusterKey {
+        phenomenon: String,
+        module: String,
+    }
+
+    let mut groups: HashMap<ClusterKey, Vec<&BadcaseRecord>> = HashMap::new();
+
+    for record in records {
+        let (phen, mod_) = if let Some(ref rca) = record.rca_result {
+            (rca.phenomenon.clone(), format!("{:?}", rca.responsibility_module))
+        } else {
+            ("unknown".into(), "unknown".into())
+        };
+        let key = ClusterKey {
+            phenomenon: phen,
+            module: mod_,
+        };
+        groups.entry(key).or_default().push(record);
+    }
+
+    let mut clusters: Vec<BadcaseCluster> = groups
+        .into_iter()
+        .map(|(key, group)| {
+            let task_ids: Vec<String> = group.iter().map(|r| r.task_id.clone()).collect();
+            // Pick the most common failure reason
+            let mut reason_counts: HashMap<&str, usize> = HashMap::new();
+            for r in &group {
+                *reason_counts.entry(&r.failure_reason).or_insert(0) += 1;
+            }
+            let common_reason = reason_counts
+                .into_iter()
+                .max_by_key(|&(_, count)| count)
+                .map(|(reason, _)| reason.to_string())
+                .unwrap_or_default();
+
+            // Parse phenomenon and module from the cluster key
+            let phenomenon = match key.phenomenon.as_str() {
+                "NonResponsive" => Some(ProblemPhenomenon::NonResponsive),
+                "OrderNotClarified" => Some(ProblemPhenomenon::OrderNotClarified),
+                "FactualError" => Some(ProblemPhenomenon::FactualError),
+                "OverPromise" => Some(ProblemPhenomenon::OverPromise),
+                "ToolNotCalled" => Some(ProblemPhenomenon::ToolNotCalled),
+                "ToolWrongOrder" => Some(ProblemPhenomenon::ToolWrongOrder),
+                "Hallucination" => Some(ProblemPhenomenon::Hallucination),
+                "RefusalError" => Some(ProblemPhenomenon::RefusalError),
+                _ => None,
+            };
+            let primary_module = match key.module.as_str() {
+                "IntentRecognition" => Some(CandidateModule::IntentRecognition),
+                "SlotFilling" => Some(CandidateModule::SlotFilling),
+                "ContextMemory" => Some(CandidateModule::ContextMemory),
+                "Retrieval" => Some(CandidateModule::Retrieval),
+                "ToolSelection" => Some(CandidateModule::ToolSelection),
+                "ToolExecution" => Some(CandidateModule::ToolExecution),
+                "ParameterConstruction" => Some(CandidateModule::ParameterConstruction),
+                "Reasoning" => Some(CandidateModule::Reasoning),
+                "ResponseGeneration" => Some(CandidateModule::ResponseGeneration),
+                "PolicyEnforcement" => Some(CandidateModule::PolicyEnforcement),
+                "SystemInfra" => Some(CandidateModule::SystemInfra),
+                _ => None,
+            };
+
+            BadcaseCluster {
+                phenomenon,
+                primary_module,
+                count: group.len(),
+                task_ids,
+                common_failure_reason: common_reason,
+            }
+        })
+        .collect();
+
+    // Sort by cluster size (largest first)
+    clusters.sort_by(|a, b| b.count.cmp(&a.count));
+
+    clusters
 }
 
 // ── YAML I/O ────────────────────────────────────────────────────────────
@@ -463,6 +566,7 @@ fn sanitize_id(id: &str) -> String {
 mod tests {
     use super::*;
     use crate::eval::harness::TrialResult;
+    use crate::eval::rca::CandidateModule;
     use crate::goal::condition::Comparison;
 
     #[test]
@@ -556,5 +660,101 @@ mod tests {
         let suite = load_badcase_suite(Path::new("/nonexistent/evals")).unwrap();
         assert_eq!(suite.id, "badcases");
         assert!(suite.tasks.is_empty());
+    }
+
+    #[test]
+    fn test_cluster_badcases_empty() {
+        let clusters = cluster_badcases(&[]);
+        assert!(clusters.is_empty());
+    }
+
+    #[test]
+    fn test_cluster_badcases_no_rca() {
+        let records = vec![
+            BadcaseRecord {
+                id: "test_1".into(),
+                task_id: "task_a".into(),
+                input: "hello".into(),
+                description: String::new(),
+                failure_reason: "condition failed".into(),
+                response: "response".into(),
+                rca_performed: false,
+                rca_result: None,
+                collected_at: SystemTime::now(),
+                fix_status: BadcaseFixStatus::Unconfirmed,
+                entry: BadcaseEntry::AutoDetected,
+            },
+            BadcaseRecord {
+                id: "test_2".into(),
+                task_id: "task_b".into(),
+                input: "world".into(),
+                description: String::new(),
+                failure_reason: "critique failed".into(),
+                response: "response".into(),
+                rca_performed: false,
+                rca_result: None,
+                collected_at: SystemTime::now(),
+                fix_status: BadcaseFixStatus::Unconfirmed,
+                entry: BadcaseEntry::AutoDetected,
+            },
+        ];
+        // Without RCA results, all cluster as "unknown/unknown"
+        let clusters = cluster_badcases(&records);
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].count, 2);
+    }
+
+    #[test]
+    fn test_cluster_by_size_descending() {
+        // Records with RCA results to test proper clustering
+        let make_rca = |phenomenon: &str, module: CandidateModule| -> RcaResult {
+            RcaResult {
+                phenomenon: phenomenon.into(),
+                process_deviation: "test".into(),
+                responsibility: format!("{:?}", module),
+                problem_category: "category".into(),
+                problem_enumeration: "enum".into(),
+                responsibility_module: module,
+                sub_responsibility: None,
+                evidence_chain: vec![],
+                fix_suggestion: "fix".into(),
+                confidence: 0.8,
+                analysis_duration_ms: 0,
+                entry: BadcaseEntry::AutoDetected,
+                completed_at: SystemTime::now(),
+            }
+        };
+
+        let records = vec![
+            BadcaseRecord {
+                id: "r1".into(), task_id: "t1".into(), input: "".into(),
+                description: "".into(), failure_reason: "cond fail".into(),
+                response: "".into(), rca_performed: true,
+                rca_result: Some(make_rca("FactualError", CandidateModule::Retrieval)),
+                collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+                entry: BadcaseEntry::AutoDetected,
+            },
+            BadcaseRecord {
+                id: "r2".into(), task_id: "t2".into(), input: "".into(),
+                description: "".into(), failure_reason: "cond fail".into(),
+                response: "".into(), rca_performed: true,
+                rca_result: Some(make_rca("FactualError", CandidateModule::Retrieval)),
+                collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+                entry: BadcaseEntry::AutoDetected,
+            },
+            BadcaseRecord {
+                id: "r3".into(), task_id: "t3".into(), input: "".into(),
+                description: "".into(), failure_reason: "tool not called".into(),
+                response: "".into(), rca_performed: true,
+                rca_result: Some(make_rca("ToolNotCalled", CandidateModule::ToolSelection)),
+                collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+                entry: BadcaseEntry::AutoDetected,
+            },
+        ];
+
+        let clusters = cluster_badcases(&records);
+        // First cluster should be the largest (2 records)
+        assert_eq!(clusters[0].count, 2);
+        assert_eq!(clusters[1].count, 1);
     }
 }

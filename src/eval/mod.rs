@@ -67,7 +67,7 @@ pub use rca::{
     BadcaseEntry, CandidateModule, ModuleVerdict, ProblemPhenomenon, RcaInput, RcaKnowledgeBase,
     RcaKnowledgeBaseEntry, RcaPipeline, RcaResult,
 };
-pub use recycle::{load_badcase_suite, BadcaseCollector, BadcaseFixStatus, BadcaseRecord};
+pub use recycle::{load_badcase_suite, BadcaseCluster, BadcaseCollector, BadcaseFixStatus, BadcaseRecord};
 pub use scorer::{LayeredScorer, RiskSignalChecker, ScoringOutput, ScreeningLayer, Verdict};
 pub use skill_scorer::{
     ExecutionCheckResult, QualityCheckResult, ResilienceCheckResult, SkillCheckResult, SkillScorer,

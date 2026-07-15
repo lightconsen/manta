@@ -25,6 +25,7 @@ use crate::channels::{
 };
 use crate::core::models::Id;
 use crate::eval::dataset::{EvalTask, SkillEvalDesign};
+use crate::eval::rca::{rca_input_from_trial, BadcaseEntry, RcaPipeline};
 use crate::eval::skill_scorer::{SkillCheckResult, SkillScorer};
 use crate::goal::condition::{CheckResult, GoalCondition};
 use crate::Result;
@@ -455,6 +456,8 @@ pub struct EvalHarness {
     default_trials: usize,
     /// Skill evaluation designs to check per trial (§02).
     skill_designs: Vec<SkillEvalDesign>,
+    /// Optional RCA pipeline for automatic badcase analysis (§07).
+    rca_pipeline: Option<Arc<RcaPipeline>>,
 }
 
 impl EvalHarness {
@@ -468,6 +471,7 @@ impl EvalHarness {
             critic,
             default_trials: 5,
             skill_designs: Vec::new(),
+            rca_pipeline: None,
         }
     }
 
@@ -480,6 +484,12 @@ impl EvalHarness {
     /// Set skill evaluation designs to check per trial.
     pub fn with_skill_designs(mut self, designs: Vec<SkillEvalDesign>) -> Self {
         self.skill_designs = designs;
+        self
+    }
+
+    /// Set an optional RCA pipeline for automatic badcase analysis.
+    pub fn with_rca_pipeline(mut self, rca: Option<Arc<RcaPipeline>>) -> Self {
+        self.rca_pipeline = rca;
         self
     }
 
@@ -511,11 +521,12 @@ impl EvalHarness {
                         task.id,
                         if r.passed { "PASS" } else { "FAIL" }
                     );
+                    self.on_badcase_detected(&r, &task).await;
                     results.push(r);
                 }
                 Err(e) => {
                     warn!("Trial {}/{} for '{}' failed: {}", trial_index + 1, n, task.id, e);
-                    results.push(TrialResult {
+                    let failed = TrialResult {
                         trial_index,
                         response: String::new(),
                         tool_calls: vec![],
@@ -531,7 +542,9 @@ impl EvalHarness {
                         session_condition_results: vec![],
                         session_conditions_passed: true,
                         passed: false,
-                    });
+                    };
+                    self.on_badcase_detected(&failed, &task).await;
+                    results.push(failed);
                 }
             }
         }
@@ -835,13 +848,27 @@ impl EvalHarness {
 
     /// Trigger RCA when a badcase is detected.
     ///
-    /// Called automatically by the harness after a failed trial if
-    /// an RcaPipeline is configured.
-    pub async fn on_badcase_detected(&self, result: TrialResult, task: &EvalTask) {
+    /// Automatically runs the 5-step RCA pipeline if configured,
+    /// then persists the result to MemoryStore.
+    pub async fn on_badcase_detected(&self, result: &TrialResult, task: &EvalTask) {
         if !result.passed {
             debug!("Badcase detected: task={}, trial={}", task.id, result.trial_index);
-            // RCA pipeline integration point — called from
-            // downstream code that constructs an RcaPipeline.
+
+            if let Some(ref rca) = self.rca_pipeline {
+                let input = rca_input_from_trial(&task.id, result, &task.input);
+                match rca.analyze(input).await {
+                    Ok(rca_result) => {
+                        info!(
+                            "RCA complete: task={}, phenomenon={:?}, module={:?}",
+                            task.id, rca_result.problem_category, rca_result.responsibility_module
+                        );
+                        if let Err(e) = rca.persist(rca_result).await {
+                            warn!("RCA persist failed: {}", e);
+                        }
+                    }
+                    Err(e) => warn!("RCA failed for task='{}': {}", task.id, e),
+                }
+            }
         }
     }
 }

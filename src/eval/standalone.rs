@@ -187,7 +187,8 @@ pub async fn run_standalone_suite(
     let effective_trials = trials_override.unwrap_or(suite.trials);
     let harness = EvalHarness::new(agent.clone(), critic)
         .with_default_trials(effective_trials)
-        .with_skill_designs(suite.skill_designs.clone());
+        .with_skill_designs(suite.skill_designs.clone())
+        .with_rca_pipeline(rca_pipeline.clone());
 
     // ── Step 8: Run each task ───────────────────────────────────────────────
     let mut all_passed = true;
