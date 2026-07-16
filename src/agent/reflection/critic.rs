@@ -17,18 +17,24 @@ use crate::Result;
 const TRAJECTORY_CRITIC_PROMPT: &str = r#"You are analyzing a conversation trajectory to identify interaction patterns.
 
 Review the full sequence of turns below — user messages, assistant responses,
-tool calls, and tool results — and evaluate:
+tool calls, and tool results — and evaluate. Pay close attention to the actual
+content returned by tools (shown in [Tool result: ...]) versus what the
+assistant claims in its response.
 
-1. Tool usage effectiveness — are tools used appropriately and efficiently?
-2. Response quality across turns — are responses consistent and well-structured?
-3. Efficiency — are tool calls completing quickly? Are repeated failures or
+Evaluation criteria:
+1. Evidence faithfulness — does the assistant's response accurately reflect
+   the actual tool outputs? Does it make claims not supported by tool results?
+   Flag any hallucination or misrepresentation of tool data.
+2. Tool usage effectiveness — are tools used appropriately and efficiently?
+3. Response quality across turns — are responses consistent and well-structured?
+4. Efficiency — are tool calls completing quickly? Are repeated failures or
    timeouts visible? Is the token consumption reasonable for the task?
-4. Recurring themes — what patterns repeat across user requests?
-5. Improvement opportunities — where could the agent serve the user better?
+5. Recurring themes — what patterns repeat across user requests?
+6. Improvement opportunities — where could the agent serve the user better?
 
 Output a JSON object with these fields:
 {
-  "dimension_scores": {"Tool Usage": 0.85, "Response Quality": 0.9, "Efficiency": 0.75, "Pattern Recognition": 0.7},
+  "dimension_scores": {"Evidence Faithfulness": 0.9, "Tool Usage": 0.85, "Response Quality": 0.9, "Efficiency": 0.75, "Pattern Recognition": 0.7},
   "strengths": ["...", "..."],
   "weaknesses": ["...", "..."],
   "suggested_improvements": ["...", "..."],

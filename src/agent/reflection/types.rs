@@ -107,6 +107,7 @@ impl Default for QualityCriteria {
                 QualityDimension::Completeness,
                 QualityDimension::Clarity,
                 QualityDimension::InstructionFollowing,
+                QualityDimension::EvidenceConsistency,
             ],
             thresholds: HashMap::new(),
         }
@@ -160,7 +161,7 @@ mod tests {
     #[test]
     fn test_criteria_default_dimensions() {
         let c = QualityCriteria::default();
-        assert_eq!(c.dimensions.len(), 4);
+        assert_eq!(c.dimensions.len(), 5);
     }
 
     #[test]
@@ -169,6 +170,7 @@ mod tests {
         let formatted = c.format_for_prompt();
         assert!(formatted.contains("Factual Accuracy"));
         assert!(formatted.contains("Completeness"));
+        assert!(formatted.contains("Evidence Consistency"));
     }
 
     #[test]

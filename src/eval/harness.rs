@@ -803,7 +803,7 @@ impl EvalHarness {
         Ok(TrialResult {
             trial_index: trial,
             response: final_response,
-            tool_calls: all_tool_calls,
+            tool_calls: real_tool_calls,
             token_usage: None,
             duration_ms: elapsed.as_millis() as u64,
             condition_results,
