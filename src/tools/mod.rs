@@ -1936,6 +1936,41 @@ impl ToolRegistry {
         self.filter_and_audit(name, context, execution_result).await
     }
 
+    /// Parse tool call arguments, handling provider-specific edge cases.
+    ///
+    /// Some providers (DeepSeek) append trailing text after the JSON object
+    /// or emit multiple JSON values. This uses a streaming parser that
+    /// extracts only the first valid JSON value and ignores trailing content.
+    fn parse_tool_args(&self, raw: &str, tool_name: &str) -> crate::Result<Value> {
+        let s = raw.trim();
+        if s.is_empty() {
+            return Ok(serde_json::json!({}));
+        }
+
+        // Fast path: direct parse works for clean JSON.
+        if let Ok(val) = serde_json::from_str::<Value>(s) {
+            return Ok(val);
+        }
+
+        // Fallback: streaming parser extracts only the first JSON value,
+        // ignoring any trailing text or multiple objects.
+        let stream = serde_json::Deserializer::from_str(s);
+        for value in stream.into_iter::<Value>() {
+            return match value {
+                Ok(val) => Ok(val),
+                Err(e) => Err(crate::error::SyscityError::Validation(format!(
+                    "Invalid arguments for tool {}: {}",
+                    tool_name, e
+                ))),
+            };
+        }
+
+        Err(crate::error::SyscityError::Validation(format!(
+            "Empty arguments for tool {}",
+            tool_name
+        )))
+    }
+
     /// Execute a function call from an LLM.
     /// Checks both static and dynamic registries.
     /// Enforces the timeout configured in `ToolContext`.
@@ -1944,27 +1979,7 @@ impl ToolRegistry {
         call: &FunctionCall,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let args: Value = if call.arguments.trim().is_empty() {
-            serde_json::json!({})
-        } else {
-            // Some providers (DeepSeek) append trailing text after the JSON
-            // object. Strip everything after the last `}` or `]`.
-            let sanitized = {
-                let s = call.arguments.trim();
-                if let Some(end) = s.rfind(['}', ']']) {
-                    &s[..=end]
-                } else {
-                    s
-                }
-            };
-            serde_json::from_str(sanitized).map_err(|e| {
-                crate::error::SyscityError::Validation(format!(
-                    "Invalid arguments for tool {}: {}",
-                    call.name, e
-                ))
-            })?
-        };
-
+        let args: Value = self.parse_tool_args(&call.arguments, &call.name)?;
         let tool_name = call.name.clone();
         let timeout = context.timeout();
 
@@ -2027,26 +2042,7 @@ impl ToolRegistry {
         F: FnMut(ToolExecutionChunk) -> Fut + Send,
         Fut: std::future::Future<Output = ()> + Send,
     {
-        let args: Value = if call.arguments.trim().is_empty() {
-            serde_json::json!({})
-        } else {
-            // Some providers (DeepSeek) append trailing text after the JSON
-            // object. Strip everything after the last `}` or `]`.
-            let sanitized = {
-                let s = call.arguments.trim();
-                if let Some(end) = s.rfind(['}', ']']) {
-                    &s[..=end]
-                } else {
-                    s
-                }
-            };
-            serde_json::from_str(sanitized).map_err(|e| {
-                crate::error::SyscityError::Validation(format!(
-                    "Invalid arguments for tool {}: {}",
-                    call.name, e
-                ))
-            })?
-        };
+        let args: Value = self.parse_tool_args(&call.arguments, &call.name)?;
 
         let tool_name = call.name.clone();
 
@@ -3259,5 +3255,59 @@ mod tests {
 
         let decoded: ToolExecutionChunk = serde_json::from_str(&json).unwrap();
         assert!(matches!(decoded, ToolExecutionChunk::Output(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_parse_tool_args_clean_json() {
+        let registry = ToolRegistry::new();
+        let result = registry.parse_tool_args(r#"{"cmd": "echo hello"}"#, "test_tool");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["cmd"], "echo hello");
+    }
+
+    #[test]
+    fn test_parse_tool_args_trailing_text() {
+        let registry = ToolRegistry::new();
+        // DeepSeek appends text after JSON
+        let result = registry
+            .parse_tool_args(r#"{"cmd": "echo hello"} some trailing text"#, "test_tool");
+        assert!(result.is_ok(), "should handle trailing text: {:?}", result);
+        assert_eq!(result.unwrap()["cmd"], "echo hello");
+    }
+
+    #[test]
+    fn test_parse_tool_args_multiple_objects() {
+        let registry = ToolRegistry::new();
+        // LLM produces two consecutive JSON objects
+        let result = registry.parse_tool_args(
+            r#"{"cmd": "first"} {"cmd": "second"}"#,
+            "test_tool",
+        );
+        assert!(result.is_ok(), "should handle multiple objects: {:?}", result);
+        // Should return only the first value
+        assert_eq!(result.unwrap()["cmd"], "first");
+    }
+
+    #[test]
+    fn test_parse_tool_args_empty() {
+        let registry = ToolRegistry::new();
+        let result = registry.parse_tool_args("", "test_tool");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), serde_json::json!({}));
+    }
+
+    #[test]
+    fn test_parse_tool_args_whitespace_only() {
+        let registry = ToolRegistry::new();
+        let result = registry.parse_tool_args("   ", "test_tool");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), serde_json::json!({}));
+    }
+
+    #[test]
+    fn test_parse_tool_args_invalid_json() {
+        let registry = ToolRegistry::new();
+        let result = registry.parse_tool_args("not valid json", "test_tool");
+        assert!(result.is_err());
     }
 }
