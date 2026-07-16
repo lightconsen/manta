@@ -442,6 +442,33 @@ impl std::fmt::Display for EvalSummary {
 
 // ── EvalHarness ─────────────────────────────────────────────────────────
 
+/// Controls when EvalHarness can stop trials early (§10).
+///
+/// All channels are disabled by default (0 / false), preserving
+/// existing behavior for all callers that don't explicitly configure it.
+#[derive(Debug, Clone)]
+pub struct EarlyStopConfig {
+    /// Minimum trials before considering early stop (default 3).
+    pub min_trials: usize,
+    /// Stop after N consecutive passes (0 = disabled, default).
+    pub consecutive_passes: usize,
+    /// Stop after N consecutive failures (0 = disabled, default).
+    pub consecutive_failures: usize,
+    /// Stop immediately on first failure.
+    pub continuous_success_required: bool,
+}
+
+impl Default for EarlyStopConfig {
+    fn default() -> Self {
+        Self {
+            min_trials: 3,
+            consecutive_passes: 0,
+            consecutive_failures: 0,
+            continuous_success_required: false,
+        }
+    }
+}
+
 /// Multi-trial evaluation harness.
 ///
 /// Orchestrates:
@@ -458,6 +485,8 @@ pub struct EvalHarness {
     skill_designs: Vec<SkillEvalDesign>,
     /// Optional RCA pipeline for automatic badcase analysis (§07).
     rca_pipeline: Option<Arc<RcaPipeline>>,
+    /// Early stopping configuration (§10).
+    early_stop: EarlyStopConfig,
 }
 
 impl EvalHarness {
@@ -472,6 +501,7 @@ impl EvalHarness {
             default_trials: 5,
             skill_designs: Vec::new(),
             rca_pipeline: None,
+            early_stop: EarlyStopConfig::default(),
         }
     }
 
@@ -490,6 +520,12 @@ impl EvalHarness {
     /// Set an optional RCA pipeline for automatic badcase analysis.
     pub fn with_rca_pipeline(mut self, rca: Option<Arc<RcaPipeline>>) -> Self {
         self.rca_pipeline = rca;
+        self
+    }
+
+    /// Set early stopping configuration (§10).
+    pub fn with_early_stop(mut self, config: EarlyStopConfig) -> Self {
+        self.early_stop = config;
         self
     }
 
@@ -547,11 +583,64 @@ impl EvalHarness {
                     results.push(failed);
                 }
             }
+
+            // Check if we can stop early (§10)
+            if self.should_stop_early(&results, n) {
+                break;
+            }
         }
 
         let summary = EvalSummary::compute(task.id.clone(), results);
         info!("Eval '{}' complete: {:.1}% pass rate", task.id, summary.pass_rate * 100.0);
         Ok(summary)
+    }
+
+    /// Check whether we can stop trials early based on accumulated results (§10).
+    fn should_stop_early(&self, results: &[TrialResult], planned: usize) -> bool {
+        let n = results.len();
+        if n < self.early_stop.min_trials {
+            return false;
+        }
+        if n >= planned {
+            return true; // all planned trials completed
+        }
+
+        let cfg = &self.early_stop;
+
+        // continuous_success_required: stop on first failure
+        if cfg.continuous_success_required && results.iter().any(|r| !r.passed) {
+            info!(
+                "Early stopping after {}/{} trials: continuous_success_required violated",
+                n, planned
+            );
+            return true;
+        }
+
+        // consecutive_passes: last N trials all passed
+        if cfg.consecutive_passes > 0 && n >= cfg.consecutive_passes {
+            let last = &results[n - cfg.consecutive_passes..];
+            if last.iter().all(|r| r.passed) {
+                info!(
+                    "Early stopping after {}/{} trials: {} consecutive passes",
+                    n, planned, cfg.consecutive_passes
+                );
+                return true;
+            }
+        }
+
+        // consecutive_failures: last N trials all failed
+        if cfg.consecutive_failures > 0 && n >= cfg.consecutive_failures {
+            let last = &results[n - cfg.consecutive_failures..];
+            if last.iter().all(|r| !r.passed) {
+                info!(
+                    "Early stopping after {}/{} trials: {} consecutive failures",
+                    n, planned, cfg.consecutive_failures
+                );
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Execute a single trial with a fresh conversation context.

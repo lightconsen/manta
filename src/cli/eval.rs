@@ -61,6 +61,9 @@ pub enum EvalCommands {
         /// Collect badcases from failed trials into evals/badcases/
         #[arg(long)]
         collect_badcases: bool,
+        /// Fraction of tasks to run (0.0–1.0). 1.0 = all tasks (§10).
+        #[arg(long)]
+        sampling_rate: Option<f64>,
     },
     /// List collected badcases
     BadcaseList {
@@ -186,6 +189,7 @@ impl EvalCommands {
                 base_url,
                 skill_breakdown,
                 collect_badcases,
+                sampling_rate,
             } => {
                 cmd_run(
                     config,
@@ -199,6 +203,7 @@ impl EvalCommands {
                     base_url.clone(),
                     *skill_breakdown,
                     *collect_badcases,
+                    *sampling_rate,
                 )
                 .await
             }
@@ -362,6 +367,7 @@ async fn cmd_run(
     base_url: Option<String>,
     skill_breakdown: bool,
     collect_badcases: bool,
+    sampling_rate_override: Option<f64>,
 ) -> Result<()> {
     let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
     let manifest_path = evals_dir.join("suites").join(format!("{}.yaml", suite));
@@ -381,6 +387,7 @@ async fn cmd_run(
             &suite,
             Some(evals_dir),
             trials,
+            sampling_rate_override,
             provider,
             model,
             api_key,

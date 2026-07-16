@@ -158,6 +158,9 @@ pub struct EvalSuite {
     /// Whether continuous success is required (all trials pass).
     #[serde(default)]
     pub continuous_success_required: bool,
+    /// Fraction of tasks to run (0.0–1.0). 1.0 = all tasks (§10).
+    #[serde(default = "default_sampling_rate")]
+    pub sampling_rate: f64,
     /// Optional tags for filtering.
     #[serde(default)]
     pub tags: Vec<String>,
@@ -175,6 +178,10 @@ fn default_min_pass_rate() -> f64 {
 
 fn default_trials() -> usize {
     5
+}
+
+fn default_sampling_rate() -> f64 {
+    1.0
 }
 
 // ── Skill evaluation types (from §06-6 / §04) ──────────────────────────

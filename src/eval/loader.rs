@@ -132,6 +132,8 @@ struct YamlTaskRef {
     min_pass_rate: Option<f64>,
     #[serde(default)]
     trials: Option<usize>,
+    #[serde(default)]
+    sampling_rate: Option<f64>,
 }
 
 /// A suite entry inside a category (registry.yaml `capability.suites`).
@@ -145,6 +147,8 @@ struct YamlSuiteEntry {
     min_pass_rate: Option<f64>,
     #[serde(default)]
     trials: Option<usize>,
+    #[serde(default)]
+    sampling_rate: Option<f64>,
     #[serde(default)]
     continuous_success_required: Option<bool>,
     #[serde(default)]
@@ -192,6 +196,8 @@ struct YamlManifest {
     min_pass_rate: Option<f64>,
     #[serde(default)]
     continuous_success_required: Option<bool>,
+    #[serde(default)]
+    sampling_rate: Option<f64>,
     #[serde(default)]
     agent_type: Option<String>,
     #[serde(default)]
@@ -274,6 +280,7 @@ fn resolve_included_manifest(incl_path: &Path, sections: &[String]) -> Result<Ve
                 task_filter: entry.task_filter.clone(),
                 min_pass_rate: entry.min_pass_rate.unwrap_or(0.8),
                 trials: entry.trials.unwrap_or(5),
+                sampling_rate: entry.sampling_rate,
             });
         }
     }
@@ -358,6 +365,7 @@ pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
                 task_filter: task_ref.task_filter.clone(),
                 min_pass_rate: task_ref.min_pass_rate.unwrap_or(default_min_pass_rate),
                 trials: task_ref.trials.unwrap_or(default_trials),
+                sampling_rate: task_ref.sampling_rate,
             });
         }
     }
@@ -377,6 +385,7 @@ pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
                 task_filter: entry.task_filter.clone(),
                 min_pass_rate: entry.min_pass_rate.unwrap_or(default_min_pass_rate),
                 trials: entry.trials.unwrap_or(default_trials),
+                sampling_rate: entry.sampling_rate,
             });
         }
     }
@@ -447,6 +456,7 @@ pub fn load_suite(manifest_path: &Path, suite_name: &str) -> Result<EvalSuite> {
         min_pass_rate: default_min_pass_rate,
         trials: default_trials,
         continuous_success_required: manifest.continuous_success_required.unwrap_or(false),
+        sampling_rate: manifest.sampling_rate.unwrap_or(1.0),
         tags: vec![],
         agent_type,
         skill_designs,
@@ -464,6 +474,7 @@ struct ResolvedEntry {
     task_filter: Option<String>,
     min_pass_rate: f64,
     trials: usize,
+    sampling_rate: Option<f64>,
 }
 
 /// Resolve a relative YAML path against the manifest directory.

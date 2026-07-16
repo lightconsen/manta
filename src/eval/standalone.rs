@@ -14,7 +14,10 @@ use tracing::{info, warn};
 use crate::acp::AcpControlPlane;
 use crate::agent::reflection::critic::Critic;
 use crate::agent::Agent;
-use crate::eval::harness::EvalHarness;
+use rand::seq::SliceRandom;
+
+use crate::eval::harness::{EarlyStopConfig, EvalHarness};
+use crate::eval::EvalTask;
 use crate::eval::loader::{default_evals_dir, load_suite};
 use crate::eval::rca::RcaPipeline;
 use crate::eval::recycle::{extract_rca_results_from_badcases, BadcaseCollector};
@@ -42,6 +45,7 @@ pub async fn run_standalone_suite(
     suite_name: &str,
     evals_dir: Option<PathBuf>,
     trials_override: Option<usize>,
+    sampling_rate_override: Option<f64>,
     provider_override: Option<String>,
     model_override: Option<String>,
     api_key_override: Option<String>,
@@ -186,17 +190,49 @@ pub async fn run_standalone_suite(
 
     // ── Step 7: Build harness ───────────────────────────────────────────────
     let effective_trials = trials_override.unwrap_or(suite.trials);
+    let early_stop = EarlyStopConfig {
+        min_trials: 3,
+        consecutive_passes: 0,
+        consecutive_failures: 0,
+        continuous_success_required: suite.continuous_success_required,
+    };
     let harness = EvalHarness::new(agent.clone(), critic)
         .with_default_trials(effective_trials)
         .with_skill_designs(suite.skill_designs.clone())
-        .with_rca_pipeline(rca_pipeline.clone());
+        .with_rca_pipeline(rca_pipeline.clone())
+        .with_early_stop(early_stop);
 
-    // ── Step 8: Run each task ───────────────────────────────────────────────
+    // ── Step 8: Apply sampling rate (§10) ───────────────────────────────────
+    let effective_sampling_rate = sampling_rate_override.unwrap_or(suite.sampling_rate);
+    let tasks_to_run: Vec<EvalTask> = if effective_sampling_rate < 1.0 {
+        let n = (suite.tasks.len() as f64 * effective_sampling_rate).ceil() as usize;
+        let n = n.max(1).min(suite.tasks.len());
+        let mut rng = rand::thread_rng();
+        let mut indices: Vec<usize> = (0..suite.tasks.len()).collect();
+        indices.shuffle(&mut rng);
+        indices.truncate(n);
+        let mut selected: Vec<EvalTask> = indices.iter().map(|i| suite.tasks[*i].clone()).collect();
+        selected.sort_by_key(|t| t.id.clone());
+        selected
+    } else {
+        suite.tasks.clone()
+    };
+
+    if tasks_to_run.len() < suite.tasks.len() {
+        println!(
+            "  Sampling: {}/{} tasks (rate={:.0}%)",
+            tasks_to_run.len(),
+            suite.tasks.len(),
+            effective_sampling_rate * 100.0,
+        );
+    }
+
+    // ── Step 9: Run each task ───────────────────────────────────────────────
     let mut all_passed = true;
     let mut total_trials = 0usize;
     let mut total_passed = 0usize;
 
-    for task in &suite.tasks {
+    for task in &tasks_to_run {
         println!("── Task: {} — {} ──", task.id, task.description);
         print!("  Running {} trials...", effective_trials);
         // Flush stdout so the message appears before potentially long execution
