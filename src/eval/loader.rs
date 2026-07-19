@@ -123,6 +123,7 @@ struct YamlTurnInput {
 
 /// A single task reference inside a flat suite manifest (ci_smoke.yaml).
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct YamlTaskRef {
     id: String,
     path: String,
@@ -138,6 +139,7 @@ struct YamlTaskRef {
 
 /// A suite entry inside a category (registry.yaml `capability.suites`).
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct YamlSuiteEntry {
     id: String,
     path: String,
@@ -157,6 +159,7 @@ struct YamlSuiteEntry {
 
 /// A category in the registry-style manifest (registry.yaml `capability:`).
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct YamlCategory {
     #[serde(default)]
     name: String,
@@ -185,6 +188,7 @@ struct YamlInclude {
 /// - category keys (registry.yaml)
 /// - `includes:` (release_gate.yaml)
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct YamlManifest {
     #[serde(default)]
     name: Option<String>,

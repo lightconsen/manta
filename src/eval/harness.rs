@@ -25,7 +25,7 @@ use crate::channels::{
 };
 use crate::core::models::Id;
 use crate::eval::dataset::{EvalTask, SkillEvalDesign};
-use crate::eval::rca::{rca_input_from_trial, BadcaseEntry, RcaPipeline};
+use crate::eval::rca::{rca_input_from_trial, RcaPipeline};
 use crate::eval::skill_scorer::{SkillCheckResult, SkillScorer};
 use crate::goal::condition::{CheckResult, GoalCondition};
 use crate::Result;

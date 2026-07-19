@@ -382,6 +382,7 @@ fn determine_failure_reason(trial: &TrialResult) -> String {
 ///
 /// Groups records that share the same phenomenon × module pair, making it
 /// easy to identify systemic issues vs one-off failures.
+#[allow(dead_code)]
 pub fn cluster_badcases(records: &[BadcaseRecord]) -> Vec<BadcaseCluster> {
     use std::collections::HashMap;
 
