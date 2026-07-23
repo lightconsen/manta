@@ -19,22 +19,14 @@ pub mod in_memory_store;
 pub mod manager;
 pub mod multimodal;
 pub mod personality;
-#[cfg(feature = "pgvector")]
-pub mod pgvector_store;
-pub mod pipeline;
 pub mod qmd;
 pub mod session_search;
 pub mod soul;
 pub mod sqlite;
-#[cfg(feature = "sqlite-vec")]
-pub mod sqlite_vec_store;
 pub mod tier;
 pub mod tiered_store;
 pub mod vector;
 pub mod workspace_state;
-
-#[cfg(feature = "local-embeddings")]
-pub mod local_embeddings;
 
 pub use compressed_store::CompressedJsonlStore;
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
@@ -57,10 +49,11 @@ pub use flush::{
     check_memory_flush, increment_compaction_count, record_flush_in_state,
     resolve_flush_target_path, FlushReason, MemoryFlushDecision,
 };
-pub use hybrid::{
-    apply_temporal_decay, hybrid_search, mmr_rerank, HybridSearchConfig, HybridSearchResult,
+pub use crate::rag::hybrid::{
+    apply_temporal_decay, mmr_rerank, HybridSearchConfig, HybridSearchResult,
     MmrConfig, TemporalDecayConfig,
 };
+pub use hybrid::hybrid_search;
 pub use manager::{MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext};
 pub use multimodal::{
     build_multimodal_glob, classify_multimodal_file, FileClassification, MemoryMultimodalConfig,
@@ -69,8 +62,8 @@ pub use multimodal::{
 };
 pub use personality::{MemoryContext, MemoryType, PersonalityMemory};
 #[cfg(feature = "pgvector")]
-pub use pgvector_store::PgVectorStore;
-pub use pipeline::{
+pub use crate::rag::pgvector_store::PgVectorStore;
+pub use crate::rag::pipeline::{
     EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
     PipelineEmbeddingProvider,
 };
@@ -79,17 +72,18 @@ pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use soul::{BehaviorConfig, PreferenceConfig, SoulConfig, SoulFile};
 pub use sqlite::SqliteMemoryStore;
 #[cfg(feature = "sqlite-vec")]
-pub use sqlite_vec_store::SqliteVecStore;
+pub use crate::rag::sqlite_vec_store::SqliteVecStore;
 pub use tier::{
     MemoryTier, TierAction, TierConfig, TierEvaluator, TierIndex, TierSystemConfig, TieredMemory,
     TIER_INDEX_FILE_NAME,
 };
 pub use tiered_store::TieredStore;
-pub use vector::{
+pub use crate::rag::{
     ApiEmbeddingProvider, BatchEmbeddingProcessor, CachedEmbeddingProvider, EmbeddedChunk,
     EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker,
-    VectorBackend, VectorMemoryService, VectorStore, VectorStoreStats,
+    VectorBackend, VectorStore, VectorStoreStats,
 };
+pub use vector::{VectorMemoryService};
 pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 
 /// Memory entry type discriminant for type-safe memory categorization

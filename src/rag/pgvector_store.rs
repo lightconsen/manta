@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 use tracing::info;
 
-use super::vector::{EmbeddedChunk, VectorStore, VectorStoreStats};
+use crate::rag::chunk::EmbeddedChunk;
+use crate::rag::vector_store::{VectorStore, VectorStoreStats};
 
 /// PostgreSQL-backed vector store using the `pgvector` extension.
 #[derive(Debug, Clone)]
@@ -283,7 +284,7 @@ impl VectorStore for PgVectorStore {
 
 #[cfg(test)]
 mod tests {
-    use super::super::vector::EmbeddedChunk;
+    use crate::rag::chunk::EmbeddedChunk;
     use super::*;
 
     async fn pg_pool() -> Option<PgPool> {

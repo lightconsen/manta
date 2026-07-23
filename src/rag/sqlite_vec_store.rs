@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tracing::info;
 
-use super::vector::{EmbeddedChunk, VectorStore, VectorStoreStats};
+use crate::rag::chunk::EmbeddedChunk;
+use crate::rag::vector_store::{VectorStore, VectorStoreStats};
 
 /// SQLite-backed vector store using the native `sqlite-vec` extension.
 #[derive(Debug, Clone)]
@@ -390,7 +391,7 @@ impl VectorStore for SqliteVecStore {
 
 #[cfg(test)]
 mod tests {
-    use super::super::vector::EmbeddedChunk;
+    use crate::rag::chunk::EmbeddedChunk;
     use super::*;
 
     #[tokio::test]

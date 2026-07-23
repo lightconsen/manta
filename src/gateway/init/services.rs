@@ -12,9 +12,10 @@ use tracing::{info, warn};
 use crate::gateway::GatewayConfig;
 use crate::gateway::GatewayEvent;
 use crate::gateway::GatewayState;
-use crate::memory::vector::{
+use crate::memory::vector::VectorMemoryService;
+use crate::rag::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
-    MemoryVectorStore, VectorMemoryService,
+    MemoryVectorStore,
 };
 use crate::memory::{MemoryManager, SessionSearch};
 
@@ -23,12 +24,12 @@ pub async fn init_memory_services(
     config: &GatewayConfig,
     state: &Arc<GatewayState>,
     sqlite_pool: Option<&sqlx::SqlitePool>,
-    unified_vector_store: Option<Arc<dyn crate::memory::VectorStore>>,
+    unified_vector_store: Option<Arc<dyn crate::rag::VectorStore>>,
 ) -> crate::Result<()> {
     if config.vector_memory.enabled {
         info!("Initializing vector memory service...");
 
-        let embedding_provider: Option<Arc<dyn crate::memory::vector::EmbeddingProvider>> =
+        let embedding_provider: Option<Arc<dyn crate::rag::EmbeddingProvider>> =
             match config.vector_memory.provider {
                 crate::gateway::EmbeddingProviderType::OpenAi => {
                     if let Some(ref api_key) = config.vector_memory.embedding_api_key {
@@ -52,7 +53,7 @@ pub async fn init_memory_services(
                     {
                         if let Some(ref model_path) = config.vector_memory.local_model_path {
                             info!("Using local GGUF embedding provider");
-                            use crate::memory::local_embeddings::ModelSource;
+                            use crate::rag::local_embeddings::ModelSource;
                             let source = ModelSource::parse(model_path);
                             let provider = LocalGgufEmbeddingProvider::create(
                                 source,
@@ -89,7 +90,7 @@ pub async fn init_memory_services(
             };
 
         if let Some(embedding_provider) = embedding_provider {
-            let vector_store: Arc<dyn crate::memory::VectorStore> = match unified_vector_store {
+            let vector_store: Arc<dyn crate::rag::VectorStore> = match unified_vector_store {
                 Some(store) => {
                     info!("Using unified SQLite storage for vector store");
                     store
@@ -315,7 +316,7 @@ pub async fn init_late_services(
     config: &GatewayConfig,
     state: &Arc<GatewayState>,
     sqlite_pool: Option<&sqlx::SqlitePool>,
-    unified_vector_store: Option<Arc<dyn crate::memory::VectorStore>>,
+    unified_vector_store: Option<Arc<dyn crate::rag::VectorStore>>,
 ) -> crate::Result<()> {
     init_memory_services(config, state, sqlite_pool, unified_vector_store).await?;
     init_hot_reload(config, state).await?;

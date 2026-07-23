@@ -66,6 +66,7 @@ pub mod outbound;
 pub mod planner;
 pub mod plugins;
 pub mod providers;
+pub mod rag;
 pub mod secrets;
 pub mod security;
 pub mod skills;

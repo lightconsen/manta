@@ -20,10 +20,9 @@ use tracing::{debug, info, warn};
 use super::{
     effectiveness::{EffectivenessConfig, EffectivenessTracker},
     events::{MemoryEventBuilder, MemoryEventLog},
-    hybrid::{hybrid_search, HybridSearchConfig},
+    hybrid::hybrid_search,
     multimodal::{MemoryMultimodalConfig, MultimodalStore},
     personality::PersonalityMemory,
-    pipeline::EmbeddingPipelineHandle,
     qmd::{QmdExecutor, QmdScope},
     session_search::SessionSearch,
     tier::{TierAction, TierIndex, TierSystemConfig},
@@ -31,6 +30,8 @@ use super::{
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
     TieredStore, UnifiedStore,
 };
+use crate::rag::hybrid::HybridSearchConfig;
+use crate::rag::pipeline::EmbeddingPipelineHandle;
 use crate::providers::{CompletionRequest, Message, Provider};
 
 /// Compute a stable id for effectiveness tracking.
@@ -1945,9 +1946,10 @@ mod tests {
 
         use crate::memory::effectiveness::{EffectivenessConfig, EffectivenessTracker};
         use crate::memory::session_search::SessionSearch;
-        use crate::memory::vector::{
-            EmbeddingConfig, EmbeddingProvider, MemoryVectorStore, VectorMemoryService, VectorStore,
-        };
+        use crate::rag::config::EmbeddingConfig;
+        use crate::rag::embedding::EmbeddingProvider;
+        use crate::rag::vector_store::{MemoryVectorStore, VectorStore};
+        use crate::memory::vector::VectorMemoryService;
 
         struct FixedEmbeddingProvider;
         #[async_trait]

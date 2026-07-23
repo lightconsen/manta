@@ -10,6 +10,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
+use super::embedding::EmbeddingProvider;
+
 /// An embedding request sent to the pipeline.
 #[derive(Debug)]
 pub struct EmbeddingJob {
@@ -246,8 +248,6 @@ async fn process_batch<P: PipelineEmbeddingProvider>(provider: &Arc<P>, batch: V
 // =============================================================================
 // Default provider implementation for existing EmbeddingProvider
 // =============================================================================
-
-use super::vector::EmbeddingProvider;
 
 #[async_trait::async_trait]
 impl PipelineEmbeddingProvider for dyn EmbeddingProvider {

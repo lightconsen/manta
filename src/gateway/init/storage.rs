@@ -13,8 +13,8 @@ use crate::agent::session_store::SessionStore;
 use crate::error::SyscityError;
 use crate::gateway::GatewayConfig;
 #[cfg(feature = "sqlite-vec")]
-use crate::memory::SqliteVecStore;
-use crate::memory::VectorStore;
+use crate::rag::sqlite_vec_store::SqliteVecStore;
+use crate::rag::VectorStore;
 use crate::security::persistent_audit::PersistentAuditLog;
 use crate::security::runtime_audit::AuditLogger;
 
