@@ -294,19 +294,17 @@ function ChatApp() {
     async (agentId: string) => {
       setSettingsOpen(false);
 
-      // If an empty session already exists for this agent, switch to it instead
+      // If a session already exists for this agent, switch to it instead
       // of creating another one.
       const existing = sessions.find((s) => s.agent_id === agentId);
       if (existing) {
-        const { messages: history } = await transport.loadHistory(existing.id);
-        if (history.length === 0) {
-          transport.switchSession(existing.id);
-          transport.setMessages([]);
-          useChatStore.getState().setHasMoreHistory(false);
-          setSessionKey((k) => k + 1);
-          await refreshSessions();
-          return;
-        }
+        transport.switchSession(existing.id);
+        const { messages: history, hasMore } = await transport.loadHistory(existing.id);
+        transport.setMessages(history);
+        useChatStore.getState().setHasMoreHistory(hasMore);
+        setSessionKey((k) => k + 1);
+        await refreshSessions();
+        return;
       }
 
       transport.createSession(agentId);
