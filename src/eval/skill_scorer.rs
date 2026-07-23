@@ -2,9 +2,12 @@
 //!
 //! Implements the four-dimensional skill evaluation from §02 / §06-6:
 //! 1. **Trigger** — did the agent call (or not call) the expected tool?
-//! 2. **Execution** — required tools present? forbidden tools absent? params correct?
-//! 3. **Quality** — does the response meet must_contain / must_not_contain / min_length?
-//! 4. **Resilience** — retroactive detection of tool failures and degradation checks.
+//! 2. **Execution** — required tools present? forbidden tools absent? params
+//!    correct?
+//! 3. **Quality** — does the response meet must_contain / must_not_contain /
+//!    min_length?
+//! 4. **Resilience** — retroactive detection of tool failures and degradation
+//!    checks.
 //!
 //! This runs alongside GoalCondition (Code Scorer) and Critic (LLM Judge)
 //! as an additional scoring layer within `EvalHarness`.

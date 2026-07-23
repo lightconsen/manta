@@ -9,8 +9,8 @@
 //!
 //! # Limitations / format quirks
 //!
-//! - YAML `must_contain` can be integer or string — the loader converts both
-//!   to `String` (required by `GoalCondition::Pattern`).
+//! - YAML `must_contain` can be integer or string — the loader converts both to
+//!   `String` (required by `GoalCondition::Pattern`).
 //! - Setup/cleanup commands are run by the harness before/after each trial.
 //! - Suite manifests support three forms: flat `tasks:`, category-grouped
 //!   (`capability: { suites: … }`), and `includes:` that reference other
@@ -242,7 +242,11 @@ pub fn list_suites(evals_dir: &Path) -> Result<Vec<(String, String)>> {
         let entry = entry?;
         let path = entry.path();
         if path.extension().map(|e| e == "yaml").unwrap_or(false) {
-            let stem = path.file_stem().unwrap().to_str().unwrap_or("").to_string();
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             // Try to extract a display name from the YAML
             let name = match std::fs::read_to_string(&path) {
                 Ok(content) => {
@@ -260,7 +264,8 @@ pub fn list_suites(evals_dir: &Path) -> Result<Vec<(String, String)>> {
     Ok(suites)
 }
 
-/// Return suite entries for the "ci_smoke" suite — first checks for YAML with that name.
+/// Return suite entries for the "ci_smoke" suite — first checks for YAML with
+/// that name.
 fn resolve_included_manifest(incl_path: &Path, sections: &[String]) -> Result<Vec<ResolvedEntry>> {
     let content = std::fs::read_to_string(incl_path).map_err(crate::error::SyscityError::Io)?;
     let manifest: YamlManifest = serde_yml::from_str(&content).map_err(|e| {
@@ -291,7 +296,8 @@ fn resolve_included_manifest(incl_path: &Path, sections: &[String]) -> Result<Ve
     Ok(entries)
 }
 
-/// Result of loading a task YAML file — tasks + optional skill evaluation design.
+/// Result of loading a task YAML file — tasks + optional skill evaluation
+/// design.
 pub struct LoadedTaskFile {
     pub tasks: Vec<EvalTask>,
     pub skill_design: Option<SkillEvalDesign>,
@@ -311,7 +317,7 @@ pub fn load_tasks(yaml_path: &Path) -> Result<LoadedTaskFile> {
         ))
     })?;
 
-    let tasks: Result<Vec<EvalTask>> = file.tasks.into_iter().map(|yt| convert_task(yt)).collect();
+    let tasks: Result<Vec<EvalTask>> = file.tasks.into_iter().map(convert_task).collect();
     Ok(LoadedTaskFile {
         tasks: tasks?,
         skill_design: file.skill_eval_design,
@@ -497,7 +503,7 @@ fn convert_task(yt: YamlTask) -> Result<EvalTask> {
     let conditions: Vec<GoalCondition> = yt
         .conditions
         .into_iter()
-        .filter_map(|yc| convert_condition(yc))
+        .filter_map(convert_condition)
         .collect();
 
     let criteria = yt.criteria.map(|yc| {
@@ -611,7 +617,8 @@ fn convert_condition(yc: YamlCondition) -> Option<GoalCondition> {
 
 /// Parse `must_contain` / `expected` from YAML `Value` to `String`.
 ///
-/// Handles both `must_contain: 1` (integer) and `must_contain: "text"` (string).
+/// Handles both `must_contain: 1` (integer) and `must_contain: "text"`
+/// (string).
 fn yaml_value_to_string(v: &serde_yml::Value) -> String {
     match v {
         serde_yml::Value::String(s) => s.clone(),

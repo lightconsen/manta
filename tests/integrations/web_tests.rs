@@ -1,8 +1,9 @@
-use super::*;
 use wiremock::{
     matchers::{method, path, query_param},
     Mock, MockServer, ResponseTemplate,
 };
+
+use super::*;
 
 #[tokio::test]
 async fn web_fetch_tool_fetches_example_com() {

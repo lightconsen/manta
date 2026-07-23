@@ -9,18 +9,17 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use rand::seq::SliceRandom;
 use tracing::{info, warn};
 
 use crate::acp::AcpControlPlane;
 use crate::agent::reflection::critic::Critic;
 use crate::agent::Agent;
-use rand::seq::SliceRandom;
-
 use crate::eval::harness::{EarlyStopConfig, EvalHarness};
-use crate::eval::EvalTask;
 use crate::eval::loader::{default_evals_dir, load_suite};
 use crate::eval::rca::RcaPipeline;
 use crate::eval::recycle::{extract_rca_results_from_badcases, BadcaseCollector};
+use crate::eval::EvalTask;
 use crate::eval::{generate_action_items, write_action_items};
 use crate::gateway::config::GatewayConfig;
 use crate::providers::resolver::resolve_provider;
@@ -301,7 +300,9 @@ pub async fn run_standalone_suite(
                         Ok(results) => {
                             if !results.is_empty() {
                                 let items = generate_action_items(&results);
-                                if let Err(e) = write_action_items(&items, &evals_dir.join("actions")) {
+                                if let Err(e) =
+                                    write_action_items(&items, &evals_dir.join("actions"))
+                                {
                                     warn!("Failed to write action items: {}", e);
                                 } else {
                                     info!("Generated {} action items", items.len());

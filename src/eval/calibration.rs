@@ -234,7 +234,8 @@ async fn evaluate_case(critic: &Critic, case: &CalibrationCase) -> CalibrationRe
     let actual_verdict = if critique.passed { "Pass" } else { "Fail" };
     let verdict_match = actual_verdict == case.expected.verdict;
 
-    // Compute dimension accuracy: average of (1 - |expected - actual|) per dimension
+    // Compute dimension accuracy: average of (1 - |expected - actual|) per
+    // dimension
     let mut dim_accuracy_sum = 0.0f64;
     let mut dim_count = 0usize;
     for (dim, expected_score) in &case.expected.dimension_scores {

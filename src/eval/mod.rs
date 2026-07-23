@@ -1,11 +1,12 @@
 //! Syscity Evaluation Framework
 //!
-//! Implements the three-tier evaluation methodology from the Agent 评测 article:
+//! Implements the three-tier evaluation methodology from the Agent 评测
+//! article:
 //!
-//! - **Eval Harness** — N-trial execution engine with GoalCondition (Code Scorer)
-//!   and Critic (LLM Judge) scoring, plus Wilson CI statistics.
-//! - **RCA Pipeline** — Root cause analysis with ProblemPhenomenon × CandidateModule
-//!   mapping table, 5-step investigation flow.
+//! - **Eval Harness** — N-trial execution engine with GoalCondition (Code
+//!   Scorer) and Critic (LLM Judge) scoring, plus Wilson CI statistics.
+//! - **RCA Pipeline** — Root cause analysis with ProblemPhenomenon ×
+//!   CandidateModule mapping table, 5-step investigation flow.
 //! - **Quality Gates** — Gateway lifecycle integration for pre-release gating.
 //!
 //! # Quick Start
@@ -42,7 +43,10 @@ pub(crate) mod calibration;
 pub(crate) mod human_review;
 pub(crate) mod multi_judge;
 
-pub use action::{generate_action_items, load_action_items, write_action_items, ActionItem, ActionLevel, ImpactScope, Priority};
+pub use action::{
+    generate_action_items, load_action_items, write_action_items, ActionItem, ActionLevel,
+    ImpactScope, Priority,
+};
 pub use agent_type::AgentType;
 pub use calibration::{
     calibrate, detect_drift, load_calibration_cases, load_calibration_history,
@@ -56,7 +60,9 @@ pub use dataset::{
     DegradeExpectation, EvalSuite, EvalTask, EvalTaskSource, ExecutionCase, FailureMode,
     ParamMatcher, QualityCase, ResilienceCase, SkillEvalDesign, SuiteCategory, TriggerCase,
 };
-pub use harness::{EarlyStopConfig, EvalHarness, EvalSummary, ToolCallSummary, TrialResult, TurnResult};
+pub use harness::{
+    EarlyStopConfig, EvalHarness, EvalSummary, ToolCallSummary, TrialResult, TurnResult,
+};
 pub use human_review::{HumanReviewCase, HumanReviewStore, ReviewStatus};
 pub use loader::{default_evals_dir, list_suites, load_suite, load_tasks, LoadedTaskFile};
 pub use multi_judge::{

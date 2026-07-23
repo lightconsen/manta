@@ -202,11 +202,17 @@ pub struct RcaKnowledgeBase {
     entries: Vec<RcaKnowledgeBaseEntry>,
 }
 
-impl RcaKnowledgeBase {
-    pub fn new() -> Self {
+impl Default for RcaKnowledgeBase {
+    fn default() -> Self {
         let mut kb = Self { entries: Vec::new() };
         kb.seed_defaults();
         kb
+    }
+}
+
+impl RcaKnowledgeBase {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Seed the KB with common failure patterns and known fixes.
@@ -689,11 +695,7 @@ impl RcaPipeline {
             let fix = if entry.known_fixes.is_empty() {
                 format!("模块 {:?} 诊断失败: {}. 请检查配置、Prompt 或实现。", module, reason)
             } else {
-                format!(
-                    "建议修复: {}。诊断详情: {}",
-                    entry.known_fixes.join("; "),
-                    reason
-                )
+                format!("建议修复: {}。诊断详情: {}", entry.known_fixes.join("; "), reason)
             };
             let category = module_category(module);
             return (category.into(), enumeration.into(), fix);
@@ -766,8 +768,12 @@ impl RcaPipeline {
 
     /// Compute confidence based on evidence strength.
     fn compute_confidence(&self, diagnoses: &[(CandidateModule, ModuleVerdict)]) -> f64 {
-        let has_fail = diagnoses.iter().any(|(_, v)| matches!(v, ModuleVerdict::Fail(_)));
-        let has_soft = diagnoses.iter().any(|(_, v)| matches!(v, ModuleVerdict::SoftPass(_)));
+        let has_fail = diagnoses
+            .iter()
+            .any(|(_, v)| matches!(v, ModuleVerdict::Fail(_)));
+        let has_soft = diagnoses
+            .iter()
+            .any(|(_, v)| matches!(v, ModuleVerdict::SoftPass(_)));
         let fail_count = diagnoses
             .iter()
             .filter(|(_, v)| matches!(v, ModuleVerdict::Fail(_)))
@@ -888,13 +894,25 @@ mod tests {
     fn test_knowledge_base_seeded() {
         let kb = RcaKnowledgeBase::new();
         // KB should have default entries
-        assert!(kb.lookup("关键工具未调用", &CandidateModule::ToolSelection).is_some());
-        assert!(kb.lookup("意图识别错误", &CandidateModule::IntentRecognition).is_some());
-        assert!(kb.lookup("知识召回不足", &CandidateModule::Retrieval).is_some());
-        assert!(kb.lookup("回复质量缺陷", &CandidateModule::ResponseGeneration).is_some());
-        assert!(kb.lookup("策略违规", &CandidateModule::PolicyEnforcement).is_some());
+        assert!(kb
+            .lookup("关键工具未调用", &CandidateModule::ToolSelection)
+            .is_some());
+        assert!(kb
+            .lookup("意图识别错误", &CandidateModule::IntentRecognition)
+            .is_some());
+        assert!(kb
+            .lookup("知识召回不足", &CandidateModule::Retrieval)
+            .is_some());
+        assert!(kb
+            .lookup("回复质量缺陷", &CandidateModule::ResponseGeneration)
+            .is_some());
+        assert!(kb
+            .lookup("策略违规", &CandidateModule::PolicyEnforcement)
+            .is_some());
         // Unknown pair should return None
-        assert!(kb.lookup("不存在的问题", &CandidateModule::SystemInfra).is_none());
+        assert!(kb
+            .lookup("不存在的问题", &CandidateModule::SystemInfra)
+            .is_none());
     }
 
     #[test]

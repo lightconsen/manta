@@ -17,7 +17,8 @@ use tracing::{debug, info, warn};
 use crate::agent::AgentConfig;
 use crate::dirs;
 
-/// Regex for matching placeholder headings that should not be used as display names.
+/// Regex for matching placeholder headings that should not be used as display
+/// names.
 #[allow(clippy::expect_used)] // Static regex with a known-valid pattern.
 static PLACEHOLDER_HEADING_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:IDENTITY|SOUL|BOOTSTRAP|USER|AGENTS|TOOLS|HEARTBEAT|MEMORY)\.md|我是谁|身份信息|agent\s*identity")
@@ -466,7 +467,8 @@ impl AgentPersonality {
     ///
     /// Supports multiple common formats:
     /// 1. `## name` / `##name` / `name:` followed by the name on the next line
-    /// 2. Markdown list items like `- **名称**: 小明` or `- **Name**: Xiao Ming`
+    /// 2. Markdown list items like `- **名称**: 小明` or `- **Name**: Xiao
+    ///    Ming`
     /// 3. YAML-style `name: 小明`
     /// 4. First heading `# Title` as a fallback
     pub fn display_name(&self) -> String {

@@ -8,8 +8,8 @@
 //! ```rust
 //! use syscity::eval::comparison::{compare_versions, ComparisonVerdict};
 //!
-//! let old = vec![true, true, true, true, false];  // 80%
-//! let new = vec![true, true, true, true, true];   // 100%
+//! let old = vec![true, true, true, true, false]; // 80%
+//! let new = vec![true, true, true, true, true]; // 100%
 //! let result = compare_versions(&old, &new, 10_000, 0.95);
 //! assert_eq!(result.verdict, ComparisonVerdict::Improved);
 //! assert!(result.confidence_interval.0 > 0.0);

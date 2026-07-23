@@ -1955,7 +1955,7 @@ impl ToolRegistry {
         // Fallback: streaming parser extracts only the first JSON value,
         // ignoring any trailing text or multiple objects.
         let stream = serde_json::Deserializer::from_str(s);
-        for value in stream.into_iter::<Value>() {
+        if let Some(value) = stream.into_iter::<Value>().next() {
             return match value {
                 Ok(val) => Ok(val),
                 Err(e) => Err(crate::error::SyscityError::Validation(format!(
@@ -3269,8 +3269,8 @@ mod tests {
     fn test_parse_tool_args_trailing_text() {
         let registry = ToolRegistry::new();
         // DeepSeek appends text after JSON
-        let result = registry
-            .parse_tool_args(r#"{"cmd": "echo hello"} some trailing text"#, "test_tool");
+        let result =
+            registry.parse_tool_args(r#"{"cmd": "echo hello"} some trailing text"#, "test_tool");
         assert!(result.is_ok(), "should handle trailing text: {:?}", result);
         assert_eq!(result.unwrap()["cmd"], "echo hello");
     }
@@ -3279,10 +3279,7 @@ mod tests {
     fn test_parse_tool_args_multiple_objects() {
         let registry = ToolRegistry::new();
         // LLM produces two consecutive JSON objects
-        let result = registry.parse_tool_args(
-            r#"{"cmd": "first"} {"cmd": "second"}"#,
-            "test_tool",
-        );
+        let result = registry.parse_tool_args(r#"{"cmd": "first"} {"cmd": "second"}"#, "test_tool");
         assert!(result.is_ok(), "should handle multiple objects: {:?}", result);
         // Should return only the first value
         assert_eq!(result.unwrap()["cmd"], "first");

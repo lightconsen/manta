@@ -327,7 +327,8 @@ impl QualityGate {
         })
     }
 
-    /// Run all criteria checks and return the gate result with release decision.
+    /// Run all criteria checks and return the gate result with release
+    /// decision.
     pub async fn check(&self) -> (GateResult, ReleaseDecision) {
         let started_at = SystemTime::now();
         let mut criteria_results = Vec::new();
@@ -396,10 +397,7 @@ impl QualityGate {
             }
 
             let summary = SuiteSummary::from_tasks(suite_id.to_string(), summaries);
-            info!(
-                "Badcase suite completed: {:.1}% pass rate",
-                summary.overall_pass_rate * 100.0
-            );
+            info!("Badcase suite completed: {:.1}% pass rate", summary.overall_pass_rate * 100.0);
             suite_results.push(summary);
         }
 
@@ -474,7 +472,8 @@ impl QualityGate {
         Ok(SuiteSummary::from_tasks(suite_id.to_string(), summaries))
     }
 
-    /// Shadow traffic: run agent on prod traffic snapshots, no user-facing impact.
+    /// Shadow traffic: run agent on prod traffic snapshots, no user-facing
+    /// impact.
     pub async fn run_shadow(&self, turns: &[ProdTurn]) -> ShadowReport {
         let total = turns.len();
         if total == 0 {
@@ -497,21 +496,26 @@ impl QualityGate {
                 input: turn.input.clone(),
                 ..Default::default()
             };
-            match self.harness.run(task, 1).await {
-                Ok(summary) => {
-                    if summary.pass_rate > 0.0 {
-                        passed += 1;
-                    }
-                    total_latency += summary.avg_duration_ms as u64;
+            if let Ok(summary) = self.harness.run(task, 1).await {
+                if summary.pass_rate > 0.0 {
+                    passed += 1;
                 }
-                Err(_) => {}
+                total_latency += summary.avg_duration_ms as u64;
             }
         }
 
         ShadowReport {
             total_turns: total,
-            pass_rate: if total > 0 { passed as f64 / total as f64 } else { 1.0 },
-            avg_latency_ms: if total > 0 { total_latency as f64 / total as f64 } else { 0.0 },
+            pass_rate: if total > 0 {
+                passed as f64 / total as f64
+            } else {
+                1.0
+            },
+            avg_latency_ms: if total > 0 {
+                total_latency as f64 / total as f64
+            } else {
+                0.0
+            },
             tool_accuracy: 1.0, // simplified; real impl would check tool call correctness
         }
     }
@@ -568,11 +572,19 @@ impl QualityGate {
             latencies[idx.min(latencies.len() - 1)]
         };
 
-        let error_rate = if total > 0 { errors as f64 / total as f64 } else { 0.0 };
+        let error_rate = if total > 0 {
+            errors as f64 / total as f64
+        } else {
+            0.0
+        };
 
         ABReport {
             total_turns: total,
-            pass_rate: if total > 0 { passed as f64 / total as f64 } else { 1.0 },
+            pass_rate: if total > 0 {
+                passed as f64 / total as f64
+            } else {
+                1.0
+            },
             guardrail_pass: error_rate < 0.1 && p99 < 5000.0, // < 10% errors, < 5s p99
             latency_p99_ms: p99,
             error_rate,
@@ -647,7 +659,11 @@ impl QualityGate {
                             passed: report.guardrail_pass,
                             actual: 1.0 - report.error_rate,
                             threshold: 0.9,
-                            detail: format!("Guardrail: p99={:.0}ms, error_rate={:.1}%", report.latency_p99_ms, report.error_rate * 100.0),
+                            detail: format!(
+                                "Guardrail: p99={:.0}ms, error_rate={:.1}%",
+                                report.latency_p99_ms,
+                                report.error_rate * 100.0
+                            ),
                         },
                         CriterionResult {
                             criterion: "ab_pass_rate".into(),
@@ -929,7 +945,11 @@ impl PhaseStore {
 
     /// Advance to the next phase and persist.
     pub fn advance(&mut self) -> bool {
-        if let Some(pos) = self.phases.iter().position(|p| (*p - self.current_phase).abs() < 1e-6) {
+        if let Some(pos) = self
+            .phases
+            .iter()
+            .position(|p| (*p - self.current_phase).abs() < 1e-6)
+        {
             if pos + 1 < self.phases.len() {
                 self.current_phase = self.phases[pos + 1];
                 self.save();
@@ -970,7 +990,8 @@ impl FeedbackCollector {
         }
     }
 
-    /// Update online experience signals (called by external webhook/monitoring).
+    /// Update online experience signals (called by external
+    /// webhook/monitoring).
     pub fn update_online(&mut self, signal: OnlineExperienceSignal) {
         self.online_signals = Some(signal);
     }
@@ -980,7 +1001,8 @@ impl FeedbackCollector {
         self.business_signals = Some(signal);
     }
 
-    /// Compute current release signals, including any populated online/business data.
+    /// Compute current release signals, including any populated online/business
+    /// data.
     pub fn current_signals(&self, gate_result: &GateResult) -> ReleaseSignals {
         let mut signals = ReleaseSignals::from_gate_result(gate_result);
         signals.online_experience = self.online_signals.clone();

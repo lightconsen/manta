@@ -175,6 +175,7 @@ impl LayeredScorer {
     ///
     /// When the verdict is `InsufficientInfo` and a `HumanReviewStore` is
     /// configured, the case is written to disk automatically.
+    #[allow(clippy::too_many_arguments)]
     pub async fn score_and_review(
         &self,
         conditions: &[GoalCondition],

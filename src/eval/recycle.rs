@@ -1,10 +1,11 @@
-//! Badcase Recycling Pipeline — collect, analyze, and persist failed eval trials
-//! as recyclable evaluation tasks (§05).
+//! Badcase Recycling Pipeline — collect, analyze, and persist failed eval
+//! trials as recyclable evaluation tasks (§05).
 //!
 //! # Pipeline
 //!
 //! 1. `BadcaseCollector::collect()` extracts failed trials from `EvalSummary`
-//! 2. Determines a human-readable `failure_reason` from condition/critique/skill results
+//! 2. Determines a human-readable `failure_reason` from
+//!    condition/critique/skill results
 //! 3. Optionally runs `RcaPipeline` analysis for deep root-cause insight
 //! 4. Persists as YAML to `evals/badcases/<task_id>.yaml` (append to existing)
 //! 5. `load_badcase_suite()` re-loads collected badcases as a regression suite
@@ -12,8 +13,9 @@
 //! # Design
 //!
 //! - Collection happens **after** harness.run() — zero changes to EvalHarness.
-//! - YAML output uses `serde_yml::Value` tree to match the `YamlTask` intermediate
-//!   schema, avoiding `GoalCondition` → `YamlCondition` round-trip mismatch.
+//! - YAML output uses `serde_yml::Value` tree to match the `YamlTask`
+//!   intermediate schema, avoiding `GoalCondition` → `YamlCondition` round-trip
+//!   mismatch.
 //! - RCA integration is optional (`Option<Arc<RcaPipeline>>`).
 
 use std::path::{Path, PathBuf};
@@ -26,7 +28,9 @@ use tracing::{info, warn};
 use crate::eval::dataset::{EvalSuite, EvalTask, EvalTaskSource, SuiteCategory};
 use crate::eval::harness::{EvalSummary, TrialResult};
 use crate::eval::loader::{default_evals_dir, load_tasks};
-use crate::eval::rca::{rca_input_from_trial, BadcaseEntry, CandidateModule, ProblemPhenomenon, RcaPipeline, RcaResult};
+use crate::eval::rca::{
+    rca_input_from_trial, BadcaseEntry, CandidateModule, ProblemPhenomenon, RcaPipeline, RcaResult,
+};
 use crate::goal::condition::GoalCondition;
 use crate::Result;
 
@@ -93,9 +97,11 @@ pub struct BadcaseCluster {
 /// to prevent suite bloat and ensure signal quality.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BadcaseGovernance {
-    /// Badcases older than this many days are excluded from the regression suite.
+    /// Badcases older than this many days are excluded from the regression
+    /// suite.
     pub max_age_days: u64,
-    /// Maximum number of badcase records with the same input before dedup kicks in.
+    /// Maximum number of badcase records with the same input before dedup kicks
+    /// in.
     pub max_duplicate_inputs: usize,
     /// After a task_id appears this many times across badcase files,
     /// its effective min_pass_rate is lowered to `downgraded_pass_rate`.
@@ -131,7 +137,8 @@ impl BadcaseGovernance {
             .collect()
     }
 
-    /// Check if a new record is a duplicate (same `input` already exists too many times).
+    /// Check if a new record is a duplicate (same `input` already exists too
+    /// many times).
     pub fn is_duplicate(&self, input: &str, existing: &[BadcaseRecord]) -> bool {
         let count = existing.iter().filter(|r| r.input == input).count();
         count >= self.max_duplicate_inputs
@@ -175,8 +182,10 @@ pub struct BadcaseCollector {
 impl BadcaseCollector {
     /// Create a new badcase collector.
     ///
-    /// * `rca_pipeline` — optional RCA pipeline for deep analysis of each failure.
-    /// * `output_dir` — directory for badcase YAML files (defaults to `evals/badcases/`).
+    /// * `rca_pipeline` — optional RCA pipeline for deep analysis of each
+    ///   failure.
+    /// * `output_dir` — directory for badcase YAML files (defaults to
+    ///   `evals/badcases/`).
     pub fn new(rca_pipeline: Option<Arc<RcaPipeline>>, output_dir: Option<PathBuf>) -> Self {
         Self {
             rca_pipeline,
@@ -268,7 +277,10 @@ impl BadcaseCollector {
 
         // Load existing records for dedup check
         // output_dir is evals/badcases/, so parent() is the evals directory
-        let evals_dir = self.output_dir.parent().map(|p| p.to_path_buf())
+        let evals_dir = self
+            .output_dir
+            .parent()
+            .map(|p| p.to_path_buf())
             .unwrap_or_else(default_evals_dir);
         let existing_records = load_all_badcase_records(&evals_dir);
 
@@ -400,10 +412,7 @@ pub fn cluster_badcases(records: &[BadcaseRecord]) -> Vec<BadcaseCluster> {
         } else {
             ("unknown".into(), "unknown".into())
         };
-        let key = ClusterKey {
-            phenomenon: phen,
-            module: mod_,
-        };
+        let key = ClusterKey { phenomenon: phen, module: mod_ };
         groups.entry(key).or_default().push(record);
     }
 
@@ -689,8 +698,8 @@ pub fn load_badcase_suite(evals_dir: &Path) -> Result<EvalSuite> {
 
 /// Load all `BadcaseRecord`s from badcase YAML files.
 ///
-/// Walks all YAML files in `{evals_dir}/badcases/`, parses each `BadcaseRecord`.
-/// Returns an empty vec on any error or missing directory.
+/// Walks all YAML files in `{evals_dir}/badcases/`, parses each
+/// `BadcaseRecord`. Returns an empty vec on any error or missing directory.
 pub(crate) fn load_all_badcase_records(evals_dir: &Path) -> Vec<BadcaseRecord> {
     let badcases_dir = evals_dir.join("badcases");
     if !badcases_dir.is_dir() {
@@ -719,9 +728,8 @@ pub(crate) fn load_all_badcase_records(evals_dir: &Path) -> Vec<BadcaseRecord> {
                 None => continue,
             };
             for task in tasks {
-                match serde_yml::from_value::<BadcaseRecord>(task.clone()) {
-                    Ok(r) => records.push(r),
-                    Err(_) => {} // skip entries that don't deserialize as BadcaseRecord
+                if let Ok(r) = serde_yml::from_value::<BadcaseRecord>(task.clone()) {
+                    records.push(r);
                 }
             }
         }
@@ -733,7 +741,10 @@ pub(crate) fn load_all_badcase_records(evals_dir: &Path) -> Vec<BadcaseRecord> {
 ///
 /// Filters expired records, applies downgraded pass rates to frequently
 /// failing tasks. See `BadcaseGovernance` for rule details.
-pub fn load_governed_badcase_suite(evals_dir: &Path, governance: &BadcaseGovernance) -> Result<EvalSuite> {
+pub fn load_governed_badcase_suite(
+    evals_dir: &Path,
+    governance: &BadcaseGovernance,
+) -> Result<EvalSuite> {
     let mut suite = load_badcase_suite(evals_dir)?;
 
     // ── Apply expiry ──
@@ -746,16 +757,19 @@ pub fn load_governed_badcase_suite(evals_dir: &Path, governance: &BadcaseGoverna
     }
 
     // ── Apply downgrade ──
-    let downgraded_min = governance.effective_pass_rate("__suite__", &active_records, suite.min_pass_rate);
+    let downgraded_min =
+        governance.effective_pass_rate("__suite__", &active_records, suite.min_pass_rate);
     suite.min_pass_rate = downgraded_min;
 
     Ok(suite)
 }
 
-/// Extract all `RcaResult` entries from badcase YAML files in `{evals_dir}/badcases/`.
+/// Extract all `RcaResult` entries from badcase YAML files in
+/// `{evals_dir}/badcases/`.
 ///
-/// Walks each YAML file, parses `rca_result` keys, and collects non-None results.
-/// Returns an empty vec if the directory doesn't exist or no RCA data is found.
+/// Walks each YAML file, parses `rca_result` keys, and collects non-None
+/// results. Returns an empty vec if the directory doesn't exist or no RCA data
+/// is found.
 pub fn extract_rca_results_from_badcases(evals_dir: &Path) -> Result<Vec<RcaResult>> {
     let badcases_dir = evals_dir.join("badcases");
 
@@ -1002,27 +1016,42 @@ mod tests {
 
         let records = vec![
             BadcaseRecord {
-                id: "r1".into(), task_id: "t1".into(), input: "".into(),
-                description: "".into(), failure_reason: "cond fail".into(),
-                response: "".into(), rca_performed: true,
+                id: "r1".into(),
+                task_id: "t1".into(),
+                input: "".into(),
+                description: "".into(),
+                failure_reason: "cond fail".into(),
+                response: "".into(),
+                rca_performed: true,
                 rca_result: Some(make_rca("FactualError", CandidateModule::Retrieval)),
-                collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+                collected_at: SystemTime::now(),
+                fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
             },
             BadcaseRecord {
-                id: "r2".into(), task_id: "t2".into(), input: "".into(),
-                description: "".into(), failure_reason: "cond fail".into(),
-                response: "".into(), rca_performed: true,
+                id: "r2".into(),
+                task_id: "t2".into(),
+                input: "".into(),
+                description: "".into(),
+                failure_reason: "cond fail".into(),
+                response: "".into(),
+                rca_performed: true,
                 rca_result: Some(make_rca("FactualError", CandidateModule::Retrieval)),
-                collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+                collected_at: SystemTime::now(),
+                fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
             },
             BadcaseRecord {
-                id: "r3".into(), task_id: "t3".into(), input: "".into(),
-                description: "".into(), failure_reason: "tool not called".into(),
-                response: "".into(), rca_performed: true,
+                id: "r3".into(),
+                task_id: "t3".into(),
+                input: "".into(),
+                description: "".into(),
+                failure_reason: "tool not called".into(),
+                response: "".into(),
+                rca_performed: true,
                 rca_result: Some(make_rca("ToolNotCalled", CandidateModule::ToolSelection)),
-                collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+                collected_at: SystemTime::now(),
+                fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
             },
         ];
@@ -1045,7 +1074,7 @@ mod tests {
     #[test]
     fn test_governance_filter_expired() {
         let g = BadcaseGovernance {
-            max_age_days: 1,  // 1 day
+            max_age_days: 1, // 1 day
             ..Default::default()
         };
 
@@ -1054,14 +1083,21 @@ mod tests {
             .checked_sub(std::time::Duration::from_secs(2 * 86400))
             .unwrap();
         let now_record = BadcaseRecord {
-            id: "fresh".into(), task_id: "t1".into(), input: "hi".into(),
-            description: "".into(), failure_reason: "fail".into(),
-            response: "".into(), rca_performed: false, rca_result: None,
-            collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+            id: "fresh".into(),
+            task_id: "t1".into(),
+            input: "hi".into(),
+            description: "".into(),
+            failure_reason: "fail".into(),
+            response: "".into(),
+            rca_performed: false,
+            rca_result: None,
+            collected_at: SystemTime::now(),
+            fix_status: BadcaseFixStatus::Unconfirmed,
             entry: BadcaseEntry::AutoDetected,
         };
         let old_record = BadcaseRecord {
-            id: "stale".into(), collected_at: two_days_ago,
+            id: "stale".into(),
+            collected_at: two_days_ago,
             ..now_record.clone()
         };
 
@@ -1078,8 +1114,16 @@ mod tests {
         };
 
         let records = vec![
-            BadcaseRecord { id: "r1".into(), input: "hello".into(), ..make_record() },
-            BadcaseRecord { id: "r2".into(), input: "hello".into(), ..make_record() },
+            BadcaseRecord {
+                id: "r1".into(),
+                input: "hello".into(),
+                ..make_record()
+            },
+            BadcaseRecord {
+                id: "r2".into(),
+                input: "hello".into(),
+                ..make_record()
+            },
         ];
 
         assert!(g.is_duplicate("hello", &records));
@@ -1095,9 +1139,21 @@ mod tests {
         };
 
         let records = vec![
-            BadcaseRecord { id: "r1".into(), task_id: "frequent_fail".into(), ..make_record() },
-            BadcaseRecord { id: "r2".into(), task_id: "frequent_fail".into(), ..make_record() },
-            BadcaseRecord { id: "r3".into(), task_id: "frequent_fail".into(), ..make_record() },
+            BadcaseRecord {
+                id: "r1".into(),
+                task_id: "frequent_fail".into(),
+                ..make_record()
+            },
+            BadcaseRecord {
+                id: "r2".into(),
+                task_id: "frequent_fail".into(),
+                ..make_record()
+            },
+            BadcaseRecord {
+                id: "r3".into(),
+                task_id: "frequent_fail".into(),
+                ..make_record()
+            },
         ];
 
         let rate = g.effective_pass_rate("frequent_fail", &records, 1.0);
@@ -1110,10 +1166,16 @@ mod tests {
     /// Helper: minimal BadcaseRecord for tests.
     fn make_record() -> BadcaseRecord {
         BadcaseRecord {
-            id: String::new(), task_id: String::new(), input: String::new(),
-            description: String::new(), failure_reason: String::new(),
-            response: String::new(), rca_performed: false, rca_result: None,
-            collected_at: SystemTime::now(), fix_status: BadcaseFixStatus::Unconfirmed,
+            id: String::new(),
+            task_id: String::new(),
+            input: String::new(),
+            description: String::new(),
+            failure_reason: String::new(),
+            response: String::new(),
+            rca_performed: false,
+            rca_result: None,
+            collected_at: SystemTime::now(),
+            fix_status: BadcaseFixStatus::Unconfirmed,
             entry: BadcaseEntry::AutoDetected,
         }
     }

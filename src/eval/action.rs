@@ -1,7 +1,8 @@
 //! Structured action items — translating RCA results into executable tasks.
 //!
 //! Implements §08: action items with explicit owner, fix, acceptance criteria.
-//! Supports four action levels: L0 ReportOnly → L1 CreateTicket → L2 ConfigProposal → L3 AutoFixPR.
+//! Supports four action levels: L0 ReportOnly → L1 CreateTicket → L2
+//! ConfigProposal → L3 AutoFixPR.
 
 use std::path::Path;
 
@@ -127,8 +128,9 @@ impl ActionItem {
 
 /// Generate a deduplicated list of action items from a batch of RCA results.
 ///
-/// Groups by `(problem_enumeration, responsibility_module)`, aggregates failure counts,
-/// and takes the highest-confidence entry for priority/level assignment.
+/// Groups by `(problem_enumeration, responsibility_module)`, aggregates failure
+/// counts, and takes the highest-confidence entry for priority/level
+/// assignment.
 pub fn generate_action_items(results: &[RcaResult]) -> Vec<ActionItem> {
     use std::collections::HashMap;
 
@@ -146,7 +148,11 @@ pub fn generate_action_items(results: &[RcaResult]) -> Vec<ActionItem> {
             // Highest confidence entry sets priority/level
             let best = group
                 .iter()
-                .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal))
+                .max_by(|a, b| {
+                    a.confidence
+                        .partial_cmp(&b.confidence)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .copied()
                 .unwrap_or_else(|| unreachable!("non-empty group guaranteed by HashMap::entry"));
 
@@ -160,9 +166,7 @@ pub fn generate_action_items(results: &[RcaResult]) -> Vec<ActionItem> {
         let prio_cmp = priority_order(&a.priority).cmp(&priority_order(&b.priority));
         prio_cmp.then_with(|| {
             // Extract confidence from risk_level for sorting
-            b.impact_scope
-                .risk_level
-                .cmp(&a.impact_scope.risk_level)
+            b.impact_scope.risk_level.cmp(&a.impact_scope.risk_level)
         })
     });
 
@@ -301,8 +305,8 @@ mod tests {
     #[test]
     fn test_generate_action_items_dedup() {
         let results = vec![
-            make_test_rca(0.9),  // group A
-            make_test_rca(0.9),  // same group (default uses ToolSelection + empty "")
+            make_test_rca(0.9), // group A
+            make_test_rca(0.9), // same group (default uses ToolSelection + empty "")
             make_test_rca_with(0.7, "问题B", CandidateModule::ContextMemory),
             make_test_rca_with(0.5, "问题B", CandidateModule::ContextMemory),
         ];
@@ -371,11 +375,7 @@ mod tests {
     }
 
     /// Helper — create an RcaResult with custom problem/module.
-    fn make_test_rca_with(
-        confidence: f64,
-        problem: &str,
-        module: CandidateModule,
-    ) -> RcaResult {
+    fn make_test_rca_with(confidence: f64, problem: &str, module: CandidateModule) -> RcaResult {
         RcaResult {
             phenomenon: "non_responsive".into(),
             process_deviation: "step1".into(),

@@ -237,11 +237,9 @@ impl EvalCommands {
                 verbose,
                 mark_reviewed,
             } => cmd_review(dir.clone(), *pending, *verbose, mark_reviewed.clone()).await,
-            Self::ActionItems {
-                dir,
-                generate,
-                verbose,
-            } => cmd_action_items(dir.clone(), *generate, *verbose).await,
+            Self::ActionItems { dir, generate, verbose } => {
+                cmd_action_items(dir.clone(), *generate, *verbose).await
+            }
             Self::Feedback { dir, channel, verbose } => {
                 cmd_feedback(dir.clone(), channel.clone(), *verbose).await
             }
@@ -514,18 +512,15 @@ async fn cmd_badcase_clusters(badcases_dir: std::path::PathBuf) -> Result<()> {
 
     for entry in &files {
         let path = entry.path();
-        match eval::load_tasks(&path) {
-            Ok(loaded) => {
-                for task in &loaded.tasks {
-                    let reason = task
-                        .failure_reason
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_string());
-                    clusters.entry(reason).or_default().push(task.id.clone());
-                    total += 1;
-                }
+        if let Ok(loaded) = eval::load_tasks(&path) {
+            for task in &loaded.tasks {
+                let reason = task
+                    .failure_reason
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                clusters.entry(reason).or_default().push(task.id.clone());
+                total += 1;
             }
-            Err(_) => {}
         }
     }
 
@@ -540,11 +535,7 @@ async fn cmd_badcase_clusters(badcases_dir: std::path::PathBuf) -> Result<()> {
 
     println!("═══ Badcase Clusters ({}) ═══", total);
     for (reason, task_ids) in &sorted {
-        println!(
-            "  [{:>2}] {}",
-            task_ids.len(),
-            reason.chars().take(100).collect::<String>()
-        );
+        println!("  [{:>2}] {}", task_ids.len(), reason.chars().take(100).collect::<String>());
         for tid in task_ids {
             println!("         └ {}", tid);
         }
@@ -598,9 +589,10 @@ async fn cmd_badcase_submit(
     failure_reason: Option<String>,
     dir: Option<PathBuf>,
 ) -> Result<()> {
-    use crate::eval::recycle::{write_badcase_yaml, BadcaseFixStatus, BadcaseRecord};
-    use crate::eval::rca::BadcaseEntry;
     use std::time::SystemTime;
+
+    use crate::eval::rca::BadcaseEntry;
+    use crate::eval::recycle::{write_badcase_yaml, BadcaseFixStatus, BadcaseRecord};
 
     let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
     let badcases_dir = evals_dir.join("badcases");
@@ -645,7 +637,8 @@ fn chrono_timestamp() -> String {
     format!("{:x}", dur.as_secs())
 }
 
-/// `eval action-items` — list or generate action items from badcase RCA results.
+/// `eval action-items` — list or generate action items from badcase RCA
+/// results.
 async fn cmd_action_items(dir: Option<PathBuf>, generate: bool, verbose: bool) -> Result<()> {
     use crate::eval::action::{generate_action_items, load_action_items, write_action_items};
     use crate::eval::recycle::extract_rca_results_from_badcases;
@@ -711,8 +704,10 @@ async fn cmd_action_items(dir: Option<PathBuf>, generate: bool, verbose: bool) -
 
 /// `eval feedback` — view feedback pipeline stats for eval/ops/model channels.
 async fn cmd_feedback(dir: Option<PathBuf>, channel: Option<String>, verbose: bool) -> Result<()> {
-    use crate::eval::recycle::{extract_rca_results_from_badcases, load_all_badcase_records, BadcaseGovernance};
     use crate::eval::action::load_action_items;
+    use crate::eval::recycle::{
+        extract_rca_results_from_badcases, load_all_badcase_records, BadcaseGovernance,
+    };
 
     let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
 
@@ -744,9 +739,12 @@ async fn cmd_feedback(dir: Option<PathBuf>, channel: Option<String>, verbose: bo
                 if !rca_results.is_empty() {
                     println!();
                     println!("  RCA modules:");
-                    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                    let mut counts: std::collections::HashMap<String, usize> =
+                        std::collections::HashMap::new();
                     for r in &rca_results {
-                        *counts.entry(format!("{:?}", r.responsibility_module)).or_insert(0) += 1;
+                        *counts
+                            .entry(format!("{:?}", r.responsibility_module))
+                            .or_insert(0) += 1;
                     }
                     for (module, count) in &counts {
                         println!("    {}: {}", module, count);
@@ -757,7 +755,10 @@ async fn cmd_feedback(dir: Option<PathBuf>, channel: Option<String>, verbose: bo
                     println!();
                     println!("  Recent action items:");
                     for item in action_items.iter().take(5) {
-                        println!("    [{}] {} — owner: {}", item.id, item.problem_summary, item.owner);
+                        println!(
+                            "    [{}] {} — owner: {}",
+                            item.id, item.problem_summary, item.owner
+                        );
                     }
                 }
             }
@@ -894,9 +895,10 @@ async fn cmd_calibrate(
     api_key: Option<String>,
     base_url: Option<String>,
 ) -> Result<()> {
+    use std::sync::Arc;
+
     use crate::eval::calibration;
     use crate::providers::resolver::resolve_provider;
-    use std::sync::Arc;
 
     let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
 
@@ -1005,7 +1007,8 @@ async fn cmd_calibrate(
     Ok(())
 }
 
-/// Recursively collect all `.yaml` files under a directory and call `f` on each.
+/// Recursively collect all `.yaml` files under a directory and call `f` on
+/// each.
 fn collect_yaml_files<F>(
     dir: &std::path::Path,
     dirs: &mut Vec<std::path::PathBuf>,

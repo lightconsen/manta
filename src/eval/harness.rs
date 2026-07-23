@@ -89,7 +89,8 @@ pub struct TrialResult {
     /// Whether skill checks passed (true when no skill designs).
     pub skill_passed: bool,
 
-    /// Composite pass/fail (conditions_passed && critique_passed && skill_passed && session_conditions_passed).
+    /// Composite pass/fail (conditions_passed && critique_passed &&
+    /// skill_passed && session_conditions_passed).
     pub passed: bool,
 
     // ── Session-level (§03) ──
@@ -595,7 +596,8 @@ impl EvalHarness {
         Ok(summary)
     }
 
-    /// Check whether we can stop trials early based on accumulated results (§10).
+    /// Check whether we can stop trials early based on accumulated results
+    /// (§10).
     fn should_stop_early(&self, results: &[TrialResult], planned: usize) -> bool {
         let n = results.len();
         if n < self.early_stop.min_trials {

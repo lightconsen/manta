@@ -57,18 +57,13 @@ fn default_weight() -> f64 {
 }
 
 /// Aggregation mode for multi-judge results.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AggregationMode {
     /// Each judge votes Pass/Fail; majority wins.
     MajorityVote,
     /// Weighted average of overall scores.
+    #[default]
     WeightedAverage,
-}
-
-impl Default for AggregationMode {
-    fn default() -> Self {
-        Self::WeightedAverage
-    }
 }
 
 /// Configuration for the multi-judge scorer.

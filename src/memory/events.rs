@@ -440,7 +440,8 @@ mod tests {
         assert_eq!(events.len(), 50, "all 50 concurrent appends should produce exactly 50 events");
 
         // Verify we can deserialize all events and they have the expected content.
-        // Order is not guaranteed because events share one-second-granularity timestamps.
+        // Order is not guaranteed because events share one-second-granularity
+        // timestamps.
         let mut by_id = std::collections::HashMap::new();
         for event in &events {
             match event {

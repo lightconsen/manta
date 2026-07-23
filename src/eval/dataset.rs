@@ -58,7 +58,8 @@ pub struct TurnInput {
 ///
 /// For single-turn tasks (the default), `input` is used directly.
 /// For multi-turn tasks, `turns` overrides `input` and each turn is sent
-/// sequentially within the same conversation for session-level evaluation (§03).
+/// sequentially within the same conversation for session-level evaluation
+/// (§03).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EvalTask {
     /// Unique task identifier.

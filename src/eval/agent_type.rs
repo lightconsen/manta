@@ -12,22 +12,26 @@ use serde::{Deserialize, Serialize};
 /// decision agents, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentType {
-    /// 知识问答型 — factual recall, citation faithfulness, hallucination avoidance.
+    /// 知识问答型 — factual recall, citation faithfulness, hallucination
+    /// avoidance.
     #[serde(rename = "knowledge_qa")]
     KnowledgeQA,
-    /// 任务执行型 — multi-step tool orchestration, instruction following, error recovery.
+    /// 任务执行型 — multi-step tool orchestration, instruction following, error
+    /// recovery.
     #[serde(rename = "task_execution")]
     TaskExecution,
     /// 推理决策型 — logical reasoning, chain-of-thought, trade-off analysis.
     #[serde(rename = "reasoning_decision")]
     ReasoningDecision,
-    /// 多轮引导型 — sustained context, persona consistency, multi-turn coherence.
+    /// 多轮引导型 — sustained context, persona consistency, multi-turn
+    /// coherence.
     #[serde(rename = "multi_turn_guide")]
     MultiTurnGuide,
     /// 创意生成型 — structured output formats, creativity constraints.
     #[serde(rename = "creative_generation")]
     CreativeGeneration,
-    /// 多 Agent 协作型 — sub-agent coordination, role separation, message passing.
+    /// 多 Agent 协作型 — sub-agent coordination, role separation, message
+    /// passing.
     #[serde(rename = "multi_agent")]
     MultiAgent,
 }
