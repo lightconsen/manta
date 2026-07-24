@@ -320,14 +320,14 @@ export function ChatContent({ transport }: ChatContentProps) {
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-primary-500/20">
-                <Send className="w-6 h-6" />
-              </div>
-              <h2 className="text-lg font-semibold text-primary mb-1">
-                Syscity
-              </h2>
+              <img
+                src="/syscity.png"
+                alt="Syscity"
+                className="w-16 h-16 mx-auto mb-4"
+                draggable={false}
+              />
               <p className="text-secondary text-sm">
-                Start a conversation
+                Type your message or press / for commands
               </p>
             </div>
           </div>
