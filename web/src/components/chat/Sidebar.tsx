@@ -397,7 +397,7 @@ function SessionRow({
   onPin,
 }: SessionRowProps) {
   const isActive = session.id === currentSessionId;
-  const displayName = session.label || session.agent?.display_name || "Untitled";
+  const displayName = session.label || "Untitled";
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(displayName);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -452,7 +452,7 @@ function SessionRow({
             ? "bg-primary-100 dark:bg-primary-900/20 text-primary"
             : "text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
         }`}
-        title={displayName}
+        title={session.agent ? `${session.agent.emoji} ${session.agent.display_name} — ${displayName}` : displayName}
         aria-label={displayName}
         role="listitem"
       >

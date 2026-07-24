@@ -15,6 +15,38 @@ import { ChatContent } from "@/components/chat/ChatContent";
 import { useGoalStore } from "@/stores/goalStore";
 import { GoalPanel } from "@/components/chat/GoalPanel";
 
+/* ── Agent emoji pool — ensures each agent has a unique icon ── */
+const EMOJI_POOL = [
+  "🦑", "🐙", "🦊", "🐺", "🐱", "🐼", "🐨", "🦁",
+  "🐯", "🐸", "🦄", "🐲", "🦅", "🦉", "🐳", "🦋",
+  "🐞", "🦀", "🕷️", "🐝", "🐢", "🦎", "🦈", "🐧",
+];
+
+function assignUniqueEmojis(
+  agents: Array<{ id: string; emoji: string }>
+): Map<string, string> {
+  const result = new Map<string, string>();
+  const used = new Set<string>();
+  let poolIdx = 0;
+
+  for (const a of agents) {
+    let emoji = a.emoji;
+    // Use agent's own emoji if it's non-empty and not already taken
+    if (emoji && !used.has(emoji)) {
+      used.add(emoji);
+    } else {
+      // Assign next unused emoji from pool
+      while (poolIdx < EMOJI_POOL.length && used.has(EMOJI_POOL[poolIdx])) {
+        poolIdx++;
+      }
+      emoji = poolIdx < EMOJI_POOL.length ? EMOJI_POOL[poolIdx++] : "🤖";
+      used.add(emoji);
+    }
+    result.set(a.id, emoji);
+  }
+  return result;
+}
+
 /* ── ChatAppInner ── */
 function ChatAppInner({ transport }: { transport: SyscityWebSocketTransport }) {
   const runtime = useLocalRuntime(transport);
@@ -107,7 +139,11 @@ function ChatApp() {
     const filtered = list.filter(
       (a) => a.is_valid && a.id !== "default"
     );
-    setAgents(filtered);
+    // Assign unique emojis so each agent has a distinct icon.
+    const emojiMap = assignUniqueEmojis(filtered);
+    setAgents(
+      filtered.map((a) => ({ ...a, emoji: emojiMap.get(a.id) || "🤖" }))
+    );
   }, [transport]);
 
   // Network status
@@ -363,6 +399,13 @@ function ChatApp() {
       agent: agents.find((a) => a.id === s.agent_id),
     }));
   }, [sessions, agents]);
+
+  // Keep chatStore.currentAgent in sync with the active session.
+  useEffect(() => {
+    const currentId = transport.getSessionId();
+    const current = sessionItems.find((s) => s.id === currentId);
+    useChatStore.getState().setCurrentAgent(current?.agent);
+  }, [sessionItems, transport]);
 
   return (
     <div className="h-screen flex bg-page text-primary">

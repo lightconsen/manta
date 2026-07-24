@@ -10,6 +10,11 @@ interface ChatState {
     last_activity?: number;
   }>;
   currentSessionId: string;
+  currentAgent?: {
+    id: string;
+    display_name: string;
+    emoji: string;
+  };
   networkStatus: NetworkStatus;
   isRunning: boolean;
   voiceMode: boolean;
@@ -30,6 +35,7 @@ interface ChatState {
     }>
   ) => void;
   setCurrentSessionId: (id: string) => void;
+  setCurrentAgent: (agent?: { id: string; display_name: string; emoji: string }) => void;
   setNetworkStatus: (status: NetworkStatus) => void;
   setIsRunning: (running: boolean) => void;
   setVoiceMode: (enabled: boolean) => void;
@@ -58,6 +64,7 @@ export const useChatStore = create<ChatState>((set) => ({
     })),
   setSessions: (sessions) => set({ sessions }),
   setCurrentSessionId: (id) => set({ currentSessionId: id }),
+  setCurrentAgent: (agent) => set({ currentAgent: agent }),
   setNetworkStatus: (status) => set({ networkStatus: status }),
   setIsRunning: (running) => set({ isRunning: running }),
   setVoiceMode: (voiceMode) => set({ voiceMode }),

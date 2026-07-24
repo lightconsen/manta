@@ -28,6 +28,7 @@ export function ChatContent({ transport }: ChatContentProps) {
   const [paletteCommands, setPaletteCommands] = useState<CommandDef[]>([]);
 
   const messages = useChatStore((s) => s.messages);
+  const currentAgent = useChatStore((s) => s.currentAgent);
   const isRunning = useChatStore((s) => s.isRunning);
   const voiceMode = useChatStore((s) => s.voiceMode);
   const setVoiceMode = useChatStore((s) => s.setVoiceMode);
@@ -277,6 +278,17 @@ export function ChatContent({ transport }: ChatContentProps) {
 
   return (
     <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden">
+      {/* Agent info header */}
+      {currentAgent && (
+        <div className="shrink-0 px-4 py-2 border-b border-subtle bg-page/80 backdrop-blur-sm">
+          <div className="max-w-[var(--message-list-max-width)] mx-auto flex items-center gap-2 text-xs text-secondary">
+            <span className="text-sm">{currentAgent.emoji}</span>
+            <span className="font-medium">{currentAgent.display_name}</span>
+            <span className="text-[10px] text-secondary/50">({currentAgent.id})</span>
+          </div>
+        </div>
+      )}
+
       {/* Scrollable message area */}
       <div
         ref={scrollRef}
