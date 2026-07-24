@@ -359,6 +359,7 @@ impl Gateway {
                 dream_scheduler: RwLock::new(None),
                 dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
                 standing_order_manager: RwLock::new(None),
+                kb_manager: RwLock::new(None),
             },
             tools: ToolState {
                 registry: tools_init.tool_registry.clone(),

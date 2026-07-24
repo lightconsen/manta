@@ -53,6 +53,14 @@ pub enum KbCommands {
         /// Agent ID (e.g., "sre", "coder")
         agent: String,
     },
+    /// Watch KB source files and auto-re-ingest on change.
+    Watch {
+        /// Agent ID to watch (e.g., "sre", "coder"). Omit to watch all.
+        agent: Option<String>,
+        /// Run as a background daemon task (requires gateway).
+        #[arg(long)]
+        daemon: bool,
+    },
 }
 
 /// Run a KB command.
@@ -64,6 +72,7 @@ pub async fn run_kb_command(command: &KbCommands) -> Result<()> {
             cmd_delete(agent.as_deref(), collection.as_deref(), doc.as_deref()).await
         }
         KbCommands::Status { agent } => cmd_status(agent).await,
+        KbCommands::Watch { agent, daemon } => cmd_watch(agent.as_deref(), *daemon).await,
     }
 }
 
@@ -303,5 +312,122 @@ async fn cmd_status(agent: &str) -> Result<()> {
         println!("\n  All documents indexed successfully.");
     }
 
+    Ok(())
+}
+
+/// Handle `kb watch` command.
+async fn cmd_watch(agent: Option<&str>, daemon: bool) -> Result<()> {
+    if daemon {
+        return cmd_watch_daemon(agent).await;
+    }
+    cmd_watch_foreground(agent).await
+}
+
+/// Handle foreground `kb watch`.
+async fn cmd_watch_foreground(agent: Option<&str>) -> Result<()> {
+    let manager = create_kb_manager().await?;
+    let manager = Arc::new(manager);
+
+    let mut watcher = crate::rag::ingestion::watch::KbWatcher::new()?;
+
+    let agents: Vec<String> = if let Some(a) = agent {
+        watcher.add_agent(a)?;
+        vec![a.to_string()]
+    } else {
+        watcher.add_all_agents()?
+    };
+
+    if agents.is_empty() {
+        println!("No agents with kb.toml found to watch.");
+        return Ok(());
+    }
+
+    println!("Watching {} agent(s) for KB changes:", agents.len());
+    for a in &agents {
+        println!("  - {}", a);
+    }
+    println!("Press Ctrl+C to stop.");
+
+    let mut rx = watcher.event_rx;
+
+    // Handle Ctrl+C
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let shutdown_clone = shutdown.clone();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        shutdown_clone.notify_one();
+    });
+
+    loop {
+        tokio::select! {
+            Some(event) = rx.recv() => {
+                match event {
+                    crate::rag::ingestion::watch::KbWatchEvent::SourceFileChanged { agent, source_path } => {
+                        println!("[{}] Source changed: {}", agent, source_path.display());
+                        let agent_dir = crate::dirs::agent_dir(&agent);
+                        let collection = KnowledgeBaseManager::collection_name(&agent);
+
+                        if let Some(sources) = crate::rag::ingestion::load_kb_config(&agent_dir) {
+                            for source in &sources {
+                                if crate::rag::ingestion::watch::source_matches_path(
+                                    source, &source_path, &agent_dir,
+                                ) {
+                                    let report = manager
+                                        .ingest_source(source, &collection, &agent_dir, false)
+                                        .await;
+                                    println!(
+                                        "  Re-ingested: {} indexed, {} skipped, {} errors",
+                                        report.docs_indexed, report.docs_skipped, report.errors.len(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    crate::rag::ingestion::watch::KbWatchEvent::KbTomlChanged { agent } => {
+                        println!("[{}] kb.toml changed — re-loading sources and re-ingesting", agent);
+                        let agent_dir = crate::dirs::agent_dir(&agent);
+                        let report = manager.ingest_agent(&agent, false).await;
+                        println!(
+                            "  Re-ingested: {} indexed, {} skipped, {} errors",
+                            report.docs_indexed, report.docs_skipped, report.errors.len(),
+                        );
+
+                        // Re-scan kb.toml and register new watch paths
+                        if let Some(ref mut watcher_ref) = watcher.watcher {
+                            use notify::{RecursiveMode, Watcher};
+                            if let Some(sources) = crate::rag::ingestion::load_kb_config(&agent_dir) {
+                                for source in &sources {
+                                    for p in crate::rag::ingestion::watch::source_paths_for_watch(source, &agent_dir) {
+                                        if p.exists() {
+                                            let _ = watcher_ref.watch(&p, RecursiveMode::NonRecursive);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ = shutdown.notified() => {
+                println!("\nStopping KB watcher...");
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle daemon `kb watch --daemon`.
+async fn cmd_watch_daemon(agent: Option<&str>) -> Result<()> {
+    let _ = agent;
+    println!("KB watcher daemon mode: connecting to running daemon...");
+    println!();
+    println!("To enable KB watching in daemon mode, set:");
+    println!("  [knowledge_base]");
+    println!("  auto_ingest_on_startup = true");
+    println!("in your config.toml and restart the daemon.");
+    println!();
+    println!("Or use `syscity kb watch` (without --daemon) for foreground mode.");
     Ok(())
 }

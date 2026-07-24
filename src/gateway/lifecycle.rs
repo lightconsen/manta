@@ -158,6 +158,37 @@ pub(crate) async fn start_gateway(
         }
     }
 
+    // Watch kb.toml files for hot-reload
+    if let Some(ref hot_reload) = *state.infra.hot_reload.read().await {
+        use crate::config::hot_reload::ConfigFileType;
+        let agents_dir = crate::dirs::agents_dir();
+        if agents_dir.exists() {
+            let mut read_dir = match tokio::fs::read_dir(&agents_dir).await {
+                Ok(d) => d,
+                Err(e) => {
+                    warn!("Failed to read agents dir for KB watching: {}", e);
+                    return Ok(());
+                }
+            };
+            while let Some(entry) = read_dir.next_entry().await.unwrap_or(None) {
+                let kb_toml = entry.path().join("kb.toml");
+                if kb_toml.exists() {
+                    if let Err(e) = hot_reload
+                        .watch_file(&kb_toml, ConfigFileType::KnowledgeBase)
+                        .await
+                    {
+                        warn!("Failed to watch kb.toml: {:?} - {}", kb_toml, e);
+                    } else {
+                        info!(
+                            "Watching kb.toml for agent '{}'",
+                        entry.path().file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // Register delegation tool with agent resolver for target_agent routing.
     {
         use crate::tools::DelegateTool;

@@ -12,6 +12,7 @@ use tracing::{info, warn};
 use crate::gateway::GatewayConfig;
 use crate::gateway::GatewayEvent;
 use crate::gateway::GatewayState;
+use crate::gateway::EmbeddingProviderType;
 use crate::memory::query::HydeTransformer;
 use crate::memory::vector::VectorMemoryService;
 use crate::rag::multi_query::MultiQueryConfig as RagMultiQueryConfig;
@@ -384,6 +385,133 @@ pub async fn init_side_effect_context(state: &Arc<GatewayState>) {
     info!("SideEffectExecutor context wired");
 }
 
+/// Initialize the Knowledge Base manager for daemon-side auto-ingest.
+pub async fn init_kb_manager(
+    config: &GatewayConfig,
+    state: &Arc<GatewayState>,
+    sqlite_pool: Option<&sqlx::SqlitePool>,
+    _unified_vector_store: Option<Arc<dyn crate::rag::VectorStore>>,
+) -> crate::Result<()> {
+    if !config.knowledge_base.auto_ingest_on_startup {
+        info!("KB auto-ingest disabled");
+        return Ok(());
+    }
+
+    info!("Initializing Knowledge Base manager...");
+
+    let pool = match sqlite_pool {
+        Some(p) => p.clone(),
+        None => {
+            let db_path = crate::dirs::default_memory_db();
+            sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(2)
+                .connect(&format!("sqlite://{}", db_path.display()))
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: "Failed to connect to KB database".into(),
+                    details: e.to_string(),
+                })?
+        }
+    };
+
+    let dimension = config.vector_memory.embedding_dimension;
+
+    let provider: Arc<dyn crate::rag::EmbeddingProvider> = match config.vector_memory.provider {
+        EmbeddingProviderType::OpenAi => {
+            let api_key = config
+                .vector_memory
+                .embedding_api_key
+                .clone()
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                .or_else(|| std::env::var("SYSCITY_EMBEDDING_API_KEY").ok())
+                .ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "OpenAI API key required for KB embedding".into(),
+                    )
+                })?;
+            let mut ep = ApiEmbeddingProvider::new(
+                api_key,
+                config.vector_memory.embedding_model.clone(),
+                dimension,
+            );
+            if let Some(ref url) = config.vector_memory.api_base_url {
+                ep = ep.with_base_url(url.clone());
+            }
+            Arc::new(CachedEmbeddingProvider::new(
+                Arc::new(ep) as Arc<dyn crate::rag::EmbeddingProvider>,
+                1024,
+            )) as Arc<dyn crate::rag::EmbeddingProvider>
+        }
+        EmbeddingProviderType::LocalGguf => {
+            return Err(crate::error::SyscityError::Validation(
+                "KB auto-ingest requires an API-based embedding provider (OpenAI)".into(),
+            ));
+        }
+    };
+
+    let vec_store: Arc<dyn crate::rag::VectorStore> = {
+        let db_path = crate::dirs::default_memory_db();
+        Arc::new(
+            crate::rag::SqliteVecStore::new(
+                &format!("sqlite://{}", db_path.display()),
+                dimension,
+            )
+            .await?,
+        )
+    };
+
+    let embedding_config = EmbeddingConfig {
+        model: config.vector_memory.embedding_model.clone(),
+        chunk_size: 512,
+        chunk_overlap: 50,
+        batch_size: 32,
+        chunk_strategy: Default::default(),
+    };
+
+    let manager = Arc::new(crate::rag::ingestion::KnowledgeBaseManager::new(
+        provider,
+        vec_store,
+        pool,
+        &embedding_config,
+    ));
+
+    *state.memory.kb_manager.write().await = Some(manager.clone());
+
+    // Auto-ingest stale/new documents on startup
+    info!("KB: auto-ingesting stale/new documents...");
+    let agents_dir = crate::dirs::agents_dir();
+    if agents_dir.exists() {
+        let mut read_dir = tokio::fs::read_dir(&agents_dir).await?;
+        while let Some(entry) = read_dir.next_entry().await? {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let agent_id = match path.file_name().and_then(|n| n.to_str()) {
+                Some(id) => id.to_string(),
+                None => continue,
+            };
+            let kb_toml = path.join("kb.toml");
+            if !kb_toml.exists() {
+                continue;
+            }
+            info!("KB: auto-ingesting '{}'...", agent_id);
+            let report = manager.ingest_agent(&agent_id, false).await;
+            info!(
+                "KB: '{}' ingested: {} indexed, {} skipped, {} errors in {:?}",
+                agent_id,
+                report.docs_indexed,
+                report.docs_skipped,
+                report.errors.len(),
+                report.duration,
+            );
+        }
+    }
+
+    info!("KB manager initialized with auto-ingest complete");
+    Ok(())
+}
+
 /// Convenience helper that initializes all late services in dependency order.
 pub async fn init_late_services(
     config: &GatewayConfig,
@@ -391,7 +519,8 @@ pub async fn init_late_services(
     sqlite_pool: Option<&sqlx::SqlitePool>,
     unified_vector_store: Option<Arc<dyn crate::rag::VectorStore>>,
 ) -> crate::Result<()> {
-    init_memory_services(config, state, sqlite_pool, unified_vector_store).await?;
+    init_memory_services(config, state, sqlite_pool, unified_vector_store.clone()).await?;
+    init_kb_manager(config, state, sqlite_pool, unified_vector_store).await?;
     init_hot_reload(config, state).await?;
     init_cron(config, state).await?;
     init_task_scheduler(state).await?;

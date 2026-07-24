@@ -1391,6 +1391,8 @@ pub mod hot_reload {
         Plugin,
         /// Gateway configuration
         Gateway,
+        /// Knowledge Base kb.toml config
+        KnowledgeBase,
         /// Custom config file
         Custom,
     }

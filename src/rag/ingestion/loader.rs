@@ -214,7 +214,7 @@ pub fn detect_mime(path: &Path) -> &'static str {
 }
 
 /// Simple glob match (supports `*` and `?` wildcards).
-fn glob_match(pattern: &str, filename: &str) -> bool {
+pub(crate) fn glob_match(pattern: &str, filename: &str) -> bool {
     let regex_pattern = pattern_to_regex(pattern);
     // Simple regex matching without external crate
     simple_regex_match(&regex_pattern, filename)

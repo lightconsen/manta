@@ -11,7 +11,7 @@ use tracing::{error, info, warn};
 
 use super::{AgentCommand, ChannelConfig, GatewayConfig, GatewayState};
 use crate::agent::AgentConfig;
-use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::config::hot_reload::{ConfigChangeType, ConfigFileType, HotReloadManager};
 
 /// Register hot reload handlers for config changes.
 ///
@@ -30,6 +30,7 @@ pub(crate) async fn register_hot_reload_handlers(
     let current_config_channel = current_config.clone();
     let state_plugin = state.clone();
     let state_gateway = state.clone();
+    let state_kb = state.clone();
 
     // Handler for main config changes (includes config.toml)
     hot_reload
@@ -553,6 +554,58 @@ pub(crate) async fn register_hot_reload_handlers(
                             changes = ?changes.iter().map(|c| &c.path).collect::<Vec<_>>(),
                             "Gateway config hot-reload changes"
                         );
+                    }
+
+                    Ok(())
+                }
+            })
+            .await;
+    }
+
+    // Handler for KB config changes (kb.toml)
+    {
+        let state = state_kb;
+        hot_reload
+            .register_handler(ConfigFileType::KnowledgeBase, move |event| {
+                let state = state.clone();
+                async move {
+                    // Extract agent ID from path: agents/{agent_id}/kb.toml
+                    let agents_dir = crate::dirs::agents_dir();
+                    let rel = match event.path.strip_prefix(&agents_dir) {
+                        Ok(r) => r,
+                        Err(_) => return Ok(()),
+                    };
+                    let agent_id = match rel.components().next() {
+                        Some(c) => c.as_os_str().to_string_lossy().to_string(),
+                        None => return Ok(()),
+                    };
+
+                    if event.change_type == ConfigChangeType::Deleted {
+                        info!("kb.toml deleted for agent '{}' — no action needed", agent_id);
+                        return Ok(());
+                    }
+
+                    info!("kb.toml changed for agent '{}', re-ingesting...", agent_id);
+
+                    let kb_manager = state.memory.kb_manager.read().await.clone();
+                    if let Some(ref manager) = kb_manager {
+                        let report = manager.ingest_agent(&agent_id, false).await;
+                        if report.errors.is_empty() {
+                            info!(
+                                "kb.toml re-ingest for '{}': {} indexed, {} skipped",
+                                agent_id, report.docs_indexed, report.docs_skipped,
+                            );
+                        } else {
+                            warn!(
+                                "kb.toml re-ingest for '{}' had {} errors",
+                                agent_id, report.errors.len(),
+                            );
+                            for e in &report.errors {
+                                warn!("  - {}", e);
+                            }
+                        }
+                    } else {
+                        warn!("KB manager not initialized, cannot re-ingest for '{}'", agent_id);
                     }
 
                     Ok(())

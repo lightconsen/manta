@@ -157,6 +157,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             dream_scheduler: tokio::sync::RwLock::new(None),
             dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
             standing_order_manager: tokio::sync::RwLock::new(None),
+            kb_manager: tokio::sync::RwLock::new(None),
         },
         tools: ToolState {
             registry: Arc::new(ToolRegistry::new()),

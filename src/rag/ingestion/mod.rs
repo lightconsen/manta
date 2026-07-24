@@ -6,6 +6,7 @@
 
 mod loader;
 mod tracker;
+pub(crate) mod watch;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -24,6 +25,7 @@ pub use tracker::{
     list_collections, list_records, mark_stale, upsert_record, CollectionStats, CollectionSummary,
     IngestionRecord, IngestionStatus,
 };
+pub use watch::{KbWatchEvent, KbWatcher};
 
 use crate::rag::chunk::{EmbeddedChunk, TextChunker};
 use crate::rag::embedding::EmbeddingProvider;

@@ -95,6 +95,28 @@ pub struct GatewayConfig {
     /// Quality gate configuration for pre-release gating.
     #[serde(default)]
     pub quality_gate: crate::gateway::quality_gate::QualityGateConfig,
+    /// Knowledge Base configuration for auto-ingest and watcher.
+    #[serde(default)]
+    pub knowledge_base: KnowledgeBaseConfig,
+}
+
+/// Knowledge Base auto-ingest configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KnowledgeBaseConfig {
+    /// Auto-ingest stale/new KB documents on daemon startup.
+    pub auto_ingest_on_startup: bool,
+    /// Max concurrency for ingestion (default: 2).
+    pub max_concurrent_ingests: usize,
+}
+
+impl Default for KnowledgeBaseConfig {
+    fn default() -> Self {
+        Self {
+            auto_ingest_on_startup: false,
+            max_concurrent_ingests: 2,
+        }
+    }
 }
 
 /// Default search provider name
@@ -688,6 +710,7 @@ impl Default for GatewayConfig {
             capabilities: crate::config::CapabilitiesConfig::default(),
             search: SearchConfig::default(),
             quality_gate: crate::gateway::quality_gate::QualityGateConfig::default(),
+            knowledge_base: KnowledgeBaseConfig::default(),
         }
     }
 }

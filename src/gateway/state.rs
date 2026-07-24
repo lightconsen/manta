@@ -114,6 +114,8 @@ pub struct MemoryState {
     pub dream_scheduler: RwLock<Option<crate::memory::DreamScheduler>>,
     pub dream_metrics: Arc<DreamMetrics>,
     pub standing_order_manager: RwLock<Option<crate::standing_orders::StandingOrderManager>>,
+    /// Knowledge Base ingestion manager (for auto-ingest and daemon watcher).
+    pub kb_manager: RwLock<Option<Arc<crate::rag::ingestion::KnowledgeBaseManager>>>,
 }
 
 /// Tool registry, MCP, skills, and canvas state.
