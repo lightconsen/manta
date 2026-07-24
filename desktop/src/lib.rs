@@ -7,6 +7,8 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
+const VERSION: &str = syscity::VERSION;
+
 /// A writer that duplicates output to both stdout and a log file.
 ///
 /// This is used so that release builds (where stdout is disconnected)
@@ -148,6 +150,23 @@ async fn find_available_port(host: &str, start: u16, max_attempts: u16) -> Optio
         }
     }
     None
+}
+
+/// Set the native macOS window subtitle (two-line title bar).
+/// Only available on macOS 14+. No-op on other platforms.
+#[allow(unused_variables)]
+fn set_window_subtitle(window: &tauri::WebviewWindow, subtitle: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSWindow;
+        use objc2_foundation::NSString;
+
+        if let Ok(ptr) = window.ns_window() {
+            let ns_window: &NSWindow = unsafe { &*ptr.cast::<NSWindow>() };
+            let ns_subtitle = NSString::from_str(subtitle);
+            ns_window.setSubtitle(&ns_subtitle);
+        }
+    }
 }
 
 /// Start the embedded Syscity Gateway on the given port.
@@ -295,6 +314,7 @@ debounce_seconds = 2
 
     // Show the main window now that the backend is ready.
     if let Some(window) = handle.get_webview_window("main") {
+        set_window_subtitle(&window, &format!("v{VERSION} · Your AI Assistant"));
         window.show().unwrap();
     }
 
