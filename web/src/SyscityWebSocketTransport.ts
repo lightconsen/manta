@@ -144,23 +144,36 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
 
     const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
     if (isTauri) {
-      // In Tauri the backend may have auto-detected a different port.
-      // Resolve the actual URL before connecting.
-      this.resolveTauriGatewayUrl().then(() => this.connect());
+      // In Tauri, wait for the gateway-ready event so we know the backend
+      // is fully initialized and get the actual port (port auto-detection).
+      this.waitForTauriGateway();
     } else {
       this.connect();
     }
   }
 
-  /** Ask the Tauri backend for the actual Gateway URL (handles port auto-detection). */
-  private async resolveTauriGatewayUrl() {
+  /** In Tauri mode, listen for the `gateway-ready` event from the backend. */
+  private async waitForTauriGateway() {
     try {
-      // Dynamic import keeps the Tauri API out of browser bundles.
+      const { listen } = await import("@tauri-apps/api/event");
       const { invoke } = await import("@tauri-apps/api/core");
-      const apiUrl = await invoke<string>("get_api_url");
-      this.gatewayUrl = apiUrl.replace(/^http/, "ws") + "/ws";
+      // Pre-resolve the gateway URL from the Tauri command (port already detected).
+      try {
+        const apiUrl = await invoke<string>("get_api_url");
+        this.gatewayUrl = apiUrl.replace(/^http/, "ws") + "/ws";
+      } catch {
+        // Fallback if command unavailable
+      }
+      // Wait for the gateway-ready event so we know the backend is listening.
+      await listen<string>("gateway-ready", (event) => {
+        const apiUrl = event.payload;
+        this.gatewayUrl = apiUrl.replace(/^http/, "ws") + "/ws";
+        this.connect();
+      });
     } catch {
+      // Fallback: connect anyway with best guess URL
       this.gatewayUrl = "ws://127.0.0.1:18080/ws";
+      this.connect();
     }
   }
 
