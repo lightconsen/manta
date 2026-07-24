@@ -185,7 +185,7 @@ On re-ingest:
 | HTML | URL | `reqwest` + html-to-text |
 | Code files | file/dir/glob | Read as text |
 
-Phase 1: Markdown + plain text + code. PDF and URL in Phase 2.
+All formats implemented in Phase 1 (basic) + Phase 4 (PDF, URL).
 
 ## 4. Storage
 
@@ -515,7 +515,7 @@ Syscity 现有的 RAG 实现逐层分析，对照业界最佳实践。
                 │                    │                    │
          ┌──────▼──────┐    ┌───────▼───────┐    ┌───────▼──────┐
          │  Embedding  │    │   FTS5 (BM25) │    │  KB Sources  │
-         │  (vector)   │    │  (keyword)    │    │  (pending)   │
+         │  (vector)   │    │  (keyword)    │    │  (file/url)  │
          └──────┬──────┘    └───────┬───────┘    └───────┬──────┘
                 │                    │                    │
          ┌──────▼────────────────────▼────────────────────▼──────┐
@@ -540,17 +540,19 @@ Syscity 现有的 RAG 实现逐层分析，对照业界最佳实践。
 
 **最佳实践**: `unstructured.io` + langchain document-loader → chunk → embed
 
-**现状**: ❌ 缺失
+**现状**: ✅ 已实现（Phase 1-4）
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| 文件导入 | ❌ | 没有文件/目录批量导入能力 |
-| URL 抓取 | ❌ | 不支持从 URL 自动拉取文档 |
-| PDF/Word 解析 | ❌ | 无文档格式解析器 |
-| 增量更新 | ❌ | 无变更检测机制 |
-| 来源追踪 | ❌ | 无 ingestion log |
+| 文件导入 | ✅ | `load_file()`/`load_dir()` — 支持 markdown / txt / code / PDF |
+| URL 抓取 | ✅ | `load_url()` — HTTP fetch + HTML-to-Markdown 转换 |
+| PDF 解析 | ✅ | `extract_pdf_text()` via `pdf-extract` crate |
+| 增量更新 | ✅ | SHA-256 checksum + mtime 变更检测，仅索引变更文档 |
+| 来源追踪 | ✅ | `kb_ingestion_log` 表 + `IngestionRecord`，支持 indexed/failed/stale |
+| 文件监听 | ✅ | `KbWatcher` via `notify` crate，自动重索引 |
+| 自动重索引 | ✅ | `kb.toml` hot reload，daemon 启动 auto-ingest |
 
-现有唯一条目：`CLI memory add` 手动单条添加内容（`src/cli/memory.rs`）。本设计文档的完整 ingestion pipeline 即为解决此层的方案。
+**文件**: `src/rag/ingestion/`
 
 ### Layer 2 — Chunking（分块策略）
 
@@ -679,7 +681,7 @@ HyDE 和 Multi-Query 的 LLM provider 均在 `gateway/init/services.rs` 中注�
 
 | 层次 | 评分 | 优先级 |
 |------|------|--------|
-| Ingestion Pipeline | ❌ 缺失（本设计方案解决） | **高** — 知识库方案第一步 |
+| Ingestion Pipeline | ✅ 完整（Phase 1-4） | **高** — 已完成 |
 | Chunking | ✅ 完整 | — |
 | Embedding | ✅ 完整 | — |
 | Index | ✅ 完整 | — |
@@ -687,31 +689,35 @@ HyDE 和 Multi-Query 的 LLM provider 均在 `gateway/init/services.rs` 中注�
 | Query Rewriting | ✅ 完整 | — |
 | Advanced | ⚠️ 缺多项 | 低 — 需要具体场景驱动 |
 
-核心检索链路（Layer 2-6）已到工业级水准；最大短板是文档入库（Layer 1），即本设计文档的核心目标。
+核心检索链路（Layer 1-6）已完整实现。
 
 ---
 
 ## 11. Implementation Phases
 
-### Phase 1 — Core (estimate: 3-5 days)
+### Phase 1 — Core (estimate: 3-5 days) ✅
 - `kb.toml` config loading
 - File/dir source loaders (markdown + text + code)
 - Ingestion pipeline (load → chunk → embed → store)
 - `kb_ingestion_log` table + tracking
 - CLI: `kb ingest`, `kb list`, `kb delete`
+- **Commit**: `57b5027`
 
-### Phase 2 — Retrieval Integration (estimate: 2-3 days)
+### Phase 2 — Retrieval Integration (estimate: 2-3 days) ✅
 - Thread `kb_collection` through `MemoryManager`
 - Scoped `hybrid_search()` with collection
 - Merge kb results + global memory results
+- **Commit**: `57b5027`
 
-### Phase 3 — Watch & Auto (estimate: 2 days)
+### Phase 3 — Watch & Auto (estimate: 2 days) ✅
 - File watcher with `notify` crate
 - Daemon auto-ingest on startup
 - Hot reload support
+- **Commit**: `58b23e7`
 
-### Phase 4 — Advanced Sources (estimate: 2-3 days)
+### Phase 4 — Advanced Sources (estimate: 2-3 days) ✅
 - URL loader (HTTP fetch + HTML-to-text)
 - PDF support
-- Glob patterns
+- Glob patterns (existing since Phase 1)
 - Ad-hoc ingestion via CLI `--source`
+- **Commit**: `b611c7f`
