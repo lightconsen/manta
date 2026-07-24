@@ -25,6 +25,7 @@ mod doctor;
 mod entity;
 mod eval;
 mod export;
+mod kb;
 mod mcp;
 mod memory;
 mod plugin;
@@ -47,6 +48,7 @@ pub use doctor::{DiagnosticHint, HintSeverity};
 pub use entity::EntityCommands;
 pub use eval::EvalCommands;
 pub use export::ExportCommands;
+pub use kb::KbCommands;
 pub use mcp::McpCommands;
 pub use memory::MemoryCommands;
 pub use plugin::PluginCommands;
@@ -208,6 +210,12 @@ pub enum Commands {
         /// Memory subcommand
         #[command(subcommand)]
         command: MemoryCommands,
+    },
+    /// Knowledge Base management (ingest, list, delete)
+    Kb {
+        /// KB subcommand
+        #[command(subcommand)]
+        command: KbCommands,
     },
     /// Security audit, DM pairing, and access control
     Security {
@@ -411,6 +419,7 @@ impl Cli {
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,
             Commands::Mcp { command } => mcp::run_mcp_command(command).await,
             Commands::Memory { command } => memory::run_memory_command(command).await,
+            Commands::Kb { command } => kb::run_kb_command(command).await,
             Commands::Security { command } => security::run_security_command(command).await,
             Commands::Session { command } => session::run_session_command(command).await,
             Commands::Setup => setup::run_setup().await,

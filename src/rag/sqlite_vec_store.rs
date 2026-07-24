@@ -343,6 +343,19 @@ impl VectorStore for SqliteVecStore {
     }
 
     async fn delete_by_source(&self, source_id: &str) -> crate::Result<usize> {
+        // Must clean vec_chunk_collections first to avoid orphaned rows.
+        sqlx::query(
+            "DELETE FROM vec_chunk_collections WHERE chunk_id IN \
+             (SELECT id FROM vec_chunks WHERE source_id = ?)",
+        )
+        .bind(source_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to delete chunk collections by source".to_string(),
+            details: e.to_string(),
+        })?;
+
         let result = sqlx::query("DELETE FROM vec_chunks WHERE source_id = ?")
             .bind(source_id)
             .execute(&self.pool)
@@ -351,6 +364,33 @@ impl VectorStore for SqliteVecStore {
                 context: "Failed to delete by source".to_string(),
                 details: e.to_string(),
             })?;
+        Ok(result.rows_affected() as usize)
+    }
+
+    async fn delete_by_collection(&self, collection: &str) -> crate::Result<usize> {
+        // Delete from vec_chunks for chunks belonging to this collection.
+        let result = sqlx::query(
+            "DELETE FROM vec_chunks WHERE id IN \
+             (SELECT chunk_id FROM vec_chunk_collections WHERE collection = ?)",
+        )
+        .bind(collection)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to delete by collection from vec_chunks".to_string(),
+            details: e.to_string(),
+        })?;
+
+        // Clean the collection table itself.
+        sqlx::query("DELETE FROM vec_chunk_collections WHERE collection = ?")
+            .bind(collection)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to delete by collection from vec_chunk_collections".to_string(),
+                details: e.to_string(),
+            })?;
+
         Ok(result.rows_affected() as usize)
     }
 
@@ -378,6 +418,13 @@ impl VectorStore for SqliteVecStore {
     }
 
     async fn clear(&self) -> crate::Result<()> {
+        sqlx::query("DELETE FROM vec_chunk_collections")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to clear sqlite-vec collection table".to_string(),
+                details: e.to_string(),
+            })?;
         sqlx::query("DELETE FROM vec_chunks")
             .execute(&self.pool)
             .await

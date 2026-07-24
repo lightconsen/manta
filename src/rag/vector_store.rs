@@ -38,6 +38,9 @@ pub trait VectorStore: Send + Sync {
     /// Delete chunks by source ID
     async fn delete_by_source(&self, source_id: &str) -> crate::Result<usize>;
 
+    /// Delete all chunks in a collection.
+    async fn delete_by_collection(&self, collection: &str) -> crate::Result<usize>;
+
     /// Get stats about the store
     async fn stats(&self) -> crate::Result<VectorStoreStats>;
 
@@ -162,6 +165,26 @@ impl VectorStore for MemoryVectorStore {
             chunks.remove(id);
         }
         // Clean up the FIFO order queue to prevent orphaned entries from accumulating.
+        if !to_remove.is_empty() {
+            let mut order = self.order.write().await;
+            order.retain(|id| !to_remove.contains(id));
+        }
+
+        Ok(count)
+    }
+
+    async fn delete_by_collection(&self, collection: &str) -> crate::Result<usize> {
+        let mut chunks = self.chunks.write().await;
+        let to_remove: Vec<String> = chunks
+            .values()
+            .filter(|c| c.collection.as_deref() == Some(collection))
+            .map(|c| c.id.clone())
+            .collect();
+
+        let count = to_remove.len();
+        for id in &to_remove {
+            chunks.remove(id);
+        }
         if !to_remove.is_empty() {
             let mut order = self.order.write().await;
             order.retain(|id| !to_remove.contains(id));

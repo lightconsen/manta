@@ -472,6 +472,7 @@ impl MemoryManager {
         conversation_id: Option<&str>,
         query: impl Into<String>,
         limit: Option<usize>,
+        kb_collection: Option<&str>,
     ) -> crate::Result<Vec<Memory>> {
         let user_id = user_id.as_ref();
         let query_text = query.into();
@@ -521,6 +522,41 @@ impl MemoryManager {
             }
 
             memories = self.store.search(mq).await?;
+        }
+
+        // ── KB collection search (additive — merged with global memory results) ─
+        if let (Some(ref vs), Some(ref _ss)) = (&self.vector_service, &self.session_search) {
+            if let Some(kb_coll) = kb_collection {
+                if !kb_coll.is_empty() {
+                    match vs.search_collection(&query_text, limit, kb_coll, 0.0).await {
+                        Ok(kb_results) => {
+                            for r in kb_results {
+                                // Skip duplicates against main results
+                                if memories.iter().any(|m| m.content == r.content) {
+                                    continue;
+                                }
+                                memories.push(
+                                    Memory::new(user_id, r.content, "kb")
+                                        .with_importance_score(r.score)
+                                        .with_source("knowledge_base")
+                                        .with_metadata(serde_json::json!({
+                                            "collection": kb_coll,
+                                        })),
+                                );
+                            }
+                            // Re-sort by importance score descending
+                            memories.sort_by(|a, b| {
+                                b.importance_score
+                                    .partial_cmp(&a.importance_score)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            });
+                        }
+                        Err(e) => {
+                            warn!("KB collection search failed for '{}': {}", kb_coll, e);
+                        }
+                    }
+                }
+            }
         }
 
         // ── QMD search path ───────────────────────────────────────────────────
@@ -662,6 +698,7 @@ impl MemoryManager {
         user_id: impl AsRef<str>,
         conversation_id: impl AsRef<str>,
         query: Option<impl Into<String>>,
+        kb_collection: Option<&str>,
     ) -> crate::Result<SessionContext> {
         let user_id = user_id.as_ref();
         let conversation_id = conversation_id.as_ref();
@@ -691,7 +728,7 @@ impl MemoryManager {
 
         // Semantic: relevant memories
         let memories = if let Some(q) = query {
-            self.retrieve(user_id, Some(conversation_id), q, Some(self.config.max_context_memories))
+            self.retrieve(user_id, Some(conversation_id), q, Some(self.config.max_context_memories), kb_collection)
                 .await?
         } else {
             // No query, fetch recent high-importance memories
@@ -1526,7 +1563,7 @@ mod tests {
         // Retrieve (no embedding, so falls back to text search)
         // Use a simpler query that will match with LIKE '%sushi%'
         let results = mm
-            .retrieve("user1", None::<&str>, "sushi", Some(5))
+            .retrieve("user1", None::<&str>, "sushi", Some(5), None::<&str>)
             .await
             .unwrap();
 
@@ -1557,7 +1594,7 @@ mod tests {
 
         // Get context
         let ctx = mm
-            .session_context("user1", "conv1", Some::<&str>("food"))
+            .session_context("user1", "conv1", Some::<&str>("food"), None::<&str>)
             .await
             .unwrap();
 
@@ -2009,7 +2046,7 @@ mod tests {
             .with_effectiveness_tracker(tracker.clone());
 
         let results = mm
-            .retrieve("user1", None::<&str>, "sushi", Some(5))
+            .retrieve("user1", None::<&str>, "sushi", Some(5), None::<&str>)
             .await
             .unwrap();
 

@@ -213,6 +213,9 @@ pub struct VectorMemoryConfig {
     /// Context-window-aware memory budgeting
     #[serde(default)]
     pub context_window: MemoryContextWindowConfig,
+    /// Multi-Query expansion configuration
+    #[serde(default)]
+    pub multi_query: MultiQueryConfig,
 }
 
 impl Default for VectorMemoryConfig {
@@ -230,6 +233,7 @@ impl Default for VectorMemoryConfig {
             query_transformer: QueryTransformerConfig::default(),
             reranker: RerankerConfig::default(),
             context_window: MemoryContextWindowConfig::default(),
+            multi_query: MultiQueryConfig::default(),
         }
     }
 }
@@ -241,6 +245,30 @@ pub struct QueryTransformerConfig {
     pub enable_hyde: bool,
     /// Optional model override for HyDE generation.
     pub hyde_model: Option<String>,
+}
+
+/// Multi-Query expansion configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiQueryConfig {
+    /// Enable Multi-Query expansion.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Number of LLM-generated sub-queries (not counting the original query).
+    #[serde(default = "default_multi_query_variations")]
+    pub num_variations: usize,
+}
+
+fn default_multi_query_variations() -> usize {
+    3
+}
+
+impl Default for MultiQueryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            num_variations: 3,
+        }
+    }
 }
 
 /// Cross-encoder reranker configuration.

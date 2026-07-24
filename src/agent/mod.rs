@@ -1163,10 +1163,13 @@ impl Agent {
         // Get base prompt
         let base_prompt = self.config.full_system_prompt_with_personality().await;
 
+        // Derive KB collection from agent_id (e.g. "kb-sre")
+        let kb_collection = self.config.agent_id.as_ref().map(|id| format!("kb-{}", id));
+
         // Retrieve relevant memories via MemoryManager and inject into context
         let memory_context = if let Some(ref mm) = self.memory_manager {
             match mm
-                .session_context(user_id, conversation_id, Some(user_message))
+                .session_context(user_id, conversation_id, Some(user_message), kb_collection.as_deref())
                 .await
             {
                 Ok(ctx) => {

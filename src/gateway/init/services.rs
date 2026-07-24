@@ -14,6 +14,7 @@ use crate::gateway::GatewayEvent;
 use crate::gateway::GatewayState;
 use crate::memory::query::HydeTransformer;
 use crate::memory::vector::VectorMemoryService;
+use crate::rag::multi_query::MultiQueryConfig as RagMultiQueryConfig;
 use crate::rag::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, CohereReranker, ContextWindowConfig,
     EmbeddingConfig, LocalGgufEmbeddingProvider, MemoryVectorStore,
@@ -149,6 +150,28 @@ pub async fn init_memory_services(
                     info!("Cohere reranker enabled (model={}, top_k={})", rc.model, rc.top_k);
                 } else {
                     warn!("Reranker enabled but no api_key configured");
+                }
+            }
+
+            // ── Multi-Query expansion ───────────────────────────────────────
+            let mqc = &config.vector_memory.multi_query;
+            if mqc.enabled && mqc.num_variations > 0 {
+                match state.infra.model_router.create_default_provider().await {
+                    Ok(provider) => {
+                        let rag_mq_config = RagMultiQueryConfig {
+                            enabled: true,
+                            num_variations: mqc.num_variations,
+                            ..Default::default()
+                        };
+                        service = service.with_multi_query(provider, rag_mq_config);
+                        info!(
+                            "Multi-Query enabled with {} variations",
+                            mqc.num_variations
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to create LLM provider for Multi-Query: {}", e);
+                    }
                 }
             }
 

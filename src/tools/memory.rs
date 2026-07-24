@@ -492,6 +492,7 @@ Actions:
                         Some(&context.conversation_id),
                         query,
                         Some(limit),
+                        None,
                     )
                     .await?
                 } else {

@@ -241,6 +241,22 @@ impl VectorStore for PgVectorStore {
         Ok(result.rows_affected() as usize)
     }
 
+    async fn delete_by_collection(&self, collection: &str) -> crate::Result<usize> {
+        let sql = format!(
+            "DELETE FROM {} WHERE collection = $1",
+            Self::quote_identifier(&self.table)
+        );
+        let result = sqlx::query(&sql)
+            .bind(collection)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to delete by collection".to_string(),
+                details: e.to_string(),
+            })?;
+        Ok(result.rows_affected() as usize)
+    }
+
     async fn stats(&self) -> crate::Result<VectorStoreStats> {
         let total_sql = format!("SELECT COUNT(*) FROM {}", Self::quote_identifier(&self.table));
         let total_vectors: (i64,) = sqlx::query_as(&total_sql)

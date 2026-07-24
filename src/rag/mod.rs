@@ -12,6 +12,8 @@ pub mod context;
 pub mod embedding;
 pub mod eval;
 pub mod hybrid;
+pub mod ingestion;
+pub mod multi_query;
 pub mod pipeline;
 pub mod query;
 pub mod reranker;
@@ -32,6 +34,10 @@ pub use embedding::{
     LocalGgufEmbeddingProvider,
 };
 pub use eval::{evaluate_retrieval, RetrievalMetrics, RetrievalSample};
+pub use multi_query::{expand_query_with_llm, merge_results, MergeStrategy, MultiQueryConfig, RrfConfig};
 pub use query::{NoopTransformer, QueryTransformer};
 pub use reranker::{CohereReranker, NoopReranker, Reranker};
 pub use vector_store::{MemoryVectorStore, SearchResult, VectorStore, VectorStoreStats};
+
+#[cfg(feature = "sqlite-vec")]
+pub use sqlite_vec_store::SqliteVecStore;

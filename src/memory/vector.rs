@@ -9,9 +9,11 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use super::{Memory, MemoryId};
+use crate::providers::Provider;
 use crate::rag::chunk::{BatchEmbeddingProcessor, EmbeddedChunk, TextChunker};
 use crate::rag::config::EmbeddingConfig;
 use crate::rag::embedding::EmbeddingProvider;
+use crate::rag::multi_query::{expand_query_with_llm, MultiQueryConfig};
 use crate::rag::query::{NoopTransformer, QueryTransformer};
 use crate::rag::reranker::{NoopReranker, Reranker};
 use crate::rag::vector_store::{VectorStore, VectorStoreStats};
@@ -29,6 +31,9 @@ pub struct VectorMemoryService {
     query_transformer: Arc<dyn QueryTransformer>,
     /// Optional reranker for cross-encoder re-scoring.
     reranker: Arc<dyn Reranker>,
+    /// Optional Multi-Query expansion provider and config.
+    multi_query_provider: Option<Arc<dyn Provider>>,
+    multi_query_config: Option<MultiQueryConfig>,
 }
 
 impl VectorMemoryService {
@@ -56,6 +61,8 @@ impl VectorMemoryService {
             collections: tokio::sync::RwLock::new(initial_collections),
             query_transformer: Arc::new(NoopTransformer),
             reranker: Arc::new(NoopReranker),
+            multi_query_provider: None,
+            multi_query_config: None,
         }
     }
 
@@ -68,6 +75,17 @@ impl VectorMemoryService {
     /// Attach a reranker for cross-encoder re-scoring after initial retrieval.
     pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
         self.reranker = reranker;
+        self
+    }
+
+    /// Attach a Multi-Query expansion provider.
+    pub fn with_multi_query(
+        mut self,
+        provider: Arc<dyn Provider>,
+        config: MultiQueryConfig,
+    ) -> Self {
+        self.multi_query_provider = Some(provider);
+        self.multi_query_config = Some(config);
         self
     }
 
@@ -111,6 +129,14 @@ impl VectorMemoryService {
         limit: usize,
         threshold: f32,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
+        // ── Multi-Query path ─────────────────────────────────────────────────
+        if let Some(ref mq_config) = self.multi_query_config {
+            if mq_config.enabled && mq_config.num_variations > 0 {
+                return self.search_multi_query(query, limit, threshold, None).await;
+            }
+        }
+
+        // ── Original single-query path ──────────────────────────────────────
         let rewritten = self.query_transformer.transform(query).await?;
         let query_embedding = self.embedding_provider.embed(&rewritten).await?;
         self.vector_store
@@ -138,6 +164,25 @@ impl VectorMemoryService {
         collection: &str,
         threshold: f32,
     ) -> crate::Result<Vec<SearchResult>> {
+        // ── Multi-Query path ─────────────────────────────────────────────────
+        if let Some(ref mq_config) = self.multi_query_config {
+            if mq_config.enabled && mq_config.num_variations > 0 {
+                let results = self
+                    .search_multi_query(query, limit, threshold, Some(collection))
+                    .await?;
+                return Ok(results
+                    .into_iter()
+                    .map(|(chunk, score)| SearchResult {
+                        id: chunk.id,
+                        content: chunk.text,
+                        score,
+                        metadata: chunk.metadata,
+                    })
+                    .collect());
+            }
+        }
+
+        // ── Original single-query path ──────────────────────────────────────
         let rewritten = self.query_transformer.transform(query).await?;
         let query_embedding = self.embedding_provider.embed(&rewritten).await?;
         let results = self
@@ -154,6 +199,57 @@ impl VectorMemoryService {
                 metadata: chunk.metadata,
             })
             .collect())
+    }
+
+    /// Multi-Query core logic: expand → N parallel searches → RRF merge.
+    async fn search_multi_query(
+        &self,
+        query: &str,
+        limit: usize,
+        threshold: f32,
+        collection: Option<&str>,
+    ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
+        let mq_config = self
+            .multi_query_config
+            .as_ref()
+            .ok_or_else(|| crate::error::SyscityError::Internal(
+                "Multi-Query config not set".into(),
+            ))?;
+        let provider = self
+            .multi_query_provider
+            .as_ref()
+            .ok_or_else(|| crate::error::SyscityError::Internal(
+                "Multi-Query provider not set".into(),
+            ))?;
+
+        // 1. Expand query into sub-queries (includes original query first)
+        let sub_queries =
+            expand_query_with_llm(query, mq_config.num_variations, provider.as_ref()).await?;
+
+        // 2. Search each sub-query in parallel
+        //    Each sub-query goes through QueryTransformer (HyDE) → Embed → Search
+        let mut handles = Vec::with_capacity(sub_queries.len());
+        for sub_q in &sub_queries {
+            let rewritten = self.query_transformer.transform(sub_q).await?;
+            let query_embedding = self.embedding_provider.embed(&rewritten).await?;
+            let results = self
+                .vector_store
+                .search_similar(&query_embedding, limit, threshold, collection)
+                .await?;
+            handles.push(results);
+        }
+
+        // 3. RRF merge
+        let crate::rag::multi_query::MergeStrategy::Rrf(rrf_config) = &mq_config.merge_strategy;
+
+        let merged = crate::rag::multi_query::merge_results(
+            handles,
+            rrf_config,
+            limit,
+            |chunk: &EmbeddedChunk| chunk.id.clone(),
+        );
+
+        Ok(merged)
     }
 
     /// Add content to a collection (simplified API for gateway)
