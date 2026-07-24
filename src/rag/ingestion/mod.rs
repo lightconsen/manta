@@ -8,6 +8,8 @@ mod loader;
 mod tracker;
 pub(crate) mod watch;
 
+pub mod html_convert;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -151,7 +153,7 @@ impl KnowledgeBaseManager {
             duration: std::time::Duration::ZERO,
         };
 
-        let docs = match load_source(source, agent_dir) {
+        let docs = match load_source(source, agent_dir).await {
             Ok(docs) => docs,
             Err(e) => {
                 report.errors.push(format!("Failed to load source: {}", e));

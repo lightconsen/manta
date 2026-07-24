@@ -176,6 +176,7 @@ cpal = "0.15"
 
 # Embed frontend assets into binary for single-file distribution (optional)
 rust-embed = { version = "8", optional = true }
+pdf-extract = "0.7"
 
 # System resource limits and signals (Unix only)
 [target.'cfg(unix)'.dependencies]

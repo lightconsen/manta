@@ -6,6 +6,8 @@
 use std::path::Path;
 
 use serde::Deserialize;
+use tokio::fs;
+use tracing::warn;
 
 use crate::rag::chunk::ChunkStrategy;
 
@@ -55,6 +57,12 @@ pub enum SourceType {
         /// Glob pattern (e.g. `**/*.md`).
         pattern: String,
     },
+    /// Remote URL (HTTP/HTTPS). Fetched and converted to Markdown.
+    #[serde(rename = "url")]
+    Url {
+        /// The URL to fetch (e.g. `https://example.com/docs`).
+        url: String,
+    },
 }
 
 /// A loaded document ready for chunking and embedding.
@@ -76,22 +84,22 @@ pub struct KnowledgeDocument {
 
 /// Load documents from a knowledge source, resolving relative paths against
 /// the given agent directory.
-pub fn load_source(
+pub async fn load_source(
     source: &KnowledgeSource,
     agent_dir: &Path,
 ) -> Result<Vec<KnowledgeDocument>, String> {
     match &source.source_type {
         SourceType::File { path } => {
             let full_path = resolve_path(path, agent_dir);
-            let doc = load_file(&full_path)?;
+            let doc = load_file(&full_path).await?;
             Ok(vec![doc])
         }
         SourceType::Dir { path } => {
             let full_path = resolve_path(path, agent_dir);
-            load_dir(&full_path, source.pattern.as_deref())
+            load_dir(&full_path, source.pattern.as_deref()).await
         }
         SourceType::Glob { pattern } => {
-            let agent_docs = load_dir(agent_dir, None)?;
+            let agent_docs = load_dir(agent_dir, None).await?;
             let filtered: Vec<KnowledgeDocument> = agent_docs
                 .into_iter()
                 .filter(|doc| {
@@ -102,16 +110,22 @@ pub fn load_source(
                 .collect();
             Ok(filtered)
         }
+        SourceType::Url { url } => {
+            let doc = load_url(url).await?;
+            Ok(vec![doc])
+        }
     }
 }
 
 /// Load a single file as a `KnowledgeDocument`.
-pub fn load_file(path: &Path) -> Result<KnowledgeDocument, String> {
-    let content = std::fs::read(path)
+pub async fn load_file(path: &Path) -> Result<KnowledgeDocument, String> {
+    let content = fs::read(path)
+        .await
         .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
     let checksum = compute_checksum(&content);
     let mime_type = detect_mime(path);
-    let mtime = std::fs::metadata(path)
+    let mtime = fs::metadata(path)
+        .await
         .ok()
         .and_then(|m| m.modified().ok())
         .map(|t| {
@@ -120,7 +134,11 @@ pub fn load_file(path: &Path) -> Result<KnowledgeDocument, String> {
                 .unwrap_or(0)
         });
 
-    let text = String::from_utf8_lossy(&content).to_string();
+    let text = if mime_type == "application/pdf" {
+        extract_pdf_text(path)?
+    } else {
+        String::from_utf8_lossy(&content).to_string()
+    };
     let doc_id = path
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -137,17 +155,27 @@ pub fn load_file(path: &Path) -> Result<KnowledgeDocument, String> {
 }
 
 /// Load all matching files from a directory, optionally filtered by glob.
-pub fn load_dir(path: &Path, pattern: Option<&str>) -> Result<Vec<KnowledgeDocument>, String> {
+pub async fn load_dir(path: &Path, pattern: Option<&str>) -> Result<Vec<KnowledgeDocument>, String> {
     if !path.is_dir() {
         return Err(format!("Not a directory: {}", path.display()));
     }
 
     let mut docs = Vec::new();
-    let entries = std::fs::read_dir(path)
-        .map_err(|e| format!("Failed to read dir {}: {}", path.display(), e))?;
 
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("Dir entry error: {}", e))?;
+    let mut entries = match fs::read_dir(path).await {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Failed to read dir {}: {}", path.display(), e)),
+    };
+
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(e) => {
+                warn!("Dir entry error in {}: {}", path.display(), e);
+                continue;
+            }
+        };
         let entry_path = entry.path();
 
         if !entry_path.is_file() {
@@ -165,16 +193,79 @@ pub fn load_dir(path: &Path, pattern: Option<&str>) -> Result<Vec<KnowledgeDocum
             }
         }
 
-        match load_file(&entry_path) {
+        match load_file(&entry_path).await {
             Ok(doc) => docs.push(doc),
             Err(e) => {
                 // Log but continue — don't fail the whole batch for one file
-                eprintln!("Warning: skipping {}: {}", entry_path.display(), e);
+                warn!("Skipping {}: {}", entry_path.display(), e);
             }
         }
     }
 
     Ok(docs)
+}
+
+/// Fetch a URL and convert HTML to Markdown.
+async fn load_url(url: &str) -> Result<KnowledgeDocument, String> {
+    let response = reqwest::get(url)
+        .await
+        .map_err(|e| format!("Failed to fetch URL '{}': {}", url, e))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("URL '{}' returned HTTP {}", url, status));
+    }
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response from '{}': {}", url, e))?;
+
+    let is_html = content_type
+        .as_deref()
+        .map(|ct| ct.contains("text/html") || ct.contains("application/xhtml"))
+        .unwrap_or(false);
+
+    let text = if is_html {
+        let html = String::from_utf8_lossy(&bytes);
+        crate::rag::ingestion::html_convert::html_to_markdown(&html)
+    } else {
+        String::from_utf8_lossy(&bytes).to_string()
+    };
+
+    let checksum = compute_checksum(bytes.as_ref());
+
+    let doc_id = url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("index")
+        .to_string();
+
+    Ok(KnowledgeDocument {
+        doc_id,
+        source_id: url.to_string(),
+        content: text,
+        checksum,
+        mtime: None,
+        mime_type: content_type.unwrap_or_else(|| "text/plain".to_string()),
+    })
+}
+
+/// Extract text from a PDF file using pdf-extract.
+fn extract_pdf_text(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| format!("Failed to read PDF {}: {}", path.display(), e))?;
+    let text = pdf_extract::extract_text_from_mem(&bytes)
+        .map_err(|e| format!("Failed to extract PDF text from {}: {}", path.display(), e))?;
+    Ok(text)
 }
 
 /// Compute a fast SHA-256 checksum from first 4 KB + file length.
@@ -391,15 +482,15 @@ mod tests {
         assert_eq!(rel, Path::new("/tmp/agent/kb/docs"));
     }
 
-    #[test]
-    fn test_load_file_not_found() {
-        let result = load_file(Path::new("/nonexistent/file.md"));
+    #[tokio::test]
+    async fn test_load_file_not_found() {
+        let result = load_file(Path::new("/nonexistent/file.md")).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_load_dir_not_found() {
-        let result = load_dir(Path::new("/nonexistent"), None);
+    #[tokio::test]
+    async fn test_load_dir_not_found() {
+        let result = load_dir(Path::new("/nonexistent"), None).await;
         assert!(result.is_err());
     }
 

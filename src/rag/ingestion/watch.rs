@@ -283,6 +283,10 @@ pub(crate) fn source_paths_for_watch(source: &KnowledgeSource, agent_dir: &Path)
             let _ = pattern;
             vec![agent_dir.to_path_buf()]
         }
+        SourceType::Url { .. } => {
+            // URLs can't be filesystem-watched
+            vec![]
+        }
     }
 }
 
@@ -316,6 +320,10 @@ pub fn source_matches_path(source: &KnowledgeSource, changed_path: &Path, agent_
             } else {
                 false
             }
+        }
+        SourceType::Url { .. } => {
+            // URLs don't correspond to local filesystem paths
+            false
         }
     }
 }

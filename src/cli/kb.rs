@@ -3,7 +3,6 @@
 //! Provides CLI access to KB ingestion: ingest agent documents, list indexed
 //! documents, and delete collections.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Subcommand;
@@ -25,9 +24,9 @@ pub enum KbCommands {
         /// Force re-indexing of all documents (alias: --rebuild)
         #[arg(short, long)]
         force: bool,
-        /// Ad-hoc single file to ingest (bypasses kb.toml)
+        /// Ad-hoc single file or URL to ingest (bypasses kb.toml)
         #[arg(short, long)]
-        source: Option<PathBuf>,
+        source: Option<String>,
     },
     /// List indexed documents.
     List {
@@ -66,7 +65,7 @@ pub enum KbCommands {
 /// Run a KB command.
 pub async fn run_kb_command(command: &KbCommands) -> Result<()> {
     match command {
-        KbCommands::Ingest { agent, force, source } => cmd_ingest(agent, *force, source.as_ref()).await,
+        KbCommands::Ingest { agent, force, source } => cmd_ingest(agent, *force, source.as_deref()).await,
         KbCommands::List { agent, status } => cmd_list(agent.as_deref(), status.as_deref()).await,
         KbCommands::Delete { agent, collection, doc } => {
             cmd_delete(agent.as_deref(), collection.as_deref(), doc.as_deref()).await
@@ -147,19 +146,27 @@ async fn create_kb_manager() -> Result<KnowledgeBaseManager> {
 }
 
 /// Handle `kb ingest` command.
-async fn cmd_ingest(agent: &str, force: bool, source: Option<&PathBuf>) -> Result<()> {
+async fn cmd_ingest(agent: &str, force: bool, source: Option<&str>) -> Result<()> {
     let manager = create_kb_manager().await?;
 
-    let report = if let Some(source_path) = source {
-        // Ad-hoc single file — bypass kb.toml
+    let report = if let Some(source_str) = source {
+        // Ad-hoc single source — bypass kb.toml
         let collection = KnowledgeBaseManager::collection_name(agent);
         let agent_dir = crate::dirs::agent_dir(agent);
+        let is_url = source_str.starts_with("http://") || source_str.starts_with("https://");
+        let source_type = if is_url {
+            SourceType::Url {
+                url: source_str.to_string(),
+            }
+        } else {
+            SourceType::File {
+                path: source_str.to_string(),
+            }
+        };
         let kb_source = KnowledgeSource {
             id: None,
-            name: source_path.to_string_lossy().to_string(),
-            source_type: SourceType::File {
-                path: source_path.to_string_lossy().to_string(),
-            },
+            name: source_str.to_string(),
+            source_type,
             pattern: None,
             collection: None,
             chunk_strategy: None,
