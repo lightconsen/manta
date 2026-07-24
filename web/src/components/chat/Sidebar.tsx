@@ -210,7 +210,7 @@ export function Sidebar({
       >
         {/* Sessions */}
         <div
-          className="overflow-y-auto overflow-x-hidden px-1 py-2"
+          className="scrollbar-hover overflow-y-auto overflow-x-hidden px-1 py-2"
           style={{ flexBasis: `${sessionRatio * 100}%`, flexShrink: 0, flexGrow: 0 }}
           role="list"
         >
@@ -294,7 +294,7 @@ export function Sidebar({
               </span>
             </div>
           )}
-          <div className="flex-1 overflow-y-auto overflow-x-hidden px-1 py-1" role="list">
+          <div className="scrollbar-hover flex-1 overflow-y-auto overflow-x-hidden px-1 py-1" role="list">
             {agents.length === 0 && !collapsed && (
               <div className="px-3 py-4 text-xs text-secondary text-center">
                 <Bot className="w-5 h-5 mx-auto mb-2 opacity-50" />

@@ -70,3 +70,19 @@ body {
   .text-secondary { color: var(--text-secondary); }
   .border-subtle { border-color: var(--border-subtle); }
 }
+
+/* Hover-only scrollbar that inherits global scrollbar styles when visible */
+.scrollbar-hover {
+  scrollbar-width: none;       /* Firefox: hidden by default */
+}
+.scrollbar-hover:hover {
+  scrollbar-width: thin;       /* Firefox: show on hover */
+}
+.scrollbar-hover::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.scrollbar-hover:hover::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
