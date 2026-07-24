@@ -721,3 +721,152 @@ HyDE 和 Multi-Query 的 LLM provider 均在 `gateway/init/services.rs` 中注�
 - Glob patterns (existing since Phase 1)
 - Ad-hoc ingestion via CLI `--source`
 - **Commit**: `b611c7f`
+
+---
+
+## 12. Usage Guide
+
+### 12.1 Quick Start
+
+```bash
+# 1. Create kb.toml for an agent
+cat > ~/.syscity/agents/sre/kb.toml << 'EOF'
+[[source]]
+type = "dir"
+path = "./docs"
+pattern = "**/*.md"
+
+[[source]]
+type = "url"
+url = "https://sre.example.com/runbook"
+EOF
+
+# 2. Ingest all sources
+syscity kb ingest sre
+
+# 3. Ingest with a single ad-hoc file or URL (bypasses kb.toml)
+syscity kb ingest sre --source ./docs/SOP.pdf
+syscity kb ingest sre --source https://example.com/api-docs
+
+# 4. Force re-index all documents (recompute checksums, re-embed)
+syscity kb ingest sre --force
+
+# 5. Watch for changes (foreground, Ctrl+C to stop)
+syscity kb watch sre
+```
+
+### 12.2 kb.toml Reference
+
+Place `kb.toml` in the agent directory: `~/.syscity/agents/{agent-id}/kb.toml`
+
+**Source types:**
+
+```toml
+# Single file (relative or absolute path)
+[[source]]
+type = "file"
+path = "./SOP.md"
+name = "Standard Operating Procedure"  # optional, for reports
+
+# Directory (optionally filtered by glob)
+[[source]]
+type = "dir"
+path = "./docs"
+pattern = "**/*.md"                    # optional glob filter
+
+# Glob pattern (recursive from agent directory)
+[[source]]
+type = "glob"
+pattern = "**/*.{md,txt}"
+
+# Remote URL (HTTP/HTTPS) — auto-converts HTML to Markdown
+[[source]]
+type = "url"
+url = "https://wiki.internal/runbooks"
+name = "Internal Wiki Runbooks"        # optional
+
+# PDF files are auto-detected by extension (.pdf)
+[[source]]
+type = "file"
+path = "./reference/SOP.pdf"
+```
+
+### 12.3 CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `syscity kb ingest <agent>` | Ingest all sources from kb.toml |
+| `syscity kb ingest <agent> --source <path\|url>` | Ad-hoc single source, bypasses kb.toml |
+| `syscity kb ingest <agent> --force` | Force re-index (ignore checksums) |
+| `syscity kb list` | List all collections |
+| `syscity kb list <agent>` | List documents in an agent's collection |
+| `syscity kb list <agent> --status stale` | Filter by status (indexed, failed, stale) |
+| `syscity kb status <agent>` | Show collection health: doc count, chunks, stale/failed |
+| `syscity kb delete <agent>` | Delete entire agent's KB collection |
+| `syscity kb delete <agent> --doc <doc_id>` | Delete a single document |
+| `syscity kb watch <agent>` | Watch files and auto-re-index on change |
+| `syscity kb watch` | Watch ALL agents with kb.toml |
+
+### 12.4 Daemon Integration
+
+Enable auto-ingest on daemon startup in `config.toml`:
+
+```toml
+[knowledge_base]
+auto_ingest_on_startup = true
+max_concurrent_ingests = 2
+```
+
+When enabled, the daemon will:
+1. On startup: scan all agents for `kb.toml`, ingest new/changed documents
+2. Hot reload: if `kb.toml` changes, automatically re-ingest that agent
+3. Skip unchanged documents (via SHA-256 checksum comparison)
+
+### 12.5 End-to-End Workflow
+
+```bash
+# 1. Configure an agent's knowledge base
+mkdir -p ~/.syscity/agents/sre/docs
+cat > ~/.syscity/agents/sre/kb.toml << 'EOF'
+[[source]]
+type = "dir"
+path = "./docs"
+pattern = "**/*.md"
+
+[[source]]
+type = "file"
+path = "./SOP.pdf"
+
+[[source]]
+type = "url"
+url = "https://sre.example.com/runbooks"
+EOF
+
+# 2. Initial ingestion
+syscity kb ingest sre
+
+# 3. Verify ingestion
+syscity kb status sre
+
+# 4. Enable daemon auto-ingest
+# Add to config.toml: [knowledge_base] auto_ingest_on_startup = true
+syscity start   # or restart the daemon
+
+# 5. Foreground watch for development
+syscity kb watch sre
+# The watcher logs re-ingestion events as you edit files
+```
+
+### 12.6 Collection Naming
+
+- Default collection: `kb-{agent_id}` (e.g. `kb-sre`, `kb-coder`)
+- Override per source in `kb.toml`: `collection = "my-custom-collection"`
+- All collections share the same vector index but are isolated via `vec_chunk_collections` JOIN table
+
+### 12.7 Change Detection Behavior
+
+- **Checksum-based**: SHA-256 of first 4 KB + file length
+- **mtime comparison**: Also checks file modification time
+- **Re-ingest**: Only changed documents are re-chunked and re-embedded
+- **Stale detection**: Documents removed from source are marked `stale`
+- **Force re-index**: `--force` flag bypasses all change detection
