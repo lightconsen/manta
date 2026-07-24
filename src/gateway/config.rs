@@ -204,6 +204,15 @@ pub struct VectorMemoryConfig {
     pub api_base_url: Option<String>,
     /// Local GGUF model path (for local-embeddings feature)
     pub local_model_path: Option<String>,
+    /// Query transformer configuration (HyDE, etc.)
+    #[serde(default)]
+    pub query_transformer: QueryTransformerConfig,
+    /// Cross-encoder reranker configuration
+    #[serde(default)]
+    pub reranker: RerankerConfig,
+    /// Context-window-aware memory budgeting
+    #[serde(default)]
+    pub context_window: MemoryContextWindowConfig,
 }
 
 impl Default for VectorMemoryConfig {
@@ -218,6 +227,66 @@ impl Default for VectorMemoryConfig {
             local_model_path: Some(
                 "hf:unsloth/embedding-gemma-2b-GGUF/embedding-gemma-2b-Q4_K_M.gguf".to_string(),
             ),
+            query_transformer: QueryTransformerConfig::default(),
+            reranker: RerankerConfig::default(),
+            context_window: MemoryContextWindowConfig::default(),
+        }
+    }
+}
+
+/// Query transformer configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct QueryTransformerConfig {
+    /// Enable HyDE (Hypothetical Document Embeddings) using the default LLM.
+    pub enable_hyde: bool,
+    /// Optional model override for HyDE generation.
+    pub hyde_model: Option<String>,
+}
+
+/// Cross-encoder reranker configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RerankerConfig {
+    /// Enable cross-encoder reranking.
+    pub enabled: bool,
+    /// Cohere Rerank API key.
+    pub api_key: Option<String>,
+    /// Model name (e.g. "rerank-english-v3.0").
+    pub model: String,
+    /// Max results to return after reranking.
+    pub top_k: usize,
+}
+
+impl Default for RerankerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: None,
+            model: "rerank-english-v3.0".to_string(),
+            top_k: 10,
+        }
+    }
+}
+
+/// Context-window-aware memory budgeting configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryContextWindowConfig {
+    /// Enable token-budget-aware memory filtering.
+    pub enabled: bool,
+    /// Maximum total tokens the LLM context can hold.
+    pub max_tokens: usize,
+    /// Tokens reserved for the LLM's response generation.
+    pub reserved_for_response: usize,
+    /// Minimum number of memories to retain, even if over budget.
+    pub min_chunks: usize,
+}
+
+impl Default for MemoryContextWindowConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_tokens: 128_000,
+            reserved_for_response: 4_096,
+            min_chunks: 1,
         }
     }
 }

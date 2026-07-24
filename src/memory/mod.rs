@@ -20,6 +20,7 @@ pub mod manager;
 pub mod multimodal;
 pub mod personality;
 pub mod qmd;
+pub mod query;
 pub mod session_search;
 pub mod soul;
 pub mod sqlite;
@@ -243,6 +244,12 @@ pub struct Memory {
     /// Source that created this memory (e.g., "agent", "user", "compaction")
     #[serde(default = "default_source")]
     pub source: String,
+}
+
+impl AsRef<str> for Memory {
+    fn as_ref(&self) -> &str {
+        &self.content
+    }
 }
 
 impl Memory {

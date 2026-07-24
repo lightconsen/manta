@@ -12,6 +12,8 @@ use super::{Memory, MemoryId};
 use crate::rag::chunk::{BatchEmbeddingProcessor, EmbeddedChunk, TextChunker};
 use crate::rag::config::EmbeddingConfig;
 use crate::rag::embedding::EmbeddingProvider;
+use crate::rag::query::{NoopTransformer, QueryTransformer};
+use crate::rag::reranker::{NoopReranker, Reranker};
 use crate::rag::vector_store::{VectorStore, VectorStoreStats};
 
 /// High-level vector memory service
@@ -23,6 +25,10 @@ pub struct VectorMemoryService {
     _batch_processor: BatchEmbeddingProcessor,
     /// Tracks the set of collections that have been written to
     collections: tokio::sync::RwLock<std::collections::HashSet<String>>,
+    /// Optional query transformer for rewriting before embedding.
+    query_transformer: Arc<dyn QueryTransformer>,
+    /// Optional reranker for cross-encoder re-scoring.
+    reranker: Arc<dyn Reranker>,
 }
 
 impl VectorMemoryService {
@@ -48,7 +54,26 @@ impl VectorMemoryService {
             chunker,
             _batch_processor: batch_processor,
             collections: tokio::sync::RwLock::new(initial_collections),
+            query_transformer: Arc::new(NoopTransformer),
+            reranker: Arc::new(NoopReranker),
         }
+    }
+
+    /// Attach a query transformer for rewriting queries before embedding.
+    pub fn with_query_transformer(mut self, transformer: Arc<dyn QueryTransformer>) -> Self {
+        self.query_transformer = transformer;
+        self
+    }
+
+    /// Attach a reranker for cross-encoder re-scoring after initial retrieval.
+    pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
+        self.reranker = reranker;
+        self
+    }
+
+    /// Get the current reranker.
+    pub fn reranker(&self) -> &dyn Reranker {
+        &*self.reranker
     }
 
     /// Store a memory with automatic chunking and embedding
@@ -86,7 +111,8 @@ impl VectorMemoryService {
         limit: usize,
         threshold: f32,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
-        let query_embedding = self.embedding_provider.embed(query).await?;
+        let rewritten = self.query_transformer.transform(query).await?;
+        let query_embedding = self.embedding_provider.embed(&rewritten).await?;
         self.vector_store
             .search_similar(&query_embedding, limit, threshold, None)
             .await
@@ -112,7 +138,8 @@ impl VectorMemoryService {
         collection: &str,
         threshold: f32,
     ) -> crate::Result<Vec<SearchResult>> {
-        let query_embedding = self.embedding_provider.embed(query).await?;
+        let rewritten = self.query_transformer.transform(query).await?;
+        let query_embedding = self.embedding_provider.embed(&rewritten).await?;
         let results = self
             .vector_store
             .search_similar(&query_embedding, limit, threshold, Some(collection))

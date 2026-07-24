@@ -12,12 +12,13 @@ use tracing::{info, warn};
 use crate::gateway::GatewayConfig;
 use crate::gateway::GatewayEvent;
 use crate::gateway::GatewayState;
+use crate::memory::query::HydeTransformer;
 use crate::memory::vector::VectorMemoryService;
 use crate::rag::{
-    ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
-    MemoryVectorStore,
+    ApiEmbeddingProvider, CachedEmbeddingProvider, CohereReranker, ContextWindowConfig,
+    EmbeddingConfig, LocalGgufEmbeddingProvider, MemoryVectorStore,
 };
-use crate::memory::{MemoryManager, SessionSearch};
+use crate::memory::{MemoryManager, MemoryManagerConfig, SessionSearch};
 
 /// Initialize vector memory, session search, and memory manager.
 pub async fn init_memory_services(
@@ -109,19 +110,53 @@ pub async fn init_memory_services(
                 chunk_size: 512,
                 chunk_overlap: 50,
                 batch_size: 32,
+                chunk_strategy: Default::default(),
             };
 
             let cached_provider = CachedEmbeddingProvider::new(embedding_provider, 1024);
-            let service = Arc::new(VectorMemoryService::new(
+            let mut service = VectorMemoryService::new(
                 Arc::new(cached_provider),
                 vector_store,
                 &embedding_config,
-            ));
+            );
+
+            // ── Query transformer (HyDE) ─────────────────────────────────────
+            let qc = &config.vector_memory.query_transformer;
+            if qc.enable_hyde {
+                match state.infra.model_router.create_default_provider().await {
+                    Ok(provider) => {
+                        let mut hyde = HydeTransformer::new(provider);
+                        if let Some(ref model) = qc.hyde_model {
+                            hyde = hyde.with_model(model);
+                        }
+                        service = service.with_query_transformer(Arc::new(hyde));
+                        info!("HyDE query transformer enabled");
+                    }
+                    Err(e) => {
+                        warn!("Failed to create LLM provider for HyDE: {}", e);
+                    }
+                }
+            }
+
+            // ── Cross-encoder reranker (Cohere) ──────────────────────────────
+            let rc = &config.vector_memory.reranker;
+            if rc.enabled {
+                if let Some(ref api_key) = rc.api_key {
+                    let reranker = CohereReranker::new(api_key.clone())
+                        .with_model(&rc.model)
+                        .with_top_k(rc.top_k);
+                    service = service.with_reranker(Arc::new(reranker));
+                    info!("Cohere reranker enabled (model={}, top_k={})", rc.model, rc.top_k);
+                } else {
+                    warn!("Reranker enabled but no api_key configured");
+                }
+            }
+
             info!(
                 "Vector memory service initialized with {:?} provider",
                 config.vector_memory.provider
             );
-            *state.memory.vector.write().await = Some(service);
+            *state.memory.vector.write().await = Some(Arc::new(service));
         } else {
             warn!("Vector memory enabled but no suitable provider available");
         }
@@ -139,6 +174,8 @@ pub async fn init_memory_services(
             let session_search_for_mm = session_search.clone();
             *state.memory.session_search.write().await = Some(session_search.clone());
 
+            let mm_config = build_memory_manager_config(config);
+
             if let Some(vector_svc) = state.memory.vector.read().await.clone() {
                 info!("Initializing MemoryManager with hybrid search...");
                 let store = Arc::new(
@@ -149,13 +186,9 @@ pub async fn init_memory_services(
                             details: e.to_string(),
                         })?,
                 );
-                let mm = MemoryManager::new(
-                    store.clone(),
-                    store,
-                    crate::memory::MemoryManagerConfig::default(),
-                )
-                .with_vector_service(vector_svc)
-                .with_session_search(session_search_for_mm);
+                let mm = MemoryManager::new(store.clone(), store, mm_config)
+                    .with_vector_service(vector_svc)
+                    .with_session_search(session_search_for_mm);
                 state.memory.manager.write().await.replace(Arc::new(mm));
                 info!("MemoryManager with hybrid search initialized");
             } else {
@@ -168,12 +201,8 @@ pub async fn init_memory_services(
                             details: e.to_string(),
                         })?,
                 );
-                let mm = MemoryManager::new(
-                    store.clone(),
-                    store,
-                    crate::memory::MemoryManagerConfig::default(),
-                )
-                .with_session_search(session_search_for_mm);
+                let mm = MemoryManager::new(store.clone(), store, mm_config)
+                    .with_session_search(session_search_for_mm);
                 state.memory.manager.write().await.replace(Arc::new(mm));
                 info!("MemoryManager initialized (without vector search)");
             }
@@ -183,6 +212,27 @@ pub async fn init_memory_services(
     }
 
     Ok(())
+}
+
+/// Build a `MemoryManagerConfig` from gateway config, reading context window
+/// settings and forwarding them when enabled.
+fn build_memory_manager_config(config: &GatewayConfig) -> MemoryManagerConfig {
+    let mut mm_config = MemoryManagerConfig::default();
+
+    if config.vector_memory.context_window.enabled {
+        let cwc = &config.vector_memory.context_window;
+        mm_config.context_window = Some(ContextWindowConfig {
+            max_tokens: cwc.max_tokens,
+            reserved_for_response: cwc.reserved_for_response,
+            min_chunks: cwc.min_chunks,
+        });
+        info!(
+            "Context window budgeting enabled: max_tokens={}, reserved={}, min_chunks={}",
+            cwc.max_tokens, cwc.reserved_for_response, cwc.min_chunks
+        );
+    }
+
+    mm_config
 }
 
 /// Initialize hot reload manager if enabled.

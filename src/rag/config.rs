@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::rag::chunk::ChunkStrategy;
+
 /// Configuration for vector database backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VectorBackend {
@@ -46,10 +48,14 @@ pub struct EmbeddingConfig {
     pub model: String,
     /// Maximum chunk size for text splitting
     pub chunk_size: usize,
-    /// Chunk overlap for sliding window
+    /// Chunk overlap for sliding window (only used when `chunk_strategy` is `Fixed`).
     pub chunk_overlap: usize,
     /// Batch size for embedding generation
     pub batch_size: usize,
+    /// Chunking strategy.  Defaults to `Fixed { chunk_size, chunk_overlap }`
+    /// for backward compatibility.
+    #[serde(default)]
+    pub chunk_strategy: ChunkStrategy,
 }
 
 impl Default for EmbeddingConfig {
@@ -59,6 +65,7 @@ impl Default for EmbeddingConfig {
             chunk_size: 512,
             chunk_overlap: 50,
             batch_size: 32,
+            chunk_strategy: ChunkStrategy::default(),
         }
     }
 }

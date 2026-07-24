@@ -10,7 +10,7 @@ use super::{
     session_search::{SessionSearch, SessionSearchQuery},
     vector::VectorMemoryService,
 };
-use crate::rag::hybrid::{ScoredResult, HybridSearchConfig, HybridSearchResult};
+use crate::rag::hybrid::{HybridSearchConfig, HybridSearchResult, ScoredResult};
 
 /// Run hybrid search over `vector_service` (semantic) and `session_search`
 /// (FTS5), merge results, and return up to `config.max_results` entries.
@@ -89,6 +89,14 @@ pub async fn hybrid_search(
         results = crate::rag::hybrid::mmr_rerank(results, &config.mmr);
     } else {
         results.truncate(config.max_results);
+    }
+
+    // ── Cross-encoder reranking (if configured) ────────────────────────────────
+    let reranked = vector_service.reranker().rerank(query, results.clone()).await;
+    match reranked {
+        Ok(rr) if !rr.is_empty() || results.is_empty() => results = rr,
+        Ok(_) => {} // empty rerank with non-empty input: keep original
+        Err(e) => warn!("Reranker failed, keeping un-reranked results: {}", e),
     }
 
     results

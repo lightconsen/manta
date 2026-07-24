@@ -30,6 +30,7 @@ use super::{
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
     TieredStore, UnifiedStore,
 };
+use crate::rag::context::{select_by_token_budget, ContextWindowConfig};
 use crate::rag::hybrid::HybridSearchConfig;
 use crate::rag::pipeline::EmbeddingPipelineHandle;
 use crate::providers::{CompletionRequest, Message, Provider};
@@ -68,6 +69,9 @@ pub struct MemoryManagerConfig {
     pub track_effectiveness: bool,
     /// Whether to enable tier management.
     pub enable_tiers: bool,
+    /// Optional context-window-aware filtering of retrieved memories.
+    /// When `None`, no token-budget filtering is applied.
+    pub context_window: Option<ContextWindowConfig>,
 }
 
 impl Default for MemoryManagerConfig {
@@ -79,6 +83,7 @@ impl Default for MemoryManagerConfig {
             workspace_dir: None,
             track_effectiveness: true,
             enable_tiers: true,
+            context_window: None,
         }
     }
 }
@@ -695,6 +700,17 @@ impl MemoryManager {
                 .for_conversation(conversation_id)
                 .limit(self.config.max_context_memories);
             self.store.search(mq).await?
+        };
+
+        // ── Context-window-aware memory budget ─────────────────────────────
+        let memories = if let Some(ref cw_config) = self.config.context_window {
+            let current_tokens: usize = messages
+                .iter()
+                .map(|m| crate::rag::context::estimate_tokens(&m.content))
+                .sum();
+            select_by_token_budget(memories, cw_config, current_tokens)
+        } else {
+            memories
         };
 
         // Multimodal: scan for image/audio files in workspace

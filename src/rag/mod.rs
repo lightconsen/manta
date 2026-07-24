@@ -8,9 +8,13 @@
 
 pub mod chunk;
 pub mod config;
+pub mod context;
 pub mod embedding;
+pub mod eval;
 pub mod hybrid;
 pub mod pipeline;
+pub mod query;
+pub mod reranker;
 pub mod vector_store;
 
 #[cfg(feature = "local-embeddings")]
@@ -20,10 +24,14 @@ pub mod pgvector_store;
 #[cfg(feature = "sqlite-vec")]
 pub mod sqlite_vec_store;
 
-pub use chunk::{BatchEmbeddingProcessor, EmbeddedChunk, TextChunker};
+pub use chunk::{BatchEmbeddingProcessor, ChunkStrategy, EmbeddedChunk, TextChunker};
+pub use context::{estimate_tokens, select_by_token_budget, ContextWindowConfig};
 pub use config::{EmbeddingConfig, VectorBackend};
 pub use embedding::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingProvider,
     LocalGgufEmbeddingProvider,
 };
+pub use eval::{evaluate_retrieval, RetrievalMetrics, RetrievalSample};
+pub use query::{NoopTransformer, QueryTransformer};
+pub use reranker::{CohereReranker, NoopReranker, Reranker};
 pub use vector_store::{MemoryVectorStore, SearchResult, VectorStore, VectorStoreStats};
