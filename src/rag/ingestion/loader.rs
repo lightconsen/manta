@@ -3,6 +3,7 @@
 //! Loads documents from file, directory, and glob sources. Supports relative
 //! path resolution (relative to the agent directory) and absolute paths.
 
+use std::io::Read;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -136,6 +137,10 @@ pub async fn load_file(path: &Path) -> Result<KnowledgeDocument, String> {
 
     let text = if mime_type == "application/pdf" {
         extract_pdf_text(path)?
+    } else if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
+        extract_docx_text(path)?
+    } else if mime_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
+        extract_xlsx_text(path)?
     } else {
         String::from_utf8_lossy(&content).to_string()
     };
@@ -268,6 +273,129 @@ fn extract_pdf_text(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
+/// Extract text from a .docx file (Word document).
+///
+/// .docx is a ZIP archive containing `word/document.xml`. Text is inside
+/// `<w:t>` XML elements.
+fn extract_docx_text(path: &Path) -> Result<String, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open docx {}: {}", path.display(), e))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read docx archive {}: {}", path.display(), e))?;
+    let mut xml = archive
+        .by_name("word/document.xml")
+        .map_err(|_| format!("Missing word/document.xml in docx {}", path.display()))?;
+    let mut content = String::new();
+    xml.read_to_string(&mut content)
+        .map_err(|e| format!("Failed to read docx XML {}: {}", path.display(), e))?;
+    Ok(extract_xml_text(&content))
+}
+
+/// Extract text from a .xlsx file (Excel spreadsheet).
+///
+/// .xlsx is a ZIP archive containing `xl/sharedStrings.xml`. Text is inside
+/// `<t>` XML elements (wrapped in `<si>` items). Extracting shared strings
+/// captures all text content; cell structure is not needed for KB ingestion.
+fn extract_xlsx_text(path: &Path) -> Result<String, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open xlsx {}: {}", path.display(), e))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read xlsx archive {}: {}", path.display(), e))?;
+    let mut xml = archive
+        .by_name("xl/sharedStrings.xml")
+        .map_err(|_| {
+            format!(
+                "Missing xl/sharedStrings.xml in xlsx {} (spreadsheet may be empty)",
+                path.display()
+            )
+        })?;
+    let mut content = String::new();
+    xml.read_to_string(&mut content)
+        .map_err(|e| format!("Failed to read xlsx XML {}: {}", path.display(), e))?;
+    Ok(extract_xml_text(&content))
+}
+
+/// Extract text content from an OOXML XML fragment by stripping all tags.
+///
+/// Works for both `.docx` (`<w:t>text</w:t>`) and `.xlsx` (`<t>text</t>`)
+/// formats. Handles CDATA sections and entity decoding.
+fn extract_xml_text(xml: &str) -> String {
+    let mut result = String::with_capacity(xml.len());
+    let mut chars = xml.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '<' if chars.peek() == Some(&'!') || chars.peek() == Some(&'?') => {
+                // Skip comments (<!---->), CDATA (<![CDATA[), and processing instructions (<? ?>)
+                if chars.peek() == Some(&'!') {
+                    // Could be comment or CDATA — consume until '>'
+                    for c in chars.by_ref() {
+                        if c == '>' {
+                            break;
+                        }
+                    }
+                } else {
+                    // <? ... ?> — consume until '?>'
+                    let mut prev = '\0';
+                    for c in chars.by_ref() {
+                        if prev == '?' && c == '>' {
+                            break;
+                        }
+                        prev = c;
+                    }
+                }
+            }
+            '<' => {
+                // Opening or closing tag — skip everything until '>'
+                for c in chars.by_ref() {
+                    if c == '>' {
+                        break;
+                    }
+                }
+            }
+            '&' => {
+                // Decode common XML entities
+                let mut entity = String::new();
+                for c in chars.by_ref() {
+                    if c == ';' {
+                        break;
+                    }
+                    entity.push(c);
+                }
+                let decoded = match entity.as_str() {
+                    "amp" => "&",
+                    "lt" => "<",
+                    "gt" => ">",
+                    "quot" => "\"",
+                    "apos" => "'",
+                    _ => "", // skip unknown entities
+                };
+                result.push_str(decoded);
+            }
+            c => {
+                result.push(c);
+            }
+        }
+    }
+
+    // Collapse multiple whitespace into single space and trim
+    let mut cleaned = String::with_capacity(result.len());
+    let mut prev_space = false;
+    for c in result.chars() {
+        if c.is_whitespace() {
+            if !prev_space {
+                cleaned.push(' ');
+                prev_space = true;
+            }
+        } else {
+            cleaned.push(c);
+            prev_space = false;
+        }
+    }
+
+    cleaned.trim().to_string()
+}
+
 /// Compute a fast SHA-256 checksum from first 4 KB + file length.
 pub fn compute_checksum(content: &[u8]) -> String {
     use sha2::Digest;
@@ -300,6 +428,8 @@ pub fn detect_mime(path: &Path) -> &'static str {
         "csv" => "text/csv",
         "xml" => "application/xml",
         "pdf" => "application/pdf",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         _ => "application/octet-stream",
     }
 }
@@ -457,6 +587,14 @@ mod tests {
         assert_eq!(detect_mime(Path::new("file.rs")), "text/x-rust");
         assert_eq!(detect_mime(Path::new("file.py")), "text/x-python");
         assert_eq!(detect_mime(Path::new("unknown.xyz")), "application/octet-stream");
+        assert_eq!(
+            detect_mime(Path::new("file.docx")),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        assert_eq!(
+            detect_mime(Path::new("file.xlsx")),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
     }
 
     #[test]
@@ -498,5 +636,44 @@ mod tests {
     fn test_pattern_to_regex() {
         let re = pattern_to_regex("*.rs");
         assert_eq!(re, r"^.*\.rs$");
+    }
+
+    #[test]
+    fn test_extract_xml_text_docx() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:t>Hello, World!</w:t>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r>
+        <w:t>Second paragraph with &amp; entities.</w:t>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>"#;
+        let text = extract_xml_text(xml);
+        assert_eq!(text, "Hello, World! Second paragraph with & entities.");
+    }
+
+    #[test]
+    fn test_extract_xml_text_xlsx() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <si><t>Cell A1</t></si>
+  <si><t>Cell B1 with text</t></si>
+  <si><t>Cell A2</t></si>
+</sst>"#;
+        let text = extract_xml_text(xml);
+        assert_eq!(text, "Cell A1 Cell B1 with text Cell A2");
+    }
+
+    #[test]
+    fn test_extract_xml_text_empty() {
+        assert_eq!(extract_xml_text(""), "");
+        assert_eq!(extract_xml_text("<root></root>"), "");
     }
 }
