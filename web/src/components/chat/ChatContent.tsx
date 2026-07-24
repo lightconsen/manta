@@ -9,7 +9,7 @@ import { MessageBubble } from "./MessageBubble";
 import { CommandPalette } from "./CommandPalette";
 import { getCommandCompletions, type CommandDef } from "@/slash-commands";
 import { useChatStore } from "@/stores/chatStore";
-import { Mic, Image, Paperclip, Square, Send } from "lucide-react";
+import { Mic, Image, Paperclip, Square, Send, ChevronDown } from "lucide-react";
 import { MessageSkeleton } from "@/components/ui/Skeleton";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useTextToSpeech } from "@/hooks/useTextToSpeech";
@@ -157,7 +157,28 @@ export function ChatContent({ transport }: ChatContentProps) {
     }
   }, [messages.length, virtualizer]);
 
-  // Load more history when scrolling to the top
+  const [showScrollButton, setShowScrollButton] = useState(false);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const checkScroll = () => {
+      const threshold = 100;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+      setShowScrollButton(!atBottom);
+    };
+
+    el.addEventListener("scroll", checkScroll);
+    checkScroll();
+    return () => el.removeEventListener("scroll", checkScroll);
+  }, [messages]);
+
+  const scrollToBottom = useCallback(() => {
+    if (messages.length > 0) {
+      virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+    }
+  }, [messages.length, virtualizer]);
   const isLoadingHistoryRef = useRef(isLoadingHistory);
   useEffect(() => {
     isLoadingHistoryRef.current = isLoadingHistory;
@@ -292,7 +313,7 @@ export function ChatContent({ transport }: ChatContentProps) {
       {/* Scrollable message area */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto"
+        className="flex-1 overflow-y-auto relative"
         role="log"
         aria-live="polite"
       >
@@ -342,6 +363,17 @@ export function ChatContent({ transport }: ChatContentProps) {
           </div>
         )}
         {isRunning && <MessageSkeleton />}
+
+        {showScrollButton && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            aria-label="Scroll to bottom"
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 p-2 rounded-full bg-primary-500 text-white shadow-lg hover:bg-primary-600 transition-opacity animate-bounce z-10"
+          >
+            <ChevronDown className="w-5 h-5" />
+          </button>
+        )}
       </div>
 
       <div className="bg-page px-4 py-3 shrink-0">
