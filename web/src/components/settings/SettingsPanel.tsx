@@ -80,7 +80,6 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   const [config, setConfig] = useState<SyscityConfig>({});
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
   const [agentRegistry, setAgentRegistry] = useState<Array<{ id: string; display_name: string; emoji?: string; is_valid: boolean; has_heartbeat: boolean }>>([]);
-  const [sessions, setSessions] = useState<Array<{ id: string; label?: string }>>([]);
   const [crons, setCrons] = useState<Array<Record<string, unknown>>>([]);
   const [skills, setSkills] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
@@ -144,18 +143,16 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       transport.getConfig(),
       transport.listModels(),
       transport.listAgentRegistry(),
-      transport.listSessions(),
       transport.listCrons(),
       transport.listSkills(),
       transport.listModelPresets(),
       transport.listMcpServers(),
     ])
-      .then(([cfg, mdl, reg, sess, cronRes, skillRes, presetRes, mcpRes]) => {
+      .then(([cfg, mdl, reg, cronRes, skillRes, presetRes, mcpRes]) => {
         setConfig(cfg as SyscityConfig);
         setModels(mdl.models || []);
         const registry = reg || [];
         setAgentRegistry(registry);
-        setSessions(sess || []);
         setCrons(cronRes.jobs || []);
         setSkills(skillRes.skills || []);
         setModelPresets(presetRes || []);
@@ -469,7 +466,6 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     { id: "agents", label: "Agents" },
     { id: "mcp", label: "MCP" },
     { id: "jobs", label: "Jobs" },
-    { id: "sessions", label: "Sessions" },
     { id: "skills", label: "Skills" },
     { id: "tools", label: "Tools" },
     { id: "logs", label: "Logs" },
@@ -1257,64 +1253,6 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               </div>
             )}
 
-            {activeTab === "sessions" && (
-              <div className="space-y-5">
-                <section>
-                  <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Active Sessions</h3>
-                  {sessions.length === 0 ? (
-                    <div className="text-sm text-secondary">No sessions.</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {sessions.map((s) => {
-                        const meta = s as unknown as Record<string, unknown>;
-                        const agentId = meta.agent_id as string | undefined;
-                        const channel = meta.channel as string | undefined;
-                        const msgCount = meta.message_count as number | undefined;
-                        const lastActivity = meta.last_activity as string | undefined;
-                        const isActive = meta.is_active as boolean | undefined;
-                        return (
-                          <div key={s.id} className="px-3 py-2 rounded-lg bg-card">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-primary font-medium">{s.label || s.id}</span>
-                              <div className="flex items-center gap-1.5">
-                                {isActive !== undefined && (
-                                  <span className={`text-xs px-2 py-0.5 rounded-full ${isActive ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-sidebar text-secondary"}`}>
-                                    {isActive ? "Active" : "Inactive"}
-                                  </span>
-                                )}
-                                {msgCount !== undefined && (
-                                  <span className="text-xs text-secondary">{msgCount} msgs</span>
-                                )}
-                              </div>
-                            </div>
-                            <div className="mt-1.5 space-y-1">
-                              {agentId && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Agent</span>
-                                  <span className="text-xs text-secondary font-mono">{agentId}</span>
-                                </div>
-                              )}
-                              {channel && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Channel</span>
-                                  <span className="text-xs px-1.5 py-0.5 rounded bg-sidebar text-secondary">{channel}</span>
-                                </div>
-                              )}
-                              {lastActivity && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-secondary/70 w-16 shrink-0">Last Active</span>
-                                  <span className="text-xs text-secondary">{new Date(lastActivity).toLocaleString()}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-              </div>
-            )}
 
             {activeTab === "skills" && (
               <div className="space-y-5">
