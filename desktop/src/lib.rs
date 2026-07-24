@@ -105,6 +105,11 @@ pub fn run() {
             let handle = app.handle().clone();
             let state = app_state_for_setup.clone();
 
+            // Set native macOS window subtitle (must be on main thread).
+            if let Some(window) = app.get_webview_window("main") {
+                set_window_subtitle(&window, &format!("v{VERSION} · Your AI Assistant"));
+            }
+
             // Spawn the Syscity Gateway in a background task.
             tauri::async_runtime::spawn(async move {
                 let port = match find_available_port("127.0.0.1", 18080, 100).await {
@@ -314,7 +319,6 @@ debounce_seconds = 2
 
     // Show the main window now that the backend is ready.
     if let Some(window) = handle.get_webview_window("main") {
-        set_window_subtitle(&window, &format!("v{VERSION} · Your AI Assistant"));
         window.show().unwrap();
     }
 
