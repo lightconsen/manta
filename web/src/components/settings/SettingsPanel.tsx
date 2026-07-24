@@ -461,13 +461,13 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
 
   const tabs = [
     { id: "general", label: "General" },
-    { id: "channels", label: "Channels" },
     { id: "models", label: "Models" },
     { id: "agents", label: "Agents" },
+    { id: "channels", label: "Channels" },
+    { id: "tools", label: "Web Search" },
     { id: "mcp", label: "MCP" },
-    { id: "jobs", label: "Jobs" },
     { id: "skills", label: "Skills" },
-    { id: "tools", label: "Tools" },
+    { id: "jobs", label: "Jobs" },
     { id: "logs", label: "Logs" },
   ];
 
