@@ -302,34 +302,52 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
           )}
           {hasParts ? (
             <div className="space-y-1">
+              {/* Internals panel: reasoning + tool-calls with Collapse button */}
+              {hasInternals && (
+                <div className={showInternals ? "" : "hidden"}>
+                  <div className="space-y-1">
+                    {message.parts!.map((part, i) => {
+                      if (part.type === "reasoning") {
+                        return (
+                          <div key={i}>
+                            <ReasoningPart text={part.text || ""} nonCollapsible />
+                          </div>
+                        );
+                      }
+                      if (part.type === "tool-call") {
+                        return (
+                          <div key={i}>
+                            <ToolCallPart
+                              toolName={part.toolName || "tool"}
+                              args={part.args || {}}
+                              result={part.result}
+                              data={part.data}
+                              transport={transport}
+                              nonCollapsible
+                            />
+                          </div>
+                        );
+                      }
+                      return null;
+                    })}
+                  </div>
+                  {/* Collapse button at bottom-right of internals panel */}
+                  {showInternals && (
+                    <div className="flex justify-end mt-1 mb-2">
+                      <button
+                        type="button"
+                        onClick={toggleInternals}
+                        className="flex items-center gap-1 text-[11px] text-secondary hover:text-primary transition px-1.5 py-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5"
+                      >
+                        <ChevronUp className="w-3 h-3" />
+                        <span>Collapse</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Text and document-ref parts (always visible) */}
               {message.parts!.map((part, i) => {
-                if (part.type === "reasoning") {
-                  return (
-                    <div
-                      key={i}
-                      className={showInternals ? "" : "hidden"}
-                    >
-                      <ReasoningPart text={part.text || ""} nonCollapsible />
-                    </div>
-                  );
-                }
-                if (part.type === "tool-call") {
-                  return (
-                    <div
-                      key={i}
-                      className={showInternals ? "" : "hidden"}
-                    >
-                      <ToolCallPart
-                        toolName={part.toolName || "tool"}
-                        args={part.args || {}}
-                        result={part.result}
-                        data={part.data}
-                        transport={transport}
-                        nonCollapsible
-                      />
-                    </div>
-                  );
-                }
                 if (part.type === "text") {
                   return (
                     <div key={i} className="text-primary">
@@ -344,18 +362,6 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
                 }
                 return null;
               })}
-              {hasInternals && showInternals && (
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={toggleInternals}
-                    className="flex items-center gap-1 text-[11px] text-secondary hover:text-primary transition px-1 py-0.5"
-                  >
-                    <ChevronUp className="w-3 h-3" />
-                    <span>Collapse</span>
-                  </button>
-                </div>
-              )}
             </div>
           ) : (
             <div className="text-primary">

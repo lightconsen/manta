@@ -56,6 +56,55 @@ fn get_api_url(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> String {
     format!("http://127.0.0.1:{}", state.gateway_port)
 }
 
+/// Tauri command: reveals an artifact file in the system file manager.
+///
+/// Platform behaviour:
+/// - macOS: `open -R` reveals the file in Finder.
+/// - Windows: `explorer /select,` reveals the file in Explorer.
+/// - Linux: opens the parent folder in the default file manager.
+#[tauri::command]
+fn reveal_in_folder(filename: String) -> Result<(), String> {
+    let path = syscity::dirs::syscity_dir()
+        .join("artifacts")
+        .join(&filename);
+
+    // Path traversal check (defence-in-depth).
+    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+        return Err("Invalid filename".into());
+    }
+
+    if !path.exists() {
+        return Err(format!("File not found: {}", filename));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open Finder: {}", e))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open Explorer: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let folder = path.parent().unwrap_or(&path);
+        std::process::Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map_err(|e| format!("Failed to open file manager: {}", e))?;
+    }
+
+    Ok(())
+}
+
 /// Entry point used by `src/main.rs`.
 pub fn run() {
     // Initialize syscity global setup (panic handler, etc.)
@@ -100,7 +149,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(app_state)
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![get_api_url])
+        .invoke_handler(tauri::generate_handler![get_api_url, reveal_in_folder])
         .setup(move |app| {
             let handle = app.handle().clone();
             let state = app_state_for_setup.clone();

@@ -1,5 +1,14 @@
-import { useState, useEffect } from "react";
-import { X, FileText, Loader2, AlertCircle } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import {
+  X,
+  FileText,
+  Loader2,
+  AlertCircle,
+  FolderOpen,
+  Share2,
+  Download,
+  Check,
+} from "lucide-react";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 interface DocumentPreviewPanelProps {
@@ -42,6 +51,51 @@ export function DocumentPreviewPanel({
     };
   }, [document.filename]);
 
+  const [copied, setCopied] = useState(false);
+  const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
+
+  const handleOpenFolder = useCallback(async () => {
+    if (!isTauri) return;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("reveal_in_folder", { filename: document.filename });
+    } catch (err) {
+      console.error("Failed to open folder:", err);
+    }
+  }, [document.filename, isTauri]);
+
+  const handleCopyLink = useCallback(async () => {
+    const url = `${window.location.origin}/api/v1/artifacts/${document.filename}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for environments without clipboard API
+      const ta = window.document.createElement("textarea");
+      ta.value = url;
+      window.document.body.appendChild(ta);
+      ta.select();
+      window.document.execCommand("copy");
+      window.document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [document.filename]);
+
+  const handleDownload = useCallback(() => {
+    if (!content) return;
+    const blob = new Blob([content], {
+      type: document.format === "html" ? "text/html" : "text/markdown",
+    });
+    const objUrl = URL.createObjectURL(blob);
+    const a = window.document.createElement("a");
+    a.href = objUrl;
+    a.download = document.filename;
+    a.click();
+    URL.revokeObjectURL(objUrl);
+  }, [content, document.filename, document.format]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       onClose();
@@ -79,15 +133,55 @@ export function DocumentPreviewPanel({
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary hover:text-primary transition"
-          title="Close preview (Esc)"
-          aria-label="Close preview"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {/* Open in folder — Tauri desktop only */}
+          {isTauri && (
+            <button
+              type="button"
+              onClick={handleOpenFolder}
+              className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary hover:text-primary transition"
+              title="Open file location"
+              aria-label="Open file location"
+            >
+              <FolderOpen className="w-4 h-4" />
+            </button>
+          )}
+          {/* Download */}
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={loadState !== "loaded"}
+            className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary hover:text-primary transition disabled:opacity-30 disabled:pointer-events-none"
+            title="Download file"
+            aria-label="Download file"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+          {/* Copy link / Share */}
+          <button
+            type="button"
+            onClick={handleCopyLink}
+            className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary hover:text-primary transition"
+            title={copied ? "Copied!" : "Copy link"}
+            aria-label="Copy link"
+          >
+            {copied ? (
+              <Check className="w-4 h-4 text-green-500" />
+            ) : (
+              <Share2 className="w-4 h-4" />
+            )}
+          </button>
+          {/* Close */}
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary hover:text-primary transition"
+            title="Close preview (Esc)"
+            aria-label="Close preview"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Content area */}
