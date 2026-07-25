@@ -1385,6 +1385,18 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             for (const t of toolCalls.values()) {
               newParts.push(t);
             }
+            // Add document-ref part for write_document tool results
+            if (toolName === "write_document" && data && typeof data === "object" && "filename" in (data as any)) {
+              const d = data as { filename: string; title?: string; format?: string };
+              newParts.push({
+                type: "document-ref",
+                data: {
+                  filename: d.filename,
+                  title: d.title || d.filename,
+                  format: d.format || "markdown",
+                },
+              } as any);
+            }
             if (currentText) {
               newParts.push(makeTextPart(currentText));
             }

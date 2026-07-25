@@ -360,7 +360,7 @@ pub struct AgentConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_dir: Option<std::path::PathBuf>,
     /// When true, restrict file operations to `workspace_dir`.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub workspace_only: bool,
     /// Model to use for LLM-powered context compaction.
     ///
@@ -384,6 +384,11 @@ pub struct AgentConfig {
     /// by an LLM critic before being returned to the user.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflection_config: Option<reflection::ReflectionConfig>,
+}
+
+/// Serde default: `true`.
+fn default_true() -> bool {
+    true
 }
 
 impl Default for AgentConfig {

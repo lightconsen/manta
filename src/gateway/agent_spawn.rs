@@ -944,6 +944,7 @@ pub(crate) async fn create_default_tool_registry(
     registry.register(Box::new(FileReadTool::new()));
     registry.register(Box::new(FileWriteTool::new()));
     registry.register(Box::new(FileEditTool::new()));
+    registry.register(Box::new(crate::tools::WriteDocumentTool::new()));
     registry.register(Box::new(GlobTool::new()));
     registry.register(Box::new(GrepTool::new()));
 

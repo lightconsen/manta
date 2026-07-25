@@ -729,7 +729,8 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/ready", get(super::ready_handler))
         .route("/live", get(super::live_handler))
         .route("/api/v1/health", get(super::health_handler))
-        .route("/api/v1/metrics", get(super::metrics_handler));
+        .route("/api/v1/metrics", get(super::metrics_handler))
+        .route("/api/v1/artifacts/{filename}", get(super::artifact_handler));
 
     // Authenticated essential APIs (auth required)
     let essential_auth_router = Router::new()

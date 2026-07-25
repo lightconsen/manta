@@ -21,6 +21,7 @@ interface ChatState {
   isLoadingHistory: boolean;
   hasMoreHistory: boolean;
   aiInternalsVisibility: Record<string, boolean>;
+  previewDocument: { filename: string; title: string; format: string } | null;
 
   setMessages: (messages: ChatMessage[]) => void;
   prependMessages: (messages: ChatMessage[]) => void;
@@ -42,6 +43,7 @@ interface ChatState {
   setIsLoadingHistory: (loading: boolean) => void;
   setHasMoreHistory: (hasMore: boolean) => void;
   setAiInternalsVisibility: (messageId: string, visible: boolean) => void;
+  setPreviewDocument: (doc: { filename: string; title: string; format: string } | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -54,6 +56,7 @@ export const useChatStore = create<ChatState>((set) => ({
   isLoadingHistory: false,
   hasMoreHistory: false,
   aiInternalsVisibility: {},
+  previewDocument: null,
 
   setMessages: (messages) => set({ messages }),
   prependMessages: (messages) => set((s) => ({ messages: [...messages, ...s.messages] })),
@@ -77,4 +80,5 @@ export const useChatStore = create<ChatState>((set) => ({
         [messageId]: visible,
       },
     })),
+  setPreviewDocument: (doc) => set({ previewDocument: doc }),
 }));

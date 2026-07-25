@@ -14,6 +14,7 @@ import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ChatContent } from "@/components/chat/ChatContent";
 import { useGoalStore } from "@/stores/goalStore";
 import { GoalPanel } from "@/components/chat/GoalPanel";
+import { DocumentPreviewPanel } from "@/components/shared/DocumentPreviewPanel";
 
 /* ── Agent emoji pool — ensures each agent has a unique icon ── */
 const EMOJI_POOL = [
@@ -120,6 +121,8 @@ function ChatApp() {
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus>("connecting");
   const [sessionKey, setSessionKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const previewDocument = useChatStore((s) => s.previewDocument);
+  const setPreviewDocument = useChatStore((s) => s.setPreviewDocument);
 
   // Sidebar state persistence
   useEffect(() => {
@@ -427,6 +430,19 @@ function ChatApp() {
       <main className="flex-1 flex flex-col overflow-hidden">
         {settingsOpen ? (
           <SettingsPanel transport={transport} onClose={() => setSettingsOpen(false)} />
+        ) : previewDocument ? (
+          <div className="flex flex-row h-full overflow-hidden">
+            {/* Left: chat */}
+            <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+              <ChatAppInner key={sessionKey} transport={transport} />
+              <GoalPanel />
+            </div>
+            {/* Right: document preview */}
+            <DocumentPreviewPanel
+              document={previewDocument}
+              onClose={() => setPreviewDocument(null)}
+            />
+          </div>
         ) : (
           <>
             <ChatAppInner key={sessionKey} transport={transport} />

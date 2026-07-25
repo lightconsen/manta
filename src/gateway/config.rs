@@ -701,7 +701,7 @@ impl Default for GatewayConfig {
             mcp: McpSettings::default(),
             cost_guard: CostGuardConfig::default(),
             workspace_dir: None,
-            workspace_only: false,
+            workspace_only: true,
             #[cfg(feature = "browser")]
             browser: crate::config::BrowserConfig::default(),
             computer: crate::config::ComputerConfig::default(),

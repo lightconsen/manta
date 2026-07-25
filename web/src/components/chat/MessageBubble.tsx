@@ -1,6 +1,7 @@
 import { MarkdownMessage } from "@/components/shared/MarkdownMessage";
 import { ReasoningPart } from "@/components/shared/ReasoningPart";
 import { ToolCallPart } from "@/components/shared/ToolCallPart";
+import { DocumentRefPart } from "@/components/shared/DocumentRefPart";
 import { Avatar } from "./Avatar";
 import { LiveStatusBar } from "./LiveStatusBar";
 import {
@@ -343,6 +344,9 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
                       <MarkdownMessage text={part.text || ""} />
                     </div>
                   );
+                }
+                if (part.type === "document-ref") {
+                  return <DocumentRefPart key={i} data={(part as any).data} />;
                 }
                 return null;
               })}
