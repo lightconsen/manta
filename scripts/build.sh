@@ -29,6 +29,7 @@ cd ..
 if [ "$FRONT_ONLY" = true ]; then
   echo "✅ Frontend build complete!"
   echo "📦 Web bundle: ./dist/"
+echo "   Frontend is served from dist/ at runtime — no binary rebuild needed for frontend changes."
   exit 0
 fi
 
@@ -36,9 +37,9 @@ fi
 echo "🧹 Cleaning Rust build artifacts..."
 cargo clean
 
-# Build release binary with embedded assets for single-file distribution
+# Build release binary (frontend served from dist/ at runtime)
 echo "🔨 Building release binary..."
-cargo build --release --features embedded-assets
+cargo build --release
 
 echo "✅ Build complete!"
 echo "📍 Binary location: ./target/release/syscity"

@@ -613,6 +613,30 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     localStorage.setItem(key, JSON.stringify(history));
   }
 
+  /** Merge document-ref parts from localStorage into API-sourced messages. */
+  private enrichWithDocumentRefs(api: ChatMessage[], local: ChatMessage[]): void {
+    const localById = new Map(local.map((m) => [m.id, m]));
+    for (const msg of api) {
+      const localMsg = localById.get(msg.id);
+      if (!localMsg?.parts) continue;
+      const docRefs = localMsg.parts.filter((p) => p.type === "document-ref");
+      if (docRefs.length === 0) continue;
+      // Skip if message already has document-ref (reconstructed from tool args)
+      if (msg.parts?.some((p) => p.type === "document-ref")) continue;
+      if (msg.parts) {
+        // Insert before the first text part (preserves order: reasoning → tool-calls → doc-ref → text)
+        const textIdx = msg.parts.findIndex((p) => p.type === "text");
+        if (textIdx >= 0) {
+          msg.parts.splice(textIdx, 0, ...docRefs);
+        } else {
+          msg.parts.push(...docRefs);
+        }
+      } else {
+        msg.parts = [...docRefs];
+      }
+    }
+  }
+
   getHistory(sessionId: string): ChatMessage[] {
     try {
       return JSON.parse(localStorage.getItem(this.historyKey(sessionId)) || "[]");
@@ -658,6 +682,17 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             args,
             result: tc.result,
           });
+          // Reconstruct document-ref part from write_document tool arguments
+          if (tc.function.name === "write_document" && args.filename) {
+            parts.push({
+              type: "document-ref",
+              data: {
+                filename: args.filename,
+                title: args.title || (args.filename as string),
+                format: args.format || "markdown",
+              },
+            } as ChatMessagePart);
+          }
         }
       }
       if (m.content) {
@@ -708,6 +743,11 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           }
         | undefined;
       const msgs = this.parseHistoryMessages(res?.messages || []);
+      // Enrich API messages with document-ref parts from localStorage
+      // (the backend doesn't know about these frontend-only parts)
+      try {
+        this.enrichWithDocumentRefs(msgs, this.getHistory(sessionId));
+      } catch { /* ignore merge errors */ }
       return {
         messages: msgs,
         hasMore: res?.has_more ?? msgs.length === 100,
@@ -750,6 +790,9 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           }
         | undefined;
       const msgs = this.parseHistoryMessages(res?.messages || []);
+      try {
+        this.enrichWithDocumentRefs(msgs, this.getHistory(sessionId));
+      } catch { /* ignore merge errors */ }
       return {
         messages: msgs,
         hasMore: res?.has_more ?? msgs.length === 100,
@@ -1251,6 +1294,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     let aborted = false;
     let aiMsgId = `a_${Date.now()}`;
     let hasShownThinking = false;
+    const extraParts: any[] = [];
 
     // Add empty AI message for streaming updates
     const aiMsg: ChatMessage = {
@@ -1393,14 +1437,16 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             // Add document-ref part for write_document tool results
             if (toolName === "write_document" && data && typeof data === "object" && "filename" in (data as any)) {
               const d = data as { filename: string; title?: string; format?: string };
-              newParts.push({
+              const docPart: any = {
                 type: "document-ref",
                 data: {
                   filename: d.filename,
                   title: d.title || d.filename,
                   format: d.format || "markdown",
                 },
-              } as any);
+              };
+              newParts.push(docPart);
+              extraParts.push(docPart);
             }
             if (currentText) {
               newParts.push(makeTextPart(currentText));
@@ -1426,6 +1472,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             for (const t of toolCalls.values()) {
               finalParts.push(t);
             }
+            finalParts.push(...extraParts);
+            extraParts.length = 0;
             finalParts.push(makeTextPart(currentText));
             const durationMs = Date.now() - startTime;
             const toolCount = toolCalls.size;

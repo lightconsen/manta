@@ -1,6 +1,22 @@
 import { create } from "zustand";
 import type { ChatMessage, NetworkStatus } from "@/SyscityWebSocketTransport";
 
+const INTERNALS_KEY = "syscity_internals_visibility";
+
+function loadInternalsVisibility(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(INTERNALS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveInternalsVisibility(v: Record<string, boolean>): void {
+  try {
+    localStorage.setItem(INTERNALS_KEY, JSON.stringify(v));
+  } catch { /* quota exceeded */ }
+}
+
 interface ChatState {
   messages: ChatMessage[];
   sessions: Array<{
@@ -55,7 +71,7 @@ export const useChatStore = create<ChatState>((set) => ({
   voiceMode: false,
   isLoadingHistory: false,
   hasMoreHistory: false,
-  aiInternalsVisibility: {},
+  aiInternalsVisibility: loadInternalsVisibility(),
   previewDocument: null,
 
   setMessages: (messages) => set({ messages }),
@@ -74,11 +90,13 @@ export const useChatStore = create<ChatState>((set) => ({
   setIsLoadingHistory: (isLoadingHistory) => set({ isLoadingHistory }),
   setHasMoreHistory: (hasMoreHistory) => set({ hasMoreHistory }),
   setAiInternalsVisibility: (messageId, visible) =>
-    set((s) => ({
-      aiInternalsVisibility: {
+    set((s) => {
+      const next = {
         ...s.aiInternalsVisibility,
         [messageId]: visible,
-      },
-    })),
+      };
+      saveInternalsVisibility(next);
+      return { aiInternalsVisibility: next };
+    }),
   setPreviewDocument: (doc) => set({ previewDocument: doc }),
 }));

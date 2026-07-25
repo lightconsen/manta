@@ -307,11 +307,7 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
                   return (
                     <div
                       key={i}
-                      className={`overflow-hidden transition-all duration-200 ${
-                        showInternals
-                          ? "max-h-[2000px] opacity-100"
-                          : "max-h-0 opacity-0"
-                      }`}
+                      className={showInternals ? "" : "hidden"}
                     >
                       <ReasoningPart text={part.text || ""} nonCollapsible />
                     </div>
@@ -321,11 +317,7 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
                   return (
                     <div
                       key={i}
-                      className={`overflow-hidden transition-all duration-200 ${
-                        showInternals
-                          ? "max-h-[2000px] opacity-100"
-                          : "max-h-0 opacity-0"
-                      }`}
+                      className={showInternals ? "" : "hidden"}
                     >
                       <ToolCallPart
                         toolName={part.toolName || "tool"}
@@ -352,6 +344,18 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
                 }
                 return null;
               })}
+              {hasInternals && showInternals && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={toggleInternals}
+                    className="flex items-center gap-1 text-[11px] text-secondary hover:text-primary transition px-1 py-0.5"
+                  >
+                    <ChevronUp className="w-3 h-3" />
+                    <span>Collapse</span>
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-primary">
