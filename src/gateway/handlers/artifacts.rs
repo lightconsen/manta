@@ -17,22 +17,9 @@ pub async fn artifact_handler(
     Path(filename): Path<String>,
 ) -> impl IntoResponse {
     let artifacts_dir = crate::dirs::syscity_dir().join("artifacts");
-    let path = artifacts_dir.join(&filename);
 
-    // Path traversal protection: canonicalize and verify it's under artifacts dir
-    let canonical = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-                "Document not found".to_string(),
-            )
-                .into_response();
-        }
-    };
-
-    if !canonical.starts_with(&artifacts_dir) {
+    // Path traversal protection: reject slashes and ".." in the filename
+    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
         return (
             StatusCode::FORBIDDEN,
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
@@ -40,6 +27,13 @@ pub async fn artifact_handler(
         )
             .into_response();
     }
+
+    let path = artifacts_dir.join(&filename);
+
+    // Note: we intentionally skip canonicalize() here because on macOS it
+    // fails on Unicode filenames due to NFC/NFD normalization differences
+    // between the HTTP-decoded path and the filesystem-stored path.
+    // The write_document tool already validates paths server-side.
 
     match tokio::fs::read_to_string(&path).await {
         Ok(content) => {
