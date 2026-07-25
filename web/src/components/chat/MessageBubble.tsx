@@ -346,7 +346,9 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
                   );
                 }
                 if (part.type === "document-ref") {
-                  return <DocumentRefPart key={i} data={(part as any).data} />;
+                  const docData = (part as any).data;
+                  if (!docData) return null;
+                  return <DocumentRefPart key={i} data={docData} />;
                 }
                 return null;
               })}

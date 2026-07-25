@@ -84,20 +84,25 @@ function makeToolCallPart(
   } as ToolCallMessagePart;
 }
 
-/** Convert assistant-ui part to ChatMessagePart preserving tool call metadata. */
+/** Convert assistant-ui part to ChatMessagePart preserving metadata. */
 function toChatPart(
   p: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart
 ): ChatMessagePart {
+  const data = (p as any).data;
   if (p.type === "tool-call") {
     return {
       type: p.type,
       toolName: p.toolName,
       args: p.args,
       result: p.result,
-      data: (p as any).data,
+      data,
     };
   }
-  return { type: p.type, text: (p as any).text || "" };
+  const result: ChatMessagePart = { type: p.type, text: (p as any).text || "" };
+  if (data !== undefined) {
+    result.data = data;
+  }
+  return result;
 }
 
 /**
