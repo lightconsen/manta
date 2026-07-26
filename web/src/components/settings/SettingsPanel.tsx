@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
+import { useThemeStore } from "@/stores/themeStore";
 
 // Types
 interface ChannelConfig {
@@ -84,6 +85,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   const [skills, setSkills] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("general");
+  const currentTheme = useThemeStore((s) => s.theme);
   const [showAddChannel, setShowAddChannel] = useState(false);
   const [addChannelError, setAddChannelError] = useState("");
   const [newChannel, setNewChannel] = useState({
@@ -570,7 +572,15 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                       <label className="block text-sm text-secondary mb-1">Theme Mode</label>
                       <div className="flex gap-2">
                         {(["system", "light", "dark"] as const).map((m) => (
-                          <button key={m} onClick={() => { localStorage.setItem("syscity-theme", m); document.documentElement.classList.toggle("dark", m === "dark" || (m === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)); }} className="px-3 py-1.5 rounded-lg border border-subtle text-sm text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] transition capitalize">
+                          <button
+                            key={m}
+                            onClick={() => useThemeStore.getState().setTheme(m)}
+                            className={`px-3 py-1.5 rounded-lg border text-sm transition capitalize ${
+                              currentTheme === m
+                                ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 border-primary-400 font-medium"
+                                : "border-subtle text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+                            }`}
+                          >
                             {m}
                           </button>
                         ))}
