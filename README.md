@@ -18,6 +18,8 @@
 
 Syscity is an **agent system** — a runtime that lets AI agents act on your computer. Unlike chatbots that only read and write text, Syscity agents can **control your desktop**, **execute code**, **operate your browser**, and **manage your files**.
 
+![Syscity Chat UI](syscity-chat-ui.png)
+
 Traditional AI lives inside a browser tab. Syscity lives inside your machine.
 
 ## What is an Agent System?
@@ -108,8 +110,6 @@ syscity start --foreground
 ```
 
 Open `http://127.0.0.1:18080` for the Web UI.
-
-![Syscity Chat UI](syscity-chat-ui.png)
 
 ### Agent in Action
 
