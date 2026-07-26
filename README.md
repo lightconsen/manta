@@ -19,7 +19,11 @@ Syscity is an **agent system** — a runtime that lets AI agents act on your com
 
 Traditional AI lives inside a browser tab. Syscity lives inside your machine.
 
-<img src="syscity-chat-ui.png" alt="Syscity Chat UI" width="800" />
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="syscity-chat-ui-light.png" />
+  <source media="(prefers-color-scheme: dark)" srcset="syscity-chat-ui.png" />
+  <img src="syscity-chat-ui.png" alt="Syscity Chat UI" width="800" />
+</picture>
 
 ## What is an Agent System?
 
