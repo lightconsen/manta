@@ -109,6 +109,8 @@ syscity start --foreground
 
 Open `http://127.0.0.1:18080` for the Web UI.
 
+![Syscity Chat UI](syscity-chat-ui.png)
+
 ### Agent in Action
 
 Open the Web UI, or attach the terminal client:
