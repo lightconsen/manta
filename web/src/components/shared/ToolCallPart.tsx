@@ -74,6 +74,20 @@ export function ToolCallPart({ toolName, args, result, data, isError: isErrorPro
     ? "Done"
     : "Running";
 
+  const statusBadge = (
+    <span
+      className={`text-[10px] font-medium ${
+        isError
+          ? "px-1.5 py-0.5 rounded bg-red-500 text-white"
+          : result !== undefined
+          ? "px-1.5 py-0.5 rounded bg-emerald-500 text-white"
+          : "px-1.5 py-0.5 rounded bg-primary-500 text-white"
+      }`}
+    >
+      {statusText}
+    </span>
+  );
+
   const resultString =
     typeof result === "string" ? result : result !== undefined ? JSON.stringify(result, null, 2) : undefined;
   const renderAsMarkdown = typeof result === "string" && looksLikeMarkdown(resultString || "");
@@ -177,14 +191,14 @@ export function ToolCallPart({ toolName, args, result, data, isError: isErrorPro
           <span className={`font-mono px-1.5 py-0.5 rounded ${toolNameBadgeClass}`}>
             {toolName}
           </span>
-          <span className="ml-auto flex items-center gap-1.5 text-[10px] opacity-70">
+          <span className="ml-auto flex items-center gap-1.5 text-[10px]">
             {result === undefined && !isError && (
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-500" />
               </span>
             )}
-            {statusText}
+            {statusBadge}
           </span>
         </button>
         {showContent && (
