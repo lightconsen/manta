@@ -1,8 +1,7 @@
 <p align="center">
   <img src="syscity.png" alt="Syscity" width="120" />
 </p>
-<h1 align="center">Syscity</h1>
-<p align="center"><strong>Agent System</strong></p>
+<h1 align="center">Syscity - AI Agent System</h1>
 
 <p align="center">
   <a href="https://github.com/lightconsen/syscity/actions/workflows/ci.yml">
@@ -18,9 +17,9 @@
 
 Syscity is an **agent system** — a runtime that lets AI agents act on your computer. Unlike chatbots that only read and write text, Syscity agents can **control your desktop**, **execute code**, **operate your browser**, and **manage your files**.
 
-![Syscity Chat UI](syscity-chat-ui.png)
-
 Traditional AI lives inside a browser tab. Syscity lives inside your machine.
+
+![Syscity Chat UI](syscity-chat-ui.png)
 
 ## What is an Agent System?
 
