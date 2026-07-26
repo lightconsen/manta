@@ -331,19 +331,6 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
                       return null;
                     })}
                   </div>
-                  {/* Collapse button at bottom-right of internals panel */}
-                  {showInternals && (
-                    <div className="flex justify-end mt-1 mb-2">
-                      <button
-                        type="button"
-                        onClick={toggleInternals}
-                        className="flex items-center gap-1 text-[11px] text-secondary hover:text-primary transition px-1.5 py-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5"
-                      >
-                        <ChevronUp className="w-3 h-3" />
-                        <span>Collapse</span>
-                      </button>
-                    </div>
-                  )}
                 </div>
               )}
               {/* Text and document-ref parts (always visible) */}
