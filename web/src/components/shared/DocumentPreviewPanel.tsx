@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   X,
   FileText,
@@ -17,6 +17,23 @@ interface DocumentPreviewPanelProps {
 }
 
 type LoadState = "loading" | "loaded" | "error";
+
+/** Render HTML content inside a Shadow DOM root — no iframe event isolation issues. */
+function HtmlShadowDom({ content }: { content: string }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    let root = host.shadowRoot;
+    if (!root) {
+      root = host.attachShadow({ mode: "open" });
+    }
+    root.innerHTML = content;
+  }, [content]);
+
+  return <div ref={hostRef} className="w-full h-full overflow-y-auto" />;
+}
 
 export function DocumentPreviewPanel({
   document,
@@ -113,7 +130,7 @@ export function DocumentPreviewPanel({
 
   return (
     <div
-      className="w-[45%] min-w-[400px] max-w-[60%] border-l border-subtle bg-page flex flex-col overflow-hidden"
+      className="flex-1 min-w-0 border-l border-subtle bg-page flex flex-col overflow-hidden"
       role="complementary"
       aria-label="Document preview"
       onKeyDown={handleKeyDown}
@@ -184,38 +201,50 @@ export function DocumentPreviewPanel({
         </div>
       </div>
 
-      {/* Content area */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {loadState === "loading" && (
-          <div className="flex items-center justify-center h-40 text-secondary">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            <span className="ml-2 text-sm">Loading document…</span>
-          </div>
-        )}
-        {loadState === "error" && (
-          <div className="flex flex-col items-center justify-center h-40 text-secondary gap-2">
-            <AlertCircle className="w-8 h-8 text-red-400" />
-            <p className="text-sm">Failed to load document</p>
-            <p className="text-xs opacity-60">{document.filename}</p>
-          </div>
-        )}
-        {loadState === "loaded" && content !== null && (
-          <div className="document-preview-content">
-            {document.format === "html" ? (
-              <iframe
-                className="w-full h-full min-h-[60vh] rounded-lg border border-subtle"
-                srcDoc={content}
-                sandbox="allow-same-origin"
-                title={document.title}
-              />
-            ) : (
+      {/* Content area — for HTML, use flex to let iframe fill height; for markdown, scrollable */}
+      {document.format === "html" ? (
+        <div className="flex-1 flex flex-col min-h-0">
+          {loadState === "loading" && (
+            <div className="flex items-center justify-center h-40 text-secondary">
+              <Loader2 className="w-6 h-6 animate-spin" />
+              <span className="ml-2 text-sm">Loading document…</span>
+            </div>
+          )}
+          {loadState === "error" && (
+            <div className="flex flex-col items-center justify-center h-40 text-secondary gap-2">
+              <AlertCircle className="w-8 h-8 text-red-400" />
+              <p className="text-sm">Failed to load document</p>
+              <p className="text-xs opacity-60">{document.filename}</p>
+            </div>
+          )}
+          {loadState === "loaded" && content !== null && (
+            <HtmlShadowDom content={content} />
+          )}
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto p-4">
+          {loadState === "loading" && (
+            <div className="flex items-center justify-center h-40 text-secondary">
+              <Loader2 className="w-6 h-6 animate-spin" />
+              <span className="ml-2 text-sm">Loading document…</span>
+            </div>
+          )}
+          {loadState === "error" && (
+            <div className="flex flex-col items-center justify-center h-40 text-secondary gap-2">
+              <AlertCircle className="w-8 h-8 text-red-400" />
+              <p className="text-sm">Failed to load document</p>
+              <p className="text-xs opacity-60">{document.filename}</p>
+            </div>
+          )}
+          {loadState === "loaded" && content !== null && (
+            <div className="document-preview-content">
               <div className="prose prose-sm dark:prose-invert max-w-none">
                 <MarkdownMessage text={content} />
               </div>
-            )}
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

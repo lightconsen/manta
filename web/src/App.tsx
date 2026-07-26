@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import {
   AssistantRuntimeProvider,
   useLocalRuntime,
@@ -123,6 +123,21 @@ function ChatApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const previewDocument = useChatStore((s) => s.previewDocument);
   const setPreviewDocument = useChatStore((s) => s.setPreviewDocument);
+
+  // Resizable split panel state
+  const [previewRatio, setPreviewRatio] = useState(() => {
+    const saved = localStorage.getItem("syscity_preview_ratio");
+    return saved ? Math.max(0.2, Math.min(0.8, parseFloat(saved))) : 0.45;
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const previewRatioRef = useRef(previewRatio);
+
+  // Keep ref in sync
+  useEffect(() => {
+    previewRatioRef.current = previewRatio;
+    localStorage.setItem("syscity_preview_ratio", String(previewRatio));
+  }, [previewRatio]);
 
   // Sidebar state persistence
   useEffect(() => {
@@ -431,17 +446,59 @@ function ChatApp() {
         {settingsOpen ? (
           <SettingsPanel transport={transport} onClose={() => setSettingsOpen(false)} />
         ) : previewDocument ? (
-          <div className="flex flex-row h-full overflow-hidden">
+          <div
+            ref={splitContainerRef}
+            className="flex flex-row h-full overflow-hidden"
+          >
             {/* Left: chat */}
-            <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <div
+              className="min-w-0 overflow-hidden flex flex-col"
+              style={{ flex: `${1 - previewRatio} 1 0%` }}
+            >
               <ChatAppInner key={sessionKey} transport={transport} />
               <GoalPanel />
             </div>
-            {/* Right: document preview */}
-            <DocumentPreviewPanel
-              document={previewDocument}
-              onClose={() => setPreviewDocument(null)}
+            {/* Resizable divider */}
+            <div
+              className={`w-1 shrink-0 cursor-col-resize transition-colors ${
+                isDragging ? "bg-primary-500" : "bg-transparent hover:bg-primary-400/40"
+              }`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const container = splitContainerRef.current;
+                if (!container) return;
+                const rect = container.getBoundingClientRect();
+                setIsDragging(true);
+                document.body.style.userSelect = "none";
+                document.body.style.cursor = "col-resize";
+
+                const onMove = (me: MouseEvent) => {
+                  const x = Math.max(0, Math.min(rect.width, me.clientX - rect.left));
+                  const ratio = x / rect.width;
+                  previewRatioRef.current = 1 - Math.max(0.2, Math.min(0.8, ratio));
+                  setPreviewRatio(previewRatioRef.current);
+                };
+                const onUp = () => {
+                  setIsDragging(false);
+                  document.body.style.userSelect = "";
+                  document.body.style.cursor = "";
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }}
             />
+            {/* Right: document preview */}
+            <div
+              className="min-w-0 overflow-hidden flex flex-col"
+              style={{ flex: `${previewRatio} 1 0%` }}
+            >
+              <DocumentPreviewPanel
+                document={previewDocument}
+                onClose={() => setPreviewDocument(null)}
+              />
+            </div>
           </div>
         ) : (
           <>
