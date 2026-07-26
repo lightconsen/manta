@@ -298,7 +298,7 @@ export function ChatContent({ transport }: ChatContentProps) {
   };
 
   return (
-    <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden">
+    <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden relative">
       {/* Agent info header */}
       {currentAgent && (
         <div className="shrink-0 px-4 py-2 border-b border-subtle bg-page/80 backdrop-blur-sm">
@@ -363,20 +363,20 @@ export function ChatContent({ transport }: ChatContentProps) {
           </div>
         )}
         {isRunning && <MessageSkeleton />}
-
-        {showScrollButton && (
-          <button
-            type="button"
-            onClick={scrollToBottom}
-            aria-label="Scroll to bottom"
-            className="absolute bottom-4 left-1/2 -translate-x-1/2 p-2 rounded-full bg-primary-500 text-white shadow-lg hover:bg-primary-600 transition-opacity animate-bounce z-10"
-          >
-            <ChevronDown className="w-5 h-5" />
-          </button>
-        )}
       </div>
 
-      <div className="bg-page px-4 py-3 shrink-0">
+      {showScrollButton && (
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          aria-label="Scroll to bottom"
+          className="absolute bottom-28 left-1/2 -translate-x-1/2 p-2 rounded-full bg-primary-500 text-white shadow-lg hover:bg-primary-600 transition-opacity animate-bounce z-10"
+        >
+          <ChevronDown className="w-5 h-5" />
+        </button>
+      )}
+
+      <div className="bg-page px-4 py-3 shrink-0 relative">
         <ComposerPrimitive.Root className="max-w-[var(--message-list-max-width)] mx-auto w-full">
           <div className="relative flex flex-col rounded-2xl bg-card shadow-sm focus-within:ring-2 focus-within:ring-primary-500/20 transition">
             {/* Command palette */}
