@@ -53,16 +53,16 @@ const SEARCH_PROVIDERS = [
 ];
 
 const PROVIDER_LOGOS: Record<string, string> = {
-  openai: "/assets/providers/openai.png",
-  deepseek: "/assets/providers/deepseek.png",
-  ollama: "/assets/providers/ollama.png",
-  qwen: "/assets/providers/qwen.png",
-  kimi: "/assets/providers/moonshot.png",
-  anthropic: "/assets/providers/anthropic.png",
-  azure: "/assets/providers/azure.png",
-  gemini: "/assets/providers/gemini.png",
-  glm: "/assets/providers/chatglm.png",
-  minimax: "/assets/providers/minimax.png",
+  openai: "/assets/providers/openai.svg",
+  deepseek: "/assets/providers/deepseek.svg",
+  ollama: "/assets/providers/ollama.svg",
+  qwen: "/assets/providers/qwen.svg",
+  kimi: "/assets/providers/moonshot.svg",
+  anthropic: "/assets/providers/anthropic.svg",
+  azure: "/assets/providers/azure.svg",
+  gemini: "/assets/providers/gemini.svg",
+  glm: "/assets/providers/chatglm.svg",
+  minimax: "/assets/providers/minimax.svg",
 };
 
 const channelCredentialFields: Record<string, Array<{ key: string; label: string; type?: string }>> = {
