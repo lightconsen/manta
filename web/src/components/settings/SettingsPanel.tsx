@@ -52,6 +52,19 @@ const SEARCH_PROVIDERS = [
   { id: "brave", label: "Brave", needsKey: true },
 ];
 
+const PROVIDER_LOGOS: Record<string, string> = {
+  openai: "/assets/providers/openai.png",
+  deepseek: "/assets/providers/deepseek.png",
+  ollama: "/assets/providers/ollama.png",
+  qwen: "/assets/providers/qwen.png",
+  kimi: "/assets/providers/moonshot.png",
+  anthropic: "/assets/providers/anthropic.png",
+  azure: "/assets/providers/azure.png",
+  gemini: "/assets/providers/gemini.png",
+  glm: "/assets/providers/chatglm.png",
+  minimax: "/assets/providers/minimax.png",
+};
+
 const channelCredentialFields: Record<string, Array<{ key: string; label: string; type?: string }>> = {
   telegram: [{ key: "token", label: "Bot Token", type: "password" }],
   discord: [{ key: "token", label: "Bot Token", type: "password" }],
@@ -287,6 +300,36 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     setChannelActionLoading("");
   };
 
+  const selectModelProvider = (provider: string) => {
+    const preset = modelPresets.find((p) => p.name === provider);
+    setNewModel({
+      ...newModel,
+      provider,
+      model: preset?.models[0] || "",
+      base_url: preset?.base_url || "",
+    });
+    setRemoteModels(null);
+    setFetchModelsError("");
+    // Providers without auth (e.g. Ollama) can fetch immediately.
+    if (preset && preset.needs_api_key === false) {
+      setFetchingModels(true);
+      transport
+        .fetchRemoteModels({
+          provider,
+          base_url: preset.base_url || undefined,
+        })
+        .then((res) => {
+          setFetchingModels(false);
+          setRemoteModels(res.models);
+          setRemoteModelsSource(res.source);
+          if (res.error) setFetchModelsError(res.error);
+          if (res.models.length > 0) {
+            setNewModel((prev) => ({ ...prev, model: res.models[0] }));
+          }
+        });
+    }
+  };
+
   const handleFetchModels = async () => {
     setFetchModelsError("");
     setRemoteModels(null);
@@ -309,6 +352,20 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       }));
     }
   };
+
+  // Auto-fetch the model list shortly after the API key is entered.
+  useEffect(() => {
+    if (!showAddModel) return;
+    const preset = modelPresets.find((p) => p.name === newModel.provider);
+    if (!preset || preset.needs_api_key === false) return;
+    const key = newModel.api_key.trim();
+    if (key.length < 20) return;
+    const t = setTimeout(() => {
+      if (!fetchingModels) handleFetchModels();
+    }, 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newModel.api_key, newModel.provider, showAddModel]);
 
   const handleAddModel = async () => {
     setAddModelError("");
@@ -817,9 +874,49 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
 
                   {showAddModel && (
                     <div className="mb-4 p-4 rounded-lg bg-card space-y-3">
+                      <div>
+                        <label className="block text-xs text-secondary mb-1">Provider</label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {modelPresets.map((p) => {
+                            const logo = PROVIDER_LOGOS[p.name];
+                            const selected = newModel.provider === p.name;
+                            return (
+                              <button
+                                key={p.name}
+                                type="button"
+                                onClick={() => selectModelProvider(p.name)}
+                                className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-xs transition ${
+                                  selected
+                                    ? "border-primary-400 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 font-medium"
+                                    : "border-subtle text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+                                }`}
+                              >
+                                {logo ? (
+                                  <img src={logo} alt="" className="w-5 h-5 object-contain shrink-0" />
+                                ) : (
+                                  <span className="w-5 h-5 shrink-0 rounded bg-sidebar flex items-center justify-center text-[10px] font-semibold">
+                                    {p.display_name.charAt(0)}
+                                  </span>
+                                )}
+                                <span className="truncate">{p.display_name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-secondary mb-1">Base URL</label>
+                        <input
+                          type="text"
+                          value={newModel.base_url}
+                          onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
+                          placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
+                          className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                        />
+                      </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs text-secondary mb-1">Alias</label>
+                          <label className="block text-xs text-secondary mb-1">Name</label>
                           <input
                             type="text"
                             value={newModel.name}
@@ -828,49 +925,6 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                             className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           />
                         </div>
-                        <div>
-                          <label className="block text-xs text-secondary mb-1">Provider</label>
-                          <select
-                            value={newModel.provider}
-                            onChange={(e) => {
-                              const provider = e.target.value;
-                              const preset = modelPresets.find((p) => p.name === provider);
-                              setNewModel({
-                                ...newModel,
-                                provider,
-                                model: preset?.models[0] || "",
-                                base_url: preset?.base_url || "",
-                              });
-                              setRemoteModels(null);
-                              setFetchModelsError("");
-                              // Providers without auth (e.g. Ollama) can fetch immediately.
-                              if (preset && preset.needs_api_key === false) {
-                                setFetchingModels(true);
-                                transport
-                                  .fetchRemoteModels({
-                                    provider,
-                                    base_url: preset.base_url || undefined,
-                                  })
-                                  .then((res) => {
-                                    setFetchingModels(false);
-                                    setRemoteModels(res.models);
-                                    setRemoteModelsSource(res.source);
-                                    if (res.error) setFetchModelsError(res.error);
-                                    if (res.models.length > 0) {
-                                      setNewModel((prev) => ({ ...prev, model: res.models[0] }));
-                                    }
-                                  });
-                              }
-                            }}
-                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-                          >
-                            {modelPresets.map((p) => (
-                              <option key={p.name} value={p.name}>{p.display_name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
                         {modelPresets.find((p) => p.name === newModel.provider)?.needs_api_key !== false && (
                           <div>
                             <label className="block text-xs text-secondary mb-1">API Key</label>
@@ -888,16 +942,6 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                             />
                           </div>
                         )}
-                        <div>
-                          <label className="block text-xs text-secondary mb-1">Base URL</label>
-                          <input
-                            type="text"
-                            value={newModel.base_url}
-                            onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
-                            placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
-                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-                          />
-                        </div>
                       </div>
                       {(() => {
                         const preset = modelPresets.find((p) => p.name === newModel.provider);

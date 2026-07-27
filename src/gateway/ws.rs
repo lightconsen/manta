@@ -2688,10 +2688,17 @@ async fn handle_models_presets(req: &WsRequest, _state: &Arc<GatewayState>) -> W
                 .and_then(|b| b.variants.first())
                 .map(|v| v.auth_method != crate::providers::AuthMethod::None)
                 .unwrap_or(true);
+            // Fall back to the TOML registry base URL when the legacy preset
+            // does not define one (e.g. Anthropic, Gemini).
+            let base_url = p.default_base_url.or_else(|| {
+                builtin
+                    .and_then(|b| b.variants.first())
+                    .map(|v| v.default_base_url.clone())
+            });
             serde_json::json!({
                 "name": name,
                 "display_name": p.display_name,
-                "base_url": p.default_base_url,
+                "base_url": base_url,
                 "models": p.models,
                 "protocol": protocol,
                 "needs_api_key": needs_api_key,
