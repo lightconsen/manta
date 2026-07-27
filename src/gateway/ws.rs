@@ -3100,6 +3100,10 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
         args: Vec<String>,
         #[serde(default)]
         url: Option<String>,
+        #[serde(default)]
+        env: std::collections::HashMap<String, String>,
+        #[serde(default)]
+        working_dir: Option<String>,
         #[serde(default = "default_true")]
         auto_connect: bool,
     }
@@ -3123,6 +3127,8 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
         command: payload.command,
         args: payload.args,
         url: payload.url,
+        env: payload.env,
+        working_dir: payload.working_dir.map(std::path::PathBuf::from),
         auto_connect: payload.auto_connect,
         ..Default::default()
     };
@@ -3136,12 +3142,25 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
     }
 
     if payload.auto_connect {
-        if let Err(e) = state.tools.mcp_manager.connect(&payload.id, config).await {
-            return WsResponse::err(
-                &req.id,
-                "MCP_CONNECT_FAILED",
-                format!("Saved config but failed to connect: {}", e),
-            );
+        match state
+            .tools
+            .mcp_manager
+            .connect(&payload.id, config.clone())
+            .await
+        {
+            Ok(tools) => {
+                // Register tools immediately so agents can use them without
+                // a daemon restart.
+                super::lifecycle::register_mcp_tools(state, &payload.id, &tools, config.max_tools)
+                    .await;
+            }
+            Err(e) => {
+                return WsResponse::err(
+                    &req.id,
+                    "MCP_CONNECT_FAILED",
+                    format!("Saved config but failed to connect: {}", e),
+                );
+            }
         }
     }
 
@@ -3207,15 +3226,19 @@ async fn handle_mcp_connect(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
         }
     };
 
-    match state.tools.mcp_manager.connect(&payload.id, config).await {
-        Ok(tools) => WsResponse::ok(
-            &req.id,
-            serde_json::json!({
-                "status": "connected",
-                "id": payload.id,
-                "tool_count": tools.len(),
-            }),
-        ),
+    match state.tools.mcp_manager.connect(&payload.id, config.clone()).await {
+        Ok(tools) => {
+            super::lifecycle::register_mcp_tools(state, &payload.id, &tools, config.max_tools)
+                .await;
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "status": "connected",
+                    "id": payload.id,
+                    "tool_count": tools.len(),
+                }),
+            )
+        }
         Err(e) => WsResponse::err(&req.id, "MCP_CONNECT_FAILED", format!("{}", e)),
     }
 }

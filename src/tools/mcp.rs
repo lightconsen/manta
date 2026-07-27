@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
 
@@ -419,8 +419,9 @@ pub enum McpNotification {
 /// MCP client – one instance per connected server
 #[derive(Debug)]
 pub struct McpClient {
-    /// Server process (stdio transport only)
-    process: Option<Child>,
+    /// Kill signal for the server process watcher (stdio transport only).
+    /// The watcher task owns the `Child` so it can await real process exit.
+    kill_tx: Option<tokio::sync::oneshot::Sender<()>>,
     /// Request sender channel (present when connected)
     request_tx: Option<mpsc::UnboundedSender<McpRequest>>,
     /// Notification sender channel for server-pushed messages.
@@ -450,7 +451,7 @@ impl McpClient {
     /// Create a new unconnected client
     pub fn new() -> Self {
         Self {
-            process: None,
+            kill_tx: None,
             request_tx: None,
             notification_tx: None,
             progress_tx: None,
@@ -652,25 +653,34 @@ impl McpClient {
             }
         });
 
-        // Process-exit watcher (9.4)
-        self.process = Some(child);
-        if let Some(child) = &mut self.process {
-            // We need to give the child to the watcher task without moving self.
-            // We replace with a new wait handle by using the pid.
-            // Simpler: take the process, spawn watcher, store None back.
-            // We don't need to kill it – the watcher only signals exit.
-            let _ = child; // keep borrow alive
-        }
-        // Spawn a lightweight watcher on the process ID via tokio::process::
-        // Because we already stored the child, we'll watch via AtomicBool signal.
-        // The watcher is spawned after connect.
+        // Process-exit watcher (9.4): the watcher owns the child so it can
+        // await real exit; `kill_tx` lets disconnect() terminate it.
+        // Reset the exit flag first so reconnects start clean.
+        self.child_exited.store(false, Ordering::Relaxed);
+        let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
+        self.kill_tx = Some(kill_tx);
         let child_exited_watcher = self.child_exited.clone();
-        let request_tx_for_watch = self.request_tx.clone();
         tokio::spawn(async move {
-            // Poll the channel: when it closes the process has likely exited.
-            // A more robust approach is to use Child::wait, but we no longer hold it here.
-            // We signal via the channel drop.
-            drop(request_tx_for_watch);
+            let mut child = child;
+            enum Outcome {
+                Killed,
+                Exited(std::io::Result<std::process::ExitStatus>),
+            }
+            let outcome = tokio::select! {
+                _ = &mut kill_rx => Outcome::Killed,
+                status = child.wait() => Outcome::Exited(status),
+            };
+            match outcome {
+                Outcome::Killed => {
+                    let _ = child.kill().await;
+                }
+                Outcome::Exited(Ok(s)) => {
+                    warn!("MCP stdio server process exited: {}", s);
+                }
+                Outcome::Exited(Err(e)) => {
+                    warn!("MCP stdio server wait failed: {}", e);
+                }
+            }
             child_exited_watcher.store(true, Ordering::Relaxed);
         });
 
@@ -1339,8 +1349,8 @@ impl McpClient {
     pub async fn disconnect(&mut self) -> crate::Result<()> {
         info!("Disconnecting from MCP server");
         self.request_tx = None;
-        if let Some(mut process) = self.process.take() {
-            let _ = process.kill().await;
+        if let Some(kill_tx) = self.kill_tx.take() {
+            let _ = kill_tx.send(());
         }
         Ok(())
     }

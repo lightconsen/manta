@@ -1008,6 +1008,31 @@ fn create_eval_tool_registry(
     registry
 }
 
+/// Register the discovered tools of a connected MCP server into the agent
+/// tool registry (`mcp__{server_id}__{tool}`). Shared by the boot-time
+/// auto-connect and runtime add/connect paths so tools become available to
+/// agents immediately.
+pub(crate) async fn register_mcp_tools(
+    state: &Arc<GatewayState>,
+    server_id: &str,
+    tools: &[crate::tools::mcp::McpToolDefinition],
+    max_tools_config: usize,
+) {
+    let max_tools = if max_tools_config == 0 {
+        tools.len()
+    } else {
+        max_tools_config.min(tools.len())
+    };
+
+    if let Some(client_arc) = state.tools.mcp_manager.get_client(server_id).await {
+        for tool in tools.iter().take(max_tools) {
+            let wrapper = Arc::new(McpToolWrapper::new(client_arc.clone(), server_id, tool));
+            state.tools.registry.register_dynamic(wrapper);
+            debug!("  Registered MCP tool: mcp__{}__{}", server_id, tool.name);
+        }
+    }
+}
+
 /// Auto-connect MCP servers from config and register their tools.
 pub(crate) async fn init_mcp_servers(state: &Arc<GatewayState>, config: &GatewayConfig) {
     let servers = &config.mcp.servers;
@@ -1036,21 +1061,7 @@ pub(crate) async fn init_mcp_servers(state: &Arc<GatewayState>, config: &Gateway
                     server_id,
                     tools.len()
                 );
-
-                let max_tools = if server_config.max_tools == 0 {
-                    tools.len()
-                } else {
-                    server_config.max_tools.min(tools.len())
-                };
-
-                if let Some(client_arc) = state.tools.mcp_manager.get_client(server_id).await {
-                    for tool in tools.iter().take(max_tools) {
-                        let wrapper =
-                            Arc::new(McpToolWrapper::new(client_arc.clone(), server_id, tool));
-                        state.tools.registry.register_dynamic(wrapper);
-                        debug!("  Registered MCP tool: mcp__{}__{}", server_id, tool.name);
-                    }
-                }
+                register_mcp_tools(state, server_id, &tools, server_config.max_tools).await;
             }
             Err(e) => {
                 warn!("Failed to connect MCP server '{}': {}", server_id, e);
