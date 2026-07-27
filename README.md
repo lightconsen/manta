@@ -10,6 +10,12 @@
   <a href="https://github.com/lightconsen/syscity/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" />
   </a>
+  <a href="https://img.shields.io/github/stars/lightconsen/syscity">
+    <img src="https://img.shields.io/github/stars/lightconsen/syscity" alt="GitHub Stars" />
+  </a>
+  <a href="https://discord.gg/aaXghvzD">
+    <img src="https://img.shields.io/discord/1342803221369724929?logo=discord&label=Discord" alt="Discord" />
+  </a>
   <a href="https://github.com/lightconsen/syscity#requirements">
     <img src="https://img.shields.io/badge/MSRV-1.75-orange.svg" alt="MSRV" />
   </a>
@@ -19,11 +25,29 @@ Syscity is an **agent system** — a runtime that lets AI agents act on your com
 
 Traditional AI lives inside a browser tab. Syscity lives inside your machine.
 
+**For developers** who want to build LLM-powered automation. **For power users** who want AI to control their desktop, not just chat.
+
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="syscity-chat-ui-light.png" />
-  <source media="(prefers-color-scheme: dark)" srcset="syscity-chat-ui.png" />
-  <img src="syscity-chat-ui.png" alt="Syscity Chat UI" width="800" />
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/demo.gif" />
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/demo-dark.gif" />
+  <img src="docs/assets/demo.gif" alt="Syscity Demo — Agent generates a document and shows it in the preview panel" width="800" />
 </picture>
+<br/>
+<p align="center"><em>Agent generates a markdown report via <code>write_document</code>, then previews it in a split-panel view.</em></p>
+
+## Why Syscity?
+
+Most "AI agents" today are just chatbots with function calling — they can fetch data or send emails, but they can't *act* on your machine. Syscity is different:
+
+**Syscity agents control your computer, not just your API keys.**
+
+- **Your desktop is the canvas** — Click buttons, type text, read UI trees, take screenshots. Not just chat.
+- **Your browser, automated** — Navigate, fill forms, capture network requests, debug console errors with sourcemaps. The agent debugs like a developer.
+- **Your tools, connected** — MCP servers, shell commands, file operations, AppleScript. Bring your own ecosystem.
+- **Your data, private** — Runs 100% locally. Vector memory, knowledge bases, artifacts all on your machine.
+- **Multiple models, one agent** — Swap between OpenAI, Anthropic, DeepSeek, GLM, Ollama, or custom endpoints. Use the right model for each task.
+
+You don't need a new IDE, a cloud subscription, or a complex deployment. Just `curl | bash` and start.
 
 ## What is an Agent System?
 
@@ -67,20 +91,20 @@ Syscity provides the **action layer**, **memory layer**, and **control plane** t
 
 ## Action
 
-- **Desktop Control** — Click, type, scroll, and send keyboard shortcuts (macOS)
-- **AppleScript** — Control macOS applications (Mail, Finder, Calendar, etc.)
-- **Shell Commands** — Execute bash/zsh commands in a sandboxed environment
-- **Code Execution** — Run Python, JavaScript, or shell scripts safely
-- **Browser Automation** — Navigate, click, fill forms, and scrape data
-- **File Operations** — Create, edit, move, delete, and patch files
+- 🖥️ **Desktop Control** — Click, type, scroll, and send keyboard shortcuts (macOS)
+- 🍎 **AppleScript** — Control macOS applications (Mail, Finder, Calendar, etc.)
+- ⌨️ **Shell Commands** — Execute bash/zsh commands in a sandboxed environment
+- 🐍 **Code Execution** — Run Python, JavaScript, or shell scripts safely
+- 🌐 **Browser Automation** — Navigate, click, fill forms, and scrape data
+- 📁 **File Operations** — Create, edit, move, delete, and patch files
 
 ## Cognition
 
-- **Multi-Provider LLM** — OpenAI, Anthropic, DeepSeek, Azure, Ollama, and custom endpoints
-- **Sub-Agents (ACP)** — Spawn and delegate to sub-agents via the Agent Control Protocol
-- **Vector Memory** — Long-term semantic memory with conversation history
-- **MCP Support** — Model Context Protocol servers for external tool integration
-- **WASM Plugins** — Extend capabilities with sandboxed WebAssembly plugins
+- 🤖 **Multi-Provider LLM** — OpenAI, Anthropic, DeepSeek, Azure, Ollama, and custom endpoints
+- 🔄 **Sub-Agents (ACP)** — Spawn and delegate to sub-agents via the Agent Control Protocol
+- 🧠 **Vector Memory** — Long-term semantic memory with conversation history
+- 🔌 **MCP Support** — Model Context Protocol servers for external tool integration
+- ⚡ **WASM Plugins** — Extend capabilities with sandboxed WebAssembly plugins
 
 ## Quick Start
 
@@ -134,6 +158,7 @@ my screen"*. The agent can:
 
 See the [Getting Started guide](docs/getting-started.md) for a full walkthrough.
 
+
 ## macOS Desktop Control (Best Experience)
 
 On macOS, Syscity unlocks the full desktop automation stack:
@@ -172,3 +197,7 @@ export SYSCITY_MODEL="gpt-4o"
 ## License
 
 Apache-2.0
+
+## Contributing
+
+PRs are welcome! Check out the [issues](https://github.com/lightconsen/syscity/issues) or join the discussion on [Discord](https://discord.gg/aaXghvzD).
