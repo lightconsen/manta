@@ -19,6 +19,17 @@ use tracing::{debug, info, warn};
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::tools::sdk::ToolCapabilities;
 
+/// A single form field for `FillForm`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormField {
+    /// CSS selector of the input
+    pub selector: String,
+    /// Value to type into it
+    pub value: String,
+    /// Clear existing content first (default: true)
+    pub clear: Option<bool>,
+}
+
 /// Browser action types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,6 +44,15 @@ pub enum BrowserAction {
         text: String,
         clear: Option<bool>,
     },
+    /// Fill multiple form fields in one action
+    FillForm {
+        /// Fields to fill: each has a CSS selector and a value
+        fields: Vec<FormField>,
+    },
+    /// Hover over an element
+    Hover { selector: String },
+    /// Click at viewport coordinates
+    ClickAt { x: f64, y: f64 },
     /// Get the current page HTML
     GetHtml,
     /// Get text content of the page or specific element
@@ -90,6 +110,8 @@ pub enum BrowserAction {
         url: Option<String>,
         /// HTTP method filter (GET, POST, ...)
         method: Option<String>,
+        /// Resource type filter (document, xhr, fetch, script, img, stylesheet, ...)
+        resource_type: Option<String>,
         /// Minimum HTTP status code (inclusive)
         min_status: Option<u16>,
         /// Maximum HTTP status code (inclusive)
@@ -121,6 +143,19 @@ pub enum BrowserAction {
     ScreencastStop,
     /// Set mobile device emulation
     EmulateMobile { device_name: String },
+    /// Emulate network conditions (throttling)
+    EmulateNetwork {
+        /// Extra latency in ms
+        latency_ms: Option<f64>,
+        /// Download throughput in bytes/sec (-1 or None = no limit)
+        download_bps: Option<f64>,
+        /// Upload throughput in bytes/sec
+        upload_bps: Option<f64>,
+        /// Simulate offline mode
+        offline: Option<bool>,
+    },
+    /// Throttle CPU by a slowdown factor (1 = no throttle, 4 = 4x slower)
+    EmulateCpu { rate: f64 },
     /// Set viewport size dynamically
     SetViewport {
         width: u32,
@@ -382,6 +417,72 @@ impl BrowserTool {
                     }
                     Err(e) => Err(format!("Element not found: {}", e)),
                 }
+            }
+
+            BrowserAction::FillForm { fields } => {
+                let mut filled = 0usize;
+                let mut errors = Vec::new();
+                for field in &fields {
+                    match page.find_element(&field.selector).await {
+                        Ok(elem) => {
+                            if field.clear.unwrap_or(true) {
+                                let _ = elem.click().await;
+                            }
+                            match elem.type_str(&field.value).await {
+                                Ok(_) => filled += 1,
+                                Err(e) => errors.push(format!("{}: {}", field.selector, e)),
+                            }
+                        }
+                        Err(e) => errors.push(format!("{}: {}", field.selector, e)),
+                    }
+                }
+                crate::browser::instrument::auto_wait(page).await;
+                if errors.is_empty() {
+                    Ok(json!({ "success": true, "filled": filled }))
+                } else {
+                    Err(format!(
+                        "Filled {}/{} fields; errors: {}",
+                        filled,
+                        fields.len(),
+                        errors.join("; ")
+                    ))
+                }
+            }
+
+            BrowserAction::Hover { selector } => match page.find_element(&selector).await {
+                Ok(elem) => match elem.hover().await {
+                    Ok(_) => Ok(json!({ "success": true, "selector": selector })),
+                    Err(e) => Err(format!("Failed to hover element: {}", e)),
+                },
+                Err(e) => Err(format!("Element not found: {}", e)),
+            },
+
+            BrowserAction::ClickAt { x, y } => {
+                use chromiumoxide::cdp::browser_protocol::input::{
+                    DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
+                };
+                let mut press = DispatchMouseEventParams::new(
+                    DispatchMouseEventType::MousePressed,
+                    x,
+                    y,
+                );
+                press.button = Some(MouseButton::Left);
+                press.click_count = Some(1);
+                let mut release = DispatchMouseEventParams::new(
+                    DispatchMouseEventType::MouseReleased,
+                    x,
+                    y,
+                );
+                release.button = Some(MouseButton::Left);
+                release.click_count = Some(1);
+                if let Err(e) = page.execute(press).await {
+                    return Err(format!("Failed to click at ({}, {}): {}", x, y, e));
+                }
+                if let Err(e) = page.execute(release).await {
+                    return Err(format!("Failed to click at ({}, {}): {}", x, y, e));
+                }
+                crate::browser::instrument::auto_wait(page).await;
+                Ok(json!({ "success": true, "x": x, "y": y }))
             }
 
             BrowserAction::GetHtml => match page.content().await {
@@ -712,12 +813,30 @@ impl BrowserTool {
             BrowserAction::GetNetworkLog {
                 url,
                 method,
+                resource_type,
                 min_status,
                 max_status,
                 include_body,
                 limit,
                 offset,
             } => {
+                // Prefer the CDP capture (all resource types); fall back to
+                // the injected fetch/XHR shim when CDP capture is inactive.
+                if crate::browser::network_log::start_capture(page).await.is_ok() {
+                    return crate::browser::network_log::query(
+                        page,
+                        url.as_deref(),
+                        method.as_deref(),
+                        min_status,
+                        max_status,
+                        resource_type.as_deref(),
+                        include_body.unwrap_or(true),
+                        limit.unwrap_or(50),
+                        offset.unwrap_or(0),
+                    )
+                    .await;
+                }
+
                 crate::browser::instrument::ensure_instrumented(page).await?;
                 let script = r#"() => (window.__syscity_net || [])"#;
                 match page.evaluate(script).await {
@@ -771,6 +890,7 @@ impl BrowserTool {
                             "count": page_entries.len(),
                             "total": total,
                             "offset": offset,
+                            "source": "shim",
                             "note": "Captures fetch/XHR only (not document/image/css loads). Bodies truncated to 8KB."
                         }))
                     }
@@ -795,8 +915,10 @@ impl BrowserTool {
                             })
                             .collect();
                         let total = filtered.len();
-                        let messages: Vec<Value> =
+                        let mut messages: Vec<Value> =
                             filtered.into_iter().take(limit.unwrap_or(100)).collect();
+                        // Best-effort: resolve error/warn stacks via source maps.
+                        crate::browser::sourcemap::sourcemap_messages(&mut messages).await;
                         Ok(json!({
                             "success": true,
                             "messages": messages,
@@ -809,6 +931,7 @@ impl BrowserTool {
             }
 
             BrowserAction::ClearCaptures => {
+                crate::browser::network_log::clear(page).await;
                 let script = r#"() => {
                     if (window.__syscity_net) window.__syscity_net.length = 0;
                     if (window.__syscity_console) window.__syscity_console.length = 0;
@@ -816,6 +939,41 @@ impl BrowserTool {
                 match page.evaluate(script).await {
                     Ok(_) => Ok(json!({ "success": true })),
                     Err(e) => Err(format!("Failed to clear captures: {}", e)),
+                }
+            }
+
+            BrowserAction::EmulateNetwork {
+                latency_ms,
+                download_bps,
+                upload_bps,
+                offline,
+            } => {
+                // Deprecated in favor of the Emulation-domain variant in newer
+                // CDP revisions, but still fully supported by Chrome.
+                #[allow(deprecated)]
+                use chromiumoxide::cdp::browser_protocol::network::EmulateNetworkConditionsParams;
+                #[allow(deprecated)]
+                let params = EmulateNetworkConditionsParams::new(
+                    offline.unwrap_or(false),
+                    latency_ms.unwrap_or(0.0),
+                    download_bps.unwrap_or(-1.0),
+                    upload_bps.unwrap_or(-1.0),
+                );
+                match page.execute(params).await {
+                    Ok(_) => Ok(json!({
+                        "success": true,
+                        "latency_ms": latency_ms.unwrap_or(0.0),
+                        "offline": offline.unwrap_or(false)
+                    })),
+                    Err(e) => Err(format!("Failed to emulate network conditions: {}", e)),
+                }
+            }
+
+            BrowserAction::EmulateCpu { rate } => {
+                use chromiumoxide::cdp::browser_protocol::emulation::SetCpuThrottlingRateParams;
+                match page.execute(SetCpuThrottlingRateParams::new(rate.max(1.0))).await {
+                    Ok(_) => Ok(json!({ "success": true, "rate": rate })),
+                    Err(e) => Err(format!("Failed to set CPU throttling: {}", e)),
                 }
             }
 
@@ -1346,6 +1504,9 @@ impl BrowserTool {
         {
             warn!("Failed to instrument pooled page: {}", e);
         }
+        if let Err(e) = crate::browser::network_log::start_capture(&current_handle.page).await {
+            warn!("Failed to start network capture on pooled page: {}", e);
+        }
 
         let mut results = Vec::new();
         let mut screenshot_data = None;
@@ -1489,6 +1650,9 @@ impl BrowserTool {
 
         if let Err(e) = crate::browser::instrument::ensure_instrumented(&page).await {
             warn!("Failed to instrument page: {}", e);
+        }
+        if let Err(e) = crate::browser::network_log::start_capture(&page).await {
+            warn!("Failed to start network capture: {}", e);
         }
 
         let mut results = Vec::new();
@@ -1754,12 +1918,88 @@ impl Tool for BrowserTool {
                                         "properties": {
                                             "url": { "type": "string", "description": "Substring filter on request URL" },
                                             "method": { "type": "string", "description": "HTTP method filter (GET, POST, ...)" },
+                                            "resource_type": { "type": "string", "description": "Resource type filter (document, xhr, fetch, script, img, stylesheet, ...)" },
                                             "min_status": { "type": "integer", "description": "Minimum HTTP status (inclusive)" },
                                             "max_status": { "type": "integer", "description": "Maximum HTTP status (inclusive)" },
                                             "include_body": { "type": "boolean", "description": "Include truncated response bodies (default: true)" },
                                             "limit": { "type": "integer", "description": "Max entries to return (default: 50)" },
                                             "offset": { "type": "integer", "description": "Entries to skip for pagination (default: 0)" }
                                         }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "FillForm": {
+                                        "type": "object",
+                                        "properties": {
+                                            "fields": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "selector": { "type": "string", "description": "CSS selector of the input" },
+                                                        "value": { "type": "string", "description": "Value to type" },
+                                                        "clear": { "type": "boolean", "description": "Clear first (default: true)" }
+                                                    },
+                                                    "required": ["selector", "value"]
+                                                },
+                                                "description": "Fields to fill"
+                                            }
+                                        },
+                                        "required": ["fields"]
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "Hover": {
+                                        "type": "object",
+                                        "properties": {
+                                            "selector": { "type": "string", "description": "CSS selector to hover" }
+                                        },
+                                        "required": ["selector"]
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "ClickAt": {
+                                        "type": "object",
+                                        "properties": {
+                                            "x": { "type": "number", "description": "Viewport x coordinate" },
+                                            "y": { "type": "number", "description": "Viewport y coordinate" }
+                                        },
+                                        "required": ["x", "y"]
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "EmulateNetwork": {
+                                        "type": "object",
+                                        "properties": {
+                                            "latency_ms": { "type": "number", "description": "Extra latency in ms (default: 0)" },
+                                            "download_bps": { "type": "number", "description": "Download throughput bytes/sec (default: unlimited)" },
+                                            "upload_bps": { "type": "number", "description": "Upload throughput bytes/sec (default: unlimited)" },
+                                            "offline": { "type": "boolean", "description": "Simulate offline (default: false)" }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "EmulateCpu": {
+                                        "type": "object",
+                                        "properties": {
+                                            "rate": { "type": "number", "description": "CPU slowdown factor (1 = none, 4 = 4x slower)" }
+                                        },
+                                        "required": ["rate"]
                                     }
                                 }
                             },
@@ -2036,6 +2276,7 @@ mod tests {
         let net = BrowserAction::GetNetworkLog {
             url: None,
             method: None,
+            resource_type: None,
             min_status: None,
             max_status: None,
             include_body: None,
@@ -2048,6 +2289,7 @@ mod tests {
         let net_filtered = BrowserAction::GetNetworkLog {
             url: Some("/api/".to_string()),
             method: Some("POST".to_string()),
+            resource_type: Some("xhr".to_string()),
             min_status: Some(200),
             max_status: Some(299),
             include_body: Some(false),
@@ -2089,6 +2331,53 @@ mod tests {
         let cast_stop = BrowserAction::ScreencastStop;
         let json = serde_json::to_string(&cast_stop).unwrap();
         assert!(json.contains("screencast_stop"));
+
+        let form = BrowserAction::FillForm {
+            fields: vec![
+                FormField {
+                    selector: "#user".to_string(),
+                    value: "alice".to_string(),
+                    clear: None,
+                },
+                FormField {
+                    selector: "#pass".to_string(),
+                    value: "secret".to_string(),
+                    clear: Some(false),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&form).unwrap();
+        assert!(json.contains("fill_form"));
+        assert!(json.contains("#user"));
+        let roundtrip: BrowserAction = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            roundtrip,
+            BrowserAction::FillForm { ref fields } if fields.len() == 2
+        ));
+
+        let hover = BrowserAction::Hover {
+            selector: "#menu".to_string(),
+        };
+        let json = serde_json::to_string(&hover).unwrap();
+        assert!(json.contains("hover"));
+
+        let click_at = BrowserAction::ClickAt { x: 100.5, y: 200.0 };
+        let json = serde_json::to_string(&click_at).unwrap();
+        assert!(json.contains("click_at"));
+
+        let emu_net = BrowserAction::EmulateNetwork {
+            latency_ms: Some(200.0),
+            download_bps: Some(1_000_000.0),
+            upload_bps: None,
+            offline: Some(false),
+        };
+        let json = serde_json::to_string(&emu_net).unwrap();
+        assert!(json.contains("emulate_network"));
+        assert!(json.contains("200"));
+
+        let emu_cpu = BrowserAction::EmulateCpu { rate: 4.0 };
+        let json = serde_json::to_string(&emu_cpu).unwrap();
+        assert!(json.contains("emulate_cpu"));
 
         let mobile = BrowserAction::EmulateMobile {
             device_name: "iphone_x".to_string(),

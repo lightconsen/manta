@@ -226,6 +226,7 @@ mod tests {
         let (browser, mut handler) = Browser::launch(
             BrowserConfig::builder()
                 .arg("--headless=new")
+                .user_data_dir(std::env::temp_dir().join("syscity-e2e-instrument"))
                 .build()
                 .unwrap(),
         )

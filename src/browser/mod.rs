@@ -16,9 +16,13 @@ pub mod aria_snapshot;
 #[cfg(feature = "browser")]
 pub mod instrument;
 #[cfg(feature = "browser")]
+pub mod network_log;
+#[cfg(feature = "browser")]
 pub mod pool;
 #[cfg(feature = "browser")]
 pub mod profile;
+#[cfg(feature = "browser")]
+pub mod sourcemap;
 
 #[cfg(feature = "browser")]
 pub use aria_snapshot::{act_by_ref, aria_snapshot, ActKind, AriaNodeLine, AriaSnapshot};
