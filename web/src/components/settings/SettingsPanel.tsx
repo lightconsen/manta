@@ -100,7 +100,11 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   const [addModelError, setAddModelError] = useState("");
   const [newModel, setNewModel] = useState({ name: "", provider: "anthropic", model: "", api_key: "", base_url: "" });
   const [modelActionLoading, setModelActionLoading] = useState<string>("");
-  const [modelPresets, setModelPresets] = useState<Array<{ name: string; display_name: string; base_url?: string; models: string[] }>>([]);
+  const [modelPresets, setModelPresets] = useState<Array<{ name: string; display_name: string; base_url?: string; models: string[]; protocol?: "open_ai" | "anthropic" | "gemini"; needs_api_key?: boolean }>>([]);
+  const [remoteModels, setRemoteModels] = useState<string[] | null>(null);
+  const [remoteModelsSource, setRemoteModelsSource] = useState<"remote" | "static">("static");
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchModelsError, setFetchModelsError] = useState("");
   const [showAddSkill, setShowAddSkill] = useState(false);
   const [addSkillError, setAddSkillError] = useState("");
   const [newSkillName, setNewSkillName] = useState("");
@@ -283,6 +287,29 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     setChannelActionLoading("");
   };
 
+  const handleFetchModels = async () => {
+    setFetchModelsError("");
+    setRemoteModels(null);
+    const preset = modelPresets.find((p) => p.name === newModel.provider);
+    setFetchingModels(true);
+    const res = await transport.fetchRemoteModels({
+      provider: newModel.provider,
+      base_url: newModel.base_url.trim() || undefined,
+      api_key: newModel.api_key.trim() || undefined,
+      protocol: newModel.provider === "custom" ? (preset?.protocol ?? "open_ai") : undefined,
+    });
+    setFetchingModels(false);
+    setRemoteModels(res.models);
+    setRemoteModelsSource(res.source);
+    if (res.error) setFetchModelsError(res.error);
+    if (res.models.length > 0) {
+      setNewModel((prev) => ({
+        ...prev,
+        model: res.models.includes(prev.model) ? prev.model : res.models[0],
+      }));
+    }
+  };
+
   const handleAddModel = async () => {
     setAddModelError("");
     if (!newModel.name.trim()) {
@@ -303,6 +330,8 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     });
     if (ok) {
       setNewModel({ name: "", provider: "anthropic", model: "", api_key: "", base_url: "" });
+      setRemoteModels(null);
+      setFetchModelsError("");
       setShowAddModel(false);
       await refreshModels();
     } else {
@@ -812,6 +841,26 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                                 model: preset?.models[0] || "",
                                 base_url: preset?.base_url || "",
                               });
+                              setRemoteModels(null);
+                              setFetchModelsError("");
+                              // Providers without auth (e.g. Ollama) can fetch immediately.
+                              if (preset && preset.needs_api_key === false) {
+                                setFetchingModels(true);
+                                transport
+                                  .fetchRemoteModels({
+                                    provider,
+                                    base_url: preset.base_url || undefined,
+                                  })
+                                  .then((res) => {
+                                    setFetchingModels(false);
+                                    setRemoteModels(res.models);
+                                    setRemoteModelsSource(res.source);
+                                    if (res.error) setFetchModelsError(res.error);
+                                    if (res.models.length > 0) {
+                                      setNewModel((prev) => ({ ...prev, model: res.models[0] }));
+                                    }
+                                  });
+                              }
                             }}
                             className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           >
@@ -821,19 +870,62 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                           </select>
                         </div>
                       </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {modelPresets.find((p) => p.name === newModel.provider)?.needs_api_key !== false && (
+                          <div>
+                            <label className="block text-xs text-secondary mb-1">API Key</label>
+                            <input
+                              type="password"
+                              value={newModel.api_key}
+                              onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
+                              onBlur={() => {
+                                if (newModel.api_key.trim() && remoteModels === null && !fetchingModels) {
+                                  handleFetchModels();
+                                }
+                              }}
+                              placeholder="sk-..."
+                              className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                            />
+                          </div>
+                        )}
+                        <div>
+                          <label className="block text-xs text-secondary mb-1">Base URL</label>
+                          <input
+                            type="text"
+                            value={newModel.base_url}
+                            onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
+                            placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                          />
+                        </div>
+                      </div>
                       {(() => {
                         const preset = modelPresets.find((p) => p.name === newModel.provider);
-                        const hasModels = preset && preset.models.length > 0;
+                        const optionList = remoteModels && remoteModels.length > 0 ? remoteModels : (preset?.models ?? []);
                         return (
                           <div>
-                            <label className="block text-xs text-secondary mb-1">Model</label>
-                            {hasModels ? (
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-xs text-secondary">Model</label>
+                              <button
+                                type="button"
+                                onClick={handleFetchModels}
+                                disabled={fetchingModels}
+                                className="text-xs text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
+                              >
+                                {fetchingModels ? "Fetching..." : "Fetch Models"}
+                              </button>
+                            </div>
+                            {fetchingModels ? (
+                              <div className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-secondary">
+                                Loading model list...
+                              </div>
+                            ) : optionList.length > 0 ? (
                               <select
                                 value={newModel.model}
                                 onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
                                 className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                               >
-                                {preset.models.map((m) => (
+                                {optionList.map((m) => (
                                   <option key={m} value={m}>{m}</option>
                                 ))}
                               </select>
@@ -846,31 +938,15 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                                 className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                               />
                             )}
+                            {remoteModelsSource === "static" && remoteModels !== null && (
+                              <div className="mt-1 text-xs text-secondary">Showing built-in model list (remote fetch unavailable).</div>
+                            )}
                           </div>
                         );
                       })()}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs text-secondary mb-1">API Key</label>
-                          <input
-                            type="password"
-                            value={newModel.api_key}
-                            onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
-                            placeholder="sk-..."
-                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-secondary mb-1">Base URL</label>
-                          <input
-                            type="text"
-                            value={newModel.base_url}
-                            onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
-                            placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
-                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-                          />
-                        </div>
-                      </div>
+                      {fetchModelsError && (
+                        <div className="text-xs text-amber-600 dark:text-amber-400">{fetchModelsError}</div>
+                      )}
                       {addModelError && (
                         <div className="text-xs text-red-600 dark:text-red-400">{addModelError}</div>
                       )}

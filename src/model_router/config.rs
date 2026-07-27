@@ -475,6 +475,20 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
         },
     );
     m.insert(
+        "glm".to_string(),
+        ProviderPreset {
+            display_name: "GLM (Zhipu)".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://open.bigmodel.cn/api/paas/v4".to_string()),
+            models: vec![
+                "glm-4.5".to_string(),
+                "glm-4.5-air".to_string(),
+                "glm-4-plus".to_string(),
+                "glm-4-flash".to_string(),
+            ],
+        },
+    );
+    m.insert(
         "minimax".to_string(),
         ProviderPreset {
             display_name: "MiniMax".to_string(),

@@ -57,6 +57,8 @@ export interface ModelPreset {
   display_name: string;
   base_url?: string;
   models: string[];
+  protocol?: "open_ai" | "anthropic" | "gemini";
+  needs_api_key?: boolean;
 }
 
 interface SettingsState {

@@ -543,6 +543,7 @@ async fn dispatch_method(
         "config.set" => handle_config_set(req, state).await,
         "models.list" => handle_models_list(req, state).await,
         "models.presets" => handle_models_presets(req, state).await,
+        "models.fetch_remote" => handle_models_fetch_remote(req, state).await,
         "models.add" => handle_models_add(req, state).await,
         "models.remove" => handle_models_remove(req, state).await,
         "models.set_default" => handle_models_set_default(req, state).await,
@@ -2675,18 +2676,224 @@ async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
 
 async fn handle_models_presets(req: &WsRequest, _state: &Arc<GatewayState>) -> WsResponse {
     let presets = crate::model_router::provider_presets();
+    let builtins = crate::providers::preset::builtin_providers();
     let list: Vec<serde_json::Value> = presets
         .into_iter()
         .map(|(name, p)| {
+            // Enrich with protocol/auth info from the TOML registry when the
+            // preset exists there (custom does not).
+            let builtin = builtins.get(name.as_str());
+            let protocol = builtin.and_then(|b| b.variants.first()).map(|v| v.protocol);
+            let needs_api_key = builtin
+                .and_then(|b| b.variants.first())
+                .map(|v| v.auth_method != crate::providers::AuthMethod::None)
+                .unwrap_or(true);
             serde_json::json!({
                 "name": name,
                 "display_name": p.display_name,
                 "base_url": p.default_base_url,
                 "models": p.models,
+                "protocol": protocol,
+                "needs_api_key": needs_api_key,
             })
         })
         .collect();
     WsResponse::ok(&req.id, serde_json::json!({ "presets": list }))
+}
+
+/// Build the list-models endpoint URL for a protocol.
+fn models_endpoint_url(protocol: crate::providers::Protocol, base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    match protocol {
+        crate::providers::Protocol::OpenAi => format!("{base}/models"),
+        crate::providers::Protocol::Anthropic => format!("{base}/v1/models"),
+        crate::providers::Protocol::Gemini => format!("{base}/models"),
+    }
+}
+
+/// Parse model IDs from an OpenAI/Anthropic-style `{ "data": [{ "id": ... }] }` body.
+fn parse_data_models(body: &serde_json::Value) -> Vec<String> {
+    body.get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Parse model IDs from a Gemini `{ "models": [{ "name": "models/..." }] }` body.
+fn parse_gemini_models(body: &serde_json::Value) -> Vec<String> {
+    body.get("models")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("name").and_then(|n| n.as_str()))
+                .map(|n| n.strip_prefix("models/").unwrap_or(n).to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn handle_models_fetch_remote(req: &WsRequest, _state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct FetchRemotePayload {
+        provider: String,
+        base_url: Option<String>,
+        api_key: Option<String>,
+        /// Protocol override, required for providers not in the registry.
+        protocol: Option<crate::providers::Protocol>,
+    }
+    let payload: FetchRemotePayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    // Resolve protocol / default base URL / auth method from the TOML registry.
+    let builtins = crate::providers::preset::builtin_providers();
+    let variant = builtins
+        .get(payload.provider.as_str())
+        .and_then(|b| b.variants.first());
+
+    let protocol = match payload.protocol.or_else(|| variant.map(|v| v.protocol)) {
+        Some(p) => p,
+        None => {
+            return WsResponse::err(
+                &req.id,
+                "PROTOCOL_REQUIRED",
+                format!(
+                    "Unknown provider '{}'; an explicit protocol is required",
+                    payload.provider
+                ),
+            );
+        }
+    };
+
+    let base_url = match payload
+        .base_url
+        .filter(|u| !u.is_empty())
+        .or_else(|| variant.map(|v| v.default_base_url.clone()))
+    {
+        Some(u) => u,
+        None => {
+            return WsResponse::err(
+                &req.id,
+                "BASE_URL_REQUIRED",
+                format!("Provider '{}' requires a base_url", payload.provider),
+            );
+        }
+    };
+
+    if !(base_url.starts_with("https://") || base_url.starts_with("http://")) {
+        return WsResponse::err(
+            &req.id,
+            "INVALID_BASE_URL",
+            "base_url must start with http:// or https://".to_string(),
+        );
+    }
+
+    let auth_method = variant
+        .map(|v| v.auth_method.clone())
+        .unwrap_or(crate::providers::AuthMethod::Bearer);
+    let api_key = payload.api_key.filter(|k| !k.is_empty());
+
+    let static_fallback = || {
+        crate::model_router::provider_presets()
+            .get(&payload.provider)
+            .map(|p| p.models.clone())
+            .unwrap_or_default()
+    };
+
+    let url = match variant.and_then(|v| v.models_endpoint.as_deref()) {
+        Some(endpoint) => format!("{}{}", base_url.trim_end_matches('/'), endpoint),
+        None => models_endpoint_url(protocol, &base_url),
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "models": static_fallback(),
+                    "source": "static",
+                    "error": format!("HTTP client error: {e}"),
+                }),
+            );
+        }
+    };
+
+    let mut request = client.get(&url);
+    match (&auth_method, &api_key) {
+        (crate::providers::AuthMethod::Bearer, Some(key)) => {
+            request = request.bearer_auth(key);
+        }
+        (crate::providers::AuthMethod::ApiKeyHeader, Some(key)) => {
+            request = request
+                .header("x-api-key", key)
+                .header("anthropic-version", "2023-06-01");
+        }
+        (crate::providers::AuthMethod::GoogleApiKey, Some(key)) => {
+            request = request.header("x-goog-api-key", key);
+        }
+        (crate::providers::AuthMethod::CustomHeader { name }, Some(key)) => {
+            request = request.header(name, key);
+        }
+        _ => {}
+    }
+
+    match request.send().await {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>().await {
+            Ok(body) => {
+                let models = match protocol {
+                    crate::providers::Protocol::Gemini => parse_gemini_models(&body),
+                    _ => parse_data_models(&body),
+                };
+                if models.is_empty() {
+                    WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({
+                            "models": static_fallback(),
+                            "source": "static",
+                            "error": "Provider returned an empty model list",
+                        }),
+                    )
+                } else {
+                    WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({ "models": models, "source": "remote" }),
+                    )
+                }
+            }
+            Err(e) => WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "models": static_fallback(),
+                    "source": "static",
+                    "error": format!("Failed to parse provider response: {e}"),
+                }),
+            ),
+        },
+        Ok(resp) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "models": static_fallback(),
+                "source": "static",
+                "error": format!("Provider returned HTTP {}", resp.status()),
+            }),
+        ),
+        Err(e) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "models": static_fallback(),
+                "source": "static",
+                "error": format!("Failed to reach provider: {e}"),
+            }),
+        ),
+    }
 }
 
 async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
@@ -3661,6 +3868,105 @@ mod tests {
             method: method.to_string(),
             params: Some(params),
         }
+    }
+
+    #[test]
+    fn test_models_endpoint_url() {
+        use crate::providers::Protocol;
+        assert_eq!(
+            models_endpoint_url(Protocol::OpenAi, "https://api.openai.com/v1"),
+            "https://api.openai.com/v1/models"
+        );
+        assert_eq!(
+            models_endpoint_url(Protocol::Anthropic, "https://api.anthropic.com/"),
+            "https://api.anthropic.com/v1/models"
+        );
+        assert_eq!(
+            models_endpoint_url(
+                Protocol::Gemini,
+                "https://generativelanguage.googleapis.com/v1beta"
+            ),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+    }
+
+    #[test]
+    fn test_parse_data_models() {
+        let body = serde_json::json!({
+            "object": "list",
+            "data": [
+                { "id": "gpt-4o", "object": "model" },
+                { "id": "gpt-4o-mini", "object": "model" },
+                { "object": "model" }
+            ]
+        });
+        assert_eq!(parse_data_models(&body), vec!["gpt-4o", "gpt-4o-mini"]);
+        assert!(parse_data_models(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn test_parse_gemini_models() {
+        let body = serde_json::json!({
+            "models": [
+                { "name": "models/gemini-2.0-flash" },
+                { "name": "models/gemini-1.5-pro" }
+            ]
+        });
+        assert_eq!(parse_gemini_models(&body), vec!["gemini-2.0-flash", "gemini-1.5-pro"]);
+        assert!(parse_gemini_models(&serde_json::json!({})).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_remote_unknown_provider_requires_protocol() {
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
+        let req = make_req(
+            "r1",
+            "models.fetch_remote",
+            serde_json::json!({ "provider": "no-such-provider" }),
+        );
+        let res = handle_models_fetch_remote(&req, &state).await;
+        assert!(!res.ok);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_remote_invalid_base_url() {
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
+        let req = make_req(
+            "r1",
+            "models.fetch_remote",
+            serde_json::json!({ "provider": "openai", "base_url": "ftp://example.com" }),
+        );
+        let res = handle_models_fetch_remote(&req, &state).await;
+        assert!(!res.ok);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_remote_unreachable_falls_back_to_static() {
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
+        let req = make_req(
+            "r1",
+            "models.fetch_remote",
+            serde_json::json!({
+                "provider": "openai",
+                // Port 1 is reserved and unreachable, so the request fails fast.
+                "base_url": "http://127.0.0.1:1"
+            }),
+        );
+        let res = handle_models_fetch_remote(&req, &state).await;
+        assert!(res.ok);
+        let payload = res.payload.unwrap();
+        assert_eq!(payload.get("source").unwrap(), "static");
+        let models = payload.get("models").unwrap().as_array().unwrap();
+        assert!(models.iter().any(|m| m == "gpt-4o"));
     }
 
     #[tokio::test]

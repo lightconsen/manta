@@ -71,6 +71,7 @@ fn fallback_providers() -> HashMap<&'static str, ProviderDefinition> {
                 default_base_url: "https://api.openai.com/v1".into(),
                 default_model: "gpt-4o-mini".into(),
                 auth_method: AuthMethod::Bearer,
+                models_endpoint: Some("/models".into()),
                 default_max_context: 128_000,
                 default_supports_vision: true,
                 default_supports_tools: true,
@@ -88,6 +89,7 @@ fn fallback_providers() -> HashMap<&'static str, ProviderDefinition> {
                 default_base_url: "https://api.anthropic.com".into(),
                 default_model: "claude-sonnet-4-20250514".into(),
                 auth_method: AuthMethod::ApiKeyHeader,
+                models_endpoint: Some("/v1/models".into()),
                 default_max_context: 200_000,
                 default_supports_vision: true,
                 default_supports_tools: true,
@@ -114,6 +116,7 @@ mod tests {
         assert!(providers.contains_key("qwen"));
         assert!(providers.contains_key("minimax"));
         assert!(providers.contains_key("azure"));
+        assert!(providers.contains_key("glm"));
     }
 
     #[test]
@@ -150,6 +153,29 @@ mod tests {
         let providers = builtin_providers();
         let ollama = providers.get("ollama").unwrap();
         assert_eq!(ollama.variants[0].auth_method, AuthMethod::None);
+    }
+
+    #[test]
+    fn test_models_endpoint_loaded() {
+        let providers = builtin_providers();
+        assert_eq!(
+            providers.get("openai").unwrap().variants[0]
+                .models_endpoint
+                .as_deref(),
+            Some("/models")
+        );
+        assert_eq!(
+            providers.get("anthropic").unwrap().variants[0]
+                .models_endpoint
+                .as_deref(),
+            Some("/v1/models")
+        );
+        assert_eq!(
+            providers.get("glm").unwrap().variants[0]
+                .models_endpoint
+                .as_deref(),
+            Some("/models")
+        );
     }
 
     #[test]

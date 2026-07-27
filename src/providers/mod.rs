@@ -570,6 +570,10 @@ pub struct ProtocolVariant {
     pub default_model: String,
     /// Authentication method
     pub auth_method: AuthMethod,
+    /// List-models endpoint path relative to base_url (e.g. "/models").
+    /// When absent, the path is derived from the protocol.
+    #[serde(default)]
+    pub models_endpoint: Option<String>,
     /// Default max context length
     pub default_max_context: usize,
     /// Whether vision is supported by default

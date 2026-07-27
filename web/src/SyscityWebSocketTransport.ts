@@ -934,12 +934,21 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   }
 
   /* ── Model operations ── */
-  async listModelPresets(): Promise<Array<{ name: string; display_name: string; base_url?: string; models: string[] }>> {
+  async listModelPresets(): Promise<Array<{ name: string; display_name: string; base_url?: string; models: string[]; protocol?: "open_ai" | "anthropic" | "gemini"; needs_api_key?: boolean }>> {
     try {
-      const res = (await this.sendRequestAndWait("models.presets", {})) as { presets?: Array<{ name: string; display_name: string; base_url?: string; models: string[] }> };
+      const res = (await this.sendRequestAndWait("models.presets", {})) as { presets?: Array<{ name: string; display_name: string; base_url?: string; models: string[]; protocol?: "open_ai" | "anthropic" | "gemini"; needs_api_key?: boolean }> };
       return res.presets || [];
     } catch {
       return [];
+    }
+  }
+
+  async fetchRemoteModels(payload: { provider: string; base_url?: string; api_key?: string; protocol?: "open_ai" | "anthropic" | "gemini" }): Promise<{ models: string[]; source: "remote" | "static"; error?: string }> {
+    try {
+      const res = (await this.sendRequestAndWait("models.fetch_remote", payload)) as { models?: string[]; source?: "remote" | "static"; error?: string };
+      return { models: res.models || [], source: res.source || "static", error: res.error };
+    } catch (e) {
+      return { models: [], source: "static", error: e instanceof Error ? e.message : "Request failed" };
     }
   }
 
