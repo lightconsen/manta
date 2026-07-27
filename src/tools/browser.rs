@@ -84,8 +84,41 @@ pub enum BrowserAction {
     },
     /// Get performance metrics
     GetPerformanceMetrics,
-    /// Get network request log via Performance API
-    GetNetworkLog,
+    /// Get network log (fetch/XHR) with optional filtering and bodies
+    GetNetworkLog {
+        /// Substring filter on the request URL
+        url: Option<String>,
+        /// HTTP method filter (GET, POST, ...)
+        method: Option<String>,
+        /// Minimum HTTP status code (inclusive)
+        min_status: Option<u16>,
+        /// Maximum HTTP status code (inclusive)
+        max_status: Option<u16>,
+        /// Include (truncated) response bodies, default true
+        include_body: Option<bool>,
+        /// Max entries to return (default 50)
+        limit: Option<usize>,
+        /// Entries to skip (pagination)
+        offset: Option<usize>,
+    },
+    /// Get captured console messages and uncaught exceptions
+    GetConsoleMessages {
+        /// Level filter: log, info, warn, error, debug, exception
+        level: Option<String>,
+        /// Max entries to return (default 100)
+        limit: Option<usize>,
+    },
+    /// Clear captured network and console buffers
+    ClearCaptures,
+    /// Start a screencast, saving JPEG frames to an artifacts directory
+    ScreencastStart {
+        /// JPEG quality 0-100 (default 80)
+        quality: Option<u32>,
+        /// Save every Nth frame (default 1)
+        every_nth_frame: Option<u32>,
+    },
+    /// Stop the active screencast and return the saved frames location
+    ScreencastStop,
     /// Set mobile device emulation
     EmulateMobile { device_name: String },
     /// Set viewport size dynamically
@@ -197,6 +230,17 @@ fn normalize_browser_actions(value: &mut Value) {
         _ => {}
     }
 }
+/// State for an active screencast recording session.
+#[cfg(feature = "browser")]
+struct ScreencastSession {
+    /// Directory receiving frame-*.jpg files
+    dir: std::path::PathBuf,
+    /// Number of frames written so far
+    frames: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Collector task reading screencastFrame events
+    task: tokio::task::JoinHandle<()>,
+}
+
 pub struct BrowserTool {
     /// Chrome/Chromium executable path (None = auto-detect)
     chrome_path: Option<String>,
@@ -301,10 +345,13 @@ impl BrowserTool {
 
             BrowserAction::Click { selector } => match page.find_element(&selector).await {
                 Ok(elem) => match elem.click().await {
-                    Ok(_) => Ok(json!({
-                        "success": true,
-                        "selector": selector
-                    })),
+                    Ok(_) => {
+                        crate::browser::instrument::auto_wait(page).await;
+                        Ok(json!({
+                            "success": true,
+                            "selector": selector
+                        }))
+                    }
                     Err(e) => Err(format!("Failed to click element: {}", e)),
                 },
                 Err(e) => Err(format!("Element not found: {}", e)),
@@ -322,11 +369,14 @@ impl BrowserTool {
                             }
                         }
                         match elem.type_str(&text).await {
-                            Ok(_) => Ok(json!({
-                                "success": true,
-                                "selector": selector,
-                                "text_length": text.len()
-                            })),
+                            Ok(_) => {
+                                crate::browser::instrument::auto_wait(page).await;
+                                Ok(json!({
+                                    "success": true,
+                                    "selector": selector,
+                                    "text_length": text.len()
+                                }))
+                            }
                             Err(e) => Err(format!("Failed to type: {}", e)),
                         }
                     }
@@ -659,30 +709,122 @@ impl BrowserTool {
                 }
             }
 
-            BrowserAction::GetNetworkLog => {
-                let script = r#"() => {
-                    return performance.getEntriesByType('resource').map(r => ({
-                        name: r.name,
-                        initiator_type: r.initiatorType,
-                        duration: r.duration,
-                        transfer_size: r.transferSize,
-                        encoded_body_size: r.encodedBodySize,
-                        decoded_body_size: r.decodedBodySize,
-                        start_time: r.startTime
-                    }));
-                }"#;
+            BrowserAction::GetNetworkLog {
+                url,
+                method,
+                min_status,
+                max_status,
+                include_body,
+                limit,
+                offset,
+            } => {
+                crate::browser::instrument::ensure_instrumented(page).await?;
+                let script = r#"() => (window.__syscity_net || [])"#;
                 match page.evaluate(script).await {
                     Ok(result) => {
                         let entries = result.into_value::<Vec<Value>>().unwrap_or_default();
+                        let include_body = include_body.unwrap_or(true);
+                        let filtered: Vec<Value> = entries
+                            .into_iter()
+                            .filter(|e| {
+                                url.as_ref().is_none_or(|f| {
+                                    e.get("url")
+                                        .and_then(|u| u.as_str())
+                                        .is_some_and(|u| u.contains(f.as_str()))
+                                })
+                            })
+                            .filter(|e| {
+                                method.as_ref().is_none_or(|m| {
+                                    e.get("method")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|v| v.eq_ignore_ascii_case(m))
+                                })
+                            })
+                            .filter(|e| {
+                                let status = e.get("status").and_then(|s| s.as_u64());
+                                min_status.is_none_or(|min| {
+                                    status.is_some_and(|s| s >= min as u64)
+                                }) && max_status.is_none_or(|max| {
+                                    status.is_some_and(|s| s <= max as u64)
+                                })
+                            })
+                            .map(|mut e| {
+                                if !include_body {
+                                    if let Value::Object(ref mut obj) = e {
+                                        obj.remove("body");
+                                        obj.remove("body_truncated");
+                                    }
+                                }
+                                e
+                            })
+                            .collect();
+                        let total = filtered.len();
+                        let offset = offset.unwrap_or(0);
+                        let page_entries: Vec<Value> = filtered
+                            .into_iter()
+                            .skip(offset)
+                            .take(limit.unwrap_or(50))
+                            .collect();
                         Ok(json!({
                             "success": true,
-                            "entries": entries,
-                            "count": entries.len()
+                            "entries": page_entries,
+                            "count": page_entries.len(),
+                            "total": total,
+                            "offset": offset,
+                            "note": "Captures fetch/XHR only (not document/image/css loads). Bodies truncated to 8KB."
                         }))
                     }
                     Err(e) => Err(format!("Failed to get network log: {}", e)),
                 }
             }
+
+            BrowserAction::GetConsoleMessages { level, limit } => {
+                crate::browser::instrument::ensure_instrumented(page).await?;
+                let script = r#"() => (window.__syscity_console || [])"#;
+                match page.evaluate(script).await {
+                    Ok(result) => {
+                        let entries = result.into_value::<Vec<Value>>().unwrap_or_default();
+                        let filtered: Vec<Value> = entries
+                            .into_iter()
+                            .filter(|e| {
+                                level.as_ref().is_none_or(|l| {
+                                    e.get("level")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|v| v.eq_ignore_ascii_case(l))
+                                })
+                            })
+                            .collect();
+                        let total = filtered.len();
+                        let messages: Vec<Value> =
+                            filtered.into_iter().take(limit.unwrap_or(100)).collect();
+                        Ok(json!({
+                            "success": true,
+                            "messages": messages,
+                            "count": messages.len(),
+                            "total": total
+                        }))
+                    }
+                    Err(e) => Err(format!("Failed to get console messages: {}", e)),
+                }
+            }
+
+            BrowserAction::ClearCaptures => {
+                let script = r#"() => {
+                    if (window.__syscity_net) window.__syscity_net.length = 0;
+                    if (window.__syscity_console) window.__syscity_console.length = 0;
+                }"#;
+                match page.evaluate(script).await {
+                    Ok(_) => Ok(json!({ "success": true })),
+                    Err(e) => Err(format!("Failed to clear captures: {}", e)),
+                }
+            }
+
+            BrowserAction::ScreencastStart {
+                quality,
+                every_nth_frame,
+            } => Self::screencast_start(page, quality, every_nth_frame).await,
+
+            BrowserAction::ScreencastStop => Self::screencast_stop(page).await,
 
             BrowserAction::EmulateMobile { device_name } => {
                 let (width, height, dpr, mobile, ua) = match device_name.to_lowercase().as_str() {
@@ -808,7 +950,10 @@ impl BrowserTool {
 
             BrowserAction::Act { ref_id, action } => {
                 match crate::browser::act_by_ref(page, ref_id, action).await {
-                    Ok(msg) => Ok(json!({ "success": true, "message": msg })),
+                    Ok(msg) => {
+                        crate::browser::instrument::auto_wait(page).await;
+                        Ok(json!({ "success": true, "message": msg }))
+                    }
                     Err(e) => Err(format!("Failed to act on ref {}: {}", ref_id, e)),
                 }
             }
@@ -826,7 +971,10 @@ impl BrowserTool {
                     key, key
                 );
                 match page.evaluate(script.as_str()).await {
-                    Ok(_) => Ok(json!({ "success": true, "key": key })),
+                    Ok(_) => {
+                        crate::browser::instrument::auto_wait(page).await;
+                        Ok(json!({ "success": true, "key": key }))
+                    }
                     Err(e) => Err(format!("Failed to press key: {}", e)),
                 }
             }
@@ -1029,6 +1177,126 @@ impl BrowserTool {
         }
     }
 
+    /// Active screencast sessions keyed by page target id.
+    #[cfg(feature = "browser")]
+    fn screencast_sessions() -> &'static tokio::sync::Mutex<
+        std::collections::HashMap<String, ScreencastSession>,
+    > {
+        static SESSIONS: std::sync::OnceLock<
+            tokio::sync::Mutex<std::collections::HashMap<String, ScreencastSession>>,
+        > = std::sync::OnceLock::new();
+        SESSIONS.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashMap::new()))
+    }
+
+    /// Start a screencast: JPEG frames are written to
+    /// `~/.syscity/artifacts/screencast-<timestamp>/frame-*.jpg`.
+    #[cfg(feature = "browser")]
+    async fn screencast_start(
+        page: &chromiumoxide::Page,
+        quality: Option<u32>,
+        every_nth_frame: Option<u32>,
+    ) -> Result<serde_json::Value, String> {
+        use chromiumoxide::cdp::browser_protocol::page::{
+            EventScreencastFrame, StartScreencastFormat, StartScreencastParams,
+        };
+        use futures::StreamExt;
+
+        let key = page.target_id().as_ref().to_string();
+        let mut sessions = Self::screencast_sessions().lock().await;
+        if sessions.contains_key(&key) {
+            return Err("Screencast already active for this page".to_string());
+        }
+
+        let dir = crate::dirs::syscity_dir().join("artifacts").join(format!(
+            "screencast-{}",
+            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+        ));
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| format!("Failed to create screencast dir: {}", e))?;
+
+        // Subscribe before starting so no frames are missed.
+        let mut events = page
+            .event_listener::<EventScreencastFrame>()
+            .await
+            .map_err(|e| format!("Failed to subscribe screencast events: {}", e))?;
+
+        let mut params = StartScreencastParams {
+            format: Some(StartScreencastFormat::Jpeg),
+            quality: Some(i64::from(quality.unwrap_or(80).min(100))),
+            ..Default::default()
+        };
+        params.every_nth_frame = every_nth_frame.map(|n| i64::from(n.max(1)));
+        page.execute(params)
+            .await
+            .map_err(|e| format!("Failed to start screencast: {}", e))?;
+
+        let frames = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let frames_task = frames.clone();
+        let page_task = page.clone();
+        let dir_task = dir.clone();
+        let task = tokio::spawn(async move {
+            while let Some(ev) = events.next().await {
+                // Ack each frame so Chrome keeps delivering.
+                if let Err(e) = page_task
+                    .execute(
+                        chromiumoxide::cdp::browser_protocol::page::ScreencastFrameAckParams::new(
+                            ev.session_id,
+                        ),
+                    )
+                    .await
+                {
+                    warn!("screencast ack failed, stopping collector: {}", e);
+                    break;
+                }
+                let idx = frames_task.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(AsRef::<str>::as_ref(&ev.data))
+                    .unwrap_or_default();
+                let path = dir_task.join(format!("frame-{idx:05}.jpg"));
+                if let Err(e) = tokio::fs::write(&path, decoded).await {
+                    warn!("Failed to write screencast frame: {}", e);
+                }
+            }
+        });
+
+        sessions.insert(
+            key,
+            ScreencastSession {
+                dir: dir.clone(),
+                frames,
+                task,
+            },
+        );
+        Ok(json!({
+            "success": true,
+            "frames_dir": dir,
+            "note": "Frames are saved as frame-*.jpg. Call screencast_stop to finish."
+        }))
+    }
+
+    /// Stop the active screencast for this page.
+    #[cfg(feature = "browser")]
+    async fn screencast_stop(page: &chromiumoxide::Page) -> Result<serde_json::Value, String> {
+        use chromiumoxide::cdp::browser_protocol::page::StopScreencastParams;
+
+        let key = page.target_id().as_ref().to_string();
+        let session = Self::screencast_sessions().lock().await.remove(&key);
+        let Some(session) = session else {
+            return Err("No active screencast for this page".to_string());
+        };
+        if let Err(e) = page.execute(StopScreencastParams {}).await {
+            warn!("stopScreencast command failed: {}", e);
+        }
+        session.task.abort();
+        let frames = session.frames.load(std::sync::atomic::Ordering::SeqCst);
+        Ok(json!({
+            "success": true,
+            "frames_dir": session.dir,
+            "frames": frames
+        }))
+    }
+
     /// Build response from action results
     #[cfg(feature = "browser")]
     fn build_result(
@@ -1073,6 +1341,11 @@ impl BrowserTool {
     ) -> crate::Result<ToolExecutionResult> {
         let instance = pool.get_or_create(&self.profile).await?;
         let mut current_handle = instance.new_page("about:blank").await?;
+        if let Err(e) =
+            crate::browser::instrument::ensure_instrumented(&current_handle.page).await
+        {
+            warn!("Failed to instrument pooled page: {}", e);
+        }
 
         let mut results = Vec::new();
         let mut screenshot_data = None;
@@ -1214,6 +1487,10 @@ impl BrowserTool {
             }
         })?;
 
+        if let Err(e) = crate::browser::instrument::ensure_instrumented(&page).await {
+            warn!("Failed to instrument page: {}", e);
+        }
+
         let mut results = Vec::new();
         let mut screenshot_data = None;
 
@@ -1269,9 +1546,14 @@ impl Tool for BrowserTool {
 
     fn description(&self) -> &str {
         "Automate web browser interactions. Navigate to URLs, click elements, fill forms, take \
-         screenshots, extract content, and execute JavaScript. Use this tool when the user asks \
-         to open a webpage, browse the web, take a website screenshot, or automate browser actions \
-         (打开网页/浏览/网页截图). Requires Chrome/Chromium to be installed."
+         screenshots, extract content, and execute JavaScript. Clicking/typing automatically waits \
+         for the page to settle (navigation + network idle). Also captures network traffic \
+         (fetch/XHR with response bodies via GetNetworkLog), console messages and uncaught \
+         exceptions (GetConsoleMessages), and can record screencasts as JPEG frame sequences \
+         (ScreencastStart/ScreencastStop). Use this tool when the user asks to open a webpage, \
+         browse the web, take a website screenshot, debug a page's network/console activity, or \
+         automate browser actions (打开网页/浏览/网页截图/网页调试). Requires Chrome/Chromium to be \
+         installed."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -1467,7 +1749,54 @@ impl Tool for BrowserTool {
                             {
                                 "type": "object",
                                 "properties": {
-                                    "GetNetworkLog": { "type": "object", "properties": {} }
+                                    "GetNetworkLog": {
+                                        "type": "object",
+                                        "properties": {
+                                            "url": { "type": "string", "description": "Substring filter on request URL" },
+                                            "method": { "type": "string", "description": "HTTP method filter (GET, POST, ...)" },
+                                            "min_status": { "type": "integer", "description": "Minimum HTTP status (inclusive)" },
+                                            "max_status": { "type": "integer", "description": "Maximum HTTP status (inclusive)" },
+                                            "include_body": { "type": "boolean", "description": "Include truncated response bodies (default: true)" },
+                                            "limit": { "type": "integer", "description": "Max entries to return (default: 50)" },
+                                            "offset": { "type": "integer", "description": "Entries to skip for pagination (default: 0)" }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "GetConsoleMessages": {
+                                        "type": "object",
+                                        "properties": {
+                                            "level": { "type": "string", "enum": ["log", "info", "warn", "error", "debug", "exception"], "description": "Level filter" },
+                                            "limit": { "type": "integer", "description": "Max messages to return (default: 100)" }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "ClearCaptures": { "type": "object", "properties": {} }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "ScreencastStart": {
+                                        "type": "object",
+                                        "properties": {
+                                            "quality": { "type": "integer", "description": "JPEG quality 0-100 (default: 80)" },
+                                            "every_nth_frame": { "type": "integer", "description": "Save every Nth frame (default: 1)" }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "ScreencastStop": { "type": "object", "properties": {} }
                                 }
                             },
                             {
@@ -1704,9 +2033,62 @@ mod tests {
         let json = serde_json::to_string(&perf).unwrap();
         assert!(json.contains("get_performance_metrics"));
 
-        let net = BrowserAction::GetNetworkLog;
+        let net = BrowserAction::GetNetworkLog {
+            url: None,
+            method: None,
+            min_status: None,
+            max_status: None,
+            include_body: None,
+            limit: None,
+            offset: None,
+        };
         let json = serde_json::to_string(&net).unwrap();
         assert!(json.contains("get_network_log"));
+
+        let net_filtered = BrowserAction::GetNetworkLog {
+            url: Some("/api/".to_string()),
+            method: Some("POST".to_string()),
+            min_status: Some(200),
+            max_status: Some(299),
+            include_body: Some(false),
+            limit: Some(10),
+            offset: Some(5),
+        };
+        let json = serde_json::to_string(&net_filtered).unwrap();
+        assert!(json.contains("/api/"));
+        let roundtrip: BrowserAction = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            roundtrip,
+            BrowserAction::GetNetworkLog {
+                min_status: Some(200),
+                limit: Some(10),
+                ..
+            }
+        ));
+
+        let console = BrowserAction::GetConsoleMessages {
+            level: Some("error".to_string()),
+            limit: Some(20),
+        };
+        let json = serde_json::to_string(&console).unwrap();
+        assert!(json.contains("get_console_messages"));
+        assert!(json.contains("error"));
+
+        let clear = BrowserAction::ClearCaptures;
+        let json = serde_json::to_string(&clear).unwrap();
+        assert!(json.contains("clear_captures"));
+
+        let cast_start = BrowserAction::ScreencastStart {
+            quality: Some(70),
+            every_nth_frame: Some(2),
+        };
+        let json = serde_json::to_string(&cast_start).unwrap();
+        assert!(json.contains("screencast_start"));
+        assert!(json.contains("70"));
+
+        let cast_stop = BrowserAction::ScreencastStop;
+        let json = serde_json::to_string(&cast_stop).unwrap();
+        assert!(json.contains("screencast_stop"));
 
         let mobile = BrowserAction::EmulateMobile {
             device_name: "iphone_x".to_string(),

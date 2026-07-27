@@ -14,6 +14,8 @@
 #[cfg(feature = "browser")]
 pub mod aria_snapshot;
 #[cfg(feature = "browser")]
+pub mod instrument;
+#[cfg(feature = "browser")]
 pub mod pool;
 #[cfg(feature = "browser")]
 pub mod profile;
