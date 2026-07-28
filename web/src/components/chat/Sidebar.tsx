@@ -11,6 +11,7 @@ import {
   Trash2,
   Pin,
   PinOff,
+  Loader2,
 } from "lucide-react";
 import { useThemeStore } from "@/stores/themeStore";
 import { StatusDot } from "./StatusDot";
@@ -38,6 +39,7 @@ interface SidebarProps {
   onToggle: () => void;
   sessions: SessionItem[];
   currentSessionId: string;
+  runningSessionId: string | null;
   onSwitchSession: (id: string) => void;
   onNewSession: () => void;
   agents: AgentItem[];
@@ -54,6 +56,7 @@ export function Sidebar({
   onToggle,
   sessions,
   currentSessionId,
+  runningSessionId,
   onSwitchSession,
   onNewSession,
   agents,
@@ -238,6 +241,7 @@ export function Sidebar({
                     key={s.id}
                     session={s}
                     currentSessionId={currentSessionId}
+                    runningSessionId={runningSessionId}
                     collapsed={collapsed}
                     onSwitch={() => onSwitchSession(s.id)}
                     onRename={onRenameSession}
@@ -253,6 +257,7 @@ export function Sidebar({
                 key={s.id}
                 session={s}
                 currentSessionId={currentSessionId}
+                runningSessionId={runningSessionId}
                 collapsed={collapsed}
                 onSwitch={() => onSwitchSession(s.id)}
                 onRename={onRenameSession}
@@ -380,6 +385,7 @@ export function Sidebar({
 interface SessionRowProps {
   session: SessionItem;
   currentSessionId: string;
+  runningSessionId: string | null;
   collapsed: boolean;
   onSwitch: () => void;
   onRename?: (id: string, name: string) => void | Promise<void>;
@@ -390,6 +396,7 @@ interface SessionRowProps {
 function SessionRow({
   session,
   currentSessionId,
+  runningSessionId,
   collapsed,
   onSwitch,
   onRename,
@@ -502,47 +509,56 @@ function SessionRow({
         <span className="truncate flex-1 min-w-0">{displayName}</span>
       </button>
       {(onPin || onRename || onDelete) && (
-        <div className="flex items-center gap-0.5 pr-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {onPin && (
-            <button
-              onClick={handlePin}
-              className={`p-1 rounded-md transition ${
-                session.pinned
-                  ? "text-primary hover:text-primary"
-                  : "text-secondary hover:text-primary"
-              } hover:bg-black/5 dark:hover:bg-white/5`}
-              title={session.pinned ? "Unpin session" : "Pin session"}
-              aria-label={session.pinned ? "Unpin session" : "Pin session"}
-            >
-              {session.pinned ? (
-                <PinOff className="w-3 h-3" />
-              ) : (
-                <Pin className="w-3 h-3" />
-              )}
-            </button>
-          )}
-          {onRename && (
-            <button
-              onClick={() => {
-                setEditName(displayName);
-                setIsEditing(true);
-              }}
-              className="p-1 rounded-md text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition"
-              title="Rename session"
-              aria-label="Rename session"
-            >
-              <Pencil className="w-3 h-3" />
-            </button>
-          )}
-          {onDelete && (
-            <button
-              onClick={handleDelete}
-              className="p-1 rounded-md text-secondary hover:text-red-500 hover:bg-red-500/10 transition"
-              title="Delete session"
-              aria-label="Delete session"
-            >
-              <Trash2 className="w-3 h-3" />
-            </button>
+        <div className="relative flex items-center gap-0.5 pr-1 ml-auto">
+          {/* Three action buttons — always in DOM for spacing, visible on hover */}
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            {onPin && (
+              <button
+                onClick={handlePin}
+                className={`p-1 rounded-md transition ${
+                  session.pinned
+                    ? "text-primary hover:text-primary"
+                    : "text-secondary hover:text-primary"
+                } hover:bg-black/5 dark:hover:bg-white/5`}
+                title={session.pinned ? "Unpin session" : "Pin session"}
+                aria-label={session.pinned ? "Unpin session" : "Pin session"}
+              >
+                {session.pinned ? (
+                  <PinOff className="w-3 h-3" />
+                ) : (
+                  <Pin className="w-3 h-3" />
+                )}
+              </button>
+            )}
+            {onRename && (
+              <button
+                onClick={() => {
+                  setEditName(displayName);
+                  setIsEditing(true);
+                }}
+                className="p-1 rounded-md text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition"
+                title="Rename session"
+                aria-label="Rename session"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+            )}
+            {onDelete && (
+              <button
+                onClick={handleDelete}
+                className="p-1 rounded-md text-secondary hover:text-red-500 hover:bg-red-500/10 transition"
+                title="Delete session"
+                aria-label="Delete session"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          {/* Loading overlay — covers same area as buttons, hidden on hover */}
+          {session.id === runningSessionId && (
+            <div className="absolute inset-0 flex items-center justify-end pr-0.5 opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none">
+              <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
+            </div>
           )}
         </div>
       )}

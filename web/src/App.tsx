@@ -119,6 +119,7 @@ function ChatApp() {
     }>
   >([]);
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus>("connecting");
+  const [runningSessionId, setRunningSessionId] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const previewDocument = useChatStore((s) => s.previewDocument);
@@ -184,6 +185,13 @@ function ChatApp() {
     }, 8000);
     return () => clearInterval(interval);
   }, [refreshSessions, refreshAgents]);
+
+  // Track which session is currently running for sidebar loading indicator
+  useEffect(() => {
+    return transport.onRunStateChange((running) => {
+      setRunningSessionId(running ? transport.getSessionId() : null);
+    });
+  }, [transport]);
 
   // Refresh session list immediately when transport creates/switches sessions
   useEffect(() => {
@@ -432,6 +440,7 @@ function ChatApp() {
         onToggle={() => setSidebarCollapsed((c) => !c)}
         sessions={sessionItems}
         currentSessionId={transport.getSessionId()}
+        runningSessionId={runningSessionId}
         onSwitchSession={handleSwitchSession}
         onNewSession={handleNewSession}
         agents={agents}
