@@ -815,7 +815,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
-  private saveHistory(sessionId: string, messages: ChatMessage[]): void {
+  saveHistory(sessionId: string, messages: ChatMessage[]): void {
     const key = this.historyKey(sessionId);
     const trimmed = messages.slice(-200).map((m) => ({
       ...m,
@@ -842,6 +842,28 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
 
     // Trigger assistant-ui to run again with the edited prompt
     await this.resendLastUserMessage();
+  }
+
+  private pendingMessageKey(sessionId: string): string {
+    return `syscity_pending_msg_${sessionId}`;
+  }
+
+  /** Save a pending user message text for a session (message that was sent but
+   *  didn't get a complete AI response before session switch). */
+  savePendingMessage(sessionId: string, text: string): void {
+    if (text) {
+      localStorage.setItem(this.pendingMessageKey(sessionId), text);
+    } else {
+      localStorage.removeItem(this.pendingMessageKey(sessionId));
+    }
+  }
+
+  /** Retrieve and clear the pending message text for a session. */
+  getPendingMessage(sessionId: string): string | null {
+    const key = this.pendingMessageKey(sessionId);
+    const text = localStorage.getItem(key);
+    localStorage.removeItem(key);
+    return text;
   }
 
   /** Remove the last assistant reply and re-send the preceding user message. */

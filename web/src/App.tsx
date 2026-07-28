@@ -380,6 +380,25 @@ function ChatApp() {
   const handleSwitchSession = useCallback(
     async (id: string) => {
       setSettingsOpen(false);
+      // Save current session's in-memory messages before switching
+      const currentId = transport.getSessionId();
+      const currentMessages = transport.getMessages();
+      if (currentMessages.length > 0) {
+        transport.saveHistory(currentId, currentMessages);
+      }
+      // If AI is running, save the last user message text as pending
+      // so it can be restored in the input when switching back.
+      if (runningSessionId === currentId) {
+        const lastUserMsg = [...currentMessages]
+          .reverse()
+          .find((m) => m.role === "user");
+        if (lastUserMsg?.content) {
+          transport.savePendingMessage(currentId, lastUserMsg.content);
+        }
+      }
+      // Abort any running AI generation
+      transport.abort();
+      // Switch to new session
       transport.switchSession(id);
       // Load history for the new session from backend
       const { messages: history, hasMore } = await transport.loadHistory(id);
@@ -387,7 +406,7 @@ function ChatApp() {
       useChatStore.getState().setHasMoreHistory(hasMore);
       setSessionKey((k) => k + 1);
     },
-    [transport]
+    [transport, runningSessionId]
   );
 
   const handleRenameSession = useCallback(
