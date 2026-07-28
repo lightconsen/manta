@@ -1392,19 +1392,6 @@ impl SessionContext {
             parts.push(format!("## Relevant Context\n{}", mem_lines.join("\n")));
         }
 
-        // Episodic context (recent conversation summary if available)
-        if self.messages.len() > 10 {
-            let recent: Vec<String> = self
-                .messages
-                .iter()
-                .rev()
-                .take(5)
-                .rev()
-                .map(|m| format!("{}: {}", m.role, m.content.chars().take(100).collect::<String>()))
-                .collect();
-            parts.push(format!("## Recent Messages\n{}", recent.join("\n")));
-        }
-
         parts.join("\n\n")
     }
 }
@@ -1685,7 +1672,7 @@ mod tests {
         };
         let formatted = ctx.format_for_injection();
         assert!(formatted.contains("Relevant Context"));
-        assert!(formatted.contains("Recent Messages"));
+        assert!(!formatted.contains("Recent Messages")); // removed — covered by full history
     }
 
     #[test]

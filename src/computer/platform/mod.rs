@@ -255,13 +255,10 @@ pub fn host_environment_summary() -> String {
     }
 
     let mut available = Vec::new();
-    let mut unavailable = Vec::new();
 
     for set in sets {
         if set.is_available() {
             available.push((set.id().to_string(), set.name().to_string()));
-        } else {
-            unavailable.push((set.id().to_string(), set.name().to_string()));
         }
     }
 
@@ -269,13 +266,6 @@ pub fn host_environment_summary() -> String {
         let _ = writeln!(&mut buf, "Available capabilities:");
         for (id, name) in &available {
             let _ = writeln!(&mut buf, "  - {} ({})", name, id);
-        }
-    }
-
-    if !unavailable.is_empty() {
-        let _ = writeln!(&mut buf, "Unavailable capabilities:");
-        for (id, name) in &unavailable {
-            let _ = writeln!(&mut buf, "  - {} ({}) — environment constraints not met", name, id);
         }
     }
 

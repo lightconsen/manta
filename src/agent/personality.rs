@@ -350,12 +350,10 @@ impl AgentPersonality {
 
         // Inject agent identity so the agent knows its own ID and can manage its files
         let system_prompt = format!(
-            "{}\n\n## Agent Identity\n\nYour agent ID is: `{}`\nYour agent directory is: \
-             `{}`\nYou may edit files in your agent directory (including HEARTBEAT.md) to manage \
+            "{}\n\n## Agent Identity\n\nYour agent ID is: `{}`\n\
+             You may edit files in your agent directory (including HEARTBEAT.md) to manage \
              your personality and periodic tasks when explicitly asked by the user.",
-            system_prompt,
-            self.id,
-            self.path.display()
+            system_prompt, self.id,
         );
 
         AgentConfig {
