@@ -845,6 +845,7 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/syscity.png", get(super::syscity_png_handler))
         .route("/manifest.webmanifest", get(super::manifest_handler))
         .route("/registerSW.js", get(super::register_sw_handler))
+        .route("/sw.js", get(super::asset_handler))
         .route("/assets/*path", get(super::asset_handler));
 
     // Merge all routers and apply global CORS
