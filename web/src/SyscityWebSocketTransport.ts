@@ -114,8 +114,18 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   private ws: WebSocket | null = null;
   private reqId = 0;
   private sessionId: string;
-  private eventQueue: WsEvent[] = [];
-  private eventWaiters: Array<(evt: WsEvent | null) => void> = [];
+  /** Per-session event queues, keyed by session_id. '' key for non-session events. */
+  private eventQueues: Map<string, WsEvent[]> = new Map();
+  /** Per-session event waiters. */
+  private eventWaiters: Map<string, Array<(evt: WsEvent | null) => void>> = new Map();
+  /** Per-session message arrays. */
+  private messagesMap: Map<string, ChatMessage[]> = new Map();
+  /** Set of session_ids currently being generated. */
+  private runningSessions: Set<string> = new Set();
+  /** Per-session AbortControllers for local cancellation. */
+  private abortControllers: Map<string, AbortController> = new Map();
+  /** Sessions whose background processing has completed. */
+  private runningSessionListeners: Set<(ids: string[]) => void> = new Set();
   private reconnectDelay = 800;
   private readonly reconnectCap = 15000;
   private readonly reconnectMultiplier = 1.7;
@@ -132,9 +142,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   private messages: ChatMessage[] = [];
   private messagesListeners: Set<MessagesCallback> = new Set();
   private sessionListeners: Set<SessionCallback> = new Set();
-  private isRunningFlag = false;
   private runListeners: Set<(running: boolean) => void> = new Set();
-  private currentAbortController: AbortController | null = null;
   private serverInfo: { version?: string; conn_id?: string; features?: string[]; scopes_granted?: string[] } = {};
   private gatewayUrl: string = "";
 
@@ -200,15 +208,45 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
 
   onRunStateChange(callback: (running: boolean) => void): () => void {
     this.runListeners.add(callback);
-    callback(this.isRunningFlag);
+    callback(this.runningSessions.has(this.sessionId));
     return () => this.runListeners.delete(callback);
   }
 
-  abort(): void {
-    this.currentAbortController?.abort();
+  onRunningSessionsChange(callback: (ids: string[]) => void): () => void {
+    this.runningSessionListeners.add(callback);
+    callback(Array.from(this.runningSessions));
+    return () => this.runningSessionListeners.delete(callback);
+  }
+
+  /** Full abort: local AbortController + sends chat.abort to backend. Used by Stop button. */
+  abort(sessionId?: string): void {
+    const sid = sessionId ?? this.sessionId;
+    this.abortLocal(sid);
     this.sendRequest("chat.abort", {
-      session_id: this.sessionId,
+      session_id: sid,
     });
+    this.runningSessions.delete(sid);
+    this.notifyRunningSessionsChanged();
+  }
+
+  /** Local-only abort: cancels frontend generator without backend chat.abort. Used by session switch. */
+  abortLocal(sessionId?: string): void {
+    const sid = sessionId ?? this.sessionId;
+    const controller = this.abortControllers.get(sid);
+    if (controller) {
+      controller.abort();
+      this.abortControllers.delete(sid);
+    }
+    this.runningSessions.delete(sid);
+    this.notifyRunningSessionsChanged();
+  }
+
+  private notifyRunningSessionsChanged(): void {
+    const ids = Array.from(this.runningSessions);
+    this.runningSessionListeners.forEach((cb) => cb(ids));
+    // Keep backwards compatible: notify run listeners with current session state
+    const currentRunning = this.runningSessions.has(this.sessionId);
+    this.runListeners.forEach((cb) => cb(currentRunning));
   }
 
   private notifySessionChange() {
@@ -303,11 +341,10 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             }
           }
           this.listeners.forEach((cb) => cb(evt));
-          if (this.eventWaiters.length > 0) {
-            const waiter = this.eventWaiters.shift()!;
-            waiter(evt);
-          } else {
-            this.eventQueue.push(evt);
+          // Route event to session-specific queue for session-aware processing
+          const sid = this.getSessionIdFromEventPayload(evt);
+          if (sid) {
+            this.routeToSessionQueue(sid, evt);
           }
         }
       } catch {
@@ -594,6 +631,38 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       });
     }
     this.notifySessionChange();
+  }
+
+  /* ── Event routing helpers ── */
+  /** Session-scoped event names that carry session_id in payload. */
+  private static SESSION_EVENTS = new Set([
+    'chat.delta', 'chat.final', 'chat.error',
+    'agent.thinking', 'tool.calling', 'tool.result',
+    'cron.completed', 'goal.progress',
+    'session.created', 'session.renamed', 'session.pinned',
+  ]);
+
+  /** Extract session_id from event payload. Returns '' for non-session events. */
+  private getSessionIdFromEventPayload(evt: WsEvent): string {
+    if (evt.payload?.session_id && SyscityWebSocketTransport.SESSION_EVENTS.has(evt.event)) {
+      return String(evt.payload.session_id);
+    }
+    return '';
+  }
+
+  /** Route an event to a session-specific queue, waking a waiter if available. */
+  private routeToSessionQueue(sessionId: string, evt: WsEvent): void {
+    if (!this.eventQueues.has(sessionId)) {
+      this.eventQueues.set(sessionId, []);
+    }
+    const queue = this.eventQueues.get(sessionId)!;
+    const waiters = this.eventWaiters.get(sessionId);
+    if (waiters && waiters.length > 0) {
+      const waiter = waiters.shift()!;
+      waiter(evt);
+    } else {
+      queue.push(evt);
+    }
   }
 
   /* ── Session history (localStorage) ── */
@@ -883,9 +952,10 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     if (!last || last.role !== "user") return;
 
     // Abort any in-flight generation
-    this.currentAbortController?.abort();
-    this.isRunningFlag = false;
+    this.abortControllers.get(this.sessionId)?.abort();
+    this.runningSessions.delete(this.sessionId);
     this.runListeners.forEach((cb) => cb(false));
+    this.notifyRunningSessionsChanged();
 
     // Send via chat.send like a normal user turn. The assistant-ui runtime
     // drives the streaming response via run() when messages change.
@@ -1142,11 +1212,16 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     return this.gatewayUrl;
   }
 
-  getMessages(): ChatMessage[] {
-    return this.messages;
+  getMessages(sessionId?: string): ChatMessage[] {
+    const sid = sessionId ?? this.sessionId;
+    if (sid === this.sessionId) {
+      return this.messages;
+    }
+    return this.messagesMap.get(sid) || [];
   }
 
-  setMessages(msgs: ChatMessage[]): void {
+  setMessages(msgs: ChatMessage[], sessionId?: string): void {
+    const sid = sessionId ?? this.sessionId;
     const seen = new Set<string>();
     const deduped: ChatMessage[] = [];
     for (const m of msgs) {
@@ -1155,8 +1230,22 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         deduped.push(m);
       }
     }
-    this.messages = deduped;
-    this.messagesListeners.forEach((cb) => cb(deduped));
+    if (sid === this.sessionId) {
+      this.messages = deduped;
+    } else {
+      this.messagesMap.set(sid, deduped);
+    }
+    this.messagesListeners.forEach((cb) => cb(this.messages));
+  }
+
+  /** Save a snapshot of session messages for seamless switch-back restoration. */
+  saveSessionMessages(sessionId: string, msgs: ChatMessage[]): void {
+    this.messagesMap.set(sessionId, [...msgs]);
+  }
+
+  /** Get saved messages for any session (not necessarily current). */
+  getSessionMessages(sessionId: string): ChatMessage[] {
+    return this.messagesMap.get(sessionId) || [];
   }
 
   onMessagesChange(callback: MessagesCallback): () => void {
@@ -1306,12 +1395,13 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       return;
     }
 
-    this.isRunningFlag = true;
-    this.runListeners.forEach((cb) => cb(true));
-    this.currentAbortController = new AbortController();
+    const sessionId = this.sessionId;
+    this.runningSessions.add(sessionId);
+    this.abortControllers.set(sessionId, new AbortController());
+    this.notifyRunningSessionsChanged();
 
     this.sendRequest("chat.send", {
-      session_id: this.sessionId,
+      session_id: sessionId,
       message: text,
     });
 
@@ -1323,7 +1413,6 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     let currentText = "";
     let currentReasoning = "";
     let toolCalls = new Map<string, ToolCallMessagePart>();
-    let aborted = false;
     let aiMsgId = `a_${Date.now()}`;
     let hasShownThinking = false;
     const extraParts: any[] = [];
@@ -1347,9 +1436,9 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
 
     try {
       while (true) {
-        const evt = await this.nextEvent(this.currentAbortController?.signal ?? abortSignal);
+        const signal = this.abortControllers.get(sessionId)?.signal ?? abortSignal;
+        const evt = await this.nextEvent(sessionId, signal);
         if (!evt) {
-          aborted = true;
           break;
         }
 
@@ -1537,27 +1626,27 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       this.messagesListeners.forEach((cb) => cb(this.messages));
       throw err;
     } finally {
-      if (aborted) {
-        this.sendRequest("chat.abort", {
-          session_id: this.sessionId,
-        });
-      }
-      // Safety net: always clear live status and running flag
+      // Safety net: always clear live status
       if (aiMsg.durationMs === undefined) {
         aiMsg.durationMs = Date.now() - startTime;
         aiMsg.toolCount = toolCalls.size;
       }
       aiMsg.liveStatus = undefined;
-      this.isRunningFlag = false;
+      this.runningSessions.delete(sessionId);
+      this.abortControllers.delete(sessionId);
       this.runListeners.forEach((cb) => cb(false));
-      this.currentAbortController = null;
+      this.notifyRunningSessionsChanged();
     }
   }
 
-  private nextEvent(abortSignal?: AbortSignal): Promise<WsEvent | null> {
+  private nextEvent(sessionId: string, abortSignal?: AbortSignal): Promise<WsEvent | null> {
     return new Promise((resolve) => {
-      if (this.eventQueue.length > 0) {
-        resolve(this.eventQueue.shift()!);
+      if (!this.eventQueues.has(sessionId)) {
+        this.eventQueues.set(sessionId, []);
+      }
+      const queue = this.eventQueues.get(sessionId)!;
+      if (queue.length > 0) {
+        resolve(queue.shift()!);
         return;
       }
 
@@ -1565,7 +1654,10 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         cleanup();
         resolve(evt);
       };
-      this.eventWaiters.push(waiter);
+      if (!this.eventWaiters.has(sessionId)) {
+        this.eventWaiters.set(sessionId, []);
+      }
+      this.eventWaiters.get(sessionId)!.push(waiter);
 
       const onAbort = () => {
         cleanup();
@@ -1576,8 +1668,11 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         if (abortSignal) {
           abortSignal.removeEventListener("abort", onAbort);
         }
-        const idx = this.eventWaiters.indexOf(waiter);
-        if (idx >= 0) this.eventWaiters.splice(idx, 1);
+        const waiters = this.eventWaiters.get(sessionId);
+        if (waiters) {
+          const idx = waiters.indexOf(waiter);
+          if (idx >= 0) waiters.splice(idx, 1);
+        }
       };
 
       if (abortSignal?.aborted) {
@@ -1588,5 +1683,145 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         abortSignal.addEventListener("abort", onAbort);
       }
     });
+  }
+
+  /**
+   * Continue processing events for a session that was running when the user
+   * switched away. Does NOT yield to assistant-ui. Updates messagesMap
+   * directly so the accumulated response is available when switching back.
+   * Does NOT send chat.abort.
+   */
+  async processSessionInBackground(sessionId: string): Promise<void> {
+    // Seed messagesMap with current state if empty
+    let sessionMessages = this.messagesMap.get(sessionId);
+    if (!sessionMessages) {
+      sessionMessages = sessionId === this.sessionId ? [...this.messages] : [];
+      this.messagesMap.set(sessionId, sessionMessages);
+    }
+
+    // Find existing partial AI message (from aborted run()), or create new
+    const partialAi = sessionMessages.find((m) => m.role === "assistant" && m.liveStatus);
+    const aiMsg: ChatMessage = partialAi ?? {
+      id: `a_bg_${Date.now()}`,
+      role: "assistant",
+      content: "",
+      parts: [],
+      liveStatus: { status: "thinking" },
+    };
+    let currentText = partialAi?.content || "";
+    let currentReasoning = "";
+    const toolCalls = new Map<string, ChatMessagePart>();
+    const extraParts: ChatMessagePart[] = [];
+    if (!partialAi) {
+      sessionMessages = [...sessionMessages, aiMsg];
+      this.messagesMap.set(sessionId, sessionMessages);
+    }
+
+    try {
+      while (true) {
+        const evt = await this.nextEvent(sessionId);
+        if (!evt) break;
+
+        switch (evt.event) {
+          case "chat.delta": {
+            const delta = (evt.payload?.delta as string) || (evt.payload?.content as string) || "";
+            currentText += delta;
+            break;
+          }
+          case "agent.thinking": {
+            currentReasoning += (evt.payload?.content as string) || "";
+            break;
+          }
+          case "tool.calling": {
+            const toolName = (evt.payload?.tool_name as string) || "tool";
+            const rawArgs = evt.payload?.arguments;
+            let toolArgs: Record<string, unknown> = {};
+            if (typeof rawArgs === "string") {
+              try { toolArgs = JSON.parse(rawArgs); } catch { toolArgs = { raw: rawArgs }; }
+            } else if (rawArgs && typeof rawArgs === "object") {
+              toolArgs = rawArgs as Record<string, unknown>;
+            }
+            toolCalls.set(`tc_bg_${toolCalls.size}_${Date.now()}`, {
+              type: "tool-call",
+              toolName,
+              args: toolArgs as any,
+            });
+            break;
+          }
+          case "tool.result": {
+            const tName = (evt.payload?.tool_name as string) || "";
+            const result = evt.payload?.result;
+            const data = evt.payload?.data;
+            for (const [, tc] of toolCalls) {
+              if (tc.toolName === tName && tc.result === undefined) {
+                tc.result = result;
+                tc.data = data;
+                break;
+              }
+            }
+            if ((tName === "write_report" || tName === "write_document") && data && typeof data === "object") {
+              const d = data as Record<string, unknown>;
+              extraParts.push({
+                type: "document-ref",
+                data: { filename: d.filename, title: d.title || d.filename, format: d.format || "markdown" },
+              });
+            }
+            break;
+          }
+          case "chat.final": {
+            currentText = (evt.payload?.response as string) || currentText;
+            const finalParts: ChatMessagePart[] = [];
+            if (currentReasoning) finalParts.push({ type: "reasoning", text: currentReasoning });
+            for (const tc of toolCalls.values()) finalParts.push(tc);
+            finalParts.push(...extraParts);
+            if (currentText) finalParts.push({ type: "text", text: currentText });
+
+            aiMsg.content = currentText;
+            aiMsg.parts = finalParts;
+            aiMsg.durationMs = Date.now();
+            aiMsg.toolCount = toolCalls.size;
+            aiMsg.liveStatus = undefined;
+
+            this.messagesMap.set(sessionId, [...sessionMessages]);
+            this.saveHistory(sessionId, this.messagesMap.get(sessionId)!);
+
+            // If user switched back and this is now the current session, notify listeners
+            if (sessionId === this.sessionId) {
+              this.messages = this.messagesMap.get(sessionId)!;
+              this.messagesListeners.forEach((cb) => cb(this.messages));
+            }
+            return;
+          }
+          case "chat.error": {
+            aiMsg.content = currentText || ((evt.payload?.message as string) || "Chat error");
+            aiMsg.liveStatus = undefined;
+            this.messagesMap.set(sessionId, [...sessionMessages]);
+            return;
+          }
+        }
+
+        // Update partial state in messagesMap
+        const parts: ChatMessagePart[] = [];
+        if (currentReasoning) parts.push({ type: "reasoning", text: currentReasoning });
+        for (const tc of toolCalls.values()) parts.push(tc);
+        parts.push(...extraParts);
+        if (currentText) parts.push({ type: "text", text: currentText });
+
+        aiMsg.content = currentText;
+        aiMsg.parts = parts;
+        this.messagesMap.set(sessionId, sessionMessages);
+
+        // If this is now the current session, notify live
+        if (sessionId === this.sessionId) {
+          this.messages = sessionMessages;
+          this.messagesListeners.forEach((cb) => cb(this.messages));
+        }
+      }
+    } catch {
+      // Background processor silently handles errors
+    } finally {
+      this.runningSessions.delete(sessionId);
+      this.notifyRunningSessionsChanged();
+    }
   }
 }

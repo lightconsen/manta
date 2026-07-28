@@ -39,7 +39,7 @@ interface SidebarProps {
   onToggle: () => void;
   sessions: SessionItem[];
   currentSessionId: string;
-  runningSessionId: string | null;
+  runningSessionIds: string[];
   onSwitchSession: (id: string) => void;
   onNewSession: () => void;
   agents: AgentItem[];
@@ -56,7 +56,7 @@ export function Sidebar({
   onToggle,
   sessions,
   currentSessionId,
-  runningSessionId,
+  runningSessionIds,
   onSwitchSession,
   onNewSession,
   agents,
@@ -241,7 +241,7 @@ export function Sidebar({
                     key={s.id}
                     session={s}
                     currentSessionId={currentSessionId}
-                    runningSessionId={runningSessionId}
+                    runningSessionIds={runningSessionIds}
                     collapsed={collapsed}
                     onSwitch={() => onSwitchSession(s.id)}
                     onRename={onRenameSession}
@@ -257,7 +257,7 @@ export function Sidebar({
                 key={s.id}
                 session={s}
                 currentSessionId={currentSessionId}
-                runningSessionId={runningSessionId}
+                runningSessionIds={runningSessionIds}
                 collapsed={collapsed}
                 onSwitch={() => onSwitchSession(s.id)}
                 onRename={onRenameSession}
@@ -385,7 +385,7 @@ export function Sidebar({
 interface SessionRowProps {
   session: SessionItem;
   currentSessionId: string;
-  runningSessionId: string | null;
+  runningSessionIds: string[];
   collapsed: boolean;
   onSwitch: () => void;
   onRename?: (id: string, name: string) => void | Promise<void>;
@@ -396,7 +396,7 @@ interface SessionRowProps {
 function SessionRow({
   session,
   currentSessionId,
-  runningSessionId,
+  runningSessionIds,
   collapsed,
   onSwitch,
   onRename,
@@ -555,7 +555,7 @@ function SessionRow({
             )}
           </div>
           {/* Loading overlay — covers same area as buttons, hidden on hover */}
-          {session.id === runningSessionId && (
+          {runningSessionIds.includes(session.id) && (
             <div className="absolute inset-0 flex items-center justify-end pr-0.5 opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none">
               <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
             </div>

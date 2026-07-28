@@ -33,6 +33,7 @@ interface ChatState {
   };
   networkStatus: NetworkStatus;
   isRunning: boolean;
+  runningSessionIds: string[];
   voiceMode: boolean;
   isLoadingHistory: boolean;
   hasMoreHistory: boolean;
@@ -55,6 +56,7 @@ interface ChatState {
   setCurrentAgent: (agent?: { id: string; display_name: string; emoji: string }) => void;
   setNetworkStatus: (status: NetworkStatus) => void;
   setIsRunning: (running: boolean) => void;
+  setRunningSessionIds: (ids: string[]) => void;
   setVoiceMode: (enabled: boolean) => void;
   setIsLoadingHistory: (loading: boolean) => void;
   setHasMoreHistory: (hasMore: boolean) => void;
@@ -68,6 +70,7 @@ export const useChatStore = create<ChatState>((set) => ({
   currentSessionId: "",
   networkStatus: "connecting",
   isRunning: false,
+  runningSessionIds: [],
   voiceMode: false,
   isLoadingHistory: false,
   hasMoreHistory: false,
@@ -86,6 +89,7 @@ export const useChatStore = create<ChatState>((set) => ({
   setCurrentAgent: (agent) => set({ currentAgent: agent }),
   setNetworkStatus: (status) => set({ networkStatus: status }),
   setIsRunning: (running) => set({ isRunning: running }),
+  setRunningSessionIds: (ids) => set({ runningSessionIds: ids }),
   setVoiceMode: (voiceMode) => set({ voiceMode }),
   setIsLoadingHistory: (isLoadingHistory) => set({ isLoadingHistory }),
   setHasMoreHistory: (hasMoreHistory) => set({ hasMoreHistory }),

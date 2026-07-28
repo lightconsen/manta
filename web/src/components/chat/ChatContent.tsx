@@ -145,16 +145,6 @@ export function ChatContent({ transport }: ChatContentProps) {
     });
   }, [transport]);
 
-  // Restore any pending user message text from a previous interrupted run
-  // (e.g., when switching sessions mid-AI-response then switching back).
-  useEffect(() => {
-    const pending = transport.getPendingMessage(transport.getSessionId());
-    if (pending) {
-      composer.setText(pending);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
-  }, [transport, composer]);
-
   // Auto-scroll to bottom when new messages arrive (but not when prepending history)
   const prevMessagesLengthRef = useRef(messages.length);
   useEffect(() => {
@@ -444,7 +434,7 @@ export function ChatContent({ transport }: ChatContentProps) {
               {isRunning ? (
                 <button
                   type="button"
-                  onClick={() => transport.abort()}
+                  onClick={() => transport.abort(transport.getSessionId())}
                   title="Stop generating"
                   aria-label="Stop generating"
                   className="shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition shadow-sm"

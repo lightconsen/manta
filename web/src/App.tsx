@@ -119,7 +119,7 @@ function ChatApp() {
     }>
   >([]);
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus>("connecting");
-  const [runningSessionId, setRunningSessionId] = useState<string | null>(null);
+  const [runningSessionIds, setRunningSessionIds] = useState<string[]>([]);
   const [sessionKey, setSessionKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const previewDocument = useChatStore((s) => s.previewDocument);
@@ -186,10 +186,10 @@ function ChatApp() {
     return () => clearInterval(interval);
   }, [refreshSessions, refreshAgents]);
 
-  // Track which session is currently running for sidebar loading indicator
+  // Track which sessions are currently running for sidebar loading indicators
   useEffect(() => {
-    return transport.onRunStateChange((running) => {
-      setRunningSessionId(running ? transport.getSessionId() : null);
+    return transport.onRunningSessionsChange((ids) => {
+      setRunningSessionIds(ids);
     });
   }, [transport]);
 
@@ -380,33 +380,34 @@ function ChatApp() {
   const handleSwitchSession = useCallback(
     async (id: string) => {
       setSettingsOpen(false);
-      // Save current session's in-memory messages before switching
       const currentId = transport.getSessionId();
-      const currentMessages = transport.getMessages();
-      if (currentMessages.length > 0) {
-        transport.saveHistory(currentId, currentMessages);
-      }
-      // If AI is running, save the last user message text as pending
-      // so it can be restored in the input when switching back.
-      if (runningSessionId === currentId) {
-        const lastUserMsg = [...currentMessages]
-          .reverse()
-          .find((m) => m.role === "user");
-        if (lastUserMsg?.content) {
-          transport.savePendingMessage(currentId, lastUserMsg.content);
+      if (currentId !== id) {
+        // Save current session's in-memory messages before switching
+        const currentMessages = transport.getMessages();
+        if (currentMessages.length > 0) {
+          transport.saveHistory(currentId, currentMessages);
         }
+        // Store current messages in messagesMap for background processing
+        transport.saveSessionMessages(currentId, currentMessages);
+        // Stop local processing but keep backend running
+        transport.abortLocal(currentId);
+        // Continue processing events in background
+        transport.processSessionInBackground(currentId).catch(() => {});
       }
-      // Abort any running AI generation
-      transport.abort();
       // Switch to new session
       transport.switchSession(id);
-      // Load history for the new session from backend
-      const { messages: history, hasMore } = await transport.loadHistory(id);
-      transport.setMessages(history);
-      useChatStore.getState().setHasMoreHistory(hasMore);
+      // Try cached messages first, fallback to backend history
+      const cached = transport.getSessionMessages(id);
+      if (cached.length > 0) {
+        transport.setMessages(cached);
+      } else {
+        const { messages: history, hasMore } = await transport.loadHistory(id);
+        transport.setMessages(history);
+        useChatStore.getState().setHasMoreHistory(hasMore);
+      }
       setSessionKey((k) => k + 1);
     },
-    [transport, runningSessionId]
+    [transport]
   );
 
   const handleRenameSession = useCallback(
@@ -459,7 +460,7 @@ function ChatApp() {
         onToggle={() => setSidebarCollapsed((c) => !c)}
         sessions={sessionItems}
         currentSessionId={transport.getSessionId()}
-        runningSessionId={runningSessionId}
+        runningSessionIds={runningSessionIds}
         onSwitchSession={handleSwitchSession}
         onNewSession={handleNewSession}
         agents={agents}
