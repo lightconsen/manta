@@ -74,6 +74,11 @@ body {
   outline-offset: 1px;
 }
 
+/* Chat input uses container's focus-within:ring-2, suppress textarea native outline */
+textarea[aria-label="Message input"]:focus-visible {
+  outline: none;
+}
+
 /* Semantic surface utilities */
 @layer utilities {
   .bg-page { background-color: var(--bg-page); }
