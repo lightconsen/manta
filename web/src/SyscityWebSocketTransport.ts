@@ -683,7 +683,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             result: tc.result,
           });
           // Reconstruct document-ref part from write_report tool arguments
-          if (tc.function.name === "write_report" && args.filename) {
+          // Also match old name "write_document" for backward compat with saved sessions
+          if ((tc.function.name === "write_report" || tc.function.name === "write_document") && args.filename) {
             parts.push({
               type: "document-ref",
               data: {
@@ -1444,7 +1445,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
               newParts.push(t);
             }
             // Add document-ref part for write_report tool results
-            if (toolName === "write_report" && data && typeof data === "object" && "filename" in (data as any)) {
+            // Also match old name "write_document" for backward compat
+            if ((toolName === "write_report" || toolName === "write_document") && data && typeof data === "object" && "filename" in (data as any)) {
               const d = data as { filename: string; title?: string; format?: string };
               const docPart: any = {
                 type: "document-ref",
