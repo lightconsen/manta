@@ -418,17 +418,17 @@ impl ErrorDiagnosisEngine {
         provider: &Arc<dyn Provider>,
     ) -> crate::Result<Diagnosis> {
         let prompt = format!(
-            r#"Analyse the following error and output a JSON object with:
-- category: one of [MissingDependency, PermissionDenied, NetworkIssue, ConfigurationError, ResourceExhaustion, CodeError, ServiceDown, TransientFailure, Unknown]
-- severity: one of [Info, Warning, Error, Critical]
-- description: brief root cause
-- is_transient: boolean
-- remediation: array of {{description, action (optional shell command), auto_safe: boolean}}
+            r#"Analyse the error and output JSON:
+category: [MissingDependency|PermissionDenied|NetworkIssue|ConfigurationError|ResourceExhaustion|CodeError|ServiceDown|TransientFailure|Unknown]
+severity: [Info|Warning|Error|Critical]
+description: brief root cause
+is_transient: bool
+remediation: [{{description, action?, auto_safe: bool}}]
 
 Context: {}
 Error: {}
 
-Output ONLY valid JSON. No markdown."#,
+Output ONLY valid JSON."#,
             context, error
         );
 

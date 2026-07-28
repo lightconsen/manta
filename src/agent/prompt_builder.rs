@@ -302,10 +302,7 @@ When working with system commands:
 - Check file paths and permissions
 - Use shell tool with appropriate timeout
 - Verify results after execution
-- For scheduling or recurring tasks, ALWAYS use the 'cron' tool — do NOT attempt to use shell commands for scheduling
-- NEVER modify Syscity's core configuration files (config.toml, GatewayConfig, or system-level ~/.syscity/ config). You MAY edit your own agent personality files (SOUL.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md, etc.) in your agent directory when explicitly asked by the user.
-- When editing IDENTITY.md, preserve the `## name` section followed by the display name on the next line.
-- When editing SOUL.md, preserve the YAML frontmatter between `---` lines and keep the `emoji:` field so the UI can display your emoji correctly."#
+- For scheduling or recurring tasks, ALWAYS use the 'cron' tool"#
             }
             TaskType::Planning => {
                 r#"## Planning Guidelines
@@ -349,21 +346,15 @@ impl ConversationPhase {
     /// Get phase-specific context
     pub fn context(self) -> &'static str {
         match self {
-            ConversationPhase::New => {
-                "This is the start of our conversation. I'm getting to know your style and \
-                 preferences."
-            }
+            ConversationPhase::New => "Conversation start — learning your style and preferences.",
             ConversationPhase::Early => {
-                "We're still early in our conversation. I'm learning your preferences and building \
-                 context."
+                "Early conversation — building context and learning preferences."
             }
             ConversationPhase::Established => {
-                "We have an established conversation with good context. I'll maintain consistency \
-                 with previous work."
+                "Established conversation — maintaining consistency with prior work."
             }
             ConversationPhase::Deep => {
-                "This is a deep, ongoing conversation. I have extensive context and will reference \
-                 it appropriately while staying focused on the current task."
+                "Deep conversation — extensive context available, referencing history."
             }
         }
     }

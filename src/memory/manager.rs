@@ -963,24 +963,19 @@ impl MemoryManager {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let prompt = format!(
-            "You are an expert memory extraction assistant. Analyze the following conversation \
-             and extract key facts, preferences, decisions, and important context that should be \
-             remembered for future interactions.\n\nReturn your findings as a JSON array of \
-             objects, each with:\n- \"content\": the fact/preference/decision as a concise \
-             statement\n- \"type\": one of \"fact\", \"preference\", \"decision\", \"context\"\n- \
-             \"importance\": a score from 0.0 to 1.0\n\nOnly extract information that is clearly \
-             stated or strongly implied. Do not invent information. Return ONLY the JSON array, \
-             no other text.\n\nConversation:\n{transcript}"
-        );
-
         let request = CompletionRequest {
             messages: vec![
                 Message::system(
-                    "You are a helpful assistant that extracts and structures information from \
-                     conversations. Return only valid JSON.",
+                    "Extract key facts, preferences, decisions, and context from conversations. \
+                     Return ONLY a JSON array.",
                 ),
-                Message::user(prompt),
+                Message::user(format!(
+                    "Analyze the conversation and extract structured information.\n\n\
+                     Each entry: {{\"content\": \"...\", \"type\": \"fact\"|\"preference\"|\"decision\"|\"context\", \
+                     \"importance\": 0.0..1.0}}\n\n\
+                     Only extract clearly stated or strongly implied info. \
+                     Do not invent. Return ONLY the JSON array.\n\nConversation:\n{transcript}"
+                )),
             ],
             model: model.map(String::from),
             temperature: Some(0.3),

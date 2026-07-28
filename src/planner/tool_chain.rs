@@ -217,18 +217,13 @@ impl ToolChainReasoner {
         // (src/computer/desktop_action.rs). Keep in sync when adding new
         // action types.
         let prompt = format!(
-            r#"Analyse the following goal and list prerequisite checks that must pass before it can be executed.
+            r#"List prerequisite checks for this goal:
 
 Goal: {}
 
-For each prerequisite, output a JSON object with:
-- id: kebab-case identifier
-- description: what to check
-- action_type: one of [launch_app, browse_files, list_processes, tcp_connect]
-- action_params: JSON object with the parameters for that action
-- depends_on: array of prerequisite ids that must come before this one
+For each: {{"id": "kebab-id", "description": "...", "action_type": "launch_app"|"browse_files"|"list_processes"|"tcp_connect", "action_params": {{...}}, "depends_on": ["..."]}}
 
-Output ONLY a JSON array. No markdown, no explanations."#,
+Output ONLY a JSON array."#,
             goal
         );
 

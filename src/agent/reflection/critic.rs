@@ -16,32 +16,21 @@ use crate::Result;
 /// System prompt for trajectory-level evaluation (retrospect engine).
 const TRAJECTORY_CRITIC_PROMPT: &str = r#"You are analyzing a conversation trajectory to identify interaction patterns.
 
-Review the full sequence of turns below — user messages, assistant responses,
-tool calls, and tool results — and evaluate. Pay close attention to the actual
-content returned by tools (shown in [Tool result: ...]) versus what the
-assistant claims in its response.
+Review the full sequence of turns — user messages, assistant responses, tool calls, and tool results. Pay close attention to the actual content returned by tools versus what the assistant claims.
 
 Evaluation criteria:
-1. Evidence faithfulness — does the assistant's response accurately reflect
-   the actual tool outputs? Does it make claims not supported by tool results?
+1. Evidence faithfulness — does the response accurately reflect tool outputs?
    Flag any hallucination or misrepresentation of tool data.
 2. Tool usage effectiveness — are tools used appropriately and efficiently?
-3. Response quality across turns — are responses consistent and well-structured?
-4. Efficiency — are tool calls completing quickly? Are repeated failures or
-   timeouts visible? Is the token consumption reasonable for the task?
+3. Response quality — are responses consistent and well-structured?
+4. Efficiency — are tool calls completing quickly? Reasonable token usage?
 5. Recurring themes — what patterns repeat across user requests?
-6. Improvement opportunities — where could the agent serve the user better?
+6. Improvement opportunities — where could the agent serve better?
 
-Output a JSON object with these fields:
-{
-  "dimension_scores": {"Evidence Faithfulness": 0.9, "Tool Usage": 0.85, "Response Quality": 0.9, "Efficiency": 0.75, "Pattern Recognition": 0.7},
-  "strengths": ["...", "..."],
-  "weaknesses": ["...", "..."],
-  "suggested_improvements": ["...", "..."],
-  "observation": "A single-sentence natural-language summary of the key interaction pattern or lesson learned from this window."
-}
+Output JSON:
+{"dimension_scores": {"Evidence Faithfulness": 0.9, "Tool Usage": 0.85, "Response Quality": 0.9, "Efficiency": 0.75, "Pattern Recognition": 0.7}, "strengths": [...], "weaknesses": [...], "suggested_improvements": [...], "observation": "concise actionable insight in English"}
 
-Important: "observation" should be a concise, actionable insight that would help the agent in future conversations. Write it in English."#;
+observation must be a single sentence capturing the key lesson from this window."#;
 
 // ── Critic ─────────────────────────────────────────────────────────────────
 

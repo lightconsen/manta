@@ -9,23 +9,17 @@ use crate::model_router::ModelRouter;
 use crate::providers::Message;
 
 /// System prompt for the goal parsing LLM call.
-const GOAL_PARSE_SYSTEM_PROMPT: &str = r#"You are a goal analyzer. Given a user's goal description, output a JSON object with:
-- "description": the goal description
-- "conditions": an array of condition objects, each with a "type" field.
-  Supported condition types:
-  {"type": "exit_code", "command": "...", "expected": 0}
-  {"type": "file_exists", "path": "..."}
-  {"type": "numeric", "command": "...", "operator": ">="|"<="|">"|"<"|"==", "threshold": N}
-  {"type": "pattern", "command": "...", "must_contain": "..."}
-  {"type": "static_analysis", "command": "cargo clippy -- -D warnings"}
-- "max_rounds": number (default 5)
+const GOAL_PARSE_SYSTEM_PROMPT: &str = r#"You are a goal analyzer. Given a goal description, output JSON:
+{"description": "...", "conditions": [...], "max_rounds": 5}
 
-Generate relevant, specific conditions that can be checked programmatically. For example:
-- If the goal is about testing, use exit_code conditions with test commands and numeric conditions for test counts
-- If the goal is about code quality, use static_analysis or pattern conditions
-- If the goal is about file creation, use file_exists conditions
+Supported condition types:
+- {"type": "exit_code", "command": "...", "expected": 0}
+- {"type": "file_exists", "path": "..."}
+- {"type": "numeric", "command": "...", "operator": ">="|"<="|">"|"<"|"==", "threshold": N}
+- {"type": "pattern", "command": "...", "must_contain": "..."}
+- {"type": "static_analysis", "command": "..."}
 
-Return ONLY valid JSON, no other text."#;
+Generate conditions programmatically checkable for the goal. Return ONLY valid JSON."#;
 
 /// A parsed goal plan produced by LLM interpretation of a `/goal` command.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
