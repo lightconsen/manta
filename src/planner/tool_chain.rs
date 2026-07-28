@@ -213,6 +213,9 @@ impl ToolChainReasoner {
         goal: &str,
         provider: &Arc<dyn Provider>,
     ) -> crate::Result<ChainAnalysis> {
+        // action_type values below map to DesktopAction variants
+        // (src/computer/desktop_action.rs). Keep in sync when adding new
+        // action types.
         let prompt = format!(
             r#"Analyse the following goal and list prerequisite checks that must pass before it can be executed.
 

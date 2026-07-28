@@ -42,20 +42,29 @@ impl HydeTransformer {
     }
 }
 
+/// System prompt for HyDE (Hypothetical Document Embeddings) query expansion.
+///
+/// Instructs the LLM to generate a direct hypothetical answer that captures
+/// the key semantics of the query without meta-commentary or hedging.
+const HYDE_SYSTEM_PROMPT: &str = r#"You are a query expansion engine for semantic search.
+Given a search query, write a short factual paragraph answering it.
+
+Rules:
+- Write ONLY the answer paragraph — no prefacing ("Based on...", "I think...", "Here is...")
+- If the query is ambiguous, cover the most likely interpretation
+- Use factual, declarative statements
+- Keep it concise (1-3 sentences)"#;
+
 #[async_trait]
 impl QueryTransformer for HydeTransformer {
     async fn transform(&self, query: &str) -> crate::Result<String> {
         let prompt = format!(
-            "You are a helpful assistant. Given a user's query, write a short, \
-             factual paragraph that answers it. Do not include any meta-commentary \
-             or prefacing — just write the answer.\n\nQuery: {query}"
+            "Query: {query}\n\nAnswer:"
         );
 
         let request = CompletionRequest {
             messages: vec![
-                Message::system(
-                    "You are a helpful assistant. Write a direct, factual answer.",
-                ),
+                Message::system(HYDE_SYSTEM_PROMPT),
                 Message::user(prompt),
             ],
             model: self.model.clone(),

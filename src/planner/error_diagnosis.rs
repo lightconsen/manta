@@ -433,7 +433,12 @@ Output ONLY valid JSON. No markdown."#,
         );
 
         let request = CompletionRequest {
-            messages: vec![Message::user(prompt)],
+            messages: vec![
+                Message::system(
+                    "You are a root cause analysis engine. Analyse errors and output structured JSON diagnoses.",
+                ),
+                Message::user(prompt),
+            ],
             temperature: Some(0.2),
             max_tokens: Some(1024),
             stream: false,

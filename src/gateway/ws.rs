@@ -826,6 +826,9 @@ fn handle_ping(req: &WsRequest) -> WsResponse {
     WsResponse::ok(&req.id, serde_json::json!({}))
 }
 
+/// Prompt for generating session titles via LLM.
+const SESSION_TITLE_PROMPT: &str = "Summarize the following user message into a very short session title (at most 6 words, no punctuation, no explanation).\n\nMessage: {message}\n\nTitle:";
+
 /// Generate a concise session title by asking an LLM to summarize the user's
 /// first message.
 async fn generate_session_title(
@@ -837,10 +840,7 @@ async fn generate_session_title(
         return Ok("New Session".to_string());
     }
 
-    let prompt = format!(
-        "Summarize the following user message into a very short session title (at most 6 words, \
-         no punctuation, no explanation).\n\nMessage: {trimmed}\n\nTitle:"
-    );
+    let prompt = SESSION_TITLE_PROMPT.replace("{message}", trimmed);
 
     let messages = vec![
         ProviderMessage::system("You generate concise session titles."),
