@@ -263,7 +263,7 @@ serial_test = "3.0"
 insta = { version = "1.39", features = ["yaml", "json"] }
 
 # Benchmark framework
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 # Browser automation for E2E tests
 chromiumoxide = { version = "0.9" }
