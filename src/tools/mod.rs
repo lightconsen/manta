@@ -814,7 +814,7 @@ pub type SharedTool = Arc<dyn Tool>;
 
 pub mod acp_tool;
 pub mod agents_list;
-pub mod artifact;
+pub mod report;
 pub mod browser;
 pub mod canvas;
 pub mod code_exec;
@@ -853,7 +853,7 @@ pub mod web;
 
 pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
 pub use agents_list::AgentsListTool;
-pub use artifact::WriteDocumentTool;
+pub use report::WriteReportTool;
 pub use browser::BrowserTool;
 pub use canvas::CanvasTool;
 pub use code_exec::CodeExecutionTool;

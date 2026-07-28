@@ -1,7 +1,7 @@
 //! Artifact serving handler
 //!
 //! Serves files from `~/.syscity/artifacts/` for the document preview feature.
-//! Documents written by the `write_document` tool are served here.
+//! Documents written by the `write_report` tool are served here.
 
 use axum::{
     extract::Path,
@@ -33,7 +33,7 @@ pub async fn artifact_handler(
     // Note: we intentionally skip canonicalize() here because on macOS it
     // fails on Unicode filenames due to NFC/NFD normalization differences
     // between the HTTP-decoded path and the filesystem-stored path.
-    // The write_document tool already validates paths server-side.
+    // The write_report tool already validates paths server-side.
 
     match tokio::fs::read_to_string(&path).await {
         Ok(content) => {

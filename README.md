@@ -30,10 +30,10 @@ Traditional AI lives inside a browser tab. Syscity lives inside your machine.
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/demo.gif" />
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/demo-dark.gif" />
-  <img src="docs/assets/demo.gif" alt="Syscity Demo — Agent generates a document and shows it in the preview panel" width="800" />
+  <img src="docs/assets/demo.gif" alt="Syscity Demo — Agent generates a report and shows it in the preview panel" width="800" />
 </picture>
 <br/>
-<p align="center"><em>Agent generates a markdown report via <code>write_document</code>, then previews it in a split-panel view.</em></p>
+<p align="center"><em>Agent generates a markdown report via <code>write_report</code>, then previews it in a split-panel view.</em></p>
 
 ## Why Syscity?
 

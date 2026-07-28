@@ -1,6 +1,6 @@
-//! Document artifact tool for Syscity
+//! Document report tool for Syscity
 //!
-//! `write_document` — saves markdown or HTML content to `~/.syscity/artifacts/`
+//! `write_report` — saves markdown or HTML content to `~/.syscity/artifacts/`
 //! and returns metadata so the frontend can render a preview card.
 
 use async_trait::async_trait;
@@ -10,31 +10,31 @@ use tracing::info;
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use crate::tools::sdk::ToolCapabilities;
 
-/// Tool that writes a user-viewable document (markdown or HTML) to the
+/// Tool that writes a user-viewable report (markdown or HTML) to the
 /// artifacts directory and returns metadata for frontend preview.
 #[derive(Debug, Default)]
-pub struct WriteDocumentTool;
+pub struct WriteReportTool;
 
-impl WriteDocumentTool {
+impl WriteReportTool {
     pub fn new() -> Self {
         Self
     }
 }
 
 #[async_trait]
-impl Tool for WriteDocumentTool {
+impl Tool for WriteReportTool {
     fn name(&self) -> &str {
-        "write_document"
+        "write_report"
     }
 
     fn description(&self) -> &str {
-        "Write a markdown or HTML document that enables a rich split-panel \
+        "Write a markdown or HTML report that enables a rich split-panel \
          preview in the chat UI. \
          \
          PREFER THIS OVER file_write when the user asks you to create a \
          document, report, article, essay, paper, summary, analysis, or any \
          formatted content they would want to READ rather than edit. This tool \
-         saves the document to a special directory and renders it with a \
+         saves the report to a special directory and renders it with a \
          clickable preview card in the chat — the user can then open it in a \
          side-by-side viewer. \
          \
@@ -49,24 +49,24 @@ impl Tool for WriteDocumentTool {
 
     fn parameters_schema(&self) -> Value {
         create_schema(
-            "Write a document artifact for user preview",
+            "Write a report for user preview",
             serde_json::json!({
                 "content": {
                     "type": "string",
-                    "description": "The full content of the document (markdown or HTML)"
+                    "description": "The full content of the report (markdown or HTML)"
                 },
                 "filename": {
                     "type": "string",
-                    "description": "Filename for the document, e.g. \"industry-report.md\" or \"report.html\""
+                    "description": "Filename for the report, e.g. \"industry-report.md\" or \"report.html\""
                 },
                 "title": {
                     "type": "string",
-                    "description": "Display title shown in the document card (defaults to filename)"
+                    "description": "Display title shown in the report card (defaults to filename)"
                 },
                 "format": {
                     "type": "string",
                     "enum": ["markdown", "html"],
-                    "description": "Document format (default: markdown)",
+                    "description": "Report format (default: markdown)",
                     "default": "markdown"
                 }
             }),
@@ -128,14 +128,14 @@ impl Tool for WriteDocumentTool {
 
         tokio::fs::write(&path, content).await.map_err(|e| {
             crate::error::SyscityError::IoContext {
-                context: format!("Failed to write document '{}'", filename),
+                context: format!("Failed to write report '{}'", filename),
                 source: e,
             }
         })?;
 
         let file_size = content.len();
         info!(
-            "Wrote document '{filename}' ({format}, {size} bytes) to {path:?}",
+            "Wrote report '{filename}' ({format}, {size} bytes) to {path:?}",
             filename = filename,
             format = format,
             size = file_size,
@@ -151,7 +151,7 @@ impl Tool for WriteDocumentTool {
         });
 
         Ok(ToolExecutionResult::success(format!(
-            "Document '{title}' written as {filename} ({format}, {size} bytes)",
+            "Report '{title}' written as {filename} ({format}, {size} bytes)",
             title = title,
             filename = filename,
             format = format,
@@ -167,14 +167,14 @@ mod tests {
     use crate::tools::ToolContext;
 
     #[tokio::test]
-    async fn test_write_document_basic() {
-        let tool = WriteDocumentTool::new();
-        assert_eq!(tool.name(), "write_document");
+    async fn test_write_report_basic() {
+        let tool = WriteReportTool::new();
+        assert_eq!(tool.name(), "write_report");
 
         let args = serde_json::json!({
-            "content": "# Test Document\n\nHello world.",
-            "filename": "test-doc.md",
-            "title": "Test Document",
+            "content": "# Test Report\n\nHello world.",
+            "filename": "test-report.md",
+            "title": "Test Report",
             "format": "markdown",
         });
 
@@ -184,9 +184,9 @@ mod tests {
         assert!(result.data.is_some());
 
         let data = result.data.unwrap();
-        assert_eq!(data["filename"], "test-doc.md");
-        assert_eq!(data["title"], "Test Document");
+        assert_eq!(data["filename"], "test-report.md");
+        assert_eq!(data["title"], "Test Report");
         assert_eq!(data["format"], "markdown");
-        assert!(data["url"].as_str().unwrap().contains("test-doc.md"));
+        assert!(data["url"].as_str().unwrap().contains("test-report.md"));
     }
 }

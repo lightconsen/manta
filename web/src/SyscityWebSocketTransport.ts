@@ -682,8 +682,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             args,
             result: tc.result,
           });
-          // Reconstruct document-ref part from write_document tool arguments
-          if (tc.function.name === "write_document" && args.filename) {
+          // Reconstruct document-ref part from write_report tool arguments
+          if (tc.function.name === "write_report" && args.filename) {
             parts.push({
               type: "document-ref",
               data: {
@@ -1443,8 +1443,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             for (const t of toolCalls.values()) {
               newParts.push(t);
             }
-            // Add document-ref part for write_document tool results
-            if (toolName === "write_document" && data && typeof data === "object" && "filename" in (data as any)) {
+            // Add document-ref part for write_report tool results
+            if (toolName === "write_report" && data && typeof data === "object" && "filename" in (data as any)) {
               const d = data as { filename: string; title?: string; format?: string };
               const docPart: any = {
                 type: "document-ref",
