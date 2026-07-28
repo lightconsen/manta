@@ -199,34 +199,19 @@ Rules:
 5. Prefer small steps over large ones. A subtask should map to roughly one user interaction.
 6. "tool_hint" can suggest which platform tool to use (e.g. "browser", "macos_accessibility", "windows_accessibility").
 
-Available DesktopAction types (JSON shape):
+Available DesktopAction types: screenshot, click, double_click, type, key_press, scroll,
+drag, read_ui_tree, launch_app, activate_window, close_window, wait, clipboard_get/set,
+key_sequence, install_package, browse_files, read_file_chunked, edit_file, compress,
+decompress, transfer_file, tool_call. See the DesktopAction enum for full parameter shapes.
+
+Examples:
 - { "screenshot": { "region": null } }
 - { "click": { "target": { "coordinate": { "x": 100, "y": 200 } }, "button": "left" } }
-- { "double_click": { "target": { "coordinate": { "x": 100, "y": 200 } }, "button": "left" } }
 - { "type": { "text": "hello world" } }
-- { "key_press": { "keys": ["ctrl", "c"] } }
-- { "scroll": { "target": { "coordinate": { "x": 100, "y": 200 } }, "direction": "down", "amount": 3 } }
-- { "drag": { "from": { "coordinate": { "x": 0, "y": 0 } }, "to": { "coordinate": { "x": 100, "y": 100 } } } }
-- { "read_ui_tree": { "app": null } }
 - { "launch_app": { "name": "Safari", "args": [], "wait_for_ready": true } }
-- { "activate_window": { "title_pattern": "Safari" } }
-- { "close_window": { "title_pattern": "Untitled" } }
-- { "wait": { "milliseconds": 500 } }
-- { "clipboard_get": {} }
-- { "clipboard_set": { "text": "copied" } }
-- { "key_sequence": { "keys": ["ctrl", "a", "delete"], "delays_ms": [100, 50, 0] } }
-- { "install_package": { "manager": "brew", "packages": ["node"], "timeout_secs": 300 } }
-- { "browse_files": { "path": "/var/log", "filter_description": "recently modified logs", "max_results": 10 } }
-- { "read_file_chunked": { "path": "/tmp/big.log", "offset": 0, "limit_bytes": 8192 } }
-- { "edit_file": { "path": "/tmp/config.ini", "search": "old_value", "replace": "new_value" } }
-- { "compress": { "sources": ["/tmp/logs"], "destination": "/tmp/logs.zip", "format": "zip" } }
-- { "decompress": { "archive": "/tmp/logs.zip", "destination": "/tmp/extracted" } }
-- { "transfer_file": { "source": "/tmp/file.txt", "destination": "user@host:/tmp/file.txt", "method": "scp" } }
-- { "tool_call": { "tool_name": "device_oscilloscope_01_read_waveform", "args": { "channel": 1 } } }
+- { "tool_call": { "tool_name": "...", "args": { ... } } }
 
-Note: Tool names starting with "device_" (e.g. "device_oscilloscope_01_read_waveform", "device_motor_03_move_to") are device capabilities registered by connected hardware. Use "tool_call" for any device operation. The list of available tool names is provided in the available_tools list.
-
-When to use `device_*` vs generic `shell`: Prefer device tools for hardware interaction (oscilloscope, motor, sensor read) because they use the device's structured API. Use `shell` only for software-side operations (file manipulation, network queries, process management) where no device tool exists.
+Note: Tool names starting with "device_" are device capabilities registered by connected hardware. Use "tool_call" for any device operation.
 
 Available verification types:
 - { "success": {} }

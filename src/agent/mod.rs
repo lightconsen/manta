@@ -397,49 +397,20 @@ impl Default for AgentConfig {
 
 You are Syscity, a helpful AI assistant running locally on the user's machine.
 
-## Tool Usage Rules
+## Core Rules (Priority: Highest)
 
-- ONLY use tools that are explicitly provided in the tools list for this conversation
-- NEVER invent or hallucinate tool names that are not in the provided tools list
-- For scheduling, recurring tasks, or cron queries: use the `cron` tool with action `list` — do NOT use shell commands or other tools for these operations
-- If a tool call fails, try a different approach or acknowledge the failure — do NOT repeat the same failed tool call
-- NEVER modify Syscity's core configuration files (config.toml, GatewayConfig, or system-level ~/.syscity/ config). You MAY edit your own agent personality files (SOUL.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md, etc.) in your agent directory when explicitly asked by the user.
-- When editing IDENTITY.md, preserve the `## name` section followed by the display name on the next line.
-- When editing SOUL.md, preserve the YAML frontmatter between `---` lines and keep the `emoji:` field so the UI can display your emoji correctly.
+1. Use ONLY tools explicitly provided in the tools list for this conversation — never invent or hallucinate tool names.
+2. If a tool call fails, try a different approach or acknowledge the failure — do NOT repeat the same failed call.
+3. NEVER modify Syscity's core configuration files (config.toml, GatewayConfig, or system-level ~/.syscity/ config). You MAY edit your own agent personality files (SOUL.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md, etc.) in your agent directory when explicitly asked.
+4. When editing IDENTITY.md, preserve the `## name` section followed by the display name on the next line.
+5. When editing SOUL.md, preserve the YAML frontmatter between `---` lines and keep the `emoji:` field.
 
-## Response Formatting Guidelines
+## Response Format
 
-When presenting information, especially lists or structured data, use rich formatting:
-
-### For Lists/Rankings (e.g., "top 10 news", "best tools"):
-```markdown
-## Title
-
-### 1. Item Name
-- **Metric**: Value | **Other**: Value
-- **Source**: Name
-- **Description**: Brief description
-
-### 2. Next Item...
-```
-
-### For Summaries:
-```markdown
-| Category | Count | Notes |
-|----------|-------|-------|
-| Type A | 5 | Description |
-| Type B | 3 | Description |
-
-**Key Takeaway**: Main insight here
-```
-
-### For Technical Content:
-- Use `inline code` for commands/variables
-- Use code blocks with language tags
-- Include emoji indicators where appropriate (bug, performance, security)
-
-## Current Time
-The current time is provided in the context. When asked about time-sensitive information (news, weather, schedules), use the current time as reference."#.to_string();
+Use rich formatting for lists, structured data, and technical content:
+- **Lists/Rankings**: markdown headings with bold metrics per item
+- **Summaries**: tables with key takeaway
+- **Technical Content**: inline code for commands/variables, code blocks with language tags, emoji indicators where appropriate (bug, performance, security)"#.to_string();
 
         Self {
             system_prompt,
@@ -543,10 +514,19 @@ impl AgentConfig {
             Err(_) => base_prompt,
         };
 
+        // Inject current time so the LLM can reason about time-sensitive
+        // queries (news, weather, schedules).
+        let time_str = chrono::Local::now()
+            .format("%Y-%m-%d %H:%M:%S %z")
+            .to_string();
+
         // Inject host environment awareness so the LLM knows what OS
         // controls are available on this machine.
         let host_env = crate::computer::platform::host_environment_summary();
-        format!("{}\n\n## Host Environment\n\n{}", result, host_env)
+        format!(
+            "{}\n\n## Current Time\n{}\n\n## Host Environment\n\n{}",
+            result, time_str, host_env
+        )
     }
 }
 
@@ -1194,9 +1174,18 @@ impl Agent {
             None
         };
 
-        // Combine base prompt with memory context and skills
+        // Build dynamic system prompt BEFORE memory/skills injection so that
+        // task-specific guidance (phase, task type, tool relevance) takes
+        // priority over supporting context.
+        let base_with_dynamic = PromptBuilder::build_from_context(
+            &base_prompt,
+            &prompt_ctx,
+            self.config.max_context_tokens / 4,
+        );
+
+        // Combine with memory context and skills
         let full_prompt = {
-            let mut prompt = base_prompt;
+            let mut prompt = base_with_dynamic;
 
             // Add memory context if available
             if let Some(ref mem_ctx) = memory_context {
@@ -1230,16 +1219,9 @@ impl Agent {
             prompt
         };
 
-        // Build dynamic system prompt
-        let system_prompt = PromptBuilder::build_from_context(
-            &full_prompt,
-            &prompt_ctx,
-            self.config.max_context_tokens / 4, // Rough token estimate
-        );
-
         let mut context = Context::new(
             conversation_id.to_string(),
-            system_prompt,
+            full_prompt,
             self.config.max_context_tokens,
         );
 

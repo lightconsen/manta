@@ -375,22 +375,22 @@ impl GoalRunner {
             .collect();
 
         format!(
-            r#"你是一个自主目标执行代理。你的任务是执行以下目标。
+            r#"You are an autonomous goal-execution agent. Your task is to complete the following goal.
 
-## 目标
+## Goal
 {}
 
-## 检查条件（必须全部通过）
+## Check Conditions (all must pass)
 {}
 
-## 规则
-1. 使用可用的工具来完成目标。
-2. 每个工具调用后，LLM 会收到工具执行结果。
-3. 条件会在本轮结束后自动检查——你只需要采取行动。
-4. 你可以多次调用工具来迭代完成工作。
-5. 工作目录: {}
-6. 不要修改 .git 目录或敏感配置文件。
-7. 完成任务后，回复一条简短的消息说明完成情况。"#,
+## Rules
+1. Use the available tools to accomplish the goal.
+2. After each tool call, the LLM will receive the tool result.
+3. Conditions are checked automatically after each round — you only need to take action.
+4. You may call tools multiple times to iterate and refine your work.
+5. Working directory: {}
+6. Do not modify .git directories or sensitive configuration files.
+7. When done, reply with a brief completion message."#,
             self.plan.description,
             conditions.join("\n"),
             crate::dirs::workspace_data_dir().display(),

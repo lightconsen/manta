@@ -608,7 +608,7 @@ impl RcaPipeline {
                         || t.name.contains("memory")
                 });
                 if !has_search && input.response.len() > 50 {
-                    return ModuleVerdict::SoftPass("可能需要检索但未调用检索工具".into());
+                    return ModuleVerdict::SoftPass("May need retrieval but no search tool was called".into());
                 }
                 ModuleVerdict::Pass
             }
@@ -627,7 +627,7 @@ impl RcaPipeline {
                     let criteria = crate::agent::reflection::types::QualityCriteria::default();
                     match critic.evaluate_trajectory(&prompt, &criteria, None).await {
                         Ok(c) if !c.passed => {
-                            return ModuleVerdict::Fail("回复未忠实于工具执行结果".into());
+                            return ModuleVerdict::Fail("Response does not faithfully reflect tool results".into());
                         }
                         _ => {}
                     }
