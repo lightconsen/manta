@@ -20,14 +20,9 @@ use crate::rag::ingestion::loader::{load_kb_config, KnowledgeSource, SourceType}
 #[derive(Debug, Clone)]
 pub enum KbWatchEvent {
     /// A source file changed — re-ingest this file for this agent.
-    SourceFileChanged {
-        agent: String,
-        source_path: PathBuf,
-    },
+    SourceFileChanged { agent: String, source_path: PathBuf },
     /// `kb.toml` changed — re-load config and re-ingest added/changed sources.
-    KbTomlChanged {
-        agent: String,
-    },
+    KbTomlChanged { agent: String },
 }
 
 /// Internal state for a watched agent.
@@ -294,7 +289,11 @@ pub(crate) fn source_paths_for_watch(source: &KnowledgeSource, agent_dir: &Path)
 ///
 /// Used by the watcher to determine which `KnowledgeSource` in `kb.toml`
 /// matches a changed file path.
-pub fn source_matches_path(source: &KnowledgeSource, changed_path: &Path, agent_dir: &Path) -> bool {
+pub fn source_matches_path(
+    source: &KnowledgeSource,
+    changed_path: &Path,
+    agent_dir: &Path,
+) -> bool {
     match &source.source_type {
         SourceType::File { path } => {
             let full = Path::new(path);
@@ -327,4 +326,3 @@ pub fn source_matches_path(source: &KnowledgeSource, changed_path: &Path, agent_
         }
     }
 }
-

@@ -127,20 +127,21 @@ impl Reranker for CohereReranker {
                 cause: None,
             })?;
 
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: format!("Failed to parse Cohere rerank response: {}", e),
-                cause: None,
-            })?;
+        let body: serde_json::Value =
+            response
+                .json()
+                .await
+                .map_err(|e| crate::error::SyscityError::ExternalService {
+                    source: format!("Failed to parse Cohere rerank response: {}", e),
+                    cause: None,
+                })?;
 
-        let results = body["results"]
-            .as_array()
-            .ok_or_else(|| crate::error::SyscityError::ExternalService {
+        let results = body["results"].as_array().ok_or_else(|| {
+            crate::error::SyscityError::ExternalService {
                 source: "Cohere rerank response missing 'results' array".to_string(),
                 cause: None,
-            })?;
+            }
+        })?;
 
         let mut reranked: Vec<(usize, f32)> = results
             .iter()
@@ -172,15 +173,13 @@ mod tests {
     #[tokio::test]
     async fn test_noop_reranker() {
         let reranker = NoopReranker;
-        let candidates = vec![
-            HybridSearchResult {
-                content: "a".to_string(),
-                score: 0.9,
-                source: "vector".to_string(),
-                memory_type: "semantic".to_string(),
-                citation: "doc:a".to_string(),
-            },
-        ];
+        let candidates = vec![HybridSearchResult {
+            content: "a".to_string(),
+            score: 0.9,
+            source: "vector".to_string(),
+            memory_type: "semantic".to_string(),
+            citation: "doc:a".to_string(),
+        }];
         let result = reranker.rerank("test", candidates.clone()).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].content, "a");

@@ -101,19 +101,16 @@ impl Tool for WriteReportTool {
             .map(|s| s.to_string())
             .unwrap_or_else(|| filename.to_string());
 
-        let format = args["format"]
-            .as_str()
-            .unwrap_or("markdown")
-            .to_string();
+        let format = args["format"].as_str().unwrap_or("markdown").to_string();
 
         // Resolve artifacts directory
         let artifacts_dir = crate::dirs::syscity_dir().join("artifacts");
-        tokio::fs::create_dir_all(&artifacts_dir).await.map_err(|e| {
-            crate::error::SyscityError::IoContext {
+        tokio::fs::create_dir_all(&artifacts_dir)
+            .await
+            .map_err(|e| crate::error::SyscityError::IoContext {
                 context: "Failed to create artifacts directory".to_string(),
                 source: e,
-            }
-        })?;
+            })?;
 
         let path = artifacts_dir.join(filename);
 

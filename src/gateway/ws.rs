@@ -3226,7 +3226,12 @@ async fn handle_mcp_connect(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
         }
     };
 
-    match state.tools.mcp_manager.connect(&payload.id, config.clone()).await {
+    match state
+        .tools
+        .mcp_manager
+        .connect(&payload.id, config.clone())
+        .await
+    {
         Ok(tools) => {
             super::lifecycle::register_mcp_tools(state, &payload.id, &tools, config.max_tools)
                 .await;

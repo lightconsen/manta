@@ -438,8 +438,8 @@ impl VectorStore for SqliteVecStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::rag::chunk::EmbeddedChunk;
     use super::*;
+    use crate::rag::chunk::EmbeddedChunk;
 
     #[tokio::test]
     async fn test_sqlite_vec_store_store_and_search() -> crate::Result<()> {

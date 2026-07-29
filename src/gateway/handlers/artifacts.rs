@@ -13,9 +13,7 @@ use axum::{
 ///
 /// Reads a document from the artifacts directory and returns it with the
 /// appropriate Content-Type (text/markdown for .md, text/html for .html).
-pub async fn artifact_handler(
-    Path(filename): Path<String>,
-) -> impl IntoResponse {
+pub async fn artifact_handler(Path(filename): Path<String>) -> impl IntoResponse {
     let artifacts_dir = crate::dirs::syscity_dir().join("artifacts");
 
     // Path traversal protection: reject slashes and ".." in the filename
@@ -42,12 +40,7 @@ pub async fn artifact_handler(
             } else {
                 "text/markdown; charset=utf-8"
             };
-            (
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, mime)],
-                content,
-            )
-                .into_response()
+            (StatusCode::OK, [(header::CONTENT_TYPE, mime)], content).into_response()
         }
         Err(_) => (
             StatusCode::NOT_FOUND,

@@ -92,7 +92,10 @@ pub async fn hybrid_search(
     }
 
     // ── Cross-encoder reranking (if configured) ────────────────────────────────
-    let reranked = vector_service.reranker().rerank(query, results.clone()).await;
+    let reranked = vector_service
+        .reranker()
+        .rerank(query, results.clone())
+        .await;
     match reranked {
         Ok(rr) if !rr.is_empty() || results.is_empty() => results = rr,
         Ok(_) => {} // empty rerank with non-empty input: keep original

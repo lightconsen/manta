@@ -250,7 +250,9 @@ mod tests {
             .unwrap();
         let entries = console.as_array().unwrap();
         assert!(
-            entries.iter().any(|e| e.get("text").and_then(|t| t.as_str()) == Some("hi-shim")),
+            entries
+                .iter()
+                .any(|e| e.get("text").and_then(|t| t.as_str()) == Some("hi-shim")),
             "console capture should contain the warn message, got {entries:?}"
         );
     }

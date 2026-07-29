@@ -34,6 +34,23 @@ pub use db::{DatabaseStore, DbStats, QueryBuilder};
 pub use in_memory_store::InMemoryStore;
 /// Alias for the single canonical SQLite store (WAL + FTS5 + access tracking).
 pub type UnifiedStore = DatabaseStore;
+pub use crate::rag::hybrid::{
+    apply_temporal_decay, mmr_rerank, HybridSearchConfig, HybridSearchResult, MmrConfig,
+    TemporalDecayConfig,
+};
+#[cfg(feature = "pgvector")]
+pub use crate::rag::pgvector_store::PgVectorStore;
+pub use crate::rag::pipeline::{
+    EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
+    PipelineEmbeddingProvider,
+};
+#[cfg(feature = "sqlite-vec")]
+pub use crate::rag::sqlite_vec_store::SqliteVecStore;
+pub use crate::rag::{
+    ApiEmbeddingProvider, BatchEmbeddingProcessor, CachedEmbeddingProvider, EmbeddedChunk,
+    EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker,
+    VectorBackend, VectorStore, VectorStoreStats,
+};
 pub use dreaming::{
     DreamAction, DreamBudget, DreamCheckpoint, DreamConfig, DreamEngine, DreamMetrics, DreamPhase,
     DreamResult, DreamReviewItem, DreamReviewQueue, DreamScheduler, DreamSpeed, DreamThinking,
@@ -50,10 +67,6 @@ pub use flush::{
     check_memory_flush, increment_compaction_count, record_flush_in_state,
     resolve_flush_target_path, FlushReason, MemoryFlushDecision,
 };
-pub use crate::rag::hybrid::{
-    apply_temporal_decay, mmr_rerank, HybridSearchConfig, HybridSearchResult,
-    MmrConfig, TemporalDecayConfig,
-};
 pub use hybrid::hybrid_search;
 pub use manager::{MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext};
 pub use multimodal::{
@@ -62,29 +75,16 @@ pub use multimodal::{
     DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES, IMAGE_EXTENSIONS,
 };
 pub use personality::{MemoryContext, MemoryType, PersonalityMemory};
-#[cfg(feature = "pgvector")]
-pub use crate::rag::pgvector_store::PgVectorStore;
-pub use crate::rag::pipeline::{
-    EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
-    PipelineEmbeddingProvider,
-};
 pub use qmd::{QmdExecutor, QmdQueryResult, QmdScope};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use soul::{BehaviorConfig, PreferenceConfig, SoulConfig, SoulFile};
 pub use sqlite::SqliteMemoryStore;
-#[cfg(feature = "sqlite-vec")]
-pub use crate::rag::sqlite_vec_store::SqliteVecStore;
 pub use tier::{
     MemoryTier, TierAction, TierConfig, TierEvaluator, TierIndex, TierSystemConfig, TieredMemory,
     TIER_INDEX_FILE_NAME,
 };
 pub use tiered_store::TieredStore;
-pub use crate::rag::{
-    ApiEmbeddingProvider, BatchEmbeddingProcessor, CachedEmbeddingProvider, EmbeddedChunk,
-    EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker,
-    VectorBackend, VectorStore, VectorStoreStats,
-};
-pub use vector::{VectorMemoryService};
+pub use vector::VectorMemoryService;
 pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 
 /// Memory entry type discriminant for type-safe memory categorization

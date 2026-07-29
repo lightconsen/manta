@@ -58,13 +58,17 @@ impl RetrievalMetrics {
     /// Returns the recall@k values for the requested ks (convenience helper).
     pub fn recall_at_ks(&self, ks: &[usize]) -> Vec<(usize, f64)> {
         let map: std::collections::HashMap<usize, f64> = self.recall_at_k.iter().cloned().collect();
-        ks.iter().filter_map(|k| map.get(k).map(|v| (*k, *v))).collect()
+        ks.iter()
+            .filter_map(|k| map.get(k).map(|v| (*k, *v)))
+            .collect()
     }
 
     /// Returns the MRR@k values for the requested ks.
     pub fn mrr_at_ks(&self, ks: &[usize]) -> Vec<(usize, f64)> {
         let map: std::collections::HashMap<usize, f64> = self.mrr_at_k.iter().cloned().collect();
-        ks.iter().filter_map(|k| map.get(k).map(|v| (*k, *v))).collect()
+        ks.iter()
+            .filter_map(|k| map.get(k).map(|v| (*k, *v)))
+            .collect()
     }
 }
 

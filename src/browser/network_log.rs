@@ -225,8 +225,7 @@ pub async fn query(
     };
 
     let total = filtered.len();
-    let page_records: Vec<NetworkRecord> =
-        filtered.into_iter().skip(offset).take(limit).collect();
+    let page_records: Vec<NetworkRecord> = filtered.into_iter().skip(offset).take(limit).collect();
 
     let mut entries = Vec::with_capacity(page_records.len());
     for rec in page_records {
@@ -337,7 +336,9 @@ mod tests {
 
         let page = browser.new_page("about:blank").await.unwrap();
         start_capture(&page).await.unwrap();
-        page.goto(format!("http://127.0.0.1:{port}/")).await.unwrap();
+        page.goto(format!("http://127.0.0.1:{port}/"))
+            .await
+            .unwrap();
         // Give the page a moment to fire the fetch.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 

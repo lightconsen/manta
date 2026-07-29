@@ -407,16 +407,11 @@ impl KnowledgeBaseManager {
             })
         } else {
             // Delete entire collection
-            let deleted = self
-                .vector_store
-                .delete_by_collection(collection)
-                .await?;
+            let deleted = self.vector_store.delete_by_collection(collection).await?;
             // Clean up all tracker records for this collection
             let records = self.list(Some(collection), None).await?;
             for rec in &records {
-                if let Err(e) =
-                    delete_tracker_record(&self.pool, collection, &rec.doc_id).await
-                {
+                if let Err(e) = delete_tracker_record(&self.pool, collection, &rec.doc_id).await {
                     warn!("Failed to delete tracker record '{}': {}", rec.doc_id, e);
                 }
             }

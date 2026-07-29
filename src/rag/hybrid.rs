@@ -840,7 +840,9 @@ mod tests {
         ];
         let cfg = MmrConfig { lambda: 0.5, top_k: 2 };
         let reranked = mmr_rerank(results, &cfg);
-        assert!(reranked[0].content.starts_with("rust ownership borrow move copy"));
+        assert!(reranked[0]
+            .content
+            .starts_with("rust ownership borrow move copy"));
         assert_eq!(reranked.len(), 2);
         let has_diverse = reranked.iter().any(|r| r.content.starts_with("python"));
         assert!(has_diverse, "MMR should promote the diverse result over the near-duplicate");
@@ -907,12 +909,18 @@ mod tests {
             min_score: 0.0,
             ..HybridSearchConfig::default()
         };
-        let vec_results = vec![
-            ScoredResult { content: "rust ownership".into(), score: 0.9, source_id: None, citation: "vec:1".into() },
-        ];
-        let fts_results = vec![
-            ScoredResult { content: "rust borrowing".into(), score: 0.8, source_id: None, citation: "fts:1".into() },
-        ];
+        let vec_results = vec![ScoredResult {
+            content: "rust ownership".into(),
+            score: 0.9,
+            source_id: None,
+            citation: "vec:1".into(),
+        }];
+        let fts_results = vec![ScoredResult {
+            content: "rust borrowing".into(),
+            score: 0.8,
+            source_id: None,
+            citation: "fts:1".into(),
+        }];
         let merged = fuse_and_rerank(vec_results, fts_results, &cfg);
         assert!(!merged.is_empty());
     }
@@ -929,12 +937,18 @@ mod tests {
             min_score: 0.0,
             ..HybridSearchConfig::default()
         };
-        let vec_results = vec![
-            ScoredResult { content: "same content".into(), score: 0.9, source_id: None, citation: "vec:1".into() },
-        ];
-        let fts_results = vec![
-            ScoredResult { content: "same content".into(), score: 0.8, source_id: None, citation: "fts:1".into() },
-        ];
+        let vec_results = vec![ScoredResult {
+            content: "same content".into(),
+            score: 0.9,
+            source_id: None,
+            citation: "vec:1".into(),
+        }];
+        let fts_results = vec![ScoredResult {
+            content: "same content".into(),
+            score: 0.8,
+            source_id: None,
+            citation: "fts:1".into(),
+        }];
         let merged = fuse_and_rerank(vec_results, fts_results, &cfg);
         assert_eq!(merged.len(), 1, "identical content should be deduped");
         assert_eq!(merged[0].source, "combined");

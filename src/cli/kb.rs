@@ -8,10 +8,8 @@ use std::sync::Arc;
 use clap::Subcommand;
 
 use crate::error::Result;
-use crate::rag::ingestion::{
-    KnowledgeBaseManager, KnowledgeSource, SourceType,
-};
 use crate::rag::embedding::EmbeddingProvider;
+use crate::rag::ingestion::{KnowledgeBaseManager, KnowledgeSource, SourceType};
 use crate::rag::VectorStore;
 
 /// Knowledge Base subcommands.
@@ -65,7 +63,9 @@ pub enum KbCommands {
 /// Run a KB command.
 pub async fn run_kb_command(command: &KbCommands) -> Result<()> {
     match command {
-        KbCommands::Ingest { agent, force, source } => cmd_ingest(agent, *force, source.as_deref()).await,
+        KbCommands::Ingest { agent, force, source } => {
+            cmd_ingest(agent, *force, source.as_deref()).await
+        }
         KbCommands::List { agent, status } => cmd_list(agent.as_deref(), status.as_deref()).await,
         KbCommands::Delete { agent, collection, doc } => {
             cmd_delete(agent.as_deref(), collection.as_deref(), doc.as_deref()).await
@@ -107,26 +107,19 @@ async fn create_kb_manager() -> Result<KnowledgeBaseManager> {
         })?;
 
     // ── Embedding provider ────────────────────────────────────────────────
-    let mut provider = crate::rag::ApiEmbeddingProvider::new(
-        api_key.clone(),
-        model.clone(),
-        dimension,
-    );
+    let mut provider =
+        crate::rag::ApiEmbeddingProvider::new(api_key.clone(), model.clone(), dimension);
     if let Some(url) = &base_url {
         provider = provider.with_base_url(url.clone());
     }
     let provider_arc: Arc<dyn EmbeddingProvider> = Arc::new(provider);
-    let embedding_provider: Arc<dyn EmbeddingProvider> = Arc::new(
-        crate::rag::CachedEmbeddingProvider::new(provider_arc, 1024),
-    );
+    let embedding_provider: Arc<dyn EmbeddingProvider> =
+        Arc::new(crate::rag::CachedEmbeddingProvider::new(provider_arc, 1024));
 
     // ── Vector store ──────────────────────────────────────────────────────
     let vec_store: Arc<dyn VectorStore> = Arc::new(
-        crate::rag::SqliteVecStore::new(
-            &format!("sqlite://{}", db_path.display()),
-            dimension,
-        )
-        .await?,
+        crate::rag::SqliteVecStore::new(&format!("sqlite://{}", db_path.display()), dimension)
+            .await?,
     );
 
     let config = crate::rag::EmbeddingConfig {
@@ -137,12 +130,7 @@ async fn create_kb_manager() -> Result<KnowledgeBaseManager> {
         chunk_strategy: Default::default(),
     };
 
-    Ok(KnowledgeBaseManager::new(
-        embedding_provider,
-        vec_store,
-        pool,
-        &config,
-    ))
+    Ok(KnowledgeBaseManager::new(embedding_provider, vec_store, pool, &config))
 }
 
 /// Handle `kb ingest` command.
@@ -155,13 +143,9 @@ async fn cmd_ingest(agent: &str, force: bool, source: Option<&str>) -> Result<()
         let agent_dir = crate::dirs::agent_dir(agent);
         let is_url = source_str.starts_with("http://") || source_str.starts_with("https://");
         let source_type = if is_url {
-            SourceType::Url {
-                url: source_str.to_string(),
-            }
+            SourceType::Url { url: source_str.to_string() }
         } else {
-            SourceType::File {
-                path: source_str.to_string(),
-            }
+            SourceType::File { path: source_str.to_string() }
         };
         let kb_source = KnowledgeSource {
             id: None,
@@ -171,7 +155,9 @@ async fn cmd_ingest(agent: &str, force: bool, source: Option<&str>) -> Result<()
             collection: None,
             chunk_strategy: None,
         };
-        manager.ingest_source(&kb_source, &collection, &agent_dir, force).await
+        manager
+            .ingest_source(&kb_source, &collection, &agent_dir, force)
+            .await
     } else {
         manager.ingest_agent(agent, force).await
     };
@@ -243,15 +229,16 @@ async fn cmd_list(agent: Option<&str>, status: Option<&str>) -> Result<()> {
         if collections.is_empty() {
             println!("  No collections found.");
         } else {
-            println!("  {:<20} {:>6} {:>8} {:>6} {:>6}  Last Indexed",
-                "Collection", "Docs", "Chunks", "Stale", "Failed");
+            println!(
+                "  {:<20} {:>6} {:>8} {:>6} {:>6}  Last Indexed",
+                "Collection", "Docs", "Chunks", "Stale", "Failed"
+            );
             println!("  {}", "-".repeat(70));
             for c in &collections {
                 let last = c.last_indexed_at.as_deref().unwrap_or("-");
                 println!(
                     "  {:<20} {:>6} {:>8} {:>6} {:>6}  {}",
-                    c.collection, c.total_docs, c.total_chunks,
-                    c.stale_count, c.failed_count, last
+                    c.collection, c.total_docs, c.total_chunks, c.stale_count, c.failed_count, last
                 );
             }
         }
@@ -280,10 +267,7 @@ async fn cmd_delete(
 
     let manager = create_kb_manager().await?;
     let report = manager.delete(&collection, doc).await?;
-    println!(
-        "Deleted {} chunks from '{}'",
-        report.chunks_deleted, report.collection
-    );
+    println!("Deleted {} chunks from '{}'", report.chunks_deleted, report.collection);
     if let Some(did) = &report.doc_id {
         println!("  Document: {}", did);
     }

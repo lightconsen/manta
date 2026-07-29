@@ -83,10 +83,7 @@ pub async fn get_record(
 }
 
 /// Insert or replace an ingestion record.
-pub async fn upsert_record(
-    pool: &Pool<Sqlite>,
-    record: &IngestionRecord,
-) -> crate::Result<()> {
+pub async fn upsert_record(pool: &Pool<Sqlite>, record: &IngestionRecord) -> crate::Result<()> {
     sqlx::query(
         "INSERT OR REPLACE INTO kb_ingestion_log \
          (collection, doc_id, source_id, checksum, mtime, chunk_count, status, error, indexed_at) \
@@ -110,11 +107,7 @@ pub async fn upsert_record(
 }
 
 /// Mark a document as stale.
-pub async fn mark_stale(
-    pool: &Pool<Sqlite>,
-    collection: &str,
-    doc_id: &str,
-) -> crate::Result<()> {
+pub async fn mark_stale(pool: &Pool<Sqlite>, collection: &str, doc_id: &str) -> crate::Result<()> {
     sqlx::query(
         "UPDATE kb_ingestion_log SET status = 'stale', indexed_at = datetime('now') \
          WHERE collection = ? AND doc_id = ?",
@@ -139,66 +132,58 @@ pub async fn list_records(
     status: Option<IngestionStatus>,
 ) -> crate::Result<Vec<IngestionRecord>> {
     let rows = match (collection, status) {
-        (Some(col), Some(ref s)) => {
-            sqlx::query(
-                "SELECT collection, doc_id, source_id, checksum, mtime, chunk_count, \
+        (Some(col), Some(ref s)) => sqlx::query(
+            "SELECT collection, doc_id, source_id, checksum, mtime, chunk_count, \
                  status, error, indexed_at \
                  FROM kb_ingestion_log WHERE collection = ? AND status = ? \
                  ORDER BY collection, doc_id",
-            )
-            .bind(col)
-            .bind(s.as_str())
-            .fetch_all(pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to list ingestion records".to_string(),
-                details: e.to_string(),
-            })?
-        }
-        (Some(col), None) => {
-            sqlx::query(
-                "SELECT collection, doc_id, source_id, checksum, mtime, chunk_count, \
+        )
+        .bind(col)
+        .bind(s.as_str())
+        .fetch_all(pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to list ingestion records".to_string(),
+            details: e.to_string(),
+        })?,
+        (Some(col), None) => sqlx::query(
+            "SELECT collection, doc_id, source_id, checksum, mtime, chunk_count, \
                  status, error, indexed_at \
                  FROM kb_ingestion_log WHERE collection = ? \
                  ORDER BY collection, doc_id",
-            )
-            .bind(col)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to list ingestion records".to_string(),
-                details: e.to_string(),
-            })?
-        }
-        (None, Some(ref s)) => {
-            sqlx::query(
-                "SELECT collection, doc_id, source_id, checksum, mtime, chunk_count, \
+        )
+        .bind(col)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to list ingestion records".to_string(),
+            details: e.to_string(),
+        })?,
+        (None, Some(ref s)) => sqlx::query(
+            "SELECT collection, doc_id, source_id, checksum, mtime, chunk_count, \
                  status, error, indexed_at \
                  FROM kb_ingestion_log WHERE status = ? \
                  ORDER BY collection, doc_id",
-            )
-            .bind(s.as_str())
-            .fetch_all(pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to list ingestion records".to_string(),
-                details: e.to_string(),
-            })?
-        }
-        (None, None) => {
-            sqlx::query(
-                "SELECT collection, doc_id, source_id, checksum, mtime, chunk_count, \
+        )
+        .bind(s.as_str())
+        .fetch_all(pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to list ingestion records".to_string(),
+            details: e.to_string(),
+        })?,
+        (None, None) => sqlx::query(
+            "SELECT collection, doc_id, source_id, checksum, mtime, chunk_count, \
                  status, error, indexed_at \
                  FROM kb_ingestion_log \
                  ORDER BY collection, doc_id",
-            )
-            .fetch_all(pool)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: "Failed to list ingestion records".to_string(),
-                details: e.to_string(),
-            })?
-        }
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to list ingestion records".to_string(),
+            details: e.to_string(),
+        })?,
     };
 
     Ok(rows.into_iter().map(row_to_record).collect())
@@ -219,9 +204,7 @@ pub struct CollectionSummary {
 }
 
 /// Get summary stats for all collections.
-pub async fn list_collections(
-    pool: &Pool<Sqlite>,
-) -> crate::Result<Vec<CollectionSummary>> {
+pub async fn list_collections(pool: &Pool<Sqlite>) -> crate::Result<Vec<CollectionSummary>> {
     #[derive(Debug, sqlx::FromRow)]
     struct CollRow {
         collection: String,
@@ -270,17 +253,15 @@ pub async fn delete_record(
     collection: &str,
     doc_id: &str,
 ) -> crate::Result<bool> {
-    let result = sqlx::query(
-        "DELETE FROM kb_ingestion_log WHERE collection = ? AND doc_id = ?",
-    )
-    .bind(collection)
-    .bind(doc_id)
-    .execute(pool)
-    .await
-    .map_err(|e| crate::error::SyscityError::Storage {
-        context: "Failed to delete ingestion record".to_string(),
-        details: e.to_string(),
-    })?;
+    let result = sqlx::query("DELETE FROM kb_ingestion_log WHERE collection = ? AND doc_id = ?")
+        .bind(collection)
+        .bind(doc_id)
+        .execute(pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to delete ingestion record".to_string(),
+            details: e.to_string(),
+        })?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -289,16 +270,15 @@ pub async fn get_collection_stats(
     pool: &Pool<Sqlite>,
     collection: &str,
 ) -> crate::Result<CollectionStats> {
-    let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM kb_ingestion_log WHERE collection = ?",
-    )
-    .bind(collection)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| crate::error::SyscityError::Storage {
-        context: "Failed to count collection records".to_string(),
-        details: e.to_string(),
-    })?;
+    let total: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM kb_ingestion_log WHERE collection = ?")
+            .bind(collection)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to count collection records".to_string(),
+                details: e.to_string(),
+            })?;
 
     let chunks: (Option<i64>,) = sqlx::query_as(
         "SELECT SUM(chunk_count) FROM kb_ingestion_log WHERE collection = ? AND status = 'indexed'",
@@ -444,7 +424,10 @@ mod tests {
 
         mark_stale(&pool, "test-col", "doc1").await.unwrap();
 
-        let fetched = get_record(&pool, "test-col", "doc1").await.unwrap().unwrap();
+        let fetched = get_record(&pool, "test-col", "doc1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(fetched.status, IngestionStatus::Stale);
     }
 

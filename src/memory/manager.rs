@@ -30,10 +30,10 @@ use super::{
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
     TieredStore, UnifiedStore,
 };
+use crate::providers::{CompletionRequest, Message, Provider};
 use crate::rag::context::{select_by_token_budget, ContextWindowConfig};
 use crate::rag::hybrid::HybridSearchConfig;
 use crate::rag::pipeline::EmbeddingPipelineHandle;
-use crate::providers::{CompletionRequest, Message, Provider};
 
 /// Compute a stable id for effectiveness tracking.
 ///
@@ -728,8 +728,14 @@ impl MemoryManager {
 
         // Semantic: relevant memories
         let memories = if let Some(q) = query {
-            self.retrieve(user_id, Some(conversation_id), q, Some(self.config.max_context_memories), kb_collection)
-                .await?
+            self.retrieve(
+                user_id,
+                Some(conversation_id),
+                q,
+                Some(self.config.max_context_memories),
+                kb_collection,
+            )
+            .await?
         } else {
             // No query, fetch recent high-importance memories
             let mq = MemoryQuery::new()
@@ -1981,10 +1987,10 @@ mod tests {
 
         use crate::memory::effectiveness::{EffectivenessConfig, EffectivenessTracker};
         use crate::memory::session_search::SessionSearch;
+        use crate::memory::vector::VectorMemoryService;
         use crate::rag::config::EmbeddingConfig;
         use crate::rag::embedding::EmbeddingProvider;
         use crate::rag::vector_store::{MemoryVectorStore, VectorStore};
-        use crate::memory::vector::VectorMemoryService;
 
         struct FixedEmbeddingProvider;
         #[async_trait]

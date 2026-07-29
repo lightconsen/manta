@@ -242,10 +242,8 @@ impl VectorStore for PgVectorStore {
     }
 
     async fn delete_by_collection(&self, collection: &str) -> crate::Result<usize> {
-        let sql = format!(
-            "DELETE FROM {} WHERE collection = $1",
-            Self::quote_identifier(&self.table)
-        );
+        let sql =
+            format!("DELETE FROM {} WHERE collection = $1", Self::quote_identifier(&self.table));
         let result = sqlx::query(&sql)
             .bind(collection)
             .execute(&self.pool)
@@ -300,8 +298,8 @@ impl VectorStore for PgVectorStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::rag::chunk::EmbeddedChunk;
     use super::*;
+    use crate::rag::chunk::EmbeddedChunk;
 
     async fn pg_pool() -> Option<PgPool> {
         let url = std::env::var("TEST_PGVECTOR_URL").unwrap_or_else(|_| {

@@ -137,7 +137,8 @@ pub async fn load_file(path: &Path) -> Result<KnowledgeDocument, String> {
 
     let text = if mime_type == "application/pdf" {
         extract_pdf_text(path)?
-    } else if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
+    } else if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    {
         extract_docx_text(path)?
     } else if mime_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
         extract_xlsx_text(path)?
@@ -160,7 +161,10 @@ pub async fn load_file(path: &Path) -> Result<KnowledgeDocument, String> {
 }
 
 /// Load all matching files from a directory, optionally filtered by glob.
-pub async fn load_dir(path: &Path, pattern: Option<&str>) -> Result<Vec<KnowledgeDocument>, String> {
+pub async fn load_dir(
+    path: &Path,
+    pattern: Option<&str>,
+) -> Result<Vec<KnowledgeDocument>, String> {
     if !path.is_dir() {
         return Err(format!("Not a directory: {}", path.display()));
     }
@@ -266,8 +270,8 @@ async fn load_url(url: &str) -> Result<KnowledgeDocument, String> {
 
 /// Extract text from a PDF file using pdf-extract.
 fn extract_pdf_text(path: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| format!("Failed to read PDF {}: {}", path.display(), e))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("Failed to read PDF {}: {}", path.display(), e))?;
     let text = pdf_extract::extract_text_from_mem(&bytes)
         .map_err(|e| format!("Failed to extract PDF text from {}: {}", path.display(), e))?;
     Ok(text)
@@ -301,14 +305,12 @@ fn extract_xlsx_text(path: &Path) -> Result<String, String> {
         .map_err(|e| format!("Failed to open xlsx {}: {}", path.display(), e))?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|e| format!("Failed to read xlsx archive {}: {}", path.display(), e))?;
-    let mut xml = archive
-        .by_name("xl/sharedStrings.xml")
-        .map_err(|_| {
-            format!(
-                "Missing xl/sharedStrings.xml in xlsx {} (spreadsheet may be empty)",
-                path.display()
-            )
-        })?;
+    let mut xml = archive.by_name("xl/sharedStrings.xml").map_err(|_| {
+        format!(
+            "Missing xl/sharedStrings.xml in xlsx {} (spreadsheet may be empty)",
+            path.display()
+        )
+    })?;
     let mut content = String::new();
     xml.read_to_string(&mut content)
         .map_err(|e| format!("Failed to read xlsx XML {}: {}", path.display(), e))?;

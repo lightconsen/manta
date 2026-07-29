@@ -219,10 +219,7 @@ mod tests {
     #[test]
     fn test_rrf_merge_single_set() {
         let config = RrfConfig { k: 60 };
-        let results = vec![vec![
-            ("doc1".to_string(), 0.9),
-            ("doc2".to_string(), 0.8),
-        ]];
+        let results = vec![vec![("doc1".to_string(), 0.9), ("doc2".to_string(), 0.8)]];
         let merged = merge_results(results, &config, 10, |s| s.clone());
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].0, "doc1");
@@ -274,14 +271,8 @@ mod tests {
     fn test_rrf_k_value_effect() {
         // With k=0, only top-ranked results matter
         let config_small = RrfConfig { k: 1 };
-        let set_a = vec![
-            ("doc1".to_string(), 0.9),
-            ("doc2".to_string(), 0.8),
-        ];
-        let set_b = vec![
-            ("doc2".to_string(), 0.9),
-            ("doc1".to_string(), 0.8),
-        ];
+        let set_a = vec![("doc1".to_string(), 0.9), ("doc2".to_string(), 0.8)];
+        let set_b = vec![("doc2".to_string(), 0.9), ("doc1".to_string(), 0.8)];
         let merged = merge_results(vec![set_a, set_b], &config_small, 10, |s| s.clone());
         // With small k, ranking contribution is sharper
         assert_eq!(merged.len(), 2);
@@ -306,9 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_expand_zero_variations() {
-        let mock = Arc::new(MockProvider::new().with_callback(|_| {
-            Message::assistant("unused")
-        }));
+        let mock = Arc::new(MockProvider::new().with_callback(|_| Message::assistant("unused")));
         let queries = expand_query_with_llm("test query", 0, mock.as_ref())
             .await
             .unwrap();
@@ -333,9 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_expand_pads_on_insufficient_output() {
-        let mock = Arc::new(MockProvider::new().with_callback(|_| {
-            Message::assistant("only one")
-        }));
+        let mock = Arc::new(MockProvider::new().with_callback(|_| Message::assistant("only one")));
         let queries = expand_query_with_llm("test", 3, mock.as_ref())
             .await
             .unwrap();
@@ -349,9 +336,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_expand_handles_empty_lines() {
-        let mock = Arc::new(MockProvider::new().with_callback(|_| {
-            Message::assistant("\n\nvariant a\n\nvariant b\n\n")
-        }));
+        let mock = Arc::new(
+            MockProvider::new()
+                .with_callback(|_| Message::assistant("\n\nvariant a\n\nvariant b\n\n")),
+        );
         let queries = expand_query_with_llm("test", 2, mock.as_ref())
             .await
             .unwrap();

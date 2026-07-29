@@ -1154,7 +1154,12 @@ impl Agent {
         // Retrieve relevant memories via MemoryManager and inject into context
         let memory_context = if let Some(ref mm) = self.memory_manager {
             match mm
-                .session_context(user_id, conversation_id, Some(user_message), kb_collection.as_deref())
+                .session_context(
+                    user_id,
+                    conversation_id,
+                    Some(user_message),
+                    kb_collection.as_deref(),
+                )
                 .await
             {
                 Ok(ctx) => {
@@ -1219,11 +1224,8 @@ impl Agent {
             prompt
         };
 
-        let mut context = Context::new(
-            conversation_id.to_string(),
-            full_prompt,
-            self.config.max_context_tokens,
-        );
+        let mut context =
+            Context::new(conversation_id.to_string(), full_prompt, self.config.max_context_tokens);
 
         // Apply turn cap from config so the agent never accumulates an
         // unbounded conversation history.

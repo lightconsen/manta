@@ -1,7 +1,7 @@
 pub mod admin;
 pub mod agents;
-pub mod artifacts;
 pub mod approvals;
+pub mod artifacts;
 pub mod auth_profiles;
 pub mod chat;
 pub mod config;
@@ -21,8 +21,8 @@ pub mod skills;
 pub mod web_ui;
 pub use admin::*;
 pub use agents::*;
-pub use artifacts::*;
 pub use approvals::*;
+pub use artifacts::*;
 pub use auth_profiles::*;
 pub use chat::*;
 pub use config::*;

@@ -59,7 +59,14 @@ async fn load_map(client: &reqwest::Client, script_url: &str) -> Option<Arc<Sour
     }
 
     let resolved = async {
-        let script = client.get(script_url).send().await.ok()?.text().await.ok()?;
+        let script = client
+            .get(script_url)
+            .send()
+            .await
+            .ok()?
+            .text()
+            .await
+            .ok()?;
         let map_url = script
             .lines()
             .rev()

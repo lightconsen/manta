@@ -181,7 +181,11 @@ pub(crate) async fn start_gateway(
                     } else {
                         info!(
                             "Watching kb.toml for agent '{}'",
-                        entry.path().file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+                            entry
+                                .path()
+                                .file_name()
+                                .map(|n| n.to_string_lossy())
+                                .unwrap_or_default()
                         );
                     }
                 }

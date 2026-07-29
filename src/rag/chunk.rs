@@ -150,7 +150,11 @@ impl TextChunker {
             return Vec::new();
         }
         let mut chunks = Vec::new();
-        let step = if chunk_overlap >= chunk_size { 1 } else { chunk_size - chunk_overlap };
+        let step = if chunk_overlap >= chunk_size {
+            1
+        } else {
+            chunk_size - chunk_overlap
+        };
 
         let mut start = 0;
         while start < words.len() {
@@ -202,10 +206,7 @@ impl TextChunker {
             }
 
             // Would adding this piece overflow the chunk?  Flush first.
-            let current_words: usize = current
-                .iter()
-                .map(|p| p.split_whitespace().count())
-                .sum();
+            let current_words: usize = current.iter().map(|p| p.split_whitespace().count()).sum();
 
             if current_words + part_words > chunk_size && !current.is_empty() {
                 result.push(current.join(current_sep));
@@ -409,7 +410,10 @@ mod tests {
 
     #[test]
     fn test_chunker_with_fixed_strategy() {
-        let strategy = ChunkStrategy::Fixed { chunk_size: 5, chunk_overlap: 1 };
+        let strategy = ChunkStrategy::Fixed {
+            chunk_size: 5,
+            chunk_overlap: 1,
+        };
         let chunker = TextChunker::with_strategy(strategy);
         let text = "a b c d e f g";
         let chunks = chunker.chunk(text);

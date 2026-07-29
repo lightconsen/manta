@@ -461,18 +461,12 @@ impl BrowserTool {
                 use chromiumoxide::cdp::browser_protocol::input::{
                     DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
                 };
-                let mut press = DispatchMouseEventParams::new(
-                    DispatchMouseEventType::MousePressed,
-                    x,
-                    y,
-                );
+                let mut press =
+                    DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, x, y);
                 press.button = Some(MouseButton::Left);
                 press.click_count = Some(1);
-                let mut release = DispatchMouseEventParams::new(
-                    DispatchMouseEventType::MouseReleased,
-                    x,
-                    y,
-                );
+                let mut release =
+                    DispatchMouseEventParams::new(DispatchMouseEventType::MouseReleased, x, y);
                 release.button = Some(MouseButton::Left);
                 release.click_count = Some(1);
                 if let Err(e) = page.execute(press).await {
@@ -822,7 +816,10 @@ impl BrowserTool {
             } => {
                 // Prefer the CDP capture (all resource types); fall back to
                 // the injected fetch/XHR shim when CDP capture is inactive.
-                if crate::browser::network_log::start_capture(page).await.is_ok() {
+                if crate::browser::network_log::start_capture(page)
+                    .await
+                    .is_ok()
+                {
                     return crate::browser::network_log::query(
                         page,
                         url.as_deref(),
@@ -861,11 +858,9 @@ impl BrowserTool {
                             })
                             .filter(|e| {
                                 let status = e.get("status").and_then(|s| s.as_u64());
-                                min_status.is_none_or(|min| {
-                                    status.is_some_and(|s| s >= min as u64)
-                                }) && max_status.is_none_or(|max| {
-                                    status.is_some_and(|s| s <= max as u64)
-                                })
+                                min_status.is_none_or(|min| status.is_some_and(|s| s >= min as u64))
+                                    && max_status
+                                        .is_none_or(|max| status.is_some_and(|s| s <= max as u64))
                             })
                             .map(|mut e| {
                                 if !include_body {
@@ -971,16 +966,18 @@ impl BrowserTool {
 
             BrowserAction::EmulateCpu { rate } => {
                 use chromiumoxide::cdp::browser_protocol::emulation::SetCpuThrottlingRateParams;
-                match page.execute(SetCpuThrottlingRateParams::new(rate.max(1.0))).await {
+                match page
+                    .execute(SetCpuThrottlingRateParams::new(rate.max(1.0)))
+                    .await
+                {
                     Ok(_) => Ok(json!({ "success": true, "rate": rate })),
                     Err(e) => Err(format!("Failed to set CPU throttling: {}", e)),
                 }
             }
 
-            BrowserAction::ScreencastStart {
-                quality,
-                every_nth_frame,
-            } => Self::screencast_start(page, quality, every_nth_frame).await,
+            BrowserAction::ScreencastStart { quality, every_nth_frame } => {
+                Self::screencast_start(page, quality, every_nth_frame).await
+            }
 
             BrowserAction::ScreencastStop => Self::screencast_stop(page).await,
 
@@ -1337,9 +1334,8 @@ impl BrowserTool {
 
     /// Active screencast sessions keyed by page target id.
     #[cfg(feature = "browser")]
-    fn screencast_sessions() -> &'static tokio::sync::Mutex<
-        std::collections::HashMap<String, ScreencastSession>,
-    > {
+    fn screencast_sessions(
+    ) -> &'static tokio::sync::Mutex<std::collections::HashMap<String, ScreencastSession>> {
         static SESSIONS: std::sync::OnceLock<
             tokio::sync::Mutex<std::collections::HashMap<String, ScreencastSession>>,
         > = std::sync::OnceLock::new();
@@ -1365,10 +1361,9 @@ impl BrowserTool {
             return Err("Screencast already active for this page".to_string());
         }
 
-        let dir = crate::dirs::syscity_dir().join("artifacts").join(format!(
-            "screencast-{}",
-            chrono::Utc::now().format("%Y%m%d-%H%M%S")
-        ));
+        let dir = crate::dirs::syscity_dir()
+            .join("artifacts")
+            .join(format!("screencast-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S")));
         tokio::fs::create_dir_all(&dir)
             .await
             .map_err(|e| format!("Failed to create screencast dir: {}", e))?;
@@ -1418,14 +1413,7 @@ impl BrowserTool {
             }
         });
 
-        sessions.insert(
-            key,
-            ScreencastSession {
-                dir: dir.clone(),
-                frames,
-                task,
-            },
-        );
+        sessions.insert(key, ScreencastSession { dir: dir.clone(), frames, task });
         Ok(json!({
             "success": true,
             "frames_dir": dir,
@@ -1499,8 +1487,7 @@ impl BrowserTool {
     ) -> crate::Result<ToolExecutionResult> {
         let instance = pool.get_or_create(&self.profile).await?;
         let mut current_handle = instance.new_page("about:blank").await?;
-        if let Err(e) =
-            crate::browser::instrument::ensure_instrumented(&current_handle.page).await
+        if let Err(e) = crate::browser::instrument::ensure_instrumented(&current_handle.page).await
         {
             warn!("Failed to instrument pooled page: {}", e);
         }
@@ -2355,9 +2342,7 @@ mod tests {
             BrowserAction::FillForm { ref fields } if fields.len() == 2
         ));
 
-        let hover = BrowserAction::Hover {
-            selector: "#menu".to_string(),
-        };
+        let hover = BrowserAction::Hover { selector: "#menu".to_string() };
         let json = serde_json::to_string(&hover).unwrap();
         assert!(json.contains("hover"));
 

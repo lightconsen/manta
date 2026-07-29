@@ -97,95 +97,200 @@ impl PromptContext {
         let mut scores: Vec<(TaskType, i32)> = Vec::new();
 
         // Coding
-        let coding_score = count_matches(&msg, &[
-            "implement", "function", "class", "refactor", "algorithm",
-            "data structure", "api endpoint", "rest api", "graphql",
-            "unit test", "integration test", "test case", "compiler",
-            "merge request", "pull request", "code review", "typescript",
-            "rust", "python", "javascript", "golang", "java",
-        ]) * 3
-        + count_matches(&msg, &[
-            "code", "write code", "snippet", "program",
-        ]) * 2;
+        let coding_score = count_matches(
+            &msg,
+            &[
+                "implement",
+                "function",
+                "class",
+                "refactor",
+                "algorithm",
+                "data structure",
+                "api endpoint",
+                "rest api",
+                "graphql",
+                "unit test",
+                "integration test",
+                "test case",
+                "compiler",
+                "merge request",
+                "pull request",
+                "code review",
+                "typescript",
+                "rust",
+                "python",
+                "javascript",
+                "golang",
+                "java",
+            ],
+        ) * 3
+            + count_matches(&msg, &["code", "write code", "snippet", "program"]) * 2;
         if coding_score > 0 {
             scores.push((TaskType::Coding, coding_score));
         }
 
         // Debugging
-        let debugging_score = count_matches(&msg, &[
-            "debug", "stack trace", "traceback", "crash", "segfault",
-            "null pointer", "panic", "exception", "bug", "regression",
-            "memory leak", "infinite loop", "deadlock", "race condition",
-            "not working", "broken", "failing", "compile error",
-            "runtime error", "type error", "syntax error",
-        ]) * 3
-        + count_matches(&msg, &[
-            "fix", "error", "issue", "problem", "unexpected",
-        ]);
+        let debugging_score = count_matches(
+            &msg,
+            &[
+                "debug",
+                "stack trace",
+                "traceback",
+                "crash",
+                "segfault",
+                "null pointer",
+                "panic",
+                "exception",
+                "bug",
+                "regression",
+                "memory leak",
+                "infinite loop",
+                "deadlock",
+                "race condition",
+                "not working",
+                "broken",
+                "failing",
+                "compile error",
+                "runtime error",
+                "type error",
+                "syntax error",
+            ],
+        ) * 3
+            + count_matches(&msg, &["fix", "error", "issue", "problem", "unexpected"]);
         if debugging_score > 0 {
             scores.push((TaskType::Debugging, debugging_score));
         }
 
         // Explanation
-        let explanation_score = count_matches(&msg, &[
-            "explain", "teach", "tutorial", "walk through",
-            "what is", "how does", "how it works", "meaning of",
-            "definition", "overview of", "introduction to", "concept of",
-            "difference between", "comparison",
-        ]) * 2;
+        let explanation_score = count_matches(
+            &msg,
+            &[
+                "explain",
+                "teach",
+                "tutorial",
+                "walk through",
+                "what is",
+                "how does",
+                "how it works",
+                "meaning of",
+                "definition",
+                "overview of",
+                "introduction to",
+                "concept of",
+                "difference between",
+                "comparison",
+            ],
+        ) * 2;
         if explanation_score > 0 {
             scores.push((TaskType::Explanation, explanation_score));
         }
 
         // Research
-        let research_score = count_matches(&msg, &[
-            "search", "research", "investigate", "look up", "find information",
-            "what is", "tell me about", "explain how", "how does",
-            "latest", "news about", "compare", "analysis of",
-            "market", "industry", "trends",
-        ]) * 2
-        + count_matches(&msg, &[
-            "find", "latest",
-        ]);
+        let research_score = count_matches(
+            &msg,
+            &[
+                "search",
+                "research",
+                "investigate",
+                "look up",
+                "find information",
+                "what is",
+                "tell me about",
+                "explain how",
+                "how does",
+                "latest",
+                "news about",
+                "compare",
+                "analysis of",
+                "market",
+                "industry",
+                "trends",
+            ],
+        ) * 2
+            + count_matches(&msg, &["find", "latest"]);
         if research_score > 0 {
             scores.push((TaskType::Research, research_score));
         }
 
         // System/Shell
-        let system_score = count_matches(&msg, &[
-            "shell", "terminal", "bash", "zsh", "command line",
-            "run command", "execute", "process", "daemon", "service",
-            "install package", "apt", "brew", "npm install", "pip install",
-            "docker", "kubernetes", "k8s", "deploy", "server",
-            "cron", "scheduled task", "systemctl", "journalctl",
-        ]) * 2
-        + count_matches(&msg, &[
-            "command",
-        ]);
+        let system_score = count_matches(
+            &msg,
+            &[
+                "shell",
+                "terminal",
+                "bash",
+                "zsh",
+                "command line",
+                "run command",
+                "execute",
+                "process",
+                "daemon",
+                "service",
+                "install package",
+                "apt",
+                "brew",
+                "npm install",
+                "pip install",
+                "docker",
+                "kubernetes",
+                "k8s",
+                "deploy",
+                "server",
+                "cron",
+                "scheduled task",
+                "systemctl",
+                "journalctl",
+            ],
+        ) * 2
+            + count_matches(&msg, &["command"]);
         if system_score > 0 {
             scores.push((TaskType::System, system_score));
         }
 
         // Planning
-        let planning_score = count_matches(&msg, &[
-            "plan", "roadmap", "milestone", "steps to", "break down",
-            "strategy", "architecture", "design doc", "proposal",
-            "sprint", "backlog", "project plan", "timeline",
-        ]) * 2;
+        let planning_score = count_matches(
+            &msg,
+            &[
+                "plan",
+                "roadmap",
+                "milestone",
+                "steps to",
+                "break down",
+                "strategy",
+                "architecture",
+                "design doc",
+                "proposal",
+                "sprint",
+                "backlog",
+                "project plan",
+                "timeline",
+            ],
+        ) * 2;
         if planning_score > 0 {
             scores.push((TaskType::Planning, planning_score));
         }
 
         // Writing
-        let writing_score = count_matches(&msg, &[
-            "draft", "compose", "write an essay", "write a report",
-            "write a document", "write an article", "write a blog",
-            "write a letter", "write an email", "write a summary",
-            "proofread", "grammar", "copyedit", "rewrite",
-        ]) * 2
-        + count_matches(&msg, &[
-            "write",
-        ]);
+        let writing_score = count_matches(
+            &msg,
+            &[
+                "draft",
+                "compose",
+                "write an essay",
+                "write a report",
+                "write a document",
+                "write an article",
+                "write a blog",
+                "write a letter",
+                "write an email",
+                "write a summary",
+                "proofread",
+                "grammar",
+                "copyedit",
+                "rewrite",
+            ],
+        ) * 2
+            + count_matches(&msg, &["write"]);
         if writing_score > 0 {
             scores.push((TaskType::Writing, writing_score));
         }

@@ -598,7 +598,8 @@ pub(crate) async fn register_hot_reload_handlers(
                         } else {
                             warn!(
                                 "kb.toml re-ingest for '{}' had {} errors",
-                                agent_id, report.errors.len(),
+                                agent_id,
+                                report.errors.len(),
                             );
                             for e in &report.errors {
                                 warn!("  - {}", e);

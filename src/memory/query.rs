@@ -29,10 +29,7 @@ pub struct HydeTransformer {
 impl HydeTransformer {
     /// Create a new HyDE transformer backed by `provider`.
     pub fn new(provider: Arc<dyn Provider>) -> Self {
-        Self {
-            provider,
-            model: None,
-        }
+        Self { provider, model: None }
     }
 
     /// Override the model used for generation.
@@ -58,15 +55,10 @@ Rules:
 #[async_trait]
 impl QueryTransformer for HydeTransformer {
     async fn transform(&self, query: &str) -> crate::Result<String> {
-        let prompt = format!(
-            "Query: {query}\n\nAnswer:"
-        );
+        let prompt = format!("Query: {query}\n\nAnswer:");
 
         let request = CompletionRequest {
-            messages: vec![
-                Message::system(HYDE_SYSTEM_PROMPT),
-                Message::user(prompt),
-            ],
+            messages: vec![Message::system(HYDE_SYSTEM_PROMPT), Message::user(prompt)],
             model: self.model.clone(),
             temperature: Some(0.3),
             max_tokens: Some(512),
@@ -86,14 +78,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_hyde_transformer_with_mock() {
-        let mock = Arc::new(
-            MockProvider::new().with_callback(|_| {
-                Message::assistant(
-                    "HyDE: The user asked about Rust's ownership system, \
+        let mock = Arc::new(MockProvider::new().with_callback(|_| {
+            Message::assistant(
+                "HyDE: The user asked about Rust's ownership system, \
                      which involves borrowing, lifetimes, and the borrow checker.",
-                )
-            }),
-        );
+            )
+        }));
         let transformer = HydeTransformer::new(mock);
         let result = transformer
             .transform("how does Rust ownership work?")

@@ -27,14 +27,15 @@ pub mod pgvector_store;
 pub mod sqlite_vec_store;
 
 pub use chunk::{BatchEmbeddingProcessor, ChunkStrategy, EmbeddedChunk, TextChunker};
-pub use context::{estimate_tokens, select_by_token_budget, ContextWindowConfig};
 pub use config::{EmbeddingConfig, VectorBackend};
+pub use context::{estimate_tokens, select_by_token_budget, ContextWindowConfig};
 pub use embedding::{
-    ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingProvider,
-    LocalGgufEmbeddingProvider,
+    ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingProvider, LocalGgufEmbeddingProvider,
 };
 pub use eval::{evaluate_retrieval, RetrievalMetrics, RetrievalSample};
-pub use multi_query::{expand_query_with_llm, merge_results, MergeStrategy, MultiQueryConfig, RrfConfig};
+pub use multi_query::{
+    expand_query_with_llm, merge_results, MergeStrategy, MultiQueryConfig, RrfConfig,
+};
 pub use query::{NoopTransformer, QueryTransformer};
 pub use reranker::{CohereReranker, NoopReranker, Reranker};
 pub use vector_store::{MemoryVectorStore, SearchResult, VectorStore, VectorStoreStats};

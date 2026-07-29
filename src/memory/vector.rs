@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
 use super::{Memory, MemoryId};
 use crate::providers::Provider;
 use crate::rag::chunk::{BatchEmbeddingProcessor, EmbeddedChunk, TextChunker};
@@ -17,6 +16,7 @@ use crate::rag::multi_query::{expand_query_with_llm, MultiQueryConfig};
 use crate::rag::query::{NoopTransformer, QueryTransformer};
 use crate::rag::reranker::{NoopReranker, Reranker};
 use crate::rag::vector_store::{VectorStore, VectorStoreStats};
+use serde::{Deserialize, Serialize};
 
 /// High-level vector memory service
 pub struct VectorMemoryService {
@@ -209,18 +209,12 @@ impl VectorMemoryService {
         threshold: f32,
         collection: Option<&str>,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
-        let mq_config = self
-            .multi_query_config
-            .as_ref()
-            .ok_or_else(|| crate::error::SyscityError::Internal(
-                "Multi-Query config not set".into(),
-            ))?;
-        let provider = self
-            .multi_query_provider
-            .as_ref()
-            .ok_or_else(|| crate::error::SyscityError::Internal(
-                "Multi-Query provider not set".into(),
-            ))?;
+        let mq_config = self.multi_query_config.as_ref().ok_or_else(|| {
+            crate::error::SyscityError::Internal("Multi-Query config not set".into())
+        })?;
+        let provider = self.multi_query_provider.as_ref().ok_or_else(|| {
+            crate::error::SyscityError::Internal("Multi-Query provider not set".into())
+        })?;
 
         // 1. Expand query into sub-queries (includes original query first)
         let sub_queries =
@@ -351,8 +345,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_vector_memory_service_search_collection_respects_collection(
-    ) -> crate::Result<()> {
+    async fn test_vector_memory_service_search_collection_respects_collection() -> crate::Result<()>
+    {
         let provider = Arc::new(FixedEmbeddingProvider) as Arc<dyn EmbeddingProvider>;
         let store = Arc::new(MemoryVectorStore::new(2)) as Arc<dyn VectorStore>;
         let config = EmbeddingConfig::default();

@@ -115,11 +115,8 @@ mod tests {
 
     #[test]
     fn test_select_by_token_budget_empty() {
-        let result: Vec<String> = select_by_token_budget(
-            vec![],
-            &ContextWindowConfig::default(),
-            0,
-        );
+        let result: Vec<String> =
+            select_by_token_budget(vec![], &ContextWindowConfig::default(), 0);
         assert!(result.is_empty());
     }
 
@@ -138,12 +135,12 @@ mod tests {
     #[test]
     fn test_select_by_token_budget_some_truncated() {
         let items: Vec<String> = vec![
-            "a".repeat(40),  // 10 tokens
-            "b".repeat(40),  // 10 tokens
-            "c".repeat(40),  // 10 tokens
+            "a".repeat(40), // 10 tokens
+            "b".repeat(40), // 10 tokens
+            "c".repeat(40), // 10 tokens
         ];
         let cfg = ContextWindowConfig {
-            max_tokens: 15,  // fits only the first chunk
+            max_tokens: 15, // fits only the first chunk
             reserved_for_response: 0,
             min_chunks: 0,
         };
@@ -191,9 +188,9 @@ mod tests {
     #[test]
     fn test_select_preserves_ordering() {
         let items: Vec<String> = vec![
-            "first chunk with some content".to_string(),   // ~5 tokens
-            "second chunk with some content".to_string(),  // ~5 tokens
-            "third chunk with some content".to_string(),   // ~5 tokens
+            "first chunk with some content".to_string(),  // ~5 tokens
+            "second chunk with some content".to_string(), // ~5 tokens
+            "third chunk with some content".to_string(),  // ~5 tokens
         ];
         let cfg = ContextWindowConfig {
             max_tokens: 8, // fits first but not second

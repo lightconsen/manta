@@ -9,18 +9,18 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
+use crate::gateway::EmbeddingProviderType;
 use crate::gateway::GatewayConfig;
 use crate::gateway::GatewayEvent;
 use crate::gateway::GatewayState;
-use crate::gateway::EmbeddingProviderType;
 use crate::memory::query::HydeTransformer;
 use crate::memory::vector::VectorMemoryService;
+use crate::memory::{MemoryManager, MemoryManagerConfig, SessionSearch};
 use crate::rag::multi_query::MultiQueryConfig as RagMultiQueryConfig;
 use crate::rag::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, CohereReranker, ContextWindowConfig,
     EmbeddingConfig, LocalGgufEmbeddingProvider, MemoryVectorStore,
 };
-use crate::memory::{MemoryManager, MemoryManagerConfig, SessionSearch};
 
 /// Initialize vector memory, session search, and memory manager.
 pub async fn init_memory_services(
@@ -165,10 +165,7 @@ pub async fn init_memory_services(
                             ..Default::default()
                         };
                         service = service.with_multi_query(provider, rag_mq_config);
-                        info!(
-                            "Multi-Query enabled with {} variations",
-                            mqc.num_variations
-                        );
+                        info!("Multi-Query enabled with {} variations", mqc.num_variations);
                     }
                     Err(e) => {
                         warn!("Failed to create LLM provider for Multi-Query: {}", e);
@@ -452,11 +449,8 @@ pub async fn init_kb_manager(
     let vec_store: Arc<dyn crate::rag::VectorStore> = {
         let db_path = crate::dirs::default_memory_db();
         Arc::new(
-            crate::rag::SqliteVecStore::new(
-                &format!("sqlite://{}", db_path.display()),
-                dimension,
-            )
-            .await?,
+            crate::rag::SqliteVecStore::new(&format!("sqlite://{}", db_path.display()), dimension)
+                .await?,
         )
     };
 
