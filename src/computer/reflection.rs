@@ -345,6 +345,12 @@ impl ReflectionEngine {
             DesktopAction::Decompress { .. } => "Decompress",
             DesktopAction::TransferFile { .. } => "TransferFile",
             DesktopAction::ToolCall { .. } => "ToolCall",
+            DesktopAction::ListWindows => "ListWindows",
+            DesktopAction::GetWindowGeometry { .. } => "GetWindowGeometry",
+            DesktopAction::MoveWindow { .. } => "MoveWindow",
+            DesktopAction::ResizeWindow { .. } => "ResizeWindow",
+            DesktopAction::MinimizeWindow { .. } => "MinimizeWindow",
+            DesktopAction::MaximizeWindow { .. } => "MaximizeWindow",
         }
     }
 

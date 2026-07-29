@@ -113,7 +113,7 @@ impl ComputerAdapter for MacosComputerAdapter {
                 let apple_args = serde_json::json!({ "script": script });
                 let result = self
                     .registry
-                    .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("applescript tool not found".to_string())
@@ -134,7 +134,7 @@ end tell"#,
                 let apple_args = serde_json::json!({ "script": script });
                 let result = self
                     .registry
-                    .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("applescript tool not found".to_string())
@@ -159,7 +159,7 @@ end tell"#,
                 let apple_args = serde_json::json!({ "script": script });
                 let result = self
                     .registry
-                    .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("applescript tool not found".to_string())
@@ -183,7 +183,7 @@ end tell"#,
                 let apple_args = serde_json::json!({ "script": script });
                 let result = self
                     .registry
-                    .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("applescript tool not found".to_string())
@@ -216,7 +216,7 @@ end tell"#,
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::KeyPress { keys } => {
-                let args = serde_json::json!({ "action": "key", "keys": keys });
+                let args = serde_json::json!({ "action": "key_shortcut", "keys": keys });
                 let result = self
                     .registry
                     .execute("macos_desktop_control", args, &crate::tools::ToolContext::default())
@@ -228,25 +228,27 @@ end tell"#,
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::ClipboardGet => {
-                let args = serde_json::json!({ "action": "get" });
+                let args = serde_json::json!({ "script": "get the clipboard" });
                 let result = self
                     .registry
-                    .execute("macos_clipboard", args, &crate::tools::ToolContext::default())
+                    .execute("applescript", args, &crate::tools::ToolContext::default())
                     .await
                     .ok_or_else(|| {
-                        ComputerError::ToolFailed("clipboard tool not found".to_string())
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::ClipboardSet { text } => {
-                let args = serde_json::json!({ "action": "set", "text": text });
+                let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+                let script = format!("set the clipboard to \"{}\"", escaped);
+                let args = serde_json::json!({ "script": script });
                 let result = self
                     .registry
-                    .execute("macos_clipboard", args, &crate::tools::ToolContext::default())
+                    .execute("applescript", args, &crate::tools::ToolContext::default())
                     .await
                     .ok_or_else(|| {
-                        ComputerError::ToolFailed("clipboard tool not found".to_string())
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(result.output))
@@ -259,7 +261,7 @@ end tell"#,
                 let script = format!(r#"tell application "{}" to activate"#, name);
                 let apple_args = serde_json::json!({ "script": script });
                 self.registry
-                    .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("applescript tool not found".to_string())
@@ -292,7 +294,7 @@ end tell"#,
                 let apple_args = serde_json::json!({ "script": script });
                 let result = self
                     .registry
-                    .execute("macos_applescript", apple_args, &crate::tools::ToolContext::default())
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("applescript tool not found".to_string())
@@ -357,7 +359,7 @@ end tell"#,
                     if delay_ms > 0 {
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     }
-                    let args = serde_json::json!({ "action": "key", "keys": [key] });
+                    let args = serde_json::json!({ "action": "key_shortcut", "keys": [key] });
                     self.registry
                         .execute(
                             "macos_desktop_control",
@@ -489,6 +491,217 @@ end tell"#,
             DesktopAction::TransferFile { source, destination, method } => {
                 transfer_file(&source, &destination, method).await
             }
+            // ── Window management ──────────────────────────────────────────
+            DesktopAction::ListWindows => {
+                let script = r#"tell application "System Events"
+    set output to ""
+    set procList to (every process whose visible is true)
+    repeat with proc in procList
+        set procName to name of proc
+        set procPid to unix id of proc
+        try
+            set winTitles to title of every window of proc
+            set winIndex to 1
+            repeat with winTitle in winTitles
+                set output to output & procName & "|||" & (procPid as string) & "|||" & winTitle & "|||" & (winIndex as string) & "\n"
+                set winIndex to winIndex + 1
+            end repeat
+        end try
+    end repeat
+    return output
+end tell"#;
+                let args = serde_json::json!({ "script": script });
+                let result = self
+                    .registry
+                    .execute("applescript", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+
+                let mut windows: Vec<crate::computer::WindowInfo> = Vec::new();
+                for line in result.output.lines() {
+                    let parts: Vec<&str> = line.splitn(4, "|||").collect();
+                    if parts.len() >= 3 {
+                        windows.push(crate::computer::WindowInfo {
+                            id: parts[1].to_string(),
+                            title: parts[2].to_string(),
+                            app_name: Some(parts[0].to_string()),
+                            pid: parts[1].parse().ok(),
+                            bounds: None,
+                            minimized: false,
+                            maximized: false,
+                            focused: false,
+                        });
+                    }
+                }
+                Ok(ActionResult::success(format!("Found {} windows", windows.len()))
+                    .with_data(serde_json::json!({ "windows": windows })))
+            }
+            DesktopAction::GetWindowGeometry { title_pattern } => {
+                let script = format!(
+                    r#"tell application "System Events"
+    set procList to (every process whose visible is true)
+    repeat with proc in procList
+        try
+            set winTitles to title of every window of proc
+            repeat with winIndex from 1 to count of winTitles
+                if item winIndex of winTitles contains "{}" then
+                    set {{x, y}} to position of window winIndex of proc
+                    set {{w, h}} to size of window winIndex of proc
+                    return x & "," & y & "," & w & "," & h
+                end if
+            end repeat
+        end try
+    end repeat
+    return ""
+end tell"#,
+                    title_pattern
+                );
+                let apple_args = serde_json::json!({ "script": script });
+                let result = self
+                    .registry
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                let coords: Vec<i32> = result
+                    .output
+                    .trim()
+                    .split(',')
+                    .filter_map(|s| s.trim().parse().ok())
+                    .collect();
+                if coords.len() == 4 {
+                    let rect = crate::computer::Rect::new(coords[0], coords[1], coords[2] as u32, coords[3] as u32);
+                    Ok(ActionResult::success(format!("Window geometry: {:?}", rect))
+                        .with_data(serde_json::json!({ "bounds": rect })))
+                } else {
+                    Err(ComputerError::ElementNotFound(title_pattern.clone()))
+                }
+            }
+            DesktopAction::MoveWindow { title_pattern, x, y } => {
+                let script = format!(
+                    r#"tell application "System Events"
+    set procList to (every process whose visible is true)
+    repeat with proc in procList
+        try
+            set winTitles to title of every window of proc
+            repeat with winIndex from 1 to count of winTitles
+                if item winIndex of winTitles contains "{}" then
+                    set position of window winIndex of proc to {{{}, {}}}
+                    return "moved"
+                end if
+            end repeat
+        end try
+    end repeat
+    return "not found"
+end tell"#,
+                    title_pattern, x, y
+                );
+                let apple_args = serde_json::json!({ "script": script });
+                let result = self
+                    .registry
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::ResizeWindow { title_pattern, width, height } => {
+                let script = format!(
+                    r#"tell application "System Events"
+    set procList to (every process whose visible is true)
+    repeat with proc in procList
+        try
+            set winTitles to title of every window of proc
+            repeat with winIndex from 1 to count of winTitles
+                if item winIndex of winTitles contains "{}" then
+                    set size of window winIndex of proc to {{{}, {}}}
+                    return "resized"
+                end if
+            end repeat
+        end try
+    end repeat
+    return "not found"
+end tell"#,
+                    title_pattern, width, height
+                );
+                let apple_args = serde_json::json!({ "script": script });
+                let result = self
+                    .registry
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::MinimizeWindow { title_pattern } => {
+                let script = format!(
+                    r#"tell application "System Events"
+    set procList to (every process whose visible is true)
+    repeat with proc in procList
+        try
+            set winTitles to title of every window of proc
+            repeat with winIndex from 1 to count of winTitles
+                if item winIndex of winTitles contains "{}" then
+                    set minimized of window winIndex of proc to true
+                    return "minimized"
+                end if
+            end repeat
+        end try
+    end repeat
+    return "not found"
+end tell"#,
+                    title_pattern
+                );
+                let apple_args = serde_json::json!({ "script": script });
+                let result = self
+                    .registry
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::MaximizeWindow { title_pattern } => {
+                let script = format!(
+                    r#"tell application "System Events"
+    set procList to (every process whose visible is true)
+    repeat with proc in procList
+        try
+            set winTitles to title of every window of proc
+            repeat with winIndex from 1 to count of winTitles
+                if item winIndex of winTitles contains "{}" then
+                    set zoomed of window winIndex of proc to true
+                    return "zoomed"
+                end if
+            end repeat
+        end try
+    end repeat
+    return "not found"
+end tell"#,
+                    title_pattern
+                );
+                let apple_args = serde_json::json!({ "script": script });
+                let result = self
+                    .registry
+                    .execute("applescript", apple_args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("applescript tool not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
             _ => Err(ComputerError::Other("Action not yet implemented on macOS".to_string())),
         }
     }
@@ -514,7 +727,7 @@ end tell"#,
                     let args = serde_json::json!({ "script": script });
                     if let Some(Ok(result)) = self
                         .registry
-                        .execute("macos_applescript", args, &crate::tools::ToolContext::default())
+                        .execute("applescript", args, &crate::tools::ToolContext::default())
                         .await
                     {
                         result.output.contains(pattern)
@@ -530,7 +743,7 @@ end tell"#,
                     let args = serde_json::json!({ "script": script });
                     if let Some(Ok(result)) = self
                         .registry
-                        .execute("macos_applescript", args, &crate::tools::ToolContext::default())
+                        .execute("applescript", args, &crate::tools::ToolContext::default())
                         .await
                     {
                         result.output == "true"

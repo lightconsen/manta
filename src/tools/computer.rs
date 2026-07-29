@@ -67,7 +67,9 @@ Common workflows:
                         "list_processes", "kill_process", "list_ports",
                         "test_ping", "test_tcp_connect", "list_firewall_rules",
                         "restart_process", "set_process_priority", "key_sequence",
-                        "install_package", "browse_files"
+                        "install_package", "browse_files",
+                        "list_windows", "get_window_geometry", "move_window",
+                        "resize_window", "minimize_window", "maximize_window"
                     ],
                     "description": "The desktop operation to perform"
                 },
@@ -144,7 +146,10 @@ Common workflows:
                 "from_x": { "type": "integer", "description": "Drag start X" },
                 "from_y": { "type": "integer", "description": "Drag start Y" },
                 "to_x": { "type": "integer", "description": "Drag end X" },
-                "to_y": { "type": "integer", "description": "Drag end Y" }
+                "to_y": { "type": "integer", "description": "Drag end Y" },
+                // ── Window management ───────────────────────────────────
+                "width": { "type": "integer", "description": "Target width (resize_window)" },
+                "height": { "type": "integer", "description": "Target height (resize_window)" }
             }),
             vec!["action"],
         )
@@ -457,6 +462,51 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
                 max_results,
             })
         }
+        "list_windows" => Ok(DesktopAction::ListWindows),
+        "get_window_geometry" => {
+            let title_pattern = parse_title_pattern(args, "get_window_geometry")?;
+            Ok(DesktopAction::GetWindowGeometry { title_pattern })
+        }
+        "move_window" => {
+            let title_pattern = parse_title_pattern(args, "move_window")?;
+            let x = args["x"].as_i64().ok_or_else(|| {
+                crate::error::SyscityError::Validation(
+                    "Missing 'x' for move_window action".to_string(),
+                )
+            })? as i32;
+            let y = args["y"].as_i64().ok_or_else(|| {
+                crate::error::SyscityError::Validation(
+                    "Missing 'y' for move_window action".to_string(),
+                )
+            })? as i32;
+            Ok(DesktopAction::MoveWindow { title_pattern, x, y })
+        }
+        "resize_window" => {
+            let title_pattern = parse_title_pattern(args, "resize_window")?;
+            let width = args["width"].as_u64().ok_or_else(|| {
+                crate::error::SyscityError::Validation(
+                    "Missing 'width' for resize_window action".to_string(),
+                )
+            })? as u32;
+            let height = args["height"].as_u64().ok_or_else(|| {
+                crate::error::SyscityError::Validation(
+                    "Missing 'height' for resize_window action".to_string(),
+                )
+            })? as u32;
+            Ok(DesktopAction::ResizeWindow {
+                title_pattern,
+                width,
+                height,
+            })
+        }
+        "minimize_window" => {
+            let title_pattern = parse_title_pattern(args, "minimize_window")?;
+            Ok(DesktopAction::MinimizeWindow { title_pattern })
+        }
+        "maximize_window" => {
+            let title_pattern = parse_title_pattern(args, "maximize_window")?;
+            Ok(DesktopAction::MaximizeWindow { title_pattern })
+        }
         _ => Err(crate::error::SyscityError::Validation(format!(
             "Unknown computer action: {}",
             action
@@ -475,6 +525,16 @@ fn parse_region(args: &Value) -> Option<Rect> {
         y: y as i32,
         width: w as u32,
         height: h as u32,
+    })
+}
+
+/// Parse the required `title_pattern` arg for window actions.
+fn parse_title_pattern(args: &Value, action: &str) -> crate::Result<String> {
+    args["title_pattern"].as_str().map(|s| s.to_string()).ok_or_else(|| {
+        crate::error::SyscityError::Validation(format!(
+            "Missing 'title_pattern' for {} action",
+            action
+        ))
     })
 }
 

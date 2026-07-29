@@ -63,6 +63,20 @@ impl DesktopControlTool {
             Err(_) => Ok((false, String::new(), "xdotool timed out".to_string())),
         }
     }
+
+    async fn run_wmctrl(args: &[&str]) -> crate::Result<(bool, String, String)> {
+        let output =
+            timeout(Duration::from_secs(10), Command::new("wmctrl").args(args).output()).await;
+        match output {
+            Ok(Ok(out)) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                Ok((out.status.success(), stdout, stderr))
+            }
+            Ok(Err(e)) => Ok((false, String::new(), format!("wmctrl spawn error: {}", e))),
+            Err(_) => Ok((false, String::new(), "wmctrl timed out".to_string())),
+        }
+    }
 }
 
 #[async_trait]
@@ -83,7 +97,7 @@ impl Tool for DesktopControlTool {
                 "action": {
                     "type": "string",
                     "description": "Action to perform: inspect, click, type, key, list_windows, activate_window",
-                    "enum": ["inspect", "click", "double_click", "type", "key", "scroll", "drag", "list_windows", "activate_window", "close_window"]
+                    "enum": ["inspect", "click", "double_click", "type", "key", "scroll", "drag", "list_windows", "activate_window", "close_window", "get_window_geometry", "move_window", "resize_window", "minimize_window", "maximize_window"]
                 },
                 "x": {
                     "type": "integer",
@@ -140,6 +154,14 @@ impl Tool for DesktopControlTool {
                 "name": {
                     "type": "string",
                     "description": "Window name for activate"
+                },
+                "width": {
+                    "type": "integer",
+                    "description": "Target width (resize_window)"
+                },
+                "height": {
+                    "type": "integer",
+                    "description": "Target height (resize_window)"
                 }
             }),
             vec!["action"],
@@ -237,21 +259,6 @@ impl Tool for DesktopControlTool {
                     Ok(ToolExecutionResult::success(format!("Pressed keys: {}", key_str)))
                 } else {
                     Ok(ToolExecutionResult::error(format!("Key press failed: {}", err)))
-                }
-            }
-            "list_windows" => {
-                let (ok, stdout, err) =
-                    Self::run_xdotool(&["search", "--onlyvisible", ".*", "getwindowname", "%@"])
-                        .await?;
-                if ok {
-                    Ok(ToolExecutionResult::success(format!("Visible windows:\n{}", stdout)))
-                } else {
-                    let (ok2, stdout2, _) = Self::run_xdotool(&["search", ".*"]).await?;
-                    if ok2 {
-                        Ok(ToolExecutionResult::success(format!("Window IDs:\n{}", stdout2)))
-                    } else {
-                        Ok(ToolExecutionResult::error(format!("List windows failed: {}", err)))
-                    }
                 }
             }
             "double_click" => {
@@ -412,6 +419,125 @@ impl Tool for DesktopControlTool {
                 Ok(ToolExecutionResult::error(
                     "Provide 'name' or 'window_id' for close_window".to_string(),
                 ))
+            }
+            // ── Window management ──────────────────────────────────────────
+            "list_windows" => {
+                // Enhanced with wmctrl for structured output
+                let mut output = String::new();
+                if let Ok((ok, list, _)) = Self::run_wmctrl(&["-l", "-p"]).await {
+                    if ok && !list.trim().is_empty() {
+                        output.push_str(&list);
+                    }
+                }
+                if output.is_empty() {
+                    let (ok, stdout, err) =
+                        Self::run_xdotool(&["search", "--onlyvisible", ".*"]).await?;
+                    if ok {
+                        output = stdout;
+                    } else {
+                        return Ok(ToolExecutionResult::error(format!("List windows failed: {}", err)));
+                    }
+                }
+                Ok(ToolExecutionResult::success(format!("Windows:\n{}", output)))
+            }
+            "get_window_geometry" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    let (ok, wid, err) = Self::run_xdotool(&["search", "--name", n]).await?;
+                    if ok {
+                        let first = wid.lines().next().unwrap_or("").trim();
+                        if !first.is_empty() {
+                            let (ok2, geo, err2) =
+                                Self::run_xdotool(&["getwindowgeometry", first]).await?;
+                            if ok2 {
+                                return Ok(ToolExecutionResult::success(geo));
+                            } else {
+                                return Ok(ToolExecutionResult::error(format!("Get geometry failed: {}", err2)));
+                            }
+                        }
+                    }
+                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                }
+                Ok(ToolExecutionResult::error("Provide 'name' for get_window_geometry".to_string()))
+            }
+            "move_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                let x = args.get("x").and_then(|v| v.as_i64());
+                let y = args.get("y").and_then(|v| v.as_i64());
+                if let (Some(n), Some(xv), Some(yv)) = (name, x, y) {
+                    let (ok, wid, err) = Self::run_xdotool(&["search", "--name", n]).await?;
+                    if ok {
+                        let first = wid.lines().next().unwrap_or("").trim();
+                        if !first.is_empty() {
+                            let (ok2, _, err2) = Self::run_xdotool(&[
+                                "windowmove", first, &xv.to_string(), &yv.to_string(),
+                            ]).await?;
+                            if ok2 {
+                                return Ok(ToolExecutionResult::success(format!("Moved window '{}' to ({}, {})", n, xv, yv)));
+                            } else {
+                                return Ok(ToolExecutionResult::error(format!("Move failed: {}", err2)));
+                            }
+                        }
+                    }
+                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                }
+                Ok(ToolExecutionResult::error("Provide 'name', 'x', 'y' for move_window".to_string()))
+            }
+            "resize_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                let width = args.get("width").and_then(|v| v.as_u64());
+                let height = args.get("height").and_then(|v| v.as_u64());
+                if let (Some(n), Some(w), Some(h)) = (name, width, height) {
+                    let (ok, wid, err) = Self::run_xdotool(&["search", "--name", n]).await?;
+                    if ok {
+                        let first = wid.lines().next().unwrap_or("").trim();
+                        if !first.is_empty() {
+                            let (ok2, _, err2) = Self::run_xdotool(&[
+                                "windowsize", first, &w.to_string(), &h.to_string(),
+                            ]).await?;
+                            if ok2 {
+                                return Ok(ToolExecutionResult::success(format!("Resized window '{}' to {}x{}", n, w, h)));
+                            } else {
+                                return Ok(ToolExecutionResult::error(format!("Resize failed: {}", err2)));
+                            }
+                        }
+                    }
+                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                }
+                Ok(ToolExecutionResult::error("Provide 'name', 'width', 'height' for resize_window".to_string()))
+            }
+            "minimize_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    let (ok, wid, err) = Self::run_xdotool(&["search", "--name", n]).await?;
+                    if ok {
+                        let first = wid.lines().next().unwrap_or("").trim();
+                        if !first.is_empty() {
+                            let (ok2, _, err2) = Self::run_xdotool(&["windowminimize", first]).await?;
+                            if ok2 {
+                                return Ok(ToolExecutionResult::success(format!("Minimized window '{}'", n)));
+                            } else {
+                                return Ok(ToolExecutionResult::error(format!("Minimize failed: {}", err2)));
+                            }
+                        }
+                    }
+                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                }
+                Ok(ToolExecutionResult::error("Provide 'name' for minimize_window".to_string()))
+            }
+            "maximize_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    let (ok, stdout, err) =
+                        Self::run_wmctrl(&["-r", n, "-b", "toggle,maximized_vert,maximized_horz"]).await?;
+                    if ok {
+                        Ok(ToolExecutionResult::success(format!("Maximize toggled for '{}': {}", n, stdout)))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("Maximize failed: {}", err)))
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error("Provide 'name' for maximize_window".to_string()))
+                }
             }
             _ => Ok(ToolExecutionResult::error(format!("Unknown action: {}", action))),
         }

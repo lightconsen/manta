@@ -311,6 +311,12 @@ fn desktop_action_name(action: &crate::computer::DesktopAction) -> String {
         crate::computer::DesktopAction::Decompress { .. } => "decompress",
         crate::computer::DesktopAction::TransferFile { .. } => "transfer_file",
         crate::computer::DesktopAction::ToolCall { .. } => "tool_call",
+        crate::computer::DesktopAction::ListWindows => "list_windows",
+        crate::computer::DesktopAction::GetWindowGeometry { .. } => "get_window_geometry",
+        crate::computer::DesktopAction::MoveWindow { .. } => "move_window",
+        crate::computer::DesktopAction::ResizeWindow { .. } => "resize_window",
+        crate::computer::DesktopAction::MinimizeWindow { .. } => "minimize_window",
+        crate::computer::DesktopAction::MaximizeWindow { .. } => "maximize_window",
     }
     .to_string()
 }

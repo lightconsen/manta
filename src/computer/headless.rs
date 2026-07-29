@@ -987,6 +987,15 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                  ComputerAdapter",
                 tool_name
             ))),
+            // ── Window management ──────────────────────────────────────────
+            DesktopAction::ListWindows
+            | DesktopAction::GetWindowGeometry { .. }
+            | DesktopAction::MoveWindow { .. }
+            | DesktopAction::ResizeWindow { .. }
+            | DesktopAction::MinimizeWindow { .. }
+            | DesktopAction::MaximizeWindow { .. } => Err(ComputerError::Other(
+                "Window management not available in headless mode".to_string(),
+            )),
             _ => Err(ComputerError::Other("Action not available in headless mode".to_string())),
         }
     }

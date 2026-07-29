@@ -449,6 +449,26 @@ pub enum DesktopAction {
     ActivateWindow { title_pattern: String },
     /// Close a window by title pattern.
     CloseWindow { title_pattern: String },
+    /// List all visible windows on the desktop.
+    ListWindows,
+    /// Get the geometry (position + size) of a specific window.
+    GetWindowGeometry { title_pattern: String },
+    /// Move a window to an absolute screen position.
+    MoveWindow {
+        title_pattern: String,
+        x: i32,
+        y: i32,
+    },
+    /// Resize a window to an absolute width and height.
+    ResizeWindow {
+        title_pattern: String,
+        width: u32,
+        height: u32,
+    },
+    /// Minimize (iconify) a window.
+    MinimizeWindow { title_pattern: String },
+    /// Maximize (zoom) a window.
+    MaximizeWindow { title_pattern: String },
     /// Wait for a duration.
     Wait { milliseconds: u64 },
     /// Read clipboard.
@@ -737,4 +757,25 @@ pub struct ProcessEntry {
     pub memory_mb: u64,
     pub status: String,
     pub start_time: Option<String>,
+}
+
+/// A window discovered on the desktop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowInfo {
+    /// Platform-specific window identifier.
+    pub id: String,
+    /// Human-readable window title.
+    pub title: String,
+    /// Application / process name that owns this window.
+    pub app_name: Option<String>,
+    /// Process ID of the owning process.
+    pub pid: Option<u32>,
+    /// Current position and size.
+    pub bounds: Option<Rect>,
+    /// Whether the window is minimized / iconic.
+    pub minimized: bool,
+    /// Whether the window is maximized / zoomed.
+    pub maximized: bool,
+    /// Whether this window is the currently focused window.
+    pub focused: bool,
 }

@@ -71,7 +71,7 @@ impl Tool for DesktopControlTool {
                 "action": {
                     "type": "string",
                     "description": "Action: inspect, click, type, key, list_windows, activate_window",
-                    "enum": ["inspect", "click", "double_click", "type", "key", "scroll", "drag", "list_windows", "activate_window", "close_window"]
+                    "enum": ["inspect", "click", "double_click", "type", "key", "scroll", "drag", "list_windows", "activate_window", "close_window", "get_window_geometry", "move_window", "resize_window", "minimize_window", "maximize_window"]
                 },
                 "x": {
                     "type": "integer",
@@ -119,6 +119,14 @@ impl Tool for DesktopControlTool {
                 "name": {
                     "type": "string",
                     "description": "Window name for activate / close"
+                },
+                "width": {
+                    "type": "integer",
+                    "description": "Target width (resize_window)"
+                },
+                "height": {
+                    "type": "integer",
+                    "description": "Target height (resize_window)"
                 }
             }),
             vec!["action"],
@@ -348,19 +356,6 @@ Add-Type -AssemblyName System.Windows.Forms
                     Ok(ToolExecutionResult::error(format!("Key press failed: {}", err)))
                 }
             }
-            "list_windows" => {
-                let script = r#"
-Get-Process | Where-Object { $_.MainWindowTitle -ne '' } | ForEach-Object {
-    "[$($_.Id)] $($_.ProcessName): $($_.MainWindowTitle)"
-} | Out-String
-"#;
-                let (ok, stdout, err) = Self::run_ps(script).await?;
-                if ok {
-                    Ok(ToolExecutionResult::success(format!("Windows:\n{}", stdout)))
-                } else {
-                    Ok(ToolExecutionResult::error(format!("List windows failed: {}", err)))
-                }
-            }
             "activate_window" => {
                 let name = args.get("name").and_then(|v| v.as_str());
                 if let Some(n) = name {
@@ -421,6 +416,213 @@ if ($proc -ne $null) {{
                     }
                 } else {
                     Ok(ToolExecutionResult::error("Provide 'name' to close a window".to_string()))
+                }
+            }
+            // ── Window management ──────────────────────────────────────────
+            "list_windows" => {
+                // Enhanced with bounds and window state via P/Invoke
+                let script = r#"
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+using System.Text;
+public class WinAPI {
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    public static string EnumAll() {
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        IntPtr fg = GetForegroundWindow();
+        EnumWindows((hWnd, _) => {
+            System.Text.StringBuilder title = new System.Text.StringBuilder(256);
+            GetWindowText(hWnd, title, 256);
+            if (title.Length > 0) {
+                GetWindowThreadProcessId(hWnd, out uint pid);
+                RECT r; GetWindowRect(hWnd, out r);
+                sb.Append(hWnd.ToInt64().ToString() + "|||");
+                sb.Append(title.ToString().Replace("|","") + "|||");
+                sb.Append(pid.ToString() + "|||");
+                sb.Append(r.Left + "," + r.Top + "," + (r.Right - r.Left) + "," + (r.Bottom - r.Top) + "|||");
+                sb.Append((hWnd == fg ? "1" : "0") + "|||");
+                sb.Append(IsIconic(hWnd) ? "1" : "0" + "|||");
+                sb.Append(IsZoomed(hWnd) ? "1" : "0");
+                sb.AppendLine();
+            }
+            return true;
+        }, IntPtr.Zero);
+        return sb.ToString().Trim();
+    }
+}
+"@
+[WinAPI]::EnumAll()
+"#;
+                let (ok, stdout, err) = Self::run_ps(script).await?;
+                if ok {
+                    Ok(ToolExecutionResult::success(format!("Windows:\n{}", stdout)))
+                } else {
+                    Ok(ToolExecutionResult::error(format!("List windows failed: {}", err)))
+                }
+            }
+            "get_window_geometry" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    let script = format!(
+                        r#"
+$proc = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{name}*' }} | Select-Object -First 1
+if ($proc -ne $null) {{
+    Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class WinAPI {{
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    public struct RECT {{ public int Left; public int Top; public int Right; public int Bottom; }}
+}}
+"@
+    $r = New-Object WinAPI+RECT
+    [WinAPI]::GetWindowRect($proc.MainWindowHandle, [ref]$r) | Out-Null
+    "$($r.Left),$($r.Top),$($r.Right - $r.Left),$($r.Bottom - $r.Top)"
+}} else {{
+    Write-Error "Window not found"
+}}
+"#,
+                        name = n.replace("'", "''")
+                    );
+                    let (ok, stdout, err) = Self::run_ps(&script).await?;
+                    if ok {
+                        Ok(ToolExecutionResult::success(stdout))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("Get geometry failed: {}", err)))
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error("Provide 'name' for get_window_geometry".to_string()))
+                }
+            }
+            "move_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                let x = args.get("x").and_then(|v| v.as_i64());
+                let y = args.get("y").and_then(|v| v.as_i64());
+                if let (Some(n), Some(xv), Some(yv)) = (name, x, y) {
+                    let script = format!(
+                        r#"
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class WinAPI {{
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+}}
+"@
+$proc = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{name}*' }} | Select-Object -First 1
+if ($proc -ne $null) {{
+    [WinAPI]::SetWindowPos($proc.MainWindowHandle, [IntPtr]::Zero, {x}, {y}, 0, 0, 0x0001) | Out-Null
+    "Moved: $($proc.MainWindowTitle)"
+}} else {{ Write-Error "Window not found" }}
+"#,
+                        name = n.replace("'", "''"),
+                        x = xv,
+                        y = yv
+                    );
+                    let (ok, stdout, err) = Self::run_ps(&script).await?;
+                    if ok {
+                        Ok(ToolExecutionResult::success(stdout))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("Move window failed: {}", err)))
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error("Provide 'name', 'x', 'y' for move_window".to_string()))
+                }
+            }
+            "resize_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                let width = args.get("width").and_then(|v| v.as_u64());
+                let height = args.get("height").and_then(|v| v.as_u64());
+                if let (Some(n), Some(w), Some(h)) = (name, width, height) {
+                    let script = format!(
+                        r#"
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class WinAPI {{
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+}}
+"@
+$proc = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{name}*' }} | Select-Object -First 1
+if ($proc -ne $null) {{
+    [WinAPI]::SetWindowPos($proc.MainWindowHandle, [IntPtr]::Zero, 0, 0, {w}, {h}, 0x0002) | Out-Null
+    "Resized: $($proc.MainWindowTitle)"
+}} else {{ Write-Error "Window not found" }}
+"#,
+                        name = n.replace("'", "''"),
+                        w = w,
+                        h = h
+                    );
+                    let (ok, stdout, err) = Self::run_ps(&script).await?;
+                    if ok {
+                        Ok(ToolExecutionResult::success(stdout))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("Resize window failed: {}", err)))
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error("Provide 'name', 'width', 'height' for resize_window".to_string()))
+                }
+            }
+            "minimize_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    let script = format!(
+                        r#"
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class WinAPI {{
+    [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+}}
+"@
+$proc = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{name}*' }} | Select-Object -First 1
+if ($proc -ne $null) {{
+    [WinAPI]::ShowWindowAsync($proc.MainWindowHandle, 6) | Out-Null
+    "Minimized: $($proc.MainWindowTitle)"
+}} else {{ Write-Error "Window not found" }}
+"#,
+                        name = n.replace("'", "''")
+                    );
+                    let (ok, stdout, err) = Self::run_ps(&script).await?;
+                    if ok {
+                        Ok(ToolExecutionResult::success(stdout))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("Minimize failed: {}", err)))
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error("Provide 'name' for minimize_window".to_string()))
+                }
+            }
+            "maximize_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    let script = format!(
+                        r#"
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class WinAPI {{
+    [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+}}
+"@
+$proc = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{name}*' }} | Select-Object -First 1
+if ($proc -ne $null) {{
+    [WinAPI]::ShowWindowAsync($proc.MainWindowHandle, 3) | Out-Null
+    "Maximized: $($proc.MainWindowTitle)"
+}} else {{ Write-Error "Window not found" }}
+"#,
+                        name = n.replace("'", "''")
+                    );
+                    let (ok, stdout, err) = Self::run_ps(&script).await?;
+                    if ok {
+                        Ok(ToolExecutionResult::success(stdout))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("Maximize failed: {}", err)))
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error("Provide 'name' for maximize_window".to_string()))
                 }
             }
             _ => Ok(ToolExecutionResult::error(format!("Unknown action: {}", action))),

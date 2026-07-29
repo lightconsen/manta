@@ -31,6 +31,10 @@ pub fn is_screen_mutating_action(action: &DesktopAction) -> bool {
             | DesktopAction::LaunchApp { .. }
             | DesktopAction::ActivateWindow { .. }
             | DesktopAction::CloseWindow { .. }
+            | DesktopAction::MoveWindow { .. }
+            | DesktopAction::ResizeWindow { .. }
+            | DesktopAction::MinimizeWindow { .. }
+            | DesktopAction::MaximizeWindow { .. }
     )
 }
 

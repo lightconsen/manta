@@ -466,7 +466,79 @@ impl ComputerAdapter for WindowsComputerAdapter {
             DesktopAction::TransferFile { source, destination, method } => {
                 transfer_file_windows(&source, &destination, method).await
             }
-            _ => Err(ComputerError::Other("Action not yet implemented on Windows".to_string())),
+            // ── Window management ──────────────────────────────────────────
+            DesktopAction::ListWindows => {
+                let args = serde_json::json!({ "action": "list_windows" });
+                let result = self
+                    .registry
+                    .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::GetWindowGeometry { title_pattern } => {
+                let args = serde_json::json!({ "action": "get_window_geometry", "name": title_pattern });
+                let result = self
+                    .registry
+                    .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::MoveWindow { title_pattern, x, y } => {
+                let args = serde_json::json!({ "action": "move_window", "name": title_pattern, "x": x, "y": y });
+                let result = self
+                    .registry
+                    .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::ResizeWindow { title_pattern, width, height } => {
+                let args = serde_json::json!({ "action": "resize_window", "name": title_pattern, "width": width, "height": height });
+                let result = self
+                    .registry
+                    .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::MinimizeWindow { title_pattern } => {
+                let args = serde_json::json!({ "action": "minimize_window", "name": title_pattern });
+                let result = self
+                    .registry
+                    .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::MaximizeWindow { title_pattern } => {
+                let args = serde_json::json!({ "action": "maximize_window", "name": title_pattern });
+                let result = self
+                    .registry
+                    .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| {
+                        ComputerError::ToolFailed("desktop control not found".to_string())
+                    })?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
         }
     }
 
