@@ -89,7 +89,11 @@ impl ComputerAdapter for MacosComputerAdapter {
 
         let elements: Vec<UiElement> = result
             .data
-            .and_then(|d| serde_json::from_value(d.get("elements")?.clone()).ok())
+            .and_then(|d| {
+                d.get("elements")?
+                    .as_array()
+                    .map(|arr| arr.iter().filter_map(ui_element_from_macos_json).collect())
+            })
             .unwrap_or_default();
 
         Ok(elements)
@@ -593,6 +597,72 @@ impl MacosComputerAdapter {
             }
         }
     }
+}
+
+// ── macOS ⇢ canonical UiElement conversion ────────────────────────────────
+
+/// Parse macOS accessibility JSON (with `position`/`size` strings) into
+/// the canonical `UiElement` (with `bounds: Rect`).
+///
+/// The macOS accessibility tool produces `{ role, name, position: "{x,y}",
+/// size: "{w,h}", enabled, value, children }`. The canonical type expects
+/// `{ bounds: { x, y, width, height }, label, ... }`.
+fn ui_element_from_macos_json(value: &serde_json::Value) -> Option<UiElement> {
+    let obj = value.as_object()?;
+    let role = obj.get("role")?.as_str()?.to_string();
+    let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let position = obj.get("position").and_then(|v| v.as_str()).unwrap_or("");
+    let size = obj.get("size").and_then(|v| v.as_str()).unwrap_or("");
+    let enabled = obj.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    let value = obj.get("value").and_then(|v| v.as_str()).map(String::from);
+
+    let children = obj
+        .get("children")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(ui_element_from_macos_json).collect())
+        .unwrap_or_default();
+
+    Some(UiElement {
+        id: String::new(),
+        role,
+        label: if name.is_empty() {
+            None
+        } else {
+            Some(name.to_string())
+        },
+        value,
+        bounds: parse_position_size(position, size),
+        enabled,
+        focused: false,
+        children,
+    })
+}
+
+/// Parse macOS `position` / `size` strings like `"{100, 200}"` / `"{80, 30}"`.
+fn parse_position_size(position: &str, size: &str) -> Rect {
+    let x = position
+        .trim_start_matches('{')
+        .split(',')
+        .next()
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .unwrap_or(0);
+    let y = position
+        .split(',')
+        .nth(1)
+        .and_then(|s| s.trim_end_matches('}').trim().parse::<i32>().ok())
+        .unwrap_or(0);
+    let width = size
+        .trim_start_matches('{')
+        .split(',')
+        .next()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(0);
+    let height = size
+        .split(',')
+        .nth(1)
+        .and_then(|s| s.trim_end_matches('}').trim().parse::<u32>().ok())
+        .unwrap_or(0);
+    Rect::new(x, y, width, height)
 }
 
 // ── Shared action helpers ──────────────────────────────────────────────────

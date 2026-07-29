@@ -814,7 +814,6 @@ pub type SharedTool = Arc<dyn Tool>;
 
 pub mod acp_tool;
 pub mod agents_list;
-pub mod report;
 pub mod browser;
 pub mod canvas;
 pub mod code_exec;
@@ -838,8 +837,10 @@ pub mod patch;
 pub mod pdf;
 pub mod planner;
 pub mod process;
+pub mod report;
 pub mod sandbox;
 pub mod sandbox_interceptor;
+pub mod screen_state;
 pub mod sdk;
 pub mod session;
 pub mod shell;
@@ -853,7 +854,6 @@ pub mod web;
 
 pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
 pub use agents_list::AgentsListTool;
-pub use report::WriteReportTool;
 pub use browser::BrowserTool;
 pub use canvas::CanvasTool;
 pub use code_exec::CodeExecutionTool;
@@ -873,6 +873,7 @@ pub use nodes::NodesTool;
 pub use patch::ApplyPatchTool;
 pub use pdf::PdfTool;
 pub use process::ProcessTool;
+pub use report::WriteReportTool;
 pub use sandbox::{SandboxConfig, SandboxedTool};
 pub use sdk::{
     CapabilityFilter, SyncResult, ToolCapabilities, ToolMetadata, ToolPack, ToolSdk, ToolSdkError,

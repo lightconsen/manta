@@ -181,55 +181,98 @@ end describe_elements"#
         .to_string()
     }
 
-    /// Parse the pipe-delimited output from AppleScript into a flat list.
+    /// Parse the pipe-delimited, indented output from AppleScript into a tree.
     ///
-    /// For LLM consumption a flat list with indentation depth is usually
-    /// sufficient and avoids complex tree-building bugs.
+    /// The AppleScript uses 2-space indentation to represent hierarchy:
+    ///
+    /// ```text
+    /// window|name|enabled|true
+    ///   button|OK||true|{100,200}|{80,30}
+    ///     static text|Click me||||
+    /// ```
+    ///
+    /// Returns a `Vec<UiElement>` of top-level windows, each with nested children.
     fn parse_tree_output(output: &str) -> Vec<UiElement> {
-        let mut elements: Vec<UiElement> = Vec::new();
-
-        for line in output.lines() {
-            let trimmed = line.trim_end();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let parts: Vec<&str> = trimmed.trim_start().split('|').collect();
-            if parts.len() < 2 {
-                continue;
-            }
-
-            let role = parts[0].to_string();
-            // The first line is app metadata, not part of the visual tree.
-            if role == "app" {
-                continue;
-            }
-
-            elements.push(UiElement {
-                role,
-                name: parts[1].to_string(),
-                value: parts
-                    .get(2)
-                    .map(|s| s.to_string())
-                    .filter(|s| !s.is_empty()),
-                enabled: parts.get(3).and_then(|s| match *s {
-                    "true" => Some(true),
-                    "false" => Some(false),
-                    _ => None,
-                }),
-                position: parts
-                    .get(4)
-                    .map(|s| s.to_string())
-                    .filter(|s| !s.is_empty()),
-                size: parts
-                    .get(5)
-                    .map(|s| s.to_string())
-                    .filter(|s| !s.is_empty()),
-                children: Vec::new(),
-            });
+        // Pre-parse: skip empty / app lines, compute depth from leading spaces.
+        struct Entry {
+            depth: usize,
+            role: String,
+            name: String,
+            value: Option<String>,
+            enabled: Option<bool>,
+            position: Option<String>,
+            size: Option<String>,
         }
 
-        elements
+        let entries: Vec<Entry> = output
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim_end();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let content = trimmed.trim_start();
+                let leading = trimmed.len() - content.len();
+                // Skip the "app|Safari" metadata line.
+                if content.starts_with("app|") {
+                    return None;
+                }
+                let parts: Vec<&str> = content.split('|').collect();
+                if parts.len() < 2 {
+                    return None;
+                }
+                Some(Entry {
+                    depth: leading / 2,
+                    role: parts[0].to_string(),
+                    name: parts[1].to_string(),
+                    value: parts
+                        .get(2)
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty()),
+                    enabled: parts.get(3).and_then(|s| match *s {
+                        "true" => Some(true),
+                        "false" => Some(false),
+                        _ => None,
+                    }),
+                    position: parts
+                        .get(4)
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty()),
+                    size: parts
+                        .get(5)
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty()),
+                })
+            })
+            .collect();
+
+        // Recursively build tree: process entries at `depth`, recursively
+        // collect children at `depth + 1`.
+        fn build(entries: &[Entry], start: usize, depth: usize) -> (Vec<UiElement>, usize) {
+            let mut elements = Vec::new();
+            let mut i = start;
+            while i < entries.len() && entries[i].depth >= depth {
+                if entries[i].depth > depth {
+                    // Skip child entries — they'll be consumed by the recursive call below.
+                    break;
+                }
+                let (children, next) = build(entries, i + 1, depth + 1);
+                elements.push(UiElement {
+                    role: entries[i].role.clone(),
+                    name: entries[i].name.clone(),
+                    value: entries[i].value.clone(),
+                    enabled: entries[i].enabled,
+                    position: entries[i].position.clone(),
+                    size: entries[i].size.clone(),
+                    children,
+                });
+                i = next;
+            }
+            (elements, i)
+        }
+
+        let (result, _) = build(&entries, 0, 0);
+        result
     }
 }
 
@@ -347,18 +390,21 @@ mod tests {
 
     #[test]
     fn test_parse_tree_output() {
-        let output = "app|Safari\n\
-                      window|GitHub|enabled|true\n\
-                        button|Reload||true||\n\
-                        text field|Search||false|{100, 200}|{300, 30}\n\
-                          static text|https://github.com|https://github.com||";
+        // Note: explicit "\n" + spaces — Rust's `\` line continuation strips
+        // leading whitespace, which would destroy the indentation the parser
+        // relies on.
+        let output = "app|Safari\nwindow|GitHub|enabled|true\n  button|Reload||true||\n  text field|Search||false|{100, 200}|{300, 30}\n    static text|https://github.com|https://github.com||";
         let elements = AccessibilityTool::parse_tree_output(output);
-        // app line is skipped, remaining 4 elements are flattened
-        assert_eq!(elements.len(), 4);
+        // app line is skipped; top-level should have 1 window
+        assert_eq!(elements.len(), 1, "should have 1 top-level window");
         assert_eq!(elements[0].role, "window");
-        assert_eq!(elements[1].role, "button");
-        assert_eq!(elements[2].role, "text field");
-        assert_eq!(elements[3].role, "static text");
-        assert_eq!(elements[2].position.as_deref(), Some("{100, 200}"));
+        // Window has 2 children: button + text field
+        assert_eq!(elements[0].children.len(), 2);
+        assert_eq!(elements[0].children[0].role, "button");
+        assert_eq!(elements[0].children[1].role, "text field");
+        assert_eq!(elements[0].children[1].position.as_deref(), Some("{100, 200}"));
+        // Text field has 1 child: static text
+        assert_eq!(elements[0].children[1].children.len(), 1);
+        assert_eq!(elements[0].children[1].children[0].role, "static text");
     }
 }

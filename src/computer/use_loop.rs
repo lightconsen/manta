@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::computer::{
-    ActionResult, ComputerAdapter, ComputerError, DesktopAction, Result, Screenshot,
+    ActionResult, ComputerAdapter, ComputerError, DesktopAction, Result, Screenshot, UiElement,
     VerificationConfig, VerificationCriteria, VerificationEngine,
 };
 
@@ -350,6 +350,14 @@ impl ComputerUseLoop {
 
                     // 4. Act — execute the action.
                     let screenshot_before = Some(screenshot);
+                    // Capture the pre-action UI tree for diff-based
+                    // verification of screen-mutating actions.
+                    let tree_before = if crate::computer::vision::is_screen_mutating_action(&action)
+                    {
+                        self.adapter.read_ui_tree(None).await.ok()
+                    } else {
+                        None
+                    };
                     let result = self.adapter.execute(action.clone()).await;
 
                     match result {
@@ -358,17 +366,25 @@ impl ComputerUseLoop {
                             tokio::time::sleep(Duration::from_millis(current_settle_delay_ms))
                                 .await;
 
-                            let verified = if self.config.verify_after_each {
-                                self.verify_action(&action, &result).await.unwrap_or(false)
-                            } else {
-                                true
-                            };
-
                             let screenshot_after = self
                                 .adapter
                                 .screenshot(self.config.screenshot_region)
                                 .await
                                 .ok();
+
+                            let verified = if self.config.verify_after_each {
+                                self.verify_action(
+                                    &action,
+                                    &result,
+                                    tree_before.as_deref(),
+                                    screenshot_before.as_ref(),
+                                    screenshot_after.as_ref(),
+                                )
+                                .await
+                                .unwrap_or(false)
+                            } else {
+                                true
+                            };
 
                             if verified {
                                 // Success — reset failure counters and settle delay.
@@ -452,30 +468,26 @@ impl ComputerUseLoop {
         })
     }
 
-    /// Verify a single action using heuristics.
+    /// Verify a single action.
+    ///
+    /// Actions with targeted criteria (LaunchApp, ActivateWindow, KillProcess)
+    /// use the [`VerificationEngine`]; other screen-mutating actions are
+    /// verified by diffing the pre/post [`ScreenState`] — if nothing visible
+    /// changed, the action likely did not land.
     ///
     /// Returns `true` if the action appears to have succeeded.
-    async fn verify_action(&self, action: &DesktopAction, result: &ActionResult) -> Result<bool> {
+    async fn verify_action(
+        &self,
+        action: &DesktopAction,
+        result: &ActionResult,
+        tree_before: Option<&[UiElement]>,
+        screenshot_before: Option<&Screenshot>,
+        screenshot_after: Option<&Screenshot>,
+    ) -> Result<bool> {
         match action {
             DesktopAction::Screenshot { .. } => {
                 // Screenshots are self-verifying.
                 Ok(true)
-            }
-            DesktopAction::Click { .. } => {
-                // After a click, verify the UI tree still exists and
-                // nothing obvious went wrong.
-                match self.adapter.read_ui_tree(None).await {
-                    Ok(tree) => Ok(!tree.is_empty()),
-                    Err(_) => Ok(true), // Accessibility not available — can't verify.
-                }
-            }
-            DesktopAction::Type { .. } | DesktopAction::KeyPress { .. } => {
-                // Text input is hard to verify without knowing the target.
-                // A basic check: UI tree is still readable.
-                match self.adapter.read_ui_tree(None).await {
-                    Ok(tree) => Ok(!tree.is_empty()),
-                    Err(_) => Ok(true),
-                }
             }
             DesktopAction::LaunchApp { name, wait_for_ready, .. } => {
                 if *wait_for_ready {
@@ -524,8 +536,44 @@ impl ComputerUseLoop {
             | DesktopAction::UnwatchDirectory { .. }
             | DesktopAction::WatchFile { .. }
             | DesktopAction::UnwatchFile { .. } => Ok(result.success),
+            _ if crate::computer::vision::is_screen_mutating_action(action) => {
+                self.verify_by_diff(tree_before, screenshot_before, screenshot_after)
+                    .await
+            }
             _ => Ok(true), // Other actions: assume success.
         }
+    }
+
+    /// Verify by diffing pre/post screen state: pixel diff on the screenshots
+    /// plus tree diff on the accessibility trees. Any meaningful visible
+    /// change counts as verified.
+    async fn verify_by_diff(
+        &self,
+        tree_before: Option<&[UiElement]>,
+        screenshot_before: Option<&Screenshot>,
+        screenshot_after: Option<&Screenshot>,
+    ) -> Result<bool> {
+        let (Some(shot_before), Some(shot_after)) = (screenshot_before, screenshot_after) else {
+            // No screenshots available (e.g. headless) — cannot verify.
+            return Ok(true);
+        };
+        if shot_before.base64.is_empty() || shot_after.base64.is_empty() {
+            return Ok(true);
+        }
+
+        let tree_after = self.adapter.read_ui_tree(None).await.unwrap_or_default();
+        let before = crate::computer::vision::ScreenState::from_parts(
+            tree_before.unwrap_or(&[]).to_vec(),
+            shot_before.clone(),
+        );
+        let after =
+            crate::computer::vision::ScreenState::from_parts(tree_after, shot_after.clone());
+        let diff = before.diff(&after);
+        let changed = diff.has_meaningful_changes();
+        if !changed {
+            tracing::info!("verification: no visible change ({})", diff.summary());
+        }
+        Ok(changed)
     }
 
     /// Take a screenshot, falling back to an empty placeholder when the

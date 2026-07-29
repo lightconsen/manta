@@ -9,6 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use crate::computer::vision::{is_screen_mutating_action, ScreenState};
 use crate::computer::{
     ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton, Point,
     Rect, ScrollDirection,
@@ -179,11 +180,44 @@ Common workflows:
 
         let desktop_action = action_to_desktop_action(action, &args)?;
 
+        // Transparent verification: for screen-mutating actions, capture a
+        // lightweight pre-snapshot so we can diff against the post-state and
+        // tell the LLM whether the action had a visible effect.
+        let verify = is_screen_mutating_action(&desktop_action);
+        let pre_state = if verify {
+            ScreenState::capture_light(adapter.as_ref()).await.ok()
+        } else {
+            None
+        };
+
         let result = adapter
             .execute(desktop_action)
             .await
             .map_err(to_syscity_err)?;
-        Ok(action_result_to_tool_result(result))
+        let mut tool_result = action_result_to_tool_result(result);
+
+        if let Some(pre) = pre_state {
+            // Brief settle delay so the UI has time to react to the action.
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            match ScreenState::capture_light(adapter.as_ref()).await {
+                Ok(post) => {
+                    let diff = pre.diff(&post);
+                    tool_result
+                        .output
+                        .push_str(&format!("\n\n[verification] {}", diff.summary()));
+                    let diff_json = serde_json::to_value(&diff).unwrap_or_default();
+                    let data = tool_result.data.get_or_insert_with(|| json!({}));
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.insert("verification".to_string(), diff_json);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("post-action verification capture failed: {}", e);
+                }
+            }
+        }
+
+        Ok(tool_result)
     }
 }
 
@@ -526,5 +560,78 @@ fn to_syscity_err(e: ComputerError) -> crate::error::SyscityError {
             "Accessibility permission not granted".to_string(),
         ),
         other => crate::error::SyscityError::Internal(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::computer::{Result as ComputerResult, Screenshot, UiElement, WaitCondition};
+
+    /// Mock adapter returning a fixed screenshot and empty UI tree.
+    struct MockAdapter {
+        screenshot_b64: String,
+    }
+
+    #[async_trait::async_trait]
+    impl ComputerAdapter for MockAdapter {
+        async fn screenshot(&self, _region: Option<Rect>) -> ComputerResult<Screenshot> {
+            Ok(Screenshot {
+                base64: self.screenshot_b64.clone(),
+                width: 100,
+                height: 100,
+                timestamp: std::time::Instant::now(),
+            })
+        }
+
+        async fn read_ui_tree(&self, _app: Option<&str>) -> ComputerResult<Vec<UiElement>> {
+            Ok(Vec::new())
+        }
+
+        async fn execute(&self, _action: DesktopAction) -> ComputerResult<ActionResult> {
+            Ok(ActionResult::success("done"))
+        }
+
+        async fn wait_for(
+            &self,
+            _condition: WaitCondition,
+            _timeout: std::time::Duration,
+        ) -> ComputerResult<bool> {
+            Ok(true)
+        }
+    }
+
+    fn mock_tool() -> ComputerTool {
+        ComputerTool::new(Some(Arc::new(MockAdapter {
+            screenshot_b64: "aGVsbG8gd29ybGQ=".to_string(),
+        })))
+    }
+
+    #[tokio::test]
+    async fn mutating_action_appends_verification_summary() {
+        let tool = mock_tool();
+        let result = tool
+            .execute(json!({"action": "click", "x": 10, "y": 20}), &ToolContext::default())
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert!(
+            result.output.contains("[verification]"),
+            "click should append a verification summary, got: {}",
+            result.output
+        );
+        // Structured diff attached to data.
+        let data = result.data.expect("data should be present");
+        assert!(data.get("verification").is_some());
+    }
+
+    #[tokio::test]
+    async fn read_only_action_skips_verification() {
+        let tool = mock_tool();
+        let result = tool
+            .execute(json!({"action": "clipboard_get"}), &ToolContext::default())
+            .await
+            .unwrap();
+        assert!(!result.output.contains("[verification]"));
     }
 }

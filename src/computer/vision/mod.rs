@@ -34,6 +34,7 @@ pub struct DetectedElement {
 pub mod model_download;
 #[cfg(feature = "vision")]
 pub mod ocr_rapid;
+pub mod screen_state;
 #[cfg(feature = "vision")]
 pub mod ui_onnx;
 
@@ -44,3 +45,7 @@ mod preprocess;
 pub use model_download::{resolve_or_download_vision_models, VisionModelPaths};
 #[cfg(feature = "vision")]
 pub use preprocess::{decode_screenshot, image_to_nchw_tensor, normalize_image, resize_with_pad};
+pub use screen_state::{
+    is_screen_mutating_action, pixel_diff, tree_diff, PixelDiffResult, ScreenDiff, ScreenState,
+    TextBlockSer, TreeDiffResult,
+};

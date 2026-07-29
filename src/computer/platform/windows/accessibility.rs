@@ -110,42 +110,41 @@ if ($target) {
         .to_string()
     }
 
-    /// Parse the JSON returned by PowerShell into our Rust types.
+    /// Parse the JSON returned by PowerShell into a tree of elements.
+    ///
+    /// The PowerShell output is already hierarchical (`children` arrays), so
+    /// we preserve the nesting instead of flattening it.
     fn parse_json_tree(value: &Value) -> Vec<UiElement> {
-        let mut result = Vec::new();
-        Self::parse_element(value, &mut result);
-        result
+        Self::parse_element(value).into_iter().collect()
     }
 
-    fn parse_element(value: &Value, out: &mut Vec<UiElement>) {
-        if let Some(obj) = value.as_object() {
-            let el = UiElement {
-                role: obj
-                    .get("role")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string(),
-                name: obj
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                value: obj.get("value").and_then(|v| v.as_str()).map(String::from),
-                enabled: obj.get("enabled").and_then(|v| v.as_bool()),
-                x: obj.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                y: obj.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                width: obj.get("width").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                height: obj.get("height").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                children: Vec::new(),
-            };
-            out.push(el);
+    fn parse_element(value: &Value) -> Option<UiElement> {
+        let obj = value.as_object()?;
+        let children = obj
+            .get("children")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(Self::parse_element).collect())
+            .unwrap_or_default();
 
-            if let Some(children) = obj.get("children").and_then(|v| v.as_array()) {
-                for child in children {
-                    Self::parse_element(child, out);
-                }
-            }
-        }
+        Some(UiElement {
+            role: obj
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            name: obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            value: obj.get("value").and_then(|v| v.as_str()).map(String::from),
+            enabled: obj.get("enabled").and_then(|v| v.as_bool()),
+            x: obj.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            y: obj.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            width: obj.get("width").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            height: obj.get("height").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            children,
+        })
     }
 
     async fn run_ps(script: &str) -> crate::Result<(bool, String, String)> {
@@ -286,10 +285,11 @@ mod tests {
         });
 
         let elements = WindowsAccessibilityTool::parse_json_tree(&json);
-        assert_eq!(elements.len(), 3);
+        assert_eq!(elements.len(), 1, "should have 1 top-level window");
         assert_eq!(elements[0].role, "Window");
-        assert_eq!(elements[1].role, "Button");
-        assert_eq!(elements[2].role, "Edit");
-        assert_eq!(elements[2].value.as_deref(), Some("0"));
+        assert_eq!(elements[0].children.len(), 2);
+        assert_eq!(elements[0].children[0].role, "Button");
+        assert_eq!(elements[0].children[1].role, "Edit");
+        assert_eq!(elements[0].children[1].value.as_deref(), Some("0"));
     }
 }

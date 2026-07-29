@@ -1,0 +1,657 @@
+//! ScreenState — a unified snapshot of everything visible on screen.
+//!
+//! Combines the three perception sources into one struct:
+//! - **UI tree** (accessibility API): structured hierarchy of elements
+//! - **Screenshot** (pixels): ground truth of what is rendered
+//! - **OCR text** (vision): text the accessibility tree cannot see
+//!
+//! Two snapshots can be compared with [`ScreenState::diff`] to produce a
+//! [`ScreenDiff`] — the foundation of the verification loop: capture before
+//! an action, capture after, diff, and hand the summary back to the LLM so
+//! it knows whether the action had the intended effect.
+
+use serde::{Deserialize, Serialize};
+
+use super::TextBlock;
+use crate::computer::types::{Rect, UiElement};
+use crate::computer::{ComputerAdapter, DesktopAction, Result, Screenshot};
+
+/// Whether an action is expected to visibly change the screen — only these
+/// get pre/post verification snapshots.
+pub fn is_screen_mutating_action(action: &DesktopAction) -> bool {
+    matches!(
+        action,
+        DesktopAction::Click { .. }
+            | DesktopAction::DoubleClick { .. }
+            | DesktopAction::Type { .. }
+            | DesktopAction::KeyPress { .. }
+            | DesktopAction::KeySequence { .. }
+            | DesktopAction::Scroll { .. }
+            | DesktopAction::Drag { .. }
+            | DesktopAction::LaunchApp { .. }
+            | DesktopAction::ActivateWindow { .. }
+            | DesktopAction::CloseWindow { .. }
+    )
+}
+
+/// Complete state of the screen at a point in time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenState {
+    /// Top-level UI tree roots (windows), each with nested children.
+    pub ui_tree: Vec<UiElement>,
+    /// Screenshot (base64 PNG + dimensions).
+    pub screenshot: Screenshot,
+    /// All text visible on screen (joined OCR blocks). Empty when OCR was
+    /// not run for this snapshot.
+    #[serde(default)]
+    pub ocr_text: String,
+    /// Positioned OCR text regions. Empty when OCR was not run.
+    #[serde(default)]
+    pub ocr_regions: Vec<TextBlockSer>,
+}
+
+/// Serializable mirror of [`TextBlock`] (TextBlock itself does not derive
+/// serde traits; it lives in the parent module for the vision pipeline).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextBlockSer {
+    pub text: String,
+    pub confidence: f32,
+    pub bounds: Rect,
+}
+
+impl From<&TextBlock> for TextBlockSer {
+    fn from(b: &TextBlock) -> Self {
+        Self {
+            text: b.text.clone(),
+            confidence: b.confidence,
+            bounds: b.bounds,
+        }
+    }
+}
+
+impl ScreenState {
+    /// Build a snapshot from already-captured parts (no OCR).
+    pub fn from_parts(ui_tree: Vec<UiElement>, screenshot: Screenshot) -> Self {
+        Self {
+            ui_tree,
+            screenshot,
+            ocr_text: String::new(),
+            ocr_regions: Vec::new(),
+        }
+    }
+
+    /// Fast capture: screenshot + UI tree, no OCR.
+    ///
+    /// This is the snapshot used by the transparent verification loop — it
+    /// must stay cheap (~300ms on macOS).
+    pub async fn capture_light(adapter: &dyn ComputerAdapter) -> Result<Self> {
+        let screenshot = adapter.screenshot(None).await?;
+        let ui_tree = adapter.read_ui_tree(None).await.unwrap_or_default();
+        Ok(Self {
+            ui_tree,
+            screenshot,
+            ocr_text: String::new(),
+            ocr_regions: Vec::new(),
+        })
+    }
+
+    /// Full capture: screenshot + UI tree + OCR text.
+    #[cfg(feature = "vision")]
+    pub async fn capture(
+        adapter: &dyn ComputerAdapter,
+        ocr: &mut super::ocr_rapid::RapidOcr,
+    ) -> Result<Self> {
+        let mut state = Self::capture_light(adapter).await?;
+        let blocks = ocr.detect_text(&state.screenshot).await.unwrap_or_default();
+        state.ocr_text = blocks
+            .iter()
+            .map(|b| b.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        state.ocr_regions = blocks.iter().map(TextBlockSer::from).collect();
+        Ok(state)
+    }
+
+    /// Compare this snapshot (before) with another (after).
+    pub fn diff(&self, after: &ScreenState) -> ScreenDiff {
+        ScreenDiff {
+            pixel: pixel_diff(&self.screenshot, &after.screenshot),
+            tree: tree_diff(&self.ui_tree, &after.ui_tree),
+        }
+    }
+}
+
+/// Result of comparing two screen states.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenDiff {
+    pub pixel: PixelDiffResult,
+    pub tree: TreeDiffResult,
+}
+
+impl ScreenDiff {
+    /// Whether the diff shows any user-visible change at all.
+    pub fn has_meaningful_changes(&self) -> bool {
+        self.pixel.change_percentage >= 0.5 || self.tree.has_changes()
+    }
+
+    /// Compact one-paragraph summary for LLM consumption.
+    pub fn summary(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        if self.pixel.change_percentage >= 0.5 {
+            if self.pixel.changed_regions.is_empty() {
+                parts.push(format!("pixels: {:.1}% changed", self.pixel.change_percentage));
+            } else {
+                let regions = self
+                    .pixel
+                    .changed_regions
+                    .iter()
+                    .take(3)
+                    .map(|r| format!("({},{}) {}x{}", r.x, r.y, r.width, r.height))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                parts.push(format!(
+                    "pixels: {:.1}% changed in {} region(s): {}",
+                    self.pixel.change_percentage,
+                    self.pixel.changed_regions.len(),
+                    regions
+                ));
+            }
+        }
+
+        if !self.tree.added.is_empty() {
+            parts.push(format!("added: {}", self.tree.added.join(", ")));
+        }
+        if !self.tree.removed.is_empty() {
+            parts.push(format!("removed: {}", self.tree.removed.join(", ")));
+        }
+        if !self.tree.changed.is_empty() {
+            parts.push(format!("changed: {}", self.tree.changed.join(", ")));
+        }
+
+        if parts.is_empty() {
+            "no visible change detected".to_string()
+        } else {
+            parts.join("; ")
+        }
+    }
+}
+
+/// Pixel-level comparison of two screenshots.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PixelDiffResult {
+    /// Percentage of 32x32 blocks whose average color changed (0.0–100.0).
+    pub change_percentage: f32,
+    /// Bounding boxes of connected changed regions, largest first (max 8).
+    pub changed_regions: Vec<Rect>,
+}
+
+/// UI-tree comparison of two snapshots.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TreeDiffResult {
+    /// Elements present only in the after-snapshot: `path role "label"`.
+    pub added: Vec<String>,
+    /// Elements present only in the before-snapshot.
+    pub removed: Vec<String>,
+    /// Elements present in both but with state changes (enabled/value/bounds).
+    pub changed: Vec<String>,
+}
+
+impl TreeDiffResult {
+    pub fn has_changes(&self) -> bool {
+        !self.added.is_empty() || !self.removed.is_empty() || !self.changed.is_empty()
+    }
+}
+
+/// Maximum diff entries per category before truncation.
+const MAX_DIFF_ENTRIES: usize = 20;
+
+// ── Pixel diff ─────────────────────────────────────────────────────────────
+
+/// Compare two screenshots. With the `vision` feature this decodes the PNGs
+/// and does a block-based comparison; otherwise it falls back to a sampled
+/// byte comparison (no region information).
+pub fn pixel_diff(before: &Screenshot, after: &Screenshot) -> PixelDiffResult {
+    if before.base64 == after.base64 {
+        return PixelDiffResult {
+            change_percentage: 0.0,
+            changed_regions: Vec::new(),
+        };
+    }
+    if before.width != after.width || before.height != after.height {
+        return PixelDiffResult {
+            change_percentage: 100.0,
+            changed_regions: vec![Rect::new(0, 0, after.width, after.height)],
+        };
+    }
+    pixel_diff_impl(&before.base64, &after.base64)
+}
+
+#[cfg(feature = "vision")]
+fn pixel_diff_impl(before_b64: &str, after_b64: &str) -> PixelDiffResult {
+    use base64::Engine as _;
+    let before_bytes = base64::engine::general_purpose::STANDARD.decode(before_b64);
+    let after_bytes = base64::engine::general_purpose::STANDARD.decode(after_b64);
+    match (before_bytes, after_bytes) {
+        (Ok(b), Ok(a)) => block_diff_bytes(&b, &a),
+        _ => byte_sampled_diff(before_b64, after_b64),
+    }
+}
+
+#[cfg(not(feature = "vision"))]
+fn pixel_diff_impl(before_b64: &str, after_b64: &str) -> PixelDiffResult {
+    byte_sampled_diff(before_b64, after_b64)
+}
+
+/// Fallback: sampled byte comparison. Reports a change percentage but no
+/// regions (we cannot map byte offsets to pixels without decoding).
+fn byte_sampled_diff(before_b64: &str, after_b64: &str) -> PixelDiffResult {
+    let (b, a) = (before_b64.as_bytes(), after_b64.as_bytes());
+    let len = b.len().min(a.len());
+    if len == 0 {
+        return PixelDiffResult {
+            change_percentage: 100.0,
+            changed_regions: Vec::new(),
+        };
+    }
+    let step = 64;
+    let samples = len / step + 1;
+    let mismatches = (0..len).step_by(step).filter(|&i| b[i] != a[i]).count();
+    PixelDiffResult {
+        change_percentage: (mismatches as f32 / samples as f32) * 100.0,
+        changed_regions: Vec::new(),
+    }
+}
+
+/// Decode PNGs and compare 32x32 blocks by average RGB distance.
+#[cfg(feature = "vision")]
+fn block_diff_bytes(before: &[u8], after: &[u8]) -> PixelDiffResult {
+    let b = image::load_from_memory(before);
+    let a = image::load_from_memory(after);
+    match (b, a) {
+        (Ok(b), Ok(a)) => block_diff_images(&b, &a),
+        _ => PixelDiffResult {
+            change_percentage: 100.0,
+            changed_regions: Vec::new(),
+        },
+    }
+}
+
+#[cfg(feature = "vision")]
+fn block_diff_images(before: &image::DynamicImage, after: &image::DynamicImage) -> PixelDiffResult {
+    use image::GenericImageView;
+
+    const BLOCK: u32 = 32;
+    /// Average per-channel distance (0–255) above which a block counts as changed.
+    const THRESHOLD: f32 = 30.0;
+
+    let (w, h) = before.dimensions();
+    if (w, h) != after.dimensions() {
+        return PixelDiffResult {
+            change_percentage: 100.0,
+            changed_regions: vec![Rect::new(0, 0, w, h)],
+        };
+    }
+
+    let b = before.to_rgb8();
+    let a = after.to_rgb8();
+    let cols = w.div_ceil(BLOCK);
+    let rows = h.div_ceil(BLOCK);
+    let mut changed = vec![false; (cols * rows) as usize];
+    let mut changed_count = 0u32;
+
+    for by in 0..rows {
+        for bx in 0..cols {
+            let (mut sb, mut sa) = ([0u64; 3], [0u64; 3]);
+            let mut n = 0u64;
+            for y in (by * BLOCK)..((by + 1) * BLOCK).min(h) {
+                for x in (bx * BLOCK)..((bx + 1) * BLOCK).min(w) {
+                    let pb = b.get_pixel(x, y).0;
+                    let pa = a.get_pixel(x, y).0;
+                    for c in 0..3 {
+                        sb[c] += pb[c] as u64;
+                        sa[c] += pa[c] as u64;
+                    }
+                    n += 1;
+                }
+            }
+            if n == 0 {
+                continue;
+            }
+            let dist: f32 = (0..3)
+                .map(|c| ((sb[c] as f32 / n as f32) - (sa[c] as f32 / n as f32)).abs())
+                .sum::<f32>()
+                / 3.0;
+            if dist > THRESHOLD {
+                changed[(by * cols + bx) as usize] = true;
+                changed_count += 1;
+            }
+        }
+    }
+
+    let total = cols * rows;
+    let change_percentage = if total == 0 {
+        0.0
+    } else {
+        (changed_count as f32 / total as f32) * 100.0
+    };
+
+    PixelDiffResult {
+        change_percentage,
+        changed_regions: merge_changed_blocks(&changed, cols, rows, BLOCK),
+    }
+}
+
+/// Flood-fill connected changed blocks and return bounding boxes,
+/// largest area first, capped at 8 regions.
+#[cfg(feature = "vision")]
+fn merge_changed_blocks(changed: &[bool], cols: u32, rows: u32, block: u32) -> Vec<Rect> {
+    let mut visited = vec![false; changed.len()];
+    let mut regions: Vec<Rect> = Vec::new();
+
+    for start in 0..changed.len() {
+        if !changed[start] || visited[start] {
+            continue;
+        }
+        // BFS flood fill.
+        let mut stack = vec![start];
+        let (mut min_x, mut min_y) = (u32::MAX, u32::MAX);
+        let (mut max_x, mut max_y) = (0u32, 0u32);
+        while let Some(idx) = stack.pop() {
+            if visited[idx] || !changed[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let (bx, by) = (idx as u32 % cols, idx as u32 / cols);
+            min_x = min_x.min(bx);
+            min_y = min_y.min(by);
+            max_x = max_x.max(bx);
+            max_y = max_y.max(by);
+            // 4-connectivity neighbours.
+            if bx > 0 {
+                stack.push(idx - 1);
+            }
+            if bx + 1 < cols {
+                stack.push(idx + 1);
+            }
+            if by > 0 {
+                stack.push(idx - cols as usize);
+            }
+            if by + 1 < rows {
+                stack.push(idx + cols as usize);
+            }
+        }
+        regions.push(Rect::new(
+            (min_x * block) as i32,
+            (min_y * block) as i32,
+            (max_x - min_x + 1) * block,
+            (max_y - min_y + 1) * block,
+        ));
+    }
+
+    regions.sort_by_key(|r| std::cmp::Reverse(r.width as u64 * r.height as u64));
+    regions.truncate(8);
+    regions
+}
+
+// ── Tree diff ──────────────────────────────────────────────────────────────
+
+/// Recursively compare two UI trees, matching elements by (role, label).
+pub fn tree_diff(before: &[UiElement], after: &[UiElement]) -> TreeDiffResult {
+    let mut out = TreeDiffResult::default();
+    diff_elements(before, after, "", &mut out);
+    truncate_diff(&mut out);
+    out
+}
+
+fn element_key(el: &UiElement) -> (&str, Option<&str>) {
+    (el.role.as_str(), el.label.as_deref())
+}
+
+fn describe(el: &UiElement) -> String {
+    match &el.label {
+        Some(l) if !l.is_empty() => format!("{} \"{}\"", el.role, l),
+        _ => el.role.clone(),
+    }
+}
+
+fn diff_elements(before: &[UiElement], after: &[UiElement], path: &str, out: &mut TreeDiffResult) {
+    for b in before {
+        let key = element_key(b);
+        let child_path = format!("{}/{}", path, describe(b));
+        match after.iter().find(|a| element_key(a) == key) {
+            Some(a) => {
+                if b.enabled != a.enabled {
+                    out.changed
+                        .push(format!("{} enabled: {} → {}", child_path, b.enabled, a.enabled));
+                }
+                if b.value != a.value {
+                    out.changed
+                        .push(format!("{} value: {:?} → {:?}", child_path, b.value, a.value));
+                }
+                if b.bounds != a.bounds {
+                    out.changed.push(format!(
+                        "{} moved to ({},{}) {}x{}",
+                        child_path, a.bounds.x, a.bounds.y, a.bounds.width, a.bounds.height
+                    ));
+                }
+                diff_elements(&b.children, &a.children, &child_path, out);
+            }
+            None => out.removed.push(child_path),
+        }
+    }
+    for a in after {
+        let key = element_key(a);
+        if !before.iter().any(|b| element_key(b) == key) {
+            out.added.push(format!("{}/{}", path, describe(a)));
+        }
+    }
+}
+
+fn truncate_diff(out: &mut TreeDiffResult) {
+    for list in [&mut out.added, &mut out.removed, &mut out.changed] {
+        if list.len() > MAX_DIFF_ENTRIES {
+            let omitted = list.len() - MAX_DIFF_ENTRIES;
+            list.truncate(MAX_DIFF_ENTRIES);
+            list.push(format!("… {} more omitted", omitted));
+        }
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::computer::types::Rect;
+
+    fn el(role: &str, label: Option<&str>, children: Vec<UiElement>) -> UiElement {
+        UiElement {
+            id: String::new(),
+            role: role.to_string(),
+            label: label.map(String::from),
+            value: None,
+            bounds: Rect::new(0, 0, 100, 30),
+            enabled: true,
+            focused: false,
+            children,
+        }
+    }
+
+    #[test]
+    fn tree_diff_identical_trees_have_no_changes() {
+        let tree = vec![el(
+            "window",
+            Some("App"),
+            vec![el("button", Some("OK"), vec![])],
+        )];
+        let diff = tree_diff(&tree, &tree);
+        assert!(!diff.has_changes());
+    }
+
+    #[test]
+    fn tree_diff_detects_added_element() {
+        let before = vec![el("window", Some("App"), vec![])];
+        let after = vec![el(
+            "window",
+            Some("App"),
+            vec![el("button", Some("OK"), vec![])],
+        )];
+        let diff = tree_diff(&before, &after);
+        assert_eq!(diff.added.len(), 1);
+        assert!(diff.added[0].contains("button"));
+        assert!(diff.removed.is_empty());
+    }
+
+    #[test]
+    fn tree_diff_detects_removed_element() {
+        let before = vec![el(
+            "window",
+            Some("App"),
+            vec![el("button", Some("OK"), vec![])],
+        )];
+        let after = vec![el("window", Some("App"), vec![])];
+        let diff = tree_diff(&before, &after);
+        assert_eq!(diff.removed.len(), 1);
+        assert!(diff.added.is_empty());
+    }
+
+    #[test]
+    fn tree_diff_detects_enabled_change() {
+        let mut before_btn = el("button", Some("OK"), vec![]);
+        before_btn.enabled = false;
+        let before = vec![el("window", Some("App"), vec![before_btn])];
+        let after = vec![el(
+            "window",
+            Some("App"),
+            vec![el("button", Some("OK"), vec![])],
+        )];
+        let diff = tree_diff(&before, &after);
+        assert_eq!(diff.changed.len(), 1);
+        assert!(diff.changed[0].contains("enabled: false → true"));
+    }
+
+    #[test]
+    fn pixel_diff_identical_base64_is_zero() {
+        let ss = Screenshot {
+            base64: "aGVsbG8=".to_string(),
+            width: 100,
+            height: 100,
+            timestamp: std::time::Instant::now(),
+        };
+        let diff = pixel_diff(&ss, &ss);
+        assert_eq!(diff.change_percentage, 0.0);
+        assert!(diff.changed_regions.is_empty());
+    }
+
+    #[test]
+    fn pixel_diff_dimension_mismatch_is_full_change() {
+        let a = Screenshot {
+            base64: "AAAA".to_string(),
+            width: 100,
+            height: 100,
+            timestamp: std::time::Instant::now(),
+        };
+        let b = Screenshot {
+            base64: "BBBB".to_string(),
+            width: 200,
+            height: 100,
+            timestamp: std::time::Instant::now(),
+        };
+        let diff = pixel_diff(&a, &b);
+        assert_eq!(diff.change_percentage, 100.0);
+    }
+
+    #[test]
+    fn byte_sampled_diff_reports_percentage() {
+        // step = 64, so mismatches at indices 0 and 64 are sampled.
+        let before = "A".repeat(256);
+        let mut after = before.clone();
+        after.replace_range(0..1, "B");
+        after.replace_range(64..65, "B");
+        let diff = byte_sampled_diff(&before, &after);
+        // 2 of 5 sampled indices (0, 64, 128, 192, 256→clamped) differ.
+        assert!(diff.change_percentage > 0.0);
+        assert!(diff.change_percentage < 100.0);
+    }
+
+    #[test]
+    fn summary_reports_no_change() {
+        let diff = ScreenDiff {
+            pixel: PixelDiffResult {
+                change_percentage: 0.0,
+                changed_regions: vec![],
+            },
+            tree: TreeDiffResult::default(),
+        };
+        assert_eq!(diff.summary(), "no visible change detected");
+        assert!(!diff.has_meaningful_changes());
+    }
+
+    #[test]
+    fn summary_includes_pixel_and_tree() {
+        let diff = ScreenDiff {
+            pixel: PixelDiffResult {
+                change_percentage: 12.5,
+                changed_regions: vec![Rect::new(100, 140, 200, 160)],
+            },
+            tree: TreeDiffResult {
+                added: vec!["/window/button \"OK\"".to_string()],
+                removed: vec![],
+                changed: vec![],
+            },
+        };
+        let s = diff.summary();
+        assert!(s.contains("12.5%"));
+        assert!(s.contains("added:"));
+        assert!(diff.has_meaningful_changes());
+    }
+
+    /// Encode a solid-color image (with an optional white block) as a
+    /// base64 PNG screenshot for pixel-diff tests.
+    #[cfg(feature = "vision")]
+    fn png_screenshot(width: u32, height: u32, white_block: Option<Rect>) -> Screenshot {
+        use base64::Engine as _;
+        let mut img = image::RgbImage::new(width, height);
+        if let Some(r) = white_block {
+            for y in r.y as u32..(r.y as u32 + r.height).min(height) {
+                for x in r.x as u32..(r.x as u32 + r.width).min(width) {
+                    img.put_pixel(x, y, image::Rgb([255, 255, 255]));
+                }
+            }
+        }
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        Screenshot {
+            base64: base64::engine::general_purpose::STANDARD.encode(buf.into_inner()),
+            width,
+            height,
+            timestamp: std::time::Instant::now(),
+        }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn pixel_diff_identical_pngs_is_zero() {
+        let a = png_screenshot(64, 64, None);
+        let b = png_screenshot(64, 64, None);
+        let diff = pixel_diff(&a, &b);
+        assert_eq!(diff.change_percentage, 0.0);
+        assert!(diff.changed_regions.is_empty());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn pixel_diff_detects_changed_block() {
+        let a = png_screenshot(64, 64, None);
+        // One 32x32 block out of four changes → 25% of blocks.
+        let b = png_screenshot(64, 64, Some(Rect::new(32, 0, 32, 32)));
+        let diff = pixel_diff(&a, &b);
+        assert!((diff.change_percentage - 25.0).abs() < 0.1);
+        assert_eq!(diff.changed_regions.len(), 1);
+        assert_eq!(diff.changed_regions[0].x, 32);
+        assert_eq!(diff.changed_regions[0].y, 0);
+    }
+}

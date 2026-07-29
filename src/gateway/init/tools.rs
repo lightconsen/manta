@@ -265,6 +265,20 @@ pub async fn init_tools(
         tool_registry.register_dynamic(Arc::new(crate::tools::computer::ComputerTool::new(None)));
     }
 
+    // Register screen-state tools (screenshot + UI tree + optional OCR).
+    #[cfg(feature = "vision")]
+    let shared_ocr = crate::tools::screen_state::new_shared_ocr();
+    tool_registry.register_dynamic(Arc::new(crate::tools::screen_state::ScreenStateTool::new(
+        computer_adapter.clone(),
+        #[cfg(feature = "vision")]
+        shared_ocr.clone(),
+    )));
+    #[cfg(feature = "vision")]
+    tool_registry.register_dynamic(Arc::new(crate::tools::screen_state::ScreenOcrTool::new(
+        computer_adapter.clone(),
+        shared_ocr,
+    )));
+
     // Create shared planner handle and register PlannerTool.
     let planner_handle: Arc<std::sync::RwLock<Option<Arc<crate::planner::GoalPlanner>>>> =
         Arc::new(std::sync::RwLock::new(None));
