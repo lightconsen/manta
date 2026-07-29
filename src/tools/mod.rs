@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_stream::StreamExt;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::providers::{FunctionCall, FunctionDefinition, ToolResult};
 
@@ -1988,14 +1988,26 @@ impl ToolRegistry {
 
         // Try static tools first
         if let Some(tool) = self.get(&tool_name) {
-            return tokio::time::timeout(timeout, tool.execute(args, context))
-                .await
-                .map_err(|_| {
-                    crate::error::SyscityError::Timeout(format!(
-                        "Tool '{}' timed out after {:?}",
-                        tool_name, timeout
-                    ))
-                })?;
+            let exec_start = std::time::Instant::now();
+            let exec_future = tool.execute(args, context);
+            let result: crate::Result<ToolExecutionResult> =
+                tokio::time::timeout(timeout, exec_future)
+                    .await
+                    .map_err(|_| {
+                        crate::error::SyscityError::Timeout(format!(
+                            "Tool '{}' timed out after {:?} (actual execution: {:?})",
+                            tool_name,
+                            timeout,
+                            exec_start.elapsed()
+                        ))
+                    })?;
+            info!(
+                "execute_call: tool={} completed in {:?} (timeout={:?})",
+                tool_name,
+                exec_start.elapsed(),
+                timeout
+            );
+            return result;
         }
 
         // Try dynamic tools
@@ -2007,14 +2019,26 @@ impl ToolRegistry {
 
         if let Some(tool) = dynamic_tool {
             if !self.is_blocked(&tool_name) && !self.is_degraded(&tool_name) {
-                return tokio::time::timeout(timeout, tool.execute(args, context))
-                    .await
-                    .map_err(|_| {
-                        crate::error::SyscityError::Timeout(format!(
-                            "Tool '{}' timed out after {:?}",
-                            tool_name, timeout
-                        ))
-                    })?;
+                let exec_start = std::time::Instant::now();
+                let exec_future = tool.execute(args, context);
+                let result: crate::Result<ToolExecutionResult> =
+                    tokio::time::timeout(timeout, exec_future)
+                        .await
+                        .map_err(|_| {
+                            crate::error::SyscityError::Timeout(format!(
+                                "Tool '{}' timed out after {:?} (actual execution: {:?})",
+                                tool_name,
+                                timeout,
+                                exec_start.elapsed()
+                            ))
+                        })?;
+                info!(
+                    "execute_call: tool={} completed in {:?} (timeout={:?})",
+                    tool_name,
+                    exec_start.elapsed(),
+                    timeout
+                );
+                return result;
             }
         }
 

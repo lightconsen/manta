@@ -858,6 +858,7 @@ impl Agent {
         };
 
         ToolContext::new(user_id.clone(), conversation_id)
+            .with_timeout(Duration::from_secs(120))
             .with_skill_trust(self.current_skill_trust())
             .with_workspace_root(self.config.resolve_workspace_dir())
             .with_workspace_only(self.config.workspace_only)
@@ -2669,7 +2670,7 @@ impl Agent {
         // its tool_call IDs don't yet have matching tool results.
         let tool_context = self
             .build_tool_context(user_id, context.id())
-            .with_timeout(std::time::Duration::from_secs(30));
+            .with_timeout(std::time::Duration::from_secs(120));
 
         let mut results = Vec::new();
 
@@ -2770,6 +2771,16 @@ impl Agent {
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
         let messages = context.to_messages();
+        let user_msg_count = messages.iter().filter(|m| m.role == Role::User).count();
+        let assistant_msg_count = messages.iter().filter(|m| m.role == Role::Assistant).count();
+        let tool_msg_count = messages.iter().filter(|m| m.role == Role::Tool).count();
+        info!(
+            "get_completion_with_progress: entry — msgs={} (user={}, asst={}, tool={})",
+            messages.len(),
+            user_msg_count,
+            assistant_msg_count,
+            tool_msg_count
+        );
 
         // Get available tools
         let tool_context = self.build_tool_context(user_id, context.id());
@@ -3085,7 +3096,7 @@ impl Agent {
         // tool results, the tool_call/tool_result pairing is preserved.
         let tool_context = self
             .build_tool_context(user_id, context.id())
-            .with_timeout(std::time::Duration::from_secs(30));
+            .with_timeout(std::time::Duration::from_secs(120));
 
         let mut results = Vec::new();
 
@@ -3109,6 +3120,12 @@ impl Agent {
             let result = self
                 .execute_single_tool(tool_call, &tool_context, &progress_cb, context.id())
                 .await;
+
+            info!(
+                "handle_tool_calls_with_progress: tool={} executed in {:?}",
+                tool_name,
+                _start.elapsed()
+            );
 
             context.push_tool_call_record(ToolCallRecord {
                 name: tool_name.clone(),
@@ -3174,9 +3191,15 @@ impl Agent {
             }
         }
 
-        // Get final response with progress
+        // Get final response with progress (recursive LLM call)
+        let recursive_llm_start = std::time::Instant::now();
+        info!("handle_tool_calls_with_progress: calling recursive get_completion_with_progress ({} tools executed)", results.len());
         let mut final_response =
             Box::pin(self.get_completion_with_progress(context, progress_cb, user_id)).await?;
+        info!(
+            "handle_tool_calls_with_progress: recursive get_completion_with_progress returned in {:?}",
+            recursive_llm_start.elapsed()
+        );
 
         // Accumulate token usage from this LLM completion in the tool loop
         if let Some(ref usage) = final_response.usage {

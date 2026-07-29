@@ -138,9 +138,11 @@ impl VirtualDisplay for XvfbDisplay {
         match import_cmd.output().await {
             Ok(output) if output.status.success() => {
                 let bytes = output.stdout;
-                // Write to temp file and apply ScreenshotEncoder
+                // Write to workspace files dir and apply ScreenshotEncoder
+                let screenshot_dir = crate::dirs::workspace_data_dir().join("files");
+                let _ = tokio::fs::create_dir_all(&screenshot_dir).await;
                 let temp_path =
-                    std::env::temp_dir().join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
+                    screenshot_dir.join(format!("xvfb_{}.png", crate::utils::ms_timestamp()));
                 if let Err(e) = tokio::fs::write(&temp_path, &bytes).await {
                     tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
                 }
@@ -163,12 +165,7 @@ impl VirtualDisplay for XvfbDisplay {
                     &base64::engine::general_purpose::STANDARD,
                     &final_bytes,
                 );
-                return Ok(Screenshot {
-                    base64,
-                    width: self.width,
-                    height: self.height,
-                    timestamp: std::time::Instant::now(),
-                });
+                return Ok(Screenshot::new(base64, self.width, self.height));
             }
             Ok(output) => {
                 tracing::warn!(
@@ -219,9 +216,11 @@ impl VirtualDisplay for XvfbDisplay {
         }
 
         let bytes = convert_output.stdout;
-        // Write to temp file and apply ScreenshotEncoder
+        // Write to workspace files dir and apply ScreenshotEncoder
+        let screenshot_dir = crate::dirs::workspace_data_dir().join("files");
+        let _ = tokio::fs::create_dir_all(&screenshot_dir).await;
         let temp_path =
-            std::env::temp_dir().join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
+            screenshot_dir.join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
         if let Err(e) = tokio::fs::write(&temp_path, &bytes).await {
             tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
         }
@@ -244,6 +243,7 @@ impl VirtualDisplay for XvfbDisplay {
             base64,
             width: self.width,
             height: self.height,
+            file_path: None,
             timestamp: std::time::Instant::now(),
         })
     }

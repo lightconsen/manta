@@ -65,6 +65,7 @@ impl ComputerAdapter for WindowsComputerAdapter {
             base64,
             width,
             height,
+            file_path: None,
             timestamp: std::time::Instant::now(),
         })
     }

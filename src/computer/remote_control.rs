@@ -288,8 +288,9 @@ impl RemoteControlAdapter {
             if output.status.success() && !output.stdout.is_empty() {
                 let raw_bytes = output.stdout;
                 // Apply ScreenshotEncoder to reduce payload size over SSH.
-                let temp_path = std::env::temp_dir()
-                    .join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
+                let files_dir = crate::dirs::workspace_data_dir().join("files");
+                let _ = std::fs::create_dir_all(&files_dir);
+                let temp_path = files_dir.join(format!("remote_{}.png", crate::utils::ms_timestamp()));
                 if let Err(e) = tokio::fs::write(&temp_path, &raw_bytes).await {
                     tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
                 }
@@ -320,12 +321,7 @@ impl RemoteControlAdapter {
                 };
                 #[cfg(not(feature = "image"))]
                 let (width, height) = (0, 0);
-                return Ok(Screenshot {
-                    base64,
-                    width,
-                    height,
-                    timestamp: std::time::Instant::now(),
-                });
+                return Ok(Screenshot::new(base64, width, height));
             }
         }
 
@@ -358,7 +354,7 @@ impl RemoteControlAdapter {
         let raw_bytes = output.stdout;
         // Apply ScreenshotEncoder to reduce payload size over SSH.
         let temp_path =
-            std::env::temp_dir().join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
+            crate::dirs::workspace_data_dir().join("files").join(format!("remote_{}.png", crate::utils::ms_timestamp()));
         if let Err(e) = tokio::fs::write(&temp_path, &raw_bytes).await {
             tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
         }
@@ -384,12 +380,7 @@ impl RemoteControlAdapter {
         #[cfg(not(feature = "image"))]
         let (width, height) = (0, 0);
 
-        Ok(Screenshot {
-            base64,
-            width,
-            height,
-            timestamp: std::time::Instant::now(),
-        })
+        Ok(Screenshot::new(base64, width, height))
     }
 
     async fn screenshot_windows(&self, _region: Option<Rect>) -> Result<Screenshot> {
@@ -432,7 +423,7 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
             base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
         {
             let temp_path =
-                std::env::temp_dir().join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
+                crate::dirs::workspace_data_dir().join("files").join(format!("remote_{}.png", crate::utils::ms_timestamp()));
             if let Err(e) = tokio::fs::write(&temp_path, &decoded).await {
                 tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
             }
@@ -468,12 +459,7 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
         #[cfg(not(feature = "image"))]
         let (width, height) = (0, 0);
 
-        Ok(Screenshot {
-            base64: final_b64,
-            width,
-            height,
-            timestamp: std::time::Instant::now(),
-        })
+        Ok(Screenshot::new(final_b64, width, height))
     }
 
     // ── Input helpers ─────────────────────────────────────────────────────

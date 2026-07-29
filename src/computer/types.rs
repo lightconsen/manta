@@ -359,15 +359,44 @@ impl UiElement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Screenshot {
     /// Base64-encoded PNG image.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub base64: String,
     /// Width in pixels.
     pub width: u32,
     /// Height in pixels.
     pub height: u32,
+    /// File path on disk (if screenshot was persisted). Preferred over base64
+    /// for large images to avoid serialization overhead.
+    #[serde(skip)]
+    pub file_path: Option<std::path::PathBuf>,
     /// Wall-clock capture timestamp. Skipped in serialization since Instant is
     /// not natively supported by serde.
     #[serde(skip, default = "instant_now")]
     pub timestamp: std::time::Instant,
+}
+
+impl Screenshot {
+    /// Construct with an in-memory base64 payload (no file backing).
+    pub fn new(base64: String, width: u32, height: u32) -> Self {
+        Self {
+            base64,
+            width,
+            height,
+            file_path: None,
+            timestamp: std::time::Instant::now(),
+        }
+    }
+
+    /// Construct with a file path reference (no base64 payload).
+    pub fn with_file(file_path: std::path::PathBuf, width: u32, height: u32) -> Self {
+        Self {
+            base64: String::new(),
+            width,
+            height,
+            file_path: Some(file_path),
+            timestamp: std::time::Instant::now(),
+        }
+    }
 }
 
 /// Serde helper: default value for `#[serde(skip)]` timestamp fields.

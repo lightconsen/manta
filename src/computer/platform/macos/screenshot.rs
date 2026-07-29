@@ -24,6 +24,47 @@ impl ScreenshotTool {
     pub fn new() -> Self {
         Self
     }
+
+    /// Extract image dimensions from raw PNG or JPEG bytes by parsing headers.
+    fn image_dimensions(data: &[u8]) -> (u32, u32) {
+        // PNG: signature + IHDR chunk — width at offset 16, height at offset 20
+        if data.len() >= 24 && data[..8] == [137, 80, 78, 71, 13, 10, 26, 10] {
+            let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+            let h = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+            return (w, h);
+        }
+        // JPEG: find SOF0 marker (0xFF 0xC0)
+        if data.len() > 4 && data[0] == 0xFF && data[1] == 0xD8 {
+            let mut i = 2;
+            while i + 4 < data.len() {
+                if data[i] == 0xFF {
+                    let marker = data[i + 1];
+                    if marker == 0xC0 {
+                        // SOF0: next 2 bytes are length, then 1 byte precision,
+                        // then 2 bytes height (BE), 2 bytes width (BE)
+                        if i + 9 < data.len() {
+                            let h = u16::from_be_bytes([data[i + 5], data[i + 6]]);
+                            let w = u16::from_be_bytes([data[i + 7], data[i + 8]]);
+                            return (w as u32, h as u32);
+                        }
+                    }
+                    if marker >= 0xD0 && marker <= 0xD9 {
+                        i += 2; // markers with no length
+                        continue;
+                    }
+                    if i + 2 < data.len() {
+                        let seg_len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+                        i += 2 + seg_len;
+                    } else {
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        (0, 0)
+    }
 }
 
 #[async_trait]
@@ -58,12 +99,37 @@ impl Tool for ScreenshotTool {
     async fn execute(
         &self,
         _args: Value,
-        _context: &ToolContext,
+        context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let temp_path =
-            std::env::temp_dir().join(format!("syscity_screenshot_{}.png", uuid::Uuid::new_v4()));
+        let _t0 = std::time::Instant::now();
 
-        info!("Taking screenshot: {}", temp_path.display());
+        // ── Determine output path ───────────────────────────────────────
+        // Save in workspace/files/ for temporary files.
+        let screenshot_dir = context
+            .workspace_root()
+            .join("files");
+        tokio::fs::create_dir_all(&screenshot_dir).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to create screenshot dir: {}", screenshot_dir.display()),
+                details: e.to_string(),
+            }
+        })?;
+
+        let final_path = screenshot_dir.join(format!(
+            "screenshot_{}.png",
+            crate::utils::ms_timestamp()
+        ));
+
+        let temp_path = std::env::temp_dir().join(format!(
+            "screenshot_{}.tmp",
+            crate::utils::ms_timestamp()
+        ));
+
+        info!(
+            "Taking screenshot: {} (final: {})",
+            temp_path.display(),
+            final_path.display()
+        );
 
         let result = timeout(
             Duration::from_secs(15),
@@ -77,9 +143,9 @@ impl Tool for ScreenshotTool {
 
         match result {
             Ok(Ok(output)) if output.status.success() => {
+                info!("screencapture done in {:?}", _t0.elapsed());
+
                 // Compress the screenshot using the cross-platform ScreenshotEncoder.
-                // This replaces the old hardcoded sips call with automatic
-                // network-condition-aware compression.
                 let encoded_path = maybe_encode_screenshot(&temp_path).await;
                 let format = if encoded_path
                     .extension()
@@ -91,12 +157,23 @@ impl Tool for ScreenshotTool {
                     "png"
                 };
 
+                // Move/copy the encoded file to the final path in workspace.
+                if encoded_path.as_os_str() != final_path.as_os_str() {
+                    if let Err(e) = tokio::fs::copy(&encoded_path, &final_path).await {
+                        warn!("Failed to copy screenshot to workspace: {}", e);
+                        // fall through — still have the encoded file
+                    }
+                }
+
                 let bytes = tokio::fs::read(&encoded_path).await.map_err(|e| {
                     crate::error::SyscityError::Storage {
                         context: format!("Failed to read screenshot: {}", encoded_path.display()),
                         details: e.to_string(),
                     }
                 })?;
+
+                // Extract dimensions from image header.
+                let (width, height) = Self::image_dimensions(&bytes);
 
                 // Clean up temp file(s)
                 if let Err(e) = tokio::fs::remove_file(&temp_path).await {
@@ -115,14 +192,27 @@ impl Tool for ScreenshotTool {
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                 let data_url = format!("data:image/{};base64,{}", format, b64);
 
+                info!(
+                    "Screenshot tool: read+encode done in {:?}, final width={} height={} size={}",
+                    _t0.elapsed(),
+                    width,
+                    height,
+                    bytes.len()
+                );
+
                 Ok(ToolExecutionResult::success(format!(
-                    "Screenshot captured ({} bytes, base64: {}...)",
+                    "Screenshot captured ({}x{}, {} bytes, file: {})",
+                    width,
+                    height,
                     bytes.len(),
-                    &data_url[..data_url.len().min(80)]
+                    final_path.display(),
                 ))
                 .with_data(serde_json::json!({
                     "image_base64": b64,
                     "data_url": data_url,
+                    "file_path": final_path.to_string_lossy().to_string(),
+                    "width": width,
+                    "height": height,
                     "format": format,
                     "size": bytes.len()
                 })))

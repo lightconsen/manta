@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use tracing::info;
 
 use crate::computer::vision::{is_screen_mutating_action, ScreenState};
 use crate::computer::{
@@ -179,6 +180,7 @@ Common workflows:
             )
         })?;
 
+        let _t_start = std::time::Instant::now();
         let action = args["action"]
             .as_str()
             .ok_or_else(|| crate::error::SyscityError::Validation("Missing action".to_string()))?;
@@ -195,10 +197,19 @@ Common workflows:
             None
         };
 
+        let adapter_start = std::time::Instant::now();
         let result = adapter
             .execute(desktop_action)
             .await
             .map_err(to_syscity_err)?;
+        let adapter_elapsed = adapter_start.elapsed();
+        info!(
+            "[ComputerTool] action={} adapter.execute() took {:?} (total so far: {:?})",
+            action,
+            adapter_elapsed,
+            _t_start.elapsed()
+        );
+
         let mut tool_result = action_result_to_tool_result(result);
 
         if let Some(pre) = pre_state {
@@ -221,6 +232,12 @@ Common workflows:
                 }
             }
         }
+
+        info!(
+            "[ComputerTool] action={} total execute() took {:?}",
+            action,
+            _t_start.elapsed()
+        );
 
         Ok(tool_result)
     }
@@ -636,12 +653,7 @@ mod tests {
     #[async_trait::async_trait]
     impl ComputerAdapter for MockAdapter {
         async fn screenshot(&self, _region: Option<Rect>) -> ComputerResult<Screenshot> {
-            Ok(Screenshot {
-                base64: self.screenshot_b64.clone(),
-                width: 100,
-                height: 100,
-                timestamp: std::time::Instant::now(),
-            })
+            Ok(Screenshot::new(self.screenshot_b64.clone(), 100, 100))
         }
 
         async fn read_ui_tree(&self, _app: Option<&str>) -> ComputerResult<Vec<UiElement>> {

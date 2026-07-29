@@ -537,12 +537,7 @@ mod tests {
 
     #[test]
     fn pixel_diff_identical_base64_is_zero() {
-        let ss = Screenshot {
-            base64: "aGVsbG8=".to_string(),
-            width: 100,
-            height: 100,
-            timestamp: std::time::Instant::now(),
-        };
+        let ss = Screenshot::new("aGVsbG8=".to_string(), 100, 100);
         let diff = pixel_diff(&ss, &ss);
         assert_eq!(diff.change_percentage, 0.0);
         assert!(diff.changed_regions.is_empty());
@@ -550,18 +545,8 @@ mod tests {
 
     #[test]
     fn pixel_diff_dimension_mismatch_is_full_change() {
-        let a = Screenshot {
-            base64: "AAAA".to_string(),
-            width: 100,
-            height: 100,
-            timestamp: std::time::Instant::now(),
-        };
-        let b = Screenshot {
-            base64: "BBBB".to_string(),
-            width: 200,
-            height: 100,
-            timestamp: std::time::Instant::now(),
-        };
+        let a = Screenshot::new("AAAA".to_string(), 100, 100);
+        let b = Screenshot::new("BBBB".to_string(), 200, 100);
         let diff = pixel_diff(&a, &b);
         assert_eq!(diff.change_percentage, 100.0);
     }
@@ -628,12 +613,11 @@ mod tests {
         image::DynamicImage::ImageRgb8(img)
             .write_to(&mut buf, image::ImageFormat::Png)
             .unwrap();
-        Screenshot {
-            base64: base64::engine::general_purpose::STANDARD.encode(buf.into_inner()),
+        Screenshot::new(
+            base64::engine::general_purpose::STANDARD.encode(buf.into_inner()),
             width,
             height,
-            timestamp: std::time::Instant::now(),
-        }
+        )
     }
 
     #[cfg(feature = "vision")]

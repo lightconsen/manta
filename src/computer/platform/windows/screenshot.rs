@@ -57,8 +57,10 @@ impl Tool for ScreenshotTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
+        let screenshot_dir = _context.workspace_root().join("files");
+        let _ = tokio::fs::create_dir_all(&screenshot_dir).await;
         let temp_path =
-            std::env::temp_dir().join(format!("syscity_screenshot_{}.png", uuid::Uuid::new_v4()));
+            screenshot_dir.join(format!("screenshot_{}.png", crate::utils::ms_timestamp()));
         let temp_str = temp_path.to_string_lossy();
 
         info!("Taking Windows screenshot: {}", temp_str);

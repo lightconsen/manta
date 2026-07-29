@@ -582,12 +582,7 @@ impl ComputerUseLoop {
         self.adapter
             .screenshot(self.config.screenshot_region)
             .await
-            .unwrap_or_else(|_| Screenshot {
-                base64: String::new(),
-                width: 0,
-                height: 0,
-                timestamp: std::time::Instant::now(),
-            })
+            .unwrap_or_else(|_| Screenshot::new(String::new(), 0, 0))
     }
 }
 
@@ -622,12 +617,7 @@ mod tests {
         let state = LoopState {
             step: 0,
             goal: "test".to_string(),
-            screenshot: Screenshot {
-                base64: String::new(),
-                width: 100,
-                height: 100,
-                timestamp: std::time::Instant::now(),
-            },
+            screenshot: Screenshot::new(String::new(), 100, 100),
             history: vec![],
             last_verified: None,
             last_error: None,

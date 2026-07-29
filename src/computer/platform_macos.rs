@@ -3,6 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tracing::info;
+
 use crate::computer::{
     ActionResult, ClickTarget, CompressionFormat, ComputerAdapter, ComputerError, DesktopAction,
     FileEntry, PackageManager, Rect, Result, Screenshot, UiElement, WaitCondition,
@@ -49,8 +51,9 @@ impl ComputerAdapter for MacosComputerAdapter {
 
         let data = result.data.as_ref();
 
+        // Fix: inner tool returns "image_base64", not "base64"
         let base64 = data
-            .and_then(|d| d.get("base64").and_then(|v| v.as_str()).map(String::from))
+            .and_then(|d| d.get("image_base64").and_then(|v| v.as_str()).map(String::from))
             .unwrap_or_default();
 
         let width = data
@@ -61,12 +64,13 @@ impl ComputerAdapter for MacosComputerAdapter {
             .and_then(|d| d.get("height").and_then(|v| v.as_u64()))
             .unwrap_or(0) as u32;
 
-        Ok(Screenshot {
-            base64,
-            width,
-            height,
-            timestamp: std::time::Instant::now(),
-        })
+        let file_path = data
+            .and_then(|d| d.get("file_path").and_then(|v| v.as_str()))
+            .map(std::path::PathBuf::from);
+
+        let mut ss = Screenshot::new(base64, width, height);
+        ss.file_path = file_path;
+        Ok(ss)
     }
 
     async fn read_ui_tree(&self, app: Option<&str>) -> Result<Vec<UiElement>> {
@@ -102,9 +106,30 @@ impl ComputerAdapter for MacosComputerAdapter {
     async fn execute(&self, action: DesktopAction) -> Result<ActionResult> {
         match action {
             DesktopAction::Screenshot { region } => {
+                let _t_exec = std::time::Instant::now();
                 let ss = self.screenshot(region).await?;
-                Ok(ActionResult::success("screenshot captured")
-                    .with_data(serde_json::to_value(&ss).unwrap_or_default()))
+                info!(
+                    "[macOS adapter] screenshot() returned in {:?} (base64_len={}, file_path={:?})",
+                    _t_exec.elapsed(),
+                    ss.base64.len(),
+                    ss.file_path,
+                );
+                // Don't serialize the full Screenshot (which includes 534KB base64).
+                // Return a lightweight reference: file path + dimensions.
+                let data = if let Some(ref fp) = ss.file_path {
+                    serde_json::json!({
+                        "file_path": fp.to_string_lossy().to_string(),
+                        "width": ss.width,
+                        "height": ss.height,
+                    })
+                } else {
+                    serde_json::json!({
+                        "width": ss.width,
+                        "height": ss.height,
+                    })
+                };
+                info!("[macOS adapter] Screenshot ActionResult built in {:?}", _t_exec.elapsed());
+                Ok(ActionResult::success("screenshot captured").with_data(data))
             }
             DesktopAction::Click { target, button: _ } => {
                 let (x, y) = self.resolve_click_target(target).await?;
