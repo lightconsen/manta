@@ -729,10 +729,78 @@ mod tests {
 
     #[test]
     fn test_method_scope_mapping() {
+        // SCOPE_CHAT
         assert_eq!(method_scope("chat.send"), Some(SCOPE_CHAT));
+        assert_eq!(method_scope("chat.abort"), Some(SCOPE_CHAT));
+
+        // SCOPE_READ
         assert_eq!(method_scope("chat.history"), Some(SCOPE_READ));
+        assert_eq!(method_scope("sessions.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("agents.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("agents.get"), Some(SCOPE_READ));
+        assert_eq!(method_scope("agents.registry"), Some(SCOPE_READ));
+        assert_eq!(method_scope("health"), Some(SCOPE_READ));
+        assert_eq!(method_scope("system.presence"), Some(SCOPE_READ));
+        assert_eq!(method_scope("commands.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("config.get"), Some(SCOPE_READ));
+        assert_eq!(method_scope("models.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("models.presets"), Some(SCOPE_READ));
+        assert_eq!(method_scope("models.fetch_remote"), Some(SCOPE_READ));
+        assert_eq!(method_scope("models.add"), Some(SCOPE_READ));
+        assert_eq!(method_scope("models.remove"), Some(SCOPE_READ));
+        assert_eq!(method_scope("models.set_default"), Some(SCOPE_READ));
+        assert_eq!(method_scope("cron.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("skills.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("skills.install"), Some(SCOPE_READ));
+        assert_eq!(method_scope("logs.subscribe"), Some(SCOPE_READ));
+        assert_eq!(method_scope("logs.unsubscribe"), Some(SCOPE_READ));
+        assert_eq!(method_scope("tasks.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("mcp.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("mcp.presets"), Some(SCOPE_READ));
+
+        // SCOPE_WRITE
+        assert_eq!(method_scope("sessions.create"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("sessions.delete"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("sessions.rename"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("sessions.set_pinned"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("sessions.reset"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("sessions.subscribe"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("sessions.unsubscribe"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("commands.execute"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("config.set"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("tasks.schedule"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("tasks.delete"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("tasks.enable"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("tasks.disable"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("mcp.add"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("mcp.remove"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("mcp.connect"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("mcp.disconnect"), Some(SCOPE_WRITE));
+
+        // SCOPE_ACP
+        assert_eq!(method_scope("acp.spawn"), Some(SCOPE_ACP));
+        assert_eq!(method_scope("acp.terminate"), Some(SCOPE_ACP));
+        assert_eq!(method_scope("acp.message"), Some(SCOPE_ACP));
+        assert_eq!(method_scope("acp.pause"), Some(SCOPE_ACP));
+        assert_eq!(method_scope("acp.resume"), Some(SCOPE_ACP));
+        assert_eq!(method_scope("acp.step"), Some(SCOPE_ACP));
+        assert_eq!(method_scope("acp.cancel"), Some(SCOPE_ACP));
+        assert_eq!(method_scope("acp.execute.session"), Some(SCOPE_ACP));
+        assert_eq!(method_scope("acp.execute.run"), Some(SCOPE_ACP));
+
+        // SCOPE_READ (acp read-only)
+        assert_eq!(method_scope("acp.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("acp.status"), Some(SCOPE_READ));
+        assert_eq!(method_scope("acp.tree"), Some(SCOPE_READ));
+
+        // No scope required
         assert_eq!(method_scope("connect"), None);
+        assert_eq!(method_scope("ping"), None);
+
+        // Default: admin scope
         assert_eq!(method_scope("unknown"), Some(SCOPE_ADMIN));
+        assert_eq!(method_scope("mcp.delete"), Some(SCOPE_ADMIN));
+        assert_eq!(method_scope("config.delete"), Some(SCOPE_ADMIN));
     }
 
     #[test]
