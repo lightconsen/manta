@@ -65,10 +65,8 @@ Common workflows:
                         "scroll", "drag", "read_ui_tree", "launch_app",
                         "activate_window", "close_window", "wait",
                         "clipboard_get", "clipboard_set", "get_system_status",
-                        "list_processes", "kill_process", "list_ports",
-                        "test_ping", "test_tcp_connect", "list_firewall_rules",
-                        "restart_process", "set_process_priority", "key_sequence",
-                        "install_package", "browse_files",
+                        "list_processes", "kill_process",
+                        "restart_process", "set_process_priority",
                         "list_windows", "get_window_geometry", "move_window",
                         "resize_window", "minimize_window", "maximize_window"
                     ],
@@ -114,35 +112,8 @@ Common workflows:
                 "name": { "type": "string", "description": "Process name (kill_process, restart_process, set_process_priority)" },
                 "force": { "type": "boolean", "description": "Force kill (kill_process, restart_process)" },
                 "priority": { "type": "integer", "description": "Priority value (set_process_priority): Unix nice -20..19, Windows 0..5" },
-                // ── Network ───────────────────────────────────────────────
-                "target": { "type": "string", "description": "Hostname or IP for network tests" },
-                "port": { "type": "integer", "description": "TCP port (test_tcp_connect)" },
-                "count": { "type": "integer", "description": "Ping count (test_ping)" },
-                "timeout_ms": { "type": "integer", "description": "Timeout in milliseconds" },
-                "protocol": { "type": "string", "description": "Protocol filter for list_ports (e.g. tcp, udp)" },
-                "state": { "type": "string", "description": "State filter for list_ports (e.g. listen, established)" },
                 // ── Wait ──────────────────────────────────────────────────
                 "milliseconds": { "type": "integer", "description": "Duration to wait in milliseconds" },
-                // ── Key sequence ──────────────────────────────────────────
-                "delays_ms": {
-                    "type": "array",
-                    "items": { "type": "integer" },
-                    "description": "Per-key delays in milliseconds (key_sequence)"
-                },
-                // ── Package install ───────────────────────────────────────
-                "packages": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Package names to install"
-                },
-                "package_manager": {
-                    "type": "string",
-                    "enum": ["brew", "apt", "dnf", "pacman", "apk", "winget", "choco", "macports"],
-                    "description": "Package manager to use"
-                },
-                // ── Browse files ──────────────────────────────────────────
-                "path": { "type": "string", "description": "Directory path for browse_files" },
-                "max_results": { "type": "integer", "description": "Maximum number of file entries to return" },
                 // ── Drag sub-params ───────────────────────────────────────
                 "from_x": { "type": "integer", "description": "Drag start X" },
                 "from_y": { "type": "integer", "description": "Drag start Y" },
@@ -150,7 +121,7 @@ Common workflows:
                 "to_y": { "type": "integer", "description": "Drag end Y" },
                 // ── Window management ───────────────────────────────────
                 "width": { "type": "integer", "description": "Target width (resize_window)" },
-                "height": { "type": "integer", "description": "Target height (resize_window)" }
+                "height": { "type": "integer", "description": "Target height (resize_window)" },
             }),
             vec!["action"],
         )
@@ -372,41 +343,6 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
             let force = args["force"].as_bool().unwrap_or(false);
             Ok(DesktopAction::KillProcess { pid, name, force })
         }
-        "list_ports" => {
-            let filter_protocol = args["protocol"].as_str().map(|s| s.to_string());
-            let filter_state = args["state"].as_str().map(|s| s.to_string());
-            Ok(DesktopAction::ListPorts { filter_protocol, filter_state })
-        }
-        "test_ping" => {
-            let target = args["target"]
-                .as_str()
-                .ok_or_else(|| {
-                    crate::error::SyscityError::Validation(
-                        "Missing 'target' for test_ping action".to_string(),
-                    )
-                })?
-                .to_string();
-            let count = args["count"].as_u64().map(|n| n as u32);
-            Ok(DesktopAction::TestPing { target, count })
-        }
-        "test_tcp_connect" => {
-            let target = args["target"]
-                .as_str()
-                .ok_or_else(|| {
-                    crate::error::SyscityError::Validation(
-                        "Missing 'target' for test_tcp_connect action".to_string(),
-                    )
-                })?
-                .to_string();
-            let port = args["port"].as_u64().ok_or_else(|| {
-                crate::error::SyscityError::Validation(
-                    "Missing 'port' for test_tcp_connect action".to_string(),
-                )
-            })? as u16;
-            let timeout_ms = args["timeout_ms"].as_u64();
-            Ok(DesktopAction::TestTcpConnect { target, port, timeout_ms })
-        }
-        "list_firewall_rules" => Ok(DesktopAction::ListFirewallRules),
         "restart_process" => {
             let pid = args["pid"].as_u64().map(|n| n as u32);
             let name = args["name"].as_str().map(|s| s.to_string());
@@ -418,66 +354,6 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
             let name = args["name"].as_str().map(|s| s.to_string());
             let priority = args["priority"].as_i64().unwrap_or(0) as i32;
             Ok(DesktopAction::SetProcessPriority { pid, name, priority })
-        }
-        "key_sequence" => {
-            let keys = parse_string_array(args, "keys");
-            let delays_ms: Vec<u64> = args["delays_ms"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_u64()).collect())
-                .unwrap_or_default();
-            Ok(DesktopAction::KeySequence { keys, delays_ms })
-        }
-        "install_package" => {
-            use crate::computer::PackageManager;
-            let manager = match args["package_manager"].as_str() {
-                Some("brew") => PackageManager::Brew,
-                Some("apt") => PackageManager::Apt,
-                Some("dnf") => PackageManager::Dnf,
-                Some("pacman") => PackageManager::Pacman,
-                Some("apk") => PackageManager::Apk,
-                Some("winget") => PackageManager::Winget,
-                Some("choco") => PackageManager::Choco,
-                Some("macports") => PackageManager::Macports,
-                _ => {
-                    // Auto-detect: default to apt on Linux, brew on macOS
-                    #[cfg(target_os = "macos")]
-                    {
-                        PackageManager::Brew
-                    }
-                    #[cfg(target_os = "linux")]
-                    {
-                        PackageManager::Apt
-                    }
-                    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-                    {
-                        PackageManager::Apt
-                    }
-                }
-            };
-            let packages = parse_string_array(args, "packages");
-            let timeout_secs = args["timeout_ms"].as_u64().unwrap_or(120);
-            Ok(DesktopAction::InstallPackage {
-                manager,
-                packages,
-                timeout_secs,
-            })
-        }
-        "browse_files" => {
-            let path = args["path"]
-                .as_str()
-                .ok_or_else(|| {
-                    crate::error::SyscityError::Validation(
-                        "Missing 'path' for browse_files action".to_string(),
-                    )
-                })?
-                .to_string();
-            let filter_description = args["filter"].as_str().map(|s| s.to_string());
-            let max_results = args["max_results"].as_u64().map(|n| n as usize);
-            Ok(DesktopAction::BrowseFiles {
-                path,
-                filter_description,
-                max_results,
-            })
         }
         "list_windows" => Ok(DesktopAction::ListWindows),
         "get_window_geometry" => {

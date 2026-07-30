@@ -962,9 +962,6 @@ impl Agent {
         if let Some(ref memory) = self.memory_store {
             planner = planner.with_memory(memory.clone());
         }
-        // Pass ToolRegistry so GoalPlanner can execute device ToolCalls
-        // and other tool-registered capabilities as plan steps.
-        planner = planner.with_tool_registry(self.tools.clone());
         self.goal_planner = Some(Arc::new(planner));
         self
     }

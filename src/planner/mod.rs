@@ -300,13 +300,6 @@ impl GoalPlanner {
         self
     }
 
-    /// Attach a [`ToolRegistry`] for executing [`ToolCall`] actions
-    /// (e.g. device operations) during plan execution.
-    pub fn with_tool_registry(mut self, registry: Arc<crate::tools::ToolRegistry>) -> Self {
-        self.executor = self.executor.with_tool_registry(registry);
-        self
-    }
-
     /// Decompose a high-level goal into an executable [`Plan`].
     ///
     /// The LLM is given the list of available tool names (taken from the
@@ -634,7 +627,6 @@ mod tests {
     use crate::computer::headless::HeadlessComputerAdapter;
     use crate::providers::mock::MockProvider;
     use crate::providers::{Message, Role};
-    use crate::tools::ToolRegistry;
 
     /// Return true if the message list is a GoalPlanner decomposition request.
     fn is_decompose_request(messages: &[Message]) -> bool {

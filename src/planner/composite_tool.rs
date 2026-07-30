@@ -232,66 +232,6 @@ impl CompositeToolRegistry {
             ),
         );
 
-        // deploy-ssh: copy files and restart service via SSH
-        reg.register(
-            CompositeTool::new(
-                "deploy-ssh",
-                "Deploy files to a remote server via SSH and restart a service",
-            )
-            .parameter("source", None)
-            .parameter("server", None)
-            .parameter("remote_path", Some("/opt/app".to_string()))
-            .parameter("service_name", Some("app".to_string()))
-            .step(
-                "Transfer files to server",
-                DesktopAction::TransferFile {
-                    source: "{{source}}".to_string(),
-                    destination: "{{server}}:{{remote_path}}".to_string(),
-                    method: crate::computer::TransferMethod::Rsync,
-                },
-            )
-            .step(
-                "Restart remote service",
-                DesktopAction::LaunchApp {
-                    name: "ssh".to_string(),
-                    args: vec![
-                        "{{server}}".to_string(),
-                        "sudo".to_string(),
-                        "systemctl".to_string(),
-                        "restart".to_string(),
-                        "{{service_name}}".to_string(),
-                    ],
-                    wait_for_ready: true,
-                },
-            ),
-        );
-
-        // install-and-verify: install a package and verify it's available
-        reg.register(
-            CompositeTool::new(
-                "install-and-verify",
-                "Install a package using the system package manager and verify installation",
-            )
-            .parameter("package", None)
-            .parameter("manager", Some("brew".to_string()))
-            .step(
-                "Install package",
-                DesktopAction::InstallPackage {
-                    manager: crate::computer::PackageManager::Brew,
-                    packages: vec!["{{package}}".to_string()],
-                    timeout_secs: 300,
-                },
-            )
-            .step(
-                "Verify installation",
-                DesktopAction::LaunchApp {
-                    name: "which".to_string(),
-                    args: vec!["{{package}}".to_string()],
-                    wait_for_ready: true,
-                },
-            ),
-        );
-
         reg
     }
 }
@@ -315,43 +255,6 @@ fn substitute_params(action: &DesktopAction, bindings: &HashMap<String, String>)
             args: args.iter().map(|a| sub(a)).collect(),
             wait_for_ready: *wait_for_ready,
         },
-        DesktopAction::TransferFile { source, destination, method } => {
-            DesktopAction::TransferFile {
-                source: sub(source),
-                destination: sub(destination),
-                method: *method,
-            }
-        }
-        DesktopAction::BrowseFiles {
-            path,
-            filter_description,
-            max_results,
-        } => DesktopAction::BrowseFiles {
-            path: sub(path),
-            filter_description: filter_description.as_ref().map(|f| sub(f)),
-            max_results: *max_results,
-        },
-        DesktopAction::EditFile { path, search, replace } => DesktopAction::EditFile {
-            path: sub(path),
-            search: sub(search),
-            replace: sub(replace),
-        },
-        DesktopAction::ReadFileChunked { path, offset, limit_bytes } => {
-            DesktopAction::ReadFileChunked {
-                path: sub(path),
-                offset: *offset,
-                limit_bytes: *limit_bytes,
-            }
-        }
-        DesktopAction::Compress { sources, destination, format } => DesktopAction::Compress {
-            sources: sources.iter().map(|s| sub(s)).collect(),
-            destination: sub(destination),
-            format: *format,
-        },
-        DesktopAction::Decompress { archive, destination } => DesktopAction::Decompress {
-            archive: sub(archive),
-            destination: sub(destination),
-        },
         DesktopAction::ActivateWindow { title_pattern } => DesktopAction::ActivateWindow {
             title_pattern: sub(title_pattern),
         },
@@ -360,25 +263,6 @@ fn substitute_params(action: &DesktopAction, bindings: &HashMap<String, String>)
         },
         DesktopAction::Type { text } => DesktopAction::Type { text: sub(text) },
         DesktopAction::ClipboardSet { text } => DesktopAction::ClipboardSet { text: sub(text) },
-        DesktopAction::WatchDirectory { path } => DesktopAction::WatchDirectory { path: sub(path) },
-        DesktopAction::UnwatchDirectory { path } => {
-            DesktopAction::UnwatchDirectory { path: sub(path) }
-        }
-        DesktopAction::WatchFile { path } => DesktopAction::WatchFile { path: sub(path) },
-        DesktopAction::UnwatchFile { path } => DesktopAction::UnwatchFile { path: sub(path) },
-        DesktopAction::InstallPackage {
-            manager,
-            packages,
-            timeout_secs,
-        } => DesktopAction::InstallPackage {
-            manager: *manager,
-            packages: packages.iter().map(|p| sub(p)).collect(),
-            timeout_secs: *timeout_secs,
-        },
-        DesktopAction::KeySequence { keys, delays_ms } => DesktopAction::KeySequence {
-            keys: keys.iter().map(|k| sub(k)).collect(),
-            delays_ms: delays_ms.clone(),
-        },
         // For other variants, just clone (no string fields to substitute).
         other => other.clone(),
     }
@@ -432,7 +316,5 @@ mod tests {
     fn test_builtin_registry() {
         let reg = CompositeToolRegistry::with_builtins();
         assert!(reg.get("git-clone-build").is_some());
-        assert!(reg.get("deploy-ssh").is_some());
-        assert!(reg.get("install-and-verify").is_some());
     }
 }

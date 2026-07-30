@@ -25,7 +25,6 @@ pub fn is_screen_mutating_action(action: &DesktopAction) -> bool {
             | DesktopAction::DoubleClick { .. }
             | DesktopAction::Type { .. }
             | DesktopAction::KeyPress { .. }
-            | DesktopAction::KeySequence { .. }
             | DesktopAction::Scroll { .. }
             | DesktopAction::Drag { .. }
             | DesktopAction::LaunchApp { .. }

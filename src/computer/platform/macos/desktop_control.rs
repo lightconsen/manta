@@ -34,9 +34,11 @@ pub enum DesktopAction {
         name: String,
     },
     /// Type text into a text field.
+    /// When `app` and `field` are omitted, uses clipboard paste at
+    /// the current cursor position.
     Type {
-        app: String,
-        field: String,
+        app: Option<String>,
+        field: Option<String>,
         text: String,
     },
     /// Press a keyboard shortcut.
@@ -105,6 +107,22 @@ end tell"#,
             app,
             field,
             text.replace('"', "\\\"")
+        )
+    }
+
+    /// Type text at the current cursor position using clipboard paste.
+    /// Saves and restores the clipboard to minimise side effects.
+    fn build_type_at_cursor_script(text: &str) -> String {
+        let escaped = text.replace('"', "\\\"");
+        format!(
+            r#"set _clipboard to (the clipboard as string)
+set the clipboard to "{}"
+tell application "System Events"
+    keystroke "v" using command down
+end tell
+delay 0.1
+set the clipboard to _clipboard"#,
+            escaped
         )
     }
 
@@ -309,23 +327,22 @@ impl Tool for DesktopControlTool {
                 }
             }
             "type" => {
-                let app = args["app"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation(
-                        "Missing 'app' for type action".to_string(),
-                    )
-                })?;
-                let field = args["field"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation(
-                        "Missing 'field' for type action".to_string(),
-                    )
-                })?;
                 let text = args["text"].as_str().ok_or_else(|| {
                     crate::error::SyscityError::Validation(
                         "Missing 'text' for type action".to_string(),
                     )
                 })?;
 
-                let script = Self::build_type_script(app, field, text);
+                // When app + field are provided, target a specific text field.
+                // Otherwise fall back to clipboard-paste at the cursor position.
+                let script = if let (Some(app), Some(field)) =
+                    (args["app"].as_str(), args["field"].as_str())
+                {
+                    Self::build_type_script(app, field, text)
+                } else {
+                    Self::build_type_at_cursor_script(text)
+                };
+
                 let as_result =
                     super::applescript::AppleScriptTool::execute_script(&script, 15).await;
                 if as_result.success {

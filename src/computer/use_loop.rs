@@ -479,7 +479,7 @@ impl ComputerUseLoop {
     async fn verify_action(
         &self,
         action: &DesktopAction,
-        result: &ActionResult,
+        _result: &ActionResult,
         tree_before: Option<&[UiElement]>,
         screenshot_before: Option<&Screenshot>,
         screenshot_after: Option<&Screenshot>,
@@ -503,7 +503,6 @@ impl ComputerUseLoop {
                 }
             }
             DesktopAction::Wait { .. } => Ok(true),
-            DesktopAction::ClipboardGet | DesktopAction::ClipboardSet { .. } => Ok(true),
             DesktopAction::ActivateWindow { title_pattern } => {
                 self.verifier
                     .verify(
@@ -515,27 +514,6 @@ impl ComputerUseLoop {
                     )
                     .await
             }
-            DesktopAction::KillProcess { name, .. } => {
-                // Verify the process is no longer running.
-                if let Some(process_name) = name {
-                    self.verifier
-                        .verify(
-                            &VerificationCriteria::ProcessExited { name: process_name.clone() },
-                            &ActionResult::success(""),
-                            None,
-                        )
-                        .await
-                } else {
-                    Ok(true)
-                }
-            }
-            DesktopAction::GetSystemStatus | DesktopAction::ListProcesses { .. } => {
-                Ok(result.success)
-            }
-            DesktopAction::WatchDirectory { .. }
-            | DesktopAction::UnwatchDirectory { .. }
-            | DesktopAction::WatchFile { .. }
-            | DesktopAction::UnwatchFile { .. } => Ok(result.success),
             _ if crate::computer::vision::is_screen_mutating_action(action) => {
                 self.verify_by_diff(tree_before, screenshot_before, screenshot_after)
                     .await

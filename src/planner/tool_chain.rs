@@ -107,26 +107,6 @@ impl ToolChainReasoner {
             || lower.contains("scp")
             || lower.contains("rsync")
         {
-            links.push(ChainLink {
-                id: "check-ssh-key".to_string(),
-                description: "Check SSH key exists for remote access".to_string(),
-                action: DesktopAction::BrowseFiles {
-                    path: "~/.ssh".to_string(),
-                    filter_description: Some("private keys".to_string()),
-                    max_results: Some(10),
-                },
-                dependencies: vec![],
-            });
-            links.push(ChainLink {
-                id: "test-ssh-connect".to_string(),
-                description: "Test SSH connectivity to target server".to_string(),
-                action: DesktopAction::TestTcpConnect {
-                    target: "{{server_host}}".to_string(),
-                    port: 22,
-                    timeout_ms: Some(5000),
-                },
-                dependencies: vec!["check-ssh-key".to_string()],
-            });
             confidence = 0.85;
         }
 
@@ -185,16 +165,6 @@ impl ToolChainReasoner {
             || lower.contains("postgres")
             || lower.contains("mysql")
         {
-            links.push(ChainLink {
-                id: "check-db-port".to_string(),
-                description: "Check database port is reachable".to_string(),
-                action: DesktopAction::TestTcpConnect {
-                    target: "{{db_host}}".to_string(),
-                    port: 5432,
-                    timeout_ms: Some(3000),
-                },
-                dependencies: vec![],
-            });
             confidence = confidence.max(0.75);
         }
 
@@ -317,25 +287,6 @@ fn parse_llm_action(action_type: &str, params: &serde_json::Value) -> DesktopAct
                     .unwrap_or(true),
             }
         }
-        "browse_files" => {
-            let path = params
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".")
-                .to_string();
-            DesktopAction::BrowseFiles {
-                path,
-                filter_description: params
-                    .get("filter")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                max_results: params
-                    .get("max_results")
-                    .and_then(|v| v.as_u64())
-                    .map(|n| n as usize)
-                    .or(Some(10)),
-            }
-        }
         "list_processes" => {
             let filter = params
                 .get("filter")
@@ -346,23 +297,6 @@ fn parse_llm_action(action_type: &str, params: &serde_json::Value) -> DesktopAct
                 .and_then(|v| v.as_u64())
                 .map(|n| n as usize);
             DesktopAction::ListProcesses { filter, limit }
-        }
-        "tcp_connect" => {
-            let target = params
-                .get("target")
-                .and_then(|v| v.as_str())
-                .unwrap_or("localhost")
-                .to_string();
-            let port = params.get("port").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
-            let timeout = params
-                .get("timeout_ms")
-                .and_then(|v| v.as_u64())
-                .or(Some(5000));
-            DesktopAction::TestTcpConnect {
-                target,
-                port,
-                timeout_ms: timeout,
-            }
         }
         _ => DesktopAction::Wait { milliseconds: 0 },
     }
@@ -381,9 +315,6 @@ mod tests {
         let reasoner = ToolChainReasoner::new();
         let analysis = reasoner.heuristic_analyse("Deploy this project to the server");
         assert!(analysis.confidence >= 0.8, "deploy goal should have high confidence");
-        let ids: Vec<_> = analysis.prerequisites.iter().map(|l| &l.id).collect();
-        assert!(ids.contains(&&"check-ssh-key".to_string()));
-        assert!(ids.contains(&&"test-ssh-connect".to_string()));
     }
 
     #[test]

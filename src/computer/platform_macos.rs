@@ -6,8 +6,8 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::computer::{
-    ActionResult, ClickTarget, CompressionFormat, ComputerAdapter, ComputerError, DesktopAction,
-    FileEntry, PackageManager, Rect, Result, Screenshot, UiElement, WaitCondition,
+    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, Rect, Result,
+    Screenshot, UiElement, WaitCondition,
 };
 use crate::tools::ToolRegistry;
 
@@ -30,15 +30,11 @@ fn apple_script_output(result: &crate::tools::ToolExecutionResult) -> &str {
 /// `macos_desktop_control`, and `macos_applescript` tools.
 pub struct MacosComputerAdapter {
     registry: Arc<ToolRegistry>,
-    file_watcher: tokio::sync::Mutex<Option<crate::computer::FileWatcher>>,
 }
 
 impl MacosComputerAdapter {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self {
-            registry,
-            file_watcher: tokio::sync::Mutex::new(None),
-        }
+        Self { registry }
     }
 }
 
@@ -392,144 +388,6 @@ end tell"#,
                 .map_err(|e| ComputerError::Other(format!("Priority change failed: {}", e)))??;
                 Ok(ActionResult::success(format!("Priority set for PID {}", updated_pid)))
             }
-            DesktopAction::KeySequence { keys, delays_ms } => {
-                for (i, key) in keys.iter().enumerate() {
-                    let delay_ms = delays_ms.get(i).copied().unwrap_or(0);
-                    if delay_ms > 0 {
-                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    }
-                    let args = serde_json::json!({ "action": "key_shortcut", "keys": [key] });
-                    self.registry
-                        .execute(
-                            "macos_desktop_control",
-                            args,
-                            &crate::tools::ToolContext::default(),
-                        )
-                        .await
-                        .ok_or_else(|| {
-                            ComputerError::ToolFailed("desktop control not found".to_string())
-                        })?
-                        .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                }
-                Ok(ActionResult::success("Key sequence executed"))
-            }
-            DesktopAction::ListPorts { filter_protocol, filter_state } => {
-                let inspector = crate::computer::network::NetworkInspector::new();
-                let filter_protocol = filter_protocol.clone();
-                let filter_state = filter_state.clone();
-                let ports = tokio::task::spawn_blocking(move || {
-                    inspector.list_ports(filter_protocol.as_deref(), filter_state.as_deref())
-                })
-                .await
-                .map_err(|e| ComputerError::Other(format!("list ports failed: {}", e)))?
-                .map_err(|e| ComputerError::Other(format!("list ports failed: {}", e)))?;
-                Ok(ActionResult::success(format!("Found {} ports", ports.len()))
-                    .with_data(serde_json::to_value(&ports).unwrap_or_default()))
-            }
-            DesktopAction::TestPing { target, count } => {
-                let inspector = crate::computer::network::NetworkInspector::new();
-                let result = inspector.test_ping(&target, count).await;
-                Ok(ActionResult::success(result.message.clone())
-                    .with_data(serde_json::to_value(&result).unwrap_or_default()))
-            }
-            DesktopAction::TestTcpConnect { target, port, timeout_ms } => {
-                let inspector = crate::computer::network::NetworkInspector::new();
-                let timeout = timeout_ms.map(Duration::from_millis);
-                let result = inspector.test_tcp_connect(&target, port, timeout).await;
-                Ok(ActionResult::success(result.message.clone())
-                    .with_data(serde_json::to_value(&result).unwrap_or_default()))
-            }
-            DesktopAction::ListFirewallRules => {
-                let inspector = crate::computer::network::NetworkInspector::new();
-                let rules = inspector
-                    .list_firewall_rules()
-                    .await
-                    .map_err(|e| ComputerError::Other(e.to_string()))?;
-                Ok(ActionResult::success(format!("Found {} firewall rules", rules.len()))
-                    .with_data(serde_json::to_value(&rules).unwrap_or_default()))
-            }
-            DesktopAction::BrowseFiles {
-                path,
-                filter_description,
-                max_results,
-            } => {
-                let entries =
-                    browse_files(&path, filter_description.as_deref(), max_results).await?;
-                Ok(ActionResult::success(format!("Found {} entries", entries.len()))
-                    .with_data(serde_json::to_value(&entries).unwrap_or_default()))
-            }
-            DesktopAction::ReadFileChunked { path, offset, limit_bytes } => {
-                let content = read_file_chunked(&path, offset, limit_bytes).await?;
-                Ok(ActionResult::success(format!("Read {} bytes", content.len()))
-                    .with_data(serde_json::json!({ "content": content })))
-            }
-            DesktopAction::InstallPackage {
-                manager,
-                packages,
-                timeout_secs,
-            } => install_package(manager, &packages, timeout_secs).await,
-            DesktopAction::Compress { sources, destination, format } => {
-                compress_files(&sources, &destination, format).await
-            }
-            DesktopAction::Decompress { archive, destination } => {
-                decompress_archive(&archive, &destination).await
-            }
-            DesktopAction::WatchDirectory { path } => {
-                let mut guard = self.file_watcher.lock().await;
-                if guard.is_none() {
-                    let watcher = crate::computer::FileWatcher::new().map_err(|e| {
-                        ComputerError::Other(format!("Failed to create file watcher: {}", e))
-                    })?;
-                    *guard = Some(watcher);
-                }
-                let watcher = guard.as_mut().ok_or_else(|| {
-                    ComputerError::Other("file watcher missing after init".to_string())
-                })?;
-                watcher.watch_directory(&path).map_err(|e| {
-                    ComputerError::Other(format!("Failed to watch directory: {}", e))
-                })?;
-                Ok(ActionResult::success(format!("Watching directory: {}", path)))
-            }
-            DesktopAction::UnwatchDirectory { path } => {
-                let mut guard = self.file_watcher.lock().await;
-                if let Some(ref mut watcher) = *guard {
-                    watcher.unwatch_directory(&path).map_err(|e| {
-                        ComputerError::Other(format!("Failed to unwatch directory: {}", e))
-                    })?;
-                }
-                Ok(ActionResult::success(format!("Stopped watching directory: {}", path)))
-            }
-            DesktopAction::WatchFile { path } => {
-                let mut guard = self.file_watcher.lock().await;
-                if guard.is_none() {
-                    let watcher = crate::computer::FileWatcher::new().map_err(|e| {
-                        ComputerError::Other(format!("Failed to create file watcher: {}", e))
-                    })?;
-                    *guard = Some(watcher);
-                }
-                let watcher = guard.as_mut().ok_or_else(|| {
-                    ComputerError::Other("file watcher missing after init".to_string())
-                })?;
-                watcher
-                    .watch_file(&path)
-                    .map_err(|e| ComputerError::Other(format!("Failed to watch file: {}", e)))?;
-                Ok(ActionResult::success(format!("Watching file: {}", path)))
-            }
-            DesktopAction::UnwatchFile { path } => {
-                let mut guard = self.file_watcher.lock().await;
-                if let Some(ref mut watcher) = *guard {
-                    watcher.unwatch_file(&path).map_err(|e| {
-                        ComputerError::Other(format!("Failed to unwatch file: {}", e))
-                    })?;
-                }
-                Ok(ActionResult::success(format!("Stopped watching file: {}", path)))
-            }
-            DesktopAction::EditFile { path, search, replace } => {
-                edit_file(&path, &search, &replace).await
-            }
-            DesktopAction::TransferFile { source, destination, method } => {
-                transfer_file(&source, &destination, method).await
-            }
             // ── Window management ──────────────────────────────────────────
             DesktopAction::ListWindows => {
                 let script = r#"tell application "System Events"
@@ -695,9 +553,14 @@ end tell"#,
             end repeat
         end try
     end repeat
+    try
+        set targetProc to first process whose name contains "{}"
+        set minimized of window 1 of targetProc to true
+        return "minimized"
+    end try
     return "not found"
 end tell"#,
-                    title_pattern
+                    title_pattern, title_pattern
                 );
                 let apple_args = serde_json::json!({ "script": script });
                 let result = self
@@ -725,9 +588,14 @@ end tell"#,
             end repeat
         end try
     end repeat
+    try
+        set targetProc to first process whose name contains "{}"
+        set zoomed of window 1 of targetProc to true
+        return "zoomed"
+    end try
     return "not found"
 end tell"#,
-                    title_pattern
+                    title_pattern, title_pattern
                 );
                 let apple_args = serde_json::json!({ "script": script });
                 let result = self
@@ -738,7 +606,7 @@ end tell"#,
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                Ok(ActionResult::success(result.output))
+                Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
             _ => Err(ComputerError::Other("Action not yet implemented on macOS".to_string())),
         }
@@ -914,263 +782,6 @@ fn parse_position_size(position: &str, size: &str) -> Rect {
         .and_then(|s| s.trim_end_matches('}').trim().parse::<u32>().ok())
         .unwrap_or(0);
     Rect::new(x, y, width, height)
-}
-
-// ── Shared action helpers ──────────────────────────────────────────────────
-
-async fn browse_files(
-    path: &str,
-    filter_description: Option<&str>,
-    max_results: Option<usize>,
-) -> Result<Vec<FileEntry>> {
-    use tokio::fs;
-
-    let mut entries = Vec::new();
-    let mut reader = fs::read_dir(path)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to read directory {}: {}", path, e)))?;
-
-    while let Ok(Some(entry)) = reader.next_entry().await {
-        let meta = entry.metadata().await.ok();
-        let modified = meta
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        entries.push(FileEntry {
-            path: entry.path().to_string_lossy().to_string(),
-            name: entry.file_name().to_string_lossy().to_string(),
-            size_bytes: meta.as_ref().map(|m| m.len()).unwrap_or(0),
-            modified_secs: modified,
-            is_directory: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
-        });
-    }
-
-    if let Some(filter) = filter_description {
-        let lower = filter.to_lowercase();
-        if lower.contains("recent") {
-            entries.sort_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
-        } else if lower.contains("large") || lower.contains("big") || lower.contains("biggest") {
-            entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
-        } else if lower.contains("directory") || lower.contains("dir") || lower.contains("folder") {
-            entries.retain(|e| e.is_directory);
-        } else if lower.contains("file") {
-            entries.retain(|e| !e.is_directory);
-        } else {
-            entries.retain(|e| e.name.to_lowercase().contains(&lower));
-        }
-    }
-
-    if let Some(limit) = max_results {
-        entries.truncate(limit);
-    }
-
-    Ok(entries)
-}
-
-async fn read_file_chunked(path: &str, offset: u64, limit_bytes: u64) -> Result<String> {
-    use tokio::fs::File;
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
-
-    let mut file = File::open(path)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to open {}: {}", path, e)))?;
-    file.seek(std::io::SeekFrom::Start(offset))
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to seek {}: {}", path, e)))?;
-
-    let mut buf = vec![0u8; limit_bytes.min(10 * 1024 * 1024) as usize];
-    let n = file
-        .read(&mut buf)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to read {}: {}", path, e)))?;
-    buf.truncate(n);
-
-    String::from_utf8(buf)
-        .map_err(|e| ComputerError::Other(format!("File {} contains non-UTF-8 bytes: {}", path, e)))
-}
-
-async fn install_package(
-    manager: PackageManager,
-    packages: &[String],
-    timeout_secs: u64,
-) -> Result<ActionResult> {
-    let (cmd, args) = match manager {
-        PackageManager::Brew => ("brew", {
-            let mut v = vec!["install"];
-            v.extend(packages.iter().map(|s| s.as_str()));
-            v
-        }),
-        PackageManager::Macports => ("port", {
-            let mut v = vec!["install"];
-            v.extend(packages.iter().map(|s| s.as_str()));
-            v
-        }),
-        _ => {
-            return Err(ComputerError::UnsupportedPlatform(format!(
-                "Package manager {:?} not supported on macOS",
-                manager
-            )));
-        }
-    };
-
-    let output = tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        tokio::process::Command::new(cmd).args(&args).output(),
-    )
-    .await
-    .map_err(|_| ComputerError::Timeout)?
-    .map_err(|e| ComputerError::ToolFailed(format!("Failed to run {}: {}", cmd, e)))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Ok(ActionResult::error(format!("{} install failed: {}", cmd, stderr)));
-    }
-
-    Ok(ActionResult::success(format!("Installed {} with {}", packages.join(", "), cmd)))
-}
-
-async fn compress_files(
-    sources: &[String],
-    destination: &str,
-    format: CompressionFormat,
-) -> Result<ActionResult> {
-    let (cmd, args) = match format {
-        CompressionFormat::Zip => ("zip", {
-            let mut v = vec!["-r", destination];
-            v.extend(sources.iter().map(|s| s.as_str()));
-            v
-        }),
-        CompressionFormat::Tar => ("tar", {
-            let mut v = vec!["-cvf", destination];
-            v.extend(sources.iter().map(|s| s.as_str()));
-            v
-        }),
-        CompressionFormat::TarGz => ("tar", {
-            let mut v = vec!["-czvf", destination];
-            v.extend(sources.iter().map(|s| s.as_str()));
-            v
-        }),
-        CompressionFormat::TarBz2 => ("tar", {
-            let mut v = vec!["-cjvf", destination];
-            v.extend(sources.iter().map(|s| s.as_str()));
-            v
-        }),
-        CompressionFormat::TarXz => ("tar", {
-            let mut v = vec!["-cJvf", destination];
-            v.extend(sources.iter().map(|s| s.as_str()));
-            v
-        }),
-        _ => {
-            return Err(ComputerError::UnsupportedPlatform(format!(
-                "Compression format {:?} not supported on macOS",
-                format
-            )));
-        }
-    };
-
-    let output = tokio::process::Command::new(cmd)
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| ComputerError::ToolFailed(format!("Failed to run {}: {}", cmd, e)))?;
-
-    if !output.status.success() {
-        return Ok(ActionResult::error(format!(
-            "{} failed: {}",
-            cmd,
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    Ok(ActionResult::success(format!("Created {}", destination)))
-}
-
-async fn decompress_archive(archive: &str, destination: &str) -> Result<ActionResult> {
-    tokio::fs::create_dir_all(destination)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to create {}: {}", destination, e)))?;
-
-    let lower = archive.to_lowercase();
-    let (cmd, args): (&str, Vec<&str>) = if lower.ends_with(".zip") {
-        ("unzip", vec![archive, "-d", destination])
-    } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-        ("tar", vec!["-xzvf", archive, "-C", destination])
-    } else if lower.ends_with(".tar.bz2") {
-        ("tar", vec!["-xjvf", archive, "-C", destination])
-    } else if lower.ends_with(".tar.xz") {
-        ("tar", vec!["-xJvf", archive, "-C", destination])
-    } else if lower.ends_with(".tar") {
-        ("tar", vec!["-xvf", archive, "-C", destination])
-    } else {
-        return Err(ComputerError::UnsupportedPlatform(format!(
-            "Cannot determine archive format for {}",
-            archive
-        )));
-    };
-
-    let output = tokio::process::Command::new(cmd)
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| ComputerError::ToolFailed(format!("Failed to run {}: {}", cmd, e)))?;
-
-    if !output.status.success() {
-        return Ok(ActionResult::error(format!(
-            "{} failed: {}",
-            cmd,
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    Ok(ActionResult::success(format!("Extracted {} to {}", archive, destination)))
-}
-
-async fn edit_file(path: &str, search: &str, replace: &str) -> Result<ActionResult> {
-    let content = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to read {}: {}", path, e)))?;
-    let new_content = content.replace(search, replace);
-    tokio::fs::write(path, new_content)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to write {}: {}", path, e)))?;
-    Ok(ActionResult::success(format!("Edited {}", path)))
-}
-
-async fn transfer_file(
-    source: &str,
-    destination: &str,
-    method: crate::computer::TransferMethod,
-) -> Result<ActionResult> {
-    let (cmd, args): (&str, Vec<&str>) = match method {
-        crate::computer::TransferMethod::Scp => ("scp", vec![source, destination]),
-        crate::computer::TransferMethod::Rsync => ("rsync", vec!["-avz", source, destination]),
-        crate::computer::TransferMethod::Smb => {
-            return Err(ComputerError::UnsupportedPlatform(
-                "SMB transfer not yet implemented on macOS".to_string(),
-            ))
-        }
-    };
-
-    let output = tokio::process::Command::new(cmd)
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| ComputerError::ToolFailed(format!("Failed to run {}: {}", cmd, e)))?;
-
-    if !output.status.success() {
-        return Ok(ActionResult::error(format!(
-            "{} failed: {}",
-            cmd,
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    Ok(ActionResult::success(format!(
-        "Transferred {} to {} via {}",
-        source, destination, cmd
-    )))
 }
 
 /// Factory for macOS.

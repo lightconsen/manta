@@ -12,7 +12,6 @@ use crate::computer::{
     ActionResult, ComputerAdapter, RollbackManager, VerificationConfig, VerificationEngine,
 };
 use crate::planner::{ErrorDiagnosisEngine, ExperienceContext, ToolLearningEngine};
-use crate::tools::ToolRegistry;
 
 /// Configuration for the task executor.
 #[derive(Debug, Clone)]
@@ -39,7 +38,6 @@ impl Default for ExecutorConfig {
 #[derive(Clone)]
 pub struct TaskExecutor {
     adapter: Arc<dyn ComputerAdapter>,
-    tool_registry: Option<Arc<ToolRegistry>>,
     verifier: VerificationEngine,
     config: ExecutorConfig,
     /// Optional execution controller for pause / resume / step / cancel.
@@ -54,20 +52,12 @@ impl TaskExecutor {
     pub fn new(adapter: Arc<dyn ComputerAdapter>, verifier: VerificationEngine) -> Self {
         Self {
             adapter,
-            tool_registry: None,
             verifier,
             config: ExecutorConfig::default(),
             execution_controller: None,
             diagnosis_engine: ErrorDiagnosisEngine::new(),
             learning_engine: None,
         }
-    }
-
-    /// Attach a ToolRegistry for executing
-    /// [`ToolCall`](crate::computer::DesktopAction::ToolCall) actions.
-    pub fn with_tool_registry(mut self, registry: Arc<ToolRegistry>) -> Self {
-        self.tool_registry = Some(registry);
-        self
     }
 
     pub fn with_config(mut self, config: ExecutorConfig) -> Self {
@@ -175,7 +165,6 @@ impl TaskExecutor {
                 let id_clone = id.clone();
                 let adapter = self.adapter.clone();
                 let verifier = self.verifier.clone();
-                let tool_registry = self.tool_registry.clone();
                 let diagnosis_engine = self.diagnosis_engine.clone();
                 let learning_engine = self.learning_engine.clone();
                 let exec_controller = self.execution_controller.clone();
@@ -186,7 +175,6 @@ impl TaskExecutor {
                         task,
                         adapter,
                         verifier,
-                        tool_registry,
                         diagnosis_engine,
                         learning_engine,
                         exec_controller,
@@ -292,25 +280,8 @@ fn desktop_action_name(action: &crate::computer::DesktopAction) -> String {
         crate::computer::DesktopAction::GetSystemStatus => "get_system_status",
         crate::computer::DesktopAction::ListProcesses { .. } => "list_processes",
         crate::computer::DesktopAction::KillProcess { .. } => "kill_process",
-        crate::computer::DesktopAction::WatchDirectory { .. } => "watch_directory",
-        crate::computer::DesktopAction::UnwatchDirectory { .. } => "unwatch_directory",
-        crate::computer::DesktopAction::WatchFile { .. } => "watch_file",
-        crate::computer::DesktopAction::UnwatchFile { .. } => "unwatch_file",
-        crate::computer::DesktopAction::ListPorts { .. } => "list_ports",
-        crate::computer::DesktopAction::TestPing { .. } => "test_ping",
-        crate::computer::DesktopAction::TestTcpConnect { .. } => "test_tcp_connect",
-        crate::computer::DesktopAction::ListFirewallRules => "list_firewall_rules",
         crate::computer::DesktopAction::RestartProcess { .. } => "restart_process",
         crate::computer::DesktopAction::SetProcessPriority { .. } => "set_process_priority",
-        crate::computer::DesktopAction::KeySequence { .. } => "key_sequence",
-        crate::computer::DesktopAction::InstallPackage { .. } => "install_package",
-        crate::computer::DesktopAction::BrowseFiles { .. } => "browse_files",
-        crate::computer::DesktopAction::EditFile { .. } => "edit_file",
-        crate::computer::DesktopAction::ReadFileChunked { .. } => "read_file_chunked",
-        crate::computer::DesktopAction::Compress { .. } => "compress",
-        crate::computer::DesktopAction::Decompress { .. } => "decompress",
-        crate::computer::DesktopAction::TransferFile { .. } => "transfer_file",
-        crate::computer::DesktopAction::ToolCall { .. } => "tool_call",
         crate::computer::DesktopAction::ListWindows => "list_windows",
         crate::computer::DesktopAction::GetWindowGeometry { .. } => "get_window_geometry",
         crate::computer::DesktopAction::MoveWindow { .. } => "move_window",
@@ -344,7 +315,6 @@ async fn execute_task_inner(
     task: crate::planner::Task,
     adapter: Arc<dyn ComputerAdapter>,
     verifier: VerificationEngine,
-    tool_registry: Option<Arc<ToolRegistry>>,
     diagnosis_engine: ErrorDiagnosisEngine,
     learning_engine: Option<Arc<ToolLearningEngine>>,
     exec_controller: Option<Arc<crate::acp::ExecutionController>>,
@@ -360,7 +330,7 @@ async fn execute_task_inner(
             }
         }
 
-        match resolve_action_standalone(&task.action, &adapter, &tool_registry).await {
+        match resolve_action_standalone(&task.action, &adapter).await {
             Ok(result) => {
                 // Verify if criteria are set.
                 let verified = if let Some(ref criteria) = task.verification {
@@ -512,47 +482,13 @@ async fn execute_task_inner(
 async fn resolve_action_standalone(
     action: &crate::computer::DesktopAction,
     adapter: &Arc<dyn ComputerAdapter>,
-    tool_registry: &Option<Arc<ToolRegistry>>,
 ) -> crate::Result<ActionResult> {
-    match action {
-        crate::computer::DesktopAction::ToolCall { tool_name, args } => {
-            execute_tool_call_standalone(tool_name, args, tool_registry).await
+    adapter.execute(action.clone()).await.map_err(|e| {
+        crate::error::SyscityError::ExternalService {
+            source: e.to_string(),
+            cause: None,
         }
-        other => adapter.execute(other.clone()).await.map_err(|e| {
-            crate::error::SyscityError::ExternalService {
-                source: e.to_string(),
-                cause: None,
-            }
-        }),
-    }
-}
-
-/// Execute a tool call through the [`ToolRegistry`] (standalone version
-/// for concurrent execution).
-async fn execute_tool_call_standalone(
-    tool_name: &str,
-    args: &serde_json::Value,
-    tool_registry: &Option<Arc<ToolRegistry>>,
-) -> crate::Result<ActionResult> {
-    let registry = tool_registry.as_ref().ok_or_else(|| {
-        crate::error::SyscityError::Validation(
-            "ToolCall requires ToolRegistry but none is configured on the executor".to_string(),
-        )
-    })?;
-
-    let context = crate::tools::ToolContext::default();
-    match registry.execute(tool_name, args.clone(), &context).await {
-        Some(Ok(result)) => Ok(ActionResult {
-            success: result.success,
-            message: result.output,
-            screenshot_after: None,
-            data: result.data,
-        }),
-        Some(Err(e)) => Err(e),
-        None => Err(crate::error::SyscityError::NotFound {
-            resource: format!("Tool '{}' referenced by ToolCall", tool_name),
-        }),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -565,39 +501,6 @@ mod tests {
     use super::*;
     use crate::planner::{Plan, Task, TaskStatus};
     use crate::tools::{Tool, ToolContext, ToolExecutionResult, ToolRegistry};
-
-    // ── Mock tool for ToolCall tests ──────────────────────────────────────
-
-    struct MockDeviceReadTool;
-
-    #[async_trait]
-    impl Tool for MockDeviceReadTool {
-        fn name(&self) -> &str {
-            "mock_device_read"
-        }
-
-        fn description(&self) -> &str {
-            "Mock device read tool"
-        }
-
-        fn parameters_schema(&self) -> serde_json::Value {
-            json!({ "type": "object", "properties": {} })
-        }
-
-        async fn execute(
-            &self,
-            _args: serde_json::Value,
-            _ctx: &ToolContext,
-        ) -> crate::Result<ToolExecutionResult> {
-            Ok(ToolExecutionResult {
-                success: true,
-                output: "read value: 42".to_string(),
-                data: Some(json!({ "value": 42 })),
-                error: None,
-                execution_time: std::time::Duration::from_secs(0),
-            })
-        }
-    }
 
     // ── Config default test ───────────────────────────────────────────────
 
@@ -639,110 +542,4 @@ mod tests {
         assert!(result.message.contains("cancelled"));
     }
 
-    // ── ToolCall tests ────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn test_executor_tool_call_success() {
-        let tool_registry = Arc::new(ToolRegistry::new());
-        tool_registry.register_dynamic(Arc::new(MockDeviceReadTool));
-
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new());
-        let verifier = VerificationEngine::new(adapter.clone());
-        let executor = TaskExecutor::new(adapter, verifier).with_tool_registry(tool_registry);
-
-        let mut plan = Plan::new("tool call test".to_string());
-        plan.add_task(Task {
-            id: "read-sensor".to_string(),
-            description: "Read sensor via tool call".to_string(),
-            action: crate::computer::DesktopAction::ToolCall {
-                tool_name: "mock_device_read".to_string(),
-                args: json!({}),
-            },
-            dependencies: vec![],
-            max_retries: 0,
-            retry_delay: std::time::Duration::from_millis(0),
-            verification: None,
-            snapshot_before: false,
-            status: TaskStatus::Pending,
-            error: None,
-            result: None,
-        });
-
-        let result = executor.execute(&mut plan).await.unwrap();
-        assert!(result.success, "ToolCall plan should succeed: {}", result.message);
-        assert_eq!(result.tasks_completed, 1);
-        assert_eq!(result.tasks_failed, 0);
-    }
-
-    #[tokio::test]
-    async fn test_executor_tool_call_no_registry() {
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new());
-        let verifier = VerificationEngine::new(adapter.clone());
-        // No with_tool_registry() — ToolRegistry not configured
-        let executor = TaskExecutor::new(adapter, verifier);
-
-        let mut plan = Plan::new("tool call without registry".to_string());
-        plan.add_task(Task {
-            id: "call".to_string(),
-            description: "Call tool without registry".to_string(),
-            action: crate::computer::DesktopAction::ToolCall {
-                tool_name: "any_tool".to_string(),
-                args: json!({}),
-            },
-            dependencies: vec![],
-            max_retries: 0,
-            retry_delay: std::time::Duration::from_millis(0),
-            verification: None,
-            snapshot_before: false,
-            status: TaskStatus::Pending,
-            error: None,
-            result: None,
-        });
-
-        let result = executor.execute(&mut plan).await.unwrap();
-        assert!(!result.success, "Should fail without ToolRegistry");
-        assert_eq!(result.tasks_failed, 1);
-    }
-
-    #[tokio::test]
-    async fn test_executor_tool_call_not_found() {
-        let tool_registry = Arc::new(ToolRegistry::new());
-        // Register a tool but call a different one
-        tool_registry.register_dynamic(Arc::new(MockDeviceReadTool));
-
-        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new());
-        let verifier = VerificationEngine::new(adapter.clone());
-        let executor = TaskExecutor::new(adapter, verifier).with_tool_registry(tool_registry);
-
-        let mut plan = Plan::new("tool call not found".to_string());
-        plan.add_task(Task {
-            id: "call".to_string(),
-            description: "Call nonexistent tool".to_string(),
-            action: crate::computer::DesktopAction::ToolCall {
-                tool_name: "nonexistent_tool".to_string(),
-                args: json!({}),
-            },
-            dependencies: vec![],
-            max_retries: 0,
-            retry_delay: std::time::Duration::from_millis(0),
-            verification: None,
-            snapshot_before: false,
-            status: TaskStatus::Pending,
-            error: None,
-            result: None,
-        });
-
-        let result = executor.execute(&mut plan).await.unwrap();
-        assert!(!result.success, "Should fail for nonexistent tool");
-        assert_eq!(result.tasks_failed, 1);
-    }
-
-    #[test]
-    fn test_desktop_action_name_tool_call() {
-        let action = crate::computer::DesktopAction::ToolCall {
-            tool_name: "test".to_string(),
-            args: json!({}),
-        };
-        assert_eq!(desktop_action_name(&action), "tool_call");
-    }
 }

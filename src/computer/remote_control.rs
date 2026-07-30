@@ -967,49 +967,6 @@ impl ComputerAdapter for RemoteControlAdapter {
                 }
                 Ok(ActionResult::success("process killed"))
             }
-            DesktopAction::ReadFileChunked { path, offset, limit_bytes } => {
-                let output = self
-                    .run_remote("tail", &["-c", &format!("+{}", offset + 1), &path])
-                    .await
-                    .map_err(|e| ComputerError::Other(e.to_string()))?;
-                let mut text = String::from_utf8_lossy(&output.stdout).to_string();
-                if text.len() > limit_bytes as usize {
-                    text.truncate(limit_bytes as usize);
-                }
-                Ok(ActionResult::success(text))
-            }
-            DesktopAction::EditFile { path, search, replace } => {
-                // Use sed for remote file editing (escape / delimiter).
-                let sed_search = search.replace('/', "\\/");
-                let sed_replace = replace.replace('/', "\\/");
-                let sed_expr = format!("s/{}/{}/g", sed_search, sed_replace);
-                self.run_remote_text("sed", &["-i", &sed_expr, &path])
-                    .await?;
-                Ok(ActionResult::success("file edited"))
-            }
-            DesktopAction::Compress {
-                sources,
-                destination,
-                format: _,
-            } => {
-                // Archive files/directories over SSH using zip.
-                let mut args = vec!["-r", destination.as_str()];
-                args.extend(sources.iter().map(|s| s.as_str()));
-                self.run_remote_text("zip", &args).await?;
-                Ok(ActionResult::success("compressed"))
-            }
-            DesktopAction::Decompress { archive, destination } => {
-                // Extract archives over SSH based on extension.
-                self.run_remote_text("mkdir", &["-p", &destination]).await?;
-                if archive.ends_with(".zip") {
-                    self.run_remote_text("unzip", &[&archive, "-d", &destination])
-                        .await?;
-                } else {
-                    self.run_remote_text("tar", &["-xvf", &archive, "-C", &destination])
-                        .await?;
-                }
-                Ok(ActionResult::success("decompressed"))
-            }
             _ => {
                 warn!("Remote adapter received unsupported action: {:?}", action);
                 Err(ComputerError::UnsupportedPlatform(format!(
