@@ -11,6 +11,21 @@ use crate::computer::{
 };
 use crate::tools::ToolRegistry;
 
+/// Extract the raw stdout from an AppleScript tool result.
+///
+/// The AppleScript tool wraps its output in a JSON `AppleScriptResult` struct
+/// (`{ success, output, error }`), so the `output` field of `ToolExecutionResult`
+/// contains the serialized JSON rather than the raw AppleScript return value.
+/// The actual script stdout is in `data["output"]`.
+fn apple_script_output(result: &crate::tools::ToolExecutionResult) -> &str {
+    result
+        .data
+        .as_ref()
+        .and_then(|d| d.get("output"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+}
+
 /// macOS adapter backed by `macos_screenshot`, `macos_accessibility`,
 /// `macos_desktop_control`, and `macos_applescript` tools.
 pub struct MacosComputerAdapter {
@@ -143,7 +158,7 @@ impl ComputerAdapter for MacosComputerAdapter {
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                Ok(ActionResult::success(result.output))
+                Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
             DesktopAction::DoubleClick { target, button: _ } => {
                 let (x, y) = self.resolve_click_target(target).await?;
@@ -164,7 +179,7 @@ end tell"#,
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                Ok(ActionResult::success(result.output))
+                Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
             DesktopAction::Scroll { target: _, direction, amount } => {
                 let key_code = match direction {
@@ -261,7 +276,7 @@ end tell"#,
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                Ok(ActionResult::success(result.output))
+                Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
             DesktopAction::ClipboardSet { text } => {
                 let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
@@ -275,7 +290,7 @@ end tell"#,
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                Ok(ActionResult::success(result.output))
+                Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
             DesktopAction::LaunchApp {
                 name,
@@ -324,7 +339,7 @@ end tell"#,
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                Ok(ActionResult::success(result.output))
+                Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
             DesktopAction::Wait { milliseconds } => {
                 tokio::time::sleep(Duration::from_millis(milliseconds)).await;
@@ -545,7 +560,7 @@ end tell"#;
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
 
                 let mut windows: Vec<crate::computer::WindowInfo> = Vec::new();
-                for line in result.output.lines() {
+                for line in apple_script_output(&result).lines() {
                     let parts: Vec<&str> = line.splitn(4, "|||").collect();
                     if parts.len() >= 3 {
                         windows.push(crate::computer::WindowInfo {
@@ -592,8 +607,7 @@ end tell"#,
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                let coords: Vec<i32> = result
-                    .output
+                let coords: Vec<i32> = apple_script_output(&result)
                     .trim()
                     .split(',')
                     .filter_map(|s| s.trim().parse().ok())
@@ -634,7 +648,7 @@ end tell"#,
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                Ok(ActionResult::success(result.output))
+                Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
             DesktopAction::ResizeWindow { title_pattern, width, height } => {
                 let script = format!(
@@ -664,7 +678,7 @@ end tell"#,
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                Ok(ActionResult::success(result.output))
+                Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
             DesktopAction::MinimizeWindow { title_pattern } => {
                 let script = format!(
@@ -694,7 +708,7 @@ end tell"#,
                         ComputerError::ToolFailed("applescript tool not found".to_string())
                     })?
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
-                Ok(ActionResult::success(result.output))
+                Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
             DesktopAction::MaximizeWindow { title_pattern } => {
                 let script = format!(
@@ -754,7 +768,7 @@ end tell"#,
                         .execute("applescript", args, &crate::tools::ToolContext::default())
                         .await
                     {
-                        result.output.contains(pattern)
+                        apple_script_output(&result).contains(pattern)
                     } else {
                         false
                     }
@@ -770,7 +784,7 @@ end tell"#,
                         .execute("applescript", args, &crate::tools::ToolContext::default())
                         .await
                     {
-                        result.output == "true"
+                        apple_script_output(&result) == "true"
                     } else {
                         false
                     }
