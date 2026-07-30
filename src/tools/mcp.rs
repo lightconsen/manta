@@ -660,6 +660,10 @@ impl McpClient {
         let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
         self.kill_tx = Some(kill_tx);
         let child_exited_watcher = self.child_exited.clone();
+
+        // Take stderr before moving child into the exit-watcher task.
+        let stderr_handle = child.stderr.take();
+
         tokio::spawn(async move {
             let mut child = child;
             enum Outcome {
@@ -684,11 +688,44 @@ impl McpClient {
             child_exited_watcher.store(true, Ordering::Relaxed);
         });
 
+        // Read stderr from the subprocess asynchronously and log it.
+        // This gives users visibility into WHY the process failed
+        // (e.g. missing env vars shown in the process's own error output).
+        if let Some(stderr) = stderr_handle {
+            tokio::spawn(async move {
+                use tokio::io::AsyncBufReadExt;
+                let mut reader = tokio::io::BufReader::new(stderr);
+                let mut line = String::new();
+                let mut total_bytes = 0u64;
+                while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                    total_bytes += line.len() as u64;
+                    if total_bytes > 4096 {
+                        warn!("MCP server stderr: ...(truncated)");
+                        break;
+                    }
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        warn!("MCP server stderr: {}", trimmed);
+                    }
+                    line.clear();
+                }
+            });
+        }
+
         // Cache config for reconnect
         self.server_config = Some(config);
 
         // Initialize protocol
-        self.initialize().await?;
+        self.initialize().await.map_err(|e| {
+            if self.child_exited.load(Ordering::Relaxed) {
+                crate::error::SyscityError::Internal(format!(
+                    "MCP server process exited before initialization: {}",
+                    e
+                ))
+            } else {
+                e
+            }
+        })?;
 
         info!("Connected to MCP server via stdio");
         Ok(())
