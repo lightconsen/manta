@@ -256,7 +256,9 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "skills.install"
         | "logs.subscribe"
         | "logs.unsubscribe"
-        | "tasks.list" => Some(SCOPE_READ),
+        | "tasks.list"
+        | "mcp.list"
+        | "mcp.presets" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.rename"
@@ -269,7 +271,11 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "tasks.schedule"
         | "tasks.delete"
         | "tasks.enable"
-        | "tasks.disable" => Some(SCOPE_WRITE),
+        | "tasks.disable"
+        | "mcp.add"
+        | "mcp.remove"
+        | "mcp.connect"
+        | "mcp.disconnect" => Some(SCOPE_WRITE),
         "acp.spawn"
         | "acp.terminate"
         | "acp.message"
