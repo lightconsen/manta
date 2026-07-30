@@ -213,6 +213,12 @@ pub enum GatewayEvent {
     McpRecovered { server_id: String, attempt: u32 },
     /// MCP subscribed resource changed
     McpResourceChanged { server_id: String, uri: String },
+    /// MCP OAuth authorization required
+    McpAuthRequired { server_id: String, auth_url: String },
+    /// MCP OAuth authorization completed
+    McpAuthComplete { server_id: String },
+    /// MCP OAuth authorization failed
+    McpAuthFailed { server_id: String, reason: String },
     /// Self-repair action taken (agent or channel restarted)
     RepairAction {
         /// "agent" or "channel"

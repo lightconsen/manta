@@ -67,3 +67,38 @@ logo_url = "https://cdn.simpleicons.org/linear"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-linear"]
 transport = "stdio"
+
+# ── Remote OAuth Presets ──
+# These use streamable_http transport with OAuth 2.1 + PKCE.
+# The OAuth flow authorizes via your browser automatically.
+#
+# For remote MCP servers, `url` is the server endpoint and `auth_type`
+# must be "oauth2". The OAuth endpoints are discovered automatically
+# via /.well-known/oauth-authorization-server.
+
+[github_remote]
+display_name = "GitHub (Remote)"
+description = "Repository management, PRs, issues, code search (remote)"
+logo_url = "https://cdn.simpleicons.org/github"
+url = "https://api.githubcopilot.com/mcp/"
+transport = "streamable_http"
+auth_type = "oauth2"
+scopes = ""
+
+[linear_remote]
+display_name = "Linear (Remote)"
+description = "Issue tracking, sprint planning, project management (remote)"
+logo_url = "https://cdn.simpleicons.org/linear"
+url = "https://mcp.linear.app/"
+transport = "streamable_http"
+auth_type = "oauth2"
+scopes = ""
+
+[slack_remote]
+display_name = "Slack (Remote)"
+description = "Channel messaging, search, workspace management (remote)"
+logo_url = "https://cdn.simpleicons.org/slack"
+url = "https://mcp.slack.com/"
+transport = "streamable_http"
+auth_type = "oauth2"
+scopes = ""

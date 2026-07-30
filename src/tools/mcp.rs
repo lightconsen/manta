@@ -22,6 +22,13 @@ use tokio::process::Command;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use rand::rngs::OsRng;
+use rand::RngCore;
+use sha2::{Digest, Sha256};
+use tokio::net::TcpListener;
+
 use super::{Tool, ToolContext, ToolExecutionChunk, ToolExecutionResult};
 use crate::tools::sdk::ToolCapabilities;
 
@@ -86,6 +93,21 @@ pub struct McpServerConfig {
     /// Maximum reconnect attempts after a connection failure.
     #[serde(default = "default_max_reconnect_attempts")]
     pub max_reconnect_attempts: u32,
+    /// OAuth 2.0 / bearer auth type (e.g. "oauth2", "bearer", or null)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_type: Option<String>,
+    /// OAuth client ID (for oauth2 flow)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// OAuth authorization endpoint (auto-discovered if omitted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_url: Option<String>,
+    /// OAuth token endpoint (auto-discovered if omitted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_url: Option<String>,
+    /// OAuth scopes (space-separated)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<String>,
 }
 
 fn default_health_check_interval_secs() -> u64 {
@@ -118,6 +140,11 @@ impl Default for McpServerConfig {
             health_check_interval_secs: default_health_check_interval_secs(),
             auto_reconnect: true,
             max_reconnect_attempts: default_max_reconnect_attempts(),
+            auth_type: None,
+            client_id: None,
+            auth_url: None,
+            token_url: None,
+            scopes: None,
         }
     }
 }
@@ -413,6 +440,31 @@ pub enum McpNotification {
 }
 
 // ─────────────────────────────────────────────
+// OAuth 2.0 token types
+// ─────────────────────────────────────────────
+
+/// OAuth 2.0 token data persisted to disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthTokens {
+    pub access_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+}
+
+/// Pending OAuth authorization state.
+#[derive(Debug)]
+pub struct PendingAuth {
+    pub server_id: String,
+    pub token_url: String,
+    pub code_verifier: String,
+    pub state: String,
+    pub callback_port: u16,
+    pub cancel_tx: tokio::sync::oneshot::Sender<()>,
+}
+
+// ─────────────────────────────────────────────
 // McpClient (9.1, 9.3, 9.4, 9.6, 9.8)
 // ─────────────────────────────────────────────
 
@@ -445,6 +497,8 @@ pub struct McpClient {
     timeout_secs: u64,
     /// Cached server config for reconnect (9.4)
     server_config: Option<McpServerConfig>,
+    /// Bearer access token for remote OAuth MCP servers.
+    access_token: Option<String>,
 }
 
 impl McpClient {
@@ -463,6 +517,7 @@ impl McpClient {
             child_exited: Arc::new(AtomicBool::new(false)),
             timeout_secs: 30,
             server_config: None,
+            access_token: None,
         }
     }
 
@@ -491,6 +546,11 @@ impl McpClient {
     /// Set the notification sender channel for server-pushed messages.
     pub fn set_notification_tx(&mut self, tx: mpsc::UnboundedSender<McpNotification>) {
         self.notification_tx = Some(tx);
+    }
+
+    /// Set the bearer access token for OAuth-authenticated HTTP transport.
+    pub fn set_access_token(&mut self, token: String) {
+        self.access_token = Some(token);
     }
 
     /// Set the broadcast channel used to distribute progress notifications.
@@ -768,10 +828,14 @@ impl McpClient {
         let response_channels_sse = response_channels.clone();
         let notification_tx_sse = self.notification_tx.clone();
         let progress_tx_sse = self.progress_tx.clone();
+        let access_token_sse = self.access_token.clone();
         tokio::spawn(async move {
             let mut builder = client.get(&get_url).header("Accept", "text/event-stream");
             for (k, v) in &env_headers {
                 builder = builder.header(k, v);
+            }
+            if let Some(ref token) = access_token_sse {
+                builder = builder.header("Authorization", format!("Bearer {}", token));
             }
             let resp = match builder.send().await {
                 Ok(r) => r,
@@ -837,6 +901,7 @@ impl McpClient {
                 crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
             })?;
         let env_for_writer = resolved_env.clone();
+        let access_token_writer = self.access_token.clone();
         tokio::spawn(async move {
             while let Some(request) = request_rx.recv().await {
                 let json = match serde_json::to_string(&request) {
@@ -852,6 +917,9 @@ impl McpClient {
                     .body(json);
                 for (k, v) in &env_for_writer {
                     builder = builder.header(k, v);
+                }
+                if let Some(ref token) = access_token_writer {
+                    builder = builder.header("Authorization", format!("Bearer {}", token));
                 }
                 if let Err(e) = builder.send().await {
                     error!("Failed to POST MCP request: {}", e);
@@ -888,6 +956,7 @@ impl McpClient {
         let env_headers = resolved_env.clone();
         let notification_tx_http = self.notification_tx.clone();
         let progress_tx_http = self.progress_tx.clone();
+        let access_token = self.access_token.clone();
 
         tokio::spawn(async move {
             let client = match reqwest::Client::builder()
@@ -917,6 +986,9 @@ impl McpClient {
                     .body(json_body);
                 for (k, v) in &env_headers {
                     builder = builder.header(k, v);
+                }
+                if let Some(ref token) = access_token {
+                    builder = builder.header("Authorization", format!("Bearer {}", token));
                 }
 
                 let resp = match builder.send().await {
@@ -1677,6 +1749,12 @@ pub enum McpEvent {
     Recovered { server_id: String, attempt: u32 },
     /// A subscribed resource changed on the server.
     ResourceChanged { server_id: String, uri: String },
+    /// OAuth authorization is required to connect.
+    AuthRequired { server_id: String, auth_url: String },
+    /// OAuth authorization completed successfully.
+    AuthComplete { server_id: String },
+    /// OAuth authorization failed.
+    AuthFailed { server_id: String, reason: String },
 }
 
 /// Health status of a single MCP server connection.
@@ -1732,10 +1810,18 @@ impl McpConnectionMeta {
 }
 
 /// Manages all MCP server connections.  Lives in `GatewayState`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct McpManager {
     clients: Arc<RwLock<HashMap<String, McpConnectionMeta>>>,
     event_tx: Arc<RwLock<Option<mpsc::UnboundedSender<McpEvent>>>>,
+    /// Pending OAuth authorization flows keyed by server_id.
+    pending_auths: Arc<RwLock<HashMap<String, PendingAuth>>>,
+}
+
+impl Default for McpManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl McpManager {
@@ -1743,6 +1829,7 @@ impl McpManager {
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
             event_tx: Arc::new(RwLock::new(None)),
+            pending_auths: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -1756,6 +1843,96 @@ impl McpManager {
         if let Some(tx) = self.event_tx.read().await.as_ref() {
             let _ = tx.send(event);
         }
+    }
+
+    /// Register a pre-authenticated, already-connected client.
+    /// Used by the OAuth flow after token exchange completes.
+    pub async fn register_client(
+        &self,
+        server_id: &str,
+        client: Arc<RwLock<McpClient>>,
+        config: McpServerConfig,
+    ) -> crate::Result<()> {
+        let tools = {
+            let c = client.read().await;
+            c.get_tools().to_vec()
+        };
+        let prompts = {
+            let c = client.read().await;
+            c.list_prompts().await.unwrap_or_default()
+        };
+        let resources = {
+            let c = client.read().await;
+            c.list_resources().await.unwrap_or_default()
+        };
+
+        let meta = McpConnectionMeta::new(client.clone(), config.clone());
+
+        // Wire notification and progress channels.
+        let (notification_tx, mut notification_rx) =
+            mpsc::unbounded_channel::<McpNotification>();
+        let (progress_tx, _progress_rx) = broadcast::channel::<McpNotification>(128);
+        {
+            let mut c = client.write().await;
+            c.set_notification_tx(notification_tx);
+            c.set_progress_tx(progress_tx);
+        }
+
+        let server_id_owned = server_id.to_string();
+        let clients_for_notifications = self.clients.clone();
+        let event_tx_for_notifications = self.event_tx.clone();
+        tokio::spawn(async move {
+            while let Some(notification) = notification_rx.recv().await {
+                match notification {
+                    McpNotification::ResourceUpdated { uri } => {
+                        if let Some(tx) = event_tx_for_notifications.read().await.as_ref() {
+                            let _ = tx.send(McpEvent::ResourceChanged {
+                                server_id: server_id_owned.clone(),
+                                uri,
+                            });
+                        }
+                    }
+                    McpNotification::ToolListChanged => {
+                        if let Some(meta) =
+                            clients_for_notifications.read().await.get(&server_id_owned)
+                        {
+                            let c = meta.client.read().await;
+                            if c.server_capabilities()
+                                .map(|c| c.supports_tools())
+                                .unwrap_or(false)
+                            {
+                                let client_clone = meta.client.clone();
+                                let sid = server_id_owned.clone();
+                                tokio::spawn(async move {
+                                    let mut c = client_clone.write().await;
+                                    if let Err(e) = c.list_tools().await {
+                                        warn!("Failed to refresh tools for '{}': {}", sid, e);
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        self.clients
+            .write()
+            .await
+            .insert(server_id.to_string(), meta);
+
+        self.emit_event(McpEvent::Connected {
+            server_id: server_id.to_string(),
+            tools: tools.len(),
+            prompts: prompts.len(),
+            resources: resources.len(),
+        })
+        .await;
+
+        self.start_health_monitor(server_id);
+
+        Ok(())
     }
 
     /// Connect to a server and return its discovered tools.
@@ -2011,6 +2188,7 @@ impl McpManager {
                     let manager = McpManager {
                         clients: clients.clone(),
                         event_tx: event_tx.clone(),
+                        pending_auths: Arc::new(RwLock::new(HashMap::new())),
                     };
                     if let Err(e) = manager.reconnect_with_backoff(&server_id, config).await {
                         error!("MCP server '{}' recovery failed: {}", server_id, e);
@@ -2023,7 +2201,421 @@ impl McpManager {
 }
 
 // ─────────────────────────────────────────────
-// McpConnectionTool – the `mcp` agent tool
+// OAuth token persistence
+// ─────────────────────────────────────────────
+
+/// Directory for MCP OAuth token storage (~/.syscity/mcp_tokens).
+pub fn mcp_tokens_dir() -> PathBuf {
+    crate::dirs::syscity_dir().join("mcp_tokens")
+}
+
+/// Path to the token file for a specific server.
+pub fn token_path_for(server_id: &str) -> PathBuf {
+    mcp_tokens_dir().join(format!("{}.json", server_id))
+}
+
+/// Minimal percent-encoding for OAuth URL parameters.
+fn urlencoding(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                result.push(byte as char);
+            }
+            b' ' => result.push_str("%20"),
+            _ => result.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    result
+}
+
+impl McpManager {
+    /// Load stored OAuth tokens for a server.
+    pub async fn load_stored_token(&self, server_id: &str) -> Option<OAuthTokens> {
+        let path = token_path_for(server_id);
+        let data = tokio::fs::read_to_string(&path).await.ok()?;
+        serde_json::from_str(&data).ok()
+    }
+
+    /// Check if stored OAuth tokens exist and are not expired.
+    pub async fn has_stored_token(&self, server_id: &str) -> bool {
+        match self.load_stored_token(server_id).await {
+            Some(tokens) => {
+                if let Some(expires_at) = tokens.expires_at {
+                    let now = chrono::Utc::now().timestamp();
+                    if now >= expires_at - 60 {
+                        return false;
+                    }
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Start the OAuth 2.1 + PKCE authorization flow for a remote MCP server.
+    ///
+    /// Returns the authorization URL the frontend should open in a browser.
+    pub async fn start_oauth_flow(
+        &self,
+        server_id: &str,
+        config: &McpServerConfig,
+    ) -> crate::Result<String> {
+        let url = config.url.as_deref().ok_or_else(|| {
+            crate::error::SyscityError::Internal("Remote MCP server has no URL".to_string())
+        })?;
+
+        // 1. Discover OAuth endpoints via well-known URL
+        let origin = Self::origin_from_url(url);
+        let well_known_url = format!("{origin}/.well-known/oauth-authorization-server");
+
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!(
+                    "Failed to build HTTP client: {e}"
+                ))
+            })?;
+
+        let discovery_response = http_client
+            .get(&well_known_url)
+            .send()
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!(
+                    "OAuth discovery failed for '{server_id}': {e}"
+                ))
+            })?;
+
+        if !discovery_response.status().is_success() {
+            return Err(crate::error::SyscityError::Internal(format!(
+                "OAuth discovery failed for '{server_id}': HTTP {}",
+                discovery_response.status()
+            )));
+        }
+
+        let discovery: serde_json::Value = discovery_response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "Failed to parse OAuth discovery document: {e}"
+            ))
+        })?;
+
+        let authorization_endpoint = discovery["authorization_endpoint"]
+            .as_str()
+            .ok_or_else(|| {
+                crate::error::SyscityError::Internal(
+                    "Missing authorization_endpoint in OAuth discovery".to_string(),
+                )
+            })?
+            .to_string();
+
+        let token_endpoint = discovery["token_endpoint"].as_str().ok_or_else(|| {
+            crate::error::SyscityError::Internal(
+                "Missing token_endpoint in OAuth discovery".to_string(),
+            )
+        })?.to_string();
+
+        // 2. Generate PKCE challenge
+        let code_verifier = Self::generate_code_verifier();
+        let code_challenge = Self::generate_code_challenge(&code_verifier);
+        let state = Self::generate_random_state();
+
+        let client_id = config
+            .client_id
+            .clone()
+            .unwrap_or_else(|| "syscity".to_string());
+
+        let scopes = config.scopes.clone().unwrap_or_default();
+
+        // 3. Bind local callback listener
+        let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to bind callback port: {e}"))
+        })?;
+        let callback_port = listener.local_addr().map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to get local addr: {e}"))
+        })?.port();
+
+        let redirect_uri_filled = format!("http://127.0.0.1:{callback_port}/callback");
+
+        // 4. Build authorization URL
+        let mut auth_url = format!(
+            "{authorization_endpoint}?response_type=code&client_id={}&redirect_uri={}&code_challenge={code_challenge}&code_challenge_method=S256&state={state}",
+            urlencoding(&client_id),
+            urlencoding(&redirect_uri_filled),
+        );
+        if !scopes.is_empty() {
+            auth_url.push_str(&format!("&scope={}", urlencoding(&scopes)));
+        }
+
+        // 5. Create cancel/completion channels
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+
+        // 6. Store pending auth
+        {
+            let mut pending = self.pending_auths.write().await;
+            pending.insert(
+                server_id.to_string(),
+                PendingAuth {
+                    server_id: server_id.to_string(),
+                    token_url: token_endpoint.clone(),
+                    code_verifier: code_verifier.clone(),
+                    state: state.clone(),
+                    callback_port,
+                    cancel_tx,
+                },
+            );
+        }
+
+        // 7. Spawn callback server task
+        let server_id_clone = server_id.to_string();
+        let token_url_clone = token_endpoint;
+        let code_verifier_clone = code_verifier;
+        let state_clone = state;
+        let event_tx = self.event_tx.clone();
+        let pending_auths = self.pending_auths.clone();
+        let tokens_dir = mcp_tokens_dir();
+
+        tokio::spawn(async move {
+            let result = Self::run_callback_server(
+                listener,
+                &token_url_clone,
+                &code_verifier_clone,
+                &state_clone,
+                &client_id,
+                &redirect_uri_filled,
+                cancel_rx,
+            )
+            .await;
+
+            match result {
+                Ok(tokens) => {
+                    let _ = tokio::fs::create_dir_all(&tokens_dir).await;
+                    let token_path = tokens_dir.join(format!("{server_id_clone}.json"));
+                    if let Ok(json) = serde_json::to_string(&tokens) {
+                        let _ = tokio::fs::write(&token_path, &json).await;
+                    }
+                    if let Some(tx) = event_tx.read().await.as_ref() {
+                        let _ = tx.send(McpEvent::AuthComplete {
+                            server_id: server_id_clone.clone(),
+                        });
+                    }
+                }
+                Err(e) => {
+                    warn!("OAuth flow failed for '{server_id_clone}': {e}");
+                    if let Some(tx) = event_tx.read().await.as_ref() {
+                        let _ = tx.send(McpEvent::AuthFailed {
+                            server_id: server_id_clone.clone(),
+                            reason: e.to_string(),
+                        });
+                    }
+                }
+            }
+            pending_auths.write().await.remove(&server_id_clone);
+        });
+
+        Ok(auth_url)
+    }
+
+    /// Cancel a pending OAuth authorization flow.
+    pub async fn cancel_oauth(&self, server_id: &str) {
+        if let Some(pending) = self.pending_auths.write().await.remove(server_id) {
+            let _ = pending.cancel_tx.send(());
+            self.emit_event(McpEvent::AuthFailed {
+                server_id: server_id.to_string(),
+                reason: "cancelled_by_user".to_string(),
+            })
+            .await;
+        }
+    }
+
+    /// Extract the origin (scheme + host) from a URL.
+    fn origin_from_url(url: &str) -> String {
+        if let Some(rest) = url.strip_prefix("https://") {
+            let end = rest.find('/').unwrap_or(rest.len());
+            format!("https://{}", &rest[..end])
+        } else if let Some(rest) = url.strip_prefix("http://") {
+            let end = rest.find('/').unwrap_or(rest.len());
+            format!("http://{}", &rest[..end])
+        } else {
+            url.to_string()
+        }
+    }
+
+    /// Generate a PKCE code verifier (random bytes → base64url no-pad).
+    fn generate_code_verifier() -> String {
+        let mut bytes = vec![0u8; 64];
+        OsRng.fill_bytes(&mut bytes);
+        URL_SAFE_NO_PAD.encode(&bytes)
+    }
+
+    /// Generate a PKCE code challenge (SHA-256 → base64url no-pad).
+    fn generate_code_challenge(verifier: &str) -> String {
+        let hash = Sha256::digest(verifier.as_bytes());
+        URL_SAFE_NO_PAD.encode(&hash)
+    }
+
+    /// Generate a random state parameter.
+    fn generate_random_state() -> String {
+        let mut bytes = vec![0u8; 32];
+        OsRng.fill_bytes(&mut bytes);
+        URL_SAFE_NO_PAD.encode(&bytes)
+    }
+
+    /// Run a mini HTTP server handling the OAuth redirect callback.
+    async fn run_callback_server(
+        listener: TcpListener,
+        token_url: &str,
+        code_verifier: &str,
+        expected_state: &str,
+        client_id: &str,
+        redirect_uri: &str,
+        cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    ) -> crate::Result<OAuthTokens> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+        let accept = Box::pin(listener.accept());
+        let cancel = Box::pin(cancel_rx);
+
+        let (stream, _) = tokio::select! {
+            result = accept => result.map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Callback server accept failed: {e}"))
+            })?,
+            _ = cancel => {
+                return Err(crate::error::SyscityError::Internal(
+                    "OAuth flow cancelled".to_string(),
+                ));
+            }
+        };
+
+        let (reader, mut writer) = tokio::io::split(stream);
+        let mut lines = BufReader::new(reader).lines();
+
+        let request_line = lines
+            .next_line()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+
+        let path = request_line
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or("/");
+
+        // Drain remaining request headers
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.is_empty() {
+                break;
+            }
+        }
+
+        // Parse query parameters
+        let params: HashMap<String, String> = path
+            .split('?')
+            .nth(1)
+            .unwrap_or("")
+            .split('&')
+            .filter_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                let key = parts.next()?.to_string();
+                let value = parts.next().unwrap_or("").to_string();
+                Some((key, value))
+            })
+            .collect();
+
+        let code = params
+            .get("code")
+            .ok_or_else(|| {
+                crate::error::SyscityError::Internal(
+                    "Missing code in OAuth callback".to_string(),
+                )
+            })?;
+
+        let state = params
+            .get("state")
+            .ok_or_else(|| {
+                crate::error::SyscityError::Internal(
+                    "Missing state in OAuth callback".to_string(),
+                )
+            })?;
+
+        if state != expected_state {
+            let body = "Invalid state parameter. Authorization failed.";
+            let _ = writer
+                .write_all(
+                    format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await;
+            return Err(crate::error::SyscityError::Internal(
+                "State mismatch in OAuth callback".to_string(),
+            ));
+        }
+
+        // Exchange code for tokens
+        let http_client = reqwest::Client::new();
+        let token_body = format!(
+            "grant_type=authorization_code&code={code}&redirect_uri={redirect_uri}&client_id={client_id}&code_verifier={code_verifier}"
+        );
+
+        let token_response = http_client
+            .post(token_url)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(token_body)
+            .send()
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Token exchange failed: {e}"))
+            })?;
+
+        if !token_response.status().is_success() {
+            let status = token_response.status();
+            let error_text = token_response.text().await.unwrap_or_default();
+            return Err(crate::error::SyscityError::Internal(format!(
+                "Token exchange failed: HTTP {status} - {error_text}"
+            )));
+        }
+
+        let token_data: serde_json::Value = token_response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to parse token response: {e}"))
+        })?;
+
+        let access_token = token_data["access_token"]
+            .as_str()
+            .ok_or_else(|| {
+                crate::error::SyscityError::Internal(
+                    "Missing access_token in token response".to_string(),
+                )
+            })?
+            .to_string();
+
+        let refresh_token = token_data["refresh_token"].as_str().map(String::from);
+        let expires_at = token_data["expires_in"]
+            .as_i64()
+            .map(|secs| chrono::Utc::now().timestamp() + secs);
+
+        let body = "<html><body><h1>Authorization complete!</h1><p>You may close this window and return to Syscity.</p></body></html>";
+        let _ = writer
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await;
+
+        Ok(OAuthTokens {
+            access_token,
+            refresh_token,
+            expires_at,
+        })
+    }
+}
 // ─────────────────────────────────────────────
 
 /// Meta-tool the agent can invoke to manage MCP connections at runtime.

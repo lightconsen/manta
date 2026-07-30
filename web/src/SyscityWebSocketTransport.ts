@@ -1081,10 +1081,16 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       display_name: string;
       description: string;
       logo_url?: string;
-      command: string;
+      command?: string;
       args: string[];
+      url?: string;
       transport: string;
       enabled: boolean;
+      auth_type?: string;
+      client_id?: string;
+      auth_url?: string;
+      token_url?: string;
+      scopes?: string;
     }>
   > {
     try {
@@ -1094,10 +1100,16 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           display_name: string;
           description: string;
           logo_url?: string;
-          command: string;
+          command?: string;
           args: string[];
+          url?: string;
           transport: string;
           enabled: boolean;
+          auth_type?: string;
+          client_id?: string;
+          auth_url?: string;
+          token_url?: string;
+          scopes?: string;
         }>;
       };
       return res.presets || [];
@@ -1160,18 +1172,37 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
-  async connectMcpServer(id: string): Promise<boolean> {
+  async connectMcpServer(id: string): Promise<{ ok: boolean; error?: string; errorCode?: string; authUrl?: string }> {
     try {
       await this.sendRequestAndWait("mcp.connect", { id });
-      return true;
-    } catch {
-      return false;
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Check if it's an auth_required error with a JSON payload
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed.auth_url) {
+          return { ok: false, errorCode: "MCP_AUTH_REQUIRED", authUrl: parsed.auth_url };
+        }
+      } catch {
+        // Not JSON, continue
+      }
+      return { ok: false, error: msg };
     }
   }
 
   async disconnectMcpServer(id: string): Promise<boolean> {
     try {
       await this.sendRequestAndWait("mcp.disconnect", { id });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async cancelMcpAuth(serverId: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("mcp.auth_cancel", { server_id: serverId });
       return true;
     } catch {
       return false;

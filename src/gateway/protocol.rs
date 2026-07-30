@@ -275,7 +275,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "mcp.add"
         | "mcp.remove"
         | "mcp.connect"
-        | "mcp.disconnect" => Some(SCOPE_WRITE),
+        | "mcp.disconnect"
+        | "mcp.auth_cancel" => Some(SCOPE_WRITE),
         "acp.spawn"
         | "acp.terminate"
         | "acp.message"
@@ -635,6 +636,26 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
             serde_json::json!({
                 "server_id": server_id,
                 "uri": uri,
+            }),
+        )),
+        GatewayEvent::McpAuthRequired { server_id, auth_url } => Some((
+            "mcp.auth_required".to_string(),
+            serde_json::json!({
+                "server_id": server_id,
+                "auth_url": auth_url,
+            }),
+        )),
+        GatewayEvent::McpAuthComplete { server_id } => Some((
+            "mcp.auth_complete".to_string(),
+            serde_json::json!({
+                "server_id": server_id,
+            }),
+        )),
+        GatewayEvent::McpAuthFailed { server_id, reason } => Some((
+            "mcp.auth_failed".to_string(),
+            serde_json::json!({
+                "server_id": server_id,
+                "reason": reason,
             }),
         )),
         GatewayEvent::DeviceStatusChanged { device_id, status, message } => Some((

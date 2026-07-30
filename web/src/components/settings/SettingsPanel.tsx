@@ -151,11 +151,21 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     display_name: string;
     description: string;
     logo_url?: string;
-    command: string;
+    command?: string;
     args: string[];
+    url?: string;
     transport: string;
     enabled: boolean;
+    auth_type?: string;
+    client_id?: string;
+    auth_url?: string;
+    token_url?: string;
+    scopes?: string;
   }>>([]);
+  const [authModal, setAuthModal] = useState<{
+    serverId: string;
+    authUrl: string;
+  } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
@@ -225,6 +235,40 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       if (evt.event === "log.line") {
         const line = (evt.payload?.line as string) || "";
         setLogLines((prev) => [...prev, line]);
+      }
+    });
+    return unsub;
+  }, [transport]);
+
+  // Listen for MCP OAuth events
+  useEffect(() => {
+    const unsub = transport.onEvent(async (evt) => {
+      if (evt.event === "mcp.auth_required") {
+        const serverId = evt.payload?.server_id as string;
+        const authUrl = evt.payload?.auth_url as string;
+        if (serverId && authUrl) {
+          setAuthModal({ serverId, authUrl });
+        }
+      }
+      if (evt.event === "mcp.auth_complete") {
+        const serverId = evt.payload?.server_id as string;
+        setAuthModal(null);
+        // Retry connecting — backend now has a stored token
+        if (serverId) {
+          const result = await transport.connectMcpServer(serverId);
+          if (result.ok) {
+            showToast(`Authorization complete, ${serverId} connected`, "success");
+          }
+        }
+        setMcpActionLoading("");
+        refreshMcp();
+        refreshMcpPresets();
+      }
+      if (evt.event === "mcp.auth_failed") {
+        setAuthModal(null);
+        setMcpActionLoading("");
+        refreshMcp();
+        refreshMcpPresets();
       }
     });
     return unsub;
@@ -459,9 +503,11 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   const handleEnablePreset = async (preset: {
     name: string;
     display_name: string;
-    command: string;
+    command?: string;
     args: string[];
+    url?: string;
     transport: string;
+    auth_type?: string;
   }) => {
     setMcpActionLoading(preset.name);
     try {
@@ -470,18 +516,42 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
         transport: preset.transport,
         command: preset.command,
         args: preset.args,
+        url: preset.url,
         auto_connect: true,
       });
-      if (ok) {
-        await Promise.all([refreshMcp(), refreshMcpPresets()]);
-        showToast(`${preset.display_name} enabled`, "success");
-      } else {
+      if (!ok) {
         showToast(`Failed to enable ${preset.display_name}`, "error");
+        setMcpActionLoading("");
+        return;
+      }
+      await Promise.all([refreshMcp(), refreshMcpPresets()]);
+
+      // Try connecting — for OAuth servers this may trigger the auth flow
+      const result = await transport.connectMcpServer(preset.name);
+      if (result.ok) {
+        showToast(`${preset.display_name} enabled`, "success");
+      } else if (result.errorCode === "MCP_AUTH_REQUIRED" && result.authUrl) {
+        setAuthModal({ serverId: preset.name, authUrl: result.authUrl });
+        showToast(`${preset.display_name}: authorization required`, "success");
+      } else if (preset.auth_type === "oauth2") {
+        // OAuth server but connect returned unexpected error
+        showToast(`${preset.display_name}: connect queued, complete auth to connect`, "success");
+      } else {
+        // For non-OAuth servers, the config was added successfully
+        showToast(`${preset.display_name} enabled`, "success");
       }
     } catch {
       showToast(`Failed to enable ${preset.display_name}`, "error");
     }
     setMcpActionLoading("");
+  };
+
+  const handleCancelAuth = async () => {
+    if (authModal) {
+      await transport.cancelMcpAuth(authModal.serverId);
+      setAuthModal(null);
+      setMcpActionLoading("");
+    }
   };
 
   const handleDisablePreset = async (name: string) => {
@@ -1754,6 +1824,33 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                 </section>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* OAuth authorization modal */}
+      {authModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-card rounded-xl p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-sm font-semibold mb-2">Authorize MCP Server</h3>
+            <p className="text-xs text-secondary mb-4">
+              This server needs you to authorize with your account. Click the button below to
+              open your browser and complete the authorization.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => window.open(authModal.authUrl, "_blank")}
+                className="flex-1 px-4 py-2 text-xs font-medium rounded-lg bg-primary text-white hover:opacity-90 transition-opacity"
+              >
+                Authorize in Browser
+              </button>
+              <button
+                onClick={handleCancelAuth}
+                className="px-4 py-2 text-xs font-medium rounded-lg bg-sidebar text-secondary hover:text-primary transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

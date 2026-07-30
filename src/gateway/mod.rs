@@ -463,6 +463,15 @@ impl Gateway {
                                 crate::tools::mcp::McpEvent::ResourceChanged { server_id, uri } => {
                                     GatewayEvent::McpResourceChanged { server_id, uri }
                                 }
+                                crate::tools::mcp::McpEvent::AuthRequired { server_id, auth_url } => {
+                                    GatewayEvent::McpAuthRequired { server_id, auth_url }
+                                }
+                                crate::tools::mcp::McpEvent::AuthComplete { server_id } => {
+                                    GatewayEvent::McpAuthComplete { server_id }
+                                }
+                                crate::tools::mcp::McpEvent::AuthFailed { server_id, reason } => {
+                                    GatewayEvent::McpAuthFailed { server_id, reason }
+                                }
                             };
                             if let Err(e) = event_tx.send(gateway_event) {
                                 debug!("No receivers for MCP event: {}", e);

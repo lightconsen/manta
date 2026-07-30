@@ -192,6 +192,12 @@ pub struct McpConnectRequest {
     pub timeout_secs: u64,
     #[serde(default)]
     pub max_tools: usize,
+    /// OAuth / bearer auth configuration
+    pub auth_type: Option<String>,
+    pub client_id: Option<String>,
+    pub auth_url: Option<String>,
+    pub token_url: Option<String>,
+    pub scopes: Option<String>,
 }
 
 /// Request body for reading a resource

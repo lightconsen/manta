@@ -553,6 +553,7 @@ async fn dispatch_method(
         "mcp.remove" => handle_mcp_remove(req, state).await,
         "mcp.connect" => handle_mcp_connect(req, state).await,
         "mcp.disconnect" => handle_mcp_disconnect(req, state).await,
+        "mcp.auth_cancel" => handle_mcp_auth_cancel(req, state).await,
         "cron.list" => handle_cron_list(req, state).await,
         "tasks.schedule" => handle_tasks_schedule(req, state).await,
         "tasks.list" => handle_tasks_list(req, state).await,
@@ -3096,9 +3097,19 @@ struct McpPresetEntry {
     display_name: String,
     description: String,
     logo_url: Option<String>,
-    command: String,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
     args: Vec<String>,
     transport: String,
+    /// Remote HTTP URL (SSE or streamable_http)
+    url: Option<String>,
+    /// OAuth / bearer auth configuration
+    auth_type: Option<String>,
+    client_id: Option<String>,
+    auth_url: Option<String>,
+    token_url: Option<String>,
+    scopes: Option<String>,
 }
 
 /// Return MCP presets from `~/.syscity/mcp.toml`, each annotated with
@@ -3120,6 +3131,12 @@ async fn handle_mcp_presets(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
                                 "command": entry.command,
                                 "args": entry.args,
                                 "transport": entry.transport,
+                                "url": entry.url,
+                                "auth_type": entry.auth_type,
+                                "client_id": entry.client_id,
+                                "auth_url": entry.auth_url,
+                                "token_url": entry.token_url,
+                                "scopes": entry.scopes,
                                 "enabled": enabled,
                             })
                         })
@@ -3153,6 +3170,11 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
         url: Option<String>,
         #[serde(default)]
         env: std::collections::HashMap<String, String>,
+        auth_type: Option<String>,
+        client_id: Option<String>,
+        auth_url: Option<String>,
+        token_url: Option<String>,
+        scopes: Option<String>,
         #[serde(default)]
         working_dir: Option<String>,
         #[serde(default = "default_true")]
@@ -3181,6 +3203,11 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
         env: payload.env,
         working_dir: payload.working_dir.map(std::path::PathBuf::from),
         auto_connect: payload.auto_connect,
+        auth_type: payload.auth_type,
+        client_id: payload.client_id,
+        auth_url: payload.auth_url,
+        token_url: payload.token_url,
+        scopes: payload.scopes,
         ..Default::default()
     };
 
@@ -3277,6 +3304,88 @@ async fn handle_mcp_connect(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
         }
     };
 
+    // If the server uses OAuth, check for stored tokens first
+    if config.auth_type.as_deref() == Some("oauth2") {
+        if !state.tools.mcp_manager.has_stored_token(&payload.id).await {
+            // No valid stored token — start the OAuth flow
+            match state
+                .tools
+                .mcp_manager
+                .start_oauth_flow(&payload.id, &config)
+                .await
+            {
+                Ok(auth_url) => {
+                    return WsResponse::err(
+                        &req.id,
+                        "MCP_AUTH_REQUIRED",
+                        serde_json::json!({
+                            "auth_url": auth_url,
+                            "server_id": payload.id,
+                        })
+                        .to_string(),
+                    );
+                }
+                Err(e) => {
+                    return WsResponse::err(
+                        &req.id,
+                        "MCP_AUTH_FAILED",
+                        format!("Failed to start OAuth flow: {}", e),
+                    );
+                }
+            }
+        }
+
+        // Load stored token and set on a fresh client before connecting
+        let tokens = state.tools.mcp_manager.load_stored_token(&payload.id).await;
+        if let Some(tokens) = tokens {
+            let mut client = crate::tools::mcp::McpClient::new()
+                .with_timeout(config.timeout_secs);
+            client.set_access_token(tokens.access_token.clone());
+
+            match client.connect(config.clone()).await {
+                Ok(()) => {
+                    let tools = client.get_tools().to_vec();
+                    let client_arc = std::sync::Arc::new(tokio::sync::RwLock::new(client));
+                    // Register through the manager using the pre-authenticated client
+                    if let Err(e) = state
+                        .tools
+                        .mcp_manager
+                        .register_client(&payload.id, client_arc, config.clone())
+                        .await
+                    {
+                        return WsResponse::err(
+                            &req.id,
+                            "MCP_CONNECT_FAILED",
+                            format!("{}", e),
+                        );
+                    }
+                    super::lifecycle::register_mcp_tools(
+                        state,
+                        &payload.id,
+                        &tools,
+                        config.max_tools,
+                    )
+                    .await;
+                    return WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({
+                            "status": "connected",
+                            "id": payload.id,
+                            "tool_count": tools.len(),
+                        }),
+                    );
+                }
+                Err(e) => {
+                    return WsResponse::err(
+                        &req.id,
+                        "MCP_CONNECT_FAILED",
+                        format!("{}", e),
+                    );
+                }
+            }
+        }
+    }
+
     match state
         .tools
         .mcp_manager
@@ -3320,6 +3429,27 @@ async fn handle_mcp_disconnect(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         }
         Err(e) => WsResponse::err(&req.id, "MCP_DISCONNECT_FAILED", format!("{}", e)),
     }
+}
+
+async fn handle_mcp_auth_cancel(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct McpAuthCancelPayload {
+        server_id: String,
+    }
+    let payload: McpAuthCancelPayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    state
+        .tools
+        .mcp_manager
+        .cancel_oauth(&payload.server_id)
+        .await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "status": "cancelled", "server_id": payload.server_id }),
+    )
 }
 
 async fn handle_cron_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
