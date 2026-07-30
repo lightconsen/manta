@@ -51,7 +51,6 @@ impl ComputerAdapter for MacosComputerAdapter {
 
         let data = result.data.as_ref();
 
-        // Fix: inner tool returns "image_base64", not "base64"
         let base64 = data
             .and_then(|d| d.get("image_base64").and_then(|v| v.as_str()).map(String::from))
             .unwrap_or_default();

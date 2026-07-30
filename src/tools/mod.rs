@@ -784,6 +784,14 @@ pub trait Tool: Send + Sync + 'static {
         true
     }
 
+    /// Whether the content filter should skip this tool's output.
+    ///
+    /// Override for tools whose output is not human-readable text
+    /// (e.g. screenshot tools that return binary image data).
+    fn skip_content_filter(&self) -> bool {
+        false
+    }
+
     /// Advertised capabilities for RBAC and SDK discovery.
     ///
     /// Defaults to a low-risk, uncategorized tool. Individual tools can
@@ -1738,7 +1746,9 @@ impl ToolRegistry {
         let execution_result: Option<crate::Result<ToolExecutionResult>> = {
             // Try static tools first
             if let Some(tool) = self.get(name) {
+                let _t_exec = std::time::Instant::now();
                 let result = tool.execute(args.clone(), context).await;
+                info!("[Timing] tool.execute({}) returned in {:?}", name, _t_exec.elapsed());
                 if let Ok(ref exec_result) = result {
                     self.store_cached(cache_key, exec_result.clone());
                 }
@@ -1772,12 +1782,17 @@ impl ToolRegistry {
 
         // Run after-hooks
         if let Some(Ok(ref exec_result)) = execution_result {
+            let _t_hook = std::time::Instant::now();
             self.active_hooks()
                 .run_after(name, &args, exec_result)
                 .await;
+            info!("[Timing] run_after({}) done in {:?}", name, _t_hook.elapsed());
         }
 
-        self.filter_and_audit(name, context, execution_result).await
+        let _t_filter = std::time::Instant::now();
+        let result = self.filter_and_audit(name, context, execution_result).await;
+        info!("[Timing] filter_and_audit({}) done in {:?}", name, _t_filter.elapsed());
+        result
     }
 
     /// Apply content filtering and audit logging to a tool execution result.
@@ -1805,7 +1820,15 @@ impl ToolRegistry {
         // ── Content filtering ──────────────────────────────────────────────
         let result = match result {
             Some(Ok(exec_result)) => {
-                if let Some(ref filter) = self.content_filter {
+                // Let the tool itself decide whether content filtering applies
+                let skip_filter = self
+                    .get(name)
+                    .map(|t| t.skip_content_filter())
+                    .unwrap_or(false);
+
+                if skip_filter {
+                    Some(Ok(exec_result))
+                } else if let Some(ref filter) = self.content_filter {
                     let outcome = filter.filter_result(&exec_result);
 
                     // Audit: content filter action
@@ -1931,12 +1954,17 @@ impl ToolRegistry {
 
         // Run after-hooks
         if let Some(Ok(ref exec_result)) = execution_result {
+            let _t_hook = std::time::Instant::now();
             self.active_hooks()
                 .run_after(name, &args, exec_result)
                 .await;
+            info!("[Timing] run_after({}) done in {:?}", name, _t_hook.elapsed());
         }
 
-        self.filter_and_audit(name, context, execution_result).await
+        let _t_filter = std::time::Instant::now();
+        let result = self.filter_and_audit(name, context, execution_result).await;
+        info!("[Timing] filter_and_audit({}) done in {:?}", name, _t_filter.elapsed());
+        result
     }
 
     /// Parse tool call arguments, handling provider-specific edge cases.

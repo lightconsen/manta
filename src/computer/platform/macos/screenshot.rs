@@ -48,7 +48,7 @@ impl ScreenshotTool {
                             return (w as u32, h as u32);
                         }
                     }
-                    if marker >= 0xD0 && marker <= 0xD9 {
+                    if (0xD0..=0xD9).contains(&marker) {
                         i += 2; // markers with no length
                         continue;
                     }
@@ -120,9 +120,13 @@ impl Tool for ScreenshotTool {
             crate::utils::ms_timestamp()
         ));
 
+        // Use a random suffix for the temp staging path to avoid collisions
+        // when two calls happen in the same millisecond (e.g., parallel tests).
+        let suffix: u16 = rand::random();
         let temp_path = std::env::temp_dir().join(format!(
-            "screenshot_{}.tmp",
-            crate::utils::ms_timestamp()
+            "screenshot_{}_{}.tmp",
+            crate::utils::ms_timestamp(),
+            suffix,
         ));
 
         info!(
@@ -232,16 +236,75 @@ impl Tool for ScreenshotTool {
     fn is_available(&self, _context: &ToolContext) -> bool {
         cfg!(target_os = "macos")
     }
+
+    fn skip_content_filter(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ToolRegistry;
+    use std::sync::Arc;
 
     #[test]
     fn test_screenshot_tool_creation() {
         let tool = ScreenshotTool::new();
         assert_eq!(tool.name(), "macos_screenshot");
         assert!(tool.description().contains("screenshot"));
+    }
+
+    #[tokio::test]
+    async fn test_screenshot_timing_direct() {
+        let tool = ScreenshotTool::new();
+        let ctx = ToolContext::default();
+
+        let _t = std::time::Instant::now();
+        let result = tool.execute(serde_json::json!({}), &ctx).await;
+        let elapsed = _t.elapsed();
+        eprintln!("[TIMING_TEST] ScreenshotTool::execute() took {:?}", elapsed);
+        assert!(result.is_ok(), "screenshot should succeed: {:?}", result.err());
+        let r = result.unwrap();
+        let keys: Vec<String> = r.data.as_ref().and_then(|d| d.as_object()).map(|m| m.keys().cloned().collect()).unwrap_or_default();
+        eprintln!("[TIMING_TEST] screenshot result data keys: {:?}", keys);
+        if let Some(b64) = r.data.as_ref().and_then(|d| d.get("image_base64")).and_then(|v| v.as_str()) {
+            eprintln!("[TIMING_TEST] base64 length: {} chars", b64.len());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_screenshot_timing_via_registry() {
+        let ctx = ToolContext::default();
+        let mut registry = ToolRegistry::new();
+
+        // Register the screenshot tool into the registry
+        registry.register(Box::new(ScreenshotTool::new()));
+
+        let _t = std::time::Instant::now();
+        let result = registry.execute("macos_screenshot", serde_json::json!({}), &ctx).await;
+        let elapsed = _t.elapsed();
+        eprintln!("[TIMING_TEST] Registry::execute(macos_screenshot) (no filter) took {:?}", elapsed);
+        assert!(result.is_some(), "tool should be found");
+        let inner = result.unwrap();
+        assert!(inner.is_ok(), "screenshot should succeed: {:?}", inner.err());
+    }
+
+    #[tokio::test]
+    async fn test_screenshot_timing_with_filter() {
+        let ctx = ToolContext::default();
+        use crate::security::content_filter::ContentFilter;
+        let filter = Arc::new(ContentFilter::default());
+        let mut registry = ToolRegistry::new().with_content_filter(filter);
+
+        registry.register(Box::new(ScreenshotTool::new()));
+
+        let _t = std::time::Instant::now();
+        let result = registry.execute("macos_screenshot", serde_json::json!({}), &ctx).await;
+        let elapsed = _t.elapsed();
+        eprintln!("[TIMING_TEST] Registry::execute(macos_screenshot) (with content_filter) took {:?}", elapsed);
+        assert!(result.is_some(), "tool should be found");
+        let inner = result.unwrap();
+        assert!(inner.is_ok(), "screenshot should succeed: {:?}", inner.err());
     }
 }
