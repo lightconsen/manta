@@ -2769,7 +2769,10 @@ impl Agent {
     ) -> crate::Result<crate::providers::CompletionResponse> {
         let messages = context.to_messages();
         let user_msg_count = messages.iter().filter(|m| m.role == Role::User).count();
-        let assistant_msg_count = messages.iter().filter(|m| m.role == Role::Assistant).count();
+        let assistant_msg_count = messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .count();
         let tool_msg_count = messages.iter().filter(|m| m.role == Role::Tool).count();
         info!(
             "get_completion_with_progress: entry — msgs={} (user={}, asst={}, tool={})",

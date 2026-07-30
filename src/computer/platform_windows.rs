@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::computer::{
-    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction,
-    MouseButton, Rect, Result, Screenshot, UiElement, WaitCondition,
+    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton, Rect,
+    Result, Screenshot, UiElement, WaitCondition,
 };
 use crate::tools::ToolRegistry;
 
@@ -345,7 +345,8 @@ impl ComputerAdapter for WindowsComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::GetWindowGeometry { title_pattern } => {
-                let args = serde_json::json!({ "action": "get_window_geometry", "name": title_pattern });
+                let args =
+                    serde_json::json!({ "action": "get_window_geometry", "name": title_pattern });
                 let result = self
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
@@ -381,7 +382,8 @@ impl ComputerAdapter for WindowsComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::MinimizeWindow { title_pattern } => {
-                let args = serde_json::json!({ "action": "minimize_window", "name": title_pattern });
+                let args =
+                    serde_json::json!({ "action": "minimize_window", "name": title_pattern });
                 let result = self
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
@@ -393,7 +395,8 @@ impl ComputerAdapter for WindowsComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::MaximizeWindow { title_pattern } => {
-                let args = serde_json::json!({ "action": "maximize_window", "name": title_pattern });
+                let args =
+                    serde_json::json!({ "action": "maximize_window", "name": title_pattern });
                 let result = self
                     .registry
                     .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
@@ -406,9 +409,7 @@ impl ComputerAdapter for WindowsComputerAdapter {
             }
             DesktopAction::ReadUiTree { app } => {
                 let tree = self.read_ui_tree(app.as_deref()).await?;
-                Ok(ActionResult::success(
-                    serde_json::to_string(&tree).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(serde_json::to_string(&tree).unwrap_or_default()))
             }
         }
     }

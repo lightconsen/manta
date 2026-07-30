@@ -290,7 +290,8 @@ impl RemoteControlAdapter {
                 // Apply ScreenshotEncoder to reduce payload size over SSH.
                 let files_dir = crate::dirs::workspace_data_dir().join("files");
                 let _ = std::fs::create_dir_all(&files_dir);
-                let temp_path = files_dir.join(format!("remote_{}.png", crate::utils::ms_timestamp()));
+                let temp_path =
+                    files_dir.join(format!("remote_{}.png", crate::utils::ms_timestamp()));
                 if let Err(e) = tokio::fs::write(&temp_path, &raw_bytes).await {
                     tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
                 }
@@ -353,8 +354,9 @@ impl RemoteControlAdapter {
 
         let raw_bytes = output.stdout;
         // Apply ScreenshotEncoder to reduce payload size over SSH.
-        let temp_path =
-            crate::dirs::workspace_data_dir().join("files").join(format!("remote_{}.png", crate::utils::ms_timestamp()));
+        let temp_path = crate::dirs::workspace_data_dir()
+            .join("files")
+            .join(format!("remote_{}.png", crate::utils::ms_timestamp()));
         if let Err(e) = tokio::fs::write(&temp_path, &raw_bytes).await {
             tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
         }
@@ -422,8 +424,9 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
         let final_b64 = if let Ok(decoded) =
             base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
         {
-            let temp_path =
-                crate::dirs::workspace_data_dir().join("files").join(format!("remote_{}.png", crate::utils::ms_timestamp()));
+            let temp_path = crate::dirs::workspace_data_dir()
+                .join("files")
+                .join(format!("remote_{}.png", crate::utils::ms_timestamp()));
             if let Err(e) = tokio::fs::write(&temp_path, &decoded).await {
                 tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
             }
@@ -969,9 +972,7 @@ impl ComputerAdapter for RemoteControlAdapter {
             }
             DesktopAction::ReadUiTree { app } => {
                 let tree = self.read_ui_tree(app.as_deref()).await?;
-                Ok(ActionResult::success(
-                    serde_json::to_string(&tree).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(serde_json::to_string(&tree).unwrap_or_default()))
             }
             _ => {
                 warn!("Remote adapter received unsupported action: {:?}", action);

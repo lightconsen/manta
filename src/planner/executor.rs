@@ -483,12 +483,13 @@ async fn resolve_action_standalone(
     action: &crate::computer::DesktopAction,
     adapter: &Arc<dyn ComputerAdapter>,
 ) -> crate::Result<ActionResult> {
-    adapter.execute(action.clone()).await.map_err(|e| {
-        crate::error::SyscityError::ExternalService {
+    adapter
+        .execute(action.clone())
+        .await
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: e.to_string(),
             cause: None,
-        }
-    })
+        })
 }
 
 #[cfg(test)]
@@ -541,5 +542,4 @@ mod tests {
         assert!(!result.success);
         assert!(result.message.contains("cancelled"));
     }
-
 }

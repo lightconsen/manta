@@ -47,9 +47,15 @@ pub async fn connect_mcp_server_handler(
     };
 
     // Connect before persisting — if connection fails, don't save bad config.
-    match state.tools.mcp_manager.connect(&server_id, config.clone()).await {
+    match state
+        .tools
+        .mcp_manager
+        .connect(&server_id, config.clone())
+        .await
+    {
         Ok(tools) => {
-            super::super::lifecycle::register_mcp_tools(&state, &server_id, &tools, body.max_tools).await;
+            super::super::lifecycle::register_mcp_tools(&state, &server_id, &tools, body.max_tools)
+                .await;
 
             // Persist to config.toml so the server reconnects on daemon restart.
             {
@@ -59,7 +65,8 @@ pub async fn connect_mcp_server_handler(
             }
             if let Some(ref config_path) = state.config_path {
                 let cfg_guard = state.config.read().await;
-                if let Err(e) = super::config::persist_config_atomic(&cfg_guard, config_path).await {
+                if let Err(e) = super::config::persist_config_atomic(&cfg_guard, config_path).await
+                {
                     warn!("MCP server connected but failed to persist config: {}", e);
                 }
             }
@@ -95,14 +102,12 @@ pub async fn disconnect_mcp_server_handler(
             // Remove from persisted config.toml.
             {
                 let mut cfg_guard = state.config.write().await;
-                Arc::make_mut(&mut cfg_guard)
-                    .mcp
-                    .servers
-                    .remove(&server_id);
+                Arc::make_mut(&mut cfg_guard).mcp.servers.remove(&server_id);
             }
             if let Some(config_path) = state.config_path.clone() {
                 let cfg_guard = state.config.read().await;
-                if let Err(e) = super::config::persist_config_atomic(&cfg_guard, &config_path).await {
+                if let Err(e) = super::config::persist_config_atomic(&cfg_guard, &config_path).await
+                {
                     warn!("MCP server disconnected but failed to persist config: {}", e);
                 }
             }

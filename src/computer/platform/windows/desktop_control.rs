@@ -498,7 +498,9 @@ public class WinAPI {{
                         Ok(ToolExecutionResult::error(format!("Get geometry failed: {}", err)))
                     }
                 } else {
-                    Ok(ToolExecutionResult::error("Provide 'name' for get_window_geometry".to_string()))
+                    Ok(ToolExecutionResult::error(
+                        "Provide 'name' for get_window_geometry".to_string(),
+                    ))
                 }
             }
             "move_window" => {
@@ -531,7 +533,9 @@ if ($proc -ne $null) {{
                         Ok(ToolExecutionResult::error(format!("Move window failed: {}", err)))
                     }
                 } else {
-                    Ok(ToolExecutionResult::error("Provide 'name', 'x', 'y' for move_window".to_string()))
+                    Ok(ToolExecutionResult::error(
+                        "Provide 'name', 'x', 'y' for move_window".to_string(),
+                    ))
                 }
             }
             "resize_window" => {
@@ -564,7 +568,9 @@ if ($proc -ne $null) {{
                         Ok(ToolExecutionResult::error(format!("Resize window failed: {}", err)))
                     }
                 } else {
-                    Ok(ToolExecutionResult::error("Provide 'name', 'width', 'height' for resize_window".to_string()))
+                    Ok(ToolExecutionResult::error(
+                        "Provide 'name', 'width', 'height' for resize_window".to_string(),
+                    ))
                 }
             }
             "minimize_window" => {

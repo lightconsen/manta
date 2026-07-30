@@ -218,8 +218,7 @@ impl VirtualDisplay for XvfbDisplay {
         // Write to workspace files dir and apply ScreenshotEncoder
         let screenshot_dir = crate::dirs::workspace_data_dir().join("files");
         let _ = tokio::fs::create_dir_all(&screenshot_dir).await;
-        let temp_path =
-            screenshot_dir.join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
+        let temp_path = screenshot_dir.join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
         if let Err(e) = tokio::fs::write(&temp_path, &bytes).await {
             tracing::warn!("Failed to write temp file '{}': {}", temp_path.display(), e);
         }
@@ -615,9 +614,7 @@ impl ComputerAdapter for HeadlessComputerAdapter {
             )),
             DesktopAction::ReadUiTree { app } => {
                 let tree = self.read_ui_tree(app.as_deref()).await?;
-                Ok(ActionResult::success(
-                    serde_json::to_string(&tree).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(serde_json::to_string(&tree).unwrap_or_default()))
             }
             _ => Err(ComputerError::Other("Action not available in headless mode".to_string())),
         }

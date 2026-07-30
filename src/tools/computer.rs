@@ -204,11 +204,7 @@ Common workflows:
             }
         }
 
-        info!(
-            "[ComputerTool] action={} total execute() took {:?}",
-            action,
-            _t_start.elapsed()
-        );
+        info!("[ComputerTool] action={} total execute() took {:?}", action, _t_start.elapsed());
 
         Ok(tool_result)
     }
@@ -386,11 +382,7 @@ fn action_to_desktop_action(action: &str, args: &Value) -> crate::Result<Desktop
                     "Missing 'height' for resize_window action".to_string(),
                 )
             })? as u32;
-            Ok(DesktopAction::ResizeWindow {
-                title_pattern,
-                width,
-                height,
-            })
+            Ok(DesktopAction::ResizeWindow { title_pattern, width, height })
         }
         "minimize_window" => {
             let title_pattern = parse_title_pattern(args, "minimize_window")?;
@@ -423,12 +415,15 @@ fn parse_region(args: &Value) -> Option<Rect> {
 
 /// Parse the required `title_pattern` arg for window actions.
 fn parse_title_pattern(args: &Value, action: &str) -> crate::Result<String> {
-    args["title_pattern"].as_str().map(|s| s.to_string()).ok_or_else(|| {
-        crate::error::SyscityError::Validation(format!(
-            "Missing 'title_pattern' for {} action",
-            action
-        ))
-    })
+    args["title_pattern"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            crate::error::SyscityError::Validation(format!(
+                "Missing 'title_pattern' for {} action",
+                action
+            ))
+        })
 }
 
 /// Parse a click target from coordinates (x, y) or element parameters.

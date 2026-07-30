@@ -105,20 +105,16 @@ impl Tool for ScreenshotTool {
 
         // ── Determine output path ───────────────────────────────────────
         // Save in workspace/files/ for temporary files.
-        let screenshot_dir = context
-            .workspace_root()
-            .join("files");
-        tokio::fs::create_dir_all(&screenshot_dir).await.map_err(|e| {
-            crate::error::SyscityError::Storage {
+        let screenshot_dir = context.workspace_root().join("files");
+        tokio::fs::create_dir_all(&screenshot_dir)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to create screenshot dir: {}", screenshot_dir.display()),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
 
-        let final_path = screenshot_dir.join(format!(
-            "screenshot_{}.png",
-            crate::utils::ms_timestamp()
-        ));
+        let final_path =
+            screenshot_dir.join(format!("screenshot_{}.png", crate::utils::ms_timestamp()));
 
         // Use a random suffix for the temp staging path to avoid collisions
         // when two calls happen in the same millisecond (e.g., parallel tests).
@@ -129,11 +125,7 @@ impl Tool for ScreenshotTool {
             suffix,
         ));
 
-        info!(
-            "Taking screenshot: {} (final: {})",
-            temp_path.display(),
-            final_path.display()
-        );
+        info!("Taking screenshot: {} (final: {})", temp_path.display(), final_path.display());
 
         let result = timeout(
             Duration::from_secs(15),
@@ -266,9 +258,19 @@ mod tests {
         eprintln!("[TIMING_TEST] ScreenshotTool::execute() took {:?}", elapsed);
         assert!(result.is_ok(), "screenshot should succeed: {:?}", result.err());
         let r = result.unwrap();
-        let keys: Vec<String> = r.data.as_ref().and_then(|d| d.as_object()).map(|m| m.keys().cloned().collect()).unwrap_or_default();
+        let keys: Vec<String> = r
+            .data
+            .as_ref()
+            .and_then(|d| d.as_object())
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
         eprintln!("[TIMING_TEST] screenshot result data keys: {:?}", keys);
-        if let Some(b64) = r.data.as_ref().and_then(|d| d.get("image_base64")).and_then(|v| v.as_str()) {
+        if let Some(b64) = r
+            .data
+            .as_ref()
+            .and_then(|d| d.get("image_base64"))
+            .and_then(|v| v.as_str())
+        {
             eprintln!("[TIMING_TEST] base64 length: {} chars", b64.len());
         }
     }
@@ -282,9 +284,14 @@ mod tests {
         registry.register(Box::new(ScreenshotTool::new()));
 
         let _t = std::time::Instant::now();
-        let result = registry.execute("macos_screenshot", serde_json::json!({}), &ctx).await;
+        let result = registry
+            .execute("macos_screenshot", serde_json::json!({}), &ctx)
+            .await;
         let elapsed = _t.elapsed();
-        eprintln!("[TIMING_TEST] Registry::execute(macos_screenshot) (no filter) took {:?}", elapsed);
+        eprintln!(
+            "[TIMING_TEST] Registry::execute(macos_screenshot) (no filter) took {:?}",
+            elapsed
+        );
         assert!(result.is_some(), "tool should be found");
         let inner = result.unwrap();
         assert!(inner.is_ok(), "screenshot should succeed: {:?}", inner.err());
@@ -300,9 +307,14 @@ mod tests {
         registry.register(Box::new(ScreenshotTool::new()));
 
         let _t = std::time::Instant::now();
-        let result = registry.execute("macos_screenshot", serde_json::json!({}), &ctx).await;
+        let result = registry
+            .execute("macos_screenshot", serde_json::json!({}), &ctx)
+            .await;
         let elapsed = _t.elapsed();
-        eprintln!("[TIMING_TEST] Registry::execute(macos_screenshot) (with content_filter) took {:?}", elapsed);
+        eprintln!(
+            "[TIMING_TEST] Registry::execute(macos_screenshot) (with content_filter) took {:?}",
+            elapsed
+        );
         assert!(result.is_some(), "tool should be found");
         let inner = result.unwrap();
         assert!(inner.is_ok(), "screenshot should succeed: {:?}", inner.err());

@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::computer::{
-    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction,
-    FileEntry, MouseButton, Rect, Result, Screenshot, UiElement, WaitCondition,
+    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, FileEntry,
+    MouseButton, Rect, Result, Screenshot, UiElement, WaitCondition,
 };
 use crate::tools::ToolRegistry;
 
@@ -362,7 +362,11 @@ impl ComputerAdapter for X11ComputerAdapter {
                 let args = serde_json::json!({ "action": "list_windows" });
                 let result = self
                     .registry
-                    .execute("linux_x11_desktop_control", args, &crate::tools::ToolContext::default())
+                    .execute(
+                        "linux_x11_desktop_control",
+                        args,
+                        &crate::tools::ToolContext::default(),
+                    )
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("desktop control not found".to_string())
@@ -371,10 +375,15 @@ impl ComputerAdapter for X11ComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::GetWindowGeometry { title_pattern, .. } => {
-                let args = serde_json::json!({ "action": "get_window_geometry", "name": title_pattern });
+                let args =
+                    serde_json::json!({ "action": "get_window_geometry", "name": title_pattern });
                 let result = self
                     .registry
-                    .execute("linux_x11_desktop_control", args, &crate::tools::ToolContext::default())
+                    .execute(
+                        "linux_x11_desktop_control",
+                        args,
+                        &crate::tools::ToolContext::default(),
+                    )
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("desktop control not found".to_string())
@@ -386,7 +395,11 @@ impl ComputerAdapter for X11ComputerAdapter {
                 let args = serde_json::json!({ "action": "move_window", "name": title_pattern, "x": x, "y": y });
                 let result = self
                     .registry
-                    .execute("linux_x11_desktop_control", args, &crate::tools::ToolContext::default())
+                    .execute(
+                        "linux_x11_desktop_control",
+                        args,
+                        &crate::tools::ToolContext::default(),
+                    )
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("desktop control not found".to_string())
@@ -398,7 +411,11 @@ impl ComputerAdapter for X11ComputerAdapter {
                 let args = serde_json::json!({ "action": "resize_window", "name": title_pattern, "width": width, "height": height });
                 let result = self
                     .registry
-                    .execute("linux_x11_desktop_control", args, &crate::tools::ToolContext::default())
+                    .execute(
+                        "linux_x11_desktop_control",
+                        args,
+                        &crate::tools::ToolContext::default(),
+                    )
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("desktop control not found".to_string())
@@ -407,10 +424,15 @@ impl ComputerAdapter for X11ComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::MinimizeWindow { title_pattern } => {
-                let args = serde_json::json!({ "action": "minimize_window", "name": title_pattern });
+                let args =
+                    serde_json::json!({ "action": "minimize_window", "name": title_pattern });
                 let result = self
                     .registry
-                    .execute("linux_x11_desktop_control", args, &crate::tools::ToolContext::default())
+                    .execute(
+                        "linux_x11_desktop_control",
+                        args,
+                        &crate::tools::ToolContext::default(),
+                    )
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("desktop control not found".to_string())
@@ -419,10 +441,15 @@ impl ComputerAdapter for X11ComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::MaximizeWindow { title_pattern } => {
-                let args = serde_json::json!({ "action": "maximize_window", "name": title_pattern });
+                let args =
+                    serde_json::json!({ "action": "maximize_window", "name": title_pattern });
                 let result = self
                     .registry
-                    .execute("linux_x11_desktop_control", args, &crate::tools::ToolContext::default())
+                    .execute(
+                        "linux_x11_desktop_control",
+                        args,
+                        &crate::tools::ToolContext::default(),
+                    )
                     .await
                     .ok_or_else(|| {
                         ComputerError::ToolFailed("desktop control not found".to_string())
@@ -432,9 +459,7 @@ impl ComputerAdapter for X11ComputerAdapter {
             }
             DesktopAction::ReadUiTree { app } => {
                 let tree = self.read_ui_tree(app.as_deref()).await?;
-                Ok(ActionResult::success(
-                    serde_json::to_string(&tree).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(serde_json::to_string(&tree).unwrap_or_default()))
             }
         }
     }
@@ -893,16 +918,12 @@ impl ComputerAdapter for WaylandComputerAdapter {
             | DesktopAction::MoveWindow { .. }
             | DesktopAction::ResizeWindow { .. }
             | DesktopAction::MinimizeWindow { .. }
-            | DesktopAction::MaximizeWindow { .. } => {
-                Err(ComputerError::UnsupportedPlatform(
-                    "Window management not available on Wayland".to_string(),
-                ))
-            }
+            | DesktopAction::MaximizeWindow { .. } => Err(ComputerError::UnsupportedPlatform(
+                "Window management not available on Wayland".to_string(),
+            )),
             DesktopAction::ReadUiTree { app } => {
                 let tree = self.read_ui_tree(app.as_deref()).await?;
-                Ok(ActionResult::success(
-                    serde_json::to_string(&tree).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(serde_json::to_string(&tree).unwrap_or_default()))
             }
         }
     }
@@ -1086,7 +1107,6 @@ async fn read_file_chunked(path: &str, offset: u64, limit_bytes: u64) -> Result<
         .map_err(|e| ComputerError::Other(format!("File {} contains non-UTF-8 bytes: {}", path, e)))
 }
 
-
 async fn edit_file(path: &str, search: &str, replace: &str) -> Result<ActionResult> {
     let content = tokio::fs::read_to_string(path)
         .await
@@ -1097,7 +1117,6 @@ async fn edit_file(path: &str, search: &str, replace: &str) -> Result<ActionResu
         .map_err(|e| ComputerError::Other(format!("Failed to write {}: {}", path, e)))?;
     Ok(ActionResult::success(format!("Edited {}", path)))
 }
-
 
 // ── Factory ────────────────────────────────────────────────────────────────
 

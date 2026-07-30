@@ -435,7 +435,10 @@ impl Tool for DesktopControlTool {
                     if ok {
                         output = stdout;
                     } else {
-                        return Ok(ToolExecutionResult::error(format!("List windows failed: {}", err)));
+                        return Ok(ToolExecutionResult::error(format!(
+                            "List windows failed: {}",
+                            err
+                        )));
                     }
                 }
                 Ok(ToolExecutionResult::success(format!("Windows:\n{}", output)))
@@ -452,11 +455,17 @@ impl Tool for DesktopControlTool {
                             if ok2 {
                                 return Ok(ToolExecutionResult::success(geo));
                             } else {
-                                return Ok(ToolExecutionResult::error(format!("Get geometry failed: {}", err2)));
+                                return Ok(ToolExecutionResult::error(format!(
+                                    "Get geometry failed: {}",
+                                    err2
+                                )));
                             }
                         }
                     }
-                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                    return Ok(ToolExecutionResult::error(format!(
+                        "Window '{}' not found: {}",
+                        n, err
+                    )));
                 }
                 Ok(ToolExecutionResult::error("Provide 'name' for get_window_geometry".to_string()))
             }
@@ -470,18 +479,33 @@ impl Tool for DesktopControlTool {
                         let first = wid.lines().next().unwrap_or("").trim();
                         if !first.is_empty() {
                             let (ok2, _, err2) = Self::run_xdotool(&[
-                                "windowmove", first, &xv.to_string(), &yv.to_string(),
-                            ]).await?;
+                                "windowmove",
+                                first,
+                                &xv.to_string(),
+                                &yv.to_string(),
+                            ])
+                            .await?;
                             if ok2 {
-                                return Ok(ToolExecutionResult::success(format!("Moved window '{}' to ({}, {})", n, xv, yv)));
+                                return Ok(ToolExecutionResult::success(format!(
+                                    "Moved window '{}' to ({}, {})",
+                                    n, xv, yv
+                                )));
                             } else {
-                                return Ok(ToolExecutionResult::error(format!("Move failed: {}", err2)));
+                                return Ok(ToolExecutionResult::error(format!(
+                                    "Move failed: {}",
+                                    err2
+                                )));
                             }
                         }
                     }
-                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                    return Ok(ToolExecutionResult::error(format!(
+                        "Window '{}' not found: {}",
+                        n, err
+                    )));
                 }
-                Ok(ToolExecutionResult::error("Provide 'name', 'x', 'y' for move_window".to_string()))
+                Ok(ToolExecutionResult::error(
+                    "Provide 'name', 'x', 'y' for move_window".to_string(),
+                ))
             }
             "resize_window" => {
                 let name = args.get("name").and_then(|v| v.as_str());
@@ -493,18 +517,33 @@ impl Tool for DesktopControlTool {
                         let first = wid.lines().next().unwrap_or("").trim();
                         if !first.is_empty() {
                             let (ok2, _, err2) = Self::run_xdotool(&[
-                                "windowsize", first, &w.to_string(), &h.to_string(),
-                            ]).await?;
+                                "windowsize",
+                                first,
+                                &w.to_string(),
+                                &h.to_string(),
+                            ])
+                            .await?;
                             if ok2 {
-                                return Ok(ToolExecutionResult::success(format!("Resized window '{}' to {}x{}", n, w, h)));
+                                return Ok(ToolExecutionResult::success(format!(
+                                    "Resized window '{}' to {}x{}",
+                                    n, w, h
+                                )));
                             } else {
-                                return Ok(ToolExecutionResult::error(format!("Resize failed: {}", err2)));
+                                return Ok(ToolExecutionResult::error(format!(
+                                    "Resize failed: {}",
+                                    err2
+                                )));
                             }
                         }
                     }
-                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                    return Ok(ToolExecutionResult::error(format!(
+                        "Window '{}' not found: {}",
+                        n, err
+                    )));
                 }
-                Ok(ToolExecutionResult::error("Provide 'name', 'width', 'height' for resize_window".to_string()))
+                Ok(ToolExecutionResult::error(
+                    "Provide 'name', 'width', 'height' for resize_window".to_string(),
+                ))
             }
             "minimize_window" => {
                 let name = args.get("name").and_then(|v| v.as_str());
@@ -513,15 +552,25 @@ impl Tool for DesktopControlTool {
                     if ok {
                         let first = wid.lines().next().unwrap_or("").trim();
                         if !first.is_empty() {
-                            let (ok2, _, err2) = Self::run_xdotool(&["windowminimize", first]).await?;
+                            let (ok2, _, err2) =
+                                Self::run_xdotool(&["windowminimize", first]).await?;
                             if ok2 {
-                                return Ok(ToolExecutionResult::success(format!("Minimized window '{}'", n)));
+                                return Ok(ToolExecutionResult::success(format!(
+                                    "Minimized window '{}'",
+                                    n
+                                )));
                             } else {
-                                return Ok(ToolExecutionResult::error(format!("Minimize failed: {}", err2)));
+                                return Ok(ToolExecutionResult::error(format!(
+                                    "Minimize failed: {}",
+                                    err2
+                                )));
                             }
                         }
                     }
-                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                    return Ok(ToolExecutionResult::error(format!(
+                        "Window '{}' not found: {}",
+                        n, err
+                    )));
                 }
                 Ok(ToolExecutionResult::error("Provide 'name' for minimize_window".to_string()))
             }
@@ -529,9 +578,13 @@ impl Tool for DesktopControlTool {
                 let name = args.get("name").and_then(|v| v.as_str());
                 if let Some(n) = name {
                     let (ok, stdout, err) =
-                        Self::run_wmctrl(&["-r", n, "-b", "toggle,maximized_vert,maximized_horz"]).await?;
+                        Self::run_wmctrl(&["-r", n, "-b", "toggle,maximized_vert,maximized_horz"])
+                            .await?;
                     if ok {
-                        Ok(ToolExecutionResult::success(format!("Maximize toggled for '{}': {}", n, stdout)))
+                        Ok(ToolExecutionResult::success(format!(
+                            "Maximize toggled for '{}': {}",
+                            n, stdout
+                        )))
                     } else {
                         Ok(ToolExecutionResult::error(format!("Maximize failed: {}", err)))
                     }

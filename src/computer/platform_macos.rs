@@ -63,7 +63,11 @@ impl ComputerAdapter for MacosComputerAdapter {
         let data = result.data.as_ref();
 
         let base64 = data
-            .and_then(|d| d.get("image_base64").and_then(|v| v.as_str()).map(String::from))
+            .and_then(|d| {
+                d.get("image_base64")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
             .unwrap_or_default();
 
         let width = data
@@ -471,7 +475,12 @@ end tell"#,
                     .filter_map(|s| s.trim().parse().ok())
                     .collect();
                 if coords.len() == 4 {
-                    let rect = crate::computer::Rect::new(coords[0], coords[1], coords[2] as u32, coords[3] as u32);
+                    let rect = crate::computer::Rect::new(
+                        coords[0],
+                        coords[1],
+                        coords[2] as u32,
+                        coords[3] as u32,
+                    );
                     Ok(ActionResult::success(format!("Window geometry: {:?}", rect))
                         .with_data(serde_json::json!({ "bounds": rect })))
                 } else {
@@ -610,9 +619,7 @@ end tell"#,
             }
             DesktopAction::ReadUiTree { app } => {
                 let tree = self.read_ui_tree(app.as_deref()).await?;
-                Ok(ActionResult::success(
-                    serde_json::to_string(&tree).unwrap_or_default(),
-                ))
+                Ok(ActionResult::success(serde_json::to_string(&tree).unwrap_or_default()))
             }
         }
     }
