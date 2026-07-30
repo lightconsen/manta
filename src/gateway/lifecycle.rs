@@ -769,6 +769,24 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/device/pairing/revoke", post(super::revoke_device_handler))
         .route("/api/v1/device/pairing/qr/:code", get(super::device_qr_handler))
         .route("/api/v1/device/pairing/setup/:setup_code", get(super::setup_device_handler))
+        .route("/api/v1/mcp/servers", get(super::list_mcp_servers_handler))
+        .route(
+            "/api/v1/mcp/servers/:server_id/connect",
+            post(super::connect_mcp_server_handler),
+        )
+        .route("/api/v1/mcp/servers/:server_id", delete(super::disconnect_mcp_server_handler))
+        .route(
+            "/api/v1/mcp/servers/:server_id/tools",
+            get(super::list_mcp_tools_handler),
+        )
+        .route(
+            "/api/v1/mcp/servers/:server_id/tools/:tool_name/call",
+            post(super::call_mcp_tool_handler),
+        )
+        .route(
+            "/api/v1/mcp/servers/:server_id/resources",
+            get(super::list_mcp_resources_handler).post(super::read_mcp_resource_handler),
+        )
         .layer(from_fn_with_state(state.clone(), super::middleware::auth_middleware));
 
     let essential_router = essential_public_router.merge(essential_auth_router);

@@ -4,6 +4,7 @@ use axum::{
     extract::{Path, State},
     response::{IntoResponse, Json},
 };
+use tracing::warn;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
@@ -12,7 +13,6 @@ use crate::gateway::*;
 // MCP REST API handlers (9.5)
 // ─────────────────────────────────────────────
 
-#[allow(dead_code)]
 /// List connected MCP servers
 pub async fn list_mcp_servers_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let servers = state.tools.mcp_manager.list_servers().await;
@@ -22,8 +22,7 @@ pub async fn list_mcp_servers_handler(State(state): State<Arc<GatewayState>>) ->
     }))
 }
 
-#[allow(dead_code)]
-/// Connect to an MCP server
+/// Connect to an MCP server and persist config.
 pub async fn connect_mcp_server_handler(
     State(state): State<Arc<GatewayState>>,
     Path(server_id): Path<String>,
@@ -43,18 +42,37 @@ pub async fn connect_mcp_server_handler(
         args: body.args,
         url: body.url,
         timeout_secs: body.timeout_secs,
+        max_tools: body.max_tools,
         ..Default::default()
     };
 
-    match state.tools.mcp_manager.connect(&server_id, config).await {
-        Ok(tools) => (
-            axum::http::StatusCode::OK,
-            Json(serde_json::json!({
-                "server_id": server_id,
-                "tool_count": tools.len(),
-                "tools": tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
-            })),
-        ),
+    // Connect before persisting — if connection fails, don't save bad config.
+    match state.tools.mcp_manager.connect(&server_id, config.clone()).await {
+        Ok(tools) => {
+            super::super::lifecycle::register_mcp_tools(&state, &server_id, &tools, body.max_tools).await;
+
+            // Persist to config.toml so the server reconnects on daemon restart.
+            {
+                let mut cfg_guard = state.config.write().await;
+                let cfg = Arc::make_mut(&mut cfg_guard);
+                cfg.mcp.servers.insert(server_id.clone(), config);
+            }
+            if let Some(ref config_path) = state.config_path {
+                let cfg_guard = state.config.read().await;
+                if let Err(e) = super::config::persist_config_atomic(&cfg_guard, config_path).await {
+                    warn!("MCP server connected but failed to persist config: {}", e);
+                }
+            }
+
+            (
+                axum::http::StatusCode::OK,
+                Json(serde_json::json!({
+                    "server_id": server_id,
+                    "tool_count": tools.len(),
+                    "tools": tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
+                })),
+            )
+        }
         Err(e) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -62,8 +80,7 @@ pub async fn connect_mcp_server_handler(
     }
 }
 
-#[allow(dead_code)]
-/// Disconnect from an MCP server
+/// Disconnect from an MCP server and remove from persisted config.
 pub async fn disconnect_mcp_server_handler(
     State(state): State<Arc<GatewayState>>,
     Path(server_id): Path<String>,
@@ -74,6 +91,21 @@ pub async fn disconnect_mcp_server_handler(
             // they are no longer offered to agents.
             let prefix = format!("mcp__{server_id}__");
             state.tools.registry.deregister_prefix(&prefix);
+
+            // Remove from persisted config.toml.
+            {
+                let mut cfg_guard = state.config.write().await;
+                Arc::make_mut(&mut cfg_guard)
+                    .mcp
+                    .servers
+                    .remove(&server_id);
+            }
+            if let Some(config_path) = state.config_path.clone() {
+                let cfg_guard = state.config.read().await;
+                if let Err(e) = super::config::persist_config_atomic(&cfg_guard, &config_path).await {
+                    warn!("MCP server disconnected but failed to persist config: {}", e);
+                }
+            }
 
             (
                 axum::http::StatusCode::OK,
@@ -87,7 +119,6 @@ pub async fn disconnect_mcp_server_handler(
     }
 }
 
-#[allow(dead_code)]
 /// List tools from an MCP server
 pub async fn list_mcp_tools_handler(
     State(state): State<Arc<GatewayState>>,
@@ -113,7 +144,6 @@ pub async fn list_mcp_tools_handler(
     }
 }
 
-#[allow(dead_code)]
 /// Call an MCP tool
 pub async fn call_mcp_tool_handler(
     State(state): State<Arc<GatewayState>>,
@@ -140,7 +170,6 @@ pub async fn call_mcp_tool_handler(
     }
 }
 
-#[allow(dead_code)]
 /// List resources from an MCP server
 pub async fn list_mcp_resources_handler(
     State(state): State<Arc<GatewayState>>,
@@ -171,7 +200,6 @@ pub async fn list_mcp_resources_handler(
     }
 }
 
-#[allow(dead_code)]
 /// Read a resource from an MCP server
 pub async fn read_mcp_resource_handler(
     State(state): State<Arc<GatewayState>>,

@@ -20,7 +20,7 @@ pub enum McpCommands {
         #[arg(short, long)]
         command: Option<String>,
         /// Arguments for the command
-        #[arg(short, long)]
+        #[arg(short, long, allow_hyphen_values = true)]
         args: Vec<String>,
         /// URL for SSE / streamable-HTTP transport
         #[arg(short, long)]

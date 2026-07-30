@@ -176,7 +176,7 @@ pub struct RunSkillRequest {
 // ── MCP ──────────────────────────────────────────────────────────────────────
 
 fn mcp_default_timeout() -> u64 {
-    30
+    120
 }
 
 /// Request body for connecting an MCP server
@@ -190,6 +190,8 @@ pub struct McpConnectRequest {
     pub url: Option<String>,
     #[serde(default = "mcp_default_timeout")]
     pub timeout_secs: u64,
+    #[serde(default)]
+    pub max_tools: usize,
 }
 
 /// Request body for reading a resource
