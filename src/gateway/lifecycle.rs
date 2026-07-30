@@ -36,6 +36,19 @@ pub(crate) async fn start_gateway(
 ) -> crate::Result<()> {
     info!("Starting Syscity Gateway control plane...");
 
+    // ── MCP presets: auto-create mcp.toml with defaults if missing ──
+    {
+        const DEFAULT_MCP_TOML: &str = include_str!("mcps.toml");
+        let mcps_path = crate::dirs::config_dir().join("mcp.toml");
+        if !mcps_path.exists() {
+            if let Err(e) = tokio::fs::write(&mcps_path, DEFAULT_MCP_TOML).await {
+                warn!("Failed to create default MCP presets file: {e}");
+            } else {
+                info!("Created default MCP presets at {}", mcps_path.display());
+            }
+        }
+    }
+
     // Initialize plugins if enabled
     if config.plugins.enabled {
         if config.plugins.auto_load {
@@ -775,10 +788,7 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
             post(super::connect_mcp_server_handler),
         )
         .route("/api/v1/mcp/servers/:server_id", delete(super::disconnect_mcp_server_handler))
-        .route(
-            "/api/v1/mcp/servers/:server_id/tools",
-            get(super::list_mcp_tools_handler),
-        )
+        .route("/api/v1/mcp/servers/:server_id/tools", get(super::list_mcp_tools_handler))
         .route(
             "/api/v1/mcp/servers/:server_id/tools/:tool_name/call",
             post(super::call_mcp_tool_handler),

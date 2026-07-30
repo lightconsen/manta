@@ -1,0 +1,62 @@
+# Syscity MCP Server Presets
+#
+# This file defines the MCP server presets shown in the Settings UI.
+# You can freely edit this file — add new presets, modify existing ones,
+# or remove any you don't need. Changes take effect on the next page refresh.
+#
+# Format:
+#   [preset_name]
+#   display_name = "..."    # Human-readable name shown in UI
+#   description = "..."     # Short description of what this server does
+#   command = "npx"         # Command to run (stdio transport)
+#   args = ["..."]          # Command arguments
+#   transport = "stdio"     # Transport type: stdio, sse, or streamable_http
+
+[github]
+display_name = "GitHub"
+description = "Repository management, PRs, issues, code search"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+transport = "stdio"
+
+[gmail]
+display_name = "Gmail"
+description = "Read, search and send emails"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-gmail"]
+transport = "stdio"
+
+[google_calendar]
+display_name = "Google Calendar"
+description = "Manage calendar events and schedules"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-google-calendar"]
+transport = "stdio"
+
+[google_drive]
+display_name = "Google Drive"
+description = "Access and manage files in Google Drive"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-google-drive"]
+transport = "stdio"
+
+[notion]
+display_name = "Notion"
+description = "Read and write Notion pages and databases"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-notion"]
+transport = "stdio"
+
+[slack]
+display_name = "Slack"
+description = "Channel messaging, search, and workspace management"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-slack"]
+transport = "stdio"
+
+[linear]
+display_name = "Linear"
+description = "Issue tracking, sprint planning, and project management"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-linear"]
+transport = "stdio"

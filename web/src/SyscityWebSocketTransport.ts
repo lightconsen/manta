@@ -1073,6 +1073,37 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   }
 
   /* ── MCP operations ── */
+
+  /** Fetch MCP server presets from ~/.syscity/mcp.toml */
+  async listMcpPresets(): Promise<
+    Array<{
+      name: string;
+      display_name: string;
+      description: string;
+      command: string;
+      args: string[];
+      transport: string;
+      enabled: boolean;
+    }>
+  > {
+    try {
+      const res = (await this.sendRequestAndWait("mcp.presets", {})) as {
+        presets?: Array<{
+          name: string;
+          display_name: string;
+          description: string;
+          command: string;
+          args: string[];
+          transport: string;
+          enabled: boolean;
+        }>;
+      };
+      return res.presets || [];
+    } catch {
+      return [];
+    }
+  }
+
   async listMcpServers(): Promise<{
     servers: Array<{
       id: string;

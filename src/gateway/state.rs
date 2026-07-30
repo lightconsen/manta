@@ -192,6 +192,8 @@ pub struct GatewayState {
     pub start_time: Instant,
     /// Path to the config file (for runtime persistence)
     pub config_path: Option<PathBuf>,
+    /// Path to the MCP presets file (~/.syscity/mcp.toml)
+    pub mcps_path: Option<PathBuf>,
 
     /// Centralized registry for all gateway background tasks.
     pub task_registry: Arc<TaskRegistry>,

@@ -548,6 +548,7 @@ async fn dispatch_method(
         "models.remove" => handle_models_remove(req, state).await,
         "models.set_default" => handle_models_set_default(req, state).await,
         "mcp.list" => handle_mcp_list(req, state).await,
+        "mcp.presets" => handle_mcp_presets(req, state).await,
         "mcp.add" => handle_mcp_add(req, state).await,
         "mcp.remove" => handle_mcp_remove(req, state).await,
         "mcp.connect" => handle_mcp_connect(req, state).await,
@@ -3087,6 +3088,54 @@ async fn handle_mcp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespon
         })
         .collect();
     WsResponse::ok(&req.id, serde_json::json!({ "servers": servers }))
+}
+
+/// A single entry in `~/.syscity/mcp.toml`.
+#[derive(Debug, Deserialize)]
+struct McpPresetEntry {
+    display_name: String,
+    description: String,
+    command: String,
+    args: Vec<String>,
+    transport: String,
+}
+
+/// Return MCP presets from `~/.syscity/mcp.toml`, each annotated with
+/// whether the preset is currently enabled (present in config.toml).
+async fn handle_mcp_presets(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let presets: Vec<serde_json::Value> = match &state.mcps_path {
+        Some(path) if path.exists() => match tokio::fs::read_to_string(path).await {
+            Ok(content) => match toml::from_str::<HashMap<String, McpPresetEntry>>(&content) {
+                Ok(map) => {
+                    let cfg = state.config.read().await;
+                    map.into_iter()
+                        .map(|(name, entry)| {
+                            let enabled = cfg.mcp.servers.contains_key(&name);
+                            serde_json::json!({
+                                "name": name,
+                                "display_name": entry.display_name,
+                                "description": entry.description,
+                                "command": entry.command,
+                                "args": entry.args,
+                                "transport": entry.transport,
+                                "enabled": enabled,
+                            })
+                        })
+                        .collect()
+                }
+                Err(e) => {
+                    warn!("Failed to parse mcp.toml: {}", e);
+                    Vec::new()
+                }
+            },
+            Err(e) => {
+                warn!("Failed to read mcp.toml: {}", e);
+                Vec::new()
+            }
+        },
+        _ => Vec::new(),
+    };
+    WsResponse::ok(&req.id, serde_json::json!({ "presets": presets }))
 }
 
 async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {

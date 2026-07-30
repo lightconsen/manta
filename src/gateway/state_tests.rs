@@ -103,6 +103,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         config: Arc::new(RwLock::new(Arc::new(config))),
         start_time: std::time::Instant::now(),
         config_path: None,
+        mcps_path: None,
         task_registry: task_registry.clone(),
         shutdown_token: CancellationToken::new(),
         auth: AuthState {

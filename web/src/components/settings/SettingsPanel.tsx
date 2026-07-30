@@ -146,6 +146,15 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     auto_connect: true,
   });
   const [mcpActionLoading, setMcpActionLoading] = useState<string>("");
+  const [mcpPresets, setMcpPresets] = useState<Array<{
+    name: string;
+    display_name: string;
+    description: string;
+    command: string;
+    args: string[];
+    transport: string;
+    enabled: boolean;
+  }>>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedAgentDetail, setSelectedAgentDetail] = useState<{
     agent_id: string;
@@ -166,8 +175,9 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       transport.listSkills(),
       transport.listModelPresets(),
       transport.listMcpServers(),
+      transport.listMcpPresets(),
     ])
-      .then(([cfg, mdl, reg, cronRes, skillRes, presetRes, mcpRes]) => {
+      .then(([cfg, mdl, reg, cronRes, skillRes, presetRes, mcpRes, mcpPresetRes]) => {
         setConfig(cfg as SyscityConfig);
         setModels(mdl.models || []);
         const registry = reg || [];
@@ -176,6 +186,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
         setSkills(skillRes.skills || []);
         setModelPresets(presetRes || []);
         setMcpServers(mcpRes.servers || []);
+        setMcpPresets(mcpPresetRes || []);
         // Auto-select default agent or first available
         const toSelect = registry.some((a) => a.id === "default") ? "default" : (registry[0]?.id || "");
         if (toSelect) {
@@ -431,6 +442,44 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     } catch {
       /* ignore */
     }
+  };
+
+  const refreshMcpPresets = async () => {
+    try {
+      const presets = await transport.listMcpPresets();
+      setMcpPresets(presets);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleEnablePreset = async (preset: {
+    name: string;
+    display_name: string;
+    command: string;
+    args: string[];
+    transport: string;
+  }) => {
+    setMcpActionLoading(preset.name);
+    const ok = await transport.addMcpServer({
+      id: preset.name,
+      transport: preset.transport,
+      command: preset.command,
+      args: preset.args,
+      auto_connect: true,
+    });
+    if (ok) {
+      await Promise.all([refreshMcp(), refreshMcpPresets()]);
+    }
+    setMcpActionLoading("");
+  };
+
+  const handleDisablePreset = async (name: string) => {
+    setMcpActionLoading(name);
+    await transport.removeMcpServer(name);
+    await transport.disconnectMcpServer(name);
+    await Promise.all([refreshMcp(), refreshMcpPresets()]);
+    setMcpActionLoading("");
   };
 
   const handleAddMcp = async () => {
@@ -1208,6 +1257,39 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
 
             {activeTab === "mcp" && (
               <div className="space-y-5">
+                {mcpPresets.length > 0 && (
+                  <section>
+                    <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-3">Presets</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                      {mcpPresets.map((p) => {
+                        const loading = mcpActionLoading === p.name;
+                        return (
+                          <button
+                            key={p.name}
+                            type="button"
+                            disabled={loading}
+                            onClick={() => (p.enabled ? handleDisablePreset(p.name) : handleEnablePreset(p))}
+                            className={`flex flex-col items-start gap-1 px-3 py-2.5 rounded-lg border text-left text-xs transition ${
+                              p.enabled
+                                ? "border-primary-400 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400"
+                                : "border-subtle text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+                            } ${loading ? "opacity-50" : ""}`}
+                          >
+                            <span className="font-medium text-sm">{p.display_name}</span>
+                            <span className="text-[11px] leading-tight opacity-70 line-clamp-2">{p.description}</span>
+                            <span className={`text-[10px] mt-1 px-1.5 py-0.5 rounded font-medium ${
+                              p.enabled
+                                ? "bg-primary-200 dark:bg-primary-800/40 text-primary-800 dark:text-primary-300"
+                                : "bg-sidebar text-secondary"
+                            }`}>
+                              {p.enabled ? "ON" : "OFF"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
                 <section>
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider">MCP Servers</h3>

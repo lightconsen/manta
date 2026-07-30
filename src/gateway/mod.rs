@@ -292,6 +292,7 @@ impl Gateway {
             config: Arc::new(RwLock::new(Arc::new(config.clone()))),
             start_time: Instant::now(),
             config_path: config_path.clone(),
+            mcps_path: Some(crate::dirs::config_dir().join("mcp.toml")),
             task_registry: task_registry.clone(),
             shutdown_token: shutdown_token.clone(),
             auth: AuthState {
