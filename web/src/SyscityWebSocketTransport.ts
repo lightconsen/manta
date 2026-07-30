@@ -1080,6 +1080,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       name: string;
       display_name: string;
       description: string;
+      logo_url?: string;
       command: string;
       args: string[];
       transport: string;
@@ -1092,6 +1093,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           name: string;
           display_name: string;
           description: string;
+          logo_url?: string;
           command: string;
           args: string[];
           transport: string;

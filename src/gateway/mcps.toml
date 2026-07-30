@@ -15,6 +15,7 @@
 [github]
 display_name = "GitHub"
 description = "Repository management, PRs, issues, code search"
+logo_url = "https://cdn.simpleicons.org/github"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
 transport = "stdio"
@@ -22,6 +23,7 @@ transport = "stdio"
 [gmail]
 display_name = "Gmail"
 description = "Read, search and send emails"
+logo_url = "https://cdn.simpleicons.org/gmail"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-gmail"]
 transport = "stdio"
@@ -29,6 +31,7 @@ transport = "stdio"
 [google_calendar]
 display_name = "Google Calendar"
 description = "Manage calendar events and schedules"
+logo_url = "https://cdn.simpleicons.org/googlecalendar"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-google-calendar"]
 transport = "stdio"
@@ -36,6 +39,7 @@ transport = "stdio"
 [google_drive]
 display_name = "Google Drive"
 description = "Access and manage files in Google Drive"
+logo_url = "https://cdn.simpleicons.org/googledrive"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-google-drive"]
 transport = "stdio"
@@ -43,6 +47,7 @@ transport = "stdio"
 [notion]
 display_name = "Notion"
 description = "Read and write Notion pages and databases"
+logo_url = "https://cdn.simpleicons.org/notion"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-notion"]
 transport = "stdio"
@@ -50,6 +55,7 @@ transport = "stdio"
 [slack]
 display_name = "Slack"
 description = "Channel messaging, search, and workspace management"
+logo_url = "https://cdn.simpleicons.org/slack"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-slack"]
 transport = "stdio"
@@ -57,6 +63,7 @@ transport = "stdio"
 [linear]
 display_name = "Linear"
 description = "Issue tracking, sprint planning, and project management"
+logo_url = "https://cdn.simpleicons.org/linear"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-linear"]
 transport = "stdio"

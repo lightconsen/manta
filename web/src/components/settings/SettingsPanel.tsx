@@ -150,6 +150,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     name: string;
     display_name: string;
     description: string;
+    logo_url?: string;
     command: string;
     args: string[];
     transport: string;
@@ -1275,7 +1276,12 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                                 : "border-subtle text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
                             } ${loading ? "opacity-50" : ""}`}
                           >
-                            <span className="font-medium text-sm">{p.display_name}</span>
+                            <div className="flex items-center gap-1.5 w-full">
+                              {p.logo_url && (
+                                <img src={p.logo_url} alt="" className="w-4 h-4 object-contain shrink-0" />
+                              )}
+                              <span className="font-medium text-sm">{p.display_name}</span>
+                            </div>
                             <span className="text-[11px] leading-tight opacity-70 line-clamp-2">{p.description}</span>
                             <span className={`text-[10px] mt-1 px-1.5 py-0.5 rounded font-medium ${
                               p.enabled

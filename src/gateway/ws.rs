@@ -3095,6 +3095,7 @@ async fn handle_mcp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespon
 struct McpPresetEntry {
     display_name: String,
     description: String,
+    logo_url: Option<String>,
     command: String,
     args: Vec<String>,
     transport: String,
@@ -3115,6 +3116,7 @@ async fn handle_mcp_presets(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
                                 "name": name,
                                 "display_name": entry.display_name,
                                 "description": entry.description,
+                                "logo_url": entry.logo_url,
                                 "command": entry.command,
                                 "args": entry.args,
                                 "transport": entry.transport,
