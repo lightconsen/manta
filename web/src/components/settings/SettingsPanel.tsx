@@ -156,6 +156,8 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     transport: string;
     enabled: boolean;
   }>>([]);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedAgentDetail, setSelectedAgentDetail] = useState<{
     agent_id: string;
@@ -462,25 +464,43 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     transport: string;
   }) => {
     setMcpActionLoading(preset.name);
-    const ok = await transport.addMcpServer({
-      id: preset.name,
-      transport: preset.transport,
-      command: preset.command,
-      args: preset.args,
-      auto_connect: true,
-    });
-    if (ok) {
-      await Promise.all([refreshMcp(), refreshMcpPresets()]);
+    try {
+      const ok = await transport.addMcpServer({
+        id: preset.name,
+        transport: preset.transport,
+        command: preset.command,
+        args: preset.args,
+        auto_connect: true,
+      });
+      if (ok) {
+        await Promise.all([refreshMcp(), refreshMcpPresets()]);
+        showToast(`${preset.display_name} enabled`, "success");
+      } else {
+        showToast(`Failed to enable ${preset.display_name}`, "error");
+      }
+    } catch {
+      showToast(`Failed to enable ${preset.display_name}`, "error");
     }
     setMcpActionLoading("");
   };
 
   const handleDisablePreset = async (name: string) => {
     setMcpActionLoading(name);
-    await transport.removeMcpServer(name);
-    await transport.disconnectMcpServer(name);
-    await Promise.all([refreshMcp(), refreshMcpPresets()]);
+    try {
+      await transport.removeMcpServer(name);
+      await transport.disconnectMcpServer(name);
+      await Promise.all([refreshMcp(), refreshMcpPresets()]);
+      showToast(`${name} disabled`, "success");
+    } catch {
+      showToast(`Failed to disable ${name}`, "error");
+    }
     setMcpActionLoading("");
+  };
+
+  const showToast = (message: string, type: "success" | "error") => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
   };
 
   const handleAddMcp = async () => {
@@ -1265,32 +1285,44 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                       {mcpPresets.map((p) => {
                         const loading = mcpActionLoading === p.name;
                         return (
-                          <button
+                          <div
                             key={p.name}
-                            type="button"
-                            disabled={loading}
-                            onClick={() => (p.enabled ? handleDisablePreset(p.name) : handleEnablePreset(p))}
                             className={`flex flex-col items-start gap-1 px-3 py-2.5 rounded-lg border text-left text-xs transition ${
                               p.enabled
-                                ? "border-primary-400 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400"
-                                : "border-subtle text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+                                ? "border-primary-400 bg-primary-100 dark:bg-primary-900/30"
+                                : "border-subtle"
                             } ${loading ? "opacity-50" : ""}`}
                           >
                             <div className="flex items-center gap-1.5 w-full">
                               {p.logo_url && (
                                 <img src={p.logo_url} alt="" className="w-4 h-4 object-contain shrink-0" />
                               )}
-                              <span className="font-medium text-sm">{p.display_name}</span>
+                              <span className="font-medium text-sm flex-1">{p.display_name}</span>
+                              <button
+                                type="button"
+                                disabled={loading}
+                                onClick={() => (p.enabled ? handleDisablePreset(p.name) : handleEnablePreset(p))}
+                                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                                  loading
+                                    ? "opacity-50 cursor-not-allowed"
+                                    : "cursor-pointer"
+                                } ${
+                                  p.enabled
+                                    ? "bg-primary-500"
+                                    : "bg-gray-300 dark:bg-gray-600"
+                                }`}
+                                role="switch"
+                                aria-checked={p.enabled}
+                              >
+                                <span
+                                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                                    p.enabled ? "translate-x-[18px]" : "translate-x-[3px]"
+                                  }`}
+                                />
+                              </button>
                             </div>
                             <span className="text-[11px] leading-tight opacity-70 line-clamp-2">{p.description}</span>
-                            <span className={`text-[10px] mt-1 px-1.5 py-0.5 rounded font-medium ${
-                              p.enabled
-                                ? "bg-primary-200 dark:bg-primary-800/40 text-primary-800 dark:text-primary-300"
-                                : "bg-sidebar text-secondary"
-                            }`}>
-                              {p.enabled ? "ON" : "OFF"}
-                            </span>
-                          </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -1723,6 +1755,19 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Toast notification */}
+      {toast && (
+        <div
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg text-sm shadow-lg transition-all ${
+            toast.type === "success"
+              ? "bg-green-600 text-white"
+              : "bg-red-600 text-white"
+          }`}
+        >
+          {toast.message}
         </div>
       )}
     </div>
