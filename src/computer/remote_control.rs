@@ -967,6 +967,12 @@ impl ComputerAdapter for RemoteControlAdapter {
                 }
                 Ok(ActionResult::success("process killed"))
             }
+            DesktopAction::ReadUiTree { app } => {
+                let tree = self.read_ui_tree(app.as_deref()).await?;
+                Ok(ActionResult::success(
+                    serde_json::to_string(&tree).unwrap_or_default(),
+                ))
+            }
             _ => {
                 warn!("Remote adapter received unsupported action: {:?}", action);
                 Err(ComputerError::UnsupportedPlatform(format!(

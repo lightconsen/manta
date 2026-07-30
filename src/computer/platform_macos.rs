@@ -608,7 +608,12 @@ end tell"#,
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
                 Ok(ActionResult::success(apple_script_output(&result).to_string()))
             }
-            _ => Err(ComputerError::Other("Action not yet implemented on macOS".to_string())),
+            DesktopAction::ReadUiTree { app } => {
+                let tree = self.read_ui_tree(app.as_deref()).await?;
+                Ok(ActionResult::success(
+                    serde_json::to_string(&tree).unwrap_or_default(),
+                ))
+            }
         }
     }
 

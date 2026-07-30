@@ -613,6 +613,12 @@ impl ComputerAdapter for HeadlessComputerAdapter {
             | DesktopAction::MaximizeWindow { .. } => Err(ComputerError::Other(
                 "Window management not available in headless mode".to_string(),
             )),
+            DesktopAction::ReadUiTree { app } => {
+                let tree = self.read_ui_tree(app.as_deref()).await?;
+                Ok(ActionResult::success(
+                    serde_json::to_string(&tree).unwrap_or_default(),
+                ))
+            }
             _ => Err(ComputerError::Other("Action not available in headless mode".to_string())),
         }
     }
