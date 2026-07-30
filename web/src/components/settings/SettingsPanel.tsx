@@ -603,7 +603,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     { id: "agents", label: "Agents" },
     { id: "channels", label: "Channels" },
     { id: "tools", label: "Web Search" },
-    { id: "mcp", label: "MCP" },
+    { id: "mcp", label: "MCP Servers" },
     { id: "skills", label: "Skills" },
     { id: "jobs", label: "Jobs" },
     { id: "logs", label: "Logs" },
