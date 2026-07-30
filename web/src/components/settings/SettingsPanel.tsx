@@ -157,7 +157,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     enabled: boolean;
   }>>([]);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedAgentDetail, setSelectedAgentDetail] = useState<{
     agent_id: string;
