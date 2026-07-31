@@ -8,7 +8,7 @@
     <img src="https://github.com/lightconsen/syscity/actions/workflows/ci.yml/badge.svg" alt="CI" />
   </a>
   <a href="https://github.com/lightconsen/syscity/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-Elastic--2.0-blue.svg" alt="License" />
+    <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" />
   </a>
   <a href="https://img.shields.io/github/stars/lightconsen/syscity">
     <img src="https://img.shields.io/github/stars/lightconsen/syscity" alt="GitHub Stars" />
@@ -196,7 +196,7 @@ export SYSCITY_MODEL="gpt-4o"
 
 ## License
 
-Elastic License 2.0
+Apache-2.0
 
 ## Contributing
 

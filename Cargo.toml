@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.93"
 authors = ["Syscity Contributors"]
 description = "Syscity - A Rust application"
-license = "Elastic-2.0"
+license = "Apache-2.0"
 repository = "https://github.com/lightconsen/syscity"
 
 [lints.rust]
