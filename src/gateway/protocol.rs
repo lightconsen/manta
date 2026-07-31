@@ -658,6 +658,12 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "reason": reason,
             }),
         )),
+        GatewayEvent::McpTokenRefreshed { server_id } => Some((
+            "mcp.token_refreshed".to_string(),
+            serde_json::json!({
+                "server_id": server_id,
+            }),
+        )),
         GatewayEvent::DeviceStatusChanged { device_id, status, message } => Some((
             "device.status_changed".to_string(),
             serde_json::json!({

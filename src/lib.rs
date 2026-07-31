@@ -60,6 +60,7 @@ pub mod goal;
 pub mod heartbeat;
 pub mod inbound;
 pub mod logs;
+pub mod mcp;
 pub mod memory;
 pub mod model_router;
 pub mod outbound;

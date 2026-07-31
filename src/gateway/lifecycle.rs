@@ -24,7 +24,7 @@ use super::*;
 use super::{GatewayConfig, GatewayState};
 use crate::agent::AgentConfig;
 use crate::config::hot_reload::ConfigFileType;
-use crate::tools::mcp::McpToolWrapper;
+use crate::mcp::McpToolWrapper;
 
 // ── start ────────────────────────────────────────────────────────────
 
@@ -38,10 +38,9 @@ pub(crate) async fn start_gateway(
 
     // ── MCP presets: auto-create mcp.toml with defaults if missing ──
     {
-        const DEFAULT_MCP_TOML: &str = include_str!("mcps.toml");
         let mcps_path = crate::dirs::config_dir().join("mcp.toml");
         if !mcps_path.exists() {
-            if let Err(e) = tokio::fs::write(&mcps_path, DEFAULT_MCP_TOML).await {
+            if let Err(e) = tokio::fs::write(&mcps_path, crate::mcp::DEFAULT_PRESETS_TOML).await {
                 warn!("Failed to create default MCP presets file: {e}");
             } else {
                 info!("Created default MCP presets at {}", mcps_path.display());
@@ -1048,7 +1047,7 @@ fn create_eval_tool_registry(
 pub(crate) async fn register_mcp_tools(
     state: &Arc<GatewayState>,
     server_id: &str,
-    tools: &[crate::tools::mcp::McpToolDefinition],
+    tools: &[crate::mcp::McpToolDefinition],
     max_tools_config: usize,
 ) {
     let max_tools = if max_tools_config == 0 {

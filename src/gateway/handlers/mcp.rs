@@ -28,7 +28,7 @@ pub async fn connect_mcp_server_handler(
     Path(server_id): Path<String>,
     Json(body): Json<McpConnectRequest>,
 ) -> impl IntoResponse {
-    use crate::tools::mcp::{McpServerConfig, McpTransport};
+    use crate::mcp::{McpServerConfig, McpTransport};
 
     let transport = match body.transport.as_str() {
         "sse" => McpTransport::Sse,

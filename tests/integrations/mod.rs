@@ -10,10 +10,10 @@ pub use syscity::tools::web::SearchProvider;
 pub use syscity::tools::{
     AcpSessionTool, AcpSpawnTool, ApplyPatchTool, BrowserTool, CanvasTool, CodeExecutionTool,
     CronTool, DelegateTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool,
-    ImageGenerateTool, ImageTool, McpConnectionTool, MemoryGetTool, MemorySearchTool, MemoryTool,
-    NodesTool, PdfTool, ProcessTool, SessionStatusTool, SessionsHistoryTool, SessionsListTool,
-    SessionsSendTool, SessionsYieldTool, ShellTool, TimeTool, TodoTool, Tool, ToolContext, TtsTool,
-    UpdatePlanTool, WebFetchTool, WebSearchTool,
+    ImageGenerateTool, ImageTool, McpConnectionTool, McpManager, MemoryGetTool, MemorySearchTool,
+    MemoryTool, NodesTool, PdfTool, ProcessTool, SessionStatusTool, SessionsHistoryTool,
+    SessionsListTool, SessionsSendTool, SessionsYieldTool, ShellTool, TimeTool, TodoTool, Tool,
+    ToolContext, TtsTool, UpdatePlanTool, WebFetchTool, WebSearchTool,
 };
 
 /// Create a test ToolContext with a unique conversation_id to avoid cross-test

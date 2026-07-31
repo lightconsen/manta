@@ -21,7 +21,7 @@ use crate::plugins::PluginManager;
 use crate::security::content_filter::ContentFilter;
 use crate::security::runtime_audit::AuditLogger;
 use crate::tools::approval::ApprovalQueue;
-use crate::tools::mcp::{McpEvent, McpManager};
+use crate::mcp::{McpEvent, McpManager};
 use crate::tools::ToolRegistry;
 
 /// Tool subsystem initialization result.

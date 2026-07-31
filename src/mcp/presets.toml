@@ -75,6 +75,19 @@ transport = "stdio"
 # For remote MCP servers, `url` is the server endpoint and `auth_type`
 # must be "oauth2". The OAuth endpoints are discovered automatically
 # via /.well-known/oauth-authorization-server.
+#
+# Local testing: run `python scripts/test_oauth_mcp.py` then enable
+# "Test OAuth" in Settings. The mock server simulates the full flow.
+
+[test_oauth]
+display_name = "Test OAuth"
+description = "Local OAuth test server (run scripts/test_oauth_mcp.py)"
+logo_url = "https://cdn.simpleicons.org/testinglibrary"
+url = "http://localhost:9999/mcp"
+transport = "streamable_http"
+auth_type = "oauth2"
+client_id = "test-client"
+scopes = ""
 
 [github_remote]
 display_name = "GitHub (Remote)"

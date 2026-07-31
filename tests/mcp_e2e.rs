@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use syscity::tools::mcp::{McpManager, McpServerConfig, McpTransport};
+use syscity::mcp::{McpManager, McpServerConfig, McpTransport};
 use tokio::time::{timeout, Duration};
 
 /// Helper: skip test gracefully if `python3` is not available.

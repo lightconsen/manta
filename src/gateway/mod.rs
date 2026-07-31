@@ -449,28 +449,31 @@ impl Gateway {
                     tokio::select! {
                         Some(event) = mcp_event_rx.recv() => {
                             let gateway_event = match event {
-                                crate::tools::mcp::McpEvent::Connected {
+                                crate::mcp::McpEvent::Connected {
                                     server_id, tools, prompts, resources,
                                 } => GatewayEvent::McpConnected {
                                     server_id, tools, prompts, resources,
                                 },
-                                crate::tools::mcp::McpEvent::Disconnected { server_id, reason } => {
+                                crate::mcp::McpEvent::Disconnected { server_id, reason } => {
                                     GatewayEvent::McpDisconnected { server_id, reason }
                                 }
-                                crate::tools::mcp::McpEvent::Recovered { server_id, attempt } => {
+                                crate::mcp::McpEvent::Recovered { server_id, attempt } => {
                                     GatewayEvent::McpRecovered { server_id, attempt }
                                 }
-                                crate::tools::mcp::McpEvent::ResourceChanged { server_id, uri } => {
+                                crate::mcp::McpEvent::ResourceChanged { server_id, uri } => {
                                     GatewayEvent::McpResourceChanged { server_id, uri }
                                 }
-                                crate::tools::mcp::McpEvent::AuthRequired { server_id, auth_url } => {
+                                crate::mcp::McpEvent::AuthRequired { server_id, auth_url } => {
                                     GatewayEvent::McpAuthRequired { server_id, auth_url }
                                 }
-                                crate::tools::mcp::McpEvent::AuthComplete { server_id } => {
+                                crate::mcp::McpEvent::AuthComplete { server_id } => {
                                     GatewayEvent::McpAuthComplete { server_id }
                                 }
-                                crate::tools::mcp::McpEvent::AuthFailed { server_id, reason } => {
+                                crate::mcp::McpEvent::AuthFailed { server_id, reason } => {
                                     GatewayEvent::McpAuthFailed { server_id, reason }
+                                }
+                                crate::mcp::McpEvent::TokenRefreshed { server_id } => {
+                                    GatewayEvent::McpTokenRefreshed { server_id }
                                 }
                             };
                             if let Err(e) = event_tx.send(gateway_event) {

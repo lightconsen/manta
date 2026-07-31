@@ -3076,9 +3076,9 @@ async fn handle_mcp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespon
             serde_json::json!({
                 "id": id,
                 "transport": match cfg.transport {
-                    crate::tools::mcp::McpTransport::Stdio => "stdio",
-                    crate::tools::mcp::McpTransport::Sse => "sse",
-                    crate::tools::mcp::McpTransport::StreamableHttp => "streamable_http",
+                    crate::mcp::McpTransport::Stdio => "stdio",
+                    crate::mcp::McpTransport::Sse => "sse",
+                    crate::mcp::McpTransport::StreamableHttp => "streamable_http",
                 },
                 "command": cfg.command,
                 "args": cfg.args,
@@ -3190,12 +3190,12 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
     };
 
     let transport = match payload.transport.as_str() {
-        "sse" => crate::tools::mcp::McpTransport::Sse,
-        "streamable_http" => crate::tools::mcp::McpTransport::StreamableHttp,
-        _ => crate::tools::mcp::McpTransport::Stdio,
+        "sse" => crate::mcp::McpTransport::Sse,
+        "streamable_http" => crate::mcp::McpTransport::StreamableHttp,
+        _ => crate::mcp::McpTransport::Stdio,
     };
 
-    let config = crate::tools::mcp::McpServerConfig {
+    let config = crate::mcp::McpServerConfig {
         transport,
         command: payload.command,
         args: payload.args,
@@ -3338,7 +3338,7 @@ async fn handle_mcp_connect(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
         // Load stored token and set on a fresh client before connecting
         let tokens = state.tools.mcp_manager.load_stored_token(&payload.id).await;
         if let Some(tokens) = tokens {
-            let mut client = crate::tools::mcp::McpClient::new()
+            let mut client = crate::mcp::McpClient::new()
                 .with_timeout(config.timeout_secs);
             client.set_access_token(tokens.access_token.clone());
 

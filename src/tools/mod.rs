@@ -837,7 +837,6 @@ pub mod heartbeat_tool;
 pub mod hooks;
 pub mod image;
 pub mod list_capabilities;
-pub mod mcp;
 pub mod memory;
 pub mod message;
 pub mod nodes;
@@ -874,7 +873,6 @@ pub use heartbeat_tool::HeartbeatTool;
 pub use hooks::{ToolHooks, ToolPolicyDecision};
 pub use image::{ImageGenerateTool, ImageTool};
 pub use list_capabilities::ListCapabilitiesTool;
-pub use mcp::McpConnectionTool;
 pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
 pub use message::MessageTool;
 pub use nodes::NodesTool;
@@ -896,6 +894,9 @@ pub use todo_tool::TodoTool;
 pub use tts::TtsTool;
 pub use update_plan::UpdatePlanTool;
 pub use web::{WebFetchTool, WebSearchTool};
+
+// Re-exported from the top-level mcp module for backward compatibility.
+pub use crate::mcp::{McpConnectionTool, McpManager};
 
 /// Cached tool result entry
 #[derive(Debug, Clone)]

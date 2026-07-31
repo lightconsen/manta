@@ -9,7 +9,7 @@ use serde::Deserialize;
 use tracing::{error, info, warn};
 
 use crate::gateway::GatewayState;
-use crate::tools::mcp::McpToolWrapper;
+use crate::mcp::McpToolWrapper;
 
 // ── Comprehensive reload
 // ──────────────────────────────────────────────────────

@@ -219,6 +219,8 @@ pub enum GatewayEvent {
     McpAuthComplete { server_id: String },
     /// MCP OAuth authorization failed
     McpAuthFailed { server_id: String, reason: String },
+    /// MCP OAuth token was silently refreshed
+    McpTokenRefreshed { server_id: String },
     /// Self-repair action taken (agent or channel restarted)
     RepairAction {
         /// "agent" or "channel"

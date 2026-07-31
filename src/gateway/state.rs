@@ -53,8 +53,9 @@ use crate::security::{
 };
 use crate::skills::SkillManager;
 use crate::tools::{
-    approval::ApprovalQueue, command_gate::CommandGate, mcp::McpManager, ToolRegistry, ToolSdk,
+    approval::ApprovalQueue, command_gate::CommandGate, ToolRegistry, ToolSdk,
 };
+use crate::mcp::McpManager;
 
 /// Authentication, authorization, and security-related state.
 pub struct AuthState {

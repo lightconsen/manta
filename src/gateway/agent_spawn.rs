@@ -16,7 +16,7 @@ use crate::agent::{Agent, AgentConfig};
 use crate::config::CapabilitiesConfig;
 use crate::tools::approval::ApprovalQueue;
 use crate::tools::delegate_tool::AgentResolver;
-use crate::tools::mcp::McpManager;
+use crate::mcp::{McpConnectionTool, McpManager};
 use crate::tools::ToolRegistry;
 
 // ── GatewayAgentResolver ─────────────────────────────────────────────────────

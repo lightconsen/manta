@@ -17,7 +17,7 @@ use crate::gateway::protocol::*;
 use crate::gateway::GatewayState;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter};
 use crate::tools::command_gate::UserLevel;
-use crate::tools::mcp::{McpServerConfig, McpToolWrapper};
+use crate::mcp::{McpServerConfig, McpToolWrapper};
 
 // ── Command Definitions
 // ───────────────────────────────────────────────────────

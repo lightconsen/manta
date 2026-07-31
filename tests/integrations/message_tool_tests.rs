@@ -159,7 +159,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         },
         tools: syscity::gateway::state::ToolState {
             registry: Arc::new(syscity::tools::ToolRegistry::new()),
-            mcp_manager: Arc::new(syscity::tools::mcp::McpManager::new()),
+            mcp_manager: Arc::new(McpManager::new()),
             approval_queue: Arc::new(syscity::tools::approval::ApprovalQueue::new()),
             skills_manager,
             canvas_manager: Arc::new(syscity::canvas::CanvasManager::new()),
