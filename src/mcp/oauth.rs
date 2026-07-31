@@ -2,8 +2,9 @@
 //! token persistence, and the PKCE authorization callback server.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -39,6 +40,14 @@ struct PendingFlowState {
     cancel_tx: oneshot::Sender<()>,
 }
 
+/// A cached token plus the disk file's last-modified time. The disk file is
+/// authoritative: if its mtime differs from the cached value the cache entry
+/// is stale (externally modified or deleted) and must be reloaded.
+struct CachedToken {
+    tokens: OAuthTokens,
+    mtime: Option<SystemTime>,
+}
+
 /// Commands sent to the `OAuthManagerActor` via its mpsc channel.
 pub(crate) enum OAuthCommand {
     StartFlow {
@@ -60,6 +69,11 @@ pub(crate) enum OAuthCommand {
     CallbackComplete {
         server_id: String,
         result: crate::Result<OAuthTokens>,
+    },
+    /// Drop the cached token and delete the persisted token file (e.g. when a
+    /// server is removed).
+    ClearToken {
+        server_id: String,
     },
     /// Request the actor to shut down (currently unused, available for
     /// graceful teardown).
@@ -133,6 +147,13 @@ impl OAuthManager {
             });
         resp_rx.await.unwrap_or(false)
     }
+
+    /// Clear the cached token and delete the persisted token file.
+    pub async fn clear_token(&self, server_id: String) {
+        let _ = self
+            .cmd_tx
+            .send(OAuthCommand::ClearToken { server_id });
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -144,7 +165,7 @@ pub(crate) struct OAuthManagerActor {
     cmd_rx: mpsc::UnboundedReceiver<OAuthCommand>,
     cmd_tx: mpsc::UnboundedSender<OAuthCommand>,
     event_tx: Arc<RwLock<Option<mpsc::UnboundedSender<McpEvent>>>>,
-    token_cache: HashMap<String, OAuthTokens>,
+    token_cache: HashMap<String, CachedToken>,
     pending_flows: HashMap<String, PendingFlowState>,
 }
 
@@ -195,6 +216,9 @@ impl OAuthManagerActor {
                         Some(OAuthCommand::CallbackComplete { server_id, result }) => {
                             self.handle_callback_complete(&server_id, result).await;
                         }
+                        Some(OAuthCommand::ClearToken { server_id }) => {
+                            self.handle_clear_token(&server_id).await;
+                        }
                         Some(OAuthCommand::Shutdown) => break,
                     }
                 }
@@ -223,7 +247,9 @@ impl OAuthManagerActor {
             if let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) {
                 if let Ok(data) = tokio::fs::read_to_string(&path).await {
                     if let Ok(tokens) = serde_json::from_str::<OAuthTokens>(&data) {
-                        self.token_cache.insert(id, tokens);
+                        let mtime = disk_mtime(&path).await;
+                        self.token_cache
+                            .insert(id, CachedToken { tokens, mtime });
                     }
                 }
             }
@@ -358,6 +384,15 @@ impl OAuthManagerActor {
             });
         });
 
+        // Notify clients that a flow has started so the UI can surface the
+        // authorization URL even when the connect call came from elsewhere
+        // (e.g. CLI or REST).
+        self.emit_event(McpEvent::AuthRequired {
+            server_id: server_id.to_string(),
+            auth_url: auth_url.clone(),
+        })
+        .await;
+
         Ok(auth_url)
     }
 
@@ -373,33 +408,34 @@ impl OAuthManagerActor {
     }
 
     async fn handle_get_token(&mut self, server_id: &str) -> Option<OAuthTokens> {
-        // Check cache first
-        if let Some(tokens) = self.token_cache.get(server_id) {
-            return Some(tokens.clone());
-        }
-        // Cache miss: try disk
         let path = token_path_for(server_id);
+        let disk_mtime = disk_mtime(&path).await;
+
+        // Cache hit only if the disk file's mtime matches — otherwise the
+        // cache is stale (externally edited/deleted token) and must be
+        // reloaded from disk.
+        if let Some(cached) = self.token_cache.get(server_id) {
+            if cached.mtime == disk_mtime {
+                return Some(cached.tokens.clone());
+            }
+            self.token_cache.remove(server_id);
+        }
+
         let data = tokio::fs::read_to_string(&path).await.ok()?;
         let tokens: OAuthTokens = serde_json::from_str(&data).ok()?;
-        self.token_cache
-            .insert(server_id.to_string(), tokens.clone());
+        self.token_cache.insert(
+            server_id.to_string(),
+            CachedToken {
+                tokens: tokens.clone(),
+                mtime: disk_mtime,
+            },
+        );
         Some(tokens)
     }
 
-    async fn handle_has_token(&self, server_id: &str) -> bool {
-        let tokens = if let Some(t) = self.token_cache.get(server_id) {
-            t.clone()
-        } else {
-            let path = token_path_for(server_id);
-            let data = match tokio::fs::read_to_string(&path).await {
-                Ok(d) => d,
-                Err(_) => return false,
-            };
-            let t: OAuthTokens = match serde_json::from_str(&data) {
-                Ok(t) => t,
-                Err(_) => return false,
-            };
-            t
+    async fn handle_has_token(&mut self, server_id: &str) -> bool {
+        let Some(tokens) = self.handle_get_token(server_id).await else {
+            return false;
         };
 
         if let Some(expires_at) = tokens.expires_at {
@@ -409,6 +445,17 @@ impl OAuthManagerActor {
             }
         }
         true
+    }
+
+    async fn handle_clear_token(&mut self, server_id: &str) {
+        self.token_cache.remove(server_id);
+        let path = token_path_for(server_id);
+        if let Err(e) = tokio::fs::remove_file(&path).await {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warn!("Failed to delete token file for '{server_id}': {e}");
+            }
+        }
+        info!("Cleared stored OAuth token for '{server_id}'");
     }
 
     async fn handle_callback_complete(
@@ -421,17 +468,22 @@ impl OAuthManagerActor {
 
         match result {
             Ok(tokens) => {
-                // Cache in memory
-                self.token_cache
-                    .insert(server_id.to_string(), tokens.clone());
-
-                // Persist to disk
+                // Persist to disk first, then cache with the file's mtime so
+                // the cache matches the authoritative on-disk state.
                 let tokens_dir = mcp_tokens_dir();
                 let _ = tokio::fs::create_dir_all(&tokens_dir).await;
                 let token_path = tokens_dir.join(format!("{server_id}.json"));
                 if let Ok(json) = serde_json::to_string(&tokens) {
                     let _ = tokio::fs::write(&token_path, &json).await;
                 }
+                let mtime = disk_mtime(&token_path).await;
+                self.token_cache.insert(
+                    server_id.to_string(),
+                    CachedToken {
+                        tokens: tokens.clone(),
+                        mtime,
+                    },
+                );
 
                 self.emit_event(McpEvent::AuthComplete {
                     server_id: server_id.to_string(),
@@ -459,11 +511,13 @@ impl OAuthManagerActor {
         let expiring: Vec<(String, OAuthTokens)> = self
             .token_cache
             .iter()
-            .filter(|(_, t)| {
-                t.expires_at.map_or(false, |exp| exp <= refresh_window)
-                    && t.refresh_token.is_some()
+            .filter(|(_, c)| {
+                c.tokens
+                    .expires_at
+                    .is_some_and(|exp| exp <= refresh_window)
+                    && c.tokens.refresh_token.is_some()
             })
-            .map(|(id, t)| (id.clone(), t.clone()))
+            .map(|(id, c)| (id.clone(), c.tokens.clone()))
             .collect();
 
         for (server_id, tokens) in &expiring {
@@ -511,17 +565,21 @@ impl OAuthManagerActor {
                                 client_id: tokens.client_id.clone(),
                             };
 
-                            // Update cache
-                            self.token_cache
-                                .insert(server_id.clone(), updated.clone());
-
-                            // Persist to disk
+                            // Persist to disk, then cache with the file's mtime
                             let tokens_dir = mcp_tokens_dir();
                             let token_path =
                                 tokens_dir.join(format!("{server_id}.json"));
                             if let Ok(json) = serde_json::to_string(&updated) {
                                 let _ = tokio::fs::write(&token_path, &json).await;
                             }
+                            let mtime = disk_mtime(&token_path).await;
+                            self.token_cache.insert(
+                                server_id.clone(),
+                                CachedToken {
+                                    tokens: updated,
+                                    mtime,
+                                },
+                            );
 
                             info!("OAuth token refreshed for '{server_id}'");
 
@@ -563,6 +621,14 @@ pub fn mcp_tokens_dir() -> PathBuf {
 /// Path to the token file for a specific server.
 pub fn token_path_for(server_id: &str) -> PathBuf {
     mcp_tokens_dir().join(format!("{}.json", server_id))
+}
+
+/// Last-modified time of a file, or `None` if it does not exist. Falls back
+/// to UNIX_EPOCH on filesystems without modification-time support so the
+/// cache still matches disk.
+async fn disk_mtime(path: &Path) -> Option<SystemTime> {
+    let meta = tokio::fs::metadata(path).await.ok()?;
+    Some(meta.modified().unwrap_or(std::time::UNIX_EPOCH))
 }
 
 /// Minimal percent-encoding for OAuth URL parameters.

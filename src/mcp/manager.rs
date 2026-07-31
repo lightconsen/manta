@@ -579,4 +579,14 @@ impl McpManager {
             oauth.cancel_flow(server_id.to_string()).await;
         }
     }
+
+    /// Clear stored OAuth tokens for a server (cache + disk file). Called when
+    /// a server is removed so a re-added server cannot reuse stale tokens.
+    pub async fn clear_oauth_token(&self, server_id: &str) {
+        if let Some(oauth) = &self.oauth {
+            oauth.clear_token(server_id.to_string()).await;
+        } else {
+            let _ = tokio::fs::remove_file(token_path_for(server_id)).await;
+        }
+    }
 }

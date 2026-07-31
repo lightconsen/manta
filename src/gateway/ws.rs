@@ -3219,7 +3219,18 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
             .insert(payload.id.clone(), config.clone());
     }
 
-    if payload.auto_connect {
+    // Persist the config to disk first so it survives a failed connect.
+    if let Err(e) = persist_config(state).await {
+        return e;
+    }
+
+    // OAuth servers without a stored token must complete the authorization
+    // flow before connecting — don't attempt a synchronous connect here;
+    // signal the client to start the flow instead.
+    let requires_auth = matches!(config.auth_type.as_deref(), Some("oauth2"))
+        && !state.tools.mcp_manager.has_stored_token(&payload.id).await;
+
+    if payload.auto_connect && !requires_auth {
         match state
             .tools
             .mcp_manager
@@ -3242,11 +3253,14 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
         }
     }
 
-    if let Err(e) = persist_config(state).await {
-        return e;
-    }
-
-    WsResponse::ok(&req.id, serde_json::json!({ "status": "added", "id": payload.id }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": "added",
+            "id": payload.id,
+            "requires_auth": requires_auth,
+        }),
+    )
 }
 
 async fn handle_mcp_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
@@ -3264,6 +3278,14 @@ async fn handle_mcp_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     }
     let prefix = format!("mcp__{}__", payload.id);
     state.tools.registry.deregister_prefix(&prefix);
+
+    // Drop any stored OAuth tokens so a re-added server cannot reuse a
+    // stale/revoked token.
+    state
+        .tools
+        .mcp_manager
+        .clear_oauth_token(&payload.id)
+        .await;
 
     {
         let mut cfg_guard = state.config.write().await;

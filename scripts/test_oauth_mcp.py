@@ -22,7 +22,7 @@ import hashlib
 import base64
 import secrets
 import urllib.parse
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.request import Request, urlopen
 
 # ── In-memory token store ──
@@ -226,7 +226,9 @@ class OAuthMcpHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    server = HTTPServer(("127.0.0.1", 9999), OAuthMcpHandler)
+    # Threading server so a slow/stuck request (e.g. a client retrying a
+    # revoked token) never blocks the whole mock.
+    server = ThreadingHTTPServer(("127.0.0.1", 9999), OAuthMcpHandler)
     print("=" * 60)
     print("  Mock OAuth MCP Server running at http://localhost:9999")
     print()

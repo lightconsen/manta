@@ -143,6 +143,11 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     command: "",
     args: "",
     url: "",
+    auth_type: "",
+    client_id: "",
+    auth_url: "",
+    token_url: "",
+    scopes: "",
     auto_connect: true,
   });
   const [mcpActionLoading, setMcpActionLoading] = useState<string>("");
@@ -508,6 +513,10 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     url?: string;
     transport: string;
     auth_type?: string;
+    client_id?: string;
+    auth_url?: string;
+    token_url?: string;
+    scopes?: string;
   }) => {
     setMcpActionLoading(preset.name);
     try {
@@ -517,6 +526,11 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
         command: preset.command,
         args: preset.args,
         url: preset.url,
+        auth_type: preset.auth_type,
+        client_id: preset.client_id,
+        auth_url: preset.auth_url,
+        token_url: preset.token_url,
+        scopes: preset.scopes,
         auto_connect: true,
       });
       if (!ok) {
@@ -594,10 +608,15 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       command: newMcp.command.trim() || undefined,
       args: newMcp.args.split(",").map((s) => s.trim()).filter(Boolean),
       url: newMcp.url.trim() || undefined,
+      auth_type: newMcp.auth_type || undefined,
+      client_id: newMcp.client_id.trim() || undefined,
+      auth_url: newMcp.auth_url.trim() || undefined,
+      token_url: newMcp.token_url.trim() || undefined,
+      scopes: newMcp.scopes.trim() || undefined,
       auto_connect: newMcp.auto_connect,
     });
     if (ok) {
-      setNewMcp({ id: "", transport: "stdio", command: "", args: "", url: "", auto_connect: true });
+      setNewMcp({ id: "", transport: "stdio", command: "", args: "", url: "", auth_type: "", client_id: "", auth_url: "", token_url: "", scopes: "", auto_connect: true });
       setShowAddMcp(false);
       await refreshMcp();
     } else {
@@ -1431,10 +1450,39 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                           </div>
                         </>
                       ) : (
-                        <div>
-                          <label className="block text-xs text-secondary mb-1">URL</label>
-                          <input type="text" value={newMcp.url} onChange={(e) => setNewMcp({ ...newMcp, url: e.target.value })} placeholder="http://localhost:3000/sse" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
-                        </div>
+                        <>
+                          <div>
+                            <label className="block text-xs text-secondary mb-1">URL</label>
+                            <input type="text" value={newMcp.url} onChange={(e) => setNewMcp({ ...newMcp, url: e.target.value })} placeholder="http://localhost:3000/sse" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-secondary mb-1">Auth Type</label>
+                            <select value={newMcp.auth_type} onChange={(e) => setNewMcp({ ...newMcp, auth_type: e.target.value })} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20">
+                              <option value="">none</option>
+                              <option value="oauth2">oauth2</option>
+                            </select>
+                          </div>
+                          {newMcp.auth_type === "oauth2" && (
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs text-secondary mb-1">Client ID</label>
+                                <input type="text" value={newMcp.client_id} onChange={(e) => setNewMcp({ ...newMcp, client_id: e.target.value })} placeholder="your-client-id" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-secondary mb-1">Scopes</label>
+                                <input type="text" value={newMcp.scopes} onChange={(e) => setNewMcp({ ...newMcp, scopes: e.target.value })} placeholder="read write" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-secondary mb-1">Auth URL</label>
+                                <input type="text" value={newMcp.auth_url} onChange={(e) => setNewMcp({ ...newMcp, auth_url: e.target.value })} placeholder="http://localhost:9999/auth (optional, discoverable)" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-secondary mb-1">Token URL</label>
+                                <input type="text" value={newMcp.token_url} onChange={(e) => setNewMcp({ ...newMcp, token_url: e.target.value })} placeholder="http://localhost:9999/token (optional, discoverable)" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
+                              </div>
+                            </div>
+                          )}
+                        </>
                       )}
                       <div className="flex items-center gap-2">
                         <input id="mcp-auto" type="checkbox" checked={newMcp.auto_connect} onChange={(e) => setNewMcp({ ...newMcp, auto_connect: e.target.checked })} className="rounded border-subtle text-primary-500 focus:ring-primary-500" />

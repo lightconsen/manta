@@ -211,6 +211,9 @@ pub async fn disconnect_mcp_server_handler(
                 let mut cfg_guard = state.config.write().await;
                 Arc::make_mut(&mut cfg_guard).mcp.servers.remove(&server_id);
             }
+            // Drop any stored OAuth tokens so a re-added server cannot reuse a
+            // stale/revoked token.
+            state.tools.mcp_manager.clear_oauth_token(&server_id).await;
             if let Some(config_path) = state.config_path.clone() {
                 let cfg_guard = state.config.read().await;
                 if let Err(e) = super::config::persist_config_atomic(&cfg_guard, &config_path).await

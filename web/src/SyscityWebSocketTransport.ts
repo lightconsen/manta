@@ -1153,6 +1153,11 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     command?: string;
     args?: string[];
     url?: string;
+    auth_type?: string;
+    client_id?: string;
+    auth_url?: string;
+    token_url?: string;
+    scopes?: string;
     auto_connect?: boolean;
   }): Promise<boolean> {
     try {
