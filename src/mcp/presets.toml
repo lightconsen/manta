@@ -55,7 +55,7 @@ transport = "stdio"
 [slack]
 display_name = "Slack"
 description = "Channel messaging, search, and workspace management"
-logo_url = "https://cdn.simpleicons.org/slack"
+logo_url = "https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-slack"]
 transport = "stdio"
@@ -110,7 +110,7 @@ scopes = ""
 [slack_remote]
 display_name = "Slack (Remote)"
 description = "Channel messaging, search, workspace management (remote)"
-logo_url = "https://cdn.simpleicons.org/slack"
+logo_url = "https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png"
 url = "https://mcp.slack.com/"
 transport = "streamable_http"
 auth_type = "oauth2"
