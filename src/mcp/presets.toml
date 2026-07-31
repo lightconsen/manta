@@ -89,29 +89,11 @@ auth_type = "oauth2"
 client_id = "test-client"
 scopes = ""
 
-[github_remote]
-display_name = "GitHub (Remote)"
-description = "Repository management, PRs, issues, code search (remote)"
-logo_url = "https://cdn.simpleicons.org/github"
-url = "https://api.githubcopilot.com/mcp/"
-transport = "streamable_http"
-auth_type = "oauth2"
-scopes = ""
-
-[linear_remote]
-display_name = "Linear (Remote)"
-description = "Issue tracking, sprint planning, project management (remote)"
-logo_url = "https://cdn.simpleicons.org/linear"
-url = "https://mcp.linear.app/"
-transport = "streamable_http"
-auth_type = "oauth2"
-scopes = ""
-
-[slack_remote]
-display_name = "Slack (Remote)"
-description = "Channel messaging, search, workspace management (remote)"
-logo_url = "https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png"
-url = "https://mcp.slack.com/"
+[notion_remote]
+display_name = "Notion (Remote)"
+description = "Read and write Notion pages and databases (remote)"
+logo_url = "https://cdn.simpleicons.org/notion"
+url = "https://mcp.notion.com/mcp"
 transport = "streamable_http"
 auth_type = "oauth2"
 scopes = ""
