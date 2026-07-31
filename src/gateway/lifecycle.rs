@@ -224,8 +224,8 @@ pub(crate) async fn start_gateway(
         info!("DelegateTool registered with agent resolver for target_agent routing");
     }
 
-    // Auto-connect MCP servers
-    init_mcp_servers(&state, &config).await;
+    // Auto-connect MCP servers (non-blocking — HTTP listener starts immediately)
+    init_mcp_servers(state.clone(), &config);
 
     // Initialize configured channels
     super::init::channels::init_channels(state.clone(), &config).await?;
@@ -1066,14 +1066,20 @@ pub(crate) async fn register_mcp_tools(
 }
 
 /// Auto-connect MCP servers from config and register their tools.
-pub(crate) async fn init_mcp_servers(state: &Arc<GatewayState>, config: &GatewayConfig) {
+///
+/// Runs all connections concurrently in the background so they never block
+/// the HTTP listener from starting.
+pub(crate) fn init_mcp_servers(state: Arc<GatewayState>, config: &GatewayConfig) {
     let servers = &config.mcp.servers;
     if servers.is_empty() {
         debug!("No MCP servers configured");
         return;
     }
 
-    info!("Auto-connecting {} configured MCP server(s)…", servers.len());
+    info!(
+        "Auto-connecting {} configured MCP server(s) (background)…",
+        servers.len()
+    );
 
     for (server_id, server_config) in servers {
         if !server_config.auto_connect {
@@ -1081,23 +1087,23 @@ pub(crate) async fn init_mcp_servers(state: &Arc<GatewayState>, config: &Gateway
             continue;
         }
 
-        match state
-            .tools
-            .mcp_manager
-            .connect(server_id, server_config.clone())
-            .await
-        {
-            Ok(tools) => {
-                info!(
-                    "✅ MCP server '{}' connected: {} tool(s) discovered",
-                    server_id,
-                    tools.len()
-                );
-                register_mcp_tools(state, server_id, &tools, server_config.max_tools).await;
+        let bg_state = state.clone();
+        let sid = server_id.clone();
+        let cfg = server_config.clone();
+        tokio::spawn(async move {
+            match bg_state.tools.mcp_manager.connect(&sid, cfg.clone()).await {
+                Ok(tools) => {
+                    info!(
+                        "✅ MCP server '{}' connected: {} tool(s) discovered",
+                        sid,
+                        tools.len()
+                    );
+                    register_mcp_tools(&bg_state, &sid, &tools, cfg.max_tools).await;
+                }
+                Err(e) => {
+                    warn!("Failed to connect MCP server '{}': {}", sid, e);
+                }
             }
-            Err(e) => {
-                warn!("Failed to connect MCP server '{}': {}", server_id, e);
-            }
-        }
+        });
     }
 }
