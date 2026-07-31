@@ -271,10 +271,6 @@ impl OAuthManagerActor {
             crate::error::SyscityError::Internal("Remote MCP server has no URL".to_string())
         })?;
 
-        // 1. Discover OAuth endpoints via well-known URL
-        let origin = McpManager::origin_from_url(url);
-        let well_known_url = format!("{origin}/.well-known/oauth-authorization-server");
-
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
@@ -284,43 +280,16 @@ impl OAuthManagerActor {
                 ))
             })?;
 
-        let discovery_response = http_client
-            .get(&well_known_url)
-            .send()
-            .await
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!(
-                    "OAuth discovery failed for '{server_id}': {e}"
-                ))
-            })?;
-
-        if !discovery_response.status().is_success() {
-            return Err(crate::error::SyscityError::Internal(format!(
-                "OAuth discovery failed for '{server_id}': HTTP {}",
-                discovery_response.status()
-            )));
-        }
-
-        let discovery: serde_json::Value = discovery_response.json().await.map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "Failed to parse OAuth discovery document: {e}"
-            ))
-        })?;
-
-        let authorization_endpoint = discovery["authorization_endpoint"]
-            .as_str()
-            .ok_or_else(|| {
-                crate::error::SyscityError::Internal(
-                    "Missing authorization_endpoint in OAuth discovery".to_string(),
-                )
-            })?
-            .to_string();
-
-        let token_endpoint = discovery["token_endpoint"].as_str().ok_or_else(|| {
-            crate::error::SyscityError::Internal(
-                "Missing token_endpoint in OAuth discovery".to_string(),
-            )
-        })?.to_string();
+        // 1. Discover OAuth endpoints: explicit config → RFC 8414 well-known →
+        //    RFC 9728 protected-resource metadata → known providers (GitHub).
+        let (authorization_endpoint, token_endpoint) =
+            discover_oauth_endpoints(&http_client, url, config)
+                .await
+                .map_err(|e| {
+                    crate::error::SyscityError::Internal(format!(
+                        "OAuth discovery failed for '{server_id}': {e}"
+                    ))
+                })?;
 
         // 2. Generate PKCE challenge
         let code_verifier = McpManager::generate_code_verifier();
@@ -538,6 +507,7 @@ impl OAuthManagerActor {
             match http_client
                 .post(&tokens.token_url)
                 .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Accept", "application/json")
                 .body(body)
                 .send()
                 .await
@@ -647,6 +617,189 @@ fn urlencoding(input: &str) -> String {
 }
 
 // ─────────────────────────────────────────────
+// OAuth endpoint discovery
+// ─────────────────────────────────────────────
+
+/// An `(authorization_endpoint, token_endpoint)` pair.
+type DiscoveredEndpoints = (String, String);
+
+/// Discover OAuth endpoints for a remote MCP server.
+///
+/// Strategy (in order of preference):
+/// 1. Explicit `auth_url` / `token_url` from the server config.
+/// 2. RFC 8414 well-known metadata at the server origin
+///    (`/.well-known/oauth-authorization-server`).
+/// 3. RFC 9728 protected-resource metadata: the server advertises a
+///    `resource_metadata` URL via the `WWW-Authenticate` challenge; that
+///    document lists `authorization_servers`, each probed for RFC 8414 / OIDC
+///    metadata.
+/// 4. A registry of known providers that publish no discovery document at all
+///    (e.g. GitHub's OAuth endpoints).
+async fn discover_oauth_endpoints(
+    http: &reqwest::Client,
+    server_url: &str,
+    config: &McpServerConfig,
+) -> Result<DiscoveredEndpoints, String> {
+    // 1. Explicit config wins.
+    if let (Some(auth), Some(token)) = (config.auth_url.as_deref(), config.token_url.as_deref()) {
+        return Ok((auth.to_string(), token.to_string()));
+    }
+
+    let origin = McpManager::origin_from_url(server_url);
+
+    // 2. RFC 8414 well-known document at the server origin.
+    let well_known = format!("{origin}/.well-known/oauth-authorization-server");
+    if let Some(endpoints) = fetch_metadata_endpoints(http, &well_known).await {
+        return Ok(endpoints);
+    }
+
+    // 3. RFC 9728 protected-resource metadata.
+    let mut auth_servers: Vec<String> = Vec::new();
+    if let Some(resource_meta_url) = fetch_resource_metadata_url(http, server_url).await {
+        auth_servers = fetch_authorization_servers(http, &resource_meta_url).await;
+        for issuer in &auth_servers {
+            let rfc8414 = format!("{issuer}/.well-known/oauth-authorization-server");
+            if let Some(endpoints) = fetch_metadata_endpoints(http, &rfc8414).await {
+                return Ok(endpoints);
+            }
+            let oidc = format!("{issuer}/.well-known/openid-configuration");
+            if let Some(endpoints) = fetch_metadata_endpoints(http, &oidc).await {
+                return Ok(endpoints);
+            }
+        }
+    }
+
+    // 4. Known-provider registry, matched against the advertised authorization
+    //    servers first, then the server origin.
+    let issuers = auth_servers
+        .iter()
+        .map(|s| s.as_str())
+        .chain(std::iter::once(origin.as_str()));
+    for issuer in issuers {
+        if let Some(endpoints) = known_provider_endpoints(issuer) {
+            return Ok(endpoints);
+        }
+    }
+
+    Err(format!(
+        "the server exposes no OAuth metadata ({well_known} is unavailable and no \
+         supported resource-metadata discovery was found); set auth_url and token_url \
+         in the server config to use it directly"
+    ))
+}
+
+/// Fetch an RFC 8414 / OIDC discovery document and extract the OAuth endpoints.
+async fn fetch_metadata_endpoints(
+    http: &reqwest::Client,
+    metadata_url: &str,
+) -> Option<DiscoveredEndpoints> {
+    let resp = http.get(metadata_url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let doc: serde_json::Value = resp.json().await.ok()?;
+    let authorization_endpoint = doc.get("authorization_endpoint")?.as_str()?;
+    let token_endpoint = doc.get("token_endpoint")?.as_str()?;
+    Some((authorization_endpoint.to_string(), token_endpoint.to_string()))
+}
+
+/// Send an unauthenticated request to the MCP endpoint and return the
+/// `resource_metadata` URL advertised in the `WWW-Authenticate` challenge
+/// (RFC 9728). Probes with a POST `initialize` first, then a plain GET.
+async fn fetch_resource_metadata_url(
+    http: &reqwest::Client,
+    server_url: &str,
+) -> Option<String> {
+    let request = http
+        .post(server_url)
+        .header("Accept", "application/json, text/event-stream")
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": { "name": "syscity", "version": env!("CARGO_PKG_VERSION") },
+            }
+        }));
+    let resp = request.send().await.ok()?;
+    if let Some(meta) = www_authenticate_resource_metadata(&resp) {
+        return Some(meta);
+    }
+
+    let resp = http.get(server_url).send().await.ok()?;
+    www_authenticate_resource_metadata(&resp)
+}
+
+/// Extract the `resource_metadata` parameter from a response's
+/// `WWW-Authenticate` header if present.
+fn www_authenticate_resource_metadata(resp: &reqwest::Response) -> Option<String> {
+    let header = resp.headers().get("www-authenticate")?.to_str().ok()?;
+    extract_resource_metadata(header)
+}
+
+/// Extract the `resource_metadata` value from a `WWW-Authenticate` header,
+/// e.g. `Bearer ..., resource_metadata="https://example.com/metadata"`.
+fn extract_resource_metadata(www_authenticate: &str) -> Option<String> {
+    let needle = "resource_metadata=";
+    let idx = www_authenticate.find(needle)?;
+    let after = &www_authenticate[idx + needle.len()..];
+    let trimmed = after.trim_start();
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    } else {
+        let end = after.find(',').unwrap_or(after.len());
+        Some(after[..end].trim().to_string())
+    }
+}
+
+/// Fetch an RFC 9728 protected-resource metadata document and return the
+/// listed authorization server issuers.
+async fn fetch_authorization_servers(
+    http: &reqwest::Client,
+    resource_meta_url: &str,
+) -> Vec<String> {
+    let Ok(resp) = http.get(resource_meta_url).send().await else {
+        return Vec::new();
+    };
+    if !resp.status().is_success() {
+        return Vec::new();
+    }
+    let Ok(doc) = resp.json::<serde_json::Value>().await else {
+        return Vec::new();
+    };
+    doc.get("authorization_servers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Hardcoded OAuth endpoints for providers that publish no discovery document.
+/// Keyed by hostname (scheme and path are ignored).
+fn known_provider_endpoints(issuer: &str) -> Option<DiscoveredEndpoints> {
+    let host = issuer
+        .strip_prefix("https://")
+        .or_else(|| issuer.strip_prefix("http://"))
+        .unwrap_or(issuer)
+        .split('/')
+        .next()
+        .unwrap_or(issuer);
+    match host {
+        "github.com" | "api.github.com" => Some((
+            "https://github.com/login/oauth/authorize".to_string(),
+            "https://github.com/login/oauth/access_token".to_string(),
+        )),
+        _ => None,
+    }
+}
+
+// ─────────────────────────────────────────────
 // Callback server
 // ─────────────────────────────────────────────
 
@@ -745,6 +898,7 @@ async fn run_callback_server(
     let token_response = http_client
         .post(token_url)
         .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "application/json")
         .body(token_body)
         .send()
         .await
