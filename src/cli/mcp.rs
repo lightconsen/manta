@@ -137,7 +137,7 @@ pub async fn run_mcp_command(command: &McpCommands) -> Result<()> {
                         println!("Connected to MCP server '{}'", server_id);
                         println!("{}", text);
                     } else if status == reqwest::StatusCode::UNAUTHORIZED {
-                        handle_mcp_auth(&client, &server_id, &text).await?;
+                        handle_mcp_auth(&client, server_id, &text).await?;
                         // Retry once after authorization completes.
                         match client.post(&endpoint).json(&body).send().await {
                             Ok(resp) => {

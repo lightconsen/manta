@@ -497,7 +497,7 @@ impl McpManager {
         use sha2::{Digest, Sha256};
 
         let hash = Sha256::digest(verifier.as_bytes());
-        URL_SAFE_NO_PAD.encode(&hash)
+        URL_SAFE_NO_PAD.encode(hash)
     }
 
     /// Generate a random state parameter.
