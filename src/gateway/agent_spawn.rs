@@ -16,7 +16,7 @@ use crate::agent::{Agent, AgentConfig};
 use crate::config::CapabilitiesConfig;
 use crate::tools::approval::ApprovalQueue;
 use crate::tools::delegate_tool::AgentResolver;
-use crate::mcp::{McpConnectionTool, McpManager};
+use crate::mcp::McpManager;
 use crate::tools::ToolRegistry;
 
 // ── GatewayAgentResolver ─────────────────────────────────────────────────────
@@ -1078,7 +1078,7 @@ pub(crate) async fn create_default_tool_registry(
     }
 
     // Register MCP (Model Context Protocol) connection tool (uses shared manager)
-    registry.register(Box::new(McpConnectionTool::with_manager(mcp_manager)));
+    registry.register(Box::new(crate::mcp::McpConnectionTool::with_manager(mcp_manager)));
 
     // Register plan management tool
     registry.register(Box::new(UpdatePlanTool::new()));
