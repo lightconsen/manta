@@ -49,6 +49,7 @@ directory under `src/`.
 ### Tools & extension
 - [tools](modules/tools.md) — tool registry, RBAC, approval, circuit breakers
 - [mcp](modules/mcp.md) — Model Context Protocol (stdio/sse/http)
+- [MCP Servers Guide](mcp-servers.md) — how to add and connect MCP servers
 - [acp](modules/acp.md) — Agent Control Protocol / sub-agents
 - [plugins](modules/plugins.md) — WASM plugin sandbox + hot-reload
 - [canvas](modules/canvas.md) — A2UI dynamic UI components
