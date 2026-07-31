@@ -1503,7 +1503,9 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                       {mcpServers.map((srv) => (
                         <div key={srv.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
                           <div className="flex items-center gap-3">
-                            <span className="text-sm text-primary font-medium">{srv.id}</span>
+                            <span className="text-sm text-primary font-medium">
+                              {srv.id.charAt(0).toUpperCase() + srv.id.slice(1)}
+                            </span>
                             <span className="text-xs px-1.5 py-0.5 rounded bg-sidebar text-secondary uppercase">{srv.transport}</span>
                             {srv.connected ? (
                               <span className="text-xs px-1.5 py-0.5 rounded bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400">connected</span>
