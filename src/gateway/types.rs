@@ -4,6 +4,8 @@
 //! Re-exported via `pub use types::*;` so all existing import paths
 //! (`crate::gateway::HealthReport`, etc.) continue to work.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
@@ -187,6 +189,8 @@ pub struct McpConnectRequest {
     pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     pub url: Option<String>,
     #[serde(default = "mcp_default_timeout")]
     pub timeout_secs: u64,
@@ -198,6 +202,13 @@ pub struct McpConnectRequest {
     pub auth_url: Option<String>,
     pub token_url: Option<String>,
     pub scopes: Option<String>,
+    /// Persist the server with auto-connect on startup (default: true)
+    #[serde(default = "mcp_default_true")]
+    pub auto_connect: bool,
+}
+
+fn mcp_default_true() -> bool {
+    true
 }
 
 /// Request body for reading a resource

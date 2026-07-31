@@ -8,6 +8,7 @@ use tracing::warn;
 
 use crate::gateway::GatewayState;
 use crate::gateway::*;
+use crate::mcp::McpServerConfig;
 
 // ─────────────────────────────────────────────
 // MCP REST API handlers (9.5)
@@ -23,12 +24,16 @@ pub async fn list_mcp_servers_handler(State(state): State<Arc<GatewayState>>) ->
 }
 
 /// Connect to an MCP server and persist config.
+///
+/// OAuth-aware: when the server uses `auth_type = "oauth2"` and no valid token
+/// is stored, starts the OAuth flow and returns `401` with an `auth_url` for
+/// the caller to open in a browser. Once authorized, retry this endpoint.
 pub async fn connect_mcp_server_handler(
     State(state): State<Arc<GatewayState>>,
     Path(server_id): Path<String>,
     Json(body): Json<McpConnectRequest>,
 ) -> impl IntoResponse {
-    use crate::mcp::{McpServerConfig, McpTransport};
+    use crate::mcp::{McpClient, McpServerConfig, McpTransport};
 
     let transport = match body.transport.as_str() {
         "sse" => McpTransport::Sse,
@@ -40,11 +45,94 @@ pub async fn connect_mcp_server_handler(
         transport,
         command: body.command,
         args: body.args,
+        env: body.env,
         url: body.url,
         timeout_secs: body.timeout_secs,
         max_tools: body.max_tools,
+        auto_connect: body.auto_connect,
+        auth_type: body.auth_type,
+        client_id: body.client_id,
+        auth_url: body.auth_url,
+        token_url: body.token_url,
+        scopes: body.scopes,
         ..Default::default()
     };
+
+    // OAuth servers: require a stored token before connecting.
+    if config.auth_type.as_deref() == Some("oauth2") {
+        if !state.tools.mcp_manager.has_stored_token(&server_id).await {
+            // No valid stored token — start the browser OAuth flow.
+            match state
+                .tools
+                .mcp_manager
+                .start_oauth_flow(&server_id, &config)
+                .await
+            {
+                Ok(auth_url) => {
+                    return (
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        Json(serde_json::json!({
+                            "error": "auth_required",
+                            "server_id": server_id,
+                            "auth_url": auth_url,
+                        })),
+                    );
+                }
+                Err(e) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": e.to_string() })),
+                    );
+                }
+            }
+        }
+
+        // Valid token: connect a client pre-authenticated with the access token.
+        let tokens = state.tools.mcp_manager.load_stored_token(&server_id).await;
+        if let Some(tokens) = tokens {
+            let mut client = McpClient::new().with_timeout(config.timeout_secs);
+            client.set_access_token(tokens.access_token.clone());
+            match client.connect(config.clone()).await {
+                Ok(()) => {
+                    let tools = client.get_tools().to_vec();
+                    let client_arc = Arc::new(tokio::sync::RwLock::new(client));
+                    if let Err(e) = state
+                        .tools
+                        .mcp_manager
+                        .register_client(&server_id, client_arc, config.clone())
+                        .await
+                    {
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({ "error": e.to_string() })),
+                        );
+                    }
+                    super::super::lifecycle::register_mcp_tools(
+                        &state,
+                        &server_id,
+                        &tools,
+                        config.max_tools,
+                    )
+                    .await;
+                    persist_mcp_config(&state, &server_id, config).await;
+                    return (
+                        axum::http::StatusCode::OK,
+                        Json(serde_json::json!({
+                            "server_id": server_id,
+                            "tool_count": tools.len(),
+                            "tools": tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
+                        })),
+                    );
+                }
+                Err(e) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": e.to_string() })),
+                    );
+                }
+            }
+        }
+    }
 
     // Connect before persisting — if connection fails, don't save bad config.
     match state
@@ -56,21 +144,7 @@ pub async fn connect_mcp_server_handler(
         Ok(tools) => {
             super::super::lifecycle::register_mcp_tools(&state, &server_id, &tools, body.max_tools)
                 .await;
-
-            // Persist to config.toml so the server reconnects on daemon restart.
-            {
-                let mut cfg_guard = state.config.write().await;
-                let cfg = Arc::make_mut(&mut cfg_guard);
-                cfg.mcp.servers.insert(server_id.clone(), config);
-            }
-            if let Some(ref config_path) = state.config_path {
-                let cfg_guard = state.config.read().await;
-                if let Err(e) = super::config::persist_config_atomic(&cfg_guard, config_path).await
-                {
-                    warn!("MCP server connected but failed to persist config: {}", e);
-                }
-            }
-
+            persist_mcp_config(&state, &server_id, config).await;
             (
                 axum::http::StatusCode::OK,
                 Json(serde_json::json!({
@@ -85,6 +159,39 @@ pub async fn connect_mcp_server_handler(
             Json(serde_json::json!({ "error": e.to_string() })),
         ),
     }
+}
+
+/// Persist an MCP server config to config.toml (best-effort).
+async fn persist_mcp_config(
+    state: &Arc<GatewayState>,
+    server_id: &str,
+    config: McpServerConfig,
+) {
+    {
+        let mut cfg_guard = state.config.write().await;
+        Arc::make_mut(&mut cfg_guard)
+            .mcp
+            .servers
+            .insert(server_id.to_string(), config);
+    }
+    if let Some(ref config_path) = state.config_path {
+        let cfg_guard = state.config.read().await;
+        if let Err(e) = super::config::persist_config_atomic(&cfg_guard, config_path).await {
+            warn!("MCP server connected but failed to persist config: {}", e);
+        }
+    }
+}
+
+/// Check whether OAuth authorization has completed for a server.
+pub async fn mcp_auth_status_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(server_id): Path<String>,
+) -> impl IntoResponse {
+    let authorized = state.tools.mcp_manager.has_stored_token(&server_id).await;
+    Json(serde_json::json!({
+        "server_id": server_id,
+        "authorized": authorized,
+    }))
 }
 
 /// Disconnect from an MCP server and remove from persisted config.

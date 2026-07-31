@@ -786,6 +786,10 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
             "/api/v1/mcp/servers/:server_id/connect",
             post(super::connect_mcp_server_handler),
         )
+        .route(
+            "/api/v1/mcp/servers/:server_id/auth/status",
+            get(super::mcp_auth_status_handler),
+        )
         .route("/api/v1/mcp/servers/:server_id", delete(super::disconnect_mcp_server_handler))
         .route("/api/v1/mcp/servers/:server_id/tools", get(super::list_mcp_tools_handler))
         .route(

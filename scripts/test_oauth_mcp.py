@@ -108,6 +108,65 @@ class OAuthMcpHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
 
+        # ── MCP endpoint (Streamable HTTP) ──
+        if parsed.path == "/mcp":
+            auth = self.headers.get("Authorization", "")
+            if not auth.startswith("Bearer "):
+                self._json(401, {"error": "unauthorized"})
+                return
+            token = auth[len("Bearer "):]
+            if token not in tokens.values():
+                self._json(401, {"error": "invalid_token"})
+                return
+
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode()
+            try:
+                req = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {"error": "bad_request"})
+                return
+
+            method = req.get("method", "")
+            req_id = req.get("id")
+
+            if method == "initialize":
+                result = {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {"listChanged": False}},
+                        "serverInfo": {"name": "test-oauth-mcp", "version": "1.0.0"},
+                    },
+                }
+            elif method == "tools/list":
+                result = {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "tools": [{
+                            "name": "echo_oauth",
+                            "description": "Echo the input back",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"message": {"type": "string"}},
+                            },
+                        }]
+                    },
+                }
+            else:
+                result = {"jsonrpc": "2.0", "id": req_id, "result": {}}
+
+            # SSE-framed response as required by streamable_http clients
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(f"data: {json.dumps(result)}\n\n".encode())
+            self.wfile.flush()
+            return
+
         # ── Token exchange ──
         if parsed.path == "/token":
             content_length = int(self.headers.get("Content-Length", 0))
