@@ -50,6 +50,7 @@ fn make_test_screenshot(img: &DynamicImage) -> syscity::computer::types::Screens
         width,
         height,
         timestamp: std::time::Instant::now(),
+        file_path: None,
     }
 }
 

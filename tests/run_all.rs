@@ -168,7 +168,7 @@ async fn eval_validate_all_yaml() {
         let is_suite = path
             .parent()
             .and_then(|p| p.file_name())
-            .map(|n| n == "suites")
+            .map(|n| n == "suites" || n == "calibration")
             .unwrap_or(false);
 
         if is_suite {
@@ -186,7 +186,7 @@ async fn eval_validate_all_yaml() {
                 Ok(tasks) => {
                     validated += 1;
                     let name = path.file_name().unwrap().to_string_lossy();
-                    println!("  ✓ {} ({} tasks)", name, tasks.len());
+                    println!("  ✓ {} ({} tasks)", name, tasks.tasks.len());
                 }
                 Err(e) => errors.push(format!("{:?}: {}", path, e)),
             }

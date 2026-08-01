@@ -101,6 +101,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         config: Arc::new(RwLock::new(Arc::new(config))),
         start_time: std::time::Instant::now(),
         config_path: None,
+        mcps_path: None,
         auth: syscity::gateway::state::AuthState {
             manager: Arc::new(syscity::security::AuthManager::new()),
             pairing_store: Arc::new(syscity::security::pairing::PairingStore::new()),

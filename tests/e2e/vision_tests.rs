@@ -97,6 +97,7 @@ fn create_white_text_screenshot(width: u32, height: u32, text_pixels: &[(u32, u3
         width,
         height,
         timestamp: std::time::Instant::now(),
+        file_path: None,
     }
 }
 
@@ -143,6 +144,7 @@ fn create_synthetic_ui_screenshot(width: u32, height: u32) -> Screenshot {
         width,
         height,
         timestamp: std::time::Instant::now(),
+        file_path: None,
     }
 }
 
