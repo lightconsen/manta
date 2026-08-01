@@ -918,18 +918,19 @@ async fn run_quality_gate_check(
 
     // 1. Resolve provider from config
     let provider_type = config.model_provider.clone();
-    let api_key = config
-        .providers
-        .get(&provider_type)
-        .and_then(|p| {
-            if !p.api_key.is_empty() {
-                Some(p.api_key.clone())
+    let api_key = match config.providers.get(&provider_type) {
+        Some(p) => {
+            let key = p.effective_key().await;
+            if key.is_empty() {
+                None
             } else {
-                p.api_keys.first().cloned()
+                Some(key)
             }
-        })
-        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-        .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+        }
+        None => None,
+    }
+    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+    .or_else(|| std::env::var("OPENAI_API_KEY").ok());
 
     let base_url = config
         .providers

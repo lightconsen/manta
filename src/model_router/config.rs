@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::model_router::auth_profile::{AuthKeyConfig, AuthProfileConfig};
+use crate::secrets::StoreRef;
 
 // ------------------------------------------------------------------
 // ModelAlias
@@ -92,6 +93,49 @@ impl std::fmt::Display for ProviderType {
 }
 
 // ------------------------------------------------------------------
+// ProviderKey
+// ------------------------------------------------------------------
+
+/// A provider API key: either an inline value or a reference into the secret
+/// store (resolved at provider-creation time).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProviderKey {
+    /// Inline (plaintext) API key, or an env/file shorthand.
+    Inline(String),
+    /// Reference into the secret store (`{ namespace, entity, kind }`).
+    Ref(StoreRef),
+}
+
+impl ProviderKey {
+    /// The inline value, if this key is inline (not a store reference).
+    pub fn inline_value(&self) -> Option<&str> {
+        match self {
+            ProviderKey::Inline(s) => Some(s),
+            ProviderKey::Ref(_) => None,
+        }
+    }
+}
+
+impl Default for ProviderKey {
+    fn default() -> Self {
+        ProviderKey::Inline(String::new())
+    }
+}
+
+impl From<String> for ProviderKey {
+    fn from(s: String) -> Self {
+        ProviderKey::Inline(s)
+    }
+}
+
+impl From<&str> for ProviderKey {
+    fn from(s: &str) -> Self {
+        ProviderKey::Inline(s.to_string())
+    }
+}
+
+// ------------------------------------------------------------------
 // ProviderConfig
 // ------------------------------------------------------------------
 
@@ -100,9 +144,9 @@ impl std::fmt::Display for ProviderType {
 pub struct ProviderConfig {
     /// Provider type
     pub provider_type: ProviderType,
-    /// API key (single key, backward compatible)
-    #[serde(alias = "api_key")]
-    pub api_key: String,
+    /// API key (single key, backward compatible). Inline value or store ref.
+    #[serde(alias = "api_key", default)]
+    pub api_key: ProviderKey,
     /// Multiple API keys for rotation (optional, takes precedence over api_key)
     #[serde(default, alias = "api_keys")]
     pub api_keys: Vec<String>,
@@ -139,8 +183,9 @@ fn default_retry_delay_ms() -> u64 {
 
 impl ProviderConfig {
     /// Get the effective API key to use for provider creation.
-    /// Prefers auth_profile keys, then api_keys, then single api_key.
-    pub fn effective_key(&self) -> String {
+    /// Prefers auth_profile keys, then api_keys, then single api_key (inline
+    /// value, or a store ref resolved via the secret store).
+    pub async fn effective_key(&self) -> String {
         if let Some(ref profile) = self.auth_profile {
             if let Some(first) = profile.keys.first() {
                 return first.key.clone();
@@ -149,24 +194,33 @@ impl ProviderConfig {
         if let Some(first) = self.api_keys.first() {
             return first.clone();
         }
-        self.api_key.clone()
+        match &self.api_key {
+            ProviderKey::Inline(s) => s.clone(),
+            ProviderKey::Ref(r) => match crate::secrets::resolve_store_ref(r).await {
+                Ok(Some(v)) if !v.is_empty() => v,
+                _ => String::new(),
+            },
+        }
     }
 
     /// Build an AuthProfileConfig from this config if one is not explicitly
-    /// set.
+    /// set. Only the inline key participates (a store ref is resolved by
+    /// `effective_key` at provider-creation time).
     pub fn derived_auth_profile_config(&self) -> AuthProfileConfig {
         if let Some(ref profile) = self.auth_profile {
             return profile.clone();
         }
         let mut keys = Vec::new();
-        if !self.api_key.is_empty() {
-            keys.push(AuthKeyConfig {
-                key: self.api_key.clone(),
-                label: "primary".to_string(),
-            });
+        if let Some(key) = self.api_key.inline_value() {
+            if !key.is_empty() {
+                keys.push(AuthKeyConfig {
+                    key: key.to_string(),
+                    label: "primary".to_string(),
+                });
+            }
         }
         for (i, key) in self.api_keys.iter().enumerate() {
-            if i == 0 && key == &self.api_key {
+            if i == 0 && self.api_key.inline_value() == Some(key.as_str()) {
                 continue; // avoid duplicate
             }
             keys.push(AuthKeyConfig {
@@ -696,7 +750,7 @@ mod tests {
     async fn provider_config_effective_key_prefers_auth_profile() {
         let mut config = ProviderConfig {
             provider_type: ProviderType::OpenAi,
-            api_key: "single-key".to_string(),
+            api_key: "single-key".to_string().into(),
             api_keys: vec!["multi-key".to_string()],
             auth_profile: None,
             oauth: None,
@@ -707,7 +761,7 @@ mod tests {
         };
 
         // api_keys takes precedence over api_key
-        assert_eq!(config.effective_key(), "multi-key");
+        assert_eq!(config.effective_key().await, "multi-key");
 
         // auth_profile takes precedence over both
         config.auth_profile = Some(AuthProfileConfig {
@@ -718,7 +772,50 @@ mod tests {
             cooldown_secs: 60,
             max_failures: 3,
         });
-        assert_eq!(config.effective_key(), "profile-key");
+        assert_eq!(config.effective_key().await, "profile-key");
+    }
+
+    #[tokio::test]
+    async fn provider_config_effective_key_resolves_store_ref() {
+        // A store ref is resolved through the secret store routing; with no
+        // keyring (test build) this falls back to the file backend, which has
+        // no entry for the synthetic id → empty key.
+        let config = ProviderConfig {
+            provider_type: ProviderType::OpenAi,
+            api_key: ProviderKey::Ref(crate::secrets::StoreRef::new("llm", "nope", "api_key")),
+            api_keys: Vec::new(),
+            auth_profile: None,
+            oauth: None,
+            base_url: None,
+            timeout: Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
+        assert_eq!(config.effective_key().await, "");
+    }
+
+    #[test]
+    fn provider_key_untagged_serde() {
+        // Plain string → Inline; a map → Ref(StoreRef).
+        let inline: ProviderConfig =
+            toml::from_str("provider_type = \"open_ai\"\napi_key = \"sk-abc\"\n").unwrap();
+        match &inline.api_key {
+            ProviderKey::Inline(s) => assert_eq!(s, "sk-abc"),
+            ProviderKey::Ref(_) => panic!("expected inline"),
+        }
+
+        let refer: ProviderConfig = toml::from_str(
+            "provider_type = \"open_ai\"\napi_key = { namespace = \"llm\", entity = \"openai\", kind = \"api_key\" }\n",
+        )
+        .unwrap();
+        match &refer.api_key {
+            ProviderKey::Ref(r) => {
+                assert_eq!(r.namespace, "llm");
+                assert_eq!(r.entity, "openai");
+                assert_eq!(r.kind, "api_key");
+            }
+            ProviderKey::Inline(_) => panic!("expected store ref"),
+        }
     }
 
     #[test]

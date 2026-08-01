@@ -3,7 +3,7 @@
 //!
 //! Sensitive credentials are split across storage tiers:
 //! - `access_token` → in-memory cache only (never persisted).
-//! - `refresh_token` → `FileStore` namespace `mcp-oauth` (keyring in Phase 1).
+//! - `refresh_token` → routed store namespace `mcp-oauth` (keyring → file).
 //! - non-sensitive metadata (`token_url` / `client_id` / `expires_at`) → a
 //!   `0600` sidecar JSON under `~/.syscity/mcp_tokens/{id}.json`.
 
@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{info, warn};
 
 use crate::mcp::{McpEvent, McpManager, McpServerConfig};
-use crate::secrets::{FileStore, SecretId, SecretOrigin, SecretStore};
+use crate::secrets::{route_store, SecretId, SecretOrigin, SecretStore};
 
 // ─────────────────────────────────────────────
 // Token data
@@ -624,9 +624,9 @@ fn tokens_fresh(tokens: &OAuthTokens) -> bool {
     }
 }
 
-/// The refresh-token backend (`~/.syscity/secrets/mcp-oauth`).
-fn refresh_token_store() -> FileStore {
-    FileStore::new("mcp-oauth")
+/// The refresh-token backend — routed (keyring → `~/.syscity/secrets/mcp-oauth`).
+fn refresh_token_store() -> Arc<dyn SecretStore> {
+    route_store("mcp-oauth")
 }
 
 fn refresh_token_id(server_id: &str) -> SecretId {

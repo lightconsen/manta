@@ -36,7 +36,7 @@ pub use classifier::{KeywordTaskClassifier, TaskClassifierImpl};
 pub use config::{
     provider_presets, CircuitState, CostAwareConfig, FallbackEntry, ModelAlias, ModelCost,
     ModelRouterConfig, OAuthConfig, ProviderConfig, ProviderHealth, ProviderHealthInfo,
-    ProviderInfo, ProviderPreset, ProviderType, TaskRoutingRule, TaskType,
+    ProviderInfo, ProviderKey, ProviderPreset, ProviderType, TaskRoutingRule, TaskType,
 };
 pub use failure_class::FailureClass;
 pub use gateway_client::{GatewayClient, HttpGatewayClient};

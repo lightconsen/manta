@@ -185,7 +185,7 @@ impl ModelRouter {
             health.insert(name.clone(), ProviderHealth::default());
 
             if matches!(provider_config.provider_type, ProviderType::OpenAi) {
-                let api_key = provider_config.effective_key();
+                let api_key = provider_config.effective_key().await;
                 if !api_key.is_empty() {
                     let fetcher = OpenAiUsageFetcher::new(api_key);
                     let mut fetchers = self.usage_fetchers.write().await;
@@ -351,7 +351,7 @@ impl ModelRouter {
         &self,
         config: &ProviderConfig,
     ) -> crate::Result<Arc<dyn Provider + Send + Sync>> {
-        let api_key = config.effective_key();
+        let api_key = config.effective_key().await;
         let provider_type = config.provider_type.to_string();
 
         // Map legacy provider_type names to preset names
@@ -1781,7 +1781,7 @@ mod tests {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let config = ProviderConfig {
             provider_type: ProviderType::Anthropic,
-            api_key: "test-key".to_string(),
+            api_key: "test-key".to_string().into(),
             api_keys: vec![],
             auth_profile: None,
             oauth: None,
@@ -1806,7 +1806,7 @@ mod tests {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let config = ProviderConfig {
             provider_type: ProviderType::Anthropic,
-            api_key: "test-key".to_string(),
+            api_key: "test-key".to_string().into(),
             api_keys: vec![],
             auth_profile: None,
             oauth: None,
@@ -1875,7 +1875,7 @@ mod tests {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let config = ProviderConfig {
             provider_type: ProviderType::Anthropic,
-            api_key: "test-key".to_string(),
+            api_key: "test-key".to_string().into(),
             api_keys: vec![],
             auth_profile: None,
             oauth: None,
@@ -1915,7 +1915,7 @@ mod tests {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let config = ProviderConfig {
             provider_type: ProviderType::OpenAi,
-            api_key: "key".to_string(),
+            api_key: "key".to_string().into(),
             api_keys: vec![],
             auth_profile: None,
             oauth: None,

@@ -173,7 +173,7 @@ fn apply_env_provider_overrides(config: &mut crate::gateway::GatewayConfig) {
         if should_insert {
             let provider_config = crate::model_router::ProviderConfig {
                 provider_type,
-                api_key,
+                api_key: api_key.into(),
                 api_keys: Vec::new(),
                 auth_profile: None,
                 oauth: None,
@@ -196,7 +196,7 @@ fn apply_env_provider_overrides(config: &mut crate::gateway::GatewayConfig) {
         if should_insert {
             let provider_config = crate::model_router::ProviderConfig {
                 provider_type: crate::model_router::ProviderType::Anthropic,
-                api_key,
+                api_key: api_key.into(),
                 api_keys: Vec::new(),
                 auth_profile: None,
                 oauth: None,
@@ -219,7 +219,7 @@ fn apply_env_provider_overrides(config: &mut crate::gateway::GatewayConfig) {
         if should_insert {
             let provider_config = crate::model_router::ProviderConfig {
                 provider_type: crate::model_router::ProviderType::OpenAi,
-                api_key,
+                api_key: api_key.into(),
                 api_keys: Vec::new(),
                 auth_profile: None,
                 oauth: None,
@@ -1036,7 +1036,7 @@ mod tests {
             "openai".to_string(),
             ProviderConfig {
                 provider_type: ProviderType::OpenAi,
-                api_key: "config-openai-key".to_string(),
+                api_key: "config-openai-key".to_string().into(),
                 api_keys: Vec::new(),
                 auth_profile: None,
                 oauth: None,
@@ -1050,7 +1050,10 @@ mod tests {
 
         apply_env_provider_overrides(&mut config);
 
-        assert_eq!(config.providers["openai"].api_key, "env-openai-key");
+        assert_eq!(
+            config.providers["openai"].api_key,
+            crate::model_router::ProviderKey::Inline("env-openai-key".to_string())
+        );
         std::env::remove_var("OPENAI_API_KEY");
     }
 
@@ -1066,7 +1069,7 @@ mod tests {
             "openai".to_string(),
             ProviderConfig {
                 provider_type: ProviderType::OpenAi,
-                api_key: "config-openai-key".to_string(),
+                api_key: "config-openai-key".to_string().into(),
                 api_keys: Vec::new(),
                 auth_profile: None,
                 oauth: None,
@@ -1080,7 +1083,10 @@ mod tests {
 
         apply_env_provider_overrides(&mut config);
 
-        assert_eq!(config.providers["openai"].api_key, "config-openai-key");
+        assert_eq!(
+            config.providers["openai"].api_key,
+            crate::model_router::ProviderKey::Inline("config-openai-key".to_string())
+        );
         std::env::remove_var("OPENAI_API_KEY");
     }
 
@@ -1095,7 +1101,10 @@ mod tests {
 
         apply_env_provider_overrides(&mut config);
 
-        assert_eq!(config.providers["anthropic"].api_key, "env-anthropic-key");
+        assert_eq!(
+            config.providers["anthropic"].api_key,
+            crate::model_router::ProviderKey::Inline("env-anthropic-key".to_string())
+        );
         std::env::remove_var("ANTHROPIC_API_KEY");
     }
 }

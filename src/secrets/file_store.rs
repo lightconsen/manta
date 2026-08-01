@@ -170,6 +170,25 @@ impl SecretStore for FileStore {
     async fn has(&self, id: &SecretId) -> bool {
         matches!(self.get(id).await, Ok(Some(_)))
     }
+
+    // Whole-map operations forward to the inherent methods (which take
+    // precedence for concrete types); the trait versions exist so the methods
+    // are reachable through `Arc<dyn SecretStore>`.
+    async fn get_all(&self, entity: &str) -> crate::Result<HashMap<String, String>> {
+        FileStore::get_all(self, entity).await
+    }
+
+    async fn set_all(&self, entity: &str, map: &HashMap<String, String>) -> crate::Result<()> {
+        FileStore::set_all(self, entity, map).await
+    }
+
+    async fn delete_entity(&self, entity: &str) -> crate::Result<()> {
+        FileStore::delete_entity(self, entity).await
+    }
+
+    async fn has_entity(&self, entity: &str) -> bool {
+        FileStore::has_entity(self, entity).await
+    }
 }
 
 // ─────────────────────────────────────────────

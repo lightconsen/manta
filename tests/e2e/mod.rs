@@ -166,7 +166,7 @@ pub fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
             };
             let provider_config = ProviderConfig {
                 provider_type,
-                api_key: provider.api_key,
+                api_key: provider.api_key.into(),
                 api_keys: vec![],
                 auth_profile: None,
                 oauth: None,

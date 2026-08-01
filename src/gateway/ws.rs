@@ -2941,7 +2941,7 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
 
         let provider_config = crate::model_router::ProviderConfig {
             provider_type,
-            api_key: api_key.clone(),
+            api_key: api_key.clone().into(),
             api_keys: Vec::new(),
             auth_profile: None,
             oauth: None,
@@ -3071,9 +3071,7 @@ async fn handle_mcp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespon
     let mut servers: Vec<serde_json::Value> = Vec::new();
     for (id, cfg) in config_guard.mcp.servers.iter() {
         // Only a boolean — never the stored token values.
-        let env_configured = crate::secrets::FileStore::new("mcp-env")
-            .has_entity(id)
-            .await;
+        let env_configured = crate::secrets::route_store("mcp-env").has_entity(id).await;
         servers.push(serde_json::json!({
             "id": id,
             "transport": match cfg.transport {
@@ -3283,7 +3281,7 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
             .await
         {
             Ok(tools) => {
-                if let Err(e) = crate::secrets::FileStore::new("mcp-env")
+                if let Err(e) = crate::secrets::route_store("mcp-env")
                     .set_all(&payload.id, &env_literals)
                     .await
                 {
@@ -3334,7 +3332,7 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
     if has_env {
         // No synchronous connect to validate against (auto_connect off or
         // oauth) — persist the tokens so they are not dropped.
-        if let Err(e) = crate::secrets::FileStore::new("mcp-env")
+        if let Err(e) = crate::secrets::route_store("mcp-env")
             .set_all(&payload.id, &env_literals)
             .await
         {
@@ -3431,7 +3429,7 @@ async fn handle_mcp_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     state.tools.mcp_manager.clear_oauth_token(&payload.id).await;
 
     // Drop any stored env tokens too.
-    if let Err(e) = crate::secrets::FileStore::new("mcp-env")
+    if let Err(e) = crate::secrets::route_store("mcp-env")
         .delete_entity(&payload.id)
         .await
     {

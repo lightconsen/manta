@@ -11,7 +11,7 @@ use crate::mcp::{
     token_path_for, McpClient, McpEvent, McpHealth, McpHealthStatus, McpNotification,
     McpServerConfig, McpToolDefinition, OAuthCommand, OAuthManager, OAuthManagerActor, OAuthTokens,
 };
-use crate::secrets::{FileStore, SecretId, SecretStore};
+use crate::secrets::{route_store, SecretId};
 
 // ─────────────────────────────────────────────
 // McpConnectionMeta
@@ -201,10 +201,7 @@ impl McpManager {
         // Reconnect-after-restart: pull persisted tokens from the secret store
         // so the server spawns with them without the user re-entering them.
         // Inline (submitted) env wins over stored via entry().or_insert().
-        if let Ok(stored) = crate::secrets::FileStore::new("mcp-env")
-            .get_all(server_id)
-            .await
-        {
+        if let Ok(stored) = route_store("mcp-env").get_all(server_id).await {
             for (k, v) in stored {
                 config.resolved_env.entry(k).or_insert(v);
             }
@@ -580,7 +577,7 @@ impl McpManager {
             oauth.clear_token(server_id.to_string()).await;
         } else if let Ok(path) = token_path_for(server_id) {
             let _ = tokio::fs::remove_file(path).await;
-            let _ = FileStore::new("mcp-oauth")
+            let _ = route_store("mcp-oauth")
                 .delete(&SecretId::new("mcp-oauth", server_id, "refresh_token"))
                 .await;
         }

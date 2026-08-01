@@ -5,7 +5,16 @@
 //! resolution) coexists with this layer: the resolver turns config "references"
 //! into values, the store handles key/value persistence.
 
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::{Arc, OnceLock};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::SyscityError;
+use crate::secrets::file_store::FileStore;
+use crate::secrets::in_memory::MemoryStore;
+use crate::secrets::keyring_store::{probe_keyring, KeyringStore};
 
 /// Logical secret identifier — a value is an entry in a Tier 1/2 backend; a
 /// reference is a key in config.
@@ -66,10 +75,48 @@ pub enum SecretStoreTier {
     Memory,
 }
 
+/// A config-level reference into the secret store.
+///
+/// Serialized in config as `{ namespace = "...", entity = "...", kind = "..." }`
+/// (e.g. a provider's `api_key = { namespace = "llm", entity = "anthropic", kind = "api_key" }`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoreRef {
+    /// Namespace ("llm" | "mcp-env" | "channel" | ...).
+    pub namespace: String,
+    /// Entity (provider / server_id / channel id).
+    pub entity: String,
+    /// Kind ("api_key" | "refresh_token" | "secret").
+    pub kind: String,
+}
+
+impl StoreRef {
+    /// Construct a new store reference.
+    pub fn new(namespace: &str, entity: &str, kind: &str) -> Self {
+        Self {
+            namespace: namespace.to_string(),
+            entity: entity.to_string(),
+            kind: kind.to_string(),
+        }
+    }
+
+    /// Convert into the equivalent `SecretId`.
+    pub fn to_secret_id(&self) -> SecretId {
+        SecretId::new(&self.namespace, &self.entity, &self.kind)
+    }
+}
+
+impl fmt::Display for StoreRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}/{}", self.namespace, self.entity, self.kind)
+    }
+}
+
 /// Unified backend storage trait.
 ///
 /// Uses `async_trait` so it is dyn-compatible (`Arc<dyn SecretStore>` for
-/// backend routing).
+/// backend routing). The whole-map methods (`get_all`/`set_all`/...) default
+/// to "unsupported" — backends without a per-entity layout (memory) leave them
+/// unimplemented.
 #[async_trait::async_trait]
 pub trait SecretStore: Send + Sync {
     /// Read a secret; returns `Ok(None)` when absent or unreadable.
@@ -83,6 +130,28 @@ pub trait SecretStore: Send + Sync {
 
     /// Whether a secret exists.
     async fn has(&self, id: &SecretId) -> bool;
+
+    /// Read an entity's whole map (missing → empty map).
+    async fn get_all(&self, _entity: &str) -> crate::Result<HashMap<String, String>> {
+        Err(SyscityError::Internal("get_all is not supported by this backend".to_string()))
+    }
+
+    /// Overwrite an entity's whole map.
+    async fn set_all(&self, _entity: &str, _map: &HashMap<String, String>) -> crate::Result<()> {
+        Err(SyscityError::Internal("set_all is not supported by this backend".to_string()))
+    }
+
+    /// Delete an entity's whole store (missing is not an error).
+    async fn delete_entity(&self, _entity: &str) -> crate::Result<()> {
+        Err(SyscityError::Internal(
+            "delete_entity is not supported by this backend".to_string(),
+        ))
+    }
+
+    /// Whether an entity already has stored data.
+    async fn has_entity(&self, _entity: &str) -> bool {
+        false
+    }
 }
 
 /// Redacted Debug: the `SecretId` is shown, values are never visible.
@@ -92,11 +161,160 @@ impl fmt::Debug for dyn SecretStore {
     }
 }
 
+/// Layered backend: reads prefer the primary (keyring) and fall back to the
+/// secondary (file) on a miss; writes always go to the primary. Deletes clear
+/// both. Used while legacy file data may still exist alongside a live keyring.
+#[derive(Debug)]
+struct FallbackStore {
+    primary: Arc<dyn SecretStore>,
+    secondary: Arc<dyn SecretStore>,
+}
+
+#[async_trait::async_trait]
+impl SecretStore for FallbackStore {
+    async fn get(&self, id: &SecretId) -> crate::Result<Option<String>> {
+        match self.primary.get(id).await {
+            Ok(Some(v)) => Ok(Some(v)),
+            _ => self.secondary.get(id).await,
+        }
+    }
+
+    async fn set(&self, id: &SecretId, value: &str, origin: SecretOrigin) -> crate::Result<()> {
+        self.primary.set(id, value, origin).await
+    }
+
+    async fn delete(&self, id: &SecretId) -> crate::Result<()> {
+        self.primary.delete(id).await?;
+        self.secondary.delete(id).await
+    }
+
+    async fn has(&self, id: &SecretId) -> bool {
+        self.primary.has(id).await || self.secondary.has(id).await
+    }
+
+    async fn get_all(&self, entity: &str) -> crate::Result<HashMap<String, String>> {
+        if self.primary.has_entity(entity).await {
+            self.primary.get_all(entity).await
+        } else {
+            self.secondary.get_all(entity).await
+        }
+    }
+
+    async fn set_all(&self, entity: &str, map: &HashMap<String, String>) -> crate::Result<()> {
+        self.primary.set_all(entity, map).await
+    }
+
+    async fn delete_entity(&self, entity: &str) -> crate::Result<()> {
+        self.primary.delete_entity(entity).await?;
+        self.secondary.delete_entity(entity).await
+    }
+
+    async fn has_entity(&self, entity: &str) -> bool {
+        self.primary.has_entity(entity).await || self.secondary.has_entity(entity).await
+    }
+}
+
 /// Backend routing — picks a backend based on the secret id.
-///
-/// Phase 0 (no keyring): always file-backed. Phase 1 will prefer keyring based
-/// on the `BACKEND` probe result; memory-only classes (e.g. `access_token`)
-/// will route to a shared `MemoryStore`.
-pub fn choose_store(id: &SecretId) -> std::sync::Arc<dyn SecretStore> {
-    std::sync::Arc::new(crate::secrets::file_store::FileStore::new(&id.namespace))
+pub fn choose_store(id: &SecretId) -> Arc<dyn SecretStore> {
+    choose_store_with(id, probe_keyring())
+}
+
+/// Like `choose_store` but with an explicit keyring preference (test hook).
+pub fn choose_store_with(id: &SecretId, prefer_keyring: bool) -> Arc<dyn SecretStore> {
+    if id.kind == "access_token" {
+        return memory_store();
+    }
+    route_store_with(&id.namespace, prefer_keyring)
+}
+
+/// Namespace-level routing — every secret in a namespace shares a backend.
+pub fn route_store(namespace: &str) -> Arc<dyn SecretStore> {
+    route_store_with(namespace, probe_keyring())
+}
+
+/// Like `route_store` but with an explicit keyring preference (test hook).
+pub fn route_store_with(namespace: &str, prefer_keyring: bool) -> Arc<dyn SecretStore> {
+    if prefer_keyring {
+        Arc::new(FallbackStore {
+            primary: Arc::new(KeyringStore::new(namespace)),
+            secondary: Arc::new(FileStore::new(namespace)),
+        })
+    } else {
+        Arc::new(FileStore::new(namespace))
+    }
+}
+
+/// Shared memory-only backend for short-lived secrets (e.g. `access_token`).
+fn memory_store() -> Arc<dyn SecretStore> {
+    static STORE: OnceLock<Arc<dyn SecretStore>> = OnceLock::new();
+    STORE.get_or_init(|| Arc::new(MemoryStore::new())).clone()
+}
+
+/// Resolve a store reference to its current value via backend routing.
+pub async fn resolve_store_ref(r: &StoreRef) -> crate::Result<Option<String>> {
+    let id = r.to_secret_id();
+    let store = choose_store(&id);
+    store.get(&id).await
+}
+
+// ─────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_route_with_keyring_is_layered() {
+        let store = route_store_with("mcp-env", true);
+        // A layered store delegates to a concrete backend only for leaf ops;
+        // exercise it through the trait to prove the chain works end to end.
+        let id = SecretId::new("mcp-env", "probe", "secret");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            store
+                .set(&id, "v", SecretOrigin::UserEntered)
+                .await
+                .unwrap();
+            assert_eq!(store.get(&id).await.unwrap(), Some("v".to_string()));
+            assert!(store.has(&id).await);
+            store.delete(&id).await.unwrap();
+            assert!(!store.has(&id).await);
+        });
+    }
+
+    #[test]
+    fn test_route_without_keyring_is_file() {
+        let store = route_store_with("mcp-env", false);
+        // File-backed: entity-level ops are supported.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut map = HashMap::new();
+            map.insert("K".to_string(), "v".to_string());
+            store.set_all("e", &map).await.unwrap();
+            assert!(store.has_entity("e").await);
+            assert_eq!(store.get_all("e").await.unwrap()["K"], "v");
+            store.delete_entity("e").await.unwrap();
+            assert!(!store.has_entity("e").await);
+        });
+    }
+
+    #[test]
+    fn test_access_token_routes_to_memory() {
+        let id = SecretId::new("mcp-oauth", "s", "access_token");
+        let store = choose_store_with(&id, false);
+        // Memory store has no per-entity map support.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            store
+                .set(&id, "at", SecretOrigin::UserEntered)
+                .await
+                .unwrap();
+            assert_eq!(store.get(&id).await.unwrap(), Some("at".to_string()));
+            assert!(store.has(&id).await);
+            store.delete(&id).await.unwrap();
+            assert!(!store.has(&id).await);
+        });
+    }
 }

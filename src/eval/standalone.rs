@@ -86,21 +86,28 @@ pub async fn run_standalone_suite(
         .clone()
         .or_else(|| gateway_cfg.as_ref().map(|g| g.model.clone()));
 
-    let api_key = api_key_override.or_else(|| {
-        // Try the configured provider's api_key from GatewayConfig
-        gateway_cfg
-            .as_ref()
-            .and_then(|g| g.providers.get(&provider_type))
-            .and_then(|p| {
-                if !p.api_key.is_empty() {
-                    Some(p.api_key.clone())
-                } else {
-                    p.api_keys.first().cloned()
+    let api_key = match api_key_override {
+        Some(k) => Some(k),
+        None => {
+            // Try the configured provider's api_key from GatewayConfig
+            match gateway_cfg
+                .as_ref()
+                .and_then(|g| g.providers.get(&provider_type))
+            {
+                Some(p) => {
+                    let key = p.effective_key().await;
+                    if key.is_empty() {
+                        None
+                    } else {
+                        Some(key)
+                    }
                 }
-            })
+                None => None,
+            }
             .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-    });
+        }
+    };
 
     let base_url = base_url_override.or_else(|| {
         gateway_cfg

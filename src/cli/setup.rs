@@ -159,7 +159,7 @@ pub async fn run_setup() -> Result<()> {
     let existing_key = config
         .providers
         .get(&provider_name)
-        .map(|p| p.api_key.clone())
+        .and_then(|p| p.api_key.inline_value().map(|s| s.to_string()))
         .unwrap_or_default();
 
     let prompt = if existing_key.is_empty() {
@@ -211,7 +211,7 @@ pub async fn run_setup() -> Result<()> {
 
     let provider_config = crate::model_router::ProviderConfig {
         provider_type,
-        api_key: api_key.clone(),
+        api_key: api_key.clone().into(),
         api_keys: vec![],
         auth_profile: None,
         oauth: None,
