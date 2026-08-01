@@ -1,10 +1,15 @@
 //! OAuth 2.0 token management — types, manager handle, background actor,
 //! token persistence, and the PKCE authorization callback server.
+//!
+//! Sensitive credentials are split across storage tiers:
+//! - `access_token` → in-memory cache only (never persisted).
+//! - `refresh_token` → `FileStore` namespace `mcp-oauth` (keyring in Phase 1).
+//! - non-sensitive metadata (`token_url` / `client_id` / `expires_at`) → a
+//!   `0600` sidecar JSON under `~/.syscity/mcp_tokens/{id}.json`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -12,12 +17,15 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{info, warn};
 
 use crate::mcp::{McpEvent, McpManager, McpServerConfig};
+use crate::secrets::{FileStore, SecretId, SecretOrigin, SecretStore};
 
 // ─────────────────────────────────────────────
 // Token data
 // ─────────────────────────────────────────────
 
-/// OAuth 2.0 token data persisted to disk.
+/// OAuth 2.0 token data handed to consumers (a live access token plus the
+/// context needed to refresh it). Only used in memory — see the module doc
+/// for how the fields are persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthTokens {
     pub access_token: String,
@@ -31,6 +39,19 @@ pub struct OAuthTokens {
     pub client_id: String,
 }
 
+/// Non-sensitive OAuth metadata persisted to the `mcp_tokens/{id}.json`
+/// sidecar. Never contains an access or refresh token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OAuthMetadata {
+    /// Token endpoint URL used for refreshing.
+    token_url: String,
+    /// OAuth client ID used for token refresh.
+    client_id: String,
+    /// Expiry of the last known access token (seconds since epoch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<i64>,
+}
+
 // ─────────────────────────────────────────────
 // Actor types
 // ─────────────────────────────────────────────
@@ -40,12 +61,10 @@ struct PendingFlowState {
     cancel_tx: oneshot::Sender<()>,
 }
 
-/// A cached token plus the disk file's last-modified time. The disk file is
-/// authoritative: if its mtime differs from the cached value the cache entry
-/// is stale (externally modified or deleted) and must be reloaded.
+/// A cached token. Access tokens live only in this in-memory cache; nothing
+/// here is ever written to disk.
 struct CachedToken {
     tokens: OAuthTokens,
-    mtime: Option<SystemTime>,
 }
 
 /// Commands sent to the `OAuthManagerActor` via its mpsc channel.
@@ -70,7 +89,7 @@ pub(crate) enum OAuthCommand {
         server_id: String,
         result: crate::Result<OAuthTokens>,
     },
-    /// Drop the cached token and delete the persisted token file (e.g. when a
+    /// Drop the cached token and delete the persisted token data (e.g. when a
     /// server is removed).
     ClearToken {
         server_id: String,
@@ -120,7 +139,8 @@ impl OAuthManager {
         let _ = self.cmd_tx.send(OAuthCommand::CancelFlow { server_id });
     }
 
-    /// Get cached OAuth tokens for a server.
+    /// Get cached OAuth tokens for a server, refreshing on demand if the
+    /// cached access token is missing or expired.
     pub async fn get_token(&self, server_id: String) -> Option<OAuthTokens> {
         let (resp_tx, resp_rx) = oneshot::channel();
         let _ = self
@@ -129,7 +149,8 @@ impl OAuthManager {
         resp_rx.await.ok().flatten()
     }
 
-    /// Check if valid (non-expired) tokens exist for a server.
+    /// Check if an access token can be obtained for a server (fresh cache or
+    /// a refresh path).
     pub async fn has_token(&self, server_id: String) -> bool {
         let (resp_tx, resp_rx) = oneshot::channel();
         let _ = self
@@ -138,7 +159,7 @@ impl OAuthManager {
         resp_rx.await.unwrap_or(false)
     }
 
-    /// Clear the cached token and delete the persisted token file.
+    /// Clear the cached token and delete all persisted token data.
     pub async fn clear_token(&self, server_id: String) {
         let _ = self.cmd_tx.send(OAuthCommand::ClearToken { server_id });
     }
@@ -179,8 +200,8 @@ impl OAuthManagerActor {
 
     /// Main run loop: process commands + periodic token refresh.
     async fn run(mut self) {
-        self.preload_cache().await;
-
+        // Access tokens are memory-only, so there is nothing to preload from
+        // disk; tokens are (re)acquired on demand in `handle_get_token`.
         let mut refresh_interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
 
         loop {
@@ -211,32 +232,6 @@ impl OAuthManagerActor {
                 }
                 _ = refresh_interval.tick() => {
                     self.refresh_expiring_tokens().await;
-                }
-            }
-        }
-    }
-
-    /// Preload token cache by reading all token files from disk.
-    async fn preload_cache(&mut self) {
-        let dir = mcp_tokens_dir();
-        if !dir.exists() {
-            return;
-        }
-        let mut entries = match tokio::fs::read_dir(&dir).await {
-            Ok(e) => e,
-            Err(_) => return,
-        };
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            if let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) {
-                if let Ok(data) = tokio::fs::read_to_string(&path).await {
-                    if let Ok(tokens) = serde_json::from_str::<OAuthTokens>(&data) {
-                        let mtime = disk_mtime(&path).await;
-                        self.token_cache.insert(id, CachedToken { tokens, mtime });
-                    }
                 }
             }
         }
@@ -358,49 +353,59 @@ impl OAuthManagerActor {
         }
     }
 
+    /// Fetch tokens for a server. Prefers a fresh in-memory access token;
+    /// otherwise performs an on-demand refresh using the persisted refresh
+    /// token, so a restarted process can still connect without re-authorizing.
     async fn handle_get_token(&mut self, server_id: &str) -> Option<OAuthTokens> {
-        let path = token_path_for(server_id);
-        let disk_mtime = disk_mtime(&path).await;
-
-        // Cache hit only if the disk file's mtime matches — otherwise the
-        // cache is stale (externally edited/deleted token) and must be
-        // reloaded from disk.
         if let Some(cached) = self.token_cache.get(server_id) {
-            if cached.mtime == disk_mtime {
+            if tokens_fresh(&cached.tokens) {
                 return Some(cached.tokens.clone());
             }
             self.token_cache.remove(server_id);
         }
 
-        let data = tokio::fs::read_to_string(&path).await.ok()?;
-        let tokens: OAuthTokens = serde_json::from_str(&data).ok()?;
-        self.token_cache.insert(
-            server_id.to_string(),
-            CachedToken {
-                tokens: tokens.clone(),
-                mtime: disk_mtime,
-            },
-        );
+        let refresh_token = load_refresh_token(server_id).await?;
+        let meta = load_metadata(server_id).await?;
+
+        let tokens = match self
+            .refresh_via_http(server_id, &meta, &refresh_token)
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                warn!("On-demand OAuth refresh failed for '{server_id}': {e}");
+                return None;
+            }
+        };
+
+        self.token_cache
+            .insert(server_id.to_string(), CachedToken { tokens: tokens.clone() });
         Some(tokens)
     }
 
+    /// Whether an access token can be obtained: a fresh cached token, or a
+    /// persisted refresh path.
     async fn handle_has_token(&mut self, server_id: &str) -> bool {
-        let Some(tokens) = self.handle_get_token(server_id).await else {
-            return false;
-        };
-
-        if let Some(expires_at) = tokens.expires_at {
-            let now = chrono::Utc::now().timestamp();
-            if now >= expires_at - 60 {
-                return false;
+        if let Some(cached) = self.token_cache.get(server_id) {
+            if tokens_fresh(&cached.tokens) {
+                return true;
             }
         }
-        true
+        load_refresh_token(server_id).await.is_some() && load_metadata(server_id).await.is_some()
     }
 
     async fn handle_clear_token(&mut self, server_id: &str) {
         self.token_cache.remove(server_id);
-        let path = token_path_for(server_id);
+        if let Err(e) = delete_refresh_token(server_id).await {
+            warn!("Failed to delete refresh token for '{server_id}': {e}");
+        }
+        let path = match token_path_for(server_id) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Invalid server id for token deletion '{server_id}': {e}");
+                return;
+            }
+        };
         if let Err(e) = tokio::fs::remove_file(&path).await {
             if e.kind() != std::io::ErrorKind::NotFound {
                 warn!("Failed to delete token file for '{server_id}': {e}");
@@ -419,17 +424,32 @@ impl OAuthManagerActor {
 
         match result {
             Ok(tokens) => {
-                // Persist to disk first, then cache with the file's mtime so
-                // the cache matches the authoritative on-disk state.
-                let tokens_dir = mcp_tokens_dir();
-                let _ = tokio::fs::create_dir_all(&tokens_dir).await;
-                let token_path = tokens_dir.join(format!("{server_id}.json"));
-                if let Ok(json) = serde_json::to_string(&tokens) {
-                    let _ = tokio::fs::write(&token_path, &json).await;
+                // Split persistence: access token stays in memory only; the
+                // refresh token and non-sensitive metadata go to disk.
+                persist_metadata(
+                    server_id,
+                    &OAuthMetadata {
+                        token_url: tokens.token_url.clone(),
+                        client_id: tokens.client_id.clone(),
+                        expires_at: tokens.expires_at,
+                    },
+                )
+                .await
+                .map_err(|e| {
+                    warn!("Failed to persist OAuth metadata for '{server_id}': {e}");
+                })
+                .ok();
+                if let Some(refresh) = &tokens.refresh_token {
+                    persist_refresh_token(server_id, refresh)
+                        .await
+                        .map_err(|e| {
+                            warn!("Failed to persist refresh token for '{server_id}': {e}");
+                        })
+                        .ok();
                 }
-                let mtime = disk_mtime(&token_path).await;
+
                 self.token_cache
-                    .insert(server_id.to_string(), CachedToken { tokens: tokens.clone(), mtime });
+                    .insert(server_id.to_string(), CachedToken { tokens: tokens.clone() });
 
                 self.emit_event(McpEvent::AuthComplete {
                     server_id: server_id.to_string(),
@@ -465,81 +485,117 @@ impl OAuthManagerActor {
             .collect();
 
         for (server_id, tokens) in &expiring {
-            let http_client = match reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-            {
-                Ok(c) => c,
-                Err(_) => continue,
+            let meta = OAuthMetadata {
+                token_url: tokens.token_url.clone(),
+                client_id: tokens.client_id.clone(),
+                expires_at: tokens.expires_at,
             };
+            let refresh = tokens.refresh_token.clone().unwrap_or_default();
 
-            let body = format!(
-                "grant_type=refresh_token&refresh_token={}&client_id={}",
-                tokens.refresh_token.as_deref().unwrap_or(""),
-                tokens.client_id
-            );
-
-            match http_client
-                .post(&tokens.token_url)
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .header("Accept", "application/json")
-                .body(body)
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<serde_json::Value>().await {
-                        Ok(data) => {
-                            let new_access = data["access_token"]
-                                .as_str()
-                                .map(String::from)
-                                .unwrap_or_else(|| tokens.access_token.clone());
-                            let new_refresh = data["refresh_token"]
-                                .as_str()
-                                .map(String::from)
-                                .or_else(|| tokens.refresh_token.clone());
-                            let new_expires = data["expires_in"]
-                                .as_i64()
-                                .map(|secs| chrono::Utc::now().timestamp() + secs);
-
-                            let updated = OAuthTokens {
-                                access_token: new_access,
-                                token_url: tokens.token_url.clone(),
-                                refresh_token: new_refresh,
-                                expires_at: new_expires,
-                                client_id: tokens.client_id.clone(),
-                            };
-
-                            // Persist to disk, then cache with the file's mtime
-                            let tokens_dir = mcp_tokens_dir();
-                            let token_path = tokens_dir.join(format!("{server_id}.json"));
-                            if let Ok(json) = serde_json::to_string(&updated) {
-                                let _ = tokio::fs::write(&token_path, &json).await;
-                            }
-                            let mtime = disk_mtime(&token_path).await;
-                            self.token_cache
-                                .insert(server_id.clone(), CachedToken { tokens: updated, mtime });
-
-                            info!("OAuth token refreshed for '{server_id}'");
-
-                            self.emit_event(McpEvent::TokenRefreshed {
-                                server_id: server_id.clone(),
-                            })
-                            .await;
-                        }
-                        Err(e) => {
-                            warn!("Failed to parse refresh token response for '{server_id}': {e}");
-                        }
+            match self.refresh_via_http(server_id, &meta, &refresh).await {
+                Ok(updated) => {
+                    persist_metadata(
+                        server_id,
+                        &OAuthMetadata {
+                            token_url: updated.token_url.clone(),
+                            client_id: updated.client_id.clone(),
+                            expires_at: updated.expires_at,
+                        },
+                    )
+                    .await
+                    .map_err(|e| {
+                        warn!("Failed to persist refreshed metadata for '{server_id}': {e}");
+                    })
+                    .ok();
+                    if let Some(r) = &updated.refresh_token {
+                        persist_refresh_token(server_id, r).await.map_err(|e| {
+                            warn!("Failed to persist refreshed refresh token for '{server_id}': {e}");
+                        }).ok();
                     }
-                }
-                Ok(resp) => {
-                    warn!("Token refresh failed for '{server_id}': HTTP {}", resp.status());
+                    self.token_cache
+                        .insert(server_id.clone(), CachedToken { tokens: updated });
+
+                    info!("OAuth token refreshed for '{server_id}'");
+
+                    self.emit_event(McpEvent::TokenRefreshed { server_id: server_id.clone() })
+                        .await;
                 }
                 Err(e) => {
-                    warn!("Token refresh request failed for '{server_id}': {e}");
+                    warn!("Token refresh failed for '{server_id}': {e}");
                 }
             }
         }
+    }
+
+    /// Perform a refresh-token grant over HTTP and return the refreshed tokens.
+    async fn refresh_via_http(
+        &self,
+        server_id: &str,
+        meta: &OAuthMetadata,
+        refresh_token: &str,
+    ) -> crate::Result<OAuthTokens> {
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {e}"))
+            })?;
+
+        let body = format!(
+            "grant_type=refresh_token&refresh_token={}&client_id={}",
+            refresh_token, meta.client_id
+        );
+
+        let resp = http_client
+            .post(&meta.token_url)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!(
+                    "Token refresh request failed for '{server_id}': {e}"
+                ))
+            })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let error_text = resp.text().await.unwrap_or_default();
+            return Err(crate::error::SyscityError::Internal(format!(
+                "Token refresh failed for '{server_id}': HTTP {status} - {error_text}"
+            )));
+        }
+
+        let data: serde_json::Value = resp.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "Failed to parse refresh response for '{server_id}': {e}"
+            ))
+        })?;
+
+        let new_access = data["access_token"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| {
+                crate::error::SyscityError::Internal(format!(
+                    "Missing access_token in refresh response for '{server_id}'"
+                ))
+            })?;
+        let new_refresh = data["refresh_token"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| refresh_token.to_string());
+        let new_expires = data["expires_in"]
+            .as_i64()
+            .map(|secs| chrono::Utc::now().timestamp() + secs);
+
+        Ok(OAuthTokens {
+            access_token: new_access,
+            token_url: meta.token_url.clone(),
+            refresh_token: Some(new_refresh),
+            expires_at: new_expires,
+            client_id: meta.client_id.clone(),
+        })
     }
 }
 
@@ -547,22 +603,104 @@ impl OAuthManagerActor {
 // Token persistence
 // ─────────────────────────────────────────────
 
-/// Directory for MCP OAuth token storage (~/.syscity/mcp_tokens).
+/// Directory for MCP OAuth metadata (~/.syscity/mcp_tokens).
 pub fn mcp_tokens_dir() -> PathBuf {
     crate::dirs::syscity_dir().join("mcp_tokens")
 }
 
-/// Path to the token file for a specific server.
-pub fn token_path_for(server_id: &str) -> PathBuf {
-    mcp_tokens_dir().join(format!("{}.json", server_id))
+/// Path to the metadata file for a specific server. The server id is sanitized
+/// so it cannot escape the tokens directory.
+pub fn token_path_for(server_id: &str) -> crate::Result<PathBuf> {
+    let id = crate::secrets::sanitize_entity(server_id)?;
+    Ok(mcp_tokens_dir().join(format!("{id}.json")))
 }
 
-/// Last-modified time of a file, or `None` if it does not exist. Falls back
-/// to UNIX_EPOCH on filesystems without modification-time support so the
-/// cache still matches disk.
-async fn disk_mtime(path: &Path) -> Option<SystemTime> {
-    let meta = tokio::fs::metadata(path).await.ok()?;
-    Some(meta.modified().unwrap_or(std::time::UNIX_EPOCH))
+/// Whether a token bundle has a currently-usable access token (unexpired, or
+/// no expiry recorded).
+fn tokens_fresh(tokens: &OAuthTokens) -> bool {
+    match tokens.expires_at {
+        Some(exp) => chrono::Utc::now().timestamp() < exp - 60,
+        None => true,
+    }
+}
+
+/// The refresh-token backend (`~/.syscity/secrets/mcp-oauth`).
+fn refresh_token_store() -> FileStore {
+    FileStore::new("mcp-oauth")
+}
+
+fn refresh_token_id(server_id: &str) -> SecretId {
+    SecretId::new("mcp-oauth", server_id, "refresh_token")
+}
+
+/// Persist a refresh token for a server.
+async fn persist_refresh_token(server_id: &str, refresh: &str) -> crate::Result<()> {
+    refresh_token_store()
+        .set(&refresh_token_id(server_id), refresh, SecretOrigin::SystemGenerated)
+        .await
+}
+
+/// Load a persisted refresh token for a server.
+async fn load_refresh_token(server_id: &str) -> Option<String> {
+    refresh_token_store()
+        .get(&refresh_token_id(server_id))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Delete a persisted refresh token for a server (missing is not an error).
+async fn delete_refresh_token(server_id: &str) -> crate::Result<()> {
+    refresh_token_store()
+        .delete(&refresh_token_id(server_id))
+        .await
+}
+
+/// Write non-sensitive OAuth metadata to the sidecar JSON (atomic + `0600`).
+async fn persist_metadata(server_id: &str, meta: &OAuthMetadata) -> crate::Result<()> {
+    let path = token_path_for(server_id)?;
+    let dir = mcp_tokens_dir();
+    tokio::fs::create_dir_all(&dir).await?;
+    set_dir_perms(&dir).await?;
+
+    let json = serde_json::to_string(meta)?;
+    let tmp = path.with_extension("json.tmp");
+    tokio::fs::write(&tmp, json).await?;
+    set_file_perms(&tmp).await?;
+    tokio::fs::rename(&tmp, &path).await?;
+    Ok(())
+}
+
+/// Read non-sensitive OAuth metadata from the sidecar JSON, if present.
+async fn load_metadata(server_id: &str) -> Option<OAuthMetadata> {
+    let path = token_path_for(server_id).ok()?;
+    let data = tokio::fs::read_to_string(&path).await.ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+#[cfg(unix)]
+async fn set_dir_perms(dir: &Path) -> crate::Result<()> {
+    tokio::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).await?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn set_dir_perms(_dir: &Path) -> crate::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn set_file_perms(path: &Path) -> crate::Result<()> {
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn set_file_perms(_path: &Path) -> crate::Result<()> {
+    Ok(())
 }
 
 /// Minimal percent-encoding for OAuth URL parameters.
@@ -902,4 +1040,75 @@ async fn run_callback_server(
         expires_at,
         client_id: client_id.to_string(),
     })
+}
+
+// ─────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_token_path_for_sanitizes() {
+        assert!(token_path_for("github").is_ok());
+        assert!(token_path_for("github-main").is_ok());
+        assert!(token_path_for("").is_err());
+        assert!(token_path_for("..").is_err());
+        assert!(token_path_for("../x").is_err());
+        assert!(token_path_for("a/b").is_err());
+    }
+
+    #[test]
+    fn test_metadata_serialization_roundtrip() {
+        let meta = OAuthMetadata {
+            token_url: "https://example.com/token".to_string(),
+            client_id: "syscity".to_string(),
+            expires_at: Some(1_700_000_000),
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: OAuthMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.token_url, meta.token_url);
+        assert_eq!(back.client_id, meta.client_id);
+        assert_eq!(back.expires_at, meta.expires_at);
+    }
+
+    #[test]
+    fn test_metadata_drops_unknown_fields() {
+        // Old-format files carry access_token/refresh_token; the metadata
+        // parser must ignore them rather than fail.
+        let json = r#"{
+            "access_token": "at_secret",
+            "refresh_token": "rt_secret",
+            "token_url": "https://example.com/token",
+            "client_id": "syscity",
+            "expires_at": 1700000000
+        }"#;
+        let meta: OAuthMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.client_id, "syscity");
+    }
+
+    #[test]
+    fn test_tokens_fresh() {
+        let now = chrono::Utc::now().timestamp();
+        let fresh = OAuthTokens {
+            access_token: "at".to_string(),
+            token_url: "https://example.com/token".to_string(),
+            refresh_token: Some("rt".to_string()),
+            expires_at: Some(now + 1000),
+            client_id: "syscity".to_string(),
+        };
+        assert!(tokens_fresh(&fresh));
+
+        let expired = OAuthTokens {
+            expires_at: Some(now - 1000),
+            ..fresh.clone()
+        };
+        assert!(!tokens_fresh(&expired));
+
+        // No expiry recorded → treated as fresh.
+        let no_expiry = OAuthTokens { expires_at: None, ..fresh };
+        assert!(tokens_fresh(&no_expiry));
+    }
 }

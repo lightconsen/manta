@@ -10,7 +10,6 @@
 
 mod client;
 mod config;
-mod env_store;
 mod manager;
 mod oauth;
 mod tools;
@@ -25,7 +24,6 @@ pub const DEFAULT_PRESETS_TOML: &str = include_str!("presets.toml");
 
 pub use client::McpClient;
 pub use config::{McpConfig, McpServerConfig, McpSettings, McpTransport};
-pub use env_store::{delete, env_path_for, has, load, mcp_env_dir, save};
 pub use manager::{McpConnectionMeta, McpManager};
 pub use oauth::{mcp_tokens_dir, token_path_for, OAuthManager, OAuthTokens};
 pub(crate) use oauth::{OAuthCommand, OAuthManagerActor};

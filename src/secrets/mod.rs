@@ -16,6 +16,21 @@
 //! [providers.custom]
 //! api_key = { source = "file", path = "/run/secrets/api_key" }
 //! ```
+//!
+//! The storage backend (`SecretStore`) coexists with the reference resolver
+//! (`SecretResolver`):
+//! - `store.rs` — `SecretId` / `SecretOrigin` / `SecretStore` trait / tier routing.
+//! - `file_store.rs` — Tier 2 file backend (absorbs the retired `mcp/env_store.rs`).
+//! - `in_memory.rs` — Tier 3 zeroize memory backend.
+//! - `keyring_store.rs` — Tier 1 OS keyring backend (introduced in Phase 1).
+
+mod file_store;
+mod in_memory;
+mod store;
+
+pub use file_store::{migrate_legacy_mcp_env, sanitize_entity, secrets_root_dir, FileStore};
+pub use in_memory::MemoryStore;
+pub use store::{choose_store, SecretId, SecretOrigin, SecretStore, SecretStoreTier};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

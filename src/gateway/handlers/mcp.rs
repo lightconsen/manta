@@ -211,7 +211,10 @@ pub async fn disconnect_mcp_server_handler(
             // stale/revoked token.
             state.tools.mcp_manager.clear_oauth_token(&server_id).await;
             // Drop any stored env tokens too.
-            if let Err(e) = crate::mcp::delete(&server_id).await {
+            if let Err(e) = crate::secrets::FileStore::new("mcp-env")
+                .delete_entity(&server_id)
+                .await
+            {
                 warn!("Failed to delete MCP env store for {}: {}", server_id, e);
             }
             if let Some(config_path) = state.config_path.clone() {

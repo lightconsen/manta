@@ -3071,7 +3071,9 @@ async fn handle_mcp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespon
     let mut servers: Vec<serde_json::Value> = Vec::new();
     for (id, cfg) in config_guard.mcp.servers.iter() {
         // Only a boolean — never the stored token values.
-        let env_configured = crate::mcp::has(id).await;
+        let env_configured = crate::secrets::FileStore::new("mcp-env")
+            .has_entity(id)
+            .await;
         servers.push(serde_json::json!({
             "id": id,
             "transport": match cfg.transport {
@@ -3281,7 +3283,10 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
             .await
         {
             Ok(tools) => {
-                if let Err(e) = crate::mcp::save(&payload.id, &env_literals).await {
+                if let Err(e) = crate::secrets::FileStore::new("mcp-env")
+                    .set_all(&payload.id, &env_literals)
+                    .await
+                {
                     return WsResponse::err(
                         &req.id,
                         "MCP_ENV_SAVE_FAILED",
@@ -3329,7 +3334,10 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
     if has_env {
         // No synchronous connect to validate against (auto_connect off or
         // oauth) — persist the tokens so they are not dropped.
-        if let Err(e) = crate::mcp::save(&payload.id, &env_literals).await {
+        if let Err(e) = crate::secrets::FileStore::new("mcp-env")
+            .set_all(&payload.id, &env_literals)
+            .await
+        {
             return WsResponse::err(
                 &req.id,
                 "MCP_ENV_SAVE_FAILED",
@@ -3423,7 +3431,10 @@ async fn handle_mcp_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     state.tools.mcp_manager.clear_oauth_token(&payload.id).await;
 
     // Drop any stored env tokens too.
-    if let Err(e) = crate::mcp::delete(&payload.id).await {
+    if let Err(e) = crate::secrets::FileStore::new("mcp-env")
+        .delete_entity(&payload.id)
+        .await
+    {
         warn!("Failed to delete MCP env store for {}: {}", payload.id, e);
     }
 

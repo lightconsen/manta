@@ -241,6 +241,12 @@ impl Gateway {
         let (routed_tx, routed_rx) = mpsc::channel(1000);
         let shutdown_token = CancellationToken::new();
 
+        // One-time migration of the legacy ~/.syscity/mcp_env store into
+        // ~/.syscity/secrets/mcp-env (idempotent; no-op when absent).
+        if let Err(e) = crate::secrets::migrate_legacy_mcp_env().await {
+            warn!("Legacy mcp_env migration failed: {}", e);
+        }
+
         let storage_init = init::storage::init_storage(&config).await?;
         let storage = storage_init.storage;
         let unified_vector_store = storage_init.unified_vector_store;

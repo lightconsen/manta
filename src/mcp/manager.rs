@@ -11,6 +11,7 @@ use crate::mcp::{
     token_path_for, McpClient, McpEvent, McpHealth, McpHealthStatus, McpNotification,
     McpServerConfig, McpToolDefinition, OAuthCommand, OAuthManager, OAuthManagerActor, OAuthTokens,
 };
+use crate::secrets::{FileStore, SecretId, SecretStore};
 
 // ─────────────────────────────────────────────
 // McpConnectionMeta
@@ -197,10 +198,13 @@ impl McpManager {
         config: McpServerConfig,
     ) -> crate::Result<Vec<McpToolDefinition>> {
         let mut config = config;
-        // Reconnect-after-restart: pull persisted tokens from the env store so
-        // the server spawns with them without the user re-entering them.
+        // Reconnect-after-restart: pull persisted tokens from the secret store
+        // so the server spawns with them without the user re-entering them.
         // Inline (submitted) env wins over stored via entry().or_insert().
-        if let Ok(stored) = crate::mcp::load(server_id).await {
+        if let Ok(stored) = crate::secrets::FileStore::new("mcp-env")
+            .get_all(server_id)
+            .await
+        {
             for (k, v) in stored {
                 config.resolved_env.entry(k).or_insert(v);
             }
@@ -517,38 +521,27 @@ impl McpManager {
 // ─────────────────────────────────────────────
 
 impl McpManager {
-    /// Load stored OAuth tokens for a server (delegates to OAuthManager actor).
+    /// Load stored OAuth tokens for a server (delegates to OAuthManager actor,
+    /// which refreshes on demand).
     pub async fn load_stored_token(&self, server_id: &str) -> Option<OAuthTokens> {
         match &self.oauth {
             Some(oauth) => oauth.get_token(server_id.to_string()).await,
             None => {
-                // Fallback: read from disk directly
-                let path = token_path_for(server_id);
-                let data = tokio::fs::read_to_string(&path).await.ok()?;
-                serde_json::from_str(&data).ok()
+                // No OAuth actor running. Access tokens are memory-only and
+                // cannot be recovered from disk, so there is nothing to hand
+                // out (only reachable for temporary reconnect managers).
+                warn!("load_stored_token called with no OAuth manager");
+                None
             }
         }
     }
 
-    /// Check if stored OAuth tokens exist and are not expired.
+    /// Check if an access token can be obtained for a server (fresh cache or a
+    /// persisted refresh path).
     pub async fn has_stored_token(&self, server_id: &str) -> bool {
         match &self.oauth {
             Some(oauth) => oauth.has_token(server_id.to_string()).await,
-            None => {
-                // Fallback: read from disk directly
-                match self.load_stored_token(server_id).await {
-                    Some(tokens) => {
-                        if let Some(expires_at) = tokens.expires_at {
-                            let now = chrono::Utc::now().timestamp();
-                            if now >= expires_at - 60 {
-                                return false;
-                            }
-                        }
-                        true
-                    }
-                    None => false,
-                }
-            }
+            None => false,
         }
     }
 
@@ -579,13 +572,17 @@ impl McpManager {
         }
     }
 
-    /// Clear stored OAuth tokens for a server (cache + disk file). Called when
-    /// a server is removed so a re-added server cannot reuse stale tokens.
+    /// Clear stored OAuth tokens for a server (memory cache + persisted token
+    /// data). Called when a server is removed so a re-added server cannot
+    /// reuse stale tokens.
     pub async fn clear_oauth_token(&self, server_id: &str) {
         if let Some(oauth) = &self.oauth {
             oauth.clear_token(server_id.to_string()).await;
-        } else {
-            let _ = tokio::fs::remove_file(token_path_for(server_id)).await;
+        } else if let Ok(path) = token_path_for(server_id) {
+            let _ = tokio::fs::remove_file(path).await;
+            let _ = FileStore::new("mcp-oauth")
+                .delete(&SecretId::new("mcp-oauth", server_id, "refresh_token"))
+                .await;
         }
     }
 }

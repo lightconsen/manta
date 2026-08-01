@@ -20,6 +20,7 @@ agents perceive and act on your computer.
 | [OS Capability Architecture](os.md) | Physical/desktop capability model |
 | [Protocol](protocol.md) | WebSocket RPC + ACP protocol surface |
 | [Security Configuration](security-config.md) | Auth, rate limiting, CORS/CSP, device pairing |
+| [Secret Storage](secret-storage.md) | Sensitive-info inventory + keyring/file storage design |
 | [Self-Upgrade](self-upgrade.md) | In-place upgrade flow |
 | [State Snapshot](state-snapshot.md) | State capture / restore |
 | [Tools Testing](tools_testing.md) | How tools are tested |
