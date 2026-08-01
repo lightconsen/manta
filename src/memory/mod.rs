@@ -88,8 +88,7 @@ pub use vector::VectorMemoryService;
 pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 
 /// Memory entry type discriminant for type-safe memory categorization
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-#[serde(tag = "type", content = "value")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum MemoryEntryType {
     /// Fact memory (objective information)
     #[default]
@@ -166,6 +165,51 @@ impl std::fmt::Display for MemoryEntryType {
 impl From<MemoryEntryType> for String {
     fn from(mem_type: MemoryEntryType) -> Self {
         mem_type.as_str().to_string()
+    }
+}
+
+/// Serializes `MemoryEntryType` as its canonical lowercase string (e.g.
+/// `"fact"`), matching `as_str()`/`From<String>` and the DB column format.
+impl Serialize for MemoryEntryType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Deserializes both the canonical plain-string form (`"fact"`) and the legacy
+/// adjacently-tagged form (`{"type":"Fact"}` / `{"type":"Custom","value":"x"}`)
+/// written by older builds, so existing archives remain readable.
+impl<'de> Deserialize<'de> for MemoryEntryType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum MemoryEntryTypeRepr {
+            Str(String),
+            Tagged {
+                r#type: String,
+                #[serde(default)]
+                value: Option<serde_json::Value>,
+            },
+        }
+        match MemoryEntryTypeRepr::deserialize(deserializer)? {
+            MemoryEntryTypeRepr::Str(s) => Ok(MemoryEntryType::from(s)),
+            MemoryEntryTypeRepr::Tagged { r#type, value } => {
+                if r#type == "Custom" {
+                    let inner = value
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "Custom".to_string());
+                    Ok(MemoryEntryType::Custom(inner))
+                } else {
+                    Ok(MemoryEntryType::from(r#type))
+                }
+            }
+        }
     }
 }
 
