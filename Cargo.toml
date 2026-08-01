@@ -169,6 +169,9 @@ subtle = "2.5"
 # Secure secret handling
 zeroize = { version = "1.7", features = ["derive"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+# Encrypted file-store fallback (AES-256-GCM)
+aes-gcm = "0.10"
 flate2 = "1.1.9"
 zip = "2"
 tar = "0.4"

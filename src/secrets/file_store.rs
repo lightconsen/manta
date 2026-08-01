@@ -17,11 +17,19 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
+use aes_gcm::aead::{Aead, AeadCore, OsRng};
+use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+use base64::Engine as _;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
+use zeroize::Zeroize;
 
 use crate::error::SyscityError;
+#[cfg(not(test))]
+use crate::secrets::keyring_store::probe_keyring;
 use crate::secrets::store::{SecretId, SecretOrigin, SecretStore};
 
 /// Top-level secrets directory (`~/.syscity/secrets`).
@@ -43,11 +51,23 @@ pub fn sanitize_entity(entity: &str) -> crate::Result<String> {
     Ok(entity.to_string())
 }
 
+/// A single stored value: plaintext (legacy / no master key) or AES-GCM
+/// encrypted. Untagged so legacy plaintext files keep parsing in encrypted
+/// mode and newly written files stay readable without a master key.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum SecretEntry {
+    /// Plaintext value.
+    Plain(String),
+    /// `base64(nonce || ciphertext)` — AES-256-GCM with a random nonce.
+    Encrypted { encrypted: String },
+}
+
 /// On-disk file content: `[secrets] kind = "value"`.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct SecretsFile {
     #[serde(default)]
-    secrets: HashMap<String, String>,
+    secrets: HashMap<String, SecretEntry>,
 }
 
 /// Legacy `mcp_env` file content (`[env]` table) — only read during migration.
@@ -58,10 +78,15 @@ struct LegacyEnvFile {
 }
 
 /// Tier 2 file backend.
+///
+/// When a master key is available (loaded from the keyring or the 0600
+/// `.master_key` fallback) values are encrypted at rest with AES-256-GCM;
+/// otherwise they are written plaintext with 0600 permissions.
 #[derive(Debug, Clone)]
 pub struct FileStore {
     namespace: String,
     root: PathBuf,
+    master_key: Option<Arc<MasterKey>>,
 }
 
 impl FileStore {
@@ -70,6 +95,14 @@ impl FileStore {
         Self {
             namespace: namespace.to_string(),
             root: secrets_root_dir(),
+            master_key: match master_key() {
+                Ok(Some(key)) => Some(key),
+                Ok(None) => None,
+                Err(e) => {
+                    warn!("Cannot load master key; secrets stored unencrypted: {e}");
+                    None
+                }
+            },
         }
     }
 
@@ -79,6 +112,18 @@ impl FileStore {
         Self {
             namespace: namespace.to_string(),
             root,
+            master_key: None,
+        }
+    }
+
+    /// Test helper: hermetic store with an injected master key so encryption
+    /// is exercised without touching the real keyring or `~/.syscity`.
+    #[cfg(test)]
+    pub(crate) fn with_root_encrypted(namespace: &str, root: PathBuf, key: &MasterKey) -> Self {
+        Self {
+            namespace: namespace.to_string(),
+            root,
+            master_key: Some(Arc::new(key.clone())),
         }
     }
 
@@ -107,17 +152,41 @@ impl FileStore {
         match tokio::fs::read_to_string(&path).await {
             Ok(content) => {
                 let file: SecretsFile = toml::from_str(&content)?;
-                Ok(file.secrets)
+                let mut out = HashMap::with_capacity(file.secrets.len());
+                for (kind, entry) in file.secrets {
+                    let value = match entry {
+                        SecretEntry::Plain(value) => value,
+                        SecretEntry::Encrypted { encrypted } => match &self.master_key {
+                            Some(key) => key.decrypt(&encrypted)?,
+                            None => {
+                                return Err(SyscityError::Internal(format!(
+                                    "secret '{kind}' in {} is encrypted but no master key is available",
+                                    path.display()
+                                )));
+                            }
+                        },
+                    };
+                    out.insert(kind, value);
+                }
+                Ok(out)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
             Err(e) => Err(e.into()),
         }
     }
 
-    /// Overwrite-write an entity's whole map.
+    /// Overwrite an entity's whole map (encrypted when a master key exists).
     pub async fn set_all(&self, entity: &str, map: &HashMap<String, String>) -> crate::Result<()> {
         let path = self.path_for(entity)?;
-        write_atomically(&path, &SecretsFile { secrets: map.clone() }).await
+        let mut secrets = HashMap::with_capacity(map.len());
+        for (kind, value) in map {
+            let entry = match &self.master_key {
+                Some(key) => SecretEntry::Encrypted { encrypted: key.encrypt(value)? },
+                None => SecretEntry::Plain(value.clone()),
+            };
+            secrets.insert(kind.clone(), entry);
+        }
+        write_atomically(&path, &SecretsFile { secrets }).await
     }
 
     /// Delete an entity's whole file (missing is not an error).
@@ -189,6 +258,213 @@ impl SecretStore for FileStore {
     async fn has_entity(&self, entity: &str) -> bool {
         FileStore::has_entity(self, entity).await
     }
+}
+
+// ─────────────────────────────────────────────
+// AES-256-GCM master key
+// ─────────────────────────────────────────────
+
+/// AES-256 master key used to encrypt file-store values at rest.
+///
+/// The raw bytes are zeroized on drop; the key itself is persisted in the OS
+/// keyring (`syscity` / `file-master-key`) with a 0600 `.master_key` fallback
+/// for headless hosts.
+pub struct MasterKey([u8; 32]);
+
+impl MasterKey {
+    /// Generate a fresh random 256-bit key.
+    fn random() -> Self {
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        Self(bytes)
+    }
+
+    /// Encrypt `plaintext` → `base64(nonce[12] || ciphertext)` with a fresh
+    /// random nonce (AES-256-GCM).
+    pub fn encrypt(&self, plaintext: &str) -> crate::Result<String> {
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.0));
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = cipher
+            .encrypt(&nonce, plaintext.as_bytes())
+            .map_err(|e| SyscityError::Internal(format!("AES-GCM encryption failed: {e}")))?;
+        let mut out = Vec::with_capacity(nonce.len() + ciphertext.len());
+        out.extend_from_slice(&nonce);
+        out.extend_from_slice(&ciphertext);
+        Ok(base64::engine::general_purpose::STANDARD.encode(out))
+    }
+
+    /// Decrypt a `base64(nonce || ciphertext)` value back to plaintext.
+    pub fn decrypt(&self, data: &str) -> crate::Result<String> {
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| {
+                SyscityError::Internal(format!("encrypted secret is not valid base64: {e}"))
+            })?;
+        if raw.len() < NONCE_LEN {
+            return Err(SyscityError::Internal(
+                "encrypted secret is shorter than a nonce".to_string(),
+            ));
+        }
+        let (nonce_bytes, ciphertext) = raw.split_at(NONCE_LEN);
+        let nonce = Nonce::from_slice(nonce_bytes);
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.0));
+        let plain = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| SyscityError::Internal(format!("AES-GCM decryption failed: {e}")))?;
+        String::from_utf8(plain)
+            .map_err(|e| SyscityError::Internal(format!("decrypted secret is not UTF-8: {e}")))
+    }
+}
+
+impl Clone for MasterKey {
+    fn clone(&self) -> Self {
+        Self(self.0)
+    }
+}
+
+/// The raw key is never logged — only the type name.
+impl std::fmt::Debug for MasterKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MasterKey([REDACTED])")
+    }
+}
+
+impl Drop for MasterKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+/// AES-GCM nonce length in bytes.
+const NONCE_LEN: usize = 12;
+
+/// The file-store master key, loaded once and cached for the process.
+///
+/// Source priority: OS keyring → 0600 `~/.syscity/secrets/.master_key`.
+/// Returns `Ok(None)` when neither backend is available (plaintext fallback);
+/// under `cfg(test)` it always returns `None` so tests stay hermetic.
+fn master_key() -> crate::Result<Option<Arc<MasterKey>>> {
+    static KEY: OnceLock<Arc<MasterKey>> = OnceLock::new();
+    if let Some(key) = KEY.get() {
+        return Ok(Some(key.clone()));
+    }
+    #[cfg(not(test))]
+    let loaded = load_or_create_master_key();
+    #[cfg(test)]
+    let loaded: crate::Result<Option<MasterKey>> = Ok(None);
+    match loaded {
+        Ok(Some(key)) => {
+            let key = Arc::new(key);
+            let _ = KEY.set(key.clone());
+            Ok(Some(key))
+        }
+        Ok(None) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Load the existing master key or create and persist a fresh one.
+#[cfg(not(test))]
+fn load_or_create_master_key() -> crate::Result<Option<MasterKey>> {
+    // 1. OS keyring (preferred).
+    if probe_keyring() {
+        if let Some(key) = read_master_key_keyring()? {
+            return Ok(Some(key));
+        }
+        let key = MasterKey::random();
+        write_master_key_keyring(&key)?;
+        return Ok(Some(key));
+    }
+
+    // 2. 0600 `.master_key` file fallback (headless hosts).
+    if let Some(key) = read_master_key_file()? {
+        return Ok(Some(key));
+    }
+    let key = MasterKey::random();
+    match write_master_key_file(&key) {
+        Ok(()) => Ok(Some(key)),
+        Err(e) => {
+            warn!("Cannot persist master key; secrets stored unencrypted: {e}");
+            Ok(None)
+        }
+    }
+}
+
+/// Keyring account name for the file-store master key.
+#[cfg(not(test))]
+const MASTER_KEY_ACCOUNT: &str = "file-master-key";
+
+#[cfg(not(test))]
+fn read_master_key_keyring() -> crate::Result<Option<MasterKey>> {
+    let entry = keyring::Entry::new("syscity", MASTER_KEY_ACCOUNT).map_err(|e| {
+        SyscityError::Internal(format!("keyring entry unavailable (file-master-key): {e}"))
+    })?;
+    match entry.get_password() {
+        Ok(raw) => decode_master_key(&raw).map(Some),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(SyscityError::Internal(format!("keyring read error (file-master-key): {e}"))),
+    }
+}
+
+#[cfg(not(test))]
+fn write_master_key_keyring(key: &MasterKey) -> crate::Result<()> {
+    let entry = keyring::Entry::new("syscity", MASTER_KEY_ACCOUNT).map_err(|e| {
+        SyscityError::Internal(format!("keyring entry unavailable (file-master-key): {e}"))
+    })?;
+    entry
+        .set_password(&encode_master_key(key))
+        .map_err(|e| SyscityError::Internal(format!("keyring write error (file-master-key): {e}")))
+}
+
+/// Path of the headless master-key fallback file.
+#[cfg(not(test))]
+fn master_key_path() -> PathBuf {
+    secrets_root_dir().join(".master_key")
+}
+
+#[cfg(not(test))]
+fn read_master_key_file() -> crate::Result<Option<MasterKey>> {
+    let path = master_key_path();
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match decode_master_key(content.trim()) {
+            Ok(key) => Ok(Some(key)),
+            Err(e) => {
+                warn!("Master key file {} is unreadable: {e}", path.display());
+                Ok(None)
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+#[cfg(not(test))]
+fn write_master_key_file(key: &MasterKey) -> crate::Result<()> {
+    let path = master_key_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    }
+    std::fs::write(&path, encode_master_key(key))?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn encode_master_key(key: &MasterKey) -> String {
+    base64::engine::general_purpose::STANDARD.encode(key.0)
+}
+
+fn decode_master_key(raw: &str) -> crate::Result<MasterKey> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .map_err(|e| SyscityError::Internal(format!("master key is not valid base64: {e}")))?;
+    let key: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| SyscityError::Internal("master key must be 32 bytes".to_string()))?;
+    Ok(MasterKey(key))
 }
 
 // ─────────────────────────────────────────────
@@ -365,7 +641,11 @@ mod tests {
         let path = dir.join(format!("{entity}.toml"));
         tokio::fs::create_dir_all(dir).await?;
         set_dir_perms(dir).await?;
-        let content = toml::to_string(&SecretsFile { secrets: map.clone() })?;
+        let secrets = map
+            .iter()
+            .map(|(k, v)| (k.clone(), SecretEntry::Plain(v.clone())))
+            .collect();
+        let content = toml::to_string(&SecretsFile { secrets })?;
         let tmp = path.with_extension("toml.tmp");
         tokio::fs::write(&tmp, content).await?;
         set_file_perms(&tmp).await?;
@@ -378,7 +658,18 @@ mod tests {
             .await
             .unwrap_or_default();
         toml::from_str::<SecretsFile>(&content)
-            .map(|f| f.secrets)
+            .map(|f| {
+                f.secrets
+                    .into_iter()
+                    .map(|(k, entry)| {
+                        let value = match entry {
+                            SecretEntry::Plain(v) => v,
+                            SecretEntry::Encrypted { .. } => String::new(),
+                        };
+                        (k, value)
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -468,6 +759,107 @@ mod tests {
         assert_eq!(loaded["GITHUB_PERSONAL_ACCESS_TOKEN"], "ghp_x");
         // Old file + directory are gone.
         assert!(!old_dir.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_master_key_roundtrip() {
+        let key = MasterKey::random();
+        let enc = key.encrypt("super-secret").unwrap();
+        assert_ne!(enc, "super-secret");
+        assert!(enc.contains('=') || enc.contains('+') || enc.contains('/'));
+        assert_eq!(key.decrypt(&enc).unwrap(), "super-secret");
+    }
+
+    #[test]
+    fn test_master_key_wrong_key_fails() {
+        let a = MasterKey::random();
+        let b = MasterKey::random();
+        let enc = a.encrypt("value").unwrap();
+        assert!(b.decrypt(&enc).is_err());
+    }
+
+    #[test]
+    fn test_master_key_roundtrip_unicode() {
+        let key = MasterKey::random();
+        let enc = key.encrypt("中文密钥 123").unwrap();
+        assert_eq!(key.decrypt(&enc).unwrap(), "中文密钥 123");
+    }
+
+    #[test]
+    fn test_decode_master_key_rejects_bad_input() {
+        assert!(decode_master_key("").is_err());
+        assert!(decode_master_key("aGVsbG8=").is_err()); // 5 bytes, not 32
+        assert!(decode_master_key("not base64!!").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_encrypted_store_roundtrip() {
+        let root = temp_root("enc_roundtrip");
+        let key = MasterKey::random();
+        let store = FileStore::with_root_encrypted("channel", root.join("secrets"), &key);
+        let id = SecretId::new("channel", "whatsapp", "access_token");
+
+        store
+            .set(&id, "at_secret", SecretOrigin::UserEntered)
+            .await
+            .unwrap();
+        assert_eq!(store.get(&id).await.unwrap(), Some("at_secret".to_string()));
+
+        // The on-disk file must not contain the plaintext value.
+        let content = tokio::fs::read_to_string(store.path_for("whatsapp").unwrap())
+            .await
+            .unwrap();
+        assert!(!content.contains("at_secret"));
+        assert!(content.contains("encrypted"));
+
+        // A fresh store with the same key can read it back.
+        let store2 = FileStore::with_root_encrypted("channel", root.join("secrets"), &key);
+        assert_eq!(store2.get(&id).await.unwrap(), Some("at_secret".to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn test_encrypted_read_requires_master_key() {
+        let root = temp_root("enc_nokey");
+        let key = MasterKey::random();
+        let store = FileStore::with_root_encrypted("channel", root.join("secrets"), &key);
+        store
+            .set(
+                &SecretId::new("channel", "whatsapp", "access_token"),
+                "at_secret",
+                SecretOrigin::UserEntered,
+            )
+            .await
+            .unwrap();
+
+        // A store without a master key cannot read the encrypted value.
+        let store_no_key = FileStore::with_root("channel", root.join("secrets"));
+        let err = store_no_key.get_all("whatsapp").await.unwrap_err();
+        assert!(err.to_string().contains("encrypted"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn test_legacy_plaintext_file_reads_in_encrypted_mode() {
+        // A file written in plaintext mode must still parse when a master key
+        // is present (untagged SecretEntry keeps legacy files readable).
+        let root = temp_root("enc_legacy");
+        let mut map = HashMap::new();
+        map.insert("token".to_string(), "legacy_plain".to_string());
+        // The store scopes files under `{root}/{namespace}`, so write the legacy
+        // plaintext file into the "channel" subdirectory.
+        write_at(&root.join("channel"), "telegram", &map)
+            .await
+            .unwrap();
+
+        let key = MasterKey::random();
+        let store = FileStore::with_root_encrypted("channel", root.clone(), &key);
+        let loaded = store.get_all("telegram").await.unwrap();
+        assert_eq!(loaded["token"], "legacy_plain");
 
         let _ = std::fs::remove_dir_all(&root);
     }
