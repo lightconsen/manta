@@ -9,6 +9,7 @@ use serde::Deserialize;
 use tracing::warn;
 
 use crate::gateway::GatewayState;
+use crate::secrets::{route_store, SecretId, SecretOrigin};
 
 // Plugin Management API Handlers
 
@@ -269,6 +270,44 @@ pub async fn sign_plugin_handler(
     use crate::plugins::manifest::PluginManifest;
     use crate::plugins::verification::sign_manifest;
 
+    // Resolve the signing key: a key submitted in the request body is persisted
+    // to the secret store (namespace `plugin`, entity = plugin name) and used
+    // immediately; an empty body falls back to the stored key. This keeps the
+    // request-body path backward compatible while letting later sign calls skip
+    // the key entirely.
+    let signing_key = if req.secret_key.is_empty() {
+        match route_store("plugin")
+            .get(&SecretId::new("plugin", &req.name, "secret_key"))
+            .await
+        {
+            Ok(Some(key)) if !key.is_empty() => key,
+            _ => {
+                let error = serde_json::json!({
+                    "error": format!(
+                        "No signing key for plugin '{}'; submit secret_key in the request body",
+                        req.name
+                    ),
+                });
+                return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+            }
+        }
+    } else {
+        if let Err(e) = route_store("plugin")
+            .set(
+                &SecretId::new("plugin", &req.name, "secret_key"),
+                &req.secret_key,
+                SecretOrigin::UserEntered,
+            )
+            .await
+        {
+            warn!(
+                "Failed to store plugin secret_key for '{}' ({}); signing with the request key",
+                req.name, e
+            );
+        }
+        req.secret_key.clone()
+    };
+
     // Find the plugin directory
     let plugin_dir = crate::dirs::config_dir().join("plugins").join(&req.name);
     let manifest_path = plugin_dir.join("plugin.json");
@@ -300,7 +339,7 @@ pub async fn sign_plugin_handler(
     };
 
     // Sign
-    if let Err(e) = sign_manifest(&mut manifest, &req.secret_key) {
+    if let Err(e) = sign_manifest(&mut manifest, &signing_key) {
         let error = serde_json::json!({
             "error": format!("Failed to sign manifest: {}", e),
         });
