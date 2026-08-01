@@ -10,6 +10,7 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use crate::error::SyscityError;
 use crate::secrets::file_store::FileStore;
@@ -221,7 +222,10 @@ pub fn choose_store(id: &SecretId) -> Arc<dyn SecretStore> {
 
 /// Like `choose_store` but with an explicit keyring preference (test hook).
 pub fn choose_store_with(id: &SecretId, prefer_keyring: bool) -> Arc<dyn SecretStore> {
-    if id.kind == "access_token" {
+    // MCP OAuth access tokens are short-lived → memory only. This is scoped to
+    // the `mcp-oauth` namespace: channel credentials may also use the
+    // `access_token` kind but are long-lived and must persist.
+    if id.namespace == "mcp-oauth" && id.kind == "access_token" {
         return memory_store();
     }
     route_store_with(&id.namespace, prefer_keyring)
@@ -255,6 +259,142 @@ pub async fn resolve_store_ref(r: &StoreRef) -> crate::Result<Option<String>> {
     let id = r.to_secret_id();
     let store = choose_store(&id);
     store.get(&id).await
+}
+
+/// Zeroized secret value — the underlying string is wiped on drop so transient
+/// secret material is not left dangling on the heap.
+pub struct SecretValue(String);
+
+impl SecretValue {
+    /// Wrap a secret string.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// View the secret.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Whether the value is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Take ownership of the underlying string. The (now empty) wrapper is
+    /// dropped normally and zeroizes nothing.
+    pub fn into_inner(mut self) -> String {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Clone for SecretValue {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+/// Values are never logged — only the type name.
+impl fmt::Debug for SecretValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SecretValue([REDACTED])")
+    }
+}
+
+impl Zeroize for SecretValue {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl Drop for SecretValue {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+/// Resolve a store reference into a zeroized secret value.
+///
+/// Returns `Ok(None)` when the referenced secret is absent or unreadable.
+pub async fn resolve_secret_or_ref(r: &StoreRef) -> crate::Result<Option<SecretValue>> {
+    Ok(resolve_store_ref(r).await?.map(SecretValue::new))
+}
+
+/// Credential keys that hold sensitive values and are mirrored into the secret
+/// store when a channel is written. Identifiers (`app_id`, `phone_number_id`,
+/// `bot_qq`, ...) are intentionally excluded — they are not secrets.
+pub const SENSITIVE_CHANNEL_CREDENTIALS: &[&str] = &[
+    "token",
+    "bot_token",
+    "access_token",
+    "app_secret",
+    "signing_secret",
+    "webhook_verify_token",
+    "verify_token",
+    "webhook_secret",
+    "encrypt_key",
+    "encryption_key",
+    "api_password",
+    "account",
+    "secret",
+];
+
+/// Mirror sensitive channel credentials into the secret store (namespace
+/// `channel`, entity = channel id, kind = credential key).
+///
+/// The plaintext `credentials` entries are kept for backward compatibility;
+/// `secrets migrate` removes them from config once the store copy exists.
+pub async fn persist_channel_secrets(
+    channel: &str,
+    credentials: &HashMap<String, String>,
+) -> crate::Result<()> {
+    let store = route_store("channel");
+    for kind in SENSITIVE_CHANNEL_CREDENTIALS {
+        if let Some(value) = credentials.get(*kind) {
+            if !value.is_empty() {
+                store
+                    .set(&SecretId::new("channel", channel, kind), value, SecretOrigin::UserEntered)
+                    .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a channel credential: the secret store (namespace `channel`) is
+/// authoritative; the legacy plaintext `credentials` map is the fallback for
+/// pre-migration configs.
+pub async fn resolve_channel_credential(
+    channel: &str,
+    kind: &str,
+    legacy: Option<&str>,
+) -> crate::Result<Option<SecretValue>> {
+    let id = SecretId::new("channel", channel, kind);
+    match route_store("channel").get(&id).await {
+        Ok(Some(value)) if !value.is_empty() => Ok(Some(SecretValue::new(value))),
+        _ => Ok(legacy
+            .filter(|value| !value.is_empty())
+            .map(SecretValue::new)),
+    }
+}
+
+/// Resolve an OAuth client secret: the secret store (namespace `security`,
+/// entity = `oauth-{provider}`, kind = `client_secret`) is authoritative; the
+/// legacy plaintext `client_secret` config field is the fallback.
+///
+/// Provider must be a stable slug (e.g. `"github"` / `"google"`) so each
+/// provider's credential is stored under its own entity.
+pub async fn resolve_oauth_client_secret(
+    provider: &str,
+    legacy: Option<&str>,
+) -> crate::Result<Option<SecretValue>> {
+    let id = SecretId::new("security", &format!("oauth-{provider}"), "client_secret");
+    match route_store("security").get(&id).await {
+        Ok(Some(value)) if !value.is_empty() => Ok(Some(SecretValue::new(value))),
+        _ => Ok(legacy
+            .filter(|value| !value.is_empty())
+            .map(SecretValue::new)),
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -316,5 +456,97 @@ mod tests {
             store.delete(&id).await.unwrap();
             assert!(!store.has(&id).await);
         });
+    }
+
+    #[test]
+    fn test_channel_access_token_is_persistent() {
+        // Channel access tokens are long-lived → they must NOT route to the
+        // memory store (reserved for MCP OAuth short-lived access tokens).
+        let id = SecretId::new("channel", "whatsapp", "access_token");
+        let store = choose_store_with(&id, false);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut map = HashMap::new();
+            map.insert("access_token".to_string(), "at".to_string());
+            store.set_all("whatsapp", &map).await.unwrap();
+            assert!(store.has_entity("whatsapp").await);
+            assert_eq!(store.get_all("whatsapp").await.unwrap()["access_token"], "at");
+            store.delete_entity("whatsapp").await.unwrap();
+            assert!(!store.has_entity("whatsapp").await);
+        });
+    }
+
+    #[tokio::test]
+    async fn test_channel_credential_store_first_then_legacy() {
+        // No store entry → legacy plaintext is the fallback.
+        let legacy = resolve_channel_credential("probe-channel", "token", Some("legacy"))
+            .await
+            .unwrap();
+        assert_eq!(legacy.as_ref().map(|v| v.as_str()), Some("legacy"));
+
+        // Store entry takes precedence over legacy plaintext.
+        let mut creds = HashMap::new();
+        creds.insert("token".to_string(), "stored".to_string());
+        persist_channel_secrets("probe-channel", &creds)
+            .await
+            .unwrap();
+        let stored = resolve_channel_credential("probe-channel", "token", Some("legacy"))
+            .await
+            .unwrap();
+        assert_eq!(stored.as_ref().map(|v| v.as_str()), Some("stored"));
+
+        // After deletion the legacy fallback is used again.
+        route_store("channel")
+            .delete(&SecretId::new("channel", "probe-channel", "token"))
+            .await
+            .unwrap();
+        let back_to_legacy = resolve_channel_credential("probe-channel", "token", Some("legacy"))
+            .await
+            .unwrap();
+        assert_eq!(back_to_legacy.as_ref().map(|v| v.as_str()), Some("legacy"));
+    }
+
+    #[tokio::test]
+    async fn test_oauth_client_secret_store_first_then_legacy() {
+        // No store entry → legacy plaintext config is the fallback.
+        let legacy = resolve_oauth_client_secret("github", Some("legacy-secret"))
+            .await
+            .unwrap();
+        assert_eq!(legacy.as_ref().map(|v| v.as_str()), Some("legacy-secret"));
+
+        // Store entry takes precedence over legacy plaintext.
+        route_store("security")
+            .set(
+                &SecretId::new("security", "oauth-github", "client_secret"),
+                "stored-secret",
+                SecretOrigin::UserEntered,
+            )
+            .await
+            .unwrap();
+        let stored = resolve_oauth_client_secret("github", Some("legacy-secret"))
+            .await
+            .unwrap();
+        assert_eq!(stored.as_ref().map(|v| v.as_str()), Some("stored-secret"));
+
+        // After deletion the legacy fallback is used again.
+        route_store("security")
+            .delete(&SecretId::new("security", "oauth-github", "client_secret"))
+            .await
+            .unwrap();
+        let back_to_legacy = resolve_oauth_client_secret("github", Some("legacy-secret"))
+            .await
+            .unwrap();
+        assert_eq!(back_to_legacy.as_ref().map(|v| v.as_str()), Some("legacy-secret"));
+    }
+
+    #[test]
+    fn test_secret_value_redacts_debug() {
+        let value = SecretValue::new("super-secret");
+        assert_eq!(value.as_str(), "super-secret");
+        assert!(!value.is_empty());
+        let debug = format!("{value:?}");
+        assert!(!debug.contains("super-secret"));
+        assert!(debug.contains("REDACTED"));
+        assert_eq!(value.into_inner(), "super-secret");
     }
 }

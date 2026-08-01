@@ -385,6 +385,22 @@ workspace_only = true
         // Apply credential precedence for security tokens
         apply_env_security_overrides(&mut gateway_config);
 
+        // Discourage plaintext shared_token in config.toml — the env reference
+        // is preferred so the value never lands in the on-disk config.
+        if std::env::var("SYSCITY_SECURITY_SHARED_TOKEN").is_err()
+            && gateway_config
+                .security
+                .shared_token
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false)
+        {
+            warn!(
+                "security.shared_token is set in plaintext config; \
+                 prefer the SYSCITY_SECURITY_SHARED_TOKEN environment variable"
+            );
+        }
+
         // Enable features based on environment variables
         // Vector Memory - enabled by default with local GGUF embeddings
         if std::env::var("SYSCITY_VECTOR_MEMORY_ENABLED")

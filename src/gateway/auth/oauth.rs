@@ -85,10 +85,20 @@ pub async fn github_login_handler(State(state): State<Arc<GatewayState>>) -> imp
         return (StatusCode::NOT_IMPLEMENTED, "OAuth is not enabled".to_string()).into_response();
     }
 
-    let Some(github_config) = oauth_config.github else {
+    let Some(mut github_config) = oauth_config.github else {
         return (StatusCode::NOT_IMPLEMENTED, "GitHub OAuth is not configured".to_string())
             .into_response();
     };
+
+    // Resolve client_secret: secret store takes precedence, config plaintext is the fallback.
+    if let Some(secret) =
+        crate::secrets::resolve_oauth_client_secret("github", Some(&github_config.client_secret))
+            .await
+            .ok()
+            .flatten()
+    {
+        github_config.client_secret = secret.into_inner();
+    }
 
     let auth_url = github_config
         .auth_url
@@ -144,10 +154,20 @@ pub async fn github_callback_handler(
         return (StatusCode::NOT_IMPLEMENTED, "OAuth is not enabled".to_string()).into_response();
     }
 
-    let Some(github_config) = oauth_config.github else {
+    let Some(mut github_config) = oauth_config.github else {
         return (StatusCode::NOT_IMPLEMENTED, "GitHub OAuth is not configured".to_string())
             .into_response();
     };
+
+    // Resolve client_secret: secret store takes precedence, config plaintext is the fallback.
+    if let Some(secret) =
+        crate::secrets::resolve_oauth_client_secret("github", Some(&github_config.client_secret))
+            .await
+            .ok()
+            .flatten()
+    {
+        github_config.client_secret = secret.into_inner();
+    }
 
     let auth_url = github_config
         .auth_url
@@ -296,10 +316,20 @@ pub async fn google_login_handler(State(state): State<Arc<GatewayState>>) -> imp
         return (StatusCode::NOT_IMPLEMENTED, "OAuth is not enabled".to_string()).into_response();
     }
 
-    let Some(google_config) = oauth_config.google else {
+    let Some(mut google_config) = oauth_config.google else {
         return (StatusCode::NOT_IMPLEMENTED, "Google OAuth is not configured".to_string())
             .into_response();
     };
+
+    // Resolve client_secret: secret store takes precedence, config plaintext is the fallback.
+    if let Some(secret) =
+        crate::secrets::resolve_oauth_client_secret("google", Some(&google_config.client_secret))
+            .await
+            .ok()
+            .flatten()
+    {
+        google_config.client_secret = secret.into_inner();
+    }
 
     let auth_url = google_config
         .auth_url
@@ -351,10 +381,20 @@ pub async fn google_callback_handler(
         return (StatusCode::NOT_IMPLEMENTED, "OAuth is not enabled".to_string()).into_response();
     }
 
-    let Some(google_config) = oauth_config.google else {
+    let Some(mut google_config) = oauth_config.google else {
         return (StatusCode::NOT_IMPLEMENTED, "Google OAuth is not configured".to_string())
             .into_response();
     };
+
+    // Resolve client_secret: secret store takes precedence, config plaintext is the fallback.
+    if let Some(secret) =
+        crate::secrets::resolve_oauth_client_secret("google", Some(&google_config.client_secret))
+            .await
+            .ok()
+            .flatten()
+    {
+        google_config.client_secret = secret.into_inner();
+    }
 
     let auth_url = google_config
         .auth_url

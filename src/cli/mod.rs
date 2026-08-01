@@ -30,6 +30,7 @@ mod mcp;
 mod memory;
 mod plugin;
 mod provider;
+mod secrets;
 mod security;
 mod session;
 mod setup;
@@ -53,6 +54,7 @@ pub use mcp::McpCommands;
 pub use memory::MemoryCommands;
 pub use plugin::PluginCommands;
 pub use provider::ProviderCommands;
+pub use secrets::SecretsCommands;
 pub use security::{GateCommands, PairingCommands, SecurityCommands};
 pub use session::SessionCommands;
 pub use skill::SkillCommands;
@@ -228,6 +230,12 @@ pub enum Commands {
         /// Session subcommand
         #[command(subcommand)]
         command: SessionCommands,
+    },
+    /// Secret store management (list, migrate, purge)
+    Secrets {
+        /// Secrets subcommand
+        #[command(subcommand)]
+        command: SecretsCommands,
     },
     /// Initialize Syscity with an interactive setup wizard
     Setup,
@@ -422,6 +430,7 @@ impl Cli {
             Commands::Kb { command } => kb::run_kb_command(command).await,
             Commands::Security { command } => security::run_security_command(command).await,
             Commands::Session { command } => session::run_session_command(command).await,
+            Commands::Secrets { command } => secrets::run_secrets_command(command).await,
             Commands::Setup => setup::run_setup().await,
             Commands::Device { command } => device::run_device_command(command).await,
             Commands::Approval { command } => approval::run_approval_command(command).await,
@@ -541,6 +550,35 @@ mod tests {
     // and the global `--log-level`. This is a bug in the CLI definition.
     // #[test]
     // fn parse_plugin_list_subcommand() { ... }
+
+    #[test]
+    fn parse_secrets_list_subcommand() {
+        let cli = Cli::try_parse_from(["syscity", "secrets", "list"]).unwrap();
+        match cli.command {
+            Commands::Secrets { command } => assert!(matches!(command, SecretsCommands::List)),
+            _ => panic!("expected Secrets command"),
+        }
+    }
+
+    #[test]
+    fn parse_secrets_migrate_subcommand() {
+        let cli = Cli::try_parse_from(["syscity", "secrets", "migrate"]).unwrap();
+        match cli.command {
+            Commands::Secrets { command } => assert!(matches!(command, SecretsCommands::Migrate)),
+            _ => panic!("expected Secrets command"),
+        }
+    }
+
+    #[test]
+    fn parse_secrets_purge_subcommand() {
+        let cli = Cli::try_parse_from(["syscity", "secrets", "purge", "channel"]).unwrap();
+        match cli.command {
+            Commands::Secrets { command } => {
+                assert!(matches!(command, SecretsCommands::Purge { .. }));
+            }
+            _ => panic!("expected Secrets command"),
+        }
+    }
 
     #[test]
     fn parse_security_pairing_list() {

@@ -33,8 +33,9 @@ pub use file_store::{migrate_legacy_mcp_env, sanitize_entity, secrets_root_dir, 
 pub use in_memory::MemoryStore;
 pub use keyring_store::{probe_keyring, KeyringStore};
 pub use store::{
-    choose_store, resolve_store_ref, route_store, SecretId, SecretOrigin, SecretStore,
-    SecretStoreTier, StoreRef,
+    choose_store, persist_channel_secrets, resolve_channel_credential, resolve_oauth_client_secret,
+    resolve_secret_or_ref, resolve_store_ref, route_store, SecretId, SecretOrigin, SecretStore,
+    SecretStoreTier, SecretValue, StoreRef, SENSITIVE_CHANNEL_CREDENTIALS,
 };
 
 use std::collections::HashMap;

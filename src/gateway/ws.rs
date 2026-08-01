@@ -2629,6 +2629,17 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         }
     }
 
+    // Mirror sensitive channel credentials into the secret store so a store
+    // copy always exists (the plaintext credentials map stays for backward
+    // compatibility until `secrets migrate` strips it).
+    for (id, channel_config) in config.channels.iter() {
+        if let Err(e) =
+            crate::secrets::persist_channel_secrets(id, &channel_config.credentials).await
+        {
+            tracing::warn!("Failed to persist channel secrets for '{}': {}", id, e);
+        }
+    }
+
     // Persist config to disk so changes survive restarts and trigger hot-reload.
     // Keep the write lock held across persistence so concurrent writers cannot
     // overwrite our update before it is serialized.

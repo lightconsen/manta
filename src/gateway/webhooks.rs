@@ -423,13 +423,23 @@ async fn feishu_webhook_handler(
         .get("x-lark-request-nonce")
         .and_then(|v| v.to_str().ok());
 
+    // Resolve the webhook secret from the secret store (falling back to the
+    // legacy plaintext credentials map). The config guard is released before
+    // the async resolution to avoid holding the lock across `.await`.
     let secret = {
-        let config = state.config.read().await;
-        config
-            .channels
-            .get("feishu")
-            .and_then(|c| c.credentials.get("webhook_secret"))
-            .cloned()
+        let legacy = {
+            let config = state.config.read().await;
+            config
+                .channels
+                .get("feishu")
+                .and_then(|c| c.credentials.get("webhook_secret"))
+                .cloned()
+        };
+        crate::secrets::resolve_channel_credential("feishu", "webhook_secret", legacy.as_deref())
+            .await
+            .ok()
+            .flatten()
+            .map(|v| v.into_inner())
     };
 
     // Verify signature if secret and headers are present
@@ -702,21 +712,34 @@ async fn generic_webhook_handler(
 ) -> impl IntoResponse {
     info!("Received generic webhook for channel: {}", channel);
 
-    // Get channel config
-    let config = state.config.read().await;
-    let Some(channel_config) = config.channels.get(&channel) else {
-        return (StatusCode::NOT_FOUND, "Channel not configured").into_response();
+    // Get channel config. Extract the fields we need and release the config
+    // guard before the async secret resolution below (avoids holding the lock
+    // across `.await`).
+    let (channel_enabled, legacy_secret) = {
+        let config = state.config.read().await;
+        let Some(channel_config) = config.channels.get(&channel) else {
+            return (StatusCode::NOT_FOUND, "Channel not configured").into_response();
+        };
+        (
+            channel_config.enabled,
+            channel_config.credentials.get("webhook_secret").cloned(),
+        )
     };
 
-    if !channel_config.enabled {
+    if !channel_enabled {
         return (StatusCode::SERVICE_UNAVAILABLE, "Channel disabled").into_response();
     }
 
-    // Get webhook secret - required for all generic webhook channels
-    let secret = channel_config.credentials.get("webhook_secret");
-
-    let secret = match secret {
-        Some(s) if !s.is_empty() => s,
+    // Resolve webhook secret from the secret store (falling back to legacy
+    // plaintext) - required for all generic webhook channels.
+    let secret = match crate::secrets::resolve_channel_credential(
+        &channel,
+        "webhook_secret",
+        legacy_secret.as_deref(),
+    )
+    .await
+    {
+        Ok(Some(s)) if !s.is_empty() => s.into_inner(),
         _ => {
             warn!("{} webhook: webhook_secret is required", channel);
             return (StatusCode::UNAUTHORIZED, "Webhook secret is required for this channel")
@@ -732,7 +755,7 @@ async fn generic_webhook_handler(
         .map(|s| s.strip_prefix("sha256=").unwrap_or(s));
 
     if let Some(sig) = signature {
-        if !verify_hmac_sha256(secret, &body, sig) {
+        if !verify_hmac_sha256(&secret, &body, sig) {
             warn!("{} webhook: invalid HMAC signature", channel);
             return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
         }
@@ -806,7 +829,6 @@ async fn generic_webhook_handler(
         }
 
         // Route through unified inbound entry
-        drop(config); // Release read lock before await
         let incoming = IncomingMessage::new(user_id, session_id, content).with_provenance(
             InputProvenance::ExternalUser {
                 channel: channel.clone(),

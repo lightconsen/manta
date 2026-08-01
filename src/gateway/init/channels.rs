@@ -27,6 +27,21 @@ async fn register_channel_task(
         .await;
 }
 
+/// Resolve a channel credential: the secret store (namespace `channel`) is
+/// authoritative, with the legacy plaintext `credentials` map as fallback for
+/// pre-migration configs.
+async fn channel_cred(name: &str, config: &ChannelConfig, key: &str) -> Option<String> {
+    crate::secrets::resolve_channel_credential(
+        name,
+        key,
+        config.credentials.get(key).map(String::as_str),
+    )
+    .await
+    .ok()
+    .flatten()
+    .map(crate::secrets::SecretValue::into_inner)
+}
+
 /// Initialize all configured channels.
 pub(crate) async fn init_channels(
     state: Arc<GatewayState>,
@@ -299,7 +314,7 @@ pub(crate) async fn init_telegram_channel(
     name: &str,
     config: &ChannelConfig,
 ) -> crate::Result<()> {
-    if let Some(token) = config.credentials.get("token") {
+    if let Some(token) = channel_cred(name, config, "token").await {
         let telegram_config = crate::channels::telegram::TelegramConfig::new(token)
             .allow_usernames(config.allow_from.clone());
 
@@ -393,7 +408,7 @@ pub(crate) async fn init_discord_channel(
     name: &str,
     config: &ChannelConfig,
 ) -> crate::Result<()> {
-    if let Some(token) = config.credentials.get("token") {
+    if let Some(token) = channel_cred(name, config, "token").await {
         // Create inbound bridge: Discord message_tx -> inbound pipeline
         let (inbound_tx, mut inbound_rx) =
             mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
@@ -446,14 +461,14 @@ pub(crate) async fn init_slack_channel(
     name: &str,
     config: &ChannelConfig,
 ) -> crate::Result<()> {
-    if let Some(token) = config.credentials.get("token") {
+    if let Some(token) = channel_cred(name, config, "token").await {
         // Create inbound bridge: Slack message_tx (Socket Mode) -> inbound pipeline
         let (inbound_tx, mut inbound_rx) =
             mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
         let mut slack_config = crate::channels::slack::SlackConfig::new(token);
         slack_config.message_tx = Some(inbound_tx);
-        if let Some(app_token) = config.credentials.get("app_token") {
-            slack_config.app_token = Some(app_token.to_string());
+        if let Some(app_token) = channel_cred(name, config, "app_token").await {
+            slack_config.app_token = Some(app_token);
         }
 
         let channel = Arc::new(crate::channels::slack::SlackChannel::new(slack_config));
@@ -504,7 +519,7 @@ pub(crate) async fn init_whatsapp_channel(
 ) -> crate::Result<()> {
     if let (Some(phone_id), Some(token)) = (
         config.credentials.get("phone_number_id"),
-        config.credentials.get("access_token"),
+        channel_cred(name, config, "access_token").await,
     ) {
         let whatsapp_config = crate::channels::whatsapp::WhatsappConfig::new(phone_id, token);
 
@@ -546,7 +561,7 @@ pub(crate) async fn init_feishu_channel(
     config: &ChannelConfig,
 ) -> crate::Result<()> {
     if let (Some(app_id), Some(app_secret)) =
-        (config.credentials.get("app_id"), config.credentials.get("app_secret"))
+        (config.credentials.get("app_id"), channel_cred(name, config, "app_secret").await)
     {
         let lark_config = crate::channels::lark::LarkConfig::new(app_id, app_secret);
 
@@ -586,7 +601,7 @@ pub(crate) async fn init_qq_channel(
 ) -> crate::Result<()> {
     if let (Some(app_id), Some(app_secret), Some(bot_qq)) = (
         config.credentials.get("app_id"),
-        config.credentials.get("app_secret"),
+        channel_cred(name, config, "app_secret").await,
         config.credentials.get("bot_qq"),
     ) {
         // Create inbound bridge: QQ WebSocket -> inbound pipeline

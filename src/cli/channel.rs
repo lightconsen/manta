@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use clap::Subcommand;
+use tracing::warn;
 
 use crate::cli::ChannelType;
 use crate::error::Result;
@@ -97,7 +98,19 @@ async fn load_gateway_config() -> Option<crate::gateway::GatewayConfig> {
 }
 
 /// Save Gateway configuration
+///
+/// Sensitive channel credentials are first mirrored into the secret store
+/// (namespace `channel`) so a store copy always exists; the plaintext
+/// `credentials` entries remain for backward compatibility until `secrets
+/// migrate` strips them.
 async fn save_gateway_config(config: &crate::gateway::GatewayConfig) -> Result<()> {
+    for (id, channel_config) in &config.channels {
+        if let Err(e) =
+            crate::secrets::persist_channel_secrets(id, &channel_config.credentials).await
+        {
+            warn!("Failed to persist channel secrets for '{}': {}", id, e);
+        }
+    }
     let config_path = get_config_path();
     let config_str = toml::to_string_pretty(config)?;
     tokio::fs::write(&config_path, config_str).await?;
