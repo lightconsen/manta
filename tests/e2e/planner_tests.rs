@@ -64,6 +64,7 @@ fn planner_mock_provider(subtasks_json: &str) -> MockProvider {
 /// contains the GoalPlanner result format ("Goal:" / "Success:").
 #[tokio::test]
 #[serial]
+#[ignore = "GoalPlanner chat auto-routing (is_complex_task) was removed in c08288b; these tests verify the old heuristic routing"]
 async fn goal_planner_triggered_by_complex_task_keyword() {
     let subtasks = r#"[
         {
@@ -124,6 +125,7 @@ async fn goal_planner_triggered_by_complex_task_keyword() {
 /// the Agent should still produce a `chat.final` containing a summary.
 #[tokio::test]
 #[serial]
+#[ignore = "GoalPlanner chat auto-routing (is_complex_task) was removed in c08288b; these tests verify the old heuristic routing"]
 async fn goal_planner_multi_step_dag() {
     let subtasks = r#"[
         {
