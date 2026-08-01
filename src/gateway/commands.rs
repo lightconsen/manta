@@ -15,9 +15,9 @@ use crate::agent::TranscriptFormat;
 use crate::gateway::command_provider::{CommandProviderHint, CommandProviderResolver};
 use crate::gateway::protocol::*;
 use crate::gateway::GatewayState;
+use crate::mcp::{McpServerConfig, McpToolWrapper};
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter};
 use crate::tools::command_gate::UserLevel;
-use crate::mcp::{McpServerConfig, McpToolWrapper};
 
 // ── Command Definitions
 // ───────────────────────────────────────────────────────

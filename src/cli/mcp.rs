@@ -112,7 +112,10 @@ pub async fn run_mcp_command(command: &McpCommands) -> Result<()> {
         } => {
             let env_map: std::collections::HashMap<String, String> = env
                 .iter()
-                .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+                .filter_map(|kv| {
+                    kv.split_once('=')
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                })
                 .collect();
             let endpoint = format!("{}/api/v1/mcp/servers/{}/connect", DAEMON_URL, server_id);
             let body = serde_json::json!({
@@ -246,11 +249,7 @@ pub async fn run_mcp_command(command: &McpCommands) -> Result<()> {
 /// Handle an `401 auth_required` connect response: print the authorization URL,
 /// open it in the default browser, then poll `auth/status` until the user
 /// completes the flow.
-async fn handle_mcp_auth(
-    client: &reqwest::Client,
-    server_id: &str,
-    body: &str,
-) -> Result<()> {
+async fn handle_mcp_auth(client: &reqwest::Client, server_id: &str, body: &str) -> Result<()> {
     let auth_url: Option<String> = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|v| v["auth_url"].as_str().map(|s| s.to_string()));

@@ -15,13 +15,13 @@ use crate::canvas::CanvasManager;
 use crate::channels::{Channel, ChannelExtensionRegistry, IncomingMessage};
 use crate::computer::ComputerAdapter;
 use crate::gateway::GatewayConfig;
+use crate::mcp::{McpEvent, McpManager};
 use crate::memory::MemoryManager;
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
 use crate::security::content_filter::ContentFilter;
 use crate::security::runtime_audit::AuditLogger;
 use crate::tools::approval::ApprovalQueue;
-use crate::mcp::{McpEvent, McpManager};
 use crate::tools::ToolRegistry;
 
 /// Tool subsystem initialization result.

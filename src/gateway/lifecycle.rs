@@ -1080,10 +1080,7 @@ pub(crate) fn init_mcp_servers(state: Arc<GatewayState>, config: &GatewayConfig)
         return;
     }
 
-    info!(
-        "Auto-connecting {} configured MCP server(s) (background)…",
-        servers.len()
-    );
+    info!("Auto-connecting {} configured MCP server(s) (background)…", servers.len());
 
     for (server_id, server_config) in servers {
         if !server_config.auto_connect {
@@ -1097,11 +1094,7 @@ pub(crate) fn init_mcp_servers(state: Arc<GatewayState>, config: &GatewayConfig)
         tokio::spawn(async move {
             match bg_state.tools.mcp_manager.connect(&sid, cfg.clone()).await {
                 Ok(tools) => {
-                    info!(
-                        "✅ MCP server '{}' connected: {} tool(s) discovered",
-                        sid,
-                        tools.len()
-                    );
+                    info!("✅ MCP server '{}' connected: {} tool(s) discovered", sid, tools.len());
                     register_mcp_tools(&bg_state, &sid, &tools, cfg.max_tools).await;
                 }
                 Err(e) => {

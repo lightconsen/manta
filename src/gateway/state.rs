@@ -38,6 +38,7 @@ use crate::gateway::RepairState;
 use crate::gateway::{GatewayConfig, GatewayEvent};
 use crate::heartbeat::{HeartbeatEvent, WakeRequest};
 use crate::inbound::{AgentRouter, InboundPipeline, RoutedMessage};
+use crate::mcp::McpManager;
 use crate::memory::vector::VectorMemoryService;
 use crate::memory::{DreamMetrics, MemoryManager, SessionSearch};
 use crate::model_router::ModelRouter;
@@ -52,10 +53,7 @@ use crate::security::{
     RateLimiter,
 };
 use crate::skills::SkillManager;
-use crate::tools::{
-    approval::ApprovalQueue, command_gate::CommandGate, ToolRegistry, ToolSdk,
-};
-use crate::mcp::McpManager;
+use crate::tools::{approval::ApprovalQueue, command_gate::CommandGate, ToolRegistry, ToolSdk};
 
 /// Authentication, authorization, and security-related state.
 pub struct AuthState {

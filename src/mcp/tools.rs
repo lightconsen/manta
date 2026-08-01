@@ -217,10 +217,7 @@ impl McpPromptTool {
                 }
                 let mut schema = serde_json::Map::new();
                 schema.insert("type".to_string(), json!("object"));
-                schema.insert(
-                    "properties".to_string(),
-                    serde_json::Value::Object(props),
-                );
+                schema.insert("properties".to_string(), serde_json::Value::Object(props));
                 if !required.is_empty() {
                     schema.insert("required".to_string(), json!(required));
                 }
@@ -449,9 +446,7 @@ Actions:
                     server_id,
                     tools.len()
                 ))
-                .with_data(
-                    json!({ "tools": tools.iter().map(|t| &t.name).collect::<Vec<_>>() }),
-                ))
+                .with_data(json!({ "tools": tools.iter().map(|t| &t.name).collect::<Vec<_>>() })))
             }
 
             "disconnect" => {
@@ -475,11 +470,8 @@ Actions:
 
             "list" => {
                 let servers = self.manager.list_servers().await;
-                Ok(ToolExecutionResult::success(format!(
-                    "{} MCP servers connected",
-                    servers.len()
-                ))
-                .with_data(json!({ "servers": servers })))
+                Ok(ToolExecutionResult::success(format!("{} MCP servers connected", servers.len()))
+                    .with_data(json!({ "servers": servers })))
             }
 
             "tools" => {
@@ -650,9 +642,7 @@ Actions:
                 })?;
                 let arguments = args["arguments"].as_object().map(|obj| {
                     obj.iter()
-                        .map(|(k, v)| {
-                            (k.clone(), v.as_str().unwrap_or_default().to_string())
-                        })
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
                         .collect::<HashMap<_, _>>()
                 });
                 match self.manager.get_client(server_id).await {
@@ -705,10 +695,7 @@ Actions:
                 }
             }
 
-            _ => Err(crate::error::SyscityError::Validation(format!(
-                "Unknown action: {}",
-                action
-            ))),
+            _ => Err(crate::error::SyscityError::Validation(format!("Unknown action: {}", action))),
         }
     }
 }

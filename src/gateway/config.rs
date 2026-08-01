@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::AgentConfig;
 use crate::channels::ChannelType;
-use crate::security::pairing::DmPolicy;
 use crate::mcp::McpSettings;
+use crate::security::pairing::DmPolicy;
 
 /// Gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

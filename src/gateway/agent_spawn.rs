@@ -14,9 +14,9 @@ use crate::acp::AcpControlPlane;
 use crate::agent::session_store::AppendMessageParams;
 use crate::agent::{Agent, AgentConfig};
 use crate::config::CapabilitiesConfig;
+use crate::mcp::McpManager;
 use crate::tools::approval::ApprovalQueue;
 use crate::tools::delegate_tool::AgentResolver;
-use crate::mcp::McpManager;
 use crate::tools::ToolRegistry;
 
 // ── GatewayAgentResolver ─────────────────────────────────────────────────────

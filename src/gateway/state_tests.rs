@@ -13,9 +13,9 @@ use tokio_util::sync::CancellationToken;
 use super::*;
 use crate::acp::AcpControlPlane;
 use crate::channels::{ChannelType, MentionState};
+use crate::mcp::McpManager;
 use crate::security::mention_gate::{MentionGate, MentionPolicy};
 use crate::security::pairing::{DmPolicy, PairingStore};
-use crate::mcp::McpManager;
 use crate::tools::{command_gate::CommandGate, ApprovalQueue, ToolRegistry};
 
 // ── Dummy pipeline implementations (required by GatewayState but unused here)
