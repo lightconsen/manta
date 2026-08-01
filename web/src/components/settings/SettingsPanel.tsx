@@ -166,10 +166,30 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     auth_url?: string;
     token_url?: string;
     scopes?: string;
+    env: Array<{ name: string; required: boolean; description?: string }>;
   }>>([]);
   const [authModal, setAuthModal] = useState<{
     serverId: string;
     authUrl: string;
+  } | null>(null);
+  const [envModal, setEnvModal] = useState<{
+    preset: {
+      name: string;
+      display_name: string;
+      command?: string;
+      args: string[];
+      url?: string;
+      transport: string;
+      auth_type?: string;
+      client_id?: string;
+      auth_url?: string;
+      token_url?: string;
+      scopes?: string;
+      env: Array<{ name: string; required: boolean; description?: string }>;
+    };
+    values: Record<string, string>;
+    error?: string;
+    saving?: boolean;
   } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -517,10 +537,17 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     auth_url?: string;
     token_url?: string;
     scopes?: string;
+    enabled: boolean;
+    env: Array<{ name: string; required: boolean; description?: string }>;
   }) => {
+    // Presets that need env tokens: collect them first, then validate on save.
+    if (preset.env?.length && !preset.enabled) {
+      setEnvModal({ preset, values: {} });
+      return;
+    }
     setMcpActionLoading(preset.name);
     try {
-      const ok = await transport.addMcpServer({
+      const res = await transport.addMcpServer({
         id: preset.name,
         transport: preset.transport,
         command: preset.command,
@@ -533,7 +560,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
         scopes: preset.scopes,
         auto_connect: true,
       });
-      if (!ok) {
+      if (!res.ok) {
         showToast(`Failed to enable ${preset.display_name}`, "error");
         setMcpActionLoading("");
         return;
@@ -558,6 +585,44 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       showToast(`Failed to enable ${preset.display_name}`, "error");
     }
     setMcpActionLoading("");
+  };
+
+  /** Validate + save env tokens for a preset, then enable it. */
+  const submitEnv = async () => {
+    if (!envModal) return;
+    const p = envModal.preset;
+    const env: Record<string, string> = {};
+    for (const v of p.env) {
+      const val = (envModal.values[v.name] ?? "").trim();
+      if (v.required && !val) {
+        setEnvModal({ ...envModal, error: `${v.name} is required` });
+        return;
+      }
+      if (val) env[v.name] = val;
+    }
+    setEnvModal({ ...envModal, saving: true, error: undefined });
+    const res = await transport.addMcpServer({
+      id: p.name,
+      transport: p.transport,
+      command: p.command,
+      args: p.args,
+      url: p.url,
+      auth_type: p.auth_type,
+      client_id: p.client_id,
+      auth_url: p.auth_url,
+      token_url: p.token_url,
+      scopes: p.scopes,
+      auto_connect: true,
+      env,
+    });
+    if (!res.ok) {
+      // Keep the typed values and the modal open so the user can retry.
+      setEnvModal((m) => (m ? { ...m, saving: false, error: res.error || "Failed to enable" } : m));
+      return;
+    }
+    setEnvModal(null);
+    await Promise.all([refreshMcp(), refreshMcpPresets()]);
+    showToast(`${p.display_name} enabled`, "success");
   };
 
   const handleCancelAuth = async () => {
@@ -602,7 +667,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       return;
     }
     setMcpActionLoading("add");
-    const ok = await transport.addMcpServer({
+    const res = await transport.addMcpServer({
       id: newMcp.id.trim(),
       transport: newMcp.transport,
       command: newMcp.command.trim() || undefined,
@@ -615,12 +680,12 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       scopes: newMcp.scopes.trim() || undefined,
       auto_connect: newMcp.auto_connect,
     });
-    if (ok) {
+    if (res.ok) {
       setNewMcp({ id: "", transport: "stdio", command: "", args: "", url: "", auth_type: "", client_id: "", auth_url: "", token_url: "", scopes: "", auto_connect: true });
       setShowAddMcp(false);
       await refreshMcp();
     } else {
-      setAddMcpError("Failed to add MCP server");
+      setAddMcpError(res.error || "Failed to add MCP server");
     }
     setMcpActionLoading("");
   };
@@ -1411,6 +1476,16 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                               </button>
                             </div>
                             <span className="text-[11px] leading-tight opacity-70 line-clamp-2">{p.description}</span>
+                            {p.enabled && p.env?.length ? (
+                              <button
+                                type="button"
+                                disabled={loading}
+                                onClick={() => setEnvModal({ preset: p, values: {} })}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-sidebar text-secondary hover:text-primary transition"
+                              >
+                                Configure tokens
+                              </button>
+                            ) : null}
                           </div>
                         );
                       })}
@@ -1896,6 +1971,62 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               </button>
               <button
                 onClick={handleCancelAuth}
+                className="px-4 py-2 text-xs font-medium rounded-lg bg-sidebar text-secondary hover:text-primary transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Env token modal — collects required tokens for a preset, validates on save */}
+      {envModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-card rounded-xl p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-sm font-semibold mb-1">Configure {envModal.preset.display_name}</h3>
+            <p className="text-xs text-secondary mb-4">
+              Enter the tokens this MCP server needs. They are stored securely on this machine
+              and verified by connecting before enabling.
+            </p>
+            <div className="space-y-3">
+              {envModal.preset.env.map((v) => (
+                <div key={v.name}>
+                  <label className="block text-xs text-secondary mb-1">
+                    {v.name}
+                    {v.required && <span className="text-red-500"> *</span>}
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="••••••••"
+                    value={envModal.values[v.name] ?? ""}
+                    onChange={(e) =>
+                      setEnvModal((m) =>
+                        m ? { ...m, values: { ...m.values, [v.name]: e.target.value } } : m
+                      )
+                    }
+                    className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                  />
+                  {v.description && (
+                    <p className="text-[10px] text-secondary/70 mt-0.5">{v.description}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+            {envModal.error && (
+              <div className="mt-3 text-xs text-red-600 dark:text-red-400 break-words">{envModal.error}</div>
+            )}
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={submitEnv}
+                disabled={envModal.saving}
+                className="flex-1 px-4 py-2 text-xs font-medium rounded-lg bg-primary text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {envModal.saving ? "Validating..." : "Save & Enable"}
+              </button>
+              <button
+                onClick={() => setEnvModal(null)}
+                disabled={envModal.saving}
                 className="px-4 py-2 text-xs font-medium rounded-lg bg-sidebar text-secondary hover:text-primary transition-colors"
               >
                 Cancel

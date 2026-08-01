@@ -8,8 +8,8 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
 
 use crate::mcp::{
-    McpClient, McpEvent, McpHealth, McpHealthStatus, McpNotification, McpServerConfig,
-    McpToolDefinition, OAuthCommand, OAuthManager, OAuthManagerActor, OAuthTokens, token_path_for,
+    token_path_for, McpClient, McpEvent, McpHealth, McpHealthStatus, McpNotification,
+    McpServerConfig, McpToolDefinition, OAuthCommand, OAuthManager, OAuthManagerActor, OAuthTokens,
 };
 
 // ─────────────────────────────────────────────
@@ -56,10 +56,7 @@ impl std::fmt::Debug for McpManager {
             .field("clients", &self.clients)
             .field("event_tx", &self.event_tx)
             .field("oauth", &self.oauth.as_ref().map(|_| "OAuthManager { .. }"))
-            .field(
-                "oauth_cmd_rx",
-                &self.oauth_cmd_rx.as_ref().map(|_| "Receiver { .. }"),
-            )
+            .field("oauth_cmd_rx", &self.oauth_cmd_rx.as_ref().map(|_| "Receiver { .. }"))
             .finish()
     }
 }
@@ -89,11 +86,8 @@ impl McpManager {
         // Spawn the OAuth manager actor if we have the receiver.
         if let Some(cmd_rx) = self.oauth_cmd_rx.take() {
             if let Some(ref oauth) = self.oauth {
-                let actor = OAuthManagerActor::new(
-                    cmd_rx,
-                    oauth.cmd_tx.clone(),
-                    self.event_tx.clone(),
-                );
+                let actor =
+                    OAuthManagerActor::new(cmd_rx, oauth.cmd_tx.clone(), self.event_tx.clone());
                 actor.spawn();
             }
         }
@@ -131,8 +125,7 @@ impl McpManager {
         let meta = McpConnectionMeta::new(client.clone(), config.clone());
 
         // Wire notification and progress channels.
-        let (notification_tx, mut notification_rx) =
-            mpsc::unbounded_channel::<McpNotification>();
+        let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<McpNotification>();
         let (progress_tx, _progress_rx) = broadcast::channel::<McpNotification>(128);
         {
             let mut c = client.write().await;
@@ -203,6 +196,15 @@ impl McpManager {
         server_id: &str,
         config: McpServerConfig,
     ) -> crate::Result<Vec<McpToolDefinition>> {
+        let mut config = config;
+        // Reconnect-after-restart: pull persisted tokens from the env store so
+        // the server spawns with them without the user re-entering them.
+        // Inline (submitted) env wins over stored via entry().or_insert().
+        if let Ok(stored) = crate::mcp::load(server_id).await {
+            for (k, v) in stored {
+                config.resolved_env.entry(k).or_insert(v);
+            }
+        }
         let mut client = McpClient::new().with_timeout(config.timeout_secs);
         client.connect(config.clone()).await?;
 
@@ -443,10 +445,7 @@ impl McpManager {
                         });
                     }
 
-                    warn!(
-                        "MCP server '{}' marked unhealthy; attempting recovery",
-                        server_id
-                    );
+                    warn!("MCP server '{}' marked unhealthy; attempting recovery", server_id);
 
                     let _ = clients.write().await.remove(&server_id);
 
@@ -567,9 +566,9 @@ impl McpManager {
                     .start_flow(server_id.to_string(), config.clone())
                     .await
             }
-            None => Err(crate::error::SyscityError::Internal(
-                "OAuth manager not available".to_string(),
-            )),
+            None => {
+                Err(crate::error::SyscityError::Internal("OAuth manager not available".to_string()))
+            }
         }
     }
 

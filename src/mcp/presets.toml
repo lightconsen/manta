@@ -20,6 +20,10 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
 transport = "stdio"
 
+[github.env.GITHUB_PERSONAL_ACCESS_TOKEN]
+required = true
+description = "GitHub Personal Access Token (repo, read:org scopes)"
+
 [gmail]
 display_name = "Gmail"
 description = "Read, search and send emails"
@@ -27,6 +31,16 @@ logo_url = "https://cdn.simpleicons.org/gmail"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-gmail"]
 transport = "stdio"
+
+[gmail.env.GOOGLE_OAUTH_CLIENT_ID]
+required = true
+description = "Google OAuth client ID"
+[gmail.env.GOOGLE_OAUTH_CLIENT_SECRET]
+required = true
+description = "Google OAuth client secret"
+[gmail.env.GOOGLE_OAUTH_REFRESH_TOKEN]
+required = true
+description = "Google OAuth refresh token (Gmail API scope)"
 
 [google_calendar]
 display_name = "Google Calendar"
@@ -36,6 +50,16 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-google-calendar"]
 transport = "stdio"
 
+[google_calendar.env.GOOGLE_OAUTH_CLIENT_ID]
+required = true
+description = "Google OAuth client ID"
+[google_calendar.env.GOOGLE_OAUTH_CLIENT_SECRET]
+required = true
+description = "Google OAuth client secret"
+[google_calendar.env.GOOGLE_OAUTH_REFRESH_TOKEN]
+required = true
+description = "Google OAuth refresh token (Calendar API scope)"
+
 [google_drive]
 display_name = "Google Drive"
 description = "Access and manage files in Google Drive"
@@ -43,6 +67,16 @@ logo_url = "https://cdn.simpleicons.org/googledrive"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-google-drive"]
 transport = "stdio"
+
+[google_drive.env.GOOGLE_OAUTH_CLIENT_ID]
+required = true
+description = "Google OAuth client ID"
+[google_drive.env.GOOGLE_OAUTH_CLIENT_SECRET]
+required = true
+description = "Google OAuth client secret"
+[google_drive.env.GOOGLE_OAUTH_REFRESH_TOKEN]
+required = true
+description = "Google OAuth refresh token (Drive API scope)"
 
 [notion]
 display_name = "Notion"
@@ -52,6 +86,10 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-notion"]
 transport = "stdio"
 
+[notion.env.NOTION_TOKEN]
+required = true
+description = "Notion integration token (internal integration secret)"
+
 [slack]
 display_name = "Slack"
 description = "Channel messaging, search, and workspace management"
@@ -60,6 +98,16 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-slack"]
 transport = "stdio"
 
+[slack.env.SLACK_API_TOKEN]
+required = true
+description = "Slack App Bot User OAuth token (xoxb-...)"
+[slack.env.SLACK_DM_PERMISSION]
+required = false
+description = "Allow DMs to the bot (true/false)"
+[slack.env.SLACK_LOG_LEVEL]
+required = false
+description = "Log level for the Slack server (info/debug)"
+
 [linear]
 display_name = "Linear"
 description = "Issue tracking, sprint planning, and project management"
@@ -67,6 +115,10 @@ logo_url = "https://cdn.simpleicons.org/linear"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-linear"]
 transport = "stdio"
+
+[linear.env.LINEAR_API_KEY]
+required = true
+description = "Linear Personal API key (Settings > Security & access)"
 
 # ── Remote OAuth Presets ──
 # These use streamable_http transport with OAuth 2.1 + PKCE.

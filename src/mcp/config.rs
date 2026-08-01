@@ -27,7 +27,7 @@ pub enum McpTransport {
 // ─────────────────────────────────────────────
 
 /// Per-server MCP configuration (used in config.toml `[mcp.servers.*]`)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     /// Transport to use (default: stdio)
     #[serde(default)]
@@ -42,6 +42,11 @@ pub struct McpServerConfig {
     /// time)
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Literal env values applied verbatim at subprocess spawn (bypass `$VAR`
+    /// expansion). Never serialized to config.toml — populated from the
+    /// `~/.syscity/mcp_env` store at connect time.
+    #[serde(default, skip)]
+    pub resolved_env: HashMap<String, String>,
     /// Working directory (stdio only)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<PathBuf>,
@@ -83,6 +88,35 @@ pub struct McpServerConfig {
     pub scopes: Option<String>,
 }
 
+/// `Debug` redacts `resolved_env` values — they are secrets and must never
+/// appear in logs.
+impl std::fmt::Debug for McpServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted: HashMap<&String, &str> =
+            self.resolved_env.keys().map(|k| (k, "••••")).collect();
+        f.debug_struct("McpServerConfig")
+            .field("transport", &self.transport)
+            .field("command", &self.command)
+            .field("args", &self.args)
+            .field("env", &self.env)
+            .field("resolved_env", &redacted)
+            .field("working_dir", &self.working_dir)
+            .field("url", &self.url)
+            .field("timeout_secs", &self.timeout_secs)
+            .field("max_tools", &self.max_tools)
+            .field("auto_connect", &self.auto_connect)
+            .field("health_check_interval_secs", &self.health_check_interval_secs)
+            .field("auto_reconnect", &self.auto_reconnect)
+            .field("max_reconnect_attempts", &self.max_reconnect_attempts)
+            .field("auth_type", &self.auth_type)
+            .field("client_id", &self.client_id)
+            .field("auth_url", &self.auth_url)
+            .field("token_url", &self.token_url)
+            .field("scopes", &self.scopes)
+            .finish()
+    }
+}
+
 fn default_health_check_interval_secs() -> u64 {
     30
 }
@@ -105,6 +139,7 @@ impl Default for McpServerConfig {
             command: None,
             args: Vec::new(),
             env: HashMap::new(),
+            resolved_env: HashMap::new(),
             working_dir: None,
             url: None,
             timeout_secs: default_timeout_secs(),

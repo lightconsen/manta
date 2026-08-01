@@ -1091,6 +1091,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       auth_url?: string;
       token_url?: string;
       scopes?: string;
+      env: Array<{ name: string; required: boolean; description?: string }>;
     }>
   > {
     try {
@@ -1110,6 +1111,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           auth_url?: string;
           token_url?: string;
           scopes?: string;
+          env: Array<{ name: string; required: boolean; description?: string }>;
         }>;
       };
       return res.presets || [];
@@ -1127,6 +1129,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       url?: string;
       auto_connect: boolean;
       connected: boolean;
+      env_configured?: boolean;
     }>;
   }> {
     try {
@@ -1139,6 +1142,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           url?: string;
           auto_connect: boolean;
           connected: boolean;
+          env_configured?: boolean;
         }>;
       };
       return res;
@@ -1159,12 +1163,13 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     token_url?: string;
     scopes?: string;
     auto_connect?: boolean;
-  }): Promise<boolean> {
+    env?: Record<string, string>;
+  }): Promise<{ ok: boolean; error?: string }> {
     try {
       await this.sendRequestAndWait("mcp.add", payload);
-      return true;
-    } catch {
-      return false;
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 

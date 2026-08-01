@@ -162,11 +162,7 @@ pub async fn connect_mcp_server_handler(
 }
 
 /// Persist an MCP server config to config.toml (best-effort).
-async fn persist_mcp_config(
-    state: &Arc<GatewayState>,
-    server_id: &str,
-    config: McpServerConfig,
-) {
+async fn persist_mcp_config(state: &Arc<GatewayState>, server_id: &str, config: McpServerConfig) {
     {
         let mut cfg_guard = state.config.write().await;
         Arc::make_mut(&mut cfg_guard)
@@ -214,6 +210,10 @@ pub async fn disconnect_mcp_server_handler(
             // Drop any stored OAuth tokens so a re-added server cannot reuse a
             // stale/revoked token.
             state.tools.mcp_manager.clear_oauth_token(&server_id).await;
+            // Drop any stored env tokens too.
+            if let Err(e) = crate::mcp::delete(&server_id).await {
+                warn!("Failed to delete MCP env store for {}: {}", server_id, e);
+            }
             if let Some(config_path) = state.config_path.clone() {
                 let cfg_guard = state.config.read().await;
                 if let Err(e) = super::config::persist_config_atomic(&cfg_guard, &config_path).await

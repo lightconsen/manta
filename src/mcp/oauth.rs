@@ -52,7 +52,7 @@ struct CachedToken {
 pub(crate) enum OAuthCommand {
     StartFlow {
         server_id: String,
-        config: McpServerConfig,
+        config: Box<McpServerConfig>,
         resp_tx: oneshot::Sender<crate::Result<String>>,
     },
     CancelFlow {
@@ -105,23 +105,19 @@ impl OAuthManager {
         config: McpServerConfig,
     ) -> crate::Result<String> {
         let (resp_tx, resp_rx) = oneshot::channel();
-        let _ = self
-            .cmd_tx
-            .send(OAuthCommand::StartFlow {
-                server_id,
-                config,
-                resp_tx,
-            });
-        resp_rx
-            .await
-            .map_err(|_| crate::error::SyscityError::Internal("OAuth manager dropped".to_string()))?
+        let _ = self.cmd_tx.send(OAuthCommand::StartFlow {
+            server_id,
+            config: Box::new(config),
+            resp_tx,
+        });
+        resp_rx.await.map_err(|_| {
+            crate::error::SyscityError::Internal("OAuth manager dropped".to_string())
+        })?
     }
 
     /// Cancel a pending OAuth flow.
     pub async fn cancel_flow(&self, server_id: String) {
-        let _ = self
-            .cmd_tx
-            .send(OAuthCommand::CancelFlow { server_id });
+        let _ = self.cmd_tx.send(OAuthCommand::CancelFlow { server_id });
     }
 
     /// Get cached OAuth tokens for a server.
@@ -129,10 +125,7 @@ impl OAuthManager {
         let (resp_tx, resp_rx) = oneshot::channel();
         let _ = self
             .cmd_tx
-            .send(OAuthCommand::GetToken {
-                server_id,
-                resp_tx,
-            });
+            .send(OAuthCommand::GetToken { server_id, resp_tx });
         resp_rx.await.ok().flatten()
     }
 
@@ -141,18 +134,13 @@ impl OAuthManager {
         let (resp_tx, resp_rx) = oneshot::channel();
         let _ = self
             .cmd_tx
-            .send(OAuthCommand::HasToken {
-                server_id,
-                resp_tx,
-            });
+            .send(OAuthCommand::HasToken { server_id, resp_tx });
         resp_rx.await.unwrap_or(false)
     }
 
     /// Clear the cached token and delete the persisted token file.
     pub async fn clear_token(&self, server_id: String) {
-        let _ = self
-            .cmd_tx
-            .send(OAuthCommand::ClearToken { server_id });
+        let _ = self.cmd_tx.send(OAuthCommand::ClearToken { server_id });
     }
 }
 
@@ -193,8 +181,7 @@ impl OAuthManagerActor {
     async fn run(mut self) {
         self.preload_cache().await;
 
-        let mut refresh_interval =
-            tokio::time::interval(tokio::time::Duration::from_secs(60));
+        let mut refresh_interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
 
         loop {
             tokio::select! {
@@ -248,8 +235,7 @@ impl OAuthManagerActor {
                 if let Ok(data) = tokio::fs::read_to_string(&path).await {
                     if let Ok(tokens) = serde_json::from_str::<OAuthTokens>(&data) {
                         let mtime = disk_mtime(&path).await;
-                        self.token_cache
-                            .insert(id, CachedToken { tokens, mtime });
+                        self.token_cache.insert(id, CachedToken { tokens, mtime });
                     }
                 }
             }
@@ -275,9 +261,7 @@ impl OAuthManagerActor {
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| {
-                crate::error::SyscityError::Internal(format!(
-                    "Failed to build HTTP client: {e}"
-                ))
+                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {e}"))
             })?;
 
         // 1. Discover OAuth endpoints: explicit config → RFC 8414 well-known →
@@ -307,9 +291,12 @@ impl OAuthManagerActor {
         let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| {
             crate::error::SyscityError::Internal(format!("Failed to bind callback port: {e}"))
         })?;
-        let callback_port = listener.local_addr().map_err(|e| {
-            crate::error::SyscityError::Internal(format!("Failed to get local addr: {e}"))
-        })?.port();
+        let callback_port = listener
+            .local_addr()
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Failed to get local addr: {e}"))
+            })?
+            .port();
 
         let redirect_uri = format!("http://127.0.0.1:{callback_port}/callback");
 
@@ -327,10 +314,8 @@ impl OAuthManagerActor {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
 
         // 6. Store pending flow state
-        self.pending_flows.insert(
-            server_id.to_string(),
-            PendingFlowState { cancel_tx },
-        );
+        self.pending_flows
+            .insert(server_id.to_string(), PendingFlowState { cancel_tx });
 
         // 7. Spawn callback server task (sends CallbackComplete back to actor)
         let sv_id = server_id.to_string();
@@ -347,10 +332,7 @@ impl OAuthManagerActor {
             )
             .await;
 
-            let _ = cmd_tx.send(OAuthCommand::CallbackComplete {
-                server_id: sv_id,
-                result,
-            });
+            let _ = cmd_tx.send(OAuthCommand::CallbackComplete { server_id: sv_id, result });
         });
 
         // Notify clients that a flow has started so the UI can surface the
@@ -446,13 +428,8 @@ impl OAuthManagerActor {
                     let _ = tokio::fs::write(&token_path, &json).await;
                 }
                 let mtime = disk_mtime(&token_path).await;
-                self.token_cache.insert(
-                    server_id.to_string(),
-                    CachedToken {
-                        tokens: tokens.clone(),
-                        mtime,
-                    },
-                );
+                self.token_cache
+                    .insert(server_id.to_string(), CachedToken { tokens: tokens.clone(), mtime });
 
                 self.emit_event(McpEvent::AuthComplete {
                     server_id: server_id.to_string(),
@@ -481,9 +458,7 @@ impl OAuthManagerActor {
             .token_cache
             .iter()
             .filter(|(_, c)| {
-                c.tokens
-                    .expires_at
-                    .is_some_and(|exp| exp <= refresh_window)
+                c.tokens.expires_at.is_some_and(|exp| exp <= refresh_window)
                     && c.tokens.refresh_token.is_some()
             })
             .map(|(id, c)| (id.clone(), c.tokens.clone()))
@@ -537,19 +512,13 @@ impl OAuthManagerActor {
 
                             // Persist to disk, then cache with the file's mtime
                             let tokens_dir = mcp_tokens_dir();
-                            let token_path =
-                                tokens_dir.join(format!("{server_id}.json"));
+                            let token_path = tokens_dir.join(format!("{server_id}.json"));
                             if let Ok(json) = serde_json::to_string(&updated) {
                                 let _ = tokio::fs::write(&token_path, &json).await;
                             }
                             let mtime = disk_mtime(&token_path).await;
-                            self.token_cache.insert(
-                                server_id.clone(),
-                                CachedToken {
-                                    tokens: updated,
-                                    mtime,
-                                },
-                            );
+                            self.token_cache
+                                .insert(server_id.clone(), CachedToken { tokens: updated, mtime });
 
                             info!("OAuth token refreshed for '{server_id}'");
 
@@ -559,17 +528,12 @@ impl OAuthManagerActor {
                             .await;
                         }
                         Err(e) => {
-                            warn!(
-                                "Failed to parse refresh token response for '{server_id}': {e}"
-                            );
+                            warn!("Failed to parse refresh token response for '{server_id}': {e}");
                         }
                     }
                 }
                 Ok(resp) => {
-                    warn!(
-                        "Token refresh failed for '{server_id}': HTTP {}",
-                        resp.status()
-                    );
+                    warn!("Token refresh failed for '{server_id}': HTTP {}", resp.status());
                 }
                 Err(e) => {
                     warn!("Token refresh request failed for '{server_id}': {e}");
@@ -706,10 +670,7 @@ async fn fetch_metadata_endpoints(
 /// Send an unauthenticated request to the MCP endpoint and return the
 /// `resource_metadata` URL advertised in the `WWW-Authenticate` challenge
 /// (RFC 9728). Probes with a POST `initialize` first, then a plain GET.
-async fn fetch_resource_metadata_url(
-    http: &reqwest::Client,
-    server_url: &str,
-) -> Option<String> {
+async fn fetch_resource_metadata_url(http: &reqwest::Client, server_url: &str) -> Option<String> {
     let request = http
         .post(server_url)
         .header("Accept", "application/json, text/event-stream")
@@ -833,12 +794,7 @@ async fn run_callback_server(
     let (reader, mut writer) = tokio::io::split(stream);
     let mut lines = tokio::io::BufReader::new(reader).lines();
 
-    let request_line = lines
-        .next_line()
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    let request_line = lines.next_line().await.ok().flatten().unwrap_or_default();
 
     let path = request_line.split_whitespace().nth(1).unwrap_or("/");
 
@@ -868,9 +824,7 @@ async fn run_callback_server(
     })?;
 
     let state = params.get("state").ok_or_else(|| {
-        crate::error::SyscityError::Internal(
-            "Missing state in OAuth callback".to_string(),
-        )
+        crate::error::SyscityError::Internal("Missing state in OAuth callback".to_string())
     })?;
 
     if state != expected_state {
@@ -902,9 +856,7 @@ async fn run_callback_server(
         .body(token_body)
         .send()
         .await
-        .map_err(|e| {
-            crate::error::SyscityError::Internal(format!("Token exchange failed: {e}"))
-        })?;
+        .map_err(|e| crate::error::SyscityError::Internal(format!("Token exchange failed: {e}")))?;
 
     if !token_response.status().is_success() {
         let status = token_response.status();

@@ -17,9 +17,9 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
 
 use crate::mcp::{
-    McpGetPromptResult, McpInitializeResult, McpNotification, McpPrompt, McpRequest,
-    McpResource, McpResourceContent, McpResponse, McpSamplingMessage, McpSamplingResult,
-    McpServerCapabilities, McpServerConfig, McpServerInfo, McpToolDefinition, McpTransport,
+    McpGetPromptResult, McpInitializeResult, McpNotification, McpPrompt, McpRequest, McpResource,
+    McpResourceContent, McpResponse, McpSamplingMessage, McpSamplingResult, McpServerCapabilities,
+    McpServerConfig, McpServerInfo, McpToolDefinition, McpTransport,
 };
 
 // ─────────────────────────────────────────────
@@ -48,8 +48,7 @@ pub struct McpClient {
     /// Monotonically increasing JSON-RPC ID
     request_id: AtomicU64,
     /// Pending response channels keyed by request ID
-    response_channels:
-        Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<McpResponse>>>>,
+    response_channels: Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<McpResponse>>>>,
     /// Set to true when the server process exits (9.4)
     child_exited: Arc<AtomicBool>,
     /// Request timeout in seconds (9.3)
@@ -89,9 +88,7 @@ impl McpClient {
     // ── Env-var resolution (9.8) ─────────────────────────────────────────────
 
     /// Resolve `$VAR` references in the env map using `std::env::var`
-    pub(crate) fn resolve_env(
-        env: &HashMap<String, String>,
-    ) -> HashMap<String, String> {
+    pub(crate) fn resolve_env(env: &HashMap<String, String>) -> HashMap<String, String> {
         env.iter()
             .map(|(k, v)| {
                 let resolved = if let Some(var_name) = v.strip_prefix('$') {
@@ -104,11 +101,17 @@ impl McpClient {
             .collect()
     }
 
+    /// Merge `config.env` (with `$VAR` expansion) and `config.resolved_env`
+    /// (literal, verbatim). Literal stored tokens must never be run through
+    /// expansion, so a stored value like `$HOME` stays as-is.
+    pub(crate) fn merged_env(config: &McpServerConfig) -> HashMap<String, String> {
+        let mut resolved = Self::resolve_env(&config.env);
+        resolved.extend(config.resolved_env.clone());
+        resolved
+    }
+
     /// Set the notification sender channel for server-pushed messages.
-    pub fn set_notification_tx(
-        &mut self,
-        tx: mpsc::UnboundedSender<McpNotification>,
-    ) {
+    pub fn set_notification_tx(&mut self, tx: mpsc::UnboundedSender<McpNotification>) {
         self.notification_tx = Some(tx);
     }
 
@@ -135,9 +138,7 @@ impl McpClient {
                     .map(String::from)?;
                 Some(McpNotification::ResourceUpdated { uri })
             }
-            "notifications/resources/list_changed" => {
-                Some(McpNotification::ResourceListChanged)
-            }
+            "notifications/resources/list_changed" => Some(McpNotification::ResourceListChanged),
             "notifications/tools/list_changed" => Some(McpNotification::ToolListChanged),
             "notifications/progress" => {
                 let params = response.params.as_ref()?;
@@ -157,10 +158,7 @@ impl McpClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("info")
                     .to_string();
-                Some(McpNotification::Message {
-                    level,
-                    data: params.clone(),
-                })
+                Some(McpNotification::Message { level, data: params.clone() })
             }
             method => Some(McpNotification::Other {
                 method: method.to_string(),
@@ -189,10 +187,7 @@ impl McpClient {
     // ── Stdio transport ──────────────────────────────────────────────────────
 
     /// Connect via stdio subprocess (9.1, 9.3, 9.4, 9.8)
-    pub async fn connect_stdio(
-        &mut self,
-        config: McpServerConfig,
-    ) -> crate::Result<()> {
+    pub async fn connect_stdio(&mut self, config: McpServerConfig) -> crate::Result<()> {
         let command = config.command.as_deref().ok_or_else(|| {
             crate::error::SyscityError::Internal(
                 "stdio transport requires 'command' field".to_string(),
@@ -203,8 +198,10 @@ impl McpClient {
 
         self.timeout_secs = config.timeout_secs;
 
-        // Resolve env vars before passing to subprocess (9.8)
-        let resolved_env = Self::resolve_env(&config.env);
+        // Resolve `$VAR` refs in `config.env` first, then apply literal
+        // `resolved_env` values verbatim so stored tokens are never run
+        // through expansion (9.8).
+        let resolved_env = Self::merged_env(&config);
 
         let mut cmd = Command::new(command);
         cmd.args(&config.args)
@@ -218,10 +215,7 @@ impl McpClient {
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "Failed to spawn MCP server: {}",
-                e
-            ))
+            crate::error::SyscityError::Internal(format!("Failed to spawn MCP server: {}", e))
         })?;
 
         let stdin = child.stdin.take().ok_or_else(|| {
@@ -232,8 +226,7 @@ impl McpClient {
             crate::error::SyscityError::Internal("Failed to get stdout".to_string())
         })?;
 
-        let (request_tx, mut request_rx) =
-            mpsc::unbounded_channel::<McpRequest>();
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel::<McpRequest>();
         self.request_tx = Some(request_tx);
 
         // Writer task
@@ -277,9 +270,7 @@ impl McpClient {
                             let _ = tx.send(response);
                         }
                     } else {
-                        if let Some(notification) =
-                            McpClient::parse_notification(&response)
-                        {
+                        if let Some(notification) = McpClient::parse_notification(&response) {
                             McpClient::emit_notification(
                                 notification,
                                 &notification_tx,
@@ -370,14 +361,9 @@ impl McpClient {
     // ── SSE transport (9.6) ──────────────────────────────────────────────────
 
     /// Connect to an MCP server via Server-Sent Events
-    pub async fn connect_sse(
-        &mut self,
-        config: McpServerConfig,
-    ) -> crate::Result<()> {
+    pub async fn connect_sse(&mut self, config: McpServerConfig) -> crate::Result<()> {
         let url = config.url.as_deref().ok_or_else(|| {
-            crate::error::SyscityError::Internal(
-                "SSE transport requires 'url' field".to_string(),
-            )
+            crate::error::SyscityError::Internal("SSE transport requires 'url' field".to_string())
         })?;
 
         info!("Connecting to MCP server via SSE: {}", url);
@@ -393,15 +379,11 @@ impl McpClient {
             .timeout(std::time::Duration::from_secs(self.timeout_secs))
             .build()
             .map_err(|e| {
-                crate::error::SyscityError::Internal(format!(
-                    "Failed to build HTTP client: {}",
-                    e
-                ))
+                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
             })?;
 
         // Channel for sending JSON-RPC requests to the writer task
-        let (request_tx, mut request_rx) =
-            mpsc::unbounded_channel::<McpRequest>();
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel::<McpRequest>();
         self.request_tx = Some(request_tx);
 
         let response_channels = self.response_channels.clone();
@@ -415,14 +397,12 @@ impl McpClient {
         let progress_tx_sse = self.progress_tx.clone();
         let access_token_sse = self.access_token.clone();
         tokio::spawn(async move {
-            let mut builder =
-                client.get(&get_url).header("Accept", "text/event-stream");
+            let mut builder = client.get(&get_url).header("Accept", "text/event-stream");
             for (k, v) in &env_headers {
                 builder = builder.header(k, v);
             }
             if let Some(ref token) = access_token_sse {
-                builder =
-                    builder.header("Authorization", format!("Bearer {}", token));
+                builder = builder.header("Authorization", format!("Bearer {}", token));
             }
             let resp = match builder.send().await {
                 Ok(r) => r,
@@ -448,20 +428,16 @@ impl McpClient {
                             for line in event.lines() {
                                 if let Some(data) = line.strip_prefix("data:") {
                                     let data = data.trim();
-                                    if let Ok(response) =
-                                        serde_json::from_str::<McpResponse>(data)
+                                    if let Ok(response) = serde_json::from_str::<McpResponse>(data)
                                     {
                                         if let Some(id) = response.id {
-                                            let channels =
-                                                response_channels_sse.read().await;
+                                            let channels = response_channels_sse.read().await;
                                             if let Some(tx) = channels.get(&id) {
                                                 let _ = tx.send(response);
                                             }
                                         } else {
                                             if let Some(notification) =
-                                                McpClient::parse_notification(
-                                                    &response,
-                                                )
+                                                McpClient::parse_notification(&response)
                                             {
                                                 McpClient::emit_notification(
                                                     notification,
@@ -488,10 +464,7 @@ impl McpClient {
             .timeout(std::time::Duration::from_secs(self.timeout_secs))
             .build()
             .map_err(|e| {
-                crate::error::SyscityError::Internal(format!(
-                    "Failed to build HTTP client: {}",
-                    e
-                ))
+                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
             })?;
         let env_for_writer = resolved_env.clone();
         let access_token_writer = self.access_token.clone();
@@ -512,8 +485,7 @@ impl McpClient {
                     builder = builder.header(k, v);
                 }
                 if let Some(ref token) = access_token_writer {
-                    builder =
-                        builder.header("Authorization", format!("Bearer {}", token));
+                    builder = builder.header("Authorization", format!("Bearer {}", token));
                 }
                 if let Err(e) = builder.send().await {
                     error!("Failed to POST MCP request: {}", e);
@@ -527,28 +499,21 @@ impl McpClient {
     }
 
     /// Connect to an MCP server via Streamable-HTTP (POST returning SSE body)
-    pub async fn connect_streamable_http(
-        &mut self,
-        config: McpServerConfig,
-    ) -> crate::Result<()> {
+    pub async fn connect_streamable_http(&mut self, config: McpServerConfig) -> crate::Result<()> {
         let url = config.url.as_deref().ok_or_else(|| {
             crate::error::SyscityError::Internal(
                 "streamable_http transport requires 'url' field".to_string(),
             )
         })?;
 
-        info!(
-            "Connecting to MCP server via streamable-HTTP: {}",
-            url
-        );
+        info!("Connecting to MCP server via streamable-HTTP: {}", url);
 
         self.timeout_secs = config.timeout_secs;
         self.server_config = Some(config.clone());
 
         let resolved_env = Self::resolve_env(&config.env);
 
-        let (request_tx, mut request_rx) =
-            mpsc::unbounded_channel::<McpRequest>();
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel::<McpRequest>();
         self.request_tx = Some(request_tx);
 
         let response_channels = self.response_channels.clone();
@@ -589,8 +554,7 @@ impl McpClient {
                     builder = builder.header(k, v);
                 }
                 if let Some(ref token) = access_token {
-                    builder =
-                        builder.header("Authorization", format!("Bearer {}", token));
+                    builder = builder.header("Authorization", format!("Bearer {}", token));
                 }
 
                 let resp = match builder.send().await {
@@ -611,28 +575,19 @@ impl McpClient {
                                 let event = buf[..end].to_string();
                                 buf.drain(..end + 2);
                                 for line in event.lines() {
-                                    if let Some(data) =
-                                        line.strip_prefix("data:")
-                                    {
+                                    if let Some(data) = line.strip_prefix("data:") {
                                         let data = data.trim();
                                         if let Ok(response) =
-                                            serde_json::from_str::<McpResponse>(
-                                                data,
-                                            )
+                                            serde_json::from_str::<McpResponse>(data)
                                         {
                                             if let Some(id) = response.id {
-                                                let channels =
-                                                    response_channels.read().await;
-                                                if let Some(tx) =
-                                                    channels.get(&id)
-                                                {
+                                                let channels = response_channels.read().await;
+                                                if let Some(tx) = channels.get(&id) {
                                                     let _ = tx.send(response);
                                                 }
                                             } else {
                                                 if let Some(notification) =
-                                                    McpClient::parse_notification(
-                                                        &response,
-                                                    )
+                                                    McpClient::parse_notification(&response)
                                                 {
                                                     McpClient::emit_notification(
                                                         notification,
@@ -661,16 +616,11 @@ impl McpClient {
     }
 
     /// Connect using the transport specified in `config`
-    pub async fn connect(
-        &mut self,
-        config: McpServerConfig,
-    ) -> crate::Result<()> {
+    pub async fn connect(&mut self, config: McpServerConfig) -> crate::Result<()> {
         match config.transport {
             McpTransport::Stdio => self.connect_stdio(config).await,
             McpTransport::Sse => self.connect_sse(config).await,
-            McpTransport::StreamableHttp => {
-                self.connect_streamable_http(config).await
-            }
+            McpTransport::StreamableHttp => self.connect_streamable_http(config).await,
         }
     }
 
@@ -700,9 +650,7 @@ impl McpClient {
         let response = self.send_request(request).await?;
 
         if let Some(result) = response.result {
-            if let Ok(init_result) =
-                serde_json::from_value::<McpInitializeResult>(result)
-            {
+            if let Ok(init_result) = serde_json::from_value::<McpInitializeResult>(result) {
                 info!(
                     "MCP server: {} v{}",
                     init_result.server_info.name, init_result.server_info.version
@@ -721,9 +669,7 @@ impl McpClient {
         {
             self.list_tools().await?;
         } else {
-            info!(
-                "MCP server does not advertise tool support; skipping tools/list"
-            );
+            info!("MCP server does not advertise tool support; skipping tools/list");
         }
 
         // Discover resources if supported.
@@ -741,10 +687,7 @@ impl McpClient {
     }
 
     /// Send a request and await its response (with configurable timeout).
-    async fn send_request(
-        &self,
-        request: McpRequest,
-    ) -> crate::Result<McpResponse> {
+    async fn send_request(&self, request: McpRequest) -> crate::Result<McpResponse> {
         let id = request.id.unwrap_or(0);
 
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -755,14 +698,10 @@ impl McpClient {
 
         if let Some(ref req_tx) = self.request_tx {
             req_tx.send(request).map_err(|_| {
-                crate::error::SyscityError::Internal(
-                    "Request channel closed".to_string(),
-                )
+                crate::error::SyscityError::Internal("Request channel closed".to_string())
             })?;
         } else {
-            return Err(crate::error::SyscityError::Internal(
-                "Not connected".to_string(),
-            ));
+            return Err(crate::error::SyscityError::Internal("Not connected".to_string()));
         }
 
         let timeout = tokio::time::Duration::from_secs(self.timeout_secs);
@@ -773,10 +712,7 @@ impl McpClient {
 
                 if let Some(error) = response.error {
                     return Err(crate::error::SyscityError::ExternalService {
-                        source: format!(
-                            "MCP error {}: {}",
-                            error.code, error.message
-                        ),
+                        source: format!("MCP error {}: {}", error.code, error.message),
                         cause: None,
                     });
                 }
@@ -784,9 +720,7 @@ impl McpClient {
                 Ok(response)
             }
             Ok(None) => {
-                Err(crate::error::SyscityError::Internal(
-                    "Response channel closed".to_string(),
-                ))
+                Err(crate::error::SyscityError::Internal("Response channel closed".to_string()))
             }
             Err(_) => Err(crate::error::SyscityError::Internal(format!(
                 "Request timeout after {}s",
@@ -808,12 +742,11 @@ impl McpClient {
         let response = self.send_request(request).await?;
         if let Some(result) = response.result {
             // The MCP spec wraps tools in `{"tools": [...]}`.
-            let tools: Vec<McpToolDefinition> =
-                if let Some(arr) = result.get("tools") {
-                    serde_json::from_value::<Vec<McpToolDefinition>>(arr.clone()).unwrap_or_default()
-                } else {
-                    serde_json::from_value::<Vec<McpToolDefinition>>(result).unwrap_or_default()
-                };
+            let tools: Vec<McpToolDefinition> = if let Some(arr) = result.get("tools") {
+                serde_json::from_value::<Vec<McpToolDefinition>>(arr.clone()).unwrap_or_default()
+            } else {
+                serde_json::from_value::<Vec<McpToolDefinition>>(result).unwrap_or_default()
+            };
             info!("Discovered {} MCP tools", tools.len());
             self.tools = tools;
         }
@@ -840,9 +773,7 @@ impl McpClient {
 
         let response = self.send_request(request).await?;
         response.result.ok_or_else(|| {
-            crate::error::SyscityError::Internal(
-                "No result from tool call".to_string(),
-            )
+            crate::error::SyscityError::Internal("No result from tool call".to_string())
         })
     }
 
@@ -867,12 +798,11 @@ impl McpClient {
 
         let response = self.send_request(request).await?;
         if let Some(result) = response.result {
-            let prompts: Vec<McpPrompt> =
-                if let Some(arr) = result.get("prompts") {
-                    serde_json::from_value::<Vec<McpPrompt>>(arr.clone()).unwrap_or_default()
-                } else {
-                    serde_json::from_value::<Vec<McpPrompt>>(result).unwrap_or_default()
-                };
+            let prompts: Vec<McpPrompt> = if let Some(arr) = result.get("prompts") {
+                serde_json::from_value::<Vec<McpPrompt>>(arr.clone()).unwrap_or_default()
+            } else {
+                serde_json::from_value::<Vec<McpPrompt>>(result).unwrap_or_default()
+            };
             return Ok(prompts);
         }
         Ok(Vec::new())
@@ -901,15 +831,10 @@ impl McpClient {
 
         let response = self.send_request(request).await?;
         let result = response.result.ok_or_else(|| {
-            crate::error::SyscityError::Internal(
-                "No result from prompts/get".to_string(),
-            )
+            crate::error::SyscityError::Internal("No result from prompts/get".to_string())
         })?;
         serde_json::from_value::<McpGetPromptResult>(result).map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "Failed to parse prompt result: {}",
-                e
-            ))
+            crate::error::SyscityError::Internal(format!("Failed to parse prompt result: {}", e))
         })
     }
 
@@ -927,10 +852,7 @@ impl McpClient {
         });
         if let Some(hints) = model_hints {
             if let Some(obj) = params.as_object_mut() {
-                obj.insert(
-                    "modelPreferences".to_string(),
-                    json!({ "hints": hints }),
-                );
+                obj.insert("modelPreferences".to_string(), json!({ "hints": hints }));
             }
         }
 
@@ -948,10 +870,7 @@ impl McpClient {
             )
         })?;
         serde_json::from_value::<McpSamplingResult>(result).map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "Failed to parse sampling result: {}",
-                e
-            ))
+            crate::error::SyscityError::Internal(format!("Failed to parse sampling result: {}", e))
         })
     }
 
@@ -969,10 +888,7 @@ impl McpClient {
             "arguments": params,
         });
         if let Some(obj) = request_params.as_object_mut() {
-            obj.insert(
-                "_meta".to_string(),
-                json!({ "progressToken": progress_token }),
-            );
+            obj.insert("_meta".to_string(), json!({ "progressToken": progress_token }));
         }
 
         let request = McpRequest {
@@ -984,9 +900,7 @@ impl McpClient {
 
         let response = self.send_request(request).await?;
         response.result.ok_or_else(|| {
-            crate::error::SyscityError::Internal(
-                "No result from tool call".to_string(),
-            )
+            crate::error::SyscityError::Internal("No result from tool call".to_string())
         })
     }
 
@@ -1004,22 +918,18 @@ impl McpClient {
 
         let response = self.send_request(request).await?;
         if let Some(result) = response.result {
-            let resources: Vec<McpResource> =
-                if let Some(arr) = result.get("resources") {
-                    serde_json::from_value::<Vec<McpResource>>(arr.clone()).unwrap_or_default()
-                } else {
-                    serde_json::from_value::<Vec<McpResource>>(result).unwrap_or_default()
-                };
+            let resources: Vec<McpResource> = if let Some(arr) = result.get("resources") {
+                serde_json::from_value::<Vec<McpResource>>(arr.clone()).unwrap_or_default()
+            } else {
+                serde_json::from_value::<Vec<McpResource>>(result).unwrap_or_default()
+            };
             return Ok(resources);
         }
         Ok(Vec::new())
     }
 
     /// Read a resource by URI.
-    pub async fn read_resource(
-        &self,
-        uri: &str,
-    ) -> crate::Result<Vec<McpResourceContent>> {
+    pub async fn read_resource(&self, uri: &str) -> crate::Result<Vec<McpResourceContent>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -1030,22 +940,18 @@ impl McpClient {
 
         let response = self.send_request(request).await?;
         if let Some(result) = response.result {
-            let contents: Vec<McpResourceContent> =
-                if let Some(arr) = result.get("contents") {
-                    serde_json::from_value::<Vec<McpResourceContent>>(arr.clone()).unwrap_or_default()
-                } else {
-                    serde_json::from_value::<Vec<McpResourceContent>>(result).unwrap_or_default()
-                };
+            let contents: Vec<McpResourceContent> = if let Some(arr) = result.get("contents") {
+                serde_json::from_value::<Vec<McpResourceContent>>(arr.clone()).unwrap_or_default()
+            } else {
+                serde_json::from_value::<Vec<McpResourceContent>>(result).unwrap_or_default()
+            };
             return Ok(contents);
         }
         Ok(Vec::new())
     }
 
     /// Subscribe to resource change notifications for a URI.
-    pub async fn subscribe_resource(
-        &self,
-        uri: &str,
-    ) -> crate::Result<()> {
+    pub async fn subscribe_resource(&self, uri: &str) -> crate::Result<()> {
         if !self
             .server_capabilities
             .as_ref()
@@ -1079,10 +985,7 @@ impl McpClient {
     }
 
     /// Unsubscribe from resource change notifications for a URI.
-    pub async fn unsubscribe_resource(
-        &self,
-        uri: &str,
-    ) -> crate::Result<()> {
+    pub async fn unsubscribe_resource(&self, uri: &str) -> crate::Result<()> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -1112,9 +1015,7 @@ impl McpClient {
     }
 
     /// Get the server capabilities returned during initialization.
-    pub fn server_capabilities(
-        &self,
-    ) -> Option<&McpServerCapabilities> {
+    pub fn server_capabilities(&self) -> Option<&McpServerCapabilities> {
         self.server_capabilities.as_ref()
     }
 
@@ -1130,8 +1031,7 @@ impl McpClient {
 
     /// Returns true when the underlying channel is open.
     pub fn is_connected(&self) -> bool {
-        self.request_tx.is_some()
-            && !self.child_exited.load(Ordering::Relaxed)
+        self.request_tx.is_some() && !self.child_exited.load(Ordering::Relaxed)
     }
 
     /// True if the child process has exited (stdio transport).

@@ -8,12 +8,13 @@
 //! - `sse` – connect to an HTTP server via Server-Sent Events
 //! - `streamable_http` – POST requests with SSE response bodies
 
-mod config;
-mod types;
 mod client;
-mod oauth;
+mod config;
+mod env_store;
 mod manager;
+mod oauth;
 mod tools;
+mod types;
 
 /// The default MCP presets embedded in the binary.
 pub const DEFAULT_PRESETS_TOML: &str = include_str!("presets.toml");
@@ -22,21 +23,20 @@ pub const DEFAULT_PRESETS_TOML: &str = include_str!("presets.toml");
 // Re-exports — preserve the `crate::mcp::*` API surface
 // ─────────────────────────────────────────────
 
+pub use client::McpClient;
 pub use config::{McpConfig, McpServerConfig, McpSettings, McpTransport};
-pub(crate) use types::{
-    McpInitializeResult, McpRequest, McpResponse, McpServerInfo,
-};
+pub use env_store::{delete, env_path_for, has, load, mcp_env_dir, save};
+pub use manager::{McpConnectionMeta, McpManager};
+pub use oauth::{mcp_tokens_dir, token_path_for, OAuthManager, OAuthTokens};
+pub(crate) use oauth::{OAuthCommand, OAuthManagerActor};
+pub use tools::{McpConnectionTool, McpPromptTool, McpToolWrapper};
 pub use types::{
     McpEvent, McpGetPromptResult, McpHealth, McpHealthStatus, McpNotification, McpPrompt,
     McpPromptArgument, McpPromptMessage, McpPromptsCapability, McpResource, McpResourceContent,
     McpResourcesCapability, McpSamplingMessage, McpSamplingResult, McpServerCapabilities,
     McpToolDefinition, McpToolsCapability,
 };
-pub use client::McpClient;
-pub use oauth::{mcp_tokens_dir, token_path_for, OAuthManager, OAuthTokens};
-pub(crate) use oauth::{OAuthCommand, OAuthManagerActor};
-pub use manager::{McpConnectionMeta, McpManager};
-pub use tools::{McpConnectionTool, McpPromptTool, McpToolWrapper};
+pub(crate) use types::{McpInitializeResult, McpRequest, McpResponse, McpServerInfo};
 
 // ─────────────────────────────────────────────
 // Tests
@@ -83,6 +83,27 @@ mod tests {
         assert_eq!(resolved["KEY"], "hello");
         assert_eq!(resolved["LITERAL"], "world");
         std::env::remove_var("MCP_TEST_VAR");
+    }
+
+    #[test]
+    fn test_merged_env_does_not_expand_literal_tokens() {
+        // A literal stored token that begins with `$` must NOT be run through
+        // env-var expansion (regression for the env-store feature).
+        std::env::set_var("HOME", "/fake/home");
+        let mut env = HashMap::new();
+        env.insert("REF".to_string(), "$HOME".to_string());
+        let mut resolved_env = HashMap::new();
+        resolved_env.insert("TOKEN".to_string(), "$HOME_literal".to_string());
+
+        let config = McpServerConfig {
+            env,
+            resolved_env,
+            ..Default::default()
+        };
+        let merged = McpClient::merged_env(&config);
+        assert_eq!(merged["REF"], "/fake/home");
+        assert_eq!(merged["TOKEN"], "$HOME_literal");
+        std::env::remove_var("HOME");
     }
 
     #[test]
