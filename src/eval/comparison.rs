@@ -6,13 +6,14 @@
 //! # Example
 //!
 //! ```rust
-//! use syscity::eval::comparison::{compare_versions, ComparisonVerdict};
+//! use syscity::eval::compare_versions;
 //!
 //! let old = vec![true, true, true, true, false]; // 80%
 //! let new = vec![true, true, true, true, true]; // 100%
 //! let result = compare_versions(&old, &new, 10_000, 0.95);
-//! assert_eq!(result.verdict, ComparisonVerdict::Improved);
-//! assert!(result.confidence_interval.0 > 0.0);
+//! assert_eq!(result.old_pass_rate, 0.8);
+//! assert_eq!(result.new_pass_rate, 1.0);
+//! assert!(result.delta > 0.0);
 //! ```
 
 use std::time::SystemTime;

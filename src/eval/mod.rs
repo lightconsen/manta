@@ -12,15 +12,18 @@
 //! # Quick Start
 //!
 //! ```rust
-//! use syscity::eval::{EvalHarness, EvalTask, EvalTaskSource, QualityCriteria};
+//! use std::sync::Arc;
+//! use syscity::agent::reflection::Critic;
+//! use syscity::agent::Agent;
+//! use syscity::eval::{EvalHarness, EvalTask};
 //!
-//! # async fn example(agent: Arc<Agent>, critic: Critic) -> Result<()> {
+//! # async fn example(agent: Arc<Agent>, critic: Critic) -> Result<(), Box<dyn std::error::Error>> {
 //! let task = EvalTask {
 //!     id: "example_task".into(),
 //!     input: "Hello".into(),
 //!     ..Default::default()
 //! };
-//! let harness = EvalHarness::new(agent, critic);
+//! let harness = EvalHarness::new(agent, Some(critic));
 //! let summary = harness.run(task, 5).await?;
 //! println!("Pass rate: {:.1}%", summary.pass_rate * 100.0);
 //! # Ok(())

@@ -176,7 +176,8 @@ struct Entry {
 /// let fts_results = vec![
 ///     ScoredResult { content: "Rust borrowing".into(), score: 0.8, source_id: None, citation: "doc:2".into() },
 /// ];
-/// let merged = fuse_and_rerank(vec_results, fts_results, &HybridSearchConfig::default());
+/// let config = HybridSearchConfig { min_score: 0.0, ..HybridSearchConfig::default() };
+/// let merged = fuse_and_rerank(vec_results, fts_results, &config);
 /// assert!(!merged.is_empty());
 /// ```
 pub fn fuse_and_rerank(

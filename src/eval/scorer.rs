@@ -139,7 +139,7 @@ impl Default for ScorerConfig {
 /// Layered scoring engine.
 ///
 /// Implements the three-tier screening from §06-9:
-/// ```
+/// ```text
 /// Coarse (GoalCondition) → Fine (Critic) → HumanReview (routing)
 /// ```
 pub struct LayeredScorer {
