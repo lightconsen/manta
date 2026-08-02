@@ -52,6 +52,19 @@ struct OAuthMetadata {
     expires_at: Option<i64>,
 }
 
+/// Old-format token sidecar that still carries plaintext `access_token` /
+/// `refresh_token` fields (pre-split-persistence, design §8.6). Every field is
+/// optional so a metadata-only file also parses; the migration only acts when
+/// a token field is present.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyTokenFile {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    token_url: Option<String>,
+    client_id: Option<String>,
+    expires_at: Option<i64>,
+}
+
 // ─────────────────────────────────────────────
 // Actor types
 // ─────────────────────────────────────────────
@@ -658,10 +671,20 @@ async fn delete_refresh_token(server_id: &str) -> crate::Result<()> {
 
 /// Write non-sensitive OAuth metadata to the sidecar JSON (atomic + `0600`).
 async fn persist_metadata(server_id: &str, meta: &OAuthMetadata) -> crate::Result<()> {
-    let path = token_path_for(server_id)?;
-    let dir = mcp_tokens_dir();
-    tokio::fs::create_dir_all(&dir).await?;
-    set_dir_perms(&dir).await?;
+    persist_metadata_to(&mcp_tokens_dir(), server_id, meta).await
+}
+
+/// Write metadata to an explicit directory — used by the live path and by the
+/// legacy-token migration, which must rewrite the very sidecar it scanned.
+async fn persist_metadata_to(
+    dir: &Path,
+    server_id: &str,
+    meta: &OAuthMetadata,
+) -> crate::Result<()> {
+    let id = crate::secrets::sanitize_entity(server_id)?;
+    let path = dir.join(format!("{id}.json"));
+    tokio::fs::create_dir_all(dir).await?;
+    set_dir_perms(dir).await?;
 
     let json = serde_json::to_string(meta)?;
     let tmp = path.with_extension("json.tmp");
@@ -676,6 +699,101 @@ async fn load_metadata(server_id: &str) -> Option<OAuthMetadata> {
     let path = token_path_for(server_id).ok()?;
     let data = tokio::fs::read_to_string(&path).await.ok()?;
     serde_json::from_str(&data).ok()
+}
+
+/// One-time migration of legacy `mcp_tokens/{id}.json` sidecars that still
+/// carry plaintext `access_token` / `refresh_token` fields written by an older
+/// format, into the split persistence model (design §8.6): the refresh token
+/// moves into the routed `mcp-oauth` store and the access token is dropped
+/// (memory-only). Idempotent — metadata-only sidecars are skipped.
+///
+/// Atomic and rollback-safe: the refresh token is persisted to the store
+/// *before* the sidecar is rewritten, so a failure at any step leaves the
+/// plaintext file intact and the refresh path is never lost.
+pub async fn migrate_legacy_mcp_tokens() -> crate::Result<()> {
+    let store = refresh_token_store();
+    migrate_legacy_mcp_tokens_with_store(mcp_tokens_dir(), store).await
+}
+
+async fn migrate_legacy_mcp_tokens_with_store(
+    dir: PathBuf,
+    store: Arc<dyn SecretStore>,
+) -> crate::Result<()> {
+    if tokio::fs::metadata(&dir).await.is_err() || !dir.is_dir() {
+        return Ok(());
+    }
+
+    let mut migrated = 0usize;
+    let mut failed = 0usize;
+
+    let mut entries = match tokio::fs::read_dir(&dir).await {
+        Ok(e) => e,
+        Err(e) => {
+            warn!("Cannot read legacy mcp_tokens dir {}: {e}", dir.display());
+            return Ok(());
+        }
+    };
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(server_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
+            continue;
+        };
+
+        let content = match tokio::fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let legacy: LegacyTokenFile = match serde_json::from_str(&content) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("Skipping legacy mcp_tokens {} (unreadable): {e}", path.display());
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Current-format metadata-only sidecar — nothing to do.
+        if legacy.access_token.is_none() && legacy.refresh_token.is_none() {
+            continue;
+        }
+
+        // Move the refresh token into the store *before* touching the file.
+        if let Some(refresh) = legacy.refresh_token {
+            let id = refresh_token_id(&server_id);
+            let already = store.get(&id).await.ok().flatten().is_some();
+            if !already {
+                if let Err(e) = store
+                    .set(&id, &refresh, SecretOrigin::SystemGenerated)
+                    .await
+                {
+                    warn!("Failed to migrate refresh token for '{server_id}': {e}");
+                    failed += 1;
+                    continue;
+                }
+            }
+        }
+
+        // Rewrite the sidecar as metadata-only; this removes the plaintext
+        // token fields from disk (atomic + 0600).
+        let meta = OAuthMetadata {
+            token_url: legacy.token_url.unwrap_or_default(),
+            client_id: legacy.client_id.unwrap_or_default(),
+            expires_at: legacy.expires_at,
+        };
+        if let Err(e) = persist_metadata_to(&dir, &server_id, &meta).await {
+            warn!("Failed to rewrite legacy mcp_tokens {}: {e}", path.display());
+            failed += 1;
+            continue;
+        }
+        migrated += 1;
+    }
+
+    info!("mcp_tokens legacy migration: {migrated} migrated, {failed} failed");
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -1087,6 +1205,74 @@ mod tests {
         }"#;
         let meta: OAuthMetadata = serde_json::from_str(json).unwrap();
         assert_eq!(meta.client_id, "syscity");
+    }
+
+    #[tokio::test]
+    async fn test_migrate_legacy_mcp_tokens() {
+        use crate::secrets::FileStore;
+
+        let root =
+            std::env::temp_dir().join(format!("syscity_oauth_migrate_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let tokens_dir = root.join("mcp_tokens");
+        tokio::fs::create_dir_all(&tokens_dir).await.unwrap();
+
+        // Legacy sidecar carrying plaintext token fields.
+        let legacy = r#"{
+            "access_token": "at_secret",
+            "refresh_token": "rt_secret",
+            "token_url": "https://example.com/token",
+            "client_id": "syscity",
+            "expires_at": 1700000000
+        }"#;
+        tokio::fs::write(tokens_dir.join("github.json"), legacy)
+            .await
+            .unwrap();
+
+        // A metadata-only sidecar that must be left untouched.
+        let meta_only = r#"{"token_url":"https://example.com/token","client_id":"syscity"}"#;
+        tokio::fs::write(tokens_dir.join("google.json"), meta_only)
+            .await
+            .unwrap();
+
+        let store = Arc::new(FileStore::with_root("mcp-oauth", root.join("secrets")));
+        migrate_legacy_mcp_tokens_with_store(tokens_dir.clone(), store.clone())
+            .await
+            .unwrap();
+
+        // Refresh token moved into the store.
+        let stored = store
+            .get(&SecretId::new("mcp-oauth", "github", "refresh_token"))
+            .await
+            .unwrap();
+        assert_eq!(stored.as_deref(), Some("rt_secret"));
+
+        // Sidecar rewritten as metadata-only: plaintext token fields gone.
+        let rewritten = tokio::fs::read_to_string(tokens_dir.join("github.json"))
+            .await
+            .unwrap();
+        let meta: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
+        assert!(meta.get("access_token").is_none());
+        assert!(meta.get("refresh_token").is_none());
+        assert_eq!(meta["client_id"], "syscity");
+
+        // Metadata-only sidecar untouched.
+        let untouched = tokio::fs::read_to_string(tokens_dir.join("google.json"))
+            .await
+            .unwrap();
+        assert!(untouched.contains("\"token_url\""));
+
+        // Idempotent: a second run neither errors nor drops the stored token.
+        migrate_legacy_mcp_tokens_with_store(tokens_dir.clone(), store.clone())
+            .await
+            .unwrap();
+        let stored = store
+            .get(&SecretId::new("mcp-oauth", "github", "refresh_token"))
+            .await
+            .unwrap();
+        assert_eq!(stored.as_deref(), Some("rt_secret"));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

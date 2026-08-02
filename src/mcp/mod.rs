@@ -25,7 +25,9 @@ pub const DEFAULT_PRESETS_TOML: &str = include_str!("presets.toml");
 pub use client::McpClient;
 pub use config::{McpConfig, McpServerConfig, McpSettings, McpTransport};
 pub use manager::{McpConnectionMeta, McpManager};
-pub use oauth::{mcp_tokens_dir, token_path_for, OAuthManager, OAuthTokens};
+pub use oauth::{
+    mcp_tokens_dir, migrate_legacy_mcp_tokens, token_path_for, OAuthManager, OAuthTokens,
+};
 pub(crate) use oauth::{OAuthCommand, OAuthManagerActor};
 pub use tools::{McpConnectionTool, McpPromptTool, McpToolWrapper};
 pub use types::{

@@ -242,9 +242,14 @@ impl Gateway {
         let shutdown_token = CancellationToken::new();
 
         // One-time migration of the legacy ~/.syscity/mcp_env store into
-        // ~/.syscity/secrets/mcp-env (idempotent; no-op when absent).
+        // ~/.syscity/secrets/mcp-env (idempotent; no-op when absent), plus a
+        // sweep of any old mcp_tokens sidecars still carrying plaintext token
+        // fields (design §8.6).
         if let Err(e) = crate::secrets::migrate_legacy_mcp_env().await {
             warn!("Legacy mcp_env migration failed: {}", e);
+        }
+        if let Err(e) = crate::mcp::migrate_legacy_mcp_tokens().await {
+            warn!("Legacy mcp_tokens migration failed: {}", e);
         }
 
         let storage_init = init::storage::init_storage(&config).await?;

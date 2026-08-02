@@ -155,6 +155,11 @@ async fn run_secrets_migrate() -> Result<()> {
     crate::secrets::migrate_legacy_mcp_env().await?;
     info!("Migrated legacy mcp_env files");
 
+    // 2. Sweep legacy `mcp_tokens` sidecars that still carry plaintext token
+    //    fields into the store and rewrite them metadata-only (idempotent).
+    crate::mcp::migrate_legacy_mcp_tokens().await?;
+    info!("Migrated legacy mcp_tokens files");
+
     let config_path = crate::dirs::default_config_file();
     if !config_path.exists() {
         println!("No config file at {}; nothing else to migrate.", config_path.display());
@@ -166,7 +171,7 @@ async fn run_secrets_migrate() -> Result<()> {
     let mut stored = 0usize;
     let mut changed = false;
 
-    // 2. Mirror channel credentials into the store (namespace `channel`).
+    // 3. Mirror channel credentials into the store (namespace `channel`).
     for (id, channel) in &config.channels {
         for kind in SENSITIVE_CHANNEL_CREDENTIALS {
             if channel
@@ -180,7 +185,7 @@ async fn run_secrets_migrate() -> Result<()> {
         crate::secrets::persist_channel_secrets(id, &channel.credentials).await?;
     }
 
-    // 3. Mirror OAuth client secrets into the store (namespace `security`).
+    // 4. Mirror OAuth client secrets into the store (namespace `security`).
     for (provider, cfg) in oauth_provider_configs(&config) {
         if let Some(cfg) = cfg {
             if !cfg.client_secret.is_empty() {
@@ -196,7 +201,7 @@ async fn run_secrets_migrate() -> Result<()> {
         }
     }
 
-    // 4. Advisory for shared_token (kept in config; env reference preferred).
+    // 5. Advisory for shared_token (kept in config; env reference preferred).
     if config
         .security
         .shared_token
@@ -209,7 +214,7 @@ async fn run_secrets_migrate() -> Result<()> {
         );
     }
 
-    // 5. Strip the now-stored plaintext copies from config (channels + OAuth).
+    // 6. Strip the now-stored plaintext copies from config (channels + OAuth).
     for channel in config.channels.values_mut() {
         for kind in SENSITIVE_CHANNEL_CREDENTIALS {
             if channel.credentials.remove(*kind).is_some() {
