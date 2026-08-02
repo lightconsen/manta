@@ -800,6 +800,21 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
             "/api/v1/mcp/servers/:server_id/resources",
             get(super::list_mcp_resources_handler).post(super::read_mcp_resource_handler),
         )
+        // Provider management (backs the `syscity provider ...` CLI commands).
+        .route("/api/v1/providers", get(super::list_providers_handler))
+        .route(
+            "/api/v1/providers/:id/health",
+            get(super::get_provider_health_handler),
+        )
+        .route("/api/v1/providers/:id/enable", post(super::enable_provider_handler))
+        .route("/api/v1/providers/:id/disable", post(super::disable_provider_handler))
+        .route("/api/v1/providers/switch", post(super::switch_model_handler))
+        .route("/api/v1/providers/usage", get(super::provider_usage_handler))
+        .route(
+            "/api/v1/providers/usage/:id",
+            get(super::provider_usage_by_id_handler),
+        )
+        .route("/api/v1/models/default", get(super::get_default_model_handler))
         .layer(from_fn_with_state(state.clone(), super::middleware::auth_middleware));
 
     let essential_router = essential_public_router.merge(essential_auth_router);
