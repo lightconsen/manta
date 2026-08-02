@@ -1,0 +1,321 @@
+//! chat.send / chat.history / chat.abort handlers.
+
+use super::*;
+pub(super) async fn handle_chat_send(
+    req: &WsRequest,
+    conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct ChatSendParams {
+        #[serde(alias = "content")]
+        message: String,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        agent_id: Option<String>,
+    }
+
+    let params: ChatSendParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let (session_id, _is_new_session) = if let Some(sid) = params.session_id {
+        (sid, false)
+    } else {
+        let cg = conn.read().await;
+        let channel = cg.client.as_ref().map(|c| c.id.as_str()).unwrap_or("ws");
+        let user = cg
+            .user_id
+            .as_ref()
+            .map(|u| u.0.as_str())
+            .unwrap_or("anonymous");
+        (format!("{}:{}", channel, user), true)
+    };
+
+    let user_id = {
+        let cg = conn.read().await;
+        cg.user_id
+            .as_ref()
+            .map(|u| u.0.clone())
+            .unwrap_or_else(|| "anonymous".to_string())
+    };
+
+    let mut should_name = false;
+    if let Some(ref store) = state.agents.store {
+        if let Err(e) = store
+            .append_message(&AppendMessageParams {
+                session_id: &session_id,
+                role: "user",
+                content: &params.message,
+                ..Default::default()
+            })
+            .await
+        {
+            tracing::warn!("Failed to save user message to session history: {}", e);
+        }
+        if let Ok(ps) = store.load_session(&session_id).await {
+            if ps.as_ref().map(|m| m.message_count).unwrap_or(0) <= 1 {
+                if let Ok(existing) = store.get_session_name(&session_id).await {
+                    if existing.is_none() {
+                        should_name = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if should_name {
+        let store = state.agents.store.clone();
+        let router = state.infra.model_router.clone();
+        let events = state.events.tx.clone();
+        let sid = session_id.clone();
+        let msg = params.message.clone();
+
+        let name_task = tokio::spawn(async move {
+            let name = handshake::generate_session_title(&router, &msg)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::debug!("LLM session title generation failed: {}, using fallback", e);
+                    handshake::fallback_session_name(&msg)
+                });
+
+            if let Some(ref s) = store {
+                if let Err(e) = s.set_session_name(&sid, &name).await {
+                    tracing::warn!("Failed to save session name for {}: {}", sid, e);
+                } else {
+                    tracing::info!("Session {} named: '{}'", sid, name);
+                    if let Err(e) = events.send(GatewayEvent::SessionRenamed {
+                        session_id: sid.clone(),
+                        name: name.clone(),
+                    }) {
+                        tracing::debug!("No receivers for SessionRenamed event: {}", e);
+                    }
+                }
+            }
+        });
+        state
+            .task_registry
+            .insert_join(format!("ws:session_name:{}", session_id), name_task)
+            .await;
+    }
+
+    if let Some(ref store) = state.agents.store {
+        if let Ok(Some(ps)) = store.load_session(&session_id).await {
+            if let Some(ref bound_agent) = ps.metadata.bound_agent_id {
+                let route = crate::inbound::RouteResult {
+                    agent_id: bound_agent.clone(),
+                    workspace_id: None,
+                    persisted_binding: false,
+                    is_fallback: false,
+                };
+                state.agents.router.bind_session(&session_id, &route).await;
+            }
+        }
+    }
+
+    if let Some(agent_id) = params.agent_id {
+        let route = crate::inbound::RouteResult {
+            agent_id,
+            workspace_id: None,
+            persisted_binding: false,
+            is_fallback: false,
+        };
+        state.agents.router.bind_session(&session_id, &route).await;
+    }
+
+    // ── Smart name-based routing: "小王，xxx" -> route to secretary-xiaowang ──
+    let mut final_message = params.message.clone();
+    {
+        let registry = state.agents.registry.read().await;
+        // Try to extract a name prefix like "小王，" or "小王：" from the message.
+        let trimmed = final_message.trim_start();
+        if let Some((first_word, rest)) = trimmed.split_once(['，', ',', '：', ':', ' ', '\t']) {
+            let name = first_word.trim();
+            if !name.is_empty() {
+                if let Some((personality, _matched_alias)) = registry.find_by_alias(name) {
+                    let agent_id = personality.id.clone();
+                    info!(
+                        "Smart-routing session {} to agent '{}' (matched name: '{}' in message)",
+                        session_id, agent_id, name
+                    );
+                    let route = crate::inbound::RouteResult {
+                        agent_id: agent_id.clone(),
+                        workspace_id: None,
+                        persisted_binding: true,
+                        is_fallback: false,
+                    };
+                    state.agents.router.bind_session(&session_id, &route).await;
+                    // Strip the greeting prefix so the agent sees only the task.
+                    final_message = rest.trim_start().to_string();
+                }
+            }
+        }
+    }
+
+    let incoming =
+        crate::channels::IncomingMessage::new(user_id.clone(), session_id.clone(), final_message)
+            .with_provenance(crate::channels::InputProvenance::ExternalUser {
+                channel: "web".to_string(),
+                is_direct: true,
+            });
+
+    // Submit to the unified inbound entry channel instead of calling the
+    // pipeline directly. The worker drives the message through the pipeline
+    // and `process_routed_messages` dispatches to the agent.
+    let routed = match state.pipelines.inbound_entry.send(incoming).await {
+        Ok(()) => {
+            // Best-effort synchronous resolution so the WebSocket client gets
+            // immediate feedback. The resolved agent is also what will receive
+            // the message via `routed_tx`.
+            Some(state.agents.router.resolve_by_session(&session_id).await)
+        }
+        Err(e) => {
+            return WsResponse::err(
+                &req.id,
+                "enqueue_failed",
+                format!("Failed to enqueue message: {}", e),
+            );
+        }
+    };
+
+    let is_new_session = {
+        let mut cg = conn.write().await;
+        let is_new = !cg.subscriptions.contains(&session_id);
+        if is_new {
+            cg.subscriptions.push(session_id.clone());
+        }
+        is_new
+    };
+
+    if is_new_session {
+        if let Err(e) = state
+            .events
+            .tx
+            .send(crate::gateway::GatewayEvent::SessionCreated {
+                session_id: session_id.clone(),
+                agent_id: routed
+                    .as_ref()
+                    .map(|r| r.agent_id.clone())
+                    .unwrap_or_default(),
+                user_id: user_id.clone(),
+            })
+        {
+            warn!("Failed to broadcast SessionCreated for {}: {}", session_id, e);
+        }
+    }
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": "accepted",
+            "session_id": session_id,
+            "agent_id": routed.map(|r| r.agent_id).unwrap_or_default(),
+        }),
+    )
+}
+
+pub(super) async fn handle_chat_history(
+    req: &WsRequest,
+    _conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct HistoryParams {
+        session_id: String,
+        #[serde(default = "default_limit")]
+        limit: usize,
+        /// Optional timestamp in milliseconds. If provided, only messages with
+        /// `created_at` strictly less than this value are returned (older
+        /// messages).
+        #[serde(default)]
+        before: Option<i64>,
+    }
+
+    fn default_limit() -> usize {
+        100
+    }
+
+    let params: HistoryParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let before = params.before.and_then(DateTime::from_timestamp_millis);
+
+    let messages = if let Some(ref store) = state.agents.store {
+        match store
+            .get_messages(&params.session_id, params.limit as i64, before)
+            .await
+        {
+            Ok(rows) => rows
+                .into_iter()
+                .map(
+                    |(
+                        id,
+                        role,
+                        content,
+                        reasoning,
+                        tool_calls_json,
+                        dt,
+                        _transcript_id,
+                        _run_id,
+                    )| {
+                        let tool_calls: Option<serde_json::Value> =
+                            tool_calls_json.and_then(|json| serde_json::from_str(&json).ok());
+                        serde_json::json!({
+                            "id": format!("msg_{}", id),
+                            "role": role,
+                            "content": content,
+                            "reasoning_content": reasoning,
+                            "tool_calls": tool_calls,
+                            "timestamp": dt.timestamp_millis(),
+                        })
+                    },
+                )
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "session_id": params.session_id,
+            "messages": messages,
+            "has_more": messages.len() == params.limit,
+        }),
+    )
+}
+
+pub(super) async fn handle_chat_abort(
+    req: &WsRequest,
+    _conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct AbortParams {
+        session_id: String,
+    }
+
+    let params: AbortParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    if let Err(e) = state.agents.acp.cancel(params.session_id.clone()).await {
+        warn!("Failed to cancel session {} during abort: {}", params.session_id, e);
+    }
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": "aborted",
+            "session_id": params.session_id,
+        }),
+    )
+}

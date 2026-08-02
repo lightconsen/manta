@@ -1,0 +1,545 @@
+//! WebSocket connection lifecycle: auth middleware, upgrade validation,
+//! the per-connection event loop, and the method dispatcher.
+
+use super::*;
+
+/// Middleware: validate WebSocket upgrade credentials before proceeding.
+///
+/// Runs BEFORE the WebSocket upgrade. When auth_mode is not "none", rejects
+/// with 401 if no valid session cookie, shared token, or query token is found.
+pub async fn ws_auth_middleware(
+    State(state): State<Arc<GatewayState>>,
+    mut req: axum::extract::Request,
+    next: Next,
+) -> axum::response::Response {
+    // Check auth_mode — if "none", allow anonymous connections
+    let auth_mode = {
+        let config = state.config.read().await;
+        config.security.auth_mode
+    };
+
+    if matches!(auth_mode, crate::gateway::protocol::AuthMode::None) {
+        // Allow anonymous access
+        req.extensions_mut().insert(WsAuthResult {
+            user_id: UserId::new("anonymous"),
+            scopes: DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        });
+        return next.run(req).await;
+    }
+
+    // Extract optional token from query parameter
+    let query_token = req.uri().query().and_then(|q| {
+        q.split('&')
+            .find(|p| p.starts_with("token="))
+            .and_then(|p| urlencoding::decode(&p["token=".len()..]).ok())
+            .map(|s| s.to_string())
+    });
+
+    let auth_result =
+        validate_ws_upgrade_request(&state, req.headers(), query_token.as_deref()).await;
+    match auth_result {
+        Ok(result) => {
+            req.extensions_mut().insert(result);
+            next.run(req).await
+        }
+        Err(resp) => resp,
+    }
+}
+
+/// Validate WebSocket upgrade request credentials BEFORE the handshake.
+async fn validate_ws_upgrade_request(
+    state: &Arc<GatewayState>,
+    headers: &axum::http::HeaderMap,
+    query_token: Option<&str>,
+) -> Result<WsAuthResult, axum::response::Response> {
+    // 1. Try session cookie
+    let cookie_config = crate::gateway::auth::SessionCookieConfig::default();
+    if let Some(token) =
+        crate::gateway::auth::extract_session_cookie_from_headers(headers, &cookie_config.name)
+    {
+        if let Some(session) = state.auth.manager.validate_session(&token).await {
+            let scopes = if session.scopes.is_empty() {
+                DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
+            } else {
+                session.scopes.clone()
+            };
+            return Ok(WsAuthResult {
+                user_id: session.user_id,
+                scopes,
+            });
+        }
+    }
+
+    // 2. Try Bearer token from Authorization header
+    let token_from_header = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer ").map(String::from));
+
+    // Check against auth_manager (for Bearer session tokens)
+    if let Some(ref tok) = token_from_header {
+        if let Some(session) = state.auth.manager.validate_session(tok).await {
+            let scopes = if session.scopes.is_empty() {
+                DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
+            } else {
+                session.scopes.clone()
+            };
+            return Ok(WsAuthResult {
+                user_id: session.user_id,
+                scopes,
+            });
+        }
+    }
+
+    // 3. Check against shared_token in config
+    let config = state.config.read().await;
+    if let Some(shared_token) = &config.security.shared_token {
+        // Check Bearer header token
+        if let Some(ref tok) = token_from_header {
+            if tok == shared_token {
+                return Ok(WsAuthResult {
+                    user_id: UserId::new("shared"),
+                    scopes: DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+                });
+            }
+        }
+        // Check query parameter token
+        if let Some(qt) = query_token {
+            if qt == shared_token {
+                return Ok(WsAuthResult {
+                    user_id: UserId::new("shared"),
+                    scopes: DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+                });
+            }
+        }
+    }
+
+    warn!("WebSocket upgrade rejected: no valid credentials");
+    let resp = axum::http::Response::builder()
+        .status(axum::http::StatusCode::UNAUTHORIZED)
+        .header(axum::http::header::WWW_AUTHENTICATE, "Bearer, Cookie")
+        .body(axum::body::Body::from(
+            "Unauthorized: valid session cookie or API token required",
+        ))
+        .unwrap_or_else(|_| {
+            axum::http::Response::new(axum::body::Body::from(
+                "Unauthorized: valid session cookie or API token required",
+            ))
+        });
+    Err(resp)
+}
+
+/// Handler: WebSocket upgrade.
+///
+/// Credentials are validated by the `ws_auth_middleware` BEFORE this handler
+/// is reached. If we get here, auth is already verified.
+pub async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<GatewayState>>,
+    Query(query): Query<WsConnectQuery>,
+    axum::Extension(auth_result): axum::Extension<WsAuthResult>,
+) -> impl IntoResponse {
+    let auth_mode = {
+        let config = state.config.read().await;
+        config.security.auth_mode
+    };
+
+    ws.on_upgrade(move |socket| handle_websocket(socket, state, query, auth_mode, auth_result))
+}
+
+async fn handle_websocket(
+    socket: WebSocket,
+    state: Arc<GatewayState>,
+    query: WsConnectQuery,
+    auth_mode: crate::gateway::protocol::AuthMode,
+    auth_result: WsAuthResult,
+) {
+    let conn_id = Uuid::new_v4().to_string();
+    info!("[{}] WebSocket connected", conn_id);
+
+    let mut proto_conn = ProtocolConnection::new(conn_id.clone());
+    if let Some(sid) = query.session_id {
+        proto_conn.subscriptions.push(sid);
+    }
+    let conn = Arc::new(tokio::sync::RwLock::new(proto_conn));
+
+    let mut event_rx = state.events.tx.subscribe();
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<WsCommand>(256);
+
+    let (mut ws_sender, mut ws_receiver): (SplitSink<WebSocket, Message>, SplitStream<WebSocket>) =
+        StreamExt::split(socket);
+    let conn_send = conn.clone();
+
+    let conn_task_prefix = format!("ws:conn:{}", conn_id);
+    let task_registry = state.task_registry.clone();
+
+    let send_task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                Ok(event) = event_rx.recv() => {
+                    let conn_guard = conn_send.read().await;
+                    if !conn_guard.handshaked {
+                        continue;
+                    }
+
+                    let should_send = match &event {
+                        GatewayEvent::AgentResponse { session_id, .. }
+                        | GatewayEvent::ToolCalling { session_id, .. }
+                        | GatewayEvent::ToolResult { session_id, .. }
+                        | GatewayEvent::Completed { session_id, .. }
+                        | GatewayEvent::ProcessingError { session_id, .. }
+                        | GatewayEvent::Thinking { session_id, .. }
+                        | GatewayEvent::GoalProgress { session_id, .. } => {
+                            conn_guard.is_subscribed(session_id)
+                        }
+                        _ => true,
+                    };
+
+                    if !should_send {
+                        continue;
+                    }
+                    drop(conn_guard);
+
+                    if let Some((event_name, payload)) = gateway_event_to_ws(&event) {
+                        let seq = {
+                            let mut cg = conn_send.write().await;
+                            cg.next_seq()
+                        };
+                        let ws_event = WsEvent::new(event_name, payload, seq);
+                        if let Ok(text) = serde_json::to_string(&ws_event) {
+                            if ws_sender.send(Message::Text(text)).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                Some(cmd) = cmd_rx.recv() => {
+                    match cmd {
+                        WsCommand::SendResponse(text) | WsCommand::SendEvent(text) => {
+                            if ws_sender.send(Message::Text(text)).await.is_err() {
+                                break;
+                            }
+                        }
+                        WsCommand::Subscribe(ids) => {
+                            let mut cg = conn_send.write().await;
+                            for id in ids {
+                                if !cg.subscriptions.contains(&id) {
+                                    cg.subscriptions.push(id);
+                                }
+                            }
+                        }
+                        WsCommand::Unsubscribe(ids) => {
+                            let mut cg = conn_send.write().await;
+                            cg.subscriptions.retain(|s| !ids.contains(s));
+                        }
+                    }
+                }
+                else => break,
+            }
+        }
+    });
+    task_registry
+        .insert_join(format!("{}:send", conn_task_prefix), send_task)
+        .await;
+
+    let recv_task = tokio::spawn(async move {
+        let handshake_ok = loop {
+            let msg = ws_receiver.next().await;
+
+            match msg {
+                Some(Ok(Message::Text(text))) => {
+                    let conn_id = conn.read().await.conn_id.clone();
+                    debug!("[{}] Received: {}", conn_id, text);
+
+                    match serde_json::from_str::<WsRequest>(&text) {
+                        Ok(req) => {
+                            if req.method == "connect" {
+                                let res = handshake::handle_connect(
+                                    &req,
+                                    &conn,
+                                    &state,
+                                    &auth_mode,
+                                    &cmd_tx,
+                                    &auth_result,
+                                )
+                                .await;
+                                let res_text = serde_json::to_string(&res).unwrap_or_default();
+                                if cmd_tx
+                                    .send(WsCommand::SendResponse(res_text))
+                                    .await
+                                    .is_err()
+                                {
+                                    warn!("[{}] Failed to send handshake response", conn_id);
+                                    break false;
+                                }
+
+                                if res.ok {
+                                    conn.write().await.handshaked = true;
+                                    break true;
+                                } else {
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                                    break false;
+                                }
+                            } else {
+                                let res = WsResponse::err(
+                                    req.id,
+                                    "INVALID_REQUEST",
+                                    "First message must be connect",
+                                );
+                                let res_text = serde_json::to_string(&res).unwrap_or_default();
+                                if cmd_tx
+                                    .send(WsCommand::SendResponse(res_text))
+                                    .await
+                                    .is_err()
+                                {
+                                    warn!("[{}] Failed to send invalid-request response", conn_id);
+                                }
+                                break false;
+                            }
+                        }
+                        Err(e) => {
+                            let conn_id = conn.read().await.conn_id.clone();
+                            warn!("[{}] Failed to parse frame: {}", conn_id, e);
+                            break false;
+                        }
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None => break false,
+                Some(Err(_)) => break false,
+                _ => {}
+            }
+        };
+
+        if !handshake_ok {
+            let conn_id = conn.read().await.conn_id.clone();
+            info!("[{}] Handshake failed, disconnecting", conn_id);
+            return;
+        }
+
+        loop {
+            let msg = ws_receiver.next().await;
+
+            match msg {
+                Some(Ok(Message::Close(_))) => break,
+                Some(Ok(Message::Ping(data))) => {
+                    let conn_id = conn.read().await.conn_id.clone();
+                    debug!("[{}] Received ping: {:?}", conn_id, data);
+                }
+                Some(Ok(Message::Text(text))) => {
+                    let conn_id = conn.read().await.conn_id.clone();
+                    debug!("[{}] Received: {}", conn_id, text);
+
+                    match serde_json::from_str::<WsRequest>(&text) {
+                        Ok(req) => {
+                            let res = dispatch_method(&req, &conn, &state, &cmd_tx).await;
+                            let res_text = serde_json::to_string(&res).unwrap_or_default();
+                            if cmd_tx
+                                .send(WsCommand::SendResponse(res_text))
+                                .await
+                                .is_err()
+                            {
+                                warn!("[{}] Failed to send response, connection closed", conn_id);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let conn_id = conn.read().await.conn_id.clone();
+                            warn!("[{}] Failed to parse request: {}", conn_id, e);
+                        }
+                    }
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) => break,
+                None => break,
+            }
+        }
+
+        let conn_id = conn.read().await.conn_id.clone();
+        info!("[{}] WebSocket disconnected", conn_id);
+    });
+    task_registry
+        .insert_join(format!("{}:recv", conn_task_prefix), recv_task)
+        .await;
+
+    let send_task_name = format!("{}:send", conn_task_prefix);
+    let recv_task_name = format!("{}:recv", conn_task_prefix);
+
+    let send_join = match task_registry.remove_join_or_abort(&send_task_name).await {
+        Some(h) => h,
+        None => {
+            warn!("[{}] send task missing from registry", conn_id);
+            return;
+        }
+    };
+    let recv_join = match task_registry.remove_join_or_abort(&recv_task_name).await {
+        Some(h) => h,
+        None => {
+            warn!("[{}] recv task missing from registry", conn_id);
+            return;
+        }
+    };
+
+    tokio::select! {
+        _ = send_join => {}
+        _ = recv_join => {}
+    }
+
+    task_registry.abort_matching(&conn_task_prefix).await;
+
+    info!("[{}] WebSocket session ended", conn_id);
+}
+
+async fn dispatch_method(
+    req: &WsRequest,
+    conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+    cmd_tx: &mpsc::Sender<WsCommand>,
+) -> WsResponse {
+    let scopes = conn.read().await.scopes.clone();
+    if let Some(required) = method_scope(&req.method) {
+        if !scopes_allow(&scopes, &req.method) {
+            if req.method == "commands.execute" {
+                if let Some(ref params_val) = req.params {
+                    if let Ok(params) =
+                        serde_json::from_value::<serde_json::Value>(params_val.clone())
+                    {
+                        if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str())
+                        {
+                            let command = params
+                                .get("command")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let user_text = format!("/{}", command);
+                            let error_text =
+                                format!("Command error: Missing required scope: {}", required);
+                            if let Some(ref store) = state.agents.store {
+                                if let Err(e) = store
+                                    .append_message(&AppendMessageParams {
+                                        session_id,
+                                        role: "user",
+                                        content: &user_text,
+                                        ..Default::default()
+                                    })
+                                    .await
+                                {
+                                    warn!("Failed to append user command message: {}", e);
+                                }
+                                if let Err(e) = store
+                                    .append_message(&AppendMessageParams {
+                                        session_id,
+                                        role: "assistant",
+                                        content: &error_text,
+                                        ..Default::default()
+                                    })
+                                    .await
+                                {
+                                    warn!("Failed to append assistant error message: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return error_forbidden(&req.id, required);
+        }
+    }
+
+    match req.method.as_str() {
+        "ping" => handshake::handle_ping(req),
+        "connect" => {
+            WsResponse::err(&req.id, "INVALID_REQUEST", "connect can only be sent as first message")
+        }
+        "chat.send" => chat::handle_chat_send(req, conn, state).await,
+        "chat.history" => chat::handle_chat_history(req, conn, state).await,
+        "chat.abort" => chat::handle_chat_abort(req, conn, state).await,
+        "sessions.list" => sessions::handle_sessions_list(req, state).await,
+        "sessions.create" => sessions::handle_sessions_create(req, conn, state).await,
+        "sessions.delete" => sessions::handle_sessions_delete(req, conn, state).await,
+        "sessions.rename" => sessions::handle_sessions_rename(req, conn, state).await,
+        "sessions.set_pinned" => sessions::handle_sessions_set_pinned(req, conn, state).await,
+        "sessions.reset" => sessions::handle_sessions_reset(req, conn, state).await,
+        "sessions.subscribe" => sessions::handle_sessions_subscribe(req, conn, cmd_tx).await,
+        "sessions.unsubscribe" => sessions::handle_sessions_unsubscribe(req, conn, cmd_tx).await,
+        "agents.list" => agents::handle_agents_list(req, state).await,
+        "agents.get" => agents::handle_agents_get(req, state).await,
+        "agents.registry" => agents::handle_agents_registry(req, state).await,
+        "health" => agents::handle_health(req, state).await,
+        "system.presence" => agents::handle_system_presence(req).await,
+        "commands.list" => {
+            WsResponse::ok(&req.id, crate::gateway::commands::handle_commands_list())
+        }
+        "commands.execute" => {
+            crate::gateway::commands::handle_commands_execute(req, conn, state).await
+        }
+        "config.get" => config_ws::handle_config_get(req, state).await,
+        "config.set" => config_ws::handle_config_set(req, state).await,
+        "models.list" => models::handle_models_list(req, state).await,
+        "models.presets" => models::handle_models_presets(req, state).await,
+        "models.fetch_remote" => models::handle_models_fetch_remote(req, state).await,
+        "models.add" => models::handle_models_add(req, state).await,
+        "models.remove" => models::handle_models_remove(req, state).await,
+        "models.set_default" => models::handle_models_set_default(req, state).await,
+        "mcp.list" => mcp_ws::handle_mcp_list(req, state).await,
+        "mcp.presets" => mcp_ws::handle_mcp_presets(req, state).await,
+        "mcp.add" => mcp_ws::handle_mcp_add(req, state).await,
+        "mcp.remove" => mcp_ws::handle_mcp_remove(req, state).await,
+        "mcp.connect" => mcp_ws::handle_mcp_connect(req, state).await,
+        "mcp.disconnect" => mcp_ws::handle_mcp_disconnect(req, state).await,
+        "mcp.auth_cancel" => mcp_ws::handle_mcp_auth_cancel(req, state).await,
+        "cron.list" => tasks::handle_cron_list(req, state).await,
+        "tasks.schedule" => tasks::handle_tasks_schedule(req, state).await,
+        "tasks.list" => tasks::handle_tasks_list(req, state).await,
+        "tasks.delete" => tasks::handle_tasks_delete(req, state).await,
+        "tasks.enable" => tasks::handle_tasks_enable(req, state).await,
+        "tasks.disable" => tasks::handle_tasks_disable(req, state).await,
+        "skills.list" => skills_ws::handle_skills_list(req, state).await,
+        "skills.install" => skills_ws::handle_skills_install(req, state).await,
+        "logs.subscribe" => logs::handle_logs_subscribe(req, conn, state, cmd_tx).await,
+        "logs.unsubscribe" => logs::handle_logs_unsubscribe(req, conn, state).await,
+        "acp.list" => acp::handle_acp_list(req, state).await,
+        "acp.spawn" => acp::handle_acp_spawn(req, conn, state).await,
+        "acp.terminate" => acp::handle_acp_terminate(req, state).await,
+        "acp.message" => acp::handle_acp_message(req, state).await,
+        "acp.status" => acp::handle_acp_status(req, state).await,
+        "acp.pause" => acp::handle_acp_pause(req, state).await,
+        "acp.resume" => acp::handle_acp_resume(req, state).await,
+        "acp.step" => acp::handle_acp_step(req, state).await,
+        "acp.cancel" => acp::handle_acp_cancel(req, state).await,
+        "acp.tree" => acp::handle_acp_tree(req, state).await,
+        "acp.execute.session" => acp::handle_acp_execute_session(req, state).await,
+        "acp.execute.run" => acp::handle_acp_execute_run(req, state).await,
+        "permissions.request_macos_accessibility" => {
+            handle_permissions_request_macos_accessibility(req).await
+        }
+        "subscribe" => sessions::handle_legacy_subscribe(req, conn, cmd_tx).await,
+        "unsubscribe" => sessions::handle_legacy_unsubscribe(req, conn, cmd_tx).await,
+        "subscribe_all" => {
+            conn.write().await.subscriptions.clear();
+            WsResponse::ok(&req.id, serde_json::json!({"status": "subscribed_all"}))
+        }
+        _ => error_method_not_found(&req.id, &req.method),
+    }
+}
+
+async fn handle_permissions_request_macos_accessibility(req: &WsRequest) -> WsResponse {
+    #[cfg(target_os = "macos")]
+    {
+        crate::computer::platform::macos::permissions::trigger_accessibility_prompt();
+        crate::computer::platform::macos::permissions::open_accessibility_settings();
+        WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "status": "prompt_triggered",
+                "message": "System permission dialog triggered. Please allow access in System Settings → Privacy & Security → Accessibility, then restart Syscity."
+            }),
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        WsResponse::err(
+            &req.id,
+            "UNSUPPORTED_PLATFORM",
+            "This permission request is only available on macOS",
+        )
+    }
+}
