@@ -1,0 +1,51 @@
+# Syscity CI environment — mirrors .github/workflows/ci.yml on ubuntu-latest.
+#
+# Every job's system deps + toolchains are preinstalled so a push that passes
+# scripts/ci-check.sh inside this image is very likely to pass GitHub CI.
+#
+# Build:
+#   docker build -f scripts/Dockerfile.ci -t syscity-ci:latest scripts/
+#
+# Run (see scripts/ci-check-docker.sh):
+#   docker run --rm -v "$PWD:/workspace" -v syscity-ci-target:/workspace/target \
+#     ... syscity-ci:latest [--skip-tests] [--backend]
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:$PATH
+ENV PNPM_STORE_DIR=/pnpm-store
+
+# ── System packages (deps across all ci.yml jobs) ──────────────────────────
+# build-essential/cmake: local-embeddings job; protobuf-compiler: build.rs;
+# libasound2-dev: audio; libssl-dev: openssl-sys; python3: MCP E2E tests.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git build-essential cmake file unzip python3 \
+        pkg-config protobuf-compiler libasound2-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Node 22 + pnpm 9 (ci.yml: setup-node@v4 + pnpm/action-setup@v3) ────────
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g pnpm@9 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Rust toolchains (ci.yml: check / msrv jobs) ─────────────────────────────
+# stable+clippy for `cargo +stable clippy`, nightly rustfmt for fmt,
+# 1.93 for the MSRV job.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+        --profile minimal --default-toolchain stable \
+    && rustup component add clippy \
+    && rustup toolchain install nightly --profile minimal --component rustfmt \
+    && rustup toolchain install 1.93 --profile minimal
+
+# ── CI helper tools (ci.yml: security / coverage jobs) ──────────────────────
+RUN cargo install cargo-audit --locked \
+    && cargo install cargo-deny --locked \
+    && cargo install cargo-tarpaulin --locked
+
+# Repo is mounted at /workspace at runtime; ci-check.sh cd's there itself.
+ENTRYPOINT ["/workspace/scripts/ci-check.sh"]
+CMD []
