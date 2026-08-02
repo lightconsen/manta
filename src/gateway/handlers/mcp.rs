@@ -41,11 +41,23 @@ pub async fn connect_mcp_server_handler(
         _ => McpTransport::Stdio,
     };
 
+    // Split submitted env into `$VAR` references (kept in config.toml,
+    // resolved at connect time) and literal secret tokens (routed to the
+    // secret store so they never touch config.toml).
+    let (env_refs, env_literals): (
+        std::collections::HashMap<String, String>,
+        std::collections::HashMap<String, String>,
+    ) = body
+        .env
+        .into_iter()
+        .partition(|(_, v)| v.starts_with('$'));
+
     let config = McpServerConfig {
         transport,
         command: body.command,
         args: body.args,
-        env: body.env,
+        env: env_refs,
+        resolved_env: env_literals.clone(),
         url: body.url,
         timeout_secs: body.timeout_secs,
         max_tools: body.max_tools,
@@ -114,7 +126,7 @@ pub async fn connect_mcp_server_handler(
                         config.max_tools,
                     )
                     .await;
-                    persist_mcp_config(&state, &server_id, config).await;
+                    persist_mcp_config(&state, &server_id, config, env_literals.clone()).await;
                     return (
                         axum::http::StatusCode::OK,
                         Json(serde_json::json!({
@@ -144,7 +156,7 @@ pub async fn connect_mcp_server_handler(
         Ok(tools) => {
             super::super::lifecycle::register_mcp_tools(&state, &server_id, &tools, body.max_tools)
                 .await;
-            persist_mcp_config(&state, &server_id, config).await;
+            persist_mcp_config(&state, &server_id, config, env_literals).await;
             (
                 axum::http::StatusCode::OK,
                 Json(serde_json::json!({
@@ -162,13 +174,37 @@ pub async fn connect_mcp_server_handler(
 }
 
 /// Persist an MCP server config to config.toml (best-effort).
-async fn persist_mcp_config(state: &Arc<GatewayState>, server_id: &str, config: McpServerConfig) {
+///
+/// Literal env tokens are routed to the secret store (`mcp-env` namespace)
+/// first — they must never be written to config.toml — and the persisted
+/// config carries a cleared `resolved_env` (mirrors the WS Settings-UI path).
+async fn persist_mcp_config(
+    state: &Arc<GatewayState>,
+    server_id: &str,
+    config: McpServerConfig,
+    env_literals: std::collections::HashMap<String, String>,
+) {
+    if !env_literals.is_empty() {
+        if let Err(e) = crate::secrets::route_store("mcp-env")
+            .set_all(server_id, &env_literals)
+            .await
+        {
+            warn!(
+                "MCP server connected but failed to store env tokens for {}: {}",
+                server_id, e
+            );
+        }
+    }
+    let persisted = McpServerConfig {
+        resolved_env: std::collections::HashMap::new(),
+        ..config
+    };
     {
         let mut cfg_guard = state.config.write().await;
         Arc::make_mut(&mut cfg_guard)
             .mcp
             .servers
-            .insert(server_id.to_string(), config);
+            .insert(server_id.to_string(), persisted);
     }
     if let Some(ref config_path) = state.config_path {
         let cfg_guard = state.config.read().await;
