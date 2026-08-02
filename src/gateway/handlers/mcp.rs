@@ -47,10 +47,7 @@ pub async fn connect_mcp_server_handler(
     let (env_refs, env_literals): (
         std::collections::HashMap<String, String>,
         std::collections::HashMap<String, String>,
-    ) = body
-        .env
-        .into_iter()
-        .partition(|(_, v)| v.starts_with('$'));
+    ) = body.env.into_iter().partition(|(_, v)| v.starts_with('$'));
 
     let config = McpServerConfig {
         transport,
@@ -189,10 +186,7 @@ async fn persist_mcp_config(
             .set_all(server_id, &env_literals)
             .await
         {
-            warn!(
-                "MCP server connected but failed to store env tokens for {}: {}",
-                server_id, e
-            );
+            warn!("MCP server connected but failed to store env tokens for {}: {}", server_id, e);
         }
     }
     let persisted = McpServerConfig {

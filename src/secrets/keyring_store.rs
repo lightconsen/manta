@@ -14,16 +14,33 @@
 //! The `keyring` crate is a synchronous, blocking API (Keychain Services /
 //! D-Bus Secret Service), so every async `SecretStore` method runs the blocking
 //! work on a blocking thread via `tokio::task::spawn_blocking` instead of
-//! stalling the async runtime.
+//! stalling the async runtime. Every call is additionally bounded by
+//! `KEYRING_OP_TIMEOUT`: macOS dark wake can hang a SecurityServer RPC
+//! indefinitely, so a hang must degrade to an error rather than block.
 
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use tracing::warn;
 
 use crate::error::SyscityError;
 use crate::secrets::store::{SecretId, SecretOrigin, SecretStore};
+
+/// Max time a single keyring operation may take before it is treated as
+/// failed. macOS dark wake can hang `SecKeychainFindGenericPassword` on a
+/// securityd RPC that never returns, so every keyring call is bounded and a
+/// hang degrades to an error instead of stalling the caller forever.
+#[cfg(test)]
+const KEYRING_OP_TIMEOUT: Duration = Duration::from_millis(100);
+#[cfg(not(test))]
+const KEYRING_OP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Minimum gap between keyring availability re-probes while the keyring is
+/// down — avoids hammering securityd during a dark-wake window.
+const PROBE_COOLDOWN_SECS: u64 = 10;
 
 /// A single keyring credential operation (injectable for tests).
 ///
@@ -134,14 +151,31 @@ impl KeyringStore {
     }
 }
 
-/// Run blocking keyring work off the async runtime.
+/// Run blocking keyring work off the async runtime, bounded by a timeout.
+///
+/// A hung SecurityServer RPC (macOS dark wake) must degrade to an error — and
+/// mark the keyring down so routing falls back to the file store — instead of
+/// stalling the async caller forever.
 async fn blocking<T>(work: impl FnOnce() -> crate::Result<T> + Send + 'static) -> crate::Result<T>
 where
     T: Send + 'static,
 {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|e| SyscityError::Internal(format!("keyring task failed: {e}")))?
+    match tokio::time::timeout(KEYRING_OP_TIMEOUT, tokio::task::spawn_blocking(work)).await {
+        Ok(join) => {
+            let result =
+                join.map_err(|e| SyscityError::Internal(format!("keyring task failed: {e}")))?;
+            if result.is_err() {
+                mark_keyring_down();
+            }
+            result
+        }
+        Err(_) => {
+            mark_keyring_down();
+            Err(SyscityError::Internal(
+                "keyring operation timed out (display asleep?)".to_string(),
+            ))
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -241,15 +275,98 @@ pub fn decode_value(raw: &str) -> crate::Result<HashMap<String, String>> {
         .map_err(|e| SyscityError::Internal(format!("keyring value deserialization failed: {e}")))
 }
 
-/// Whether the OS keyring is usable. Cached per process.
+/// Run a blocking closure on a detached thread with a timeout; `None` when it
+/// does not finish in time.
 ///
-/// Under `cfg(test)` this always returns `false` so tests never touch the real
-/// user keychain. In production a throwaway entry is written and read back to
-/// verify the backend actually works — headless Linux has no Secret Service
-/// daemon, so the probe gracefully degrades to `false`.
+/// Used by synchronous paths (availability probe, master key load) that run on
+/// the caller's thread. A hung thread is leaked — bounded to one per call, so
+/// callers must be throttled (the probe is cooldown-gated) or one-shot (the
+/// master key is cached once per process).
+pub(crate) fn with_timeout<T>(work: impl FnOnce() -> T + Send + 'static) -> Option<T>
+where
+    T: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(work());
+    });
+    rx.recv_timeout(KEYRING_OP_TIMEOUT).ok()
+}
+
+/// Throttled, recoverable keyring availability tracker.
+///
+/// Unlike a one-shot `OnceLock<bool>`, a failed probe is not cached for the
+/// process lifetime: after `cooldown_secs` the next `available()` re-probes, so
+/// a daemon started during macOS dark wake recovers automatically once the
+/// display wakes — no restart required.
+#[derive(Debug)]
+struct KeyringHealth {
+    up: AtomicBool,
+    last_probe: AtomicU64,
+    cooldown_secs: u64,
+}
+
+impl KeyringHealth {
+    const fn new(cooldown_secs: u64) -> Self {
+        Self {
+            up: AtomicBool::new(false),
+            last_probe: AtomicU64::new(0),
+            cooldown_secs,
+        }
+    }
+
+    /// Current availability, re-probing only when the cooldown has expired.
+    ///
+    /// `probe` runs under `with_timeout`, so a dark-wake hang degrades to
+    /// `false` instead of blocking the caller. Returns `true` with no I/O while
+    /// the keyring is confirmed up.
+    fn available(&self, now_secs: u64, probe: impl Fn() -> bool + Send + 'static) -> bool {
+        if self.up.load(Ordering::Relaxed) {
+            return true;
+        }
+        if now_secs.saturating_sub(self.last_probe.load(Ordering::Relaxed)) < self.cooldown_secs {
+            return false;
+        }
+        self.last_probe.store(now_secs, Ordering::Relaxed);
+        let ok = with_timeout(probe).unwrap_or(false);
+        self.up.store(ok, Ordering::Relaxed);
+        ok
+    }
+
+    /// Record a failed/timed-out keyring operation: marks the keyring down and
+    /// restarts the cooldown so the next `available()` re-probes after it
+    /// expires, allowing automatic recovery.
+    fn mark_down(&self, now_secs: u64) {
+        self.up.store(false, Ordering::Relaxed);
+        self.last_probe.store(now_secs, Ordering::Relaxed);
+    }
+}
+
+/// Process-wide keyring availability.
+static KEYRING_HEALTH: KeyringHealth = KeyringHealth::new(PROBE_COOLDOWN_SECS);
+
+/// Current unix time in seconds.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Whether the OS keyring is usable.
+///
+/// Recoverable: a failure is throttled by a cooldown and re-probed, so
+/// availability is re-evaluated instead of being cached for the process
+/// lifetime. Under `cfg(test)` the probe always returns `false` so tests never
+/// touch a real keychain.
 pub fn probe_keyring() -> bool {
-    static RESULT: OnceLock<bool> = OnceLock::new();
-    *RESULT.get_or_init(probe_keyring_uncached)
+    KEYRING_HEALTH.available(now_unix_secs(), probe_keyring_uncached)
+}
+
+/// Mark the keyring as unavailable after a failed or timed-out operation so
+/// subsequent routing cheaply uses the file fallback until a re-probe succeeds.
+fn mark_keyring_down() {
+    KEYRING_HEALTH.mark_down(now_unix_secs());
 }
 
 #[cfg(test)]
@@ -344,6 +461,86 @@ mod tests {
     fn test_probe_is_safe_under_test() {
         // Under cfg(test) the probe must never touch a real keychain.
         assert!(!probe_keyring());
+    }
+
+    /// A backend whose read blocks until the test sends on the channel —
+    /// simulating a dark-wake SecurityServer RPC that never returns.
+    #[derive(Debug)]
+    struct HangingBackend {
+        blocked: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl CredentialBackend for HangingBackend {
+        fn get(&self, _service: &str, _user: &str) -> crate::Result<Option<String>> {
+            // Runs on a blocking thread; the std lock is fine here.
+            if let Ok(guard) = self.blocked.lock() {
+                let _ = guard.recv();
+            }
+            Ok(None)
+        }
+
+        fn set(&self, _service: &str, _user: &str, _value: &str) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn delete(&self, _service: &str, _user: &str) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_blocking_times_out_on_hung_backend() {
+        // A hung keychain read must degrade to an error instead of stalling.
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let store = KeyringStore::with_backend(
+            "llm",
+            Arc::new(HangingBackend {
+                blocked: std::sync::Mutex::new(rx),
+            }),
+        );
+        let id = SecretId::new("llm", "deepseek", "api_key");
+
+        let start = std::time::Instant::now();
+        let result = store.get(&id).await;
+        assert!(result.is_err(), "hung read should time out, got {result:?}");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2),
+            "timeout should fire quickly"
+        );
+
+        // Release the blocked thread so the test process exits cleanly.
+        let _ = tx.send(());
+    }
+
+    #[test]
+    fn test_keyring_health_first_probe_and_recovery() {
+        let health = KeyringHealth::new(10);
+        // First call settles the state with a real probe.
+        assert!(!health.available(1000, || false));
+        // Within the cooldown the probe is not called again.
+        assert!(!health.available(1005, || panic!("probe must be throttled")));
+        // After the cooldown a re-probe succeeds → recovery.
+        assert!(health.available(1011, || true));
+        // Up is sticky — no further probing.
+        assert!(health.available(2000, || panic!("must not re-probe while up")));
+    }
+
+    #[test]
+    fn test_keyring_health_throttles_down_probes() {
+        let health = KeyringHealth::new(10);
+        assert!(!health.available(1000, || false)); // probe → down
+        assert!(!health.available(1005, || panic!("throttled")));
+        assert!(!health.available(1010, || false)); // cooldown over → re-probe → down
+        assert!(!health.available(1015, || panic!("throttled")));
+    }
+
+    #[test]
+    fn test_keyring_health_mark_down_restarts_cooldown() {
+        let health = KeyringHealth::new(10);
+        assert!(health.available(1000, || true)); // up
+        health.mark_down(2000); // a keyring op failed at 2000
+        assert!(!health.available(2005, || panic!("cooldown must restart on mark_down")));
+        assert!(health.available(2011, || true)); // cooldown over → recovered
     }
 
     #[tokio::test]

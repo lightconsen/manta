@@ -17,7 +17,9 @@
 
 use serial_test::serial;
 
-use syscity::secrets::{probe_keyring, route_store, resolve_store_ref, SecretId, SecretOrigin, StoreRef};
+use syscity::secrets::{
+    probe_keyring, resolve_store_ref, route_store, SecretId, SecretOrigin, StoreRef,
+};
 
 /// One row per design-doc storage namespace: `(namespace, entity, kind)`.
 const NAMESPACES: &[(&str, &str, &str)] = &[
