@@ -61,11 +61,11 @@ cd "$PROJECT_ROOT"
 
 # ── Optional format fix ────────────────────────────────────────────────────
 if $FIX; then
-    run_step "cargo fmt" cargo +nightly fmt
+    run_step "cargo fmt" cargo fmt
 fi
 
 # ── Format check ───────────────────────────────────────────────────────────
-run_step "cargo fmt --check" cargo +nightly fmt -- --check
+run_step "cargo fmt --check" cargo fmt -- --check
 
 # ── Clippy with warnings as errors ─────────────────────────────────────────
 run_step "cargo clippy" cargo clippy --all-features -- -D warnings

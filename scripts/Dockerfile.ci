@@ -33,12 +33,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Rust toolchains (ci.yml: check / msrv jobs) ─────────────────────────────
-# stable+clippy for `cargo +stable clippy`, nightly rustfmt for fmt,
+# stable+clippy+rustfmt for `cargo clippy` / `cargo fmt -- --check`,
 # 1.93 for the MSRV job.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
         --profile minimal --default-toolchain stable \
-    && rustup component add clippy \
-    && rustup toolchain install nightly --profile minimal --component rustfmt \
+    && rustup component add clippy rustfmt \
     && rustup toolchain install 1.93 --profile minimal
 
 # ── CI helper tools (ci.yml: security / coverage jobs) ──────────────────────

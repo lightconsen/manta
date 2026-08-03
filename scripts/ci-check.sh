@@ -90,13 +90,7 @@ if $RUN_FRONTEND; then
 fi
 
 # ── Job: check (ci.yml `check`) ─────────────────────────────────────────────
-if cargo +nightly fmt --version >/dev/null 2>&1; then
-    check "fmt (nightly)" cargo +nightly fmt -- --check
-else
-    echo -e "${YELLOW}nightly toolchain not installed; falling back to stable fmt.${RESET}"
-    echo "  CI uses nightly rustfmt — install with: rustup toolchain install nightly --component rustfmt"
-    check "fmt (stable)" cargo fmt -- --check
-fi
+check "fmt" cargo fmt -- --check
 check "clippy" cargo +stable clippy --all-features -- -D warnings
 check "static-analysis" ./scripts/static-analysis.sh
 check "cargo check (all-features)" cargo check --all-features
