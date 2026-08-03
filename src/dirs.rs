@@ -157,6 +157,36 @@ pub fn artifacts_dir() -> PathBuf {
     syscity_dir().join("artifacts")
 }
 
+/// Get a delegation tree's shared workspace directory
+/// (~/.syscity/delegations/{root_id}).
+///
+/// Every task under the same tree root shares this directory; file tools of
+/// delegated children are confined to it (plus their own agent workspace), so
+/// cross-tree and cross-task isolation come from the root_id key.  `root_id`
+/// is a uuid and thus safe to use as a path segment.
+pub fn delegation_workspace_dir(root_id: &str) -> PathBuf {
+    syscity_dir().join("delegations").join(root_id)
+}
+
+/// Tree-wide shared files directory inside a delegation workspace.
+///
+/// Any member of the tree may read and write here; this is the explicit place
+/// to hand a file to sibling or descendant agents.
+pub fn delegation_shared_dir(root_id: &str) -> PathBuf {
+    delegation_workspace_dir(root_id).join("shared")
+}
+
+/// A single task's private scratch directory inside a delegation workspace.
+///
+/// This is the default `workspace_root` for a delegated child: relative file
+/// paths resolve here, so parallel tasks never collide even when they run the
+/// same agent.
+pub fn delegation_task_dir(root_id: &str, task_id: &str) -> PathBuf {
+    delegation_workspace_dir(root_id)
+        .join("tasks")
+        .join(task_id)
+}
+
 /// Get the disk budget tracking directory (~/.syscity/budget)
 pub fn budget_dir() -> PathBuf {
     syscity_dir().join("budget")
@@ -449,6 +479,15 @@ mod tests {
     #[test]
     fn test_artifacts_dir() {
         assert!(artifacts_dir().to_string_lossy().contains("artifacts"));
+    }
+
+    #[test]
+    fn test_delegation_workspace_dir() {
+        let root = delegation_workspace_dir("root-1");
+        assert!(root.to_string_lossy().contains("delegations"));
+        assert!(root.ends_with("delegations/root-1"));
+        assert_eq!(delegation_shared_dir("root-1"), root.join("shared"));
+        assert_eq!(delegation_task_dir("root-1", "task-1"), root.join("tasks").join("task-1"));
     }
 
     #[test]

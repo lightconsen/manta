@@ -86,7 +86,7 @@ impl Tool for WriteReportTool {
     async fn execute(
         &self,
         args: Value,
-        _context: &ToolContext,
+        context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let content = args["content"].as_str().ok_or_else(|| {
             crate::error::SyscityError::Validation("Missing 'content' argument".to_string())
@@ -103,8 +103,17 @@ impl Tool for WriteReportTool {
 
         let format = args["format"].as_str().unwrap_or("markdown").to_string();
 
-        // Resolve artifacts directory
-        let artifacts_dir = crate::dirs::syscity_dir().join("artifacts");
+        // Resolve artifacts directory.  A delegated agent's reports are bound
+        // to its tree: stored under the global artifacts root but tree- and
+        // task-scoped, so parallel trees never collide and every artifact is
+        // attributable to a delegation tree.
+        let delegation_scope = context.delegation.as_ref();
+        let artifacts_dir = match delegation_scope {
+            Some(scope) => crate::dirs::artifacts_dir()
+                .join(&scope.root_id)
+                .join(&scope.task_id),
+            None => crate::dirs::artifacts_dir(),
+        };
         tokio::fs::create_dir_all(&artifacts_dir)
             .await
             .map_err(|e| crate::error::SyscityError::IoContext {
@@ -139,11 +148,18 @@ impl Tool for WriteReportTool {
             path = &path,
         );
 
+        let url = match delegation_scope {
+            Some(scope) => {
+                format!("/api/v1/artifacts/{}/{}/{}", scope.root_id, scope.task_id, filename)
+            }
+            None => format!("/api/v1/artifacts/{}", filename),
+        };
+
         let data = serde_json::json!({
             "filename": filename,
             "title": title,
             "format": format,
-            "url": format!("/api/v1/artifacts/{}", filename),
+            "url": url,
             "size": file_size,
         });
 
@@ -161,6 +177,7 @@ impl Tool for WriteReportTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::delegation::DelegationScope;
     use crate::tools::ToolContext;
 
     #[tokio::test]
@@ -185,5 +202,38 @@ mod tests {
         assert_eq!(data["title"], "Test Report");
         assert_eq!(data["format"], "markdown");
         assert!(data["url"].as_str().unwrap().contains("test-report.md"));
+    }
+
+    #[tokio::test]
+    async fn test_write_report_in_delegation_is_tree_bound() {
+        let tool = WriteReportTool::new();
+
+        let scope = DelegationScope::new("root-9", "task-9", 1, 3);
+        let ctx = ToolContext::new("test", "test-conv").with_delegation(Some(scope));
+
+        let args = serde_json::json!({
+            "content": "# Tree Report\n\nShared.",
+            "filename": "report.md",
+            "title": "Tree Report",
+            "format": "markdown",
+        });
+
+        let result = tool.execute(args, &ctx).await.unwrap();
+        assert!(result.success);
+
+        let data = result.data.unwrap();
+        assert_eq!(data["url"], "/api/v1/artifacts/root-9/task-9/report.md");
+
+        // The file physically lands under the tree-scoped artifacts subdir.
+        let written = crate::dirs::artifacts_dir()
+            .join("root-9")
+            .join("task-9")
+            .join("report.md");
+        assert!(written.exists(), "tree-bound artifact should be written: {:?}", written);
+        let content = tokio::fs::read_to_string(&written).await.unwrap();
+        assert!(content.contains("Tree Report"));
+
+        // Clean up so the test does not leak files.
+        let _ = tokio::fs::remove_dir_all(crate::dirs::artifacts_dir().join("root-9")).await;
     }
 }

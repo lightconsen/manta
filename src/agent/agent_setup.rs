@@ -198,16 +198,32 @@ impl Agent {
             max_context_length: None,
         };
 
-        ToolContext::new(user_id.clone(), conversation_id)
+        let agent_workspace = self.config.resolve_workspace_dir();
+
+        let mut ctx = ToolContext::new(user_id.clone(), conversation_id)
             .with_timeout(Duration::from_secs(120))
             .with_skill_trust(self.current_skill_trust())
-            .with_workspace_root(self.config.resolve_workspace_dir())
+            .with_workspace_root(agent_workspace.clone())
             .with_workspace_only(self.config.workspace_only)
             .with_model_name(self.model.clone().unwrap_or_default())
             .with_provider_name(self.provider.name().to_string())
             .with_sender_id(user_id)
-            .with_model_capabilities(model_capabilities)
-            .with_delegation(delegation)
+            .with_model_capabilities(model_capabilities);
+
+        // A delegated child operates inside its delegation tree's shared
+        // workspace: relative file paths resolve into this task's scratch dir,
+        // while the whole tree plus the agent's own workspace stay reachable by
+        // absolute path.  Other agents' workspaces are not granted, preserving
+        // cross-agent isolation.
+        if let Some(scope) = delegation.as_ref() {
+            let task_dir = crate::dirs::delegation_task_dir(&scope.root_id, &scope.task_id);
+            ctx = ctx
+                .with_workspace_root(task_dir)
+                .allow_path(agent_workspace)
+                .allow_path(crate::dirs::delegation_workspace_dir(&scope.root_id));
+        }
+
+        ctx.with_delegation(delegation)
     }
 
     /// Attach a `SessionStore` for turn persistence.
@@ -634,5 +650,72 @@ impl Agent {
         }
 
         context
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::agent::{Agent, AgentConfig};
+    use crate::delegation::DelegationScope;
+    use crate::providers::mock::MockProvider;
+    use crate::tools::ToolRegistry;
+
+    fn named_agent() -> Agent {
+        let config = AgentConfig {
+            agent_id: Some("worker".to_string()),
+            ..AgentConfig::default()
+        };
+        let provider = Arc::new(MockProvider::new());
+        Agent::new(config, provider, Arc::new(ToolRegistry::new()))
+    }
+
+    fn scope(task_id: &str) -> DelegationScope {
+        DelegationScope::new("root-1", task_id, 2, 3)
+    }
+
+    #[test]
+    fn test_delegated_child_gets_tree_workspace() {
+        let agent = named_agent();
+        let ctx = agent.build_tool_context("user", "conv-1", Some(scope("run-1")));
+
+        // Relative paths resolve into the task's scratch dir inside the tree.
+        let task_dir = crate::dirs::delegation_task_dir("root-1", "run-1");
+        assert_eq!(ctx.workspace_root(), &task_dir);
+        assert_eq!(ctx.resolve_path(std::path::Path::new("draft.md")), task_dir.join("draft.md"));
+
+        // The whole tree plus the agent's own workspace are reachable.
+        let agent_workspace = crate::dirs::agent_workspace_dir("worker");
+        let allowed = ctx.allowed_paths();
+        assert!(allowed.contains(&crate::dirs::delegation_workspace_dir("root-1")));
+        assert!(allowed.contains(&agent_workspace));
+        assert!(ctx.is_path_allowed(&crate::dirs::delegation_shared_dir("root-1")));
+        assert!(ctx.is_path_allowed(&task_dir));
+    }
+
+    #[test]
+    fn test_delegated_child_cannot_reach_other_agents_workspace() {
+        let agent = named_agent();
+        let ctx = agent.build_tool_context("user", "conv-1", Some(scope("run-1")));
+
+        // Another agent's workspace is not in the allowlist, so a path there
+        // is rejected — cross-agent isolation holds even inside a tree.
+        let other = crate::dirs::agent_workspace_dir("other").join("secret.md");
+        assert!(!ctx.is_path_allowed(&other));
+        // Nor can it reach another delegation tree.
+        let other_tree = crate::dirs::delegation_workspace_dir("root-other").join("x.md");
+        assert!(!ctx.is_path_allowed(&other_tree));
+    }
+
+    #[test]
+    fn test_ordinary_context_unaffected() {
+        let agent = named_agent();
+        let ctx = agent.build_tool_context("user", "conv-1", None);
+
+        // No delegation → workspace stays the agent's own, no allowlist.
+        assert_eq!(ctx.workspace_root(), &crate::dirs::agent_workspace_dir("worker"));
+        assert!(ctx.allowed_paths().is_empty());
     }
 }

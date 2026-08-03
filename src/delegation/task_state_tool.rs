@@ -42,6 +42,11 @@ Use this tool to coordinate with sibling or descendant agents working on the
 same task. Each delegated child owns a shared state blob that other agents in
 the tree can read.
 
+Your file operations (file_read/file_write) are confined to your delegation
+tree's shared workspace. Relative paths resolve into your own task's scratch
+dir; use ../shared/<file> to share a file with the whole tree, and run `status`
+to see the absolute paths.
+
 Actions:
 - get <key>: read one key from the shared state
 - get_from <task_id> <key>: read one key from a sibling or ancestor task's
@@ -280,11 +285,14 @@ Only available inside an active delegation; errors otherwise."#
                     .await?
                     .ok_or_else(|| DelegationError::TaskNotFound(task_id.clone()))?;
                 let state_keys: Vec<String> = task.state().keys().cloned().collect();
+                let workspace = crate::dirs::delegation_task_dir(&scope.root_id, &scope.task_id);
+                let tree_root = crate::dirs::delegation_workspace_dir(&scope.root_id);
                 Ok(ToolExecutionResult::success(format!(
-                    "task {} ({}): status={}, state_keys={:?}, artifacts={}, events={}",
+                    "task {} ({}): status={}, workspace={}, state_keys={:?}, artifacts={}, events={}",
                     task.id,
                     task.title,
                     task.status,
+                    workspace.display(),
                     state_keys,
                     task.artifacts.len(),
                     task.events.len()
@@ -293,6 +301,8 @@ Only available inside an active delegation; errors otherwise."#
                     "task_id": task.id,
                     "status": task.status,
                     "depth": task.depth,
+                    "workspace": workspace.display().to_string(),
+                    "tree_workspace": tree_root.display().to_string(),
                     "state": task.state(),
                     "artifacts": task.artifacts,
                 })))
@@ -399,6 +409,27 @@ mod tests {
             .unwrap();
         assert!(status.success);
         assert!(status.output.contains("events=1"));
+    }
+
+    #[tokio::test]
+    async fn test_status_exposes_tree_workspace() {
+        let tool = setup().await;
+        let status = tool
+            .execute(json!({"action": "status"}), &context_with_scope("run-1"))
+            .await
+            .unwrap();
+        assert!(status.success);
+        // The agent can discover its file sandbox from the status output.
+        assert!(status.output.contains("delegations/root-1/tasks/run-1"));
+        let data = status.data.as_ref().unwrap();
+        assert!(data["workspace"]
+            .as_str()
+            .unwrap()
+            .ends_with("delegations/root-1/tasks/run-1"));
+        assert!(data["tree_workspace"]
+            .as_str()
+            .unwrap()
+            .ends_with("delegations/root-1"));
     }
 
     #[tokio::test]
