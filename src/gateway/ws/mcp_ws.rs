@@ -76,7 +76,8 @@ pub(super) async fn handle_mcp_presets(req: &WsRequest, state: &Arc<GatewayState
                 Ok(map) => {
                     let cfg = state.config.read().await;
                     let fallback = env_metadata_fallback();
-                    map.into_iter()
+                    let mut presets: Vec<serde_json::Value> = map
+                        .into_iter()
                         .map(|(name, entry)| {
                             let enabled = cfg.mcp.servers.contains_key(&name);
                             // Stale mcp.toml files lack env metadata — fill from
@@ -115,7 +116,17 @@ pub(super) async fn handle_mcp_presets(req: &WsRequest, state: &Arc<GatewayState
                                 "enabled": enabled,
                             })
                         })
-                        .collect()
+                        .collect();
+                    // Deterministic order: raw hash-map iteration is arbitrary
+                    // and reshuffles on every refresh; sort by display name so
+                    // the list stays stable across clicks and restarts.
+                    presets.sort_by(|a, b| {
+                        a["display_name"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .cmp(b["display_name"].as_str().unwrap_or_default())
+                    });
+                    presets
                 }
                 Err(e) => {
                     warn!("Failed to parse mcp.toml: {}", e);
