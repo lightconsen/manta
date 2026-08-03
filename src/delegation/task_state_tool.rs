@@ -44,8 +44,9 @@ the tree can read.
 
 Your file operations (file_read/file_write) are confined to your delegation
 tree's shared workspace. Relative paths resolve into your own task's scratch
-dir; use ../shared/<file> to share a file with the whole tree, and run `status`
-to see the absolute paths.
+dir; write tree-shared files under the absolute `shared_workspace` path (run
+`status` to see it) rather than your private `workspace`, so sibling and
+descendant agents can read them.
 
 Actions:
 - get <key>: read one key from the shared state
@@ -287,12 +288,14 @@ Only available inside an active delegation; errors otherwise."#
                 let state_keys: Vec<String> = task.state().keys().cloned().collect();
                 let workspace = crate::dirs::delegation_task_dir(&scope.root_id, &scope.task_id);
                 let tree_root = crate::dirs::delegation_workspace_dir(&scope.root_id);
+                let shared_root = crate::dirs::delegation_shared_dir(&scope.root_id);
                 Ok(ToolExecutionResult::success(format!(
-                    "task {} ({}): status={}, workspace={}, state_keys={:?}, artifacts={}, events={}",
+                    "task {} ({}): status={}, workspace={}, shared_workspace={}, state_keys={:?}, artifacts={}, events={}",
                     task.id,
                     task.title,
                     task.status,
                     workspace.display(),
+                    shared_root.display(),
                     state_keys,
                     task.artifacts.len(),
                     task.events.len()
@@ -303,6 +306,7 @@ Only available inside an active delegation; errors otherwise."#
                     "depth": task.depth,
                     "workspace": workspace.display().to_string(),
                     "tree_workspace": tree_root.display().to_string(),
+                    "shared_workspace": shared_root.display().to_string(),
                     "state": task.state(),
                     "artifacts": task.artifacts,
                 })))
@@ -430,6 +434,11 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with("delegations/root-1"));
+        // The tree-wide shared dir is where agents write files for siblings.
+        assert!(data["shared_workspace"]
+            .as_str()
+            .unwrap()
+            .ends_with("delegations/root-1/shared"));
     }
 
     #[tokio::test]
