@@ -15,10 +15,12 @@
 //! [`SubagentRegistry`](crate::agent::subagent_registry::SubagentRegistry)
 //! infrastructure; this module only adds the shared-state dimension.
 
+pub mod coordinator;
 pub mod scope;
 pub mod state;
 pub mod task_state_tool;
 
+pub use coordinator::DelegationCoordinator;
 pub use scope::{DelegationScope, DELEGATION_SCOPE_KEY};
 pub use state::{ArtifactRef, DelegationEvent, DelegationTask, DelegationTaskStore, NewTask};
 pub use task_state_tool::TaskStateTool;

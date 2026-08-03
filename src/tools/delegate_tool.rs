@@ -20,7 +20,9 @@ use tracing::{debug, error, info, warn};
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::budget::IterationBudget;
 use crate::agent::subagent_registry::SubagentRegistry;
-use crate::delegation::{DelegationEvent, DelegationScope, DelegationTaskStore, NewTask};
+use crate::delegation::{
+    DelegationCoordinator, DelegationEvent, DelegationScope, DelegationTaskStore, NewTask,
+};
 use crate::tools::hooks::ToolHooks;
 use crate::tools::sdk::ToolCapabilities;
 use uuid::Uuid;
@@ -213,6 +215,9 @@ pub struct DelegateTool {
     /// Optional shared task state store.  When set, every spawned child gets a
     /// `delegation_tasks` row and can read/write shared state via `task_state`.
     store: Option<Arc<DelegationTaskStore>>,
+    /// Optional handoff coordinator.  When set, a child that finishes while a
+    /// sibling/descendant is `waiting_handoff` triggers successor continuation.
+    coordinator: Option<Arc<DelegationCoordinator>>,
 }
 
 impl std::fmt::Debug for DelegateTool {
@@ -235,6 +240,7 @@ impl DelegateTool {
             hooks: ToolHooks::new(),
             agent_resolver: None,
             store: None,
+            coordinator: None,
         }
     }
 
@@ -247,6 +253,7 @@ impl DelegateTool {
             hooks: ToolHooks::new(),
             agent_resolver: None,
             store: None,
+            coordinator: None,
         }
     }
 
@@ -286,6 +293,14 @@ impl DelegateTool {
         self
     }
 
+    /// Attach a handoff coordinator.  When set, a child that finishes while a
+    /// task under the same root is `waiting_handoff` drives successor
+    /// continuation via the coordinator.
+    pub fn with_coordinator(mut self, coordinator: Arc<DelegationCoordinator>) -> Self {
+        self.coordinator = Some(coordinator);
+        self
+    }
+
     /// Access the underlying registry for metrics / status queries.
     pub fn registry(&self) -> &Arc<SubagentRegistry> {
         &self.registry
@@ -313,6 +328,11 @@ impl DelegateTool {
             None => 1,
         };
         let max_depth = self.registry.max_depth();
+        let root_id = match &parent_scope {
+            Some(ps) => ps.root_id.clone(),
+            None => Uuid::new_v4().to_string(),
+        };
+        let parent_task_id = parent_scope.as_ref().map(|ps| ps.task_id.clone());
 
         // Determine which agent to use for child execution:
         // 1. If target_agent is set and we have a resolver, look it up
@@ -336,13 +356,17 @@ impl DelegateTool {
             .unwrap_or_else(|| "delegate".to_string());
 
         // Build the execution closure. The registry will supply the run_id, which
-        // becomes the child id so local tracking and registry tracking share a key.
+        // becomes the child id so local tracking and registry tracking share a
+        // key; the child's delegation scope is built inside the closure once
+        // that run_id is known.
         let registry = Arc::clone(&self.registry);
         let store_opt = self.store.clone();
         let reg_task = task.clone();
         let reg_tracker = self.tracker.clone();
         let iterations_bg = iterations.clone();
-        let parent_scope_owned = parent_scope.clone();
+        let coordinator = self.coordinator.clone();
+        let root_id_bg = root_id.clone();
+        let parent_task_id_bg = parent_task_id.clone();
         let agent_id_owned = agent_type.clone();
         let task_fn = move |run_id: String, _task_str: String| {
             let reg_task = reg_task.clone();
@@ -351,8 +375,21 @@ impl DelegateTool {
             let child_agent = child_agent.clone();
             let registry = Arc::clone(&registry);
             let store_opt = store_opt.clone();
-            let parent_scope = parent_scope_owned.clone();
+            let coordinator = coordinator.clone();
             let agent_id = agent_id_owned.clone();
+            let scope = DelegationScope {
+                root_id: root_id_bg.clone(),
+                task_id: run_id.clone(),
+                parent_task_id: parent_task_id_bg.clone(),
+                depth,
+                max_depth,
+                allowed_tools: if reg_task.allowed_tools.is_empty() {
+                    None
+                } else {
+                    Some(reg_task.allowed_tools.clone())
+                },
+                max_iterations: reg_task.max_iterations,
+            };
             async move {
                 execute_child_task(
                     run_id,
@@ -362,9 +399,9 @@ impl DelegateTool {
                     child_agent,
                     registry,
                     store_opt,
-                    parent_scope,
-                    max_depth,
+                    scope,
                     agent_id,
+                    coordinator,
                 )
                 .await;
             }
@@ -406,10 +443,13 @@ impl DelegateTool {
 /// the local [`DelegationTracker`] and the shared [`SubagentRegistry`].
 ///
 /// When a task store is attached, the child gets a `delegation_tasks` row and
-/// a [`DelegationScope`] threaded through its message metadata so it can read
-/// and write shared state via the `task_state` tool.
+/// the caller-supplied [`DelegationScope`] is threaded through its message
+/// metadata so it can read and write shared state via the `task_state` tool.
+///
+/// `coordinator`, when present, advances pending handoffs under the child's
+/// tree root after the child finishes.
 #[allow(clippy::too_many_arguments)] // closure-captured execution context for a spawned child
-async fn execute_child_task(
+pub(crate) fn execute_child_task(
     child_id: String,
     task: TaskSpec,
     tracker: DelegationTracker,
@@ -417,178 +457,198 @@ async fn execute_child_task(
     agent: Option<Arc<crate::agent::Agent>>,
     registry: Arc<SubagentRegistry>,
     store: Option<Arc<DelegationTaskStore>>,
-    parent_scope: Option<DelegationScope>,
-    max_depth: u32,
+    scope: DelegationScope,
     agent_id: String,
-) {
-    tracker.update_status(&child_id, ChildStatus::Running).await;
+    coordinator: Option<Arc<DelegationCoordinator>>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    // Boxed (type-erased) future: `execute_child_task -> maybe_advance ->
+    // successor spawn -> execute_child_task` is a genuinely cyclic call graph,
+    // so a concrete `impl Future` would recurse in the type system (E0391).
+    Box::pin(async move {
+        tracker.update_status(&child_id, ChildStatus::Running).await;
 
-    debug!("Child {} starting execution", child_id);
+        debug!("Child {} starting execution", child_id);
 
-    // Derive the child's scope: one level below its parent, sharing the tree
-    // root.  A top-level delegation starts a fresh root.
-    let (root_id, depth) = match &parent_scope {
-        Some(ps) => (ps.root_id.clone(), ps.depth + 1),
-        None => (Uuid::new_v4().to_string(), 1),
-    };
-    let scope = DelegationScope {
-        root_id: root_id.clone(),
-        task_id: child_id.clone(),
-        depth,
-        max_depth,
-        allowed_tools: if task.allowed_tools.is_empty() {
-            None
-        } else {
-            Some(task.allowed_tools.clone())
-        },
-        max_iterations: task.max_iterations,
-    };
+        // Row linkage: the tree root and the child's parent row come from the scope.
+        let root_id = scope.root_id.clone();
+        let depth = scope.depth;
+        let parent_id = scope.parent_task_id.clone();
 
-    // Create the shared-state row and record a start event.
-    if let Some(store) = &store {
-        let title: String = task.prompt.chars().take(120).collect();
-        if let Err(e) = store
-            .create_task(NewTask {
-                id: &child_id,
-                root_id: &root_id,
-                parent_id: parent_scope.as_ref().map(|ps| ps.task_id.as_str()),
-                depth,
-                agent_id: &agent_id,
-                title: &title,
-            })
-            .await
-        {
-            warn!("Failed to create delegation task '{}': {}", child_id, e);
-        }
-        if let Err(e) = store
-            .append_event(
-                &child_id,
-                &DelegationEvent::new(
-                    &agent_id,
-                    "started",
-                    task.prompt.chars().take(80).collect::<String>(),
-                ),
-            )
-            .await
-        {
-            warn!("Failed to record start event for '{}': {}", child_id, e);
-        }
-    }
-
-    if let Some(agent) = agent {
-        // Create incoming message for the child task
-        let message = crate::channels::IncomingMessage::new(
-            format!("child:{}", child_id),
-            format!("delegation:{}", child_id),
-            &task.prompt,
-        )
-        .with_metadata(
-            crate::channels::MessageMetadata::new()
-                .with_extra("child_id", child_id.clone())
-                .with_extra("output_format", task.output_format.clone().unwrap_or_default())
-                .with_extra("allowed_tools", task.allowed_tools.join(","))
-                .with_extra(
-                    crate::delegation::DELEGATION_SCOPE_KEY,
-                    serde_json::to_value(&scope).unwrap_or(serde_json::Value::Null),
-                ),
-        );
-
-        // Build a debug-logging progress callback so child tool activity
-        // surfaces in logs even though there is no parent callback to forward to.
-        let child_id_cb = child_id.clone();
-        let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
-            let cid = child_id_cb.clone();
-            Box::pin(async move {
-                match event {
-                    crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
-                        debug!("Child {} calling tool {}: {}", cid, name, arguments);
-                    }
-                    crate::agent::ProgressEvent::ToolResult { name, result, .. } => {
-                        debug!("Child {} tool {} result: {} chars", cid, name, result.len());
-                    }
-                    crate::agent::ProgressEvent::Error { message } => {
-                        warn!("Child {} progress error: {}", cid, message);
-                    }
-                    _ => {}
-                }
-            })
-        });
-
-        // Process the task through the agent with progress visibility
-        match agent
-            .process_message_with_progress(message, progress_cb)
-            .await
-        {
-            Ok(response) => {
-                iterations.fetch_add(1, Ordering::SeqCst);
-
-                info!(
-                    "Child {} completed successfully. Response: {} chars",
-                    child_id,
-                    response.content.len()
-                );
-
-                // Format result based on output_format if specified
-                let result = if let Some(format) = &task.output_format {
-                    format!("Output format ({}): {}", format, response.content)
-                } else {
-                    response.content.clone()
-                };
-
-                tracker.set_result(&child_id, result.clone()).await;
-                registry.complete_run(&child_id, Ok(result)).await;
-
-                // Write the outcome back to the shared task record.
-                if let Some(store) = &store {
-                    if let Err(e) = store.set_status(&child_id, "completed").await {
-                        warn!("Failed to mark delegation task '{}' completed: {}", child_id, e);
-                    }
-                    if let Err(e) = store
-                        .append_event(
-                            &child_id,
-                            &DelegationEvent::new(
-                                &agent_id,
-                                "completed",
-                                format!("output: {} chars", response.content.len()),
-                            ),
-                        )
-                        .await
-                    {
-                        warn!("Failed to record completion event for '{}': {}", child_id, e);
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Child {} failed: {}", child_id, e);
-                let err_msg = format!("Task execution failed: {}", e);
-                tracker.set_error(&child_id, err_msg.clone()).await;
-                registry.complete_run(&child_id, Err(err_msg)).await;
-
-                if let Some(store) = &store {
-                    if let Err(e) = store.set_status(&child_id, "failed").await {
-                        warn!("Failed to mark delegation task '{}' failed: {}", child_id, e);
-                    }
-                }
-            }
-        }
-    } else {
-        // No agent configured - log warning and mark as failed
-        warn!(
-            "No agent configured for child {}. Task would execute with prompt: {}",
-            child_id, task.prompt
-        );
-        let err_msg = "No agent configured for delegation".to_string();
-        tracker.set_error(&child_id, err_msg.clone()).await;
-        registry.complete_run(&child_id, Err(err_msg)).await;
-
+        // Create the shared-state row and record a start event.
         if let Some(store) = &store {
-            if let Err(e) = store.set_status(&child_id, "failed").await {
-                warn!("Failed to mark delegation task '{}' failed: {}", child_id, e);
+            let title: String = task.prompt.chars().take(120).collect();
+            if let Err(e) = store
+                .create_task(NewTask {
+                    id: &child_id,
+                    root_id: &root_id,
+                    parent_id: parent_id.as_deref(),
+                    depth,
+                    agent_id: &agent_id,
+                    title: &title,
+                })
+                .await
+            {
+                warn!("Failed to create delegation task '{}': {}", child_id, e);
+            }
+            if let Err(e) = store
+                .append_event(
+                    &child_id,
+                    &DelegationEvent::new(
+                        &agent_id,
+                        "started",
+                        task.prompt.chars().take(80).collect::<String>(),
+                    ),
+                )
+                .await
+            {
+                warn!("Failed to record start event for '{}': {}", child_id, e);
             }
         }
-    }
 
-    debug!("Child {} execution completed", child_id);
+        if let Some(agent) = agent {
+            // Create incoming message for the child task
+            let message = crate::channels::IncomingMessage::new(
+                format!("child:{}", child_id),
+                format!("delegation:{}", child_id),
+                &task.prompt,
+            )
+            .with_metadata(
+                crate::channels::MessageMetadata::new()
+                    .with_extra("child_id", child_id.clone())
+                    .with_extra("output_format", task.output_format.clone().unwrap_or_default())
+                    .with_extra("allowed_tools", task.allowed_tools.join(","))
+                    .with_extra(
+                        crate::delegation::DELEGATION_SCOPE_KEY,
+                        serde_json::to_value(&scope).unwrap_or(serde_json::Value::Null),
+                    ),
+            );
+
+            // Build a debug-logging progress callback so child tool activity
+            // surfaces in logs even though there is no parent callback to forward to.
+            let child_id_cb = child_id.clone();
+            let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
+                let cid = child_id_cb.clone();
+                Box::pin(async move {
+                    match event {
+                        crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                            debug!("Child {} calling tool {}: {}", cid, name, arguments);
+                        }
+                        crate::agent::ProgressEvent::ToolResult { name, result, .. } => {
+                            debug!("Child {} tool {} result: {} chars", cid, name, result.len());
+                        }
+                        crate::agent::ProgressEvent::Error { message } => {
+                            warn!("Child {} progress error: {}", cid, message);
+                        }
+                        _ => {}
+                    }
+                })
+            });
+
+            // Process the task through the agent with progress visibility
+            match agent
+                .process_message_with_progress(message, progress_cb)
+                .await
+            {
+                Ok(response) => {
+                    iterations.fetch_add(1, Ordering::SeqCst);
+
+                    info!(
+                        "Child {} completed successfully. Response: {} chars",
+                        child_id,
+                        response.content.len()
+                    );
+
+                    // Format result based on output_format if specified
+                    let result = if let Some(format) = &task.output_format {
+                        format!("Output format ({}): {}", format, response.content)
+                    } else {
+                        response.content.clone()
+                    };
+
+                    tracker.set_result(&child_id, result.clone()).await;
+                    registry.complete_run(&child_id, Ok(result)).await;
+
+                    // Write the outcome back to the shared task record.
+                    if let Some(store) = &store {
+                        // A task that requested a handoff must keep `waiting_handoff`
+                        // so the coordinator can advance it.
+                        preserve_handoff_and_set_status(store, &child_id, "completed").await;
+                        if let Err(e) = store
+                            .append_event(
+                                &child_id,
+                                &DelegationEvent::new(
+                                    &agent_id,
+                                    "completed",
+                                    format!("output: {} chars", response.content.len()),
+                                ),
+                            )
+                            .await
+                        {
+                            warn!("Failed to record completion event for '{}': {}", child_id, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Child {} failed: {}", child_id, e);
+                    let err_msg = format!("Task execution failed: {}", e);
+                    tracker.set_error(&child_id, err_msg.clone()).await;
+                    registry.complete_run(&child_id, Err(err_msg)).await;
+
+                    if let Some(store) = &store {
+                        preserve_handoff_and_set_status(store, &child_id, "failed").await;
+                    }
+                }
+            }
+        } else {
+            // No agent configured - log warning and mark as failed
+            warn!(
+                "No agent configured for child {}. Task would execute with prompt: {}",
+                child_id, task.prompt
+            );
+            let err_msg = "No agent configured for delegation".to_string();
+            tracker.set_error(&child_id, err_msg.clone()).await;
+            registry.complete_run(&child_id, Err(err_msg)).await;
+
+            if let Some(store) = &store {
+                preserve_handoff_and_set_status(store, &child_id, "failed").await;
+            }
+        }
+
+        // Drive any pending handoffs in this tree (successor continuation).  Runs
+        // on both the success and failure paths so a handoff requested just before
+        // a child finished is still picked up.
+        if let Some(coordinator) = &coordinator {
+            if let Err(e) = coordinator.maybe_advance(&root_id).await {
+                warn!("Failed to advance delegation tree '{}': {}", root_id, e);
+            }
+        }
+
+        debug!("Child {} execution completed", child_id);
+    })
+}
+
+/// Set a delegation task's status unless it is already `waiting_handoff`.
+///
+/// A child that requested a handoff must keep `waiting_handoff` so the
+/// coordinator can pick it up and spawn the successor; overwriting it with
+/// `completed`/`failed` would silently drop the handoff.
+async fn preserve_handoff_and_set_status(
+    store: &DelegationTaskStore,
+    child_id: &str,
+    status: &str,
+) {
+    let pending_handoff = store
+        .get_task(child_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|task| task.is_waiting_handoff());
+    if pending_handoff {
+        return;
+    }
+    if let Err(e) = store.set_status(child_id, status).await {
+        warn!("Failed to mark delegation task '{}' {}: {}", child_id, status, e);
+    }
 }
 
 #[async_trait]

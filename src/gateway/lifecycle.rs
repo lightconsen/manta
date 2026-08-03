@@ -206,10 +206,11 @@ pub(crate) async fn start_gateway(
     }
 
     // Register delegation tool with agent resolver for target_agent routing,
-    // plus the shared task-state store and `task_state` tool for delegation
-    // trees (children read/write their shared state via that tool).
+    // plus the shared task-state store, the `task_state` tool for delegation
+    // trees (children read/write their shared state via that tool), and a
+    // handoff coordinator for successor continuation.
     {
-        use crate::delegation::{DelegationTaskStore, TaskStateTool};
+        use crate::delegation::{DelegationCoordinator, DelegationTaskStore, TaskStateTool};
         use crate::tools::DelegateTool;
 
         let db_url =
@@ -220,23 +221,33 @@ pub(crate) async fn start_gateway(
             .registry
             .register_dynamic(Arc::new(TaskStateTool::new(delegation_store.clone())));
 
-        let resolver = Arc::new(super::agent_spawn::GatewayAgentResolver {
-            agents: state.agents.agents.clone(),
-        });
+        let resolver: Arc<dyn crate::tools::delegate_tool::AgentResolver> =
+            Arc::new(super::agent_spawn::GatewayAgentResolver {
+                agents: state.agents.agents.clone(),
+            });
         let default_agent = {
             let agents = state.agents.agents.read().await;
             agents.get("default").map(|h| h.agent.clone())
         };
-        let delegate = if let Some(agent) = default_agent {
+        let delegate = if let Some(agent) = default_agent.clone() {
             DelegateTool::with_agent(0, agent)
-                .with_agent_resolver(resolver)
+                .with_agent_resolver(Arc::clone(&resolver))
                 .with_task_store(delegation_store.clone())
         } else {
             DelegateTool::root()
-                .with_agent_resolver(resolver)
-                .with_task_store(delegation_store)
+                .with_agent_resolver(Arc::clone(&resolver))
+                .with_task_store(delegation_store.clone())
         };
-        state.tools.registry.register_dynamic(Arc::new(delegate));
+        let coordinator = Arc::new(DelegationCoordinator::new(
+            delegation_store,
+            delegate.registry().clone(),
+            resolver,
+            default_agent,
+        ));
+        state
+            .tools
+            .registry
+            .register_dynamic(Arc::new(delegate.with_coordinator(coordinator)));
         info!("DelegateTool registered with agent resolver for target_agent routing");
     }
 

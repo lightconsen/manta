@@ -47,6 +47,7 @@ Actions:
 - set <key> <value_json>: write one key to the shared state
 - append <text>: append a note to the task's event ledger
 - put_artifact <name> <url>: record a reference to an artifact you produced
+- handoff <to_agent> <summary>: hand this task to another agent to continue
 - status: show the task's status, state, and artifacts
 
 Only available inside an active delegation; errors otherwise."#
@@ -58,7 +59,7 @@ Only available inside an active delegation; errors otherwise."#
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["get", "set", "append", "put_artifact", "status"],
+                    "enum": ["get", "set", "append", "put_artifact", "handoff", "status"],
                     "description": "Action to perform"
                 },
                 "key": {
@@ -79,6 +80,14 @@ Only available inside an active delegation; errors otherwise."#
                 "url": {
                     "type": "string",
                     "description": "Artifact URL/path (for put_artifact)"
+                },
+                "to_agent": {
+                    "type": "string",
+                    "description": "Agent to hand the task to (for handoff)"
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Handoff summary for the successor (for handoff)"
                 }
             },
             "required": ["action"]
@@ -207,6 +216,25 @@ Only available inside an active delegation; errors otherwise."#
                     .with_data(json!({ "name": name, "url": url })))
             }
 
+            "handoff" => {
+                let to_agent = args["to_agent"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "to_agent is required for handoff".to_string(),
+                    )
+                })?;
+                let summary = args["summary"].as_str().unwrap_or("continue the task");
+                let task = self
+                    .store
+                    .get_task(&task_id)
+                    .await?
+                    .ok_or_else(|| DelegationError::TaskNotFound(task_id.clone()))?;
+                self.store.set_handoff(&task.id, to_agent, summary).await?;
+                Ok(ToolExecutionResult::success(format!(
+                    "handed task to {} for continuation",
+                    to_agent
+                )))
+            }
+
             "status" => {
                 let task = self
                     .store
@@ -329,6 +357,30 @@ mod tests {
             .await
             .unwrap();
         assert!(status.output.contains("artifacts=1"));
+    }
+
+    #[tokio::test]
+    async fn test_handoff_action() {
+        let (tool, _) = setup().await;
+
+        let result = tool
+            .execute(
+                json!({"action": "handoff", "to_agent": "reviewer", "summary": "needs review"}),
+                &context_with_scope("run-1"),
+            )
+            .await
+            .unwrap();
+        assert!(result.success, "handoff should succeed: {:?}", result.output);
+
+        let status = tool
+            .execute(json!({"action": "status"}), &context_with_scope("run-1"))
+            .await
+            .unwrap();
+        assert!(
+            status.output.contains("waiting_handoff"),
+            "task should be waiting_handoff: {}",
+            status.output
+        );
     }
 
     #[tokio::test]

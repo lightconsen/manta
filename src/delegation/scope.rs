@@ -29,6 +29,10 @@ pub struct DelegationScope {
     /// Maximum allowed nesting depth.  `can_delegate()` is false at or beyond
     /// this depth.
     pub max_depth: u32,
+    /// Task id of this child's parent in the delegation tree (`None` for a
+    /// tree root).  Used to link rows; not directly actionable by the child.
+    #[serde(default)]
+    pub parent_task_id: Option<String>,
     /// Explicit tool allowlist for this child.  `None` means every tool is
     /// allowed (subject to the ordinary tool registry / approval gates).
     #[serde(default)]
@@ -51,6 +55,7 @@ impl DelegationScope {
             task_id: task_id.into(),
             depth,
             max_depth,
+            parent_task_id: None,
             allowed_tools: None,
             max_iterations: None,
         }
@@ -85,6 +90,7 @@ impl DelegationScope {
             task_id: child_task_id.into(),
             depth: self.depth + 1,
             max_depth: self.max_depth,
+            parent_task_id: Some(self.task_id.clone()),
             allowed_tools,
             max_iterations,
         }
@@ -102,6 +108,7 @@ mod tests {
             task_id: "task-1".to_string(),
             depth: 2,
             max_depth: 3,
+            parent_task_id: Some("parent-0".to_string()),
             allowed_tools: Some(vec!["file_read".to_string(), "file_write".to_string()]),
             max_iterations: Some(12),
         };
@@ -158,6 +165,7 @@ mod tests {
         assert_eq!(child.task_id, "child");
         assert_eq!(child.depth, 2);
         assert_eq!(child.max_depth, 3);
+        assert_eq!(child.parent_task_id.as_deref(), Some("parent"));
         assert_eq!(child.allowed_tools.as_deref(), Some(&["file_read".to_string()][..]));
         assert_eq!(child.max_iterations, Some(5));
     }
