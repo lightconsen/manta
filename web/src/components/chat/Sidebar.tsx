@@ -271,8 +271,8 @@ export function Sidebar({
         {!collapsed && (
           <div
             onMouseDown={handleMouseDown}
-            className={`relative h-1 shrink-0 cursor-ns-resize bg-transparent hover:bg-primary/10 transition-colors ${
-              isDragging ? "bg-primary/20" : ""
+            className={`relative h-1 shrink-0 cursor-ns-resize bg-transparent hover:bg-primary-600/10 transition-colors ${
+              isDragging ? "bg-primary-600/20" : ""
             }`}
             role="separator"
             aria-orientation="horizontal"

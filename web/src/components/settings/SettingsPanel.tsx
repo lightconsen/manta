@@ -172,6 +172,10 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     serverId: string;
     authUrl: string;
   } | null>(null);
+  // Server id whose enable must be rolled back if its pending OAuth
+  // authorization fails or is cancelled. Only ever set during the
+  // enable-preset flow, so a Cancel/failed auth flips the toggle back off.
+  const pendingEnableRevert = useRef<string | null>(null);
   const [envModal, setEnvModal] = useState<{
     preset: {
       name: string;
@@ -278,6 +282,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       if (evt.event === "mcp.auth_complete") {
         const serverId = evt.payload?.server_id as string;
         setAuthModal(null);
+        pendingEnableRevert.current = null;
         // Retry connecting — backend now has a stored token
         if (serverId) {
           const result = await transport.connectMcpServer(serverId);
@@ -292,6 +297,20 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       if (evt.event === "mcp.auth_failed") {
         setAuthModal(null);
         setMcpActionLoading("");
+        const serverId = evt.payload?.server_id as string;
+        // A failed authorization from the enable-preset flow rolls the enable
+        // back so the preset does not stay "Enabled". handleCancelAuth covers
+        // the explicit Cancel path; this covers failures that arrive without a
+        // Cancel (provider callback / token-exchange errors).
+        if (serverId && pendingEnableRevert.current === serverId) {
+          pendingEnableRevert.current = null;
+          try {
+            await transport.removeMcpServer(serverId);
+            await transport.disconnectMcpServer(serverId);
+          } catch {
+            /* rollback is best-effort */
+          }
+        }
         refreshMcp();
         refreshMcpPresets();
       }
@@ -572,6 +591,10 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       if (result.ok) {
         showToast(`${preset.display_name} enabled`, "success");
       } else if (result.errorCode === "MCP_AUTH_REQUIRED" && result.authUrl) {
+        // This auth modal came from the enable flow — if it fails or is
+        // cancelled, roll the enable back (remove the server config) so the
+        // preset toggle returns to disabled.
+        pendingEnableRevert.current = preset.name;
         setAuthModal({ serverId: preset.name, authUrl: result.authUrl });
         showToast(`${preset.display_name}: authorization required`, "success");
       } else if (preset.auth_type === "oauth2") {
@@ -630,6 +653,19 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       await transport.cancelMcpAuth(authModal.serverId);
       setAuthModal(null);
       setMcpActionLoading("");
+      // Roll back the enable: the preset was only marked enabled as part of the
+      // now-cancelled authorize flow. Removing the server config flips the
+      // preset toggle back to disabled.
+      if (pendingEnableRevert.current === authModal.serverId) {
+        pendingEnableRevert.current = null;
+        try {
+          await transport.removeMcpServer(authModal.serverId);
+          await transport.disconnectMcpServer(authModal.serverId);
+          await Promise.all([refreshMcp(), refreshMcpPresets()]);
+        } catch {
+          /* rollback is best-effort */
+        }
+      }
     }
   };
 
@@ -1965,13 +2001,13 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
             <div className="flex gap-2">
               <button
                 onClick={() => window.open(authModal.authUrl, "_blank")}
-                className="flex-1 px-4 py-2 text-xs font-medium rounded-lg bg-primary text-white hover:opacity-90 transition-opacity"
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-600 text-white hover:opacity-90 transition-opacity"
               >
                 Authorize in Browser
               </button>
               <button
                 onClick={handleCancelAuth}
-                className="px-4 py-2 text-xs font-medium rounded-lg bg-sidebar text-secondary hover:text-primary transition-colors"
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-sidebar text-secondary hover:text-primary transition-colors"
               >
                 Cancel
               </button>
@@ -2020,7 +2056,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               <button
                 onClick={submitEnv}
                 disabled={envModal.saving}
-                className="flex-1 px-4 py-2 text-xs font-medium rounded-lg bg-primary text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                className="flex-1 px-4 py-2 text-xs font-medium rounded-lg bg-primary-600 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
               >
                 {envModal.saving ? "Validating..." : "Save & Enable"}
               </button>
