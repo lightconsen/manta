@@ -205,9 +205,21 @@ pub(crate) async fn start_gateway(
         }
     }
 
-    // Register delegation tool with agent resolver for target_agent routing.
+    // Register delegation tool with agent resolver for target_agent routing,
+    // plus the shared task-state store and `task_state` tool for delegation
+    // trees (children read/write their shared state via that tool).
     {
+        use crate::delegation::{DelegationTaskStore, TaskStateTool};
         use crate::tools::DelegateTool;
+
+        let db_url =
+            format!("sqlite://{}", crate::dirs::data_dir().join("delegations.db").display());
+        let delegation_store = Arc::new(DelegationTaskStore::new(&db_url).await?);
+        state
+            .tools
+            .registry
+            .register_dynamic(Arc::new(TaskStateTool::new(delegation_store.clone())));
+
         let resolver = Arc::new(super::agent_spawn::GatewayAgentResolver {
             agents: state.agents.agents.clone(),
         });
@@ -216,9 +228,13 @@ pub(crate) async fn start_gateway(
             agents.get("default").map(|h| h.agent.clone())
         };
         let delegate = if let Some(agent) = default_agent {
-            DelegateTool::with_agent(0, agent).with_agent_resolver(resolver)
+            DelegateTool::with_agent(0, agent)
+                .with_agent_resolver(resolver)
+                .with_task_store(delegation_store.clone())
         } else {
-            DelegateTool::root().with_agent_resolver(resolver)
+            DelegateTool::root()
+                .with_agent_resolver(resolver)
+                .with_task_store(delegation_store)
         };
         state.tools.registry.register_dynamic(Arc::new(delegate));
         info!("DelegateTool registered with agent resolver for target_agent routing");

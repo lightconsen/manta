@@ -20,8 +20,10 @@ use tracing::{debug, error, info, warn};
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::budget::IterationBudget;
 use crate::agent::subagent_registry::SubagentRegistry;
+use crate::delegation::{DelegationEvent, DelegationScope, DelegationTaskStore, NewTask};
 use crate::tools::hooks::ToolHooks;
 use crate::tools::sdk::ToolCapabilities;
+use uuid::Uuid;
 
 /// Maximum number of concurrent child agents
 const MAX_CHILDREN: usize = 3;
@@ -53,6 +55,10 @@ pub struct TaskSpec {
     /// "delegate".
     #[serde(default)]
     pub target_agent: Option<String>,
+    /// Optional shared-task id for the child (registry run id).  When set, the
+    /// child's shared state is tracked under this task.
+    #[serde(default)]
+    pub task_id: Option<String>,
 }
 
 /// Child agent handle
@@ -204,6 +210,9 @@ pub struct DelegateTool {
     /// Optional resolver for `target_agent` routing — when set, children
     /// are routed to the named agent instead of `self.agent`.
     agent_resolver: Option<Arc<dyn AgentResolver>>,
+    /// Optional shared task state store.  When set, every spawned child gets a
+    /// `delegation_tasks` row and can read/write shared state via `task_state`.
+    store: Option<Arc<DelegationTaskStore>>,
 }
 
 impl std::fmt::Debug for DelegateTool {
@@ -225,6 +234,7 @@ impl DelegateTool {
             registry: Arc::new(SubagentRegistry::new(MAX_DEPTH as u32, MAX_CHILDREN)),
             hooks: ToolHooks::new(),
             agent_resolver: None,
+            store: None,
         }
     }
 
@@ -236,6 +246,7 @@ impl DelegateTool {
             registry: Arc::new(SubagentRegistry::new(MAX_DEPTH as u32, MAX_CHILDREN)),
             hooks: ToolHooks::new(),
             agent_resolver: None,
+            store: None,
         }
     }
 
@@ -267,20 +278,41 @@ impl DelegateTool {
         self
     }
 
+    /// Attach a shared delegation task store.  When set, every spawned child
+    /// gets a shared-state row that sibling/descendant agents can read and
+    /// write through the `task_state` tool.
+    pub fn with_task_store(mut self, store: Arc<DelegationTaskStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
     /// Access the underlying registry for metrics / status queries.
     pub fn registry(&self) -> &Arc<SubagentRegistry> {
         &self.registry
     }
 
     /// Spawn a child agent
+    ///
+    /// `parent_scope` is the caller's delegation scope (`None` for a
+    /// top-level delegation).  The child's own scope is derived from it: one
+    /// level deeper, sharing the same tree root.
     async fn spawn_child(
         &self,
         task: TaskSpec,
         parent_budget: Option<IterationBudget>,
         parent_id: String,
+        parent_scope: Option<DelegationScope>,
     ) -> crate::Result<ChildAgent> {
         let budget = parent_budget.unwrap_or_else(|| IterationBudget::new(50));
         let iterations = Arc::new(AtomicUsize::new(0));
+
+        // Compute the child's intended depth before asking the registry, which
+        // validates it against its configured max depth.
+        let depth = match &parent_scope {
+            Some(ps) => ps.depth + 1,
+            None => 1,
+        };
+        let max_depth = self.registry.max_depth();
 
         // Determine which agent to use for child execution:
         // 1. If target_agent is set and we have a resolver, look it up
@@ -306,15 +338,21 @@ impl DelegateTool {
         // Build the execution closure. The registry will supply the run_id, which
         // becomes the child id so local tracking and registry tracking share a key.
         let registry = Arc::clone(&self.registry);
+        let store_opt = self.store.clone();
         let reg_task = task.clone();
         let reg_tracker = self.tracker.clone();
         let iterations_bg = iterations.clone();
+        let parent_scope_owned = parent_scope.clone();
+        let agent_id_owned = agent_type.clone();
         let task_fn = move |run_id: String, _task_str: String| {
             let reg_task = reg_task.clone();
             let reg_tracker = reg_tracker.clone();
             let iterations_bg = iterations_bg.clone();
             let child_agent = child_agent.clone();
             let registry = Arc::clone(&registry);
+            let store_opt = store_opt.clone();
+            let parent_scope = parent_scope_owned.clone();
+            let agent_id = agent_id_owned.clone();
             async move {
                 execute_child_task(
                     run_id,
@@ -323,6 +361,10 @@ impl DelegateTool {
                     iterations_bg,
                     child_agent,
                     registry,
+                    store_opt,
+                    parent_scope,
+                    max_depth,
+                    agent_id,
                 )
                 .await;
             }
@@ -332,7 +374,7 @@ impl DelegateTool {
         // If the registry rejects the spawn, no child is registered locally.
         let run_id = self
             .registry
-            .spawn(&parent_id, &agent_type, &task.prompt, task_fn)
+            .spawn(&parent_id, &agent_type, &task.prompt, depth, task_fn)
             .await?;
 
         let child = ChildAgent {
@@ -362,6 +404,11 @@ impl DelegateTool {
 
 /// Execute a child task using the provided agent, reporting outcomes to both
 /// the local [`DelegationTracker`] and the shared [`SubagentRegistry`].
+///
+/// When a task store is attached, the child gets a `delegation_tasks` row and
+/// a [`DelegationScope`] threaded through its message metadata so it can read
+/// and write shared state via the `task_state` tool.
+#[allow(clippy::too_many_arguments)] // closure-captured execution context for a spawned child
 async fn execute_child_task(
     child_id: String,
     task: TaskSpec,
@@ -369,10 +416,64 @@ async fn execute_child_task(
     iterations: Arc<AtomicUsize>,
     agent: Option<Arc<crate::agent::Agent>>,
     registry: Arc<SubagentRegistry>,
+    store: Option<Arc<DelegationTaskStore>>,
+    parent_scope: Option<DelegationScope>,
+    max_depth: u32,
+    agent_id: String,
 ) {
     tracker.update_status(&child_id, ChildStatus::Running).await;
 
     debug!("Child {} starting execution", child_id);
+
+    // Derive the child's scope: one level below its parent, sharing the tree
+    // root.  A top-level delegation starts a fresh root.
+    let (root_id, depth) = match &parent_scope {
+        Some(ps) => (ps.root_id.clone(), ps.depth + 1),
+        None => (Uuid::new_v4().to_string(), 1),
+    };
+    let scope = DelegationScope {
+        root_id: root_id.clone(),
+        task_id: child_id.clone(),
+        depth,
+        max_depth,
+        allowed_tools: if task.allowed_tools.is_empty() {
+            None
+        } else {
+            Some(task.allowed_tools.clone())
+        },
+        max_iterations: task.max_iterations,
+    };
+
+    // Create the shared-state row and record a start event.
+    if let Some(store) = &store {
+        let title: String = task.prompt.chars().take(120).collect();
+        if let Err(e) = store
+            .create_task(NewTask {
+                id: &child_id,
+                root_id: &root_id,
+                parent_id: parent_scope.as_ref().map(|ps| ps.task_id.as_str()),
+                depth,
+                agent_id: &agent_id,
+                title: &title,
+            })
+            .await
+        {
+            warn!("Failed to create delegation task '{}': {}", child_id, e);
+        }
+        if let Err(e) = store
+            .append_event(
+                &child_id,
+                &DelegationEvent::new(
+                    &agent_id,
+                    "started",
+                    task.prompt.chars().take(80).collect::<String>(),
+                ),
+            )
+            .await
+        {
+            warn!("Failed to record start event for '{}': {}", child_id, e);
+        }
+    }
 
     if let Some(agent) = agent {
         // Create incoming message for the child task
@@ -385,7 +486,11 @@ async fn execute_child_task(
             crate::channels::MessageMetadata::new()
                 .with_extra("child_id", child_id.clone())
                 .with_extra("output_format", task.output_format.clone().unwrap_or_default())
-                .with_extra("allowed_tools", task.allowed_tools.join(",")),
+                .with_extra("allowed_tools", task.allowed_tools.join(","))
+                .with_extra(
+                    crate::delegation::DELEGATION_SCOPE_KEY,
+                    serde_json::to_value(&scope).unwrap_or(serde_json::Value::Null),
+                ),
         );
 
         // Build a debug-logging progress callback so child tool activity
@@ -432,12 +537,38 @@ async fn execute_child_task(
 
                 tracker.set_result(&child_id, result.clone()).await;
                 registry.complete_run(&child_id, Ok(result)).await;
+
+                // Write the outcome back to the shared task record.
+                if let Some(store) = &store {
+                    if let Err(e) = store.set_status(&child_id, "completed").await {
+                        warn!("Failed to mark delegation task '{}' completed: {}", child_id, e);
+                    }
+                    if let Err(e) = store
+                        .append_event(
+                            &child_id,
+                            &DelegationEvent::new(
+                                &agent_id,
+                                "completed",
+                                format!("output: {} chars", response.content.len()),
+                            ),
+                        )
+                        .await
+                    {
+                        warn!("Failed to record completion event for '{}': {}", child_id, e);
+                    }
+                }
             }
             Err(e) => {
                 error!("Child {} failed: {}", child_id, e);
                 let err_msg = format!("Task execution failed: {}", e);
                 tracker.set_error(&child_id, err_msg.clone()).await;
                 registry.complete_run(&child_id, Err(err_msg)).await;
+
+                if let Some(store) = &store {
+                    if let Err(e) = store.set_status(&child_id, "failed").await {
+                        warn!("Failed to mark delegation task '{}' failed: {}", child_id, e);
+                    }
+                }
             }
         }
     } else {
@@ -449,6 +580,12 @@ async fn execute_child_task(
         let err_msg = "No agent configured for delegation".to_string();
         tracker.set_error(&child_id, err_msg.clone()).await;
         registry.complete_run(&child_id, Err(err_msg)).await;
+
+        if let Some(store) = &store {
+            if let Err(e) = store.set_status(&child_id, "failed").await {
+                warn!("Failed to mark delegation task '{}' failed: {}", child_id, e);
+            }
+        }
     }
 
     debug!("Child {} execution completed", child_id);
@@ -618,18 +755,22 @@ impl DelegateTool {
                     allowed_tools,
                     context: HashMap::new(),
                     target_agent: task_json["target_agent"].as_str().map(String::from),
+                    task_id: task_json["task_id"].as_str().map(String::from),
                 };
 
                 let child = self
-                    .spawn_child(task, None, context.conversation_id.clone())
+                    .spawn_child(
+                        task,
+                        None,
+                        context.conversation_id.clone(),
+                        context.delegation.clone(),
+                    )
                     .await?;
 
-                let child_session = format!(
-                    "{}:subagent:{}",
-                    context.conversation_id,
-                    &child.id[..8.min(child.id.len())]
-                );
-                let depth = self.registry.get_depth(&child_session).await;
+                let depth = match &context.delegation {
+                    Some(scope) => scope.depth + 1,
+                    None => 1,
+                };
 
                 Ok(ToolExecutionResult::success(format!("Spawned child agent: {}", child.id))
                     .with_data(json!({
@@ -749,6 +890,7 @@ mod tests {
             allowed_tools: vec!["file_read".to_string()],
             context: HashMap::new(),
             target_agent: None,
+            task_id: None,
         };
         assert_eq!(task.prompt, "Test task");
     }
@@ -789,6 +931,7 @@ mod tests {
                     allowed_tools: vec![],
                     context: HashMap::new(),
                     target_agent: None,
+                    task_id: None,
                 },
                 status: ChildStatus::Pending,
                 created_at: chrono::Utc::now(),
@@ -816,6 +959,7 @@ mod tests {
                 allowed_tools: vec![],
                 context: HashMap::new(),
                 target_agent: None,
+                task_id: None,
             },
             status: ChildStatus::Pending,
             created_at: chrono::Utc::now(),
@@ -846,6 +990,7 @@ mod tests {
                 allowed_tools: vec![],
                 context: HashMap::new(),
                 target_agent: None,
+                task_id: None,
             },
             status: ChildStatus::Pending,
             created_at: chrono::Utc::now(),
@@ -874,6 +1019,7 @@ mod tests {
                 allowed_tools: vec![],
                 context: HashMap::new(),
                 target_agent: None,
+                task_id: None,
             },
             status: ChildStatus::Running,
             created_at: chrono::Utc::now(),
@@ -903,6 +1049,7 @@ mod tests {
                 allowed_tools: vec![],
                 context: HashMap::new(),
                 target_agent: None,
+                task_id: None,
             },
             status: ChildStatus::Running,
             created_at: chrono::Utc::now(),
@@ -933,6 +1080,7 @@ mod tests {
                     allowed_tools: vec![],
                     context: HashMap::new(),
                     target_agent: None,
+                    task_id: None,
                 },
                 status: ChildStatus::Pending,
                 created_at: chrono::Utc::now(),
@@ -960,6 +1108,7 @@ mod tests {
                 allowed_tools: vec![],
                 context: HashMap::new(),
                 target_agent: None,
+                task_id: None,
             },
             status: ChildStatus::Pending,
             created_at: chrono::Utc::now(),

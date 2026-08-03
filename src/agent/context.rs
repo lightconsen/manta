@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::time::SystemTime;
 
 use crate::agent::turns::{ToolCallRecord, TurnUsage};
+use crate::delegation::DelegationScope;
 use crate::providers::Message;
 
 /// Conversation context
@@ -44,6 +45,9 @@ pub struct Context {
     /// Accumulated token usage for the current turn.
     /// Transferred to [`Turn::token_usage`] when the turn completes.
     pub turn_token_usage: Option<TurnUsage>,
+    /// Active delegation scope, when this conversation runs inside a
+    /// delegated child agent.  `None` for ordinary conversations.
+    delegation: Option<DelegationScope>,
 }
 
 impl Context {
@@ -68,6 +72,34 @@ impl Context {
             max_turns: None,
             tool_call_records: Vec::new(),
             turn_token_usage: None,
+            delegation: None,
+        }
+    }
+
+    /// Attach a delegation scope to this context.
+    pub fn with_delegation(mut self, scope: DelegationScope) -> Self {
+        self.delegation = Some(scope);
+        self
+    }
+
+    /// Set (or clear) the delegation scope on this context.
+    pub fn set_delegation(&mut self, scope: Option<DelegationScope>) {
+        self.delegation = scope;
+    }
+
+    /// The active delegation scope, if any.
+    pub fn delegation(&self) -> Option<&DelegationScope> {
+        self.delegation.as_ref()
+    }
+
+    /// Whether the named tool may be executed in this context.
+    ///
+    /// With no active delegation scope every tool is allowed; inside a
+    /// delegated child the scope's allowlist is enforced.
+    pub fn is_tool_allowed(&self, name: &str) -> bool {
+        match &self.delegation {
+            None => true,
+            Some(scope) => scope.is_tool_allowed(name),
         }
     }
 
@@ -702,5 +734,28 @@ mod tests {
         ctx.record_tool_call("file_read", "{\"path\":\"/tmp/test\"}");
         assert!(ctx.is_tool_call_duplicate("file_read", "{\"path\":\"/tmp/test\"}"));
         assert!(!ctx.is_tool_call_duplicate("file_read", "{\"path\":\"/tmp/other\"}"));
+    }
+
+    #[test]
+    fn test_is_tool_allowed_no_scope_allows_all() {
+        let ctx = Context::new("test", "System", 1000);
+        assert!(ctx.is_tool_allowed("file_read"));
+        assert!(ctx.is_tool_allowed("delegate"));
+        assert!(ctx.delegation().is_none());
+    }
+
+    #[test]
+    fn test_is_tool_allowed_with_scope_filters() {
+        use crate::delegation::DelegationScope;
+
+        let scope = DelegationScope {
+            allowed_tools: Some(vec!["file_read".to_string()]),
+            ..DelegationScope::new("root", "task", 1, 3)
+        };
+        let ctx = Context::new("test", "System", 1000).with_delegation(scope);
+        assert!(ctx.is_tool_allowed("file_read"));
+        assert!(!ctx.is_tool_allowed("file_write"));
+        assert!(!ctx.is_tool_allowed("delegate"));
+        assert!(ctx.delegation().is_some());
     }
 }

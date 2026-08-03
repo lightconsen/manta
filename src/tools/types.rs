@@ -153,6 +153,9 @@ pub struct ToolContext {
     pub sandbox: ToolSandbox,
     /// Model / policy metadata
     pub model: ToolModel,
+    /// Active delegation scope, when this tool call runs inside a delegated
+    /// child agent.  `None` for ordinary top-level conversations.
+    pub delegation: Option<crate::delegation::DelegationScope>,
 }
 
 /// Allowed environment variables that are safe to forward to child processes.
@@ -298,6 +301,12 @@ impl ToolContext {
     /// Set the model capabilities for model-based tool gating.
     pub fn with_model_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
         self.model.model_capabilities = capabilities;
+        self
+    }
+
+    /// Attach the active delegation scope for this tool call.
+    pub fn with_delegation(mut self, scope: Option<crate::delegation::DelegationScope>) -> Self {
+        self.delegation = scope;
         self
     }
 

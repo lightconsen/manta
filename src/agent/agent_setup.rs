@@ -179,10 +179,15 @@ impl Agent {
 
     /// Build a ToolContext pre-configured with workspace settings from agent
     /// config.
+    ///
+    /// `delegation` carries the active delegation scope (if any) so tools like
+    /// `task_state` can address the child's shared task row.  `None` for
+    /// ordinary conversations.
     pub(super) fn build_tool_context(
         &self,
         user_id: impl Into<String>,
         conversation_id: impl Into<String>,
+        delegation: Option<crate::delegation::DelegationScope>,
     ) -> ToolContext {
         let user_id = user_id.into();
         let conversation_id = conversation_id.into();
@@ -202,6 +207,7 @@ impl Agent {
             .with_provider_name(self.provider.name().to_string())
             .with_sender_id(user_id)
             .with_model_capabilities(model_capabilities)
+            .with_delegation(delegation)
     }
 
     /// Attach a `SessionStore` for turn persistence.
@@ -474,8 +480,9 @@ impl Agent {
         }
         drop(active_plans);
 
-        // Get available tools
-        let tool_context = self.build_tool_context(user_id, conversation_id);
+        // Get available tools.  Fresh contexts have no delegation scope yet —
+        // the scope is applied later from message metadata in the engine.
+        let tool_context = self.build_tool_context(user_id, conversation_id, None);
         let tool_defs = self.tools.get_available(&tool_context);
         prompt_ctx.available_tools = tool_defs;
 

@@ -309,6 +309,7 @@ mod tests {
                 skill_trust: crate::tools::SkillTrust::Trusted,
                 tool_policy: None,
             },
+            delegation: None,
         }
     }
 

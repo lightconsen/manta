@@ -50,6 +50,7 @@ pub mod config;
 pub mod core;
 pub mod cron;
 pub mod daemon;
+pub mod delegation;
 pub mod dirs;
 pub mod embed;
 pub mod error;

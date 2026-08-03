@@ -123,7 +123,7 @@ pub struct RunRecord {
 /// // Spawn returns a run_id; the actual execution is your responsibility
 /// // (wire in your Arc<Agent> via the callback argument).
 /// let run_id = registry
-///     .spawn("session-1", "code-reviewer", "review this PR", {
+///     .spawn("session-1", "code-reviewer", "review this PR", 1, {
 ///         let registry = Arc::clone(&registry);
 ///         move |run_id, _task| {
 ///             let registry = Arc::clone(&registry);
@@ -173,6 +173,12 @@ impl SubagentRegistry {
 
     /// Spawn a subagent to handle `task` on behalf of `parent_session`.
     ///
+    /// `depth` is the nesting depth the caller intends for this run
+    /// (top-level delegation = 1).  The registry rejects any depth above its
+    /// configured `max_depth`, so a caller that wants recursion must compute
+    /// the child depth from its own scope and stop delegating once
+    /// `depth >= max_depth`.
+    ///
     /// The caller supplies a `task_fn` closure that receives the `run_id` and
     /// task string, and is responsible for executing the work and calling
     /// [`complete_run`](Self::complete_run) when done.
@@ -183,6 +189,7 @@ impl SubagentRegistry {
         parent_session: &str,
         target_agent: &str,
         task: &str,
+        depth: u32,
         task_fn: F,
     ) -> crate::Result<String>
     where
@@ -193,20 +200,14 @@ impl SubagentRegistry {
         let child_session = format!("{}:subagent:{}", parent_session, &run_id[..8]);
 
         // ── atomic depth + concurrency check + insert ────────────────────
-        let spawn_depth;
+        let spawn_depth = depth;
         {
             let mut runs = self.runs.write().await;
 
-            // Depth check: find parent session's depth
-            let current_depth = runs
-                .values()
-                .find(|r| r.child_session == parent_session)
-                .map(|r| r.spawn_depth)
-                .unwrap_or(0);
-            if current_depth >= self.max_depth {
+            // Depth check: caller-declared depth against configured max.
+            if depth > self.max_depth {
                 return Err(SyscityError::MaxSpawnDepth(self.max_depth));
             }
-            spawn_depth = current_depth + 1;
 
             // Concurrency check
             let active = runs
@@ -522,7 +523,7 @@ mod tests {
         let reg = Arc::clone(&registry);
 
         let run_id = registry
-            .spawn("session-1", "test-agent", "do something", {
+            .spawn("session-1", "test-agent", "do something", 1, {
                 let reg = Arc::clone(&reg);
                 move |run_id, _task| async move {
                     reg.complete_run(&run_id, Ok("done".to_string())).await;
@@ -546,7 +547,7 @@ mod tests {
         // First spawn at depth 1 — OK
         let reg = Arc::clone(&registry);
         let run_id = registry
-            .spawn("root", "agent", "task", {
+            .spawn("root", "agent", "task", 1, {
                 let reg = Arc::clone(&reg);
                 move |run_id, _| async move {
                     reg.complete_run(&run_id, Ok("ok".to_string())).await;
@@ -560,18 +561,34 @@ mod tests {
             .wait_for_completion(&run_id, Duration::from_secs(5))
             .await;
 
-        // Try to spawn from child session — should fail (depth >= max_depth=1)
-        // child_session is "root:subagent:<short-run-id>"
+        // A grandchild depth (2) exceeds max_depth=1 → rejected.
         let child_session = {
             let runs = registry.runs.read().await;
             runs.get(&run_id).unwrap().child_session.clone()
         };
 
         let result = registry
-            .spawn(&child_session, "agent", "nested", |_, _| async {})
+            .spawn(&child_session, "agent", "nested", 2, |_, _| async {})
             .await;
 
         assert!(matches!(result, Err(SyscityError::MaxSpawnDepth(1))));
+    }
+
+    #[tokio::test]
+    async fn test_explicit_depth_is_recorded() {
+        let registry = Arc::new(SubagentRegistry::new(3, 10));
+        let reg = Arc::clone(&registry);
+        let run_id = registry
+            .spawn("root", "agent", "task", 3, {
+                let reg = Arc::clone(&reg);
+                move |run_id, _| async move {
+                    reg.complete_run(&run_id, Ok("ok".to_string())).await;
+                }
+            })
+            .await
+            .unwrap();
+        let run = registry.get_run(&run_id).await.unwrap();
+        assert_eq!(run.spawn_depth, 3);
     }
 
     #[tokio::test]
@@ -586,6 +603,7 @@ mod tests {
                     &format!("session-{}", i),
                     "agent",
                     "blocking",
+                    1,
                     |_, _| async { /* never completes */ },
                 )
                 .await
@@ -593,7 +611,7 @@ mod tests {
         }
 
         let result = registry
-            .spawn("session-overflow", "agent", "task", |_, _| async {})
+            .spawn("session-overflow", "agent", "task", 1, |_, _| async {})
             .await;
 
         assert!(matches!(result, Err(SyscityError::MaxConcurrentSubagents(2))));
@@ -605,7 +623,7 @@ mod tests {
         let _reg = Arc::clone(&registry);
 
         let run_id = registry
-            .spawn("session-1", "agent", "task", |_, _| async { /* hangs */ })
+            .spawn("session-1", "agent", "task", 1, |_, _| async { /* hangs */ })
             .await
             .unwrap();
 
@@ -624,7 +642,7 @@ mod tests {
         let reg = Arc::clone(&registry);
 
         let run_id = registry
-            .spawn("session-1", "agent", "task", {
+            .spawn("session-1", "agent", "task", 1, {
                 let reg = Arc::clone(&reg);
                 move |run_id, _| async move {
                     reg.complete_run(&run_id, Ok("ok".to_string())).await;
@@ -665,7 +683,7 @@ mod tests {
         let reg = Arc::clone(&registry);
 
         let run_id = registry
-            .spawn("session-1", "reviewer", "task", move |run_id, _| {
+            .spawn("session-1", "reviewer", "task", 1, move |run_id, _| {
                 let reg = Arc::clone(&reg);
                 async move {
                     // Hold running status until polled.

@@ -693,6 +693,38 @@ impl Agent {
         }
         let thread = guard.get_mut();
 
+        // Apply delegation scope from message metadata (delegated child agents).
+        // Applied after the thread is available so both freshly built and resumed
+        // delegation conversations get the scope before any LLM call.
+        if let Some(scope_value) = message
+            .metadata
+            .extra
+            .get(crate::delegation::DELEGATION_SCOPE_KEY)
+        {
+            match serde_json::from_value::<crate::delegation::DelegationScope>(scope_value.clone())
+            {
+                Ok(scope) => {
+                    thread.context.set_delegation(Some(scope.clone()));
+                    if let Some(max_iter) = scope.max_iterations {
+                        thread.context.set_max_tool_iterations(max_iter);
+                    }
+                    info!(
+                        delegation_root = %scope.root_id,
+                        delegation_task = %scope.task_id,
+                        depth = scope.depth,
+                        "Applied delegation scope to conversation {}",
+                        conversation_id
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to parse delegation scope for conversation {}: {}",
+                        conversation_id, e
+                    );
+                }
+            }
+        }
+
         // Apply ACP max iteration override for existing threads
         let override_opt = *self.max_tool_iterations_override.read().await;
         if let Some(max_iter) = override_opt {
@@ -1240,7 +1272,8 @@ impl Agent {
         let messages = context.to_messages();
 
         // Get available tools
-        let tool_context = self.build_tool_context(user_id, context.id());
+        let tool_context =
+            self.build_tool_context(user_id, context.id(), context.delegation().cloned());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -1375,12 +1408,24 @@ impl Agent {
                     true
                 }
             })
+            .filter(|tc| {
+                if !context.is_tool_allowed(&tc.function.name) {
+                    warn!(
+                        "Tool '{}' is not allowed in this delegation scope, skipping",
+                        tc.function.name
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
             .cloned()
             .collect();
 
         if filtered_tool_calls.is_empty() {
-            // All tool calls were duplicates; return the original response as-is
-            // (the assistant message with tool_calls was never added to context)
+            // All tool calls were duplicates or disallowed; return the original
+            // response as-is (the assistant message with tool_calls was never
+            // added to context)
             return Ok(original_response.clone());
         }
 
@@ -1388,7 +1433,7 @@ impl Agent {
         // This avoids context.prune_if_needed() removing the assistant because
         // its tool_call IDs don't yet have matching tool results.
         let tool_context = self
-            .build_tool_context(user_id, context.id())
+            .build_tool_context(user_id, context.id(), context.delegation().cloned())
             .with_timeout(std::time::Duration::from_secs(120));
 
         let mut results = Vec::new();
@@ -1505,7 +1550,8 @@ impl Agent {
         );
 
         // Get available tools
-        let tool_context = self.build_tool_context(user_id, context.id());
+        let tool_context =
+            self.build_tool_context(user_id, context.id(), context.delegation().cloned());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -1803,11 +1849,38 @@ impl Agent {
                     true
                 }
             })
+            .filter(|tc| {
+                if !context.is_tool_allowed(&tc.function.name) {
+                    warn!(
+                        "Tool '{}' is not allowed in this delegation scope, skipping",
+                        tc.function.name
+                    );
+
+                    // Notify about the disallowed tool via progress callback
+                    let cb = progress_cb.clone();
+                    let name = tc.function.name.clone();
+                    tokio::spawn(async move {
+                        (cb)(ProgressEvent::ToolResult {
+                            name,
+                            result: "[Tool skipped - not allowed in this delegation scope]"
+                                .to_string(),
+                            data: None,
+                            execution_time_ms: 0,
+                        })
+                        .await;
+                    });
+
+                    false
+                } else {
+                    true
+                }
+            })
             .cloned()
             .collect();
 
         if filtered_tool_calls.is_empty() {
-            // All tool calls were duplicates; return the original response as-is
+            // All tool calls were duplicates or disallowed; return the original
+            // response as-is
             return Ok(original_response.clone());
         }
 
@@ -1817,7 +1890,7 @@ impl Agent {
         // By adding the assistant AFTER execution and immediately followed by
         // tool results, the tool_call/tool_result pairing is preserved.
         let tool_context = self
-            .build_tool_context(user_id, context.id())
+            .build_tool_context(user_id, context.id(), context.delegation().cloned())
             .with_timeout(std::time::Duration::from_secs(120));
 
         let mut results = Vec::new();
