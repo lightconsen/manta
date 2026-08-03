@@ -44,6 +44,8 @@ the tree can read.
 
 Actions:
 - get <key>: read one key from the shared state
+- get_from <task_id> <key>: read one key from a sibling or ancestor task's
+  shared state (must be in the same delegation tree)
 - set <key> <value_json>: write one key to the shared state
 - append <text>: append a note to the task's event ledger
 - put_artifact <name> <url>: record a reference to an artifact you produced
@@ -59,12 +61,16 @@ Only available inside an active delegation; errors otherwise."#
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["get", "set", "append", "put_artifact", "handoff", "status"],
+                    "enum": ["get", "get_from", "set", "append", "put_artifact", "handoff", "status"],
                     "description": "Action to perform"
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Target task id in your delegation tree (for get_from)"
                 },
                 "key": {
                     "type": "string",
-                    "description": "State key (for get/set)"
+                    "description": "State key (for get/set/get_from)"
                 },
                 "value": {
                     "description": "JSON value to store under key (for set)"
@@ -134,6 +140,38 @@ Only available inside an active delegation; errors otherwise."#
                     None => format!("{} is not set", key),
                 })
                 .with_data(json!({ "key": key, "value": value })))
+            }
+
+            "get_from" => {
+                let target_id = args["task_id"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "task_id is required for get_from".to_string(),
+                    )
+                })?;
+                let key = args["key"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "key is required for get_from".to_string(),
+                    )
+                })?;
+                let target = self
+                    .store
+                    .get_task(target_id)
+                    .await?
+                    .ok_or_else(|| DelegationError::TaskNotFound(target_id.to_string()))?;
+                // A delegated agent may only read state from tasks in its own
+                // delegation tree — never from an unrelated root.
+                if target.root_id != scope.root_id {
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "task {} is outside the caller's delegation tree",
+                        target_id
+                    )));
+                }
+                let value = target.state().get(key).cloned();
+                Ok(ToolExecutionResult::success(match value.as_ref() {
+                    Some(v) => format!("{} = {}", key, v),
+                    None => format!("{} is not set", key),
+                })
+                .with_data(json!({ "task_id": target_id, "key": key, "value": value })))
             }
 
             "set" => {
@@ -277,12 +315,14 @@ mod tests {
         DelegationScope::new("root-1", task_id, 2, 3)
     }
 
-    async fn setup() -> (TaskStateTool, String) {
+    async fn setup() -> TaskStateTool {
         let store = Arc::new(
             DelegationTaskStore::new("sqlite::memory:")
                 .await
                 .expect("in-memory store"),
         );
+        // run-1 and run-2 share a tree rooted at root-1; other-1 belongs to a
+        // different tree.
         store
             .create_task(NewTask {
                 id: "run-1",
@@ -294,7 +334,29 @@ mod tests {
             })
             .await
             .unwrap();
-        (TaskStateTool::new(store), "run-1".to_string())
+        store
+            .create_task(NewTask {
+                id: "run-2",
+                root_id: "root-1",
+                parent_id: Some("run-1"),
+                depth: 2,
+                agent_id: "sibling",
+                title: "Sibling task",
+            })
+            .await
+            .unwrap();
+        store
+            .create_task(NewTask {
+                id: "other-1",
+                root_id: "root-other",
+                parent_id: None,
+                depth: 1,
+                agent_id: "stranger",
+                title: "Unrelated task",
+            })
+            .await
+            .unwrap();
+        TaskStateTool::new(store)
     }
 
     fn context_with_scope(task_id: &str) -> ToolContext {
@@ -304,7 +366,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_and_get() {
-        let (tool, _) = setup().await;
+        let tool = setup().await;
 
         let set = tool
             .execute(
@@ -325,7 +387,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_append_and_status() {
-        let (tool, _) = setup().await;
+        let tool = setup().await;
 
         tool.execute(json!({"action": "append", "text": "starting"}), &context_with_scope("run-1"))
             .await
@@ -341,7 +403,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_put_artifact() {
-        let (tool, _) = setup().await;
+        let tool = setup().await;
 
         let result = tool
             .execute(
@@ -361,7 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handoff_action() {
-        let (tool, _) = setup().await;
+        let tool = setup().await;
 
         let result = tool
             .execute(
@@ -385,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rejects_outside_delegation() {
-        let (tool, _) = setup().await;
+        let tool = setup().await;
         let plain = ToolContext::new("user", "session-1");
         let result = tool
             .execute(json!({"action": "status"}), &plain)
@@ -400,11 +462,80 @@ mod tests {
 
     #[tokio::test]
     async fn test_unknown_action() {
-        let (tool, _) = setup().await;
+        let tool = setup().await;
         let result = tool
             .execute(json!({"action": "explode"}), &context_with_scope("run-1"))
             .await
             .unwrap_err();
         assert!(result.to_string().contains("Unknown action"));
+    }
+
+    #[tokio::test]
+    async fn test_get_from_sibling_within_tree() {
+        let tool = setup().await;
+        // run-2 writes a key; run-1 reads it back via get_from.
+        tool.execute(
+            json!({"action": "set", "key": "plan", "value": {"steps": 3}}),
+            &context_with_scope("run-2"),
+        )
+        .await
+        .unwrap();
+
+        let get_from = tool
+            .execute(
+                json!({"action": "get_from", "task_id": "run-2", "key": "plan"}),
+                &context_with_scope("run-1"),
+            )
+            .await
+            .unwrap();
+        assert!(get_from.success, "sibling read should succeed: {:?}", get_from.output);
+        assert!(get_from.output.contains("\"steps\":3"));
+    }
+
+    #[tokio::test]
+    async fn test_get_from_unset_key_reports_not_set() {
+        let tool = setup().await;
+        let get_from = tool
+            .execute(
+                json!({"action": "get_from", "task_id": "run-2", "key": "nope"}),
+                &context_with_scope("run-1"),
+            )
+            .await
+            .unwrap();
+        assert!(get_from.success);
+        assert!(get_from.output.contains("nope is not set"));
+    }
+
+    #[tokio::test]
+    async fn test_get_from_rejects_foreign_tree() {
+        let tool = setup().await;
+        // other-1 belongs to root-other; run-1 (root-1) may not read it.
+        let result = tool
+            .execute(
+                json!({"action": "get_from", "task_id": "other-1", "key": "x"}),
+                &context_with_scope("run-1"),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            result
+                .to_string()
+                .contains("outside the caller's delegation tree"),
+            "unexpected error: {}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_from_unknown_task() {
+        let tool = setup().await;
+        let result = tool
+            .execute(
+                json!({"action": "get_from", "task_id": "ghost", "key": "x"}),
+                &context_with_scope("run-1"),
+            )
+            .await
+            .unwrap_err();
+        assert!(result.to_string().contains("ghost"));
     }
 }
