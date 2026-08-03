@@ -24,6 +24,12 @@ const MAX_CONSECUTIVE_IDENTICAL_FAILURES: usize = 3;
 /// Maximum number of LLM → tool → LLM iterations within a single agent round.
 const MAX_TOOL_ITERATIONS: usize = 25;
 
+/// Cap for a single tool result before it enters the round context. A tool
+/// call can return arbitrarily large output, and up to `MAX_TOOL_ITERATIONS`
+/// results accumulate in one round, so one uncapped result can blow the
+/// context window. Mirrors the cron executor's head-kept byte cap.
+const MAX_TOOL_RESULT_BYTES: usize = 8 * 1024;
+
 /// A background goal runner that acts and checks conditions in a loop.
 pub struct GoalRunner {
     /// Unique identifier for this goal run.
@@ -357,7 +363,7 @@ impl GoalRunner {
                     Err(e) => format!("Tool execution error: {}", e),
                 };
 
-                messages.push(Message::tool(result_str, &tc.id));
+                messages.push(Message::tool(truncate_tool_output(&result_str), &tc.id));
             }
         }
 
@@ -506,6 +512,22 @@ impl GoalRunner {
             tracing::warn!("[goal {}] Failed to emit event: {}", self.id, e);
         }
     }
+}
+
+/// Keep the head of a tool result up to `MAX_TOOL_RESULT_BYTES`, cutting on a
+/// UTF-8 char boundary, and append a marker so the model knows it was cut.
+fn truncate_tool_output(output: &str) -> String {
+    if output.len() <= MAX_TOOL_RESULT_BYTES {
+        return output.to_string();
+    }
+    // Find the largest char boundary at or before the byte cap. `String`
+    // slicing (`&output[..cut]`) panics if `cut` is mid-char; UTF-8 is at
+    // most 4 bytes per char, so the loop backs off at most 3 bytes.
+    let mut cut = MAX_TOOL_RESULT_BYTES;
+    while cut > 0 && !output.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}…(truncated {} bytes)", &output[..cut], output.len() - cut)
 }
 
 #[cfg(test)]
@@ -698,5 +720,23 @@ mod tests {
             });
         }
         assert!(!runner.detect_loop());
+    }
+
+    #[test]
+    fn test_truncate_tool_output_under_cap_untouched() {
+        assert_eq!(truncate_tool_output("hello"), "hello");
+    }
+
+    #[test]
+    fn test_truncate_tool_output_cuts_on_char_boundary() {
+        // "中" is 3 bytes in UTF-8. 2731 chars = 8193 bytes, just over the
+        // 8192-byte cap; the cap lands mid-char (8192 % 3 = 2), so the cut
+        // must back off to 8190 and stay valid UTF-8.
+        let s = "中".repeat(2731); // 8193 bytes
+        let t = truncate_tool_output(&s);
+        assert!(t.starts_with('中'));
+        assert!(t.contains("truncated"));
+        assert!(t.ends_with("bytes)"));
+        assert!(t.is_char_boundary(t.len()));
     }
 }
