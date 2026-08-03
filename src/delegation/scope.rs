@@ -16,6 +16,14 @@ use serde::{Deserialize, Serialize};
 /// Metadata key used to pass the delegation scope to a child agent.
 pub const DELEGATION_SCOPE_KEY: &str = "delegation_scope";
 
+/// Tools no delegated child may use, regardless of its allowlist.
+///
+/// `delegate` is deliberately absent — it is gated separately on delegation
+/// depth via [`DelegationScope::can_delegate`], so interior nodes keep the
+/// ability to recurse while leaves lose it.
+pub const DELEGATION_BLOCKED_TOOLS: &[&str] =
+    &["clarify", "memory", "send_message", "execute_code"];
+
 /// Shared-task delegation contract for one child agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DelegationScope {
@@ -63,9 +71,19 @@ impl DelegationScope {
 
     /// Whether this child may use the named tool.
     ///
-    /// `allowed_tools == None` allows everything; otherwise only the listed
-    /// tools are allowed.
+    /// Three rules apply in order: the hard-blocked delegation tools are never
+    /// available, `delegate` is gated on remaining depth, and then the
+    /// allowlist (`None` = everything else) decides.
     pub fn is_tool_allowed(&self, name: &str) -> bool {
+        // Hard blocks apply to every delegated child, whatever the allowlist.
+        if DELEGATION_BLOCKED_TOOLS.contains(&name) {
+            return false;
+        }
+        // Recursive delegation is depth-gated: a leaf may not recurse even
+        // when the allowlist is open (`None`).
+        if name == "delegate" && !self.can_delegate() {
+            return false;
+        }
         match &self.allowed_tools {
             None => true,
             Some(allowed) => allowed.iter().any(|t| t == name),
@@ -145,6 +163,46 @@ mod tests {
         assert!(restricted.is_tool_allowed("file_read"));
         assert!(!restricted.is_tool_allowed("file_write"));
         assert!(!restricted.is_tool_allowed("delegate"));
+    }
+
+    #[test]
+    fn test_hard_blocked_tools_never_allowed() {
+        // Even with an open allowlist (`None`), a delegated child cannot use
+        // the hard-blocked tools.  `delegate` is NOT hard-blocked — interior
+        // nodes keep it (see `test_delegate_gated_on_depth`).
+        let any = DelegationScope::new("r", "t", 1, 3);
+        for tool in DELEGATION_BLOCKED_TOOLS {
+            assert!(!any.is_tool_allowed(tool), "{} should be hard-blocked", tool);
+        }
+        assert!(any.is_tool_allowed("file_read"));
+
+        // Explicitly listing a blocked tool does not grant it.
+        let listed = DelegationScope {
+            allowed_tools: Some(vec!["execute_code".to_string(), "file_read".to_string()]),
+            ..DelegationScope::new("r", "t", 1, 3)
+        };
+        assert!(!listed.is_tool_allowed("execute_code"));
+        assert!(listed.is_tool_allowed("file_read"));
+    }
+
+    #[test]
+    fn test_delegate_gated_on_depth() {
+        // root → manager → worker → leaf with max_depth 3: interior nodes may
+        // delegate, the leaf may not, even though the allowlist stays open.
+        let manager = DelegationScope::new("r", "manager", 1, 3);
+        assert!(manager.is_tool_allowed("delegate"));
+        let worker = DelegationScope::new("r", "worker", 2, 3);
+        assert!(worker.is_tool_allowed("delegate"));
+        let leaf = DelegationScope::new("r", "leaf", 3, 3);
+        assert!(!leaf.is_tool_allowed("delegate"));
+
+        // A leaf with an explicit allowlist that names `delegate` still cannot
+        // recurse — depth gating wins over the allowlist.
+        let leaf_listed = DelegationScope {
+            allowed_tools: Some(vec!["delegate".to_string()]),
+            ..DelegationScope::new("r", "leaf", 3, 3)
+        };
+        assert!(!leaf_listed.is_tool_allowed("delegate"));
     }
 
     #[test]

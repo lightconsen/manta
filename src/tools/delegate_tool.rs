@@ -21,17 +21,20 @@ use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::budget::IterationBudget;
 use crate::agent::subagent_registry::SubagentRegistry;
 use crate::delegation::{
-    DelegationCoordinator, DelegationEvent, DelegationScope, DelegationTaskStore, NewTask,
+    DelegationConfig, DelegationCoordinator, DelegationEvent, DelegationScope, DelegationTaskStore,
+    NewTask,
 };
 use crate::tools::hooks::ToolHooks;
 use crate::tools::sdk::ToolCapabilities;
 use uuid::Uuid;
 
-/// Maximum number of concurrent child agents
-const MAX_CHILDREN: usize = 3;
-/// Maximum delegation depth
-const MAX_DEPTH: usize = 2;
-/// Tools blocked for child agents
+/// Tools stripped from a child's requested allowlist.
+///
+/// `delegate` is listed for documentation and the spawn-time warning only —
+/// its real enforcement is depth-based inside
+/// [`DelegationScope::is_tool_allowed`], so interior nodes keep recursion
+/// while leaves lose it. The remaining tools match
+/// [`DELEGATION_BLOCKED_TOOLS`](crate::delegation::scope::DELEGATION_BLOCKED_TOOLS).
 const BLOCKED_TOOLS: &[&str] = &[
     "delegate",
     "clarify",
@@ -107,25 +110,39 @@ pub enum ChildStatus {
 pub struct DelegationTracker {
     /// Active child agents
     children: Arc<RwLock<HashMap<String, ChildAgent>>>,
-    /// Current delegation depth
+    /// Current delegation depth of the agent this tracker belongs to
     depth: usize,
     /// Maximum allowed children
     max_children: usize,
+    /// Maximum nesting depth (agents at or beyond this may not delegate)
+    max_depth: usize,
 }
 
 impl DelegationTracker {
-    /// Create a new delegation tracker
+    /// Create a new delegation tracker with default limits.
     pub fn new(depth: usize) -> Self {
+        Self::with_limits(depth, DelegationConfig::default())
+    }
+
+    /// Create a new delegation tracker with explicit limits.
+    pub fn with_limits(depth: usize, config: DelegationConfig) -> Self {
         Self {
             children: Arc::new(RwLock::new(HashMap::new())),
             depth,
-            max_children: MAX_CHILDREN,
+            max_children: config.max_children,
+            max_depth: config.max_depth as usize,
         }
+    }
+
+    /// Replace the depth/concurrency limits (e.g. from a config reload).
+    pub fn set_limits(&mut self, config: DelegationConfig) {
+        self.max_children = config.max_children;
+        self.max_depth = config.max_depth as usize;
     }
 
     /// Check if delegation is allowed
     pub async fn can_delegate(&self) -> bool {
-        if self.depth >= MAX_DEPTH {
+        if self.depth >= self.max_depth {
             return false;
         }
         let children = self.children.read().await;
@@ -231,12 +248,22 @@ impl std::fmt::Debug for DelegateTool {
 }
 
 impl DelegateTool {
-    /// Create a new delegate tool
+    /// Create a new delegate tool with default limits.
     pub fn new(depth: usize) -> Self {
+        Self::new_with_config(depth, DelegationConfig::default())
+    }
+
+    /// Create a new delegate tool with an agent for execution.
+    pub fn with_agent(depth: usize, agent: Arc<crate::agent::Agent>) -> Self {
+        Self::with_agent_and_config(depth, agent, DelegationConfig::default())
+    }
+
+    /// Create a new delegate tool with explicit depth/concurrency limits.
+    fn new_with_config(depth: usize, config: DelegationConfig) -> Self {
         Self {
-            tracker: DelegationTracker::new(depth),
+            tracker: DelegationTracker::with_limits(depth, config.clone()),
             agent: None,
-            registry: Arc::new(SubagentRegistry::new(MAX_DEPTH as u32, MAX_CHILDREN)),
+            registry: Arc::new(SubagentRegistry::new(config.max_depth, config.max_children)),
             hooks: ToolHooks::new(),
             agent_resolver: None,
             store: None,
@@ -244,12 +271,16 @@ impl DelegateTool {
         }
     }
 
-    /// Create a new delegate tool with an agent for execution
-    pub fn with_agent(depth: usize, agent: Arc<crate::agent::Agent>) -> Self {
+    /// Create a new delegate tool with an agent and explicit limits.
+    fn with_agent_and_config(
+        depth: usize,
+        agent: Arc<crate::agent::Agent>,
+        config: DelegationConfig,
+    ) -> Self {
         Self {
-            tracker: DelegationTracker::new(depth),
+            tracker: DelegationTracker::with_limits(depth, config.clone()),
             agent: Some(agent),
-            registry: Arc::new(SubagentRegistry::new(MAX_DEPTH as u32, MAX_CHILDREN)),
+            registry: Arc::new(SubagentRegistry::new(config.max_depth, config.max_children)),
             hooks: ToolHooks::new(),
             agent_resolver: None,
             store: None,
@@ -298,6 +329,16 @@ impl DelegateTool {
     /// continuation via the coordinator.
     pub fn with_coordinator(mut self, coordinator: Arc<DelegationCoordinator>) -> Self {
         self.coordinator = Some(coordinator);
+        self
+    }
+
+    /// Override the delegation depth/concurrency limits.
+    ///
+    /// Rebuilds the shared [`SubagentRegistry`] and tracker so both enforce
+    /// the same bounds (defaults: depth 3, 3 concurrent children).
+    pub fn with_delegation_config(mut self, config: DelegationConfig) -> Self {
+        self.tracker.set_limits(config.clone());
+        self.registry = Arc::new(SubagentRegistry::new(config.max_depth, config.max_children));
         self
     }
 
@@ -362,7 +403,11 @@ impl DelegateTool {
         let registry = Arc::clone(&self.registry);
         let store_opt = self.store.clone();
         let reg_task = task.clone();
-        let reg_tracker = self.tracker.clone();
+        // The child's execution tracker carries its actual depth so any
+        // depth-based gating (e.g. `can_delegate`) reflects the child's level
+        // in the tree rather than the shared tool's construction depth (0).
+        let mut reg_tracker = self.tracker.clone();
+        reg_tracker.depth = depth as usize;
         let iterations_bg = iterations.clone();
         let coordinator = self.coordinator.clone();
         let root_id_bg = root_id.clone();
@@ -667,8 +712,9 @@ Use this tool to:
 
 Limitations:
 - Maximum 3 concurrent children per parent
-- Maximum delegation depth: 2 (parent → child, no grandchildren)
-- Child agents cannot use: delegate, clarify, memory, send_message, execute_code
+- Delegation nests up to 3 levels deep; agents at the deepest level cannot
+  delegate further
+- Child agents cannot use: clarify, memory, send_message, execute_code
 - Children share parent's iteration budget
 
 The child agent will execute the task independently and return results.
@@ -779,7 +825,10 @@ impl DelegateTool {
                     crate::error::SyscityError::Validation("task.prompt is required".to_string())
                 })?;
 
-                // Parse requested tools, then enforce BLOCKED_TOOLS by removing them
+                // Parse requested tools, then strip BLOCKED_TOOLS. `delegate`
+                // is only stripped when the child cannot recurse (a leaf) —
+                // interior nodes keep it so they can delegate further. The
+                // scope re-enforces both rules at execution time.
                 let requested_tools: Vec<String> = task_json["allowed_tools"]
                     .as_array()
                     .map(|arr| {
@@ -789,9 +838,18 @@ impl DelegateTool {
                     })
                     .unwrap_or_default();
 
+                let child_depth = match &context.delegation {
+                    Some(ps) => ps.depth + 1,
+                    None => 1,
+                };
+                let can_child_delegate = child_depth < self.registry.max_depth();
+
                 let blocked_requested: Vec<&str> = requested_tools
                     .iter()
-                    .filter(|t| BLOCKED_TOOLS.contains(&t.as_str()))
+                    .filter(|t| {
+                        BLOCKED_TOOLS.contains(&t.as_str())
+                            && !(*t == "delegate" && can_child_delegate)
+                    })
                     .map(|t| t.as_str())
                     .collect();
 
@@ -805,7 +863,10 @@ impl DelegateTool {
 
                 let allowed_tools: Vec<String> = requested_tools
                     .into_iter()
-                    .filter(|t| !BLOCKED_TOOLS.contains(&t.as_str()))
+                    .filter(|t| {
+                        !BLOCKED_TOOLS.contains(&t.as_str())
+                            || (*t == "delegate" && can_child_delegate)
+                    })
                     .collect();
 
                 let task = TaskSpec {
@@ -927,6 +988,7 @@ impl Clone for DelegationTracker {
             children: Arc::clone(&self.children),
             depth: self.depth,
             max_children: self.max_children,
+            max_depth: self.max_depth,
         }
     }
 }
@@ -970,17 +1032,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_delegation_tracker_can_delegate_at_max_depth() {
-        let tracker = DelegationTracker::new(MAX_DEPTH);
+        let cfg = DelegationConfig::default();
+        let tracker = DelegationTracker::with_limits(cfg.max_depth as usize, cfg.clone());
         assert!(!tracker.can_delegate().await);
 
-        let tracker = DelegationTracker::new(MAX_DEPTH + 1);
+        let tracker = DelegationTracker::with_limits(cfg.max_depth as usize + 1, cfg);
         assert!(!tracker.can_delegate().await);
     }
 
     #[tokio::test]
     async fn test_delegation_tracker_can_delegate_at_max_children() {
-        let tracker = DelegationTracker::new(0);
-        for i in 0..MAX_CHILDREN {
+        let cfg = DelegationConfig::default();
+        let tracker = DelegationTracker::with_limits(0, cfg.clone());
+        for i in 0..cfg.max_children {
             let child = ChildAgent {
                 id: format!("child-{}", i),
                 parent_id: "parent".to_string(),
@@ -1002,7 +1066,7 @@ mod tests {
             };
             tracker.register_child(child).await;
         }
-        assert_eq!(tracker.child_count().await, MAX_CHILDREN);
+        assert_eq!(tracker.child_count().await, cfg.max_children);
         assert!(!tracker.can_delegate().await);
     }
 
@@ -1227,9 +1291,10 @@ mod tests {
     }
 
     #[test]
-    fn test_max_constants() {
-        assert_eq!(MAX_CHILDREN, 3);
-        assert_eq!(MAX_DEPTH, 2);
+    fn test_delegation_config_defaults() {
+        let cfg = DelegationConfig::default();
+        assert_eq!(cfg.max_depth, 3);
+        assert_eq!(cfg.max_children, 3);
     }
 
     #[test]

@@ -758,4 +758,23 @@ mod tests {
         assert!(!ctx.is_tool_allowed("delegate"));
         assert!(ctx.delegation().is_some());
     }
+
+    #[test]
+    fn test_delegate_allowed_for_interior_node_but_not_leaf() {
+        use crate::delegation::DelegationScope;
+
+        // root → manager → worker → leaf with max_depth 3. Interior nodes may
+        // delegate; the leaf may not — even with an open allowlist.
+        let manager = Context::new("m", "System", 1000)
+            .with_delegation(DelegationScope::new("root", "manager", 1, 3));
+        assert!(manager.is_tool_allowed("delegate"));
+
+        let leaf = Context::new("l", "System", 1000)
+            .with_delegation(DelegationScope::new("root", "leaf", 3, 3));
+        assert!(!leaf.is_tool_allowed("delegate"));
+
+        // Hard-blocked tools stay blocked regardless of depth.
+        assert!(!manager.is_tool_allowed("execute_code"));
+        assert!(!leaf.is_tool_allowed("send_message"));
+    }
 }
