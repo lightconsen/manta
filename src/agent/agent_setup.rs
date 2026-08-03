@@ -1,0 +1,631 @@
+//! [`Agent`] construction, builder-style setters, and fresh-context
+//! building.
+
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::{Mutex, RwLock};
+
+use tracing::{debug, info, warn};
+
+use crate::channels::thread_binding::ThreadBindingManager;
+use crate::providers::{CompletionRequest, Provider};
+use crate::tools::{ToolContext, ToolRegistry};
+
+use super::*;
+
+impl Agent {
+    /// Create a new Agent
+    pub fn new(config: AgentConfig, provider: Arc<dyn Provider>, tools: Arc<ToolRegistry>) -> Self {
+        let provider_clone = provider.clone();
+        let retrospect_engine = config.reflection_config.as_ref().and_then(|rc| {
+            if rc.retrospect_enabled {
+                Some(reflection::RetrospectEngine::new(rc.retrospect.clone(), provider.clone()))
+            } else {
+                None
+            }
+        });
+
+        Self {
+            config,
+            provider,
+            model: None,
+            tools,
+            thread_map: Arc::new(Mutex::new(HashMap::new())),
+            session_store: None,
+            session_id: None,
+            shutdown_tx: Arc::new(RwLock::new(None)),
+            memory_manager: None,
+            memory_store: None,
+            chat_history: None,
+            session_search: None,
+            response_cache: Arc::new(ResponseCache::new(Duration::from_secs(3600))), // 1 hour TTL
+            task_planner: Arc::new(TaskPlanner::new(provider_clone)),
+            active_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            cost_guard: None,
+            active_skill_trust: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(1)), // Trusted
+            skill_manager: None,
+            execution_controller: Arc::new(RwLock::new(None)),
+            max_tool_iterations_override: Arc::new(RwLock::new(None)),
+            transcript_store: None,
+            artifact_store: None,
+            disk_budget: None,
+            session_file_manager: None,
+            extra_params: Arc::new(RwLock::new(None)),
+            model_router: None,
+            model_alias: None,
+            model_override: Arc::new(RwLock::new(None)),
+            plans_dir: None,
+            pii_detector: None,
+            computer_adapter: None,
+            computer_config: None,
+            goal_planner: None,
+            retrospect_engine,
+            retrospect_counter: Arc::new(AtomicU64::new(0)),
+            thread_binding_manager: None,
+            concurrency_guards: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Set provider-specific extra parameters (e.g. thinking config) to inject
+    /// into every completion request.
+    pub async fn set_extra_params(&self, params: Option<serde_json::Value>) {
+        let mut guard = self.extra_params.write().await;
+        *guard = params;
+    }
+
+    /// Set a temporary model override for the next provider call.
+    ///
+    /// Cleared automatically after each `process_message` invocation
+    /// so that subsequent requests revert to the default model.
+    pub async fn set_model_override(&self, model: Option<String>) {
+        let mut guard = self.model_override.write().await;
+        *guard = model;
+    }
+
+    /// Patch a [`CompletionRequest`] with provider-specific reasoning
+    /// parameters when the target model is a known reasoning / thinking
+    /// model and no explicit reasoning config has already been supplied via
+    /// `extra`.
+    pub(super) fn patch_request_for_reasoning(&self, request: &mut CompletionRequest) {
+        let family = self.provider.stream_family();
+        let model = request
+            .model
+            .as_deref()
+            .or(self.model.as_deref())
+            .unwrap_or_else(|| self.provider.default_model());
+
+        // Skip if user already provided explicit reasoning config in extra
+        let has_reasoning_config = request.extra.as_ref().is_some_and(|v| {
+            v.get("reasoning_effort").is_some()
+                || v.get("thinking").is_some()
+                || v.get("thinkingConfig").is_some()
+        });
+        if has_reasoning_config {
+            return;
+        }
+
+        match family {
+            crate::providers::stream_wrappers::ProviderStreamFamily::OpenAi
+            | crate::providers::stream_wrappers::ProviderStreamFamily::OpenAiReasoning => {
+                // OpenAI o1 / o3 series use `reasoning_effort`
+                if model.starts_with("o1") || model.starts_with("o3") {
+                    request.extra = Some(
+                        serde_json::json!({ "reasoning_effort": "medium", "service_tier": "auto" }),
+                    );
+                }
+                // DeepSeek thinking models (via OpenAI-compatible API) require
+                // `reasoning` parameter so that the API accepts reasoning_content
+                // in conversation history.
+                else if model.starts_with("deepseek") {
+                    request.extra = Some(serde_json::json!({ "reasoning": { "enabled": true } }));
+                }
+            }
+            crate::providers::stream_wrappers::ProviderStreamFamily::Anthropic
+            | crate::providers::stream_wrappers::ProviderStreamFamily::AnthropicThinking => {
+                // Anthropic thinking models (claude-3-7-sonnet-thinking, etc.)
+                if model.contains("thinking") || model.contains("-extended-thinking") {
+                    request.extra = Some(serde_json::json!({
+                        "thinking": { "type": "enabled", "budget_tokens": 16000 }
+                    }));
+                }
+            }
+            crate::providers::stream_wrappers::ProviderStreamFamily::GoogleThinking
+                if model.contains("thinking") || model.contains("-exp") =>
+            {
+                request.extra =
+                    Some(serde_json::json!({ "thinkingConfig": { "thinkingBudget": 16000 } }));
+            }
+            _ => {}
+        }
+    }
+
+    /// Set the skill trust level for the next process_message invocation.
+    ///
+    /// Call this before invoking `process_message` or
+    /// `process_message_with_progress` to constrain which tools the agent
+    /// may call. The gateway resets this to `Trusted` after the invocation
+    /// completes.
+    pub fn set_skill_trust(&self, trust: crate::tools::SkillTrust) {
+        use std::sync::atomic::Ordering;
+        self.active_skill_trust
+            .store(trust as u8, Ordering::Relaxed);
+    }
+
+    /// Read the current active skill trust level from the atomic.
+    pub(super) fn current_skill_trust(&self) -> crate::tools::SkillTrust {
+        use std::sync::atomic::Ordering;
+        match self.active_skill_trust.load(Ordering::Relaxed) {
+            0 => crate::tools::SkillTrust::Community,
+            _ => crate::tools::SkillTrust::Trusted,
+        }
+    }
+
+    fn infer_model_vision(&self) -> bool {
+        self.model
+            .as_deref()
+            .map(|m| {
+                let m = m.to_lowercase();
+                m.contains("vision")
+                    || m.contains("claude-3")
+                    || m.contains("gpt-4o")
+                    || m.contains("gemini-pro-vision")
+                    || m.contains("llava")
+            })
+            .unwrap_or(false)
+    }
+
+    /// Build a ToolContext pre-configured with workspace settings from agent
+    /// config.
+    pub(super) fn build_tool_context(
+        &self,
+        user_id: impl Into<String>,
+        conversation_id: impl Into<String>,
+    ) -> ToolContext {
+        let user_id = user_id.into();
+        let conversation_id = conversation_id.into();
+
+        let model_capabilities = crate::tools::ModelCapabilities {
+            has_vision: self.infer_model_vision(),
+            supports_tool_use: self.provider.supports_tools(),
+            max_context_length: None,
+        };
+
+        ToolContext::new(user_id.clone(), conversation_id)
+            .with_timeout(Duration::from_secs(120))
+            .with_skill_trust(self.current_skill_trust())
+            .with_workspace_root(self.config.resolve_workspace_dir())
+            .with_workspace_only(self.config.workspace_only)
+            .with_model_name(self.model.clone().unwrap_or_default())
+            .with_provider_name(self.provider.name().to_string())
+            .with_sender_id(user_id)
+            .with_model_capabilities(model_capabilities)
+    }
+
+    /// Attach a `SessionStore` for turn persistence.
+    ///
+    /// When set, every completed turn is persisted asynchronously and the
+    /// conversation history can be restored across restarts via
+    /// [`Agent::restore_threads`].
+    pub fn with_session_store(
+        mut self,
+        store: Arc<SessionStore>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        self.session_store = Some(store);
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Attach a `CostGuard` to this agent.  When set, every provider call
+    /// first checks `cost_guard.is_exceeded()` and returns an error if the
+    /// budget has been exhausted.
+    pub fn with_cost_guard(mut self, guard: Arc<CostGuard>) -> Self {
+        self.cost_guard = Some(guard);
+        self
+    }
+
+    /// Set the model name to use for completions
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        let model = model.into();
+        self.model = Some(model.clone());
+        // Update task planner with the model
+        let provider = self.provider.clone();
+        self.task_planner = Arc::new(TaskPlanner::new(provider).with_model(model));
+        self
+    }
+
+    /// Set the memory store
+    pub fn with_memory_store(mut self, store: Arc<dyn crate::memory::MemoryStore>) -> Self {
+        self.memory_store = Some(store);
+        self
+    }
+
+    /// Set the chat history store
+    pub fn with_chat_history(mut self, store: Arc<dyn crate::memory::ChatHistoryStore>) -> Self {
+        self.chat_history = Some(store);
+        self
+    }
+
+    /// Set the session search for conversation indexing
+    pub fn with_session_search(mut self, search: Arc<crate::memory::SessionSearch>) -> Self {
+        self.session_search = Some(search);
+        self
+    }
+
+    /// Set the memory manager for unified memory operations.
+    ///
+    /// The memory manager provides retrieval, storage, and compaction
+    /// capabilities. When set, it takes precedence over the legacy
+    /// memory_store and chat_history fields.
+    pub fn with_memory_manager(mut self, manager: Arc<crate::memory::MemoryManager>) -> Self {
+        self.memory_manager = Some(manager);
+        self
+    }
+
+    /// Set the skill manager for deterministic skill prefiltering.
+    ///
+    /// When set, the agent will dynamically filter skills based on trigger
+    /// patterns (regex, keywords, commands) before including them in the
+    /// system prompt. This reduces token usage and improves relevance by
+    /// only including skills that match the user's message.
+    pub fn with_skill_manager(mut self, manager: Arc<RwLock<crate::skills::SkillManager>>) -> Self {
+        self.skill_manager = Some(manager);
+        self
+    }
+
+    /// Set the directory for persisting active plans.
+    pub fn with_plans_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.plans_dir = Some(dir);
+        self
+    }
+
+    /// Attach a computer adapter for desktop automation.
+    ///
+    /// When set, the agent can detect desktop-operation tasks and launch
+    /// the [`ComputerUseLoop`] to interact with the GUI.
+    /// Also creates a [`GoalPlanner`] for complex multi-step tasks.
+    pub fn with_computer_adapter(
+        mut self,
+        adapter: Arc<dyn crate::computer::ComputerAdapter>,
+    ) -> Self {
+        self.computer_adapter = Some(adapter.clone());
+        // Auto-create GoalPlanner when adapter + provider are both available.
+        let mut planner =
+            crate::planner::GoalPlanner::with_provider(adapter, self.provider.clone());
+        if let Some(ref memory) = self.memory_store {
+            planner = planner.with_memory(memory.clone());
+        }
+        self.goal_planner = Some(Arc::new(planner));
+        self
+    }
+
+    /// Set the configuration for the computer use loop.
+    pub fn with_computer_config(mut self, config: crate::computer::LoopConfig) -> Self {
+        self.computer_config = Some(config);
+        self
+    }
+
+    /// Attach a persistent state store to the goal planner for crash recovery.
+    pub fn with_planner_state_store(mut self, store: crate::planner::TaskStateStore) -> Self {
+        if let Some(ref mut planner) = self.goal_planner {
+            let updated = (**planner).clone().with_state_store(store);
+            *planner = Arc::new(updated);
+        }
+        self
+    }
+
+    /// Attach a thread binding manager for tracking session/thread hierarchy.
+    pub fn with_thread_binding_manager(mut self, manager: ThreadBindingManager) -> Self {
+        self.thread_binding_manager = Some(manager);
+        self
+    }
+
+    /// Persist all active plans to disk.
+    pub async fn save_all_plans(&self) -> crate::Result<()> {
+        let Some(ref dir) = self.plans_dir else {
+            return Ok(());
+        };
+        let plans = self.active_plans.read().await;
+        for (conv_id, active) in plans.iter() {
+            let snapshot = PersistedPlan::from_active(active);
+            let path = dir.join(format!("{}.json", conv_id));
+            if let Err(e) = snapshot.persist_to(&path).await {
+                warn!("Failed to persist plan for {}: {}", conv_id, e);
+            }
+        }
+        debug!("Persisted {} plans to {:?}", plans.len(), dir);
+        Ok(())
+    }
+
+    /// Load previously persisted plans from disk and restore them.
+    pub async fn load_plans(&self) -> crate::Result<usize> {
+        let Some(ref dir) = self.plans_dir else {
+            return Ok(0);
+        };
+        let persisted = planner::load_all_plans(dir).await?;
+        let mut plans = self.active_plans.write().await;
+        let mut count = 0;
+        for pp in persisted {
+            let conv_id = pp.plan.id.clone();
+            let active = pp.into_active(&self.task_planner);
+            plans.insert(conv_id, active);
+            count += 1;
+        }
+        if count > 0 {
+            info!("Restored {} plans from {:?}", count, dir);
+        }
+        Ok(count)
+    }
+
+    /// Attach a `TranscriptStore` for conversation recording.
+    ///
+    /// When set, every user and assistant message is appended to a
+    /// per-session transcript that can be exported in multiple formats.
+    pub fn with_transcript_store(mut self, store: Arc<crate::agent::TranscriptStore>) -> Self {
+        self.transcript_store = Some(store);
+        self
+    }
+
+    /// Attach an `ArtifactStore` for session-bound artifacts.
+    ///
+    /// When set, code blocks and documents produced during tool execution
+    /// are automatically captured as artifacts.
+    pub fn with_artifact_store(mut self, store: Arc<crate::agent::ArtifactStore>) -> Self {
+        self.artifact_store = Some(store);
+        self
+    }
+
+    /// Attach a `DiskBudgetManager` for per-session storage quota.
+    ///
+    /// When set, file operations are checked against the session's
+    /// disk budget before proceeding.
+    pub fn with_disk_budget(mut self, budget: Arc<crate::agent::DiskBudgetManager>) -> Self {
+        self.disk_budget = Some(budget);
+        self
+    }
+
+    /// Attach a `SessionFileManager` for isolated per-session file ops.
+    ///
+    /// When set, each conversation gets its own scoped directory.
+    pub fn with_session_file_manager(
+        mut self,
+        manager: Arc<crate::agent::SessionFileManager>,
+    ) -> Self {
+        self.session_file_manager = Some(manager);
+        self
+    }
+
+    /// Attach a `ModelRouter` for advanced routing, key rotation, and fallback.
+    pub fn with_model_router(mut self, router: Arc<crate::model_router::ModelRouter>) -> Self {
+        self.model_router = Some(router);
+        self
+    }
+
+    /// Set the model alias used when routing through the model router.
+    pub fn with_model_alias(mut self, alias: impl Into<String>) -> Self {
+        self.model_alias = Some(alias.into());
+        self
+    }
+
+    /// Attach a PII detector for output content filtering.
+    pub fn with_pii_detector(mut self, detector: Arc<crate::security::PiiDetector>) -> Self {
+        self.pii_detector = Some(detector);
+        self
+    }
+
+    /// Update agent configuration at runtime.
+    ///
+    /// Applies fields from `new_config` to the running agent.  The update is
+    /// applied immediately; in-flight requests use the previous values.
+    pub fn update_config(&mut self, new_config: AgentConfig) {
+        self.config = new_config;
+    }
+
+    /// Get chat history for a conversation
+    pub async fn get_chat_history(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<crate::memory::ChatMessage>> {
+        if let Some(ref store) = self.chat_history {
+            store.get_conversation_history(conversation_id, limit).await
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Get the last conversation ID for a user
+    pub async fn get_last_conversation(&self, user_id: &str) -> crate::Result<Option<String>> {
+        if let Some(ref store) = self.chat_history {
+            store.get_last_conversation(user_id).await
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Build a fresh `Context` for a new conversation thread.
+    ///
+    /// This is called only when no existing [`Thread`] is found for a
+    /// `conversation_id`.  It constructs the system prompt, applies token
+    /// limits and dynamic tool iteration caps, but does NOT store anything
+    /// — callers are responsible for wrapping the returned `Context` in a
+    /// `Thread` and inserting it into `thread_map`.
+    pub(super) async fn build_fresh_context(
+        &self,
+        conversation_id: &str,
+        user_id: &str,
+        user_message: &str,
+    ) -> Context {
+        // Build dynamic prompt context
+        let mut prompt_ctx = PromptContext::new(user_message);
+        prompt_ctx.detect_task_type();
+        // New thread → no prior history; phase starts at Initial.
+        prompt_ctx = prompt_ctx.set_phase(0);
+
+        // Check for active plan
+        let active_plans = self.active_plans.read().await;
+        if let Some(active_plan) = active_plans.get(conversation_id) {
+            if let Some(task_prompt) = active_plan.current_task_prompt() {
+                prompt_ctx.task_context = Some(task_prompt);
+            }
+        }
+        drop(active_plans);
+
+        // Get available tools
+        let tool_context = self.build_tool_context(user_id, conversation_id);
+        let tool_defs = self.tools.get_available(&tool_context);
+        prompt_ctx.available_tools = tool_defs;
+
+        // Get base prompt
+        let base_prompt = self.config.full_system_prompt_with_personality().await;
+
+        // Derive KB collection from agent_id (e.g. "kb-sre")
+        let kb_collection = self.config.agent_id.as_ref().map(|id| format!("kb-{}", id));
+
+        // Retrieve relevant memories via MemoryManager and inject into context
+        let memory_context = if let Some(ref mm) = self.memory_manager {
+            match mm
+                .session_context(
+                    user_id,
+                    conversation_id,
+                    Some(user_message),
+                    kb_collection.as_deref(),
+                )
+                .await
+            {
+                Ok(ctx) => {
+                    let formatted = ctx.format_for_injection();
+                    if formatted.is_empty() {
+                        None
+                    } else {
+                        Some(formatted)
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Memory context retrieval failed: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Build dynamic system prompt BEFORE memory/skills injection so that
+        // task-specific guidance (phase, task type, tool relevance) takes
+        // priority over supporting context.
+        let base_with_dynamic = PromptBuilder::build_from_context(
+            &base_prompt,
+            &prompt_ctx,
+            self.config.max_context_tokens / 4,
+        );
+
+        // Combine with memory context and skills
+        let full_prompt = {
+            let mut prompt = base_with_dynamic;
+
+            // Add memory context if available
+            if let Some(ref mem_ctx) = memory_context {
+                prompt = format!("{}\n\n{}", prompt, mem_ctx);
+            }
+
+            // Add dynamically filtered skills based on user message
+            if let Some(ref skill_manager) = self.skill_manager {
+                debug!("SkillManager is active, prefiltering skills");
+                let mgr = skill_manager.read().await;
+                let max_skills = mgr.max_skills_in_prompt();
+                let max_chars = mgr.max_skills_prompt_chars();
+                let matching_skills = mgr
+                    .prefilter_skills(user_message, max_skills, max_chars)
+                    .await;
+                if !matching_skills.is_empty() {
+                    // Use token-optimised sections with individual char budget
+                    let budget_per_skill = max_chars / matching_skills.len().max(1);
+                    let skills_text = matching_skills
+                        .iter()
+                        .map(|s| s.to_prompt_section(Some(budget_per_skill)))
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    prompt = format!("{}\n\n## Active Skills\n\n{}", prompt, skills_text);
+                }
+            } else if let Some(ref static_skills) = self.config.skills_prompt {
+                // Fallback to static skills prompt if skill_manager not set
+                prompt = format!("{}\n\n{}", prompt, static_skills);
+            }
+
+            prompt
+        };
+
+        let mut context =
+            Context::new(conversation_id.to_string(), full_prompt, self.config.max_context_tokens);
+
+        // Apply turn cap from config so the agent never accumulates an
+        // unbounded conversation history.
+        if let Some(max_turns) = self.config.max_turns {
+            context = context.with_max_turns(max_turns);
+        }
+
+        // Restore prior conversation messages so the LLM sees real history
+        // instead of relying only on the memory-injected summary (which can
+        // leak wrong/stale context from other sessions).
+        if let Some(ref store) = self.chat_history {
+            match store
+                .get_conversation_history(conversation_id, self.config.max_turns.unwrap_or(50) * 2)
+                .await
+            {
+                Ok(history) => {
+                    for msg in history {
+                        let role = match msg.role.as_str() {
+                            "user" => crate::providers::Role::User,
+                            "assistant" => crate::providers::Role::Assistant,
+                            _ => continue,
+                        };
+                        let mut message = crate::providers::Message {
+                            role,
+                            content: msg.content,
+                            content_blocks: None,
+                            reasoning_content: None,
+                            name: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                            metadata: None,
+                        };
+                        if role == crate::providers::Role::User && !msg.user_id.is_empty() {
+                            message.name = Some(msg.user_id);
+                        }
+                        context.add_message(message);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load conversation history for {}: {}",
+                        conversation_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        // Set dynamic tool iteration limit based on message complexity
+        let dynamic_limit = Context::calculate_dynamic_limit(user_message);
+        context.set_max_tool_iterations(dynamic_limit);
+        info!(
+            "Set dynamic tool iteration limit: {} for conversation {}",
+            dynamic_limit, conversation_id
+        );
+
+        // Apply ACP max iteration override if set
+        let override_opt = *self.max_tool_iterations_override.read().await;
+        if let Some(max_iter) = override_opt {
+            context.set_max_tool_iterations(max_iter);
+            info!(
+                "Applied ACP max iteration override: {} for conversation {}",
+                max_iter, conversation_id
+            );
+        }
+
+        context
+    }
+}
