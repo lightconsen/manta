@@ -13,7 +13,7 @@ use axum::{
     response::IntoResponse,
 };
 
-/// GET /api/v1/artifacts/{*path}
+/// GET /api/v1/artifacts/*path
 ///
 /// Reads a document from the artifacts directory and returns it with the
 /// appropriate Content-Type (text/markdown for .md, text/html for .html).
