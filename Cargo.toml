@@ -168,7 +168,7 @@ subtle = "2.5"
 
 # Secure secret handling
 zeroize = { version = "1.7", features = ["derive"] }
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"], optional = true }
 
 # Encrypted file-store fallback (AES-256-GCM)
 aes-gcm = "0.10"
@@ -249,6 +249,10 @@ vision = ["ort", "image", "ndarray"]
 pgvector = ["dep:pgvector", "pgvector/sqlx", "sqlx/postgres"]
 sqlite-vec = ["dep:sqlite-vec", "dep:libsqlite3-sys"]
 embedded-assets = ["dep:rust-embed"]
+# OS keyring backend — opt-in. Default builds use the 0600 encrypted file
+# store only and never touch the platform keychain. Enable for the previous
+# keyring-primary-with-file-fallback routing.
+keyring = ["dep:keyring"]
 
 # Note: Discord and Slack use reqwest for HTTP API calls
 # WhatsApp, QQ, Lark use reqwest with custom implementations

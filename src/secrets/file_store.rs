@@ -28,7 +28,7 @@ use tracing::{info, warn};
 use zeroize::Zeroize;
 
 use crate::error::SyscityError;
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "keyring"))]
 use crate::secrets::keyring_store::{probe_keyring, with_timeout};
 use crate::secrets::store::{SecretId, SecretOrigin, SecretStore};
 
@@ -340,9 +340,10 @@ const NONCE_LEN: usize = 12;
 
 /// The file-store master key, loaded once and cached for the process.
 ///
-/// Source priority: OS keyring → 0600 `~/.syscity/secrets/.master_key`.
-/// Returns `Ok(None)` when neither backend is available (plaintext fallback);
-/// under `cfg(test)` it always returns `None` so tests stay hermetic.
+/// Source priority: OS keyring (feature `keyring`) → 0600
+/// `~/.syscity/secrets/.master_key`. Returns `Ok(None)` when no backend is
+/// available (plaintext fallback); under `cfg(test)` it always returns `None`
+/// so tests stay hermetic.
 fn master_key() -> crate::Result<Option<Arc<MasterKey>>> {
     static KEY: OnceLock<Arc<MasterKey>> = OnceLock::new();
     if let Some(key) = KEY.get() {
@@ -366,21 +367,25 @@ fn master_key() -> crate::Result<Option<Arc<MasterKey>>> {
 /// Load the existing master key or create and persist a fresh one.
 #[cfg(not(test))]
 fn load_or_create_master_key() -> crate::Result<Option<MasterKey>> {
-    // 1. OS keyring (preferred). The probe is cooldown-throttled and never
-    // hangs; the keyring read/write below are additionally time-bounded so a
-    // dark-wake hang falls back to the 0600 file instead of blocking startup.
-    if probe_keyring() {
-        if let Some(key) = read_master_key_keyring_bounded()? {
-            return Ok(Some(key));
+    // 1. OS keyring (preferred, feature `keyring` only). The probe is
+    // cooldown-throttled and never hangs; the keyring read/write below are
+    // additionally time-bounded so a dark-wake hang falls back to the 0600
+    // file instead of blocking startup.
+    #[cfg(feature = "keyring")]
+    {
+        if probe_keyring() {
+            if let Some(key) = read_master_key_keyring_bounded()? {
+                return Ok(Some(key));
+            }
+            let key = MasterKey::random();
+            if write_master_key_keyring_bounded(&key)? {
+                return Ok(Some(key));
+            }
+            // Keyring write timed out or failed — fall through to the file path.
         }
-        let key = MasterKey::random();
-        if write_master_key_keyring_bounded(&key)? {
-            return Ok(Some(key));
-        }
-        // Keyring write timed out or failed — fall through to the file path.
     }
 
-    // 2. 0600 `.master_key` file fallback (headless hosts).
+    // 2. 0600 `.master_key` file (headless hosts / default file storage).
     if let Some(key) = read_master_key_file()? {
         return Ok(Some(key));
     }
@@ -395,10 +400,10 @@ fn load_or_create_master_key() -> crate::Result<Option<MasterKey>> {
 }
 
 /// Keyring account name for the file-store master key.
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "keyring"))]
 const MASTER_KEY_ACCOUNT: &str = "file-master-key";
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "keyring"))]
 fn read_master_key_keyring() -> crate::Result<Option<MasterKey>> {
     let entry = keyring::Entry::new("syscity", MASTER_KEY_ACCOUNT).map_err(|e| {
         SyscityError::Internal(format!("keyring entry unavailable (file-master-key): {e}"))
@@ -410,7 +415,7 @@ fn read_master_key_keyring() -> crate::Result<Option<MasterKey>> {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "keyring"))]
 fn write_master_key_keyring(key: &MasterKey) -> crate::Result<()> {
     let entry = keyring::Entry::new("syscity", MASTER_KEY_ACCOUNT).map_err(|e| {
         SyscityError::Internal(format!("keyring entry unavailable (file-master-key): {e}"))
@@ -422,7 +427,7 @@ fn write_master_key_keyring(key: &MasterKey) -> crate::Result<()> {
 
 /// Bounded keyring master-key read. A timeout (macOS dark wake) is treated as
 /// absent so the 0600 file fallback is used instead of hanging startup.
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "keyring"))]
 fn read_master_key_keyring_bounded() -> crate::Result<Option<MasterKey>> {
     match with_timeout(read_master_key_keyring) {
         Some(result) => result,
@@ -432,7 +437,7 @@ fn read_master_key_keyring_bounded() -> crate::Result<Option<MasterKey>> {
 
 /// Bounded keyring master-key write; `Ok(false)` when it did not finish in
 /// time, letting the caller fall through to the 0600 file fallback.
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "keyring"))]
 fn write_master_key_keyring_bounded(key: &MasterKey) -> crate::Result<bool> {
     let key = key.clone();
     match with_timeout(move || write_master_key_keyring(&key)) {

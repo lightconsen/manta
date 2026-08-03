@@ -20,17 +20,23 @@
 //! The storage backend (`SecretStore`) coexists with the reference resolver
 //! (`SecretResolver`):
 //! - `store.rs` — `SecretId` / `SecretOrigin` / `SecretStore` trait / tier routing.
-//! - `keyring_store.rs` — Tier 1 OS keyring backend.
+//! - `keyring_store.rs` — Tier 1 OS keyring backend (feature `keyring`, opt-in).
 //! - `file_store.rs` — Tier 2 file backend (absorbs the retired `mcp/env_store.rs`).
 //! - `in_memory.rs` — Tier 3 zeroize memory backend.
+//!
+//! Default routing is the 0600 encrypted file store. The OS keyring backend is
+//! opt-in: compile with `--features keyring` for keyring-primary routing with a
+//! file fallback. Without it, the platform keychain is never touched.
 
 mod file_store;
 mod in_memory;
+#[cfg(feature = "keyring")]
 mod keyring_store;
 mod store;
 
 pub use file_store::{migrate_legacy_mcp_env, sanitize_entity, secrets_root_dir, FileStore};
 pub use in_memory::MemoryStore;
+#[cfg(feature = "keyring")]
 pub use keyring_store::{probe_keyring, KeyringStore};
 pub use store::{
     choose_store, persist_channel_secrets, resolve_channel_credential, resolve_oauth_client_secret,

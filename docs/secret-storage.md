@@ -10,8 +10,10 @@ unified abstraction, routing, OAuth lifecycle, migration). It closes with the
 **current implementation state** so the design can be checked against what is
 actually built.
 
-Core position: **values go into the OS keyring; when no keyring is available
-they fall back to 0600 AES-GCM-encrypted files; config only stores references.**
+Core position: **values are stored in 0600 AES-GCM-encrypted files by default;
+the OS keyring is an opt-in compile-time feature (`--features keyring`) that
+restores keyring-primary routing with the file layer as fallback; config only
+stores references.**
 
 ---
 
@@ -46,20 +48,21 @@ can also be deployed as a server.
 
 | Threat | Defense |
 |--------|---------|
-| Another user on the machine reads files | directories `0700` / files `0600`; high-value values go to the OS keyring |
-| `~` directory is backed up / synced to the cloud | file fallback layer is AES-256-GCM encrypted; keyring values never touch files |
+| Another user on the machine reads files | directories `0700` / files `0600`; high-value values may additionally be held in the OS keyring (feature `keyring`) |
+| `~` directory is backed up / synced to the cloud | file layer is AES-256-GCM encrypted; with the `keyring` feature, keyring values never touch files |
 | Env leak via subprocesses | env is injected only when needed; MCP stdio does not inherit the full environment |
 | Log / crash-dump leaks | zeroize everywhere + Debug `[REDACTED]` |
 | Path traversal | `sanitize_entity` rejects `..`, `/`, and empty |
-| Malicious same-user process | keyring values never hit files, inherently immune |
-| Keyring unavailable (display asleep / headless) | every operation is timeout-bounded → degrade to file fallback; routing recovers automatically on wake |
+| Malicious same-user process | with the `keyring` feature, keyring values never hit files, inherently immune |
+| Keyring unavailable (display asleep / headless) | feature `keyring` only: every operation is timeout-bounded → degrade to file fallback; routing recovers automatically on wake |
 
 ### 1.3 Goals
 
-1. Consolidate persistent secrets that are **user-entered / third-party-issued**
-   into the OS keyring.
-2. Fall back to **0600 encrypted files** in environments without a keyring
-   (headless Linux / containers / CI).
+1. Store persistent secrets that are **user-entered / third-party-issued** in
+   the OS keyring when the `keyring` feature is enabled (opt-in).
+2. Default to **0600 encrypted files** — the only backend in default builds,
+   and the fallback in environments without a keyring (headless Linux /
+   containers / CI).
 3. `config.toml` **never stores values, only references**.
 4. No aggregation — each entity (provider / server / channel / plugin) gets its
    own entry.
@@ -77,9 +80,9 @@ consensus:
    store references).
 2. **No aggregation**: one entry per entity, so a single leaked plaintext file
    does not expose everything.
-3. **OS keyring is the desktop default**: macOS Keychain / Windows DPAPI /
-   Linux Secret Service; headless environments fall back to 0600 encrypted
-   files.
+3. **OS keyring is an opt-in compile-time feature**: with `--features keyring`
+   the OS keychain (macOS Keychain / Windows DPAPI / Linux Secret Service) is
+   the preferred backend; default builds use 0600 encrypted files everywhere.
 4. **OAuth lifecycle**: access tokens stay **in memory only**; only the refresh
    token is persisted.
 5. **PKCE + minimal scope**: a desktop public client does not need a
@@ -101,7 +104,7 @@ Five tiers, from "most secure" to "most frequently read/written":
 │ Tier 0  Config reference layer  config.toml              │  ← references only, never values
 │         SecretRef("$VAR") / StoreRef{ns,entity,kind}     │
 ├─────────────────────────────────────────────────────────┤
-│ Tier 1  OS keyring (default)                             │  ← user-entered, persistent, high-value
+│ Tier 1  OS keyring (feature `keyring`, opt-in)           │  ← user-entered, persistent, high-value
 │         macOS Keychain / Win DPAPI / Linux SecretService │     → keyring crate
 ├─────────────────────────────────────────────────────────┤
 │ Tier 2  File fallback (headless / system-generated)      │  ← AES-256-GCM encrypted
@@ -120,8 +123,9 @@ Five tiers, from "most secure" to "most frequently read/written":
 1. **Ephemeral / access token** → Tier 3 (memory).
 2. **Ops-injected sources** (env/file/exec) configured → Tier 4, not persisted.
 3. **System-generated and required headless** → Tier 2 (file).
-4. **User-entered / third-party-issued, persistent, high-value** → keyring
-   available → Tier 1, otherwise Tier 2.
+4. **User-entered / third-party-issued, persistent, high-value** → Tier 1
+   (requires the `keyring` feature) when the keyring is available, otherwise
+   Tier 2.
 
 ---
 
@@ -154,7 +158,9 @@ pub trait SecretStore: Send + Sync {
 
 **KeyringStore (Tier 1)** — `src/secrets/keyring_store.rs`
 
-- Dependency: `keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }`.
+- Compile-gated: the module and its re-exports (`probe_keyring`, `KeyringStore`)
+  are `#[cfg(feature = "keyring")]`, and the crate dependency is optional:
+  `keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"], optional = true }`.
 - Mapping: `Entry::new("syscity/{namespace}", "{entity}")`, storing a
   JSON-serialized `kind → value` table (semantically identical to the file
   backend's `[secrets]` table).
@@ -173,9 +179,10 @@ pub trait SecretStore: Send + Sync {
   `base64(nonce[12] || AES-256-GCM ciphertext)`; without a key they are written
   plaintext at 0600. An untagged enum makes the new and legacy formats
   mutually readable.
-- **Master key source priority**: OS keyring (`syscity` / `file-master-key`) →
-  0600 `~/.syscity/secrets/.master_key` → plaintext fallback; cached in a
-  process-wide `OnceLock`, zeroized on drop.
+- **Master key source priority**: OS keyring (`syscity` / `file-master-key`,
+  feature `keyring` only) → 0600 `~/.syscity/secrets/.master_key` → plaintext
+  fallback; cached in a process-wide `OnceLock`, zeroized on drop. Without the
+  feature the keyring source is absent and only the 0600 file is consulted.
 
 **MemoryStore (Tier 3)** — `src/secrets/in_memory.rs`: zeroize memory backend.
 
@@ -191,7 +198,12 @@ pub fn choose_store(id: &SecretId) -> Arc<dyn SecretStore>;    // entry-level
 pub fn probe_keyring() -> bool;                                // availability probe
 ```
 
-- `probe_keyring()` returns `true` → `route_store` returns
+- `route_store` / `choose_store` consult `keyring_available()`: with the
+  `keyring` feature this calls `probe_keyring()`; without the feature
+  `keyring_available()` always returns `false`, so routing is **always a plain
+  `FileStore`** and the keychain is never touched.
+- With the feature, `probe_keyring()` returning `true` makes
+  `route_store_with(.., true)` return
   `FallbackStore{ primary: KeyringStore, secondary: FileStore }`; otherwise a
   plain `FileStore`.
 - `FallbackStore`: `get` tries primary then secondary; `set` writes the primary
@@ -218,6 +230,9 @@ turns the reference into a value.
 ---
 
 ## 4. Per-Category Design
+
+> "Tier 1" below means *when the `keyring` feature is enabled and the keyring
+> is available*; otherwise every persistent value goes to Tier 2 (file).
 
 | Category | Lifecycle | Scope | Storage |
 |----------|-----------|-------|---------|
@@ -298,6 +313,7 @@ src/secrets/
 ├── mod.rs           SecretRef / SecretResolver (env/file/exec, Tier 4)
 ├── store.rs         SecretId / SecretOrigin / SecretStore trait / routing / SecretValue
 ├── keyring_store.rs Tier 1 backend + availability probe + KeyringHealth
+│                     (compiled only with the `keyring` feature)
 ├── file_store.rs    Tier 2 backend (AES-GCM encryption) + master key + migration
 └── in_memory.rs     Tier 3 memory backend (zeroize)
 ```
@@ -323,6 +339,9 @@ src/secrets/
   `delete_refresh_token` (mcp-oauth) plus `persist_metadata` (0600 sidecar).
 
 ### 6.4 Robustness (timeout + auto-recovery)
+
+> Applies only when the `keyring` feature is compiled in; default builds have
+> no keyring code at all.
 
 - `KEYRING_OP_TIMEOUT` (5s; 100ms in tests) bounds **every** keyring operation;
   a timeout or failure → `mark_keyring_down()` + a bounded error, so callers
@@ -362,22 +381,29 @@ src/secrets/
 - **Env unchanged**: `SYSCITY_PROVIDER_{NAME}_KEY` and
   `SYSCITY_SECURITY_SHARED_TOKEN` are unchanged; the MCP `$VAR` env-ref feature
   is unchanged.
-- **Keyring platform variance**: solid on macOS; unavailable on headless
-  Linux / containers → automatic probe + encrypted file fallback + log notice.
-  Under `cfg(test)` the probe always returns `false`, so tests never touch a
-  real keychain.
-- **Master-key boundary**: if the keyring master key cannot be read during
-  dark-wake startup, a new file master key is generated; since it differs from
-  the keyring key of a previously awake process, old encrypted files may not
-  decrypt within that process. The blast radius is narrow (during dark wake the
-  file secrets are mostly written plaintext at 0600), and this is a known
-  boundary.
+- **Keyring platform variance** (feature `keyring`): solid on macOS;
+  unavailable on headless Linux / containers → automatic probe + encrypted
+  file fallback + log notice. Under `cfg(test)` the probe always returns
+  `false`, so tests never touch a real keychain. Without the feature the
+  keychain is never probed at all.
+- **Default-build boundary**: a build without `--features keyring` uses the
+  0600 file layer exclusively — no keychain access, no password prompts. To
+  switch a deployment to keyring-primary, rebuild with `--features keyring`.
+- **Master-key boundary** (feature `keyring`): if the keyring master key
+  cannot be read during dark-wake startup, a new file master key is generated;
+  since it differs from the keyring key of a previously awake process, old
+  encrypted files may not decrypt within that process. The blast radius is
+  narrow (during dark wake the file secrets are mostly written plaintext at
+  0600), and this is a known boundary. Note that a default (file-only) build
+  and a `keyring` build derive the master key from different sources — the two
+  should not be mixed while encrypted file secrets exist.
 - **Rejected alternative**: write-through (writing both keyring and file)
   would guarantee availability but leaves a disk copy of every keychain secret,
   violating the "independent layers" and keychain-only requirements, so it is
   not used.
-- **Keyring version**: pinned to v3 (v4 alpha is breaking); evaluate v4's
-  default features once it stabilizes.
+- **Keyring version**: pinned to v3 (v4 alpha is breaking), optional and
+  behind the `keyring` feature; evaluate v4's default features once it
+  stabilizes.
 
 ---
 
@@ -390,12 +416,14 @@ src/secrets/
   timeouts and `KeyringHealth` stickiness/throttle/recovery); migration
   idempotence (mcp_env / mcp_tokens); `SecretValue` redaction.
 - **Integration tests**: real OS-keyring roundtrip
-  (`tests/secrets_keyring_roundtrip.rs`).
+  (`tests/secrets_keyring_roundtrip.rs`, `#![cfg(feature = "keyring")]` +
+  `#[ignore]`; run with `--features keyring -- --ignored`).
 - **Manual verification matrix**:
 
 | Scenario | Expected |
 |----------|----------|
-| Enable the GitHub preset on macOS | token → saved to Keychain, no password/Touch ID prompt |
+| Default build (no `--features keyring`), any OS | all secrets in 0600 encrypted files; no keychain access or prompts |
+| `--features keyring`, enable the GitHub preset on macOS | token → saved to Keychain, no password/Touch ID prompt |
 | Enable on headless Linux | falls back to 0600 encrypted files, startup log reports the backend |
 | Restart the daemon while the display is asleep | no hang; keyring ops degrade bounded-ly |
 | After waking (no restart) | MCP/LLM keys readable again without a restart |

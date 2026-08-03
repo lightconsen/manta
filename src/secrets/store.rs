@@ -15,6 +15,7 @@ use zeroize::Zeroize;
 use crate::error::SyscityError;
 use crate::secrets::file_store::FileStore;
 use crate::secrets::in_memory::MemoryStore;
+#[cfg(feature = "keyring")]
 use crate::secrets::keyring_store::{probe_keyring, KeyringStore};
 
 /// Logical secret identifier — a value is an entry in a Tier 1/2 backend; a
@@ -165,12 +166,17 @@ impl fmt::Debug for dyn SecretStore {
 /// Layered backend: reads prefer the primary (keyring) and fall back to the
 /// secondary (file) on a miss; writes always go to the primary. Deletes clear
 /// both. Used while legacy file data may still exist alongside a live keyring.
+///
+/// Compiled only with the `keyring` feature — without it routing is always
+/// file-backed and no keychain access is possible.
+#[cfg(feature = "keyring")]
 #[derive(Debug)]
 struct FallbackStore {
     primary: Arc<dyn SecretStore>,
     secondary: Arc<dyn SecretStore>,
 }
 
+#[cfg(feature = "keyring")]
 #[async_trait::async_trait]
 impl SecretStore for FallbackStore {
     async fn get(&self, id: &SecretId) -> crate::Result<Option<String>> {
@@ -217,7 +223,7 @@ impl SecretStore for FallbackStore {
 
 /// Backend routing — picks a backend based on the secret id.
 pub fn choose_store(id: &SecretId) -> Arc<dyn SecretStore> {
-    choose_store_with(id, probe_keyring())
+    choose_store_with(id, keyring_available())
 }
 
 /// Like `choose_store` but with an explicit keyring preference (test hook).
@@ -233,10 +239,14 @@ pub fn choose_store_with(id: &SecretId, prefer_keyring: bool) -> Arc<dyn SecretS
 
 /// Namespace-level routing — every secret in a namespace shares a backend.
 pub fn route_store(namespace: &str) -> Arc<dyn SecretStore> {
-    route_store_with(namespace, probe_keyring())
+    route_store_with(namespace, keyring_available())
 }
 
 /// Like `route_store` but with an explicit keyring preference (test hook).
+///
+/// Without the `keyring` feature `prefer_keyring` is ignored and routing is
+/// always file-backed.
+#[cfg(feature = "keyring")]
 pub fn route_store_with(namespace: &str, prefer_keyring: bool) -> Arc<dyn SecretStore> {
     if prefer_keyring {
         Arc::new(FallbackStore {
@@ -246,6 +256,27 @@ pub fn route_store_with(namespace: &str, prefer_keyring: bool) -> Arc<dyn Secret
     } else {
         Arc::new(FileStore::new(namespace))
     }
+}
+
+/// Like `route_store` but with an explicit keyring preference (test hook).
+///
+/// Without the `keyring` feature routing is always file-backed and the
+/// keychain is never touched.
+#[cfg(not(feature = "keyring"))]
+pub fn route_store_with(namespace: &str, _prefer_keyring: bool) -> Arc<dyn SecretStore> {
+    Arc::new(FileStore::new(namespace))
+}
+
+/// Whether the OS keyring backend is enabled and probed available.
+#[cfg(feature = "keyring")]
+fn keyring_available() -> bool {
+    probe_keyring()
+}
+
+/// Without the `keyring` feature the keychain is never touched.
+#[cfg(not(feature = "keyring"))]
+fn keyring_available() -> bool {
+    false
 }
 
 /// Shared memory-only backend for short-lived secrets (e.g. `access_token`).
@@ -405,6 +436,7 @@ pub async fn resolve_oauth_client_secret(
 mod tests {
     use super::*;
 
+    #[cfg(feature = "keyring")]
     #[test]
     fn test_route_with_keyring_is_layered() {
         let store = route_store_with("mcp-env", true);

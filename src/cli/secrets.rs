@@ -1,7 +1,7 @@
 //! `syscity secrets` — inspect, migrate, and purge the secret store.
 //!
-//! These commands operate on the tiered secret store (OS keyring preferred,
-//! 0600 file fallback) and never print secret values.
+//! These commands operate on the tiered secret store (0600 file by default;
+//! OS keyring with the `keyring` feature) and never print secret values.
 
 use std::collections::BTreeSet;
 
@@ -10,9 +10,10 @@ use tracing::{info, warn};
 
 use crate::error::{Result, SyscityError};
 use crate::gateway::GatewayConfig;
+#[cfg(feature = "keyring")]
+use crate::secrets::{probe_keyring, KeyringStore, SecretStore};
 use crate::secrets::{
-    probe_keyring, route_store, FileStore, KeyringStore, SecretId, SecretOrigin, SecretStore,
-    SENSITIVE_CHANNEL_CREDENTIALS,
+    route_store, FileStore, SecretId, SecretOrigin, SENSITIVE_CHANNEL_CREDENTIALS,
 };
 
 /// Namespaces handled by the secret store and their human-readable label.
@@ -110,9 +111,33 @@ async fn collect_pairs() -> BTreeSet<(String, String)> {
     pairs
 }
 
+/// Whether the OS keyring backend is enabled and probed available.
+#[cfg(feature = "keyring")]
+fn keyring_available() -> bool {
+    probe_keyring()
+}
+
+/// Without the `keyring` feature the keychain is never touched.
+#[cfg(not(feature = "keyring"))]
+fn keyring_available() -> bool {
+    false
+}
+
+/// Whether an entity already has a keyring entry.
+#[cfg(feature = "keyring")]
+async fn keyring_has_entity(namespace: &str, entity: &str) -> bool {
+    KeyringStore::new(namespace).has_entity(entity).await
+}
+
+/// Without the `keyring` feature there are never any keyring entries.
+#[cfg(not(feature = "keyring"))]
+async fn keyring_has_entity(_namespace: &str, _entity: &str) -> bool {
+    false
+}
+
 /// `syscity secrets list` — show names and locations, never values.
 async fn run_secrets_list() -> Result<()> {
-    let keyring = probe_keyring();
+    let keyring = keyring_available();
     println!(
         "Secret store backend: {}",
         if keyring {
@@ -131,7 +156,7 @@ async fn run_secrets_list() -> Result<()> {
     println!();
     println!("{:<10} {:<22} {:<20} {:<5}", "Namespace", "Entity", "Location", "Stored");
     for (namespace, entity) in pairs {
-        let in_keyring = KeyringStore::new(&namespace).has_entity(&entity).await;
+        let in_keyring = keyring_has_entity(&namespace, &entity).await;
         let in_file = FileStore::new(&namespace).has_entity(&entity).await;
         let location = match (in_keyring, in_file) {
             (true, true) => "keyring + file",

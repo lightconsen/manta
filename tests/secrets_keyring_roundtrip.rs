@@ -4,7 +4,8 @@
 //! Linux Secret Service — the write path the mock-backed unit tests cannot
 //! cover. Runs on the real keychain and cleans up after itself.
 //!
-//! Guarded two ways so it never runs unintentionally:
+//! Compiled only with the `keyring` feature (the backend is opt-in) and
+//! guarded so it never runs unintentionally:
 //! - `#[ignore]`: excluded from the normal `cargo test` batch.
 //! - Runtime `probe_keyring()`: headless/CI boxes without a usable keyring
 //!   print `SKIP` and return.
@@ -12,8 +13,11 @@
 //! Run explicitly on a desktop machine with a logged-in keychain:
 //!
 //! ```sh
-//! cargo test --release --test secrets_keyring_roundtrip -- --ignored --nocapture
+//! cargo test --release --features keyring --test secrets_keyring_roundtrip \
+//!   -- --ignored --nocapture
 //! ```
+
+#![cfg(feature = "keyring")]
 
 use serial_test::serial;
 
