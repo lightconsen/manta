@@ -1151,6 +1151,13 @@ impl Clone for DelegationTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    use crate::agent::subagent_registry::SubagentStatus;
+    use crate::agent::{Agent, AgentConfig};
+    use crate::providers::mock::MockProvider;
+    use crate::providers::Message;
+    use crate::tools::ToolRegistry;
 
     #[test]
     fn test_delegation_tracker() {
@@ -1639,5 +1646,302 @@ mod tests {
         assert_eq!(clamp_wait_seconds(60), 60);
         assert_eq!(clamp_wait_seconds(300), 60);
         assert_eq!(clamp_wait_seconds(u64::MAX), 60);
+    }
+
+    // ── wait + wake integration (parent auto-wake, v2) ─────────────────────
+    // These drive `execute_child_task` end-to-end against a real agent, a real
+    // registry, a real task store, and a real [`DelegationWake`] dispatcher,
+    // then assert the two halves of the delegation result contract: the result
+    // lands in the tracker that `wait` reads, AND the parent is woken with it.
+
+    /// Records every wake delivered through a [`DelegationWake`] dispatcher.
+    #[derive(Default)]
+    struct RecordingWakeHandler {
+        wakes: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    #[async_trait]
+    impl crate::delegation::WakeHandler for RecordingWakeHandler {
+        async fn wake(&self, parent_session: &str, message: &str) -> crate::Result<()> {
+            self.wakes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((parent_session.to_string(), message.to_string()));
+            Ok(())
+        }
+    }
+
+    async fn wait_for_wake(handler: &RecordingWakeHandler, len: usize) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while tokio::time::Instant::now() < deadline {
+            if handler
+                .wakes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len()
+                >= len
+            {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        let seen = handler
+            .wakes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
+        panic!("timed out waiting for {} wake(s), saw {}", len, seen);
+    }
+
+    fn mock_agent(response: &str) -> Arc<Agent> {
+        let provider =
+            Arc::new(MockProvider::new().with_responses(vec![Message::assistant(response)]));
+        Arc::new(Agent::new(AgentConfig::default(), provider, Arc::new(ToolRegistry::new())))
+    }
+
+    /// Register a child run in the registry, as `spawn_child` does before
+    /// `execute_child_task` runs.  Returns the run id (the child id).
+    async fn register_child_run(registry: &SubagentRegistry, parent_session: &str) -> String {
+        registry
+            .spawn(parent_session, "worker", "child prompt", 2, |_, _| async {})
+            .await
+            .expect("spawn child run")
+    }
+
+    async fn wake_fixture() -> (
+        Arc<SubagentRegistry>,
+        Arc<DelegationTaskStore>,
+        Arc<RecordingWakeHandler>,
+        Arc<DelegationWake>,
+    ) {
+        let registry = Arc::new(SubagentRegistry::new(3, 10));
+        let store = Arc::new(
+            DelegationTaskStore::new("sqlite::memory:")
+                .await
+                .expect("in-memory store"),
+        );
+        let handler = Arc::new(RecordingWakeHandler::default());
+        let wake = Arc::new(DelegationWake::new(handler.clone()));
+        (registry, store, handler, wake)
+    }
+
+    /// Create the parent's task row (`delegation:parent-run`), optionally in a
+    /// terminal status so the wake guard has a row to consult.
+    async fn create_parent_row(store: &DelegationTaskStore, status: &str) {
+        store
+            .create_task(NewTask {
+                id: "parent-run",
+                root_id: "root-1",
+                parent_id: None,
+                depth: 1,
+                agent_id: "manager",
+                title: "Parent task",
+            })
+            .await
+            .unwrap();
+        if status != "running" {
+            store.set_status("parent-run", status).await.unwrap();
+        }
+    }
+
+    fn child_scope(child_id: &str, parent_task_id: Option<String>, depth: u32) -> DelegationScope {
+        DelegationScope {
+            root_id: "root-1".to_string(),
+            task_id: child_id.to_string(),
+            parent_task_id,
+            depth,
+            max_depth: 3,
+            allowed_tools: None,
+            max_iterations: None,
+        }
+    }
+
+    fn completion_task() -> TaskSpec {
+        TaskSpec {
+            // Short + contains "this" so the engine's follow-up heuristic skips
+            // the cache-classifier LLM call and the single MockProvider
+            // response goes straight to the completion.
+            prompt: "finish this".to_string(),
+            output_format: None,
+            max_iterations: None,
+            allowed_tools: vec![],
+            context: HashMap::new(),
+            target_agent: None,
+            task_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_completed_child_is_waitable_and_wakes_active_parent() {
+        let (registry, store, handler, wake) = wake_fixture().await;
+        // The parent is a live delegated agent: its task row is still active.
+        create_parent_row(&store, "running").await;
+
+        // The child run exists in the registry under the parent's session, and
+        // the tool's tracker knows the child is running (as `spawn_child`
+        // would have registered it).
+        let tool = DelegateTool::root();
+        let child_id = register_child_run(&registry, "delegation:parent-run").await;
+        tool.tracker
+            .register_child(make_child(&child_id, ChildStatus::Running))
+            .await;
+
+        execute_child_task(
+            child_id.clone(),
+            completion_task(),
+            tool.tracker.clone(),
+            Arc::new(AtomicUsize::new(0)),
+            Some(mock_agent("the answer")),
+            registry.clone(),
+            Some(store.clone()),
+            child_scope(&child_id, Some("parent-run".to_string()), 2),
+            "worker".to_string(),
+            None,
+            Some(wake.clone()),
+        )
+        .await;
+
+        // Wait (fast path): the shared tracker `wait` reads now reports the
+        // child completed with its result.
+        let waited = tool
+            .wait_for_child(&child_id, std::time::Duration::from_secs(1))
+            .await;
+        assert!(waited.success, "wait should see completed child: {:?}", waited.output);
+        assert!(waited.output.contains("the answer"));
+
+        // Wake (slow path): the parent is woken with the completion message.
+        wait_for_wake(&handler, 1).await;
+        let wakes = handler
+            .wakes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(wakes.len(), 1);
+        assert_eq!(wakes[0].0, "delegation:parent-run");
+        assert!(wakes[0].1.contains("the answer"));
+        assert!(wakes[0].1.contains(&child_id));
+
+        // The registry run completed, so `delegate status` / crash recovery
+        // still see the outcome.
+        let run = registry.get_run(&child_id).await.expect("child run exists");
+        match run.status {
+            SubagentStatus::Completed(out) => assert_eq!(out, "the answer"),
+            other => panic!("expected completed run, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_completed_child_does_not_wake_terminal_parent() {
+        let (registry, store, handler, wake) = wake_fixture().await;
+        // The parent already finished its part — waking it would be noise, so
+        // the guard suppresses the notification.
+        create_parent_row(&store, "completed").await;
+
+        let tool = DelegateTool::root();
+        let child_id = register_child_run(&registry, "delegation:parent-run").await;
+        tool.tracker
+            .register_child(make_child(&child_id, ChildStatus::Running))
+            .await;
+
+        execute_child_task(
+            child_id.clone(),
+            completion_task(),
+            tool.tracker.clone(),
+            Arc::new(AtomicUsize::new(0)),
+            Some(mock_agent("result")),
+            registry.clone(),
+            Some(store.clone()),
+            child_scope(&child_id, Some("parent-run".to_string()), 2),
+            "worker".to_string(),
+            None,
+            Some(wake.clone()),
+        )
+        .await;
+
+        // The child still completes and its result is still wait-able…
+        let waited = tool
+            .wait_for_child(&child_id, std::time::Duration::from_secs(1))
+            .await;
+        assert!(waited.success, "child should still complete: {:?}", waited.output);
+        assert!(waited.output.contains("result"));
+
+        // …but the terminal parent is never woken.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let wakes = handler
+            .wakes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert!(wakes.is_empty(), "terminal parent must not be woken");
+    }
+
+    #[tokio::test]
+    async fn test_completed_child_always_wakes_root_parent() {
+        let (registry, _store, handler, wake) = wake_fixture().await;
+        // Root parents (no `delegation:` session, no task row) are always
+        // woken — their turn may already have ended with the child outstanding.
+        let child_id = register_child_run(&registry, "user-session-1").await;
+
+        // store: None — the no-store path also defaults the guard to active.
+        execute_child_task(
+            child_id.clone(),
+            completion_task(),
+            DelegationTracker::new(1),
+            Arc::new(AtomicUsize::new(0)),
+            Some(mock_agent("root answer")),
+            registry,
+            None,
+            child_scope(&child_id, None, 1),
+            "worker".to_string(),
+            None,
+            Some(wake),
+        )
+        .await;
+
+        wait_for_wake(&handler, 1).await;
+        let wakes = handler
+            .wakes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(wakes.len(), 1);
+        assert_eq!(wakes[0].0, "user-session-1");
+        assert!(wakes[0].1.contains("root answer"));
+    }
+
+    #[tokio::test]
+    async fn test_failed_child_wakes_parent_with_failure() {
+        let (registry, store, handler, wake) = wake_fixture().await;
+        create_parent_row(&store, "running").await;
+
+        let child_id = register_child_run(&registry, "delegation:parent-run").await;
+
+        // No agent configured → the child fails; the failure must still wake
+        // the parent so it can decide to retry or re-delegate.
+        execute_child_task(
+            child_id.clone(),
+            completion_task(),
+            DelegationTracker::new(2),
+            Arc::new(AtomicUsize::new(0)),
+            None,
+            registry.clone(),
+            Some(store.clone()),
+            child_scope(&child_id, Some("parent-run".to_string()), 2),
+            "worker".to_string(),
+            None,
+            Some(wake.clone()),
+        )
+        .await;
+
+        wait_for_wake(&handler, 1).await;
+        let wakes = handler
+            .wakes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(wakes.len(), 1);
+        assert_eq!(wakes[0].0, "delegation:parent-run");
+        assert!(wakes[0].1.contains(&child_id));
+        assert!(wakes[0].1.contains("failed"));
     }
 }
