@@ -408,6 +408,16 @@ pub async fn private_only_middleware(req: Request, next: Next) -> Result<Respons
     }
 }
 
+/// Whether `presented` matches the configured shared token, compared in
+/// constant time. `None` (no shared token configured) never matches.
+fn shared_token_matches(shared_token: Option<&str>, presented: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    match shared_token {
+        Some(shared) => presented.as_bytes().ct_eq(shared.as_bytes()).into(),
+        None => false,
+    }
+}
+
 /// Middleware: Authentication check
 ///
 /// Validates Bearer token from Authorization header.
@@ -446,6 +456,20 @@ pub async fn auth_middleware(
                     // Validate session; AuthManager emits the TokenValidation event.
                     if state.auth.manager.validate_session(token).await.is_some() {
                         debug!("Valid auth token, allowing request");
+                        return Ok(next.run(req).await);
+                    }
+                    // The configured shared token (auth_mode=token) is also a
+                    // valid Bearer credential — matching the WS handshake's
+                    // resolve_token_auth, which already accepts it. This is
+                    // the only credential mobile builds have (per-install
+                    // token); desktop defaults (auth_required=false) never
+                    // reach this path.
+                    let shared_token = {
+                        let config = state.config.read().await;
+                        config.security.shared_token.clone()
+                    };
+                    if shared_token_matches(shared_token.as_deref(), token) {
+                        debug!("Valid shared token, allowing request");
                         return Ok(next.run(req).await);
                     }
                     warn!("Invalid or expired auth token");
@@ -768,6 +792,17 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use super::*;
+
+    #[test]
+    fn test_shared_token_matches() {
+        assert!(shared_token_matches(Some("secret-token"), "secret-token"));
+        assert!(!shared_token_matches(Some("secret-token"), "wrong"));
+        assert!(!shared_token_matches(Some("secret-token"), "secret-token-longer"));
+        assert!(!shared_token_matches(Some("secret-token"), "short"));
+        // No configured token never matches — even an empty presented one.
+        assert!(!shared_token_matches(None, "secret-token"));
+        assert!(!shared_token_matches(None, ""));
+    }
 
     #[test]
     fn test_is_localhost() {

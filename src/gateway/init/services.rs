@@ -17,9 +17,11 @@ use crate::memory::query::HydeTransformer;
 use crate::memory::vector::VectorMemoryService;
 use crate::memory::{MemoryManager, MemoryManagerConfig, SessionSearch};
 use crate::rag::multi_query::MultiQueryConfig as RagMultiQueryConfig;
+#[cfg(feature = "local-embeddings")]
+use crate::rag::LocalGgufEmbeddingProvider;
 use crate::rag::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, CohereReranker, ContextWindowConfig,
-    EmbeddingConfig, LocalGgufEmbeddingProvider, MemoryVectorStore,
+    EmbeddingConfig, MemoryVectorStore,
 };
 
 /// Initialize vector memory, session search, and memory manager.

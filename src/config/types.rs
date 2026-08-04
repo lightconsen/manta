@@ -733,7 +733,9 @@ impl Default for BrowserConfig {
 fn default_bridge_port() -> u16 {
     18800
 }
-#[cfg(feature = "browser")]
+
+// Used by always-compiled configs (e.g. HeadlessConfig), so it must not be
+// feature-gated even though the browser config also uses it.
 fn default_false() -> bool {
     false
 }

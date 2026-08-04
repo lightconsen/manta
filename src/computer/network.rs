@@ -99,11 +99,13 @@ impl NetworkInspector {
         {
             self.list_ports_windows(filter_protocol, filter_state)
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        #[cfg(not(desktop_os))]
         {
-            Err(crate::error::SyscityError::UnsupportedPlatform(
-                std::env::consts::OS.to_string(),
-            ))
+            let _ = (filter_protocol, filter_state);
+            Err(crate::error::SyscityError::Unsupported(format!(
+                "list_ports on {}",
+                std::env::consts::OS
+            )))
         }
     }
 
@@ -203,11 +205,12 @@ impl NetworkInspector {
         {
             self.list_firewall_rules_windows().await
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        #[cfg(not(desktop_os))]
         {
-            Err(crate::error::SyscityError::UnsupportedPlatform(
-                std::env::consts::OS.to_string(),
-            ))
+            Err(crate::error::SyscityError::Unsupported(format!(
+                "list_firewall_rules on {}",
+                std::env::consts::OS
+            )))
         }
     }
 
@@ -647,6 +650,7 @@ impl NetworkInspector {
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
+    #[cfg(desktop_os)] // only the desktop list_ports impls parse socket tables
     fn parse_addr_port(addr_port: &str) -> (String, u16) {
         if let Some(pos) = addr_port.rfind(':') {
             let addr = addr_port[..pos].to_string();

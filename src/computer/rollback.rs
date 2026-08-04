@@ -6,6 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
+// Bare `warn!` is only used by the desktop snapshot backends (btrfs /
+// Windows System Restore blocks); other platforms use `tracing::warn!`.
+#[cfg(desktop_os)]
 use tracing::warn;
 
 /// A single snapshot of some system state.

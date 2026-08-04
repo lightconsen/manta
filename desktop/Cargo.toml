@@ -16,8 +16,23 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
+rand = "0.8"
 
+# Desktop builds use syscity's default features; mobile builds use the
+# pruned `mobile` profile (no channels / local-embeddings / vision / browser,
+# bundled SQLite, embedded SPA assets). The dep must live in target tables —
+# cargo features are additive, so a shared [dependencies] entry would force
+# default features onto mobile too.
+#
+# NOTE: target tables can only use *built-in* cfgs — custom aliases like
+# syscity's `mobile_os` (emitted by its build.rs) do not exist at dependency
+# resolution time and would silently never match. In Rust source the aliases
+# apply: `mobile_os`/`desktop_os` in syscity, tauri-build's `mobile` here.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 syscity = { path = ".." }
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+syscity = { path = "..", default-features = false, features = ["mobile"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3"

@@ -140,7 +140,10 @@ pub async fn reload_all_handler(
                 config.dreaming = new_cfg.dreaming.clone();
                 config.standing_orders = new_cfg.standing_orders.clone();
                 config.cron = new_cfg.cron.clone();
-                config.browser = new_cfg.browser.clone();
+                #[cfg(feature = "browser")]
+                {
+                    config.browser = new_cfg.browser.clone();
+                }
                 drop(config_guard);
                 result["config"] = serde_json::json!({ "updated": true });
                 info!("Applied hot-reloadable configuration fields");

@@ -6,7 +6,12 @@
 
 use std::sync::Arc;
 
+// These imports and helpers are used by the external-channel initializers,
+// all of which are feature-gated; a channel-free build (e.g. the mobile
+// profile) has no callers for them.
+#[allow(unused_imports)]
 use tokio::sync::mpsc;
+#[allow(unused_imports)]
 use tracing::{error, info, warn};
 
 use crate::channels::snapshot::healthy_snapshot;
@@ -30,6 +35,7 @@ async fn register_channel_task(
 /// Resolve a channel credential: the secret store (namespace `channel`) is
 /// authoritative, with the legacy plaintext `credentials` map as fallback for
 /// pre-migration configs.
+#[allow(dead_code)] // only called from feature-gated channel initializers
 async fn channel_cred(name: &str, config: &ChannelConfig, key: &str) -> Option<String> {
     crate::secrets::resolve_channel_credential(
         name,
@@ -653,6 +659,7 @@ pub(crate) async fn init_qq_channel(
 }
 
 /// Register a channel extension in the extension registry.
+#[allow(dead_code)] // only called from feature-gated channel initializers
 async fn register_channel_extension(state: &GatewayState, ext: Arc<dyn ChannelExtension>) {
     let mut registry = state.channels.extensions.write().await;
     registry.register(ext);

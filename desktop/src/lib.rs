@@ -47,6 +47,9 @@ pub struct AppState {
     pub gateway_ready: bool,
     /// The actual port the Gateway bound to (auto-detected).
     pub gateway_port: u16,
+    /// Per-install gateway auth token (mobile only; `None` on desktop, where
+    /// `auth_mode = "none"` remains the default).
+    pub gateway_token: Option<String>,
 }
 
 /// Tauri command: returns the Gateway base URL for the frontend.
@@ -54,6 +57,47 @@ pub struct AppState {
 fn get_api_url(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> String {
     let state = state.blocking_lock();
     format!("http://127.0.0.1:{}", state.gateway_port)
+}
+
+/// Tauri command (mobile only): the per-install gateway auth token.
+///
+/// Loopback is not per-app isolated on Android/iOS, so the embedded gateway
+/// requires this token; the WebView fetches it here and presents it at the
+/// WS handshake / as an HTTP Bearer credential.
+#[cfg(mobile)]
+#[tauri::command]
+fn get_gateway_token(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Option<String> {
+    state.blocking_lock().gateway_token.clone()
+}
+
+/// Load the per-install gateway token, generating one on first launch.
+///
+/// Stored at `<SYSCITY_HOME>/data/gateway_token` — the app sandbox already
+/// protects the file; the token exists because loopback is shared with every
+/// other installed app.
+#[cfg(mobile)]
+fn load_or_create_gateway_token() -> String {
+    use rand::RngCore;
+
+    let path = syscity::dirs::data_dir().join("gateway_token");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let trimmed = existing.trim();
+        if trimmed.len() >= 32 {
+            return trimmed.to_string();
+        }
+    }
+
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let token: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(&path, &token) {
+        eprintln!("Failed to persist gateway token to {:?}: {}", path, e);
+    }
+    token
 }
 
 /// Tauri command: reveals an artifact file in the system file manager.
@@ -106,6 +150,7 @@ fn reveal_in_folder(filename: String) -> Result<(), String> {
 }
 
 /// Entry point used by `src/main.rs`.
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize syscity global setup (panic handler, etc.)
     if let Err(e) = syscity::init() {
@@ -139,17 +184,33 @@ pub fn run() {
         })
         .try_init();
 
+    #[cfg(mobile)]
+    let gateway_token = Some(load_or_create_gateway_token());
+    #[cfg(not(mobile))]
+    let gateway_token: Option<String> = None;
+
     let app_state = Arc::new(Mutex::new(AppState {
         gateway_ready: false,
         gateway_port: 18080,
+        gateway_token,
     }));
 
     let app_state_for_setup = app_state.clone();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(app_state)
-        .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![get_api_url, reveal_in_folder])
+        .plugin(tauri_plugin_shell::init());
+
+    #[cfg(not(mobile))]
+    let builder = builder.invoke_handler(tauri::generate_handler![get_api_url, reveal_in_folder]);
+    #[cfg(mobile)]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        get_api_url,
+        reveal_in_folder,
+        get_gateway_token
+    ]);
+
+    builder
         .setup(move |app| {
             let handle = app.handle().clone();
             let state = app_state_for_setup.clone();
@@ -179,7 +240,8 @@ pub fn run() {
                 }
             });
 
-            // Set up system tray and menu.
+            // Set up system tray and menu (desktop only — no tray on mobile).
+            #[cfg(not(mobile))]
             if let Err(e) = setup_tray_and_menu(app) {
                 eprintln!("Tray/menu setup failed: {}", e);
             }
@@ -307,13 +369,32 @@ debounce_seconds = 2
     gateway_config.host = "127.0.0.1".to_string();
     gateway_config.port = port;
 
+    // Mobile builds must never run unauthenticated: loopback is shared with
+    // every installed app. Force shared-token auth using the per-install
+    // token generated at first launch. Desktop keeps `auth_mode = "none"`.
+    #[cfg(mobile)]
+    {
+        let token = handle
+            .state::<Arc<Mutex<AppState>>>()
+            .lock()
+            .await
+            .gateway_token
+            .clone();
+        if let Some(token) = token {
+            gateway_config.security.enabled = true;
+            gateway_config.security.auth_required = true;
+            gateway_config.security.auth_mode = syscity::gateway::protocol::AuthMode::Token;
+            gateway_config.security.shared_token = Some(token);
+        }
+    }
+
     // Configure LLM provider from environment (same logic as daemon.rs).
     if let (Ok(base_url), Ok(api_key)) =
         (std::env::var("SYSCITY_BASE_URL"), std::env::var("SYSCITY_API_KEY"))
     {
         let provider_config = syscity::model_router::ProviderConfig {
             provider_type: syscity::model_router::ProviderType::OpenAi,
-            api_key,
+            api_key: api_key.into(),
             api_keys: Vec::new(),
             auth_profile: None,
             oauth: None,
@@ -328,7 +409,7 @@ debounce_seconds = 2
     } else if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
         let provider_config = syscity::model_router::ProviderConfig {
             provider_type: syscity::model_router::ProviderType::Anthropic,
-            api_key,
+            api_key: api_key.into(),
             api_keys: Vec::new(),
             auth_profile: None,
             oauth: None,
@@ -343,7 +424,7 @@ debounce_seconds = 2
     } else if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
         let provider_config = syscity::model_router::ProviderConfig {
             provider_type: syscity::model_router::ProviderType::OpenAi,
-            api_key,
+            api_key: api_key.into(),
             api_keys: Vec::new(),
             auth_profile: None,
             oauth: None,
@@ -389,6 +470,7 @@ debounce_seconds = 2
 }
 
 /// Set up the system tray icon and context menu.
+#[cfg(not(mobile))] // tauri::tray/menu do not exist on mobile targets
 fn setup_tray_and_menu(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{MenuBuilder, MenuItemBuilder};
     use tauri::tray::TrayIconBuilder;

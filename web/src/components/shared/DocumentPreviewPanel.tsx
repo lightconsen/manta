@@ -47,7 +47,12 @@ export function DocumentPreviewPanel({
     setLoadState("loading");
     setContent(null);
 
-    fetch(`/api/v1/artifacts/${document.filename}`)
+    // Mobile gateway requires the per-install token as a Bearer credential
+    // (stashed by the WS transport); absent on desktop, where auth is off.
+    const gatewayToken = localStorage.getItem("syscity_gateway_token");
+    fetch(`/api/v1/artifacts/${document.filename}`, {
+      headers: gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {},
+    })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.text();

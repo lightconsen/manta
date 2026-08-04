@@ -35,7 +35,9 @@ pub mod system;
 pub mod types;
 pub mod use_loop;
 pub mod verification;
-#[cfg(feature = "vision")]
+// The vision module itself is always compiled: its heavy ONNX/OCR
+// submodules are feature-gated internally, while `screen_state` (used by
+// `use_loop` and the computer/screen_state tools) is pure data structures.
 pub mod vision;
 
 // Platform adapters
@@ -186,7 +188,7 @@ pub trait ComputerAdapter: Send + Sync {
 /// - Linux + X11 → `X11PhysicalAdapter`
 /// - Linux + Wayland → `WaylandPhysicalAdapter`
 /// - Linux headless → `HeadlessPhysicalAdapter`
-#[allow(unreachable_code)]
+#[allow(unreachable_code, unused_variables)] // mobile targets take none of the platform arms
 pub async fn create_adapter(registry: Arc<ToolRegistry>) -> Result<Box<dyn ComputerAdapter>> {
     #[cfg(target_os = "macos")]
     {

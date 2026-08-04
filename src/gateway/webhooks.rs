@@ -171,6 +171,7 @@ async fn whatsapp_webhook_handler(
 
                     // Log and acknowledge statuses events (delivered, read, failed)
                     // instead of silently dropping them.
+                    #[cfg(feature = "whatsapp")]
                     if let Some(v) = &value {
                         if let Some(statuses) = v.get("statuses") {
                             crate::channels::whatsapp::WhatsappChannel::handle_statuses_event(

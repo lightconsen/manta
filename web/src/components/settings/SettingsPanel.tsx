@@ -947,7 +947,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                       <label className="block text-sm text-secondary mb-1">Interval (seconds)</label>
                       <input type="number" value={hb.interval_seconds ?? 300} onChange={(e) => update("heartbeat.interval_seconds", parseInt(e.target.value))} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-sm text-secondary mb-1">Active From</label>
                         <input type="text" value={hb.active_hours_start || ""} onChange={(e) => update("heartbeat.active_hours_start", e.target.value)} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
@@ -981,7 +981,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
 
                   {showAddChannel && (
                     <div className="mb-4 p-4 rounded-lg bg-card space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs text-secondary mb-1">Name</label>
                           <input
@@ -1013,7 +1013,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                           </select>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs text-secondary mb-1">Agent ID (optional)</label>
                           <input
@@ -1136,7 +1136,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                     <div className="mb-4 p-4 rounded-lg bg-card space-y-3">
                       <div>
                         <label className="block text-xs text-secondary mb-1">Provider</label>
-                        <div className="grid grid-cols-4 gap-2">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                           {modelPresets.map((p) => {
                             const logo = PROVIDER_LOGOS[p.name];
                             const selected = newModel.provider === p.name;
@@ -1174,7 +1174,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                           className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs text-secondary mb-1">Name</label>
                           <input
@@ -1356,7 +1356,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                     {selectedAgentDetail.config && (
                       <div>
                         <h4 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Configuration</h4>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div className="px-3 py-2 rounded-lg bg-card">
                             <div className="text-[10px] uppercase tracking-wider text-secondary/70">Temperature</div>
                             <div className="text-sm text-primary">{typeof (selectedAgentDetail.config as Record<string, unknown>).temperature === "number" ? ((selectedAgentDetail.config as Record<string, unknown>).temperature as number).toFixed(2) : "—"}</div>
@@ -1389,7 +1389,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                     {selectedAgentDetail.personality && (
                       <div>
                         <h4 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Personality</h4>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div className="px-3 py-2 rounded-lg bg-card">
                             <div className="text-[10px] uppercase tracking-wider text-secondary/70">Display Name</div>
                             <div className="text-sm text-primary">{String((selectedAgentDetail.personality as Record<string, unknown>).display_name ?? "—")}</div>
@@ -1431,7 +1431,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                           <div className="text-[11px] text-secondary/70 mb-2">Editing individual agent parameters is not yet supported. Changes here affect the global default.</div>
                         )}
                         <div className="space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                               <label className="block text-sm text-secondary mb-1">Temperature</label>
                               <div className="flex items-center gap-2">
@@ -1444,7 +1444,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                               <input type="number" value={(ac.max_tokens as number | undefined) ?? 2048} onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
                             </div>
                           </div>
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                               <label className="block text-sm text-secondary mb-1">Max Turns</label>
                               <input type="number" value={(ac.max_turns as number | undefined) ?? ""} placeholder="Unlimited" onChange={(e) => update("default_agent.max_turns", e.target.value ? parseInt(e.target.value) : null)} className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
@@ -1471,7 +1471,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                 {mcpPresets.length > 0 && (
                   <section>
                     <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-3">Presets</h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 sm:grid-cols-3 md:grid-cols-2 sm:grid-cols-4 gap-2">
                       {mcpPresets.map((p) => {
                         const loading = mcpActionLoading === p.name;
                         return (
@@ -1535,7 +1535,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                   </div>
                   {showAddMcp && (
                     <div className="mb-4 p-4 rounded-lg bg-card space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs text-secondary mb-1">Server ID</label>
                           <input type="text" value={newMcp.id} onChange={(e) => setNewMcp({ ...newMcp, id: e.target.value })} placeholder="filesystem" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />
@@ -1574,7 +1574,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                             </select>
                           </div>
                           {newMcp.auth_type === "oauth2" && (
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               <div>
                                 <label className="block text-xs text-secondary mb-1">Client ID</label>
                                 <input type="text" value={newMcp.client_id} onChange={(e) => setNewMcp({ ...newMcp, client_id: e.target.value })} placeholder="your-client-id" className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20" />

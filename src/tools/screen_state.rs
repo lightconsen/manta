@@ -13,7 +13,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::computer::vision::ScreenState;
-use crate::computer::{ComputerAdapter, Rect, UiElement};
+#[cfg(feature = "vision")]
+use crate::computer::Rect;
+use crate::computer::{ComputerAdapter, UiElement};
 use crate::tools::{
     approval::RiskLevel, create_schema, sdk::ToolCapabilities, Tool, ToolContext,
     ToolExecutionResult,
@@ -345,6 +347,7 @@ Use when the accessibility tree lacks the text you need: PDF viewers, dialogs, i
 }
 
 /// Parse an optional region from tool args.
+#[cfg(feature = "vision")]
 fn parse_region(args: &Value) -> Option<Rect> {
     let x = args["region_x"].as_i64()?;
     let y = args["region_y"].as_i64()?;
@@ -399,6 +402,7 @@ mod tests {
         assert!(out.contains("truncated"));
     }
 
+    #[cfg(feature = "vision")]
     #[test]
     fn parse_region_requires_all_fields() {
         assert!(parse_region(&json!({})).is_none());

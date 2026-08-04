@@ -30,7 +30,25 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 /// Get the base Syscity directory (~/.syscity)
+///
+/// The `SYSCITY_HOME` environment variable overrides the base directory.
+/// Desktop behavior is unchanged when it is unset; mobile hosts set it to
+/// the app sandbox (Android `filesDir`, iOS `NSDocumentDirectory`) at
+/// startup, which relocates the whole `data/`, `logs/`, `agents/`,
+/// `delegations/`, `artifacts/` tree in one move.
 pub fn syscity_dir() -> PathBuf {
+    resolve_base_dir(std::env::var_os("SYSCITY_HOME"))
+}
+
+/// Resolve the base directory from the `SYSCITY_HOME` override value,
+/// falling back to `<home>/.syscity`. Separated from the process env read
+/// so tests stay pure (no process-global env mutation).
+fn resolve_base_dir(override_value: Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(dir) = override_value {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     home_dir()
         .map(|h| h.join(SYSCITY_DIR))
         .unwrap_or_else(|| PathBuf::from(SYSCITY_DIR))
@@ -522,6 +540,26 @@ mod tests {
         let dir = plugins_data_dir();
         assert!(dir.to_string_lossy().contains("plugins"));
         assert!(dir.to_string_lossy().contains("data"));
+    }
+
+    #[test]
+    fn test_syscity_home_override_relocates_base() {
+        let dir = resolve_base_dir(Some(std::ffi::OsString::from(
+            "/data/data/com.syscity/files/syscity",
+        )));
+        assert_eq!(dir, PathBuf::from("/data/data/com.syscity/files/syscity"));
+    }
+
+    #[test]
+    fn test_syscity_home_empty_override_falls_back() {
+        let dir = resolve_base_dir(Some(std::ffi::OsString::from("")));
+        assert!(dir.to_string_lossy().contains(".syscity"));
+    }
+
+    #[test]
+    fn test_syscity_home_unset_falls_back() {
+        let dir = resolve_base_dir(None);
+        assert!(dir.to_string_lossy().contains(".syscity"));
     }
 
     #[test]

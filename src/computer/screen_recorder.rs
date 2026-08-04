@@ -102,6 +102,7 @@ pub async fn resolve_or_download_ffmpeg() -> crate::computer::Result<PathBuf> {
 }
 
 /// Download raw bytes from a URL (up to 120 s timeout).
+#[cfg(desktop_os)] // only the desktop ffmpeg downloaders call this
 async fn download_bytes(url: &str) -> crate::computer::Result<Vec<u8>> {
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -278,7 +279,7 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
     Ok(())
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+#[cfg(not(desktop_os))]
 async fn download_ffmpeg(_dest: &Path) -> crate::computer::Result<()> {
     Err(crate::computer::ComputerError::Other(
         "Automatic ffmpeg download not supported on this platform. Please install ffmpeg manually."
@@ -286,7 +287,10 @@ async fn download_ffmpeg(_dest: &Path) -> crate::computer::Result<()> {
     ))
 }
 
-#[cfg(unix)]
+// Desktop unixes (linux/macos) chmod the downloaded ffmpeg; Windows and
+// mobile use the no-op. `desktop_os` alone would misfire on Windows, plain
+// `unix` would misfire on Android/iOS — hence the intersection.
+#[cfg(all(unix, desktop_os))]
 fn set_executable(path: &Path) -> crate::computer::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let meta = std::fs::metadata(path).map_err(|e| {
@@ -299,7 +303,7 @@ fn set_executable(path: &Path) -> crate::computer::Result<()> {
     })
 }
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), desktop_os))] // Windows only; mobile has no caller
 fn set_executable(_path: &Path) -> crate::computer::Result<()> {
     Ok(())
 }

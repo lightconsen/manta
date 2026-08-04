@@ -145,6 +145,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   private runListeners: Set<(running: boolean) => void> = new Set();
   private serverInfo: { version?: string; conn_id?: string; features?: string[]; scopes_granted?: string[] } = {};
   private gatewayUrl: string = "";
+  /** Per-install gateway auth token (mobile Tauri builds only). */
+  private gatewayToken: string | null = null;
 
   constructor() {
     this.deviceId =
@@ -176,6 +178,18 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         this.gatewayUrl = apiUrl.replace(/^http/, "ws") + "/ws";
       } catch {
         // Fallback if command unavailable
+      }
+      // Mobile builds require the per-install gateway token (loopback is
+      // shared with other apps). Desktop builds don't register the command.
+      try {
+        const token = await invoke<string | null>("get_gateway_token");
+        if (token) {
+          this.gatewayToken = token;
+          // Shared with plain-HTTP fetches (e.g. artifact preview).
+          localStorage.setItem("syscity_gateway_token", token);
+        }
+      } catch {
+        // Not a mobile build — no token required.
       }
       // Wait for the gateway-ready event so we know the backend is listening.
       await listen<string>("gateway-ready", (event) => {
@@ -288,6 +302,15 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       url = `${proto}//${location.host}/ws`;
     }
 
+    // Mobile gateways require the shared token at the WS *upgrade* (before
+    // any connect message arrives); browsers can't set headers on WebSocket,
+    // so the token goes in the query string (`?token=` is accepted by
+    // `gateway/ws/core.rs`).
+    if (this.gatewayToken) {
+      const sep = url.includes("?") ? "&" : "?";
+      url = `${url}${sep}token=${encodeURIComponent(this.gatewayToken)}`;
+    }
+
     this.gatewayUrl = url;
     this.ws = new WebSocket(url);
 
@@ -298,6 +321,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         client: { id: "web", version: "1.0.0" },
         device: { id: this.deviceId },
         scopes: ["chat", "read", "write"],
+        // Mobile gateway requires the per-install token at the handshake.
+        ...(this.gatewayToken ? { auth: { token: this.gatewayToken } } : {}),
       });
     };
 

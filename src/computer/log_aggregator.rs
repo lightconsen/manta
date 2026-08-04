@@ -42,6 +42,9 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Datelike, Utc};
 use regex::Regex;
+// Only the desktop log daemons (journald / macOS `log`) use buffered line
+// reading at module scope; `tail_file` imports it locally.
+#[cfg(desktop_os)]
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::task::JoinHandle;

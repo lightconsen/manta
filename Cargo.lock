@@ -7331,6 +7331,7 @@ version = "0.1.2"
 dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "syscity",

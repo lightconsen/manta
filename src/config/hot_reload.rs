@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(feature = "hot-reload")]
 use std::time::Duration;
 
 #[cfg(feature = "hot-reload")]
@@ -82,7 +83,8 @@ pub struct HotReloadManager {
     watched_files: Arc<RwLock<HashMap<PathBuf, WatchedConfig>>>,
     /// Registered handlers
     handlers: Arc<RwLock<HashMap<ConfigFileType, Vec<ConfigChangeHandler>>>>,
-    /// Channel for change events
+    /// Channel for change events (read only by the hot-reload watcher loop)
+    #[cfg_attr(not(feature = "hot-reload"), allow(dead_code))]
     change_tx: mpsc::Sender<ConfigChangeEvent>,
     change_rx: Arc<RwLock<mpsc::Receiver<ConfigChangeEvent>>>,
     /// File watcher (only available with hot-reload feature)

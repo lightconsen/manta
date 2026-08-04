@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { Menu } from "lucide-react";
 import {
   AssistantRuntimeProvider,
   useLocalRuntime,
@@ -15,6 +16,7 @@ import { ChatContent } from "@/components/chat/ChatContent";
 import { useGoalStore } from "@/stores/goalStore";
 import { GoalPanel } from "@/components/chat/GoalPanel";
 import { DocumentPreviewPanel } from "@/components/shared/DocumentPreviewPanel";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 
 /* ── Agent emoji pool — ensures each agent has a unique icon ── */
 const EMOJI_POOL = [
@@ -122,6 +124,8 @@ function ChatApp() {
   const [runningSessionIds, setRunningSessionIds] = useState<string[]>([]);
   const [sessionKey, setSessionKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const isMobile = useIsMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const previewDocument = useChatStore((s) => s.previewDocument);
   const setPreviewDocument = useChatStore((s) => s.setPreviewDocument);
 
@@ -454,27 +458,95 @@ function ChatApp() {
   }, [sessionItems, transport]);
 
   return (
-    <div className="h-screen flex bg-page text-primary">
-      <Sidebar
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((c) => !c)}
-        sessions={sessionItems}
-        currentSessionId={transport.getSessionId()}
-        runningSessionIds={runningSessionIds}
-        onSwitchSession={handleSwitchSession}
-        onNewSession={handleNewSession}
-        agents={agents}
-        onCreateSessionWithAgent={handleCreateSessionWithAgent}
-        networkStatus={networkStatus}
-        onOpenSettings={() => setSettingsOpen((s) => !s)}
-        onRenameSession={handleRenameSession}
-        onDeleteSession={handleDeleteSession}
-        onPinSession={handlePinSession}
-      />
+    <div
+      className="h-dvh flex bg-page text-primary"
+      style={{
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+      }}
+    >
+      {/* Desktop: inline sidebar. Mobile: hidden, the drawer below replaces it. */}
+      <div className="hidden md:contents">
+        <Sidebar
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed((c) => !c)}
+          sessions={sessionItems}
+          currentSessionId={transport.getSessionId()}
+          runningSessionIds={runningSessionIds}
+          onSwitchSession={handleSwitchSession}
+          onNewSession={handleNewSession}
+          agents={agents}
+          onCreateSessionWithAgent={handleCreateSessionWithAgent}
+          networkStatus={networkStatus}
+          onOpenSettings={() => setSettingsOpen((s) => !s)}
+          onRenameSession={handleRenameSession}
+          onDeleteSession={handleDeleteSession}
+          onPinSession={handlePinSession}
+        />
+      </div>
+
+      {/* Mobile: hamburger opens the navigation drawer. */}
+      {isMobile && !mobileNavOpen && (
+        <button
+          className="fixed left-3 z-40 md:hidden p-2 rounded-lg bg-page/80 backdrop-blur-sm border border-subtle text-secondary"
+          style={{ top: "calc(0.75rem + env(safe-area-inset-top))" }}
+          onClick={() => setMobileNavOpen(true)}
+          aria-label="Open navigation"
+        >
+          <Menu size={20} />
+        </button>
+      )}
+
+      {/* Mobile navigation drawer. */}
+      {isMobile && mobileNavOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <div
+            className="absolute inset-y-0 left-0 w-72 max-w-[85vw] bg-sidebar shadow-xl"
+            style={{
+              paddingTop: "env(safe-area-inset-top)",
+              paddingBottom: "env(safe-area-inset-bottom)",
+            }}
+          >
+            <Sidebar
+              collapsed={false}
+              onToggle={() => setMobileNavOpen(false)}
+              sessions={sessionItems}
+              currentSessionId={transport.getSessionId()}
+              runningSessionIds={runningSessionIds}
+              onSwitchSession={(id) => {
+                handleSwitchSession(id);
+                setMobileNavOpen(false);
+              }}
+              onNewSession={() => {
+                handleNewSession();
+                setMobileNavOpen(false);
+              }}
+              agents={agents}
+              onCreateSessionWithAgent={(id) => {
+                handleCreateSessionWithAgent(id);
+                setMobileNavOpen(false);
+              }}
+              networkStatus={networkStatus}
+              onOpenSettings={() => {
+                setSettingsOpen((s) => !s);
+                setMobileNavOpen(false);
+              }}
+              onRenameSession={handleRenameSession}
+              onDeleteSession={handleDeleteSession}
+              onPinSession={handlePinSession}
+            />
+          </div>
+        </div>
+      )}
+
       <main className="flex-1 flex flex-col overflow-hidden">
         {settingsOpen ? (
           <SettingsPanel transport={transport} onClose={() => setSettingsOpen(false)} />
-        ) : previewDocument ? (
+        ) : previewDocument && !isMobile ? (
           <div
             ref={splitContainerRef}
             className="flex flex-row h-full overflow-hidden"
@@ -536,6 +608,22 @@ function ChatApp() {
           </>
         )}
       </main>
+
+      {/* Mobile: document preview takes the whole screen instead of a split. */}
+      {isMobile && previewDocument && (
+        <div
+          className="fixed inset-0 z-30 bg-page flex flex-col"
+          style={{
+            paddingTop: "env(safe-area-inset-top)",
+            paddingBottom: "env(safe-area-inset-bottom)",
+          }}
+        >
+          <DocumentPreviewPanel
+            document={previewDocument}
+            onClose={() => setPreviewDocument(null)}
+          />
+        </div>
+      )}
     </div>
   );
 }
