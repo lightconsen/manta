@@ -10,6 +10,9 @@
 //!   metadata: which shared task it belongs to, how deep it may recurse, which
 //!   tools it may use, and its tool-iteration cap.
 //! - [`TaskStateTool`] is how a child reads/writes its shared state.
+//! - [`DelegationWake`] is how a parent that ended its turn is re-opened with a
+//!   child's result when the child completes after the fact (see
+//!   `docs/delegation-wake.md`).
 //!
 //! Orchestration is built on top of the existing [`DelegateTool`] +
 //! [`SubagentRegistry`](crate::agent::subagent_registry::SubagentRegistry)
@@ -19,11 +22,16 @@ pub mod coordinator;
 pub mod scope;
 pub mod state;
 pub mod task_state_tool;
+pub mod wake;
 
 pub use coordinator::DelegationCoordinator;
 pub use scope::{DelegationScope, DELEGATION_SCOPE_KEY};
 pub use state::{ArtifactRef, DelegationEvent, DelegationTask, DelegationTaskStore, NewTask};
 pub use task_state_tool::TaskStateTool;
+pub use wake::{
+    child_completion_message, child_failure_message, notify_parent, parent_active_for_wake,
+    AgentWakeHandler, DelegationWake, WakeHandler, WakeResolver,
+};
 
 /// Errors specific to the delegation subsystem.
 #[derive(Debug, thiserror::Error)]

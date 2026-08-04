@@ -37,6 +37,41 @@ impl AgentResolver for GatewayAgentResolver {
     }
 }
 
+/// Resolves the parent agent for a wake notification (parent auto-wake, v2).
+///
+/// A root parent lives on a user session (router-bound, resolved via
+/// `resolve_by_session`); a delegated parent lives on a `delegation:<run_id>`
+/// session (not router-bound, because delegated turns run
+/// `process_message_with_progress` directly) — its agent is the `agent_id`
+/// recorded on its delegation task row.
+pub(crate) struct GatewayWakeResolver {
+    pub(crate) agents: Arc<RwLock<std::collections::HashMap<String, super::AgentHandle>>>,
+    pub(crate) router: Arc<crate::inbound::router::AgentRouter>,
+    pub(crate) store: Arc<crate::delegation::DelegationTaskStore>,
+}
+
+#[async_trait]
+impl crate::delegation::WakeResolver for GatewayWakeResolver {
+    async fn resolve_agent(&self, session: &str) -> Option<Arc<Agent>> {
+        let agent_id = if let Some(run_id) = session.strip_prefix("delegation:") {
+            self.store
+                .get_task(run_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|task| task.agent_id)
+        } else {
+            Some(self.router.resolve_by_session(session).await.agent_id)
+        };
+        let agent_id = agent_id?;
+        let agents = self.agents.read().await;
+        agents
+            .get(&agent_id)
+            .map(|h| h.agent.clone())
+            .or_else(|| agents.get("default").map(|h| h.agent.clone()))
+    }
+}
+
 // ── spawn_agent_inner ────────────────────────────────────────────────────────
 
 /// Resolve the model an agent should use at spawn time.

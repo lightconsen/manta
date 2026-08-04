@@ -210,7 +210,10 @@ pub(crate) async fn start_gateway(
     // trees (children read/write their shared state via that tool), and a
     // handoff coordinator for successor continuation.
     {
-        use crate::delegation::{DelegationCoordinator, DelegationTaskStore, TaskStateTool};
+        use crate::delegation::{
+            AgentWakeHandler, DelegationCoordinator, DelegationTaskStore, DelegationWake,
+            TaskStateTool,
+        };
         use crate::tools::DelegateTool;
 
         let db_url =
@@ -229,14 +232,30 @@ pub(crate) async fn start_gateway(
             let agents = state.agents.agents.read().await;
             agents.get("default").map(|h| h.agent.clone())
         };
+
+        // Parent auto-wake (v2): when a child completes after its parent's turn
+        // ended, wake the parent's session with the child's result so it can
+        // aggregate.  The resolver maps a parent session key to the agent that
+        // owns it (router-bound user sessions for tree roots, the task row's
+        // agent_id for delegated parents).
+        let wake = Arc::new(DelegationWake::new(Arc::new(AgentWakeHandler::new(Arc::new(
+            super::agent_spawn::GatewayWakeResolver {
+                agents: state.agents.agents.clone(),
+                router: state.agents.router.clone(),
+                store: delegation_store.clone(),
+            },
+        )))));
+
         let delegate = if let Some(agent) = default_agent.clone() {
             DelegateTool::with_agent(0, agent)
                 .with_agent_resolver(Arc::clone(&resolver))
                 .with_task_store(delegation_store.clone())
+                .with_wake(wake.clone())
         } else {
             DelegateTool::root()
                 .with_agent_resolver(Arc::clone(&resolver))
                 .with_task_store(delegation_store.clone())
+                .with_wake(wake)
         };
         let coordinator = Arc::new(DelegationCoordinator::new(
             delegation_store,

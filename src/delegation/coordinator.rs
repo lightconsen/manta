@@ -214,6 +214,10 @@ impl DelegationCoordinator {
                             scope,
                             target,
                             Some(coordinator),
+                            // No wake: a successor's parent session is the
+                            // handing-off task's id, not a live agent session,
+                            // so waking it would be spurious.
+                            None,
                         )
                         .await;
                     })

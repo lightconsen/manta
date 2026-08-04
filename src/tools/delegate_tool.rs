@@ -21,7 +21,8 @@ use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::budget::IterationBudget;
 use crate::agent::subagent_registry::SubagentRegistry;
 use crate::delegation::{
-    DelegationConfig, DelegationCoordinator, DelegationEvent, DelegationScope, DelegationTaskStore,
+    child_completion_message, child_failure_message, notify_parent, DelegationConfig,
+    DelegationCoordinator, DelegationEvent, DelegationScope, DelegationTaskStore, DelegationWake,
     NewTask,
 };
 use crate::tools::hooks::ToolHooks;
@@ -243,6 +244,10 @@ pub struct DelegateTool {
     /// Optional handoff coordinator.  When set, a child that finishes while a
     /// sibling/descendant is `waiting_handoff` triggers successor continuation.
     coordinator: Option<Arc<DelegationCoordinator>>,
+    /// Optional parent auto-wake.  When set, a child that completes after the
+    /// parent's turn ended wakes the parent's session with the child's result
+    /// so it can aggregate (see [`DelegationWake`]).
+    wake: Option<Arc<DelegationWake>>,
 }
 
 impl std::fmt::Debug for DelegateTool {
@@ -276,6 +281,7 @@ impl DelegateTool {
             agent_resolver: None,
             store: None,
             coordinator: None,
+            wake: None,
         }
     }
 
@@ -293,6 +299,7 @@ impl DelegateTool {
             agent_resolver: None,
             store: None,
             coordinator: None,
+            wake: None,
         }
     }
 
@@ -337,6 +344,14 @@ impl DelegateTool {
     /// continuation via the coordinator.
     pub fn with_coordinator(mut self, coordinator: Arc<DelegationCoordinator>) -> Self {
         self.coordinator = Some(coordinator);
+        self
+    }
+
+    /// Attach a parent auto-wake dispatcher.  When set, a child that completes
+    /// after the parent's turn ended wakes the parent's session with the
+    /// child's result (see [`DelegationWake`]).
+    pub fn with_wake(mut self, wake: Arc<DelegationWake>) -> Self {
+        self.wake = Some(wake);
         self
     }
 
@@ -418,6 +433,7 @@ impl DelegateTool {
         reg_tracker.depth = depth as usize;
         let iterations_bg = iterations.clone();
         let coordinator = self.coordinator.clone();
+        let wake = self.wake.clone();
         let root_id_bg = root_id.clone();
         let parent_task_id_bg = parent_task_id.clone();
         let agent_id_owned = agent_type.clone();
@@ -429,6 +445,7 @@ impl DelegateTool {
             let registry = Arc::clone(&registry);
             let store_opt = store_opt.clone();
             let coordinator = coordinator.clone();
+            let wake = wake.clone();
             let agent_id = agent_id_owned.clone();
             let scope = DelegationScope {
                 root_id: root_id_bg.clone(),
@@ -455,6 +472,7 @@ impl DelegateTool {
                     scope,
                     agent_id,
                     coordinator,
+                    wake,
                 )
                 .await;
             }
@@ -501,6 +519,9 @@ impl DelegateTool {
 ///
 /// `coordinator`, when present, advances pending handoffs under the child's
 /// tree root after the child finishes.
+///
+/// `wake`, when present, wakes the parent with the child's outcome after the
+/// child finishes (parent auto-wake, v2).
 #[allow(clippy::too_many_arguments)] // closure-captured execution context for a spawned child
 pub(crate) fn execute_child_task(
     child_id: String,
@@ -513,6 +534,7 @@ pub(crate) fn execute_child_task(
     scope: DelegationScope,
     agent_id: String,
     coordinator: Option<Arc<DelegationCoordinator>>,
+    wake: Option<Arc<DelegationWake>>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     // Boxed (type-erased) future: `execute_child_task -> maybe_advance ->
     // successor spawn -> execute_child_task` is a genuinely cyclic call graph,
@@ -557,6 +579,11 @@ pub(crate) fn execute_child_task(
                 warn!("Failed to record start event for '{}': {}", child_id, e);
             }
         }
+
+        // Captured on whichever completion path runs, then delivered to the
+        // parent after the outcome has been persisted (parent auto-wake, v2).
+        // Every completion path assigns it before the read below.
+        let wake_message: Option<String>;
 
         if let Some(agent) = agent {
             // Create incoming message for the child task
@@ -619,7 +646,8 @@ pub(crate) fn execute_child_task(
                     };
 
                     tracker.set_result(&child_id, result.clone()).await;
-                    registry.complete_run(&child_id, Ok(result)).await;
+                    registry.complete_run(&child_id, Ok(result.clone())).await;
+                    wake_message = Some(child_completion_message(&child_id, &result));
 
                     // Write the outcome back to the shared task record.
                     if let Some(store) = &store {
@@ -645,6 +673,7 @@ pub(crate) fn execute_child_task(
                     error!("Child {} failed: {}", child_id, e);
                     let err_msg = format!("Task execution failed: {}", e);
                     tracker.set_error(&child_id, err_msg.clone()).await;
+                    wake_message = Some(child_failure_message(&child_id, &err_msg));
                     registry.complete_run(&child_id, Err(err_msg)).await;
 
                     if let Some(store) = &store {
@@ -660,11 +689,20 @@ pub(crate) fn execute_child_task(
             );
             let err_msg = "No agent configured for delegation".to_string();
             tracker.set_error(&child_id, err_msg.clone()).await;
+            wake_message = Some(child_failure_message(&child_id, &err_msg));
             registry.complete_run(&child_id, Err(err_msg)).await;
 
             if let Some(store) = &store {
                 preserve_handoff_and_set_status(store, &child_id, "failed").await;
             }
+        }
+
+        // Wake the parent if it ended its turn with this child outstanding
+        // (parent auto-wake, v2).  Runs after the outcome is persisted so the
+        // parent can pull it via `delegate status` / `wait` if it prefers, and
+        // the `parent_active_for_wake` guard consults the parent's own row.
+        if let (Some(wake), Some(message)) = (&wake, wake_message) {
+            notify_parent(&registry, store.as_deref(), wake, &child_id, &message).await;
         }
 
         // Drive any pending handoffs in this tree (successor continuation).  Runs
@@ -727,9 +765,9 @@ Limitations:
 
 The child agent executes its task independently. Results are NOT relayed
 automatically — call action="wait" (child_id) to block for the child's
-result directly, or action="status" (child_id) to poll. If wait reports
-"still running", the child continues in the background; poll again with
-wait/status to collect the result when it finishes."#
+result directly. If wait reports "still running", end your turn: when the
+child completes you will be woken with its result so you can continue and
+aggregate. You may also poll action="status" (child_id) at any time."#
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1079,8 +1117,8 @@ impl DelegateTool {
             let now = tokio::time::Instant::now();
             if now >= deadline {
                 return ToolExecutionResult::success(format!(
-                    "Child {} is still running after {}s. It continues in the background. \
-                     Poll again with wait or status to collect its result.",
+                    "Child {} is still running after {}s. End your turn — you will be \
+                     woken with its result when it completes.",
                     child_id,
                     budget.as_secs().max(1)
                 ))
