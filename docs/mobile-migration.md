@@ -410,6 +410,18 @@ rendering is exactly what the web stack is best at.
 
 ## 5. Phased roadmap
 
+> **Desktop non-regression invariant:** every phase's acceptance includes the
+> desktop build and full test suite (`./scripts/self-check.sh`) staying green
+> on linux/macos/windows, with the desktop shell behaving unchanged. Nearly
+> all mobile work is additive (new features, `cfg(target_os)` gates,
+> mobile-host files); the exceptions that touch shared code are P2.5 (gateway
+> auth — mobile-scoped only; desktop keeps `auth_mode = "none"`), P2.6 (web
+> responsive pass — additive breakpoints only), P2.7 (retryable turns — shared
+> `src/agent/` semantics), and above all **P3.2 (ProcessRunner), the
+> highest-risk item: a pure behavior-preserving refactor on desktop** (env,
+> cwd, pipes, timeouts, error mapping all unchanged), covered by the existing
+> test suite.
+
 ### Phase 1 — Cross-compilation proof (Android)
 
 Goal: prove the core compiles and runs on Android.
@@ -450,8 +462,8 @@ Goal: the core product (chat, delegation, memory) works on the phone.
 | 2.2 | Web UI served by the embedded gateway in the app | `desktop/src/lib.rs` (already embeds gateway) |
 | 2.3 | Set `SYSCITY_HOME` from `context.filesDir` at startup | mobile host |
 | 2.4 | Allow cleartext HTTP to `127.0.0.1` for the WebView (targetSdk 28+ blocks cleartext by default) | Android `networkSecurityConfig` / manifest |
-| 2.5 | **Enforce gateway auth on mobile builds.** Loopback is *not* per-app isolated: any installed app with `INTERNET` permission can reach `127.0.0.1:<port>` and drive the agent. Generate a per-install token at first launch and inject it into the WebView via a Tauri command; never accept `AuthMode::None` on mobile | `src/gateway/`, mobile host |
-| 2.6 | Mobile adaptation pass on the web SPA: responsive breakpoints, drawer sidebar, touch targets, virtual-keyboard + safe-area handling (§4.12). Reuse, not rewrite — the Tauri bridge and transport already work on mobile | `web/` |
+| 2.5 | **Enforce gateway auth on mobile builds** (mobile builds only — desktop keeps `auth_mode = "none"`; the transport change must keep the no-token path working). Loopback is *not* per-app isolated: any installed app with `INTERNET` permission can reach `127.0.0.1:<port>` and drive the agent. Generate a per-install token at first launch and inject it into the WebView via a Tauri command; never accept `AuthMode::None` on mobile | `src/gateway/`, mobile host |
+| 2.6 | Mobile adaptation pass on the web SPA: responsive breakpoints, drawer sidebar, touch targets, virtual-keyboard + safe-area handling (§4.12). Reuse, not rewrite — the Tauri bridge and transport already work on mobile. **Additive breakpoints only; desktop layout unchanged** | `web/` |
 | 2.7 | **Run survival:** Android foreground service (persistent notification) while an agent run is active; iOS retryable/resumable turns + "run interrupted" UX (§4.7) | mobile host, `src/agent/` |
 
 **Acceptance:** installable Android app where the user can chat, spawn
@@ -465,7 +477,7 @@ Goal: bring the subprocess-dependent tools up (or down) correctly on mobile.
 | # | Task | File(s) |
 |---|---|---|
 | 3.1 | `is_available()` platform branches | `src/tools/*.rs` |
-| 3.2 | `ProcessRunner` abstraction + Android `sh`/bundled-binary impl | `src/tools/*` |
+| 3.2 | `ProcessRunner` abstraction + Android `sh`/bundled-binary impl. Desktop impl = today's `std::process` behavior, byte-for-byte (pure refactor, covered by existing tests) | `src/tools/*` |
 | 3.3 | `code_exec` → WASM / embedded engines behind feature flags | `src/tools/code_exec.rs`, `Cargo.toml` |
 | 3.4 | MCP: HTTP transport for supported servers; in-process channel for Rust libs | `src/mcp/client.rs` |
 | 3.5 | `fs_watch` sandbox-scoped / polling; process tools disabled | `src/computer/fs_watch.rs`, `src/tools/process.rs` |
