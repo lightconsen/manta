@@ -14,6 +14,7 @@ pub(super) async fn handle_mcp_list(req: &WsRequest, state: &Arc<GatewayState>) 
                 crate::mcp::McpTransport::Stdio => "stdio",
                 crate::mcp::McpTransport::Sse => "sse",
                 crate::mcp::McpTransport::StreamableHttp => "streamable_http",
+                crate::mcp::McpTransport::InProcess => "in_process",
             },
             "command": cfg.command,
             "args": cfg.args,

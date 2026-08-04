@@ -20,6 +20,10 @@ pub enum McpTransport {
     Sse,
     /// POST requests with SSE response bodies (newer MCP spec)
     StreamableHttp,
+    /// A pure-Rust MCP server compiled into the app, connected over an
+    /// in-process `tokio::mpsc` channel instead of a child-process pipe
+    /// (mobile §4.6).
+    InProcess,
 }
 
 // ─────────────────────────────────────────────

@@ -9,6 +9,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use futures::StreamExt;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -21,6 +22,23 @@ use crate::mcp::{
     McpResourceContent, McpResponse, McpSamplingMessage, McpSamplingResult, McpServerCapabilities,
     McpServerConfig, McpServerInfo, McpToolDefinition, McpTransport,
 };
+
+// ─────────────────────────────────────────────
+// In-process transport (mobile §4.6)
+// ─────────────────────────────────────────────
+
+/// A pure-Rust MCP server compiled into the app. The `McpClient` sends JSON-RPC
+/// requests to the handler over a `tokio::mpsc` channel instead of a
+/// child-process stdio pipe, so mobile builds with no subprocess support can
+/// still serve MCP tools.
+#[async_trait]
+pub(crate) trait McpInProcessHandler: std::fmt::Debug + Send + Sync {
+    /// Handle a single JSON-RPC request and produce the response. The returned
+    /// `McpResponse` carries the request's `id`; the client routes it back to
+    /// the pending caller (and forwards id-less notifications) exactly as it
+    /// does for the stdio/HTTP readers.
+    async fn handle(&self, request: McpRequest) -> McpResponse;
+}
 
 // ─────────────────────────────────────────────
 // McpClient (9.1, 9.3, 9.4, 9.6, 9.8)
@@ -57,6 +75,9 @@ pub struct McpClient {
     server_config: Option<McpServerConfig>,
     /// Bearer access token for remote OAuth MCP servers.
     access_token: Option<String>,
+    /// In-process server handler, when the connection uses the in-process
+    /// channel transport (mobile §4.6).
+    in_process_handler: Option<Arc<dyn McpInProcessHandler>>,
 }
 
 impl McpClient {
@@ -76,7 +97,17 @@ impl McpClient {
             timeout_secs: 30,
             server_config: None,
             access_token: None,
+            in_process_handler: None,
         }
+    }
+
+    /// Register the in-process server handler used by the `InProcess`
+    /// transport (mobile §4.6). Call before `connect()` with
+    /// `McpTransport::InProcess`. Wired in-crate by the mobile host / MCP
+    /// manager; the handler trait is `pub(crate)`.
+    #[cfg_attr(not(test), allow(dead_code))] // exercised by tests; wired by the mobile host
+    pub(crate) fn set_in_process_handler(&mut self, handler: Arc<dyn McpInProcessHandler>) {
+        self.in_process_handler = Some(handler);
     }
 
     /// Set the request timeout (9.3)
@@ -184,6 +215,25 @@ impl McpClient {
         }
     }
 
+    /// Route an inbound `McpResponse` to its pending caller (by JSON-RPC id),
+    /// or forward it as a server notification when it has no id. Shared by the
+    /// stdio, SSE, streamable-HTTP, and in-process readers.
+    async fn route_response(
+        response: McpResponse,
+        response_channels: &Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<McpResponse>>>>,
+        notification_tx: &Option<mpsc::UnboundedSender<McpNotification>>,
+        progress_tx: &Option<broadcast::Sender<McpNotification>>,
+    ) {
+        if let Some(id) = response.id {
+            let channels = response_channels.read().await;
+            if let Some(tx) = channels.get(&id) {
+                let _ = tx.send(response);
+            }
+        } else if let Some(notification) = McpClient::parse_notification(&response) {
+            McpClient::emit_notification(notification, notification_tx, progress_tx);
+        }
+    }
+
     // ── Stdio transport ──────────────────────────────────────────────────────
 
     /// Connect via stdio subprocess (9.1, 9.3, 9.4, 9.8)
@@ -264,20 +314,13 @@ impl McpClient {
             let mut lines = stdout_reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Ok(response) = serde_json::from_str::<McpResponse>(&line) {
-                    if let Some(id) = response.id {
-                        let channels = response_channels.read().await;
-                        if let Some(tx) = channels.get(&id) {
-                            let _ = tx.send(response);
-                        }
-                    } else {
-                        if let Some(notification) = McpClient::parse_notification(&response) {
-                            McpClient::emit_notification(
-                                notification,
-                                &notification_tx,
-                                &progress_tx,
-                            );
-                        }
-                    }
+                    McpClient::route_response(
+                        response,
+                        &response_channels,
+                        &notification_tx,
+                        &progress_tx,
+                    )
+                    .await;
                 }
             }
         });
@@ -430,22 +473,13 @@ impl McpClient {
                                     let data = data.trim();
                                     if let Ok(response) = serde_json::from_str::<McpResponse>(data)
                                     {
-                                        if let Some(id) = response.id {
-                                            let channels = response_channels_sse.read().await;
-                                            if let Some(tx) = channels.get(&id) {
-                                                let _ = tx.send(response);
-                                            }
-                                        } else {
-                                            if let Some(notification) =
-                                                McpClient::parse_notification(&response)
-                                            {
-                                                McpClient::emit_notification(
-                                                    notification,
-                                                    &notification_tx_sse,
-                                                    &progress_tx_sse,
-                                                );
-                                            }
-                                        }
+                                        McpClient::route_response(
+                                            response,
+                                            &response_channels_sse,
+                                            &notification_tx_sse,
+                                            &progress_tx_sse,
+                                        )
+                                        .await;
                                     }
                                 }
                             }
@@ -580,22 +614,13 @@ impl McpClient {
                                         if let Ok(response) =
                                             serde_json::from_str::<McpResponse>(data)
                                         {
-                                            if let Some(id) = response.id {
-                                                let channels = response_channels.read().await;
-                                                if let Some(tx) = channels.get(&id) {
-                                                    let _ = tx.send(response);
-                                                }
-                                            } else {
-                                                if let Some(notification) =
-                                                    McpClient::parse_notification(&response)
-                                                {
-                                                    McpClient::emit_notification(
-                                                        notification,
-                                                        &notification_tx_http,
-                                                        &progress_tx_http,
-                                                    );
-                                                }
-                                            }
+                                            McpClient::route_response(
+                                                response,
+                                                &response_channels,
+                                                &notification_tx_http,
+                                                &progress_tx_http,
+                                            )
+                                            .await;
                                         }
                                     }
                                 }
@@ -615,12 +640,63 @@ impl McpClient {
         Ok(())
     }
 
+    // ── In-process transport (mobile §4.6) ───────────────────────────────────
+
+    /// Connect to a pure-Rust MCP server compiled into the app. Requests flow
+    /// over a `tokio::mpsc` channel to `handler` instead of a child-process
+    /// stdio pipe; responses are routed back through the same id-based
+    /// machinery as the other transports.
+    pub(crate) async fn connect_in_process(
+        &mut self,
+        config: McpServerConfig,
+        handler: Arc<dyn McpInProcessHandler>,
+    ) -> crate::Result<()> {
+        info!("Connecting to MCP server via in-process channel");
+
+        self.timeout_secs = config.timeout_secs;
+        self.server_config = Some(config.clone());
+
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel::<McpRequest>();
+        self.request_tx = Some(request_tx);
+
+        let response_channels = self.response_channels.clone();
+        let notification_tx = self.notification_tx.clone();
+        let progress_tx = self.progress_tx.clone();
+
+        tokio::spawn(async move {
+            while let Some(request) = request_rx.recv().await {
+                let response = handler.handle(request).await;
+                McpClient::route_response(
+                    response,
+                    &response_channels,
+                    &notification_tx,
+                    &progress_tx,
+                )
+                .await;
+            }
+        });
+
+        self.initialize().await?;
+        info!("Connected to MCP server via in-process channel");
+        Ok(())
+    }
+
     /// Connect using the transport specified in `config`
     pub async fn connect(&mut self, config: McpServerConfig) -> crate::Result<()> {
         match config.transport {
             McpTransport::Stdio => self.connect_stdio(config).await,
             McpTransport::Sse => self.connect_sse(config).await,
             McpTransport::StreamableHttp => self.connect_streamable_http(config).await,
+            McpTransport::InProcess => {
+                let handler = self.in_process_handler.as_ref().ok_or_else(|| {
+                    crate::error::SyscityError::Internal(
+                        "in-process MCP transport requires a registered handler \
+                         (call set_in_process_handler first)"
+                            .to_string(),
+                    )
+                })?;
+                self.connect_in_process(config, Arc::clone(handler)).await
+            }
         }
     }
 

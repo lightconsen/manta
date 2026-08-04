@@ -58,6 +58,7 @@ pub mod patch;
 pub mod pdf;
 pub mod planner;
 pub mod process;
+pub mod process_runner;
 pub mod report;
 pub mod sandbox;
 pub mod sandbox_interceptor;
@@ -93,6 +94,7 @@ pub use nodes::NodesTool;
 pub use patch::ApplyPatchTool;
 pub use pdf::PdfTool;
 pub use process::ProcessTool;
+pub use process_runner::{CommandOutput, ProcessError, ProcessRequest, ProcessRunner, StdioMode};
 pub use report::WriteReportTool;
 pub use sandbox::{SandboxConfig, SandboxedTool};
 pub use sdk::{

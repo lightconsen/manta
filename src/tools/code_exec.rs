@@ -4,18 +4,18 @@
 //! other tools programmatically via RPC. This enables self-orchestration and
 //! collapses multi-step chains into single inference turns.
 
-use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::process_runner::{ProcessError, ProcessRequest, StdioMode};
 use crate::tools::sdk::ToolCapabilities;
 
 /// Code execution sandbox configuration
@@ -174,58 +174,70 @@ print(json.dumps(result))
             format!("    exec(compile({:?}, '<string>', 'exec'), exec_globals, exec_locals)", code);
         let wrapped_code = format!("{}{}{}", header, code_escaped, footer);
 
-        // Spawn Python process
-        let mut cmd = Command::new("python3");
-        cmd.arg("-c")
-            .arg(&wrapped_code)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null());
+        // Spawn Python process via the platform process runner
+        let mut req = ProcessRequest {
+            argv: vec!["python3".to_string(), "-c".to_string(), wrapped_code],
+            stdio: StdioMode::Piped,
+            ..Default::default()
+        };
 
         // Apply resource limits via pre_exec (Unix only)
         #[cfg(unix)]
         {
             let max_memory_mb = self.config.max_memory_mb;
 
-            #[allow(unsafe_code)]
-            unsafe {
-                cmd.pre_exec(move || {
-                    // Memory limit (RLIMIT_AS)
-                    let mem_bytes = max_memory_mb * 1024 * 1024;
-                    let limit = libc::rlimit {
-                        rlim_cur: mem_bytes as libc::rlim_t,
-                        rlim_max: mem_bytes as libc::rlim_t,
-                    };
-                    let _ = libc::setrlimit(libc::RLIMIT_AS, &limit);
+            // SAFETY: pre_exec runs in the child process after fork but before exec.
+            // We only call async-signal-safe libc functions (setrlimit) here, which
+            // is the documented safety requirement for pre_exec callbacks.
+            let pre_exec: Arc<dyn Fn() -> std::io::Result<()> + Send + Sync> =
+                Arc::new(move || {
+                    #[allow(unsafe_code)]
+                    unsafe {
+                        // Memory limit (RLIMIT_AS)
+                        let mem_bytes = max_memory_mb * 1024 * 1024;
+                        let limit = libc::rlimit {
+                            rlim_cur: mem_bytes as libc::rlim_t,
+                            rlim_max: mem_bytes as libc::rlim_t,
+                        };
+                        let _ = libc::setrlimit(libc::RLIMIT_AS, &limit);
 
-                    // CPU limit
-                    let limit = libc::rlimit {
-                        rlim_cur: timeout_secs as libc::rlim_t,
-                        rlim_max: timeout_secs as libc::rlim_t,
-                    };
-                    let _ = libc::setrlimit(libc::RLIMIT_CPU, &limit);
+                        // CPU limit
+                        let limit = libc::rlimit {
+                            rlim_cur: timeout_secs as libc::rlim_t,
+                            rlim_max: timeout_secs as libc::rlim_t,
+                        };
+                        let _ = libc::setrlimit(libc::RLIMIT_CPU, &limit);
 
-                    // File descriptor limit
-                    let limit = libc::rlimit { rlim_cur: 256, rlim_max: 256 };
-                    let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
+                        // File descriptor limit
+                        let limit = libc::rlimit { rlim_cur: 256, rlim_max: 256 };
+                        let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
 
-                    // Process limit (prevent fork bombs).
-                    // Skip on macOS: RLIMIT_NPROC is per-user and interferes with
-                    // pyenv and other multi-process toolchains.
-                    #[cfg(target_os = "linux")]
-                    {
-                        let limit = libc::rlimit { rlim_cur: 64, rlim_max: 64 };
-                        let _ = libc::setrlimit(libc::RLIMIT_NPROC, &limit);
+                        // Process limit (prevent fork bombs).
+                        // Skip on macOS: RLIMIT_NPROC is per-user and interferes with
+                        // pyenv and other multi-process toolchains.
+                        #[cfg(target_os = "linux")]
+                        {
+                            let limit = libc::rlimit { rlim_cur: 64, rlim_max: 64 };
+                            let _ = libc::setrlimit(libc::RLIMIT_NPROC, &limit);
+                        }
+
+                        Ok(())
                     }
-
-                    Ok(())
                 });
-            }
+            req.pre_exec = Some(pre_exec);
         }
 
-        let mut child = cmd.spawn().map_err(|e| {
-            crate::error::SyscityError::Internal(format!("Failed to spawn Python: {}", e))
-        })?;
+        let mut child = crate::tools::process_runner::spawn(&req)
+            .await
+            .map_err(|e| {
+                let msg = match e {
+                    ProcessError::Spawn { source, .. } => {
+                        format!("Failed to spawn Python: {}", source)
+                    }
+                    other => format!("Failed to spawn Python: {}", other),
+                };
+                crate::error::SyscityError::Internal(msg)
+            })?;
 
         // Wait for execution with timeout
         let timeout_duration = Duration::from_secs(timeout_secs);
@@ -303,6 +315,145 @@ print(json.dumps(result))
             }
         }
     }
+
+    /// Execute a wasm32-wasi command module inside a sandboxed wasmtime
+    /// instance (§4.5).
+    ///
+    /// `code` carries base64-encoded module bytes (or WAT text — wasmtime
+    /// parses both). The guest must export `_start`. Guest stdout/stderr are
+    /// captured into bounded in-memory pipes and returned in the result.
+    ///
+    /// Execution is bounded by wasmtime fuel metering scaled to the requested
+    /// timeout; exhausting fuel traps the guest as a timeout (fuel is the
+    /// primary bound — every wasm instruction burns fuel, so a runaway guest
+    /// is always interrupted). The guest gets stdin/stdout/stderr only: no
+    /// filesystem, network, or env preopens.
+    #[cfg(feature = "plugins")]
+    async fn execute_wasm(&self, code: &str, timeout_secs: u64) -> crate::Result<CodeResult> {
+        use base64::Engine;
+
+        let wasm_bytes = base64::engine::general_purpose::STANDARD
+            .decode(code.trim())
+            .map_err(|e| {
+                crate::error::SyscityError::Validation(format!(
+                    "language=wasm expects base64-encoded wasm32-wasi module bytes: {}",
+                    e
+                ))
+            })?;
+        if wasm_bytes.len() > 2 * 1024 * 1024 {
+            return Err(crate::error::SyscityError::Validation(
+                "WASM module exceeds the 2 MiB size limit".to_string(),
+            ));
+        }
+
+        // Capture guest output into bounded in-memory pipes instead of
+        // inheriting stdio, so results return to the tool caller. Writes past
+        // the pipe capacity trap the guest, enforcing the output budget.
+        let stdout_pipe =
+            wasmtime_wasi::p2::pipe::MemoryOutputPipe::new(self.config.max_output_size);
+        let stderr_pipe =
+            wasmtime_wasi::p2::pipe::MemoryOutputPipe::new(self.config.max_output_size);
+
+        // Compile on the calling thread — bounded by the 2 MiB size cap
+        // above. wasmtime parses both the wasm binary and WAT text formats.
+        // Fuel metering bounds execution time; the stack cap bounds recursion.
+        // No strategy override — the default engine (Cranelift JIT on desktop,
+        // Pulley interpreter on iOS) is chosen by the platform.
+        let mut config = wasmtime::Config::default();
+        config.consume_fuel(true);
+        config.max_wasm_stack(512 * 1024);
+        let engine = wasmtime::Engine::new(&config).map_err(|e| {
+            crate::error::SyscityError::Internal(format!("WASM engine init failed: {}", e))
+        })?;
+        let module = wasmtime::Module::new(&engine, &wasm_bytes).map_err(|e| {
+            crate::error::SyscityError::Validation(format!("Invalid WASM module: {}", e))
+        })?;
+
+        // wasmtime's WASI preview1 shim drives async host streams through
+        // `in_tokio`, which `block_on`s the ambient runtime handle. From
+        // inside a tokio task that `block_on` panics ("cannot start a runtime
+        // from within a runtime"), so the (blocking) wasm call runs on a
+        // blocking thread where there is no ambient runtime. Fuel metering is
+        // the hard execution bound; the tokio timeout below is a caller-side
+        // upper bound.
+        let stdout_writer = stdout_pipe.clone();
+        let stderr_writer = stderr_pipe.clone();
+        let call_handle = tokio::task::spawn_blocking(move || {
+            let wasi_ctx = wasmtime_wasi::WasiCtxBuilder::new()
+                .stdout(stdout_writer)
+                .stderr(stderr_writer)
+                .build_p1();
+            let mut store = wasmtime::Store::new(&engine, wasi_ctx);
+            // ~1e8 instructions per second is a conservative fuel burn rate.
+            store.set_fuel(timeout_secs.saturating_mul(100_000_000))?;
+            let mut linker = wasmtime::Linker::new(&engine);
+            wasmtime_wasi::p1::add_to_linker_sync(
+                &mut linker,
+                |ctx: &mut wasmtime_wasi::p1::WasiP1Ctx| ctx,
+            )?;
+            let instance = linker.instantiate(&mut store, &module)?;
+            // The error for a missing export names `_start`, which the caller
+            // surfaces in the result.
+            let start = instance.get_typed_func::<(), ()>(&mut store, "_start")?;
+            start.call(&mut store, ())
+        });
+
+        // `timeout` awaits the JoinHandle itself, so the value here is
+        // `Result<Result<(), wasmtime::Error>, JoinError>`.
+        let join_result = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs.saturating_add(5)),
+            call_handle,
+        )
+        .await
+        .map_err(|_| {
+            crate::error::SyscityError::Internal(format!(
+                "Code execution timed out after {} seconds",
+                timeout_secs
+            ))
+        })?;
+
+        let call_result = join_result.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("WASM execution task failed: {}", e))
+        })?;
+
+        let mut stderr_str = match call_result {
+            Ok(()) => String::new(),
+            Err(e) => {
+                if e.downcast_ref::<wasmtime::Trap>()
+                    .is_some_and(|t| matches!(t, wasmtime::Trap::OutOfFuel))
+                {
+                    return Err(crate::error::SyscityError::Internal(format!(
+                        "Code execution timed out after {} seconds",
+                        timeout_secs
+                    )));
+                }
+                format!("WASM execution failed: {}", e)
+            }
+        };
+        let exit_code = if stderr_str.is_empty() { 0 } else { -1 };
+
+        let stdout_str = String::from_utf8_lossy(stdout_pipe.contents().as_ref()).to_string();
+        if stderr_str.is_empty() {
+            stderr_str = String::from_utf8_lossy(stderr_pipe.contents().as_ref()).to_string();
+        }
+
+        // Parse a trailing `__PTC_RESULT__` JSON marker if the guest emitted
+        // one (same contract as the Python path).
+        let ptc_result = if let Some(idx) = stdout_str.find("__PTC_RESULT__") {
+            let json_part = &stdout_str[idx + "__PTC_RESULT__".len()..];
+            serde_json::from_str(json_part.trim())
+                .unwrap_or_else(|_| json!({"success": exit_code == 0}))
+        } else {
+            json!({"success": exit_code == 0})
+        };
+
+        Ok(CodeResult {
+            stdout: stdout_str,
+            stderr: stderr_str,
+            exit_code,
+            result: ptc_result,
+        })
+    }
 }
 
 /// Result of code execution
@@ -326,6 +477,8 @@ impl Tool for CodeExecutionTool {
 
     fn description(&self) -> &str {
         r#"Execute Python code in a sandboxed environment.
+On mobile, `language=wasm` additionally runs base64-encoded wasm32-wasi modules
+in an in-process sandbox (the desktop subprocess interpreter is unavailable).
 
 Use this tool to:
 - Perform calculations or data processing
@@ -359,18 +512,24 @@ print(json.dumps({"average": result, "count": len(data)}))
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
+        let mut languages = vec!["python".to_string()];
+        // Mobile exposes the in-process WASM engine (§4.5); desktop keeps the
+        // subprocess Python interpreter.
+        #[cfg(feature = "plugins")]
+        languages.push("wasm".to_string());
+
         json!({
             "type": "object",
             "properties": {
                 "language": {
                     "type": "string",
-                    "enum": ["python"],
+                    "enum": languages,
                     "description": "Programming language",
                     "default": "python"
                 },
                 "code": {
                     "type": "string",
-                    "description": "The code to execute"
+                    "description": "Python source to execute, or (language=wasm) base64-encoded wasm32-wasi module bytes"
                 },
                 "timeout": {
                     "type": "integer",
@@ -394,21 +553,19 @@ print(json.dumps({"average": result, "count": len(data)}))
 
         let language = args["language"].as_str().unwrap_or("python");
 
-        if language != "python" {
-            return Err(crate::error::SyscityError::Validation(format!(
-                "Unsupported language: {}",
-                language
-            )));
-        }
-
-        // Validate code for security
-        match self.validate_code(code) {
-            Ok(()) => {}
-            Err(violations) => {
-                return Ok(ToolExecutionResult::error(format!(
-                    "Code validation failed:\n{}",
-                    violations.join("\n")
-                )));
+        // Python source is statically screened for forbidden imports/patterns
+        // before it is handed to the interpreter. WASM input is base64 text the
+        // Python checks do not apply to — the wasmtime sandbox is its security
+        // boundary.
+        if language == "python" {
+            match self.validate_code(code) {
+                Ok(()) => {}
+                Err(violations) => {
+                    return Ok(ToolExecutionResult::error(format!(
+                        "Code validation failed:\n{}",
+                        violations.join("\n")
+                    )));
+                }
             }
         }
 
@@ -418,7 +575,29 @@ print(json.dumps({"average": result, "count": len(data)}))
         debug!("Code: {}", code.chars().take(200).collect::<String>());
 
         // Execute the code
-        match self.execute_python(code, context, timeout_secs).await {
+        let result = match language {
+            "python" => self.execute_python(code, context, timeout_secs).await,
+            "wasm" => {
+                #[cfg(feature = "plugins")]
+                {
+                    self.execute_wasm(code, timeout_secs).await
+                }
+                #[cfg(not(feature = "plugins"))]
+                {
+                    Err(crate::error::SyscityError::Validation(
+                        "`wasm` execution requires the `plugins` feature".to_string(),
+                    ))
+                }
+            }
+            other => {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Unsupported language: {}",
+                    other
+                )));
+            }
+        };
+
+        match result {
             Ok(result) => {
                 let success =
                     result.exit_code == 0 && result.result["success"].as_bool().unwrap_or(true);
@@ -456,6 +635,18 @@ print(json.dumps({"average": result, "count": len(data)}))
             risk_level: crate::tools::approval::RiskLevel::High,
             categories: vec!["system".to_string(), "exec".to_string()],
             ..ToolCapabilities::default()
+        }
+    }
+
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        if cfg!(mobile_os) {
+            // Mobile has no subprocess interpreters — availability comes from
+            // the in-process wasmtime engine (§4.5), which the `plugins`
+            // feature pulls in (the mobile profile enables it).
+            cfg!(feature = "plugins")
+        } else {
+            // Desktop: subprocess Python interpreter.
+            true
         }
     }
 }
@@ -672,11 +863,10 @@ mod tests {
     #[tokio::test]
     async fn test_execute_python_timeout() {
         // Skip if python3 is not available in the test environment.
-        let python_check = tokio::process::Command::new("python3")
-            .arg("--version")
-            .output()
-            .await;
-        if python_check.map(|o| !o.status.success()).unwrap_or(true) {
+        let python_check =
+            crate::tools::process_runner::run(&ProcessRequest::argv(&["python3", "--version"]))
+                .await;
+        if python_check.map(|o| !o.success()).unwrap_or(true) {
             return;
         }
 
@@ -702,5 +892,104 @@ mod tests {
             "code execution was not killed within timeout: {:?}",
             elapsed
         );
+    }
+
+    // ── WASM in-process engine (P3.3, §4.5) ──
+
+    /// wasm32-wasi command that writes "hello from wasm\n" to stdout via
+    /// fd_write (fd 1), then exits normally. Passed as WAT — wasmtime's
+    /// `Module::new` parses the text format directly.
+    #[cfg(feature = "plugins")]
+    fn wasm_hello_wat() -> String {
+        r#"
+(module
+  (import "wasi_snapshot_preview1" "fd_write"
+    (func $fd_write (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 8) "hello from wasm\n")
+  (func (export "_start")
+    (i32.store (i32.const 0) (i32.const 8))
+    (i32.store (i32.const 4) (i32.const 16))
+    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 32)))))
+"#
+        .to_string()
+    }
+
+    /// wasm32-wasi command with a tight infinite loop — exercises the fuel
+    /// metering timeout.
+    #[cfg(feature = "plugins")]
+    fn wasm_infinite_loop_wat() -> String {
+        r#"
+(module
+  (func (export "_start")
+    (loop (br 0))))
+"#
+        .to_string()
+    }
+
+    #[cfg(feature = "plugins")]
+    #[tokio::test]
+    async fn test_execute_wasm_hello() {
+        use base64::Engine;
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        let code = base64::engine::general_purpose::STANDARD.encode(wasm_hello_wat());
+        let args = serde_json::json!({"language": "wasm", "code": code});
+        let result = tool.execute(args, &ctx).await.unwrap();
+        assert!(result.success, "expected success, got {:?}", result.error);
+        assert!(result.output.contains("hello from wasm"));
+    }
+
+    #[cfg(feature = "plugins")]
+    #[tokio::test]
+    async fn test_execute_wasm_timeout() {
+        use base64::Engine;
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        let code = base64::engine::general_purpose::STANDARD.encode(wasm_infinite_loop_wat());
+        let args = serde_json::json!({"language": "wasm", "code": code, "timeout": 1});
+        let result = tool.execute(args, &ctx).await.unwrap();
+        assert!(!result.success, "infinite loop should not succeed");
+        assert!(
+            result.error.as_ref().unwrap().contains("timed out"),
+            "expected fuel-exhaustion timeout, got {:?}",
+            result.error
+        );
+    }
+
+    #[cfg(feature = "plugins")]
+    #[tokio::test]
+    async fn test_execute_wasm_invalid_module() {
+        use base64::Engine;
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        let code = base64::engine::general_purpose::STANDARD.encode(b"not a wasm module");
+        let args = serde_json::json!({"language": "wasm", "code": code});
+        let result = tool.execute(args, &ctx).await.unwrap();
+        assert!(!result.success);
+        assert!(
+            result
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Invalid WASM module"),
+            "got {:?}",
+            result.error
+        );
+    }
+
+    #[cfg(feature = "plugins")]
+    #[tokio::test]
+    async fn test_execute_wasm_missing_start() {
+        use base64::Engine;
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        // Valid module, but not a command — no `_start` export.
+        let wat = "(module (memory (export \"memory\") 1))";
+        let code = base64::engine::general_purpose::STANDARD.encode(wat);
+        let args = serde_json::json!({"language": "wasm", "code": code});
+        let result = tool.execute(args, &ctx).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("_start"), "got {:?}", result.error);
     }
 }

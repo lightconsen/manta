@@ -888,3 +888,36 @@ impl GatewayConfig {
         changes
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: the auto-generated default config written by the desktop
+    /// shell (and mobile hosts) must round-trip through the TOML parser. A
+    /// hand-written template drifted out of sync with GatewayConfig's schema
+    /// (missing `security.rate_limit`, `[model]` as a table instead of flat
+    /// keys) and silently fell back to defaults on the next start.
+    #[test]
+    fn default_config_round_trips() {
+        let toml_str =
+            toml::to_string_pretty(&GatewayConfig::default()).expect("serialize default config");
+        // The serialized form must use the flat model keys, not a [model] table.
+        assert!(toml_str.contains("\nmodel = "), "flat model key missing");
+        assert!(!toml_str.contains("\n[model]\n"), "[model] table should not exist");
+        // And the security section must carry the required rate_limit table.
+        assert!(
+            toml_str.contains("[security.rate_limit]"),
+            "security.rate_limit missing from default config"
+        );
+
+        let parsed: GatewayConfig =
+            toml::from_str(&toml_str).expect("default config must re-parse");
+        assert_eq!(parsed.model, default_model());
+        assert_eq!(parsed.model_provider, default_model_provider());
+        assert_eq!(parsed.security.auth_mode, crate::gateway::protocol::AuthMode::None);
+        assert!(!parsed.security.auth_required);
+        assert_eq!(parsed.host, "127.0.0.1");
+        assert_eq!(parsed.port, 18080);
+    }
+}

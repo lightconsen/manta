@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::process_runner::{ProcessError, ProcessRequest};
 use crate::tools::sdk::ToolCapabilities;
 
 /// Apply a unified diff patch to files.
@@ -71,6 +72,11 @@ impl Tool for ApplyPatchTool {
             categories: vec!["file".to_string(), "write".to_string()],
             ..Default::default()
         }
+    }
+
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        // Applies patches via the `git` CLI; no mobile equivalent (§4.4).
+        !cfg!(mobile_os)
     }
 
     async fn execute(
@@ -138,25 +144,29 @@ impl Tool for ApplyPatchTool {
             }
         }
 
-        let result = tokio::time::timeout(
-            Duration::from_secs(30),
-            tokio::process::Command::new("git")
-                .args(["apply", "--check", patch_file.to_str().unwrap_or("")])
-                .current_dir(&target_dir)
-                .output(),
-        )
+        let result = crate::tools::process_runner::run(&ProcessRequest {
+            argv: vec![
+                "git".into(),
+                "apply".into(),
+                "--check".into(),
+                patch_file.to_str().unwrap_or("").into(),
+            ],
+            cwd: Some(target_dir.clone()),
+            timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
+        })
         .await;
 
         match result {
-            Ok(Ok(output)) if output.status.success() => {}
-            Ok(Ok(output)) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
+            Ok(output) if output.success() => {}
+            Ok(output) => {
+                let stderr = output.stderr_string();
                 let stderr_msg = if stderr.is_empty() {
                     String::from(
                         "Patch does not apply cleanly. Check the patch format and target files.",
                     )
                 } else {
-                    stderr.into_owned()
+                    stderr
                 };
                 let _ = tokio::fs::remove_file(&patch_file).await;
                 return Ok(ToolExecutionResult {
@@ -167,71 +177,64 @@ impl Tool for ApplyPatchTool {
                     execution_time: start.elapsed(),
                 });
             }
-            Ok(Err(e)) => {
+            Err(e) => {
                 let _ = tokio::fs::remove_file(&patch_file).await;
+                let msg = match e {
+                    ProcessError::Timeout { .. } => "Patch check timed out.".to_string(),
+                    other => format!("Patch execution failed: {}", other),
+                };
                 return Ok(ToolExecutionResult {
                     success: false,
                     output: String::new(),
-                    error: Some(format!("Patch execution failed: {}", e)),
-                    data: None,
-                    execution_time: start.elapsed(),
-                });
-            }
-            Err(_) => {
-                let _ = tokio::fs::remove_file(&patch_file).await;
-                return Ok(ToolExecutionResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Patch check timed out.".to_string()),
+                    error: Some(msg),
                     data: None,
                     execution_time: start.elapsed(),
                 });
             }
         }
 
-        let apply_result = tokio::time::timeout(
-            Duration::from_secs(30),
-            tokio::process::Command::new("git")
-                .args(["apply", patch_file.to_str().unwrap_or("")])
-                .current_dir(&target_dir)
-                .output(),
-        )
+        let apply_result = crate::tools::process_runner::run(&ProcessRequest {
+            argv: vec![
+                "git".into(),
+                "apply".into(),
+                patch_file.to_str().unwrap_or("").into(),
+            ],
+            cwd: Some(target_dir.clone()),
+            timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
+        })
         .await;
 
         let _ = tokio::fs::remove_file(&patch_file).await;
 
         match apply_result {
-            Ok(Ok(output)) if output.status.success() => Ok(ToolExecutionResult {
+            Ok(output) if output.success() => Ok(ToolExecutionResult {
                 success: true,
                 output: "Patch applied successfully".to_string(),
                 error: None,
                 data: None,
                 execution_time: start.elapsed(),
             }),
-            Ok(Ok(output)) => Ok(ToolExecutionResult {
+            Ok(output) => Ok(ToolExecutionResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!(
-                    "Patch application failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                )),
+                error: Some(format!("Patch application failed: {}", output.stderr_string())),
                 data: None,
                 execution_time: start.elapsed(),
             }),
-            Ok(Err(e)) => Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to run git apply: {}", e)),
-                data: None,
-                execution_time: start.elapsed(),
-            }),
-            Err(_) => Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some("Patch application timed out".to_string()),
-                data: None,
-                execution_time: start.elapsed(),
-            }),
+            Err(e) => {
+                let msg = match e {
+                    ProcessError::Timeout { .. } => "Patch application timed out".to_string(),
+                    other => format!("Failed to run git apply: {}", other),
+                };
+                Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(msg),
+                    data: None,
+                    execution_time: start.elapsed(),
+                })
+            }
         }
     }
 }

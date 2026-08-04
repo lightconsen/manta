@@ -422,6 +422,7 @@ Actions:
                 let transport = match args["transport"].as_str().unwrap_or("stdio") {
                     "sse" => McpTransport::Sse,
                     "streamable_http" => McpTransport::StreamableHttp,
+                    "in_process" => McpTransport::InProcess,
                     _ => McpTransport::Stdio,
                 };
 

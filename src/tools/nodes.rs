@@ -10,6 +10,7 @@ use serde_json::Value;
 use tracing::warn;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::process_runner::ProcessRequest;
 use crate::tools::sdk::ToolCapabilities;
 
 /// Nodes discovery and control tool
@@ -75,12 +76,14 @@ struct TailscaleNode {
 /// Fetch Tailscale node list via tailscale CLI API
 async fn fetch_tailscale_nodes() -> Vec<TailscaleNode> {
     // Try tailscale status --json
-    let output = match tokio::process::Command::new("tailscale")
-        .args(["status", "--json"])
-        .output()
-        .await
+    let output = match crate::tools::process_runner::run(&ProcessRequest::argv(&[
+        "tailscale",
+        "status",
+        "--json",
+    ]))
+    .await
     {
-        Ok(o) if o.status.success() => o.stdout,
+        Ok(o) if o.success() => o.stdout,
         _ => return Vec::new(),
     };
 
@@ -191,6 +194,11 @@ impl Tool for NodesTool {
         }
     }
 
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        // Drives the `tailscale` CLI; no mobile equivalent (§4.4).
+        !cfg!(mobile_os)
+    }
+
     async fn execute(
         &self,
         args: Value,
@@ -211,12 +219,11 @@ impl Tool for NodesTool {
         };
 
         // Check if tailscale is available
-        let tailscale_available = tokio::process::Command::new("tailscale")
-            .arg("version")
-            .output()
-            .await
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        let tailscale_available =
+            crate::tools::process_runner::run(&ProcessRequest::argv(&["tailscale", "version"]))
+                .await
+                .map(|o| o.success())
+                .unwrap_or(false);
 
         if !tailscale_available {
             return Ok(ToolExecutionResult {
@@ -300,16 +307,20 @@ impl Tool for NodesTool {
                 })
             }
             NodesAction::Ping { node_id } => {
-                let output = tokio::process::Command::new("tailscale")
-                    .args(["ping", "-c", "3", &node_id])
-                    .output()
-                    .await;
+                let output = crate::tools::process_runner::run(&ProcessRequest::argv(&[
+                    "tailscale",
+                    "ping",
+                    "-c",
+                    "3",
+                    &node_id,
+                ]))
+                .await;
 
                 match output {
                     Ok(o) => {
-                        let stdout = String::from_utf8_lossy(&o.stdout);
-                        let stderr = String::from_utf8_lossy(&o.stderr);
-                        let success = o.status.success();
+                        let stdout = o.stdout_string();
+                        let stderr = o.stderr_string();
+                        let success = o.success();
 
                         Ok(ToolExecutionResult {
                             success,
@@ -325,7 +336,7 @@ impl Tool for NodesTool {
                             },
                             data: Some(serde_json::json!({
                                 "node_id": node_id,
-                                "exit_code": o.status.code(),
+                                "exit_code": o.exit_code(),
                             })),
                             execution_time: start.elapsed(),
                         })
@@ -390,13 +401,15 @@ impl Tool for NodesTool {
             }
             NodesAction::LocationGet { node_id } => {
                 // Try to get location from tailscale status --json (may include geo info)
-                let output = tokio::process::Command::new("tailscale")
-                    .args(["status", "--json"])
-                    .output()
-                    .await;
+                let output = crate::tools::process_runner::run(&ProcessRequest::argv(&[
+                    "tailscale",
+                    "status",
+                    "--json",
+                ]))
+                .await;
 
                 match output {
-                    Ok(o) if o.status.success() => {
+                    Ok(o) if o.success() => {
                         let _json: Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
                         // Tailscale doesn't expose location directly; this is a placeholder
                         Ok(ToolExecutionResult {

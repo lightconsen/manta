@@ -5,17 +5,16 @@
 //! that can run in the background and be queried/stopped later.
 
 use std::collections::HashMap;
-use std::process::Stdio;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::process::Command;
 use tokio::sync::RwLock;
 use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::process_runner::{ProcessError, ProcessRequest};
 use crate::tools::sdk::ToolCapabilities;
 
 /// Status of a background process
@@ -186,6 +185,11 @@ impl Tool for ProcessTool {
         }
     }
 
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        // Subprocess management; no mobile equivalent (mobile migration §4.4).
+        !cfg!(mobile_os)
+    }
+
     async fn execute(
         &self,
         args: Value,
@@ -222,25 +226,19 @@ impl Tool for ProcessTool {
                     });
                 }
 
-                let mut cmd = Command::new(&command);
-                cmd.args(&cmd_args)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .stdin(Stdio::null());
+                let req = ProcessRequest {
+                    argv: std::iter::once(command.clone())
+                        .chain(cmd_args.iter().cloned())
+                        .collect(),
+                    cwd: Some(match working_dir {
+                        Some(dir) => std::path::PathBuf::from(dir),
+                        None => context.working_directory().clone(),
+                    }),
+                    env: env.unwrap_or_default(),
+                    ..Default::default()
+                };
 
-                if let Some(dir) = working_dir {
-                    cmd.current_dir(dir);
-                } else {
-                    cmd.current_dir(context.working_directory());
-                }
-
-                if let Some(vars) = env {
-                    for (k, v) in vars {
-                        cmd.env(k, v);
-                    }
-                }
-
-                match cmd.spawn() {
+                match crate::tools::process_runner::spawn(&req).await {
                     Ok(child) => {
                         let pid = child.id();
                         let process_id = uuid::Uuid::new_v4().to_string();
@@ -289,13 +287,21 @@ impl Tool for ProcessTool {
                             execution_time: start.elapsed(),
                         })
                     }
-                    Err(e) => Ok(ToolExecutionResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Failed to start process: {}", e)),
-                        data: None,
-                        execution_time: start.elapsed(),
-                    }),
+                    Err(e) => {
+                        let msg = match e {
+                            ProcessError::Spawn { source, .. } => {
+                                format!("Failed to start process: {}", source)
+                            }
+                            other => format!("Failed to start process: {}", other),
+                        };
+                        Ok(ToolExecutionResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some(msg),
+                            data: None,
+                            execution_time: start.elapsed(),
+                        })
+                    }
                 }
             }
             ProcessAction::Status { process_id } => match self.registry.get(&process_id).await {

@@ -47,10 +47,13 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    use async_trait::async_trait;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
+    use crate::mcp::client::McpInProcessHandler;
+    use crate::mcp::types::McpJsonRpcError;
     use crate::tools::Tool;
 
     #[test]
@@ -144,6 +147,124 @@ mod tests {
         .unwrap();
         assert_eq!(result.server_info.name, "test-server");
         assert!(result.capabilities.supports_tools());
+    }
+
+    /// Minimal in-process MCP server implementing initialize / tools/list /
+    /// tools/call over the in-process channel transport.
+    #[derive(Debug)]
+    struct FakeInProcessMcpServer;
+
+    #[async_trait]
+    impl McpInProcessHandler for FakeInProcessMcpServer {
+        async fn handle(&self, request: McpRequest) -> McpResponse {
+            let id = request.id;
+            match request.method.as_str() {
+                "initialize" => McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    method: None,
+                    params: None,
+                    result: Some(json!({
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": { "tools": {} },
+                        "serverInfo": { "name": "fake", "version": "1.0.0" },
+                    })),
+                    error: None,
+                },
+                "tools/list" => McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    method: None,
+                    params: None,
+                    result: Some(json!({
+                        "tools": [{
+                            "name": "echo",
+                            "description": "Echo text",
+                            "inputSchema": { "type": "object" }
+                        }]
+                    })),
+                    error: None,
+                },
+                "tools/call" => {
+                    let name = request
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let args = request
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("arguments"))
+                        .cloned()
+                        .unwrap_or(json!({}));
+                    McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id,
+                        method: None,
+                        params: None,
+                        result: Some(json!({
+                            "content": [{ "type": "text", "text": format!("{}: {}", name, args) }],
+                            "isError": false
+                        })),
+                        error: None,
+                    }
+                }
+                _ => McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    method: None,
+                    params: None,
+                    result: None,
+                    error: Some(McpJsonRpcError {
+                        code: -32601,
+                        message: format!("Method not found: {}", request.method),
+                        data: None,
+                    }),
+                },
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_in_process_transport_connect_and_call() {
+        let mut client = McpClient::new();
+        client.set_in_process_handler(Arc::new(FakeInProcessMcpServer));
+        let config = McpServerConfig {
+            transport: McpTransport::InProcess,
+            timeout_secs: 5,
+            ..Default::default()
+        };
+
+        client.connect(config).await.unwrap();
+        assert!(client.is_connected());
+
+        let tools = client.get_tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "echo");
+
+        let result = client
+            .call_tool("echo", json!({ "text": "hi" }))
+            .await
+            .unwrap();
+        let text = result
+            .get("content")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap();
+        assert!(text.contains("hi"));
+    }
+
+    #[tokio::test]
+    async fn test_in_process_transport_requires_handler() {
+        let mut client = McpClient::new();
+        let config = McpServerConfig {
+            transport: McpTransport::InProcess,
+            ..Default::default()
+        };
+        let err = client.connect(config).await.unwrap_err();
+        assert!(err.to_string().contains("registered handler"));
     }
 
     #[test]

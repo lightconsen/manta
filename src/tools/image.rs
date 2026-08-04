@@ -11,6 +11,7 @@ use serde_json::Value;
 use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::process_runner::ProcessRequest;
 use crate::tools::sdk::ToolCapabilities;
 
 #[allow(clippy::unwrap_used)] // Static regex with known-valid pattern.
@@ -140,12 +141,13 @@ impl Tool for ImageTool {
         let mut height = None::<u32>;
 
         // Try file command for basic dimensions
-        if let Ok(output) = tokio::process::Command::new("file")
-            .arg(path.to_str().unwrap_or(""))
-            .output()
-            .await
+        if let Ok(output) = crate::tools::process_runner::run(&ProcessRequest::argv(&[
+            "file",
+            path.to_str().unwrap_or(""),
+        ]))
+        .await
         {
-            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stdout = output.stdout_string();
             // Parse "640 x 480" from file output
             if let Some(caps) = RE_IMAGE_DIMS.captures(&stdout) {
                 width = caps.get(1).and_then(|m| m.as_str().parse().ok());

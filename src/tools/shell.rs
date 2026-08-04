@@ -3,15 +3,14 @@
 //! This tool allows the AI to execute shell commands in a sandboxed
 //! environment.
 
-use std::process::Stdio;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::process::Command;
-use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use crate::tools::process_runner::{ProcessError, ProcessRequest};
 use crate::tools::sdk::ToolCapabilities;
 
 /// Shell tool for executing commands
@@ -204,15 +203,15 @@ impl Tool for ShellTool {
 
         let start_time = std::time::Instant::now();
 
-        // Build the command with resource limits if sandboxed
-        let mut cmd = Command::new(&shell);
-        cmd.arg("-c")
-            .arg(command_str)
-            .current_dir(&working_dir)
-            .env_clear()
-            .envs(context.environment())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        // Build the request with resource limits if sandboxed
+        let mut req = ProcessRequest {
+            argv: vec![shell, "-c".to_string(), command_str.to_string()],
+            cwd: Some(working_dir),
+            env_clear: true,
+            env: context.environment().clone(),
+            timeout: Some(context.timeout()),
+            ..Default::default()
+        };
 
         // Apply resource limits in sandboxed mode (Unix only)
         #[cfg(unix)]
@@ -230,67 +229,69 @@ impl Tool for ShellTool {
                 // SAFETY: pre_exec runs in the child process after fork but before exec.
                 // We only call async-signal-safe libc functions (setrlimit) here, which
                 // is the documented safety requirement for pre_exec callbacks.
-                #[allow(unsafe_code)]
-                unsafe {
-                    cmd.pre_exec(move || {
-                        // Apply memory limit
-                        if let Some(limit_bytes) = memory_limit {
-                            let limit = libc::rlimit {
-                                rlim_cur: limit_bytes as libc::rlim_t,
-                                rlim_max: limit_bytes as libc::rlim_t,
-                            };
-                            if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
-                                return Err(std::io::Error::last_os_error());
+                let pre_exec: Arc<dyn Fn() -> std::io::Result<()> + Send + Sync> =
+                    Arc::new(move || {
+                        #[allow(unsafe_code)]
+                        unsafe {
+                            // Apply memory limit
+                            if let Some(limit_bytes) = memory_limit {
+                                let limit = libc::rlimit {
+                                    rlim_cur: limit_bytes as libc::rlim_t,
+                                    rlim_max: limit_bytes as libc::rlim_t,
+                                };
+                                if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
+                                    return Err(std::io::Error::last_os_error());
+                                }
                             }
-                        }
 
-                        // Apply CPU limit
-                        if let Some(limit_secs) = cpu_limit {
-                            let limit = libc::rlimit {
-                                rlim_cur: limit_secs as libc::rlim_t,
-                                rlim_max: limit_secs as libc::rlim_t,
-                            };
-                            if libc::setrlimit(libc::RLIMIT_CPU, &limit) != 0 {
-                                return Err(std::io::Error::last_os_error());
+                            // Apply CPU limit
+                            if let Some(limit_secs) = cpu_limit {
+                                let limit = libc::rlimit {
+                                    rlim_cur: limit_secs as libc::rlim_t,
+                                    rlim_max: limit_secs as libc::rlim_t,
+                                };
+                                if libc::setrlimit(libc::RLIMIT_CPU, &limit) != 0 {
+                                    return Err(std::io::Error::last_os_error());
+                                }
                             }
-                        }
 
-                        // Apply FD limit
-                        if let Some(limit_count) = fd_limit {
-                            let limit = libc::rlimit {
-                                rlim_cur: limit_count as libc::rlim_t,
-                                rlim_max: limit_count as libc::rlim_t,
-                            };
-                            if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) != 0 {
-                                return Err(std::io::Error::last_os_error());
+                            // Apply FD limit
+                            if let Some(limit_count) = fd_limit {
+                                let limit = libc::rlimit {
+                                    rlim_cur: limit_count as libc::rlim_t,
+                                    rlim_max: limit_count as libc::rlim_t,
+                                };
+                                if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) != 0 {
+                                    return Err(std::io::Error::last_os_error());
+                                }
                             }
-                        }
 
-                        // Apply process limit
-                        if let Some(limit_count) = process_limit {
-                            let limit = libc::rlimit {
-                                rlim_cur: limit_count as libc::rlim_t,
-                                rlim_max: limit_count as libc::rlim_t,
-                            };
-                            if libc::setrlimit(libc::RLIMIT_NPROC, &limit) != 0 {
-                                return Err(std::io::Error::last_os_error());
+                            // Apply process limit
+                            if let Some(limit_count) = process_limit {
+                                let limit = libc::rlimit {
+                                    rlim_cur: limit_count as libc::rlim_t,
+                                    rlim_max: limit_count as libc::rlim_t,
+                                };
+                                if libc::setrlimit(libc::RLIMIT_NPROC, &limit) != 0 {
+                                    return Err(std::io::Error::last_os_error());
+                                }
                             }
-                        }
 
-                        Ok(())
+                            Ok(())
+                        }
                     });
-                }
+                req.pre_exec = Some(pre_exec);
             }
         }
 
-        let result = timeout(context.timeout(), cmd.output()).await;
+        let result = crate::tools::process_runner::run(&req).await;
 
         let duration = start_time.elapsed();
 
         match result {
-            Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Ok(output) => {
+                let stdout = output.stdout_string();
+                let stderr = output.stderr_string();
 
                 let combined_output = if stderr.is_empty() {
                     stdout
@@ -300,11 +301,11 @@ impl Tool for ShellTool {
 
                 let truncated = self.truncate_output(combined_output);
 
-                if output.status.success() {
+                if output.success() {
                     info!("Command executed successfully in {:?}", duration);
                     Ok(ToolExecutionResult::success(truncated).with_execution_time(duration))
                 } else {
-                    let exit_code = output.status.code().unwrap_or(-1);
+                    let exit_code = output.exit_code().unwrap_or(-1);
                     warn!("Command failed with exit code {}: {}", exit_code, command_str);
                     Ok(ToolExecutionResult::error(format!(
                         "Exit code {}: {}",
@@ -313,20 +314,35 @@ impl Tool for ShellTool {
                     .with_execution_time(duration))
                 }
             }
-            Ok(Err(e)) => {
-                error!("Failed to execute command: {}", e);
-                Ok(ToolExecutionResult::error(format!("Execution failed: {}", e)))
-            }
-            Err(_) => {
-                error!("Command timed out after {:?}", context.timeout());
-                Ok(ToolExecutionResult::error(format!(
-                    "Command timed out after {:?}",
-                    context.timeout()
-                )))
-            }
+            Err(e) => match e {
+                ProcessError::Timeout { duration: timeout_dur } => {
+                    error!("Command timed out after {:?}", timeout_dur);
+                    Ok(ToolExecutionResult::error(format!(
+                        "Command timed out after {:?}",
+                        timeout_dur
+                    )))
+                }
+                ProcessError::Spawn { source, .. } => {
+                    error!("Failed to execute command: {}", source);
+                    Ok(ToolExecutionResult::error(format!("Execution failed: {}", source)))
+                }
+                other => {
+                    error!("Failed to execute command: {}", other);
+                    Ok(ToolExecutionResult::error(format!("Execution failed: {}", other)))
+                }
+            },
         }
     }
 
+    /// On iOS the sandbox forbids `fork`/`exec` entirely, so there is no
+    /// shell (§3.2). Desktop and Android can run `/bin/sh` (toybox on
+    /// Android), subject to the sandbox rules below.
+    #[cfg(target_os = "ios")]
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        false
+    }
+
+    #[cfg(not(target_os = "ios"))]
     fn is_available(&self, context: &ToolContext) -> bool {
         // Shell is available if we're not in strict sandbox mode
         // or if there are allowed commands specified

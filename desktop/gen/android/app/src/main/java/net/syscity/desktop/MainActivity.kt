@@ -11,6 +11,9 @@ class MainActivity : TauriActivity() {
     // initializes: `super.onCreate` loads the native lib and calls the entry
     // point, and `dirs.rs` reads SYSCITY_HOME at first use.
     Os.setenv("SYSCITY_HOME", File(filesDir, "syscity").absolutePath, true)
+    // Point the AndroidShellRunner at the APK's extracted native libraries
+    // (`jniLibs`) so bundled binaries (sh/toybox) can be exec'd from there.
+    Os.setenv("SYSCITY_NATIVE_LIB_DIR", applicationInfo.nativeLibraryDir, true)
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     // Keep the process alive for long agent turns when backgrounded (§4.7).

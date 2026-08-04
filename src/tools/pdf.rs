@@ -14,6 +14,7 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::process_runner::ProcessRequest;
 use crate::tools::sdk::ToolCapabilities;
 
 #[allow(clippy::unwrap_used)]
@@ -232,6 +233,11 @@ impl Tool for PdfTool {
         }
     }
 
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        // Headless-Chromium subprocess; no mobile equivalent (§4.4).
+        !cfg!(mobile_os)
+    }
+
     async fn execute(
         &self,
         args: Value,
@@ -273,39 +279,37 @@ impl Tool for PdfTool {
         }
 
         // Try to convert HTML to PDF using headless Chrome/Chromium
-        let pdf_result = tokio::process::Command::new("google-chrome")
-            .args([
-                "--headless",
-                "--disable-gpu",
-                "--no-sandbox",
-                "--print-to-pdf",
-                output_path.to_str().unwrap_or("output.pdf"),
-                html_path.to_str().unwrap_or("output.html"),
-            ])
-            .output()
-            .await;
+        let chrome_args = [
+            "--headless",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--print-to-pdf",
+            output_path.to_str().unwrap_or("output.pdf"),
+            html_path.to_str().unwrap_or("output.html"),
+        ];
+        let pdf_result = crate::tools::process_runner::run(&ProcessRequest::argv(&{
+            let mut argv = vec!["google-chrome"];
+            argv.extend(chrome_args);
+            argv
+        }))
+        .await;
 
         let (success, method) = match pdf_result {
-            Ok(output) if output.status.success() => {
+            Ok(output) if output.success() => {
                 info!("PDF generated via Chrome: {:?}", output_path);
                 (true, "chrome")
             }
             _ => {
                 // Try chromium
-                let result = tokio::process::Command::new("chromium")
-                    .args([
-                        "--headless",
-                        "--disable-gpu",
-                        "--no-sandbox",
-                        "--print-to-pdf",
-                        output_path.to_str().unwrap_or("output.pdf"),
-                        html_path.to_str().unwrap_or("output.html"),
-                    ])
-                    .output()
-                    .await;
+                let result = crate::tools::process_runner::run(&ProcessRequest::argv(&{
+                    let mut argv = vec!["chromium"];
+                    argv.extend(chrome_args);
+                    argv
+                }))
+                .await;
 
                 match result {
-                    Ok(output) if output.status.success() => {
+                    Ok(output) if output.success() => {
                         info!("PDF generated via Chromium: {:?}", output_path);
                         (true, "chromium")
                     }

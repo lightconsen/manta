@@ -10,6 +10,7 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
+use crate::tools::process_runner::ProcessRequest;
 use crate::tools::sdk::ToolCapabilities;
 
 /// Text-to-speech tool
@@ -84,6 +85,11 @@ impl Tool for TtsTool {
             categories: vec!["media".to_string(), "audio".to_string()],
             ..Default::default()
         }
+    }
+
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        // Uses `say`/`espeak` subprocesses; no mobile equivalent yet (§4.4).
+        !cfg!(mobile_os)
     }
 
     async fn execute(
@@ -183,14 +189,21 @@ impl Tool for TtsTool {
         {
             let output_aiff = output_path.with_extension("aiff");
             let voice = args.voice.as_deref().unwrap_or("");
-            let mut cmd = tokio::process::Command::new("say");
+            let mut say_argv = vec!["say".to_string()];
             if !voice.is_empty() && voice != "alloy" {
-                cmd.arg("-v").arg(voice);
+                say_argv.push("-v".to_string());
+                say_argv.push(voice.to_string());
             }
-            cmd.arg("-o").arg(&output_aiff).arg(&args.text);
+            say_argv.push("-o".to_string());
+            say_argv.push(output_aiff.to_string_lossy().into_owned());
+            say_argv.push(args.text.clone());
 
-            match cmd.output().await {
-                Ok(output) if output.status.success() => {
+            let req = ProcessRequest {
+                argv: say_argv,
+                ..Default::default()
+            };
+            match crate::tools::process_runner::run(&req).await {
+                Ok(output) if output.success() => {
                     info!("TTS audio generated via macOS say: {:?}", output_aiff);
                     return Ok(ToolExecutionResult {
                         success: true,
@@ -210,11 +223,15 @@ impl Tool for TtsTool {
         // Fallback: espeak (Linux)
         {
             let output_wav = output_path.with_extension("wav");
-            let mut cmd = tokio::process::Command::new("espeak");
-            cmd.arg("-w").arg(&output_wav).arg(&args.text);
+            let req = ProcessRequest::argv(&[
+                "espeak",
+                "-w",
+                output_wav.to_str().unwrap_or(""),
+                &args.text,
+            ]);
 
-            match cmd.output().await {
-                Ok(output) if output.status.success() => {
+            match crate::tools::process_runner::run(&req).await {
+                Ok(output) if output.success() => {
                     info!("TTS audio generated via espeak: {:?}", output_wav);
                     return Ok(ToolExecutionResult {
                         success: true,

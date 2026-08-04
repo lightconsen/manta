@@ -318,47 +318,13 @@ async fn start_gateway(
             }
         }
     } else {
-        let default_config = r#"# Syscity Desktop Configuration
-# Auto-generated on first start
-
-[server]
-host = "127.0.0.1"
-port = 18080
-
-[security]
-enabled = true
-auth_required = false
-pairing_required = false
-auth_mode = "none"
-security_headers = true
-
-[model]
-model = "claude-3-sonnet-20240229"
-model_provider = "anthropic"
-
-[storage]
-storage_type = "sqlite"
-
-[acp]
-enabled = true
-max_subagents = 10
-default_timeout_seconds = 300
-
-[cron]
-enabled = true
-check_interval_seconds = 60
-
-[plugins]
-enabled = true
-auto_load = true
-
-[hot_reload]
-enabled = true
-watch_config = true
-watch_agents = true
-watch_plugins = true
-debounce_seconds = 2
-"#;
+        // Serialize the default config instead of hand-writing a template:
+        // a hand-written string can silently drift out of sync with
+        // GatewayConfig's schema (required fields like `security.rate_limit`
+        // and the flat `model`/`model_provider` keys) and then fail to
+        // re-parse on the next start, silently falling back to defaults.
+        let default_config = toml::to_string_pretty(&GatewayConfig::default())
+            .map_err(|e| format!("Failed to serialize default config: {}", e))?;
         tokio::fs::write(&config_path, default_config)
             .await
             .map_err(|e| format!("Failed to write default config: {}", e))?;

@@ -17,11 +17,16 @@
 //!     println!("{:?} changed: {:?}", change.path, change.kind);
 //! }
 //! ```
+//!
+//! On platforms with no native notification backend (iOS), [`FileWatcher::new_polling`]
+//! degrades to periodic polling via notify's `PollWatcher`. On mobile, callers should
+//! use [`FileWatcher::with_sandbox_root`] to reject watch paths outside the app sandbox.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Event, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -61,58 +66,100 @@ impl From<&notify::EventKind> for FileChangeKind {
 
 /// Generic file-system watcher backed by `notify`.
 pub struct FileWatcher {
-    /// Underlying OS watcher.
-    watcher: RecommendedWatcher,
+    /// Underlying OS watcher (native backend or `PollWatcher` fallback).
+    watcher: Box<dyn Watcher>,
     /// Channel receiver for change events.
     rx: mpsc::UnboundedReceiver<FileChangeEvent>,
     /// Set of currently watched paths (tracked for rebuilds).
     watched_paths: HashSet<PathBuf>,
     /// Sender clone kept for rebuilds.
     _tx: mpsc::UnboundedSender<FileChangeEvent>,
+    /// When set, watch/unwatch paths are rejected unless beneath this root.
+    sandbox_root: Option<PathBuf>,
+}
+
+/// Build the notify event-handler that forwards changes into the channel.
+fn event_handler(
+    tx: mpsc::UnboundedSender<FileChangeEvent>,
+) -> impl FnMut(std::result::Result<Event, notify::Error>) {
+    move |res| match res {
+        Ok(event) => {
+            let kind: FileChangeKind = (&event.kind).into();
+            for path in event.paths {
+                if let Err(e) = tx.send(FileChangeEvent { path: path.clone(), kind }) {
+                    warn!("Failed to send file change event: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            error!("File watcher error: {}", e);
+        }
+    }
+}
+
+fn watcher_error(what: &str, path: &Path, e: notify::Error) -> crate::error::SyscityError {
+    crate::error::SyscityError::Internal(format!("Failed to {} {:?}: {}", what, path, e))
 }
 
 impl FileWatcher {
-    /// Create a new file watcher.
+    /// Create a file watcher on the platform's recommended native backend.
     pub fn new() -> crate::Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let tx_clone = tx.clone();
-
-        let watcher =
-            notify::recommended_watcher(move |res: std::result::Result<Event, notify::Error>| {
-                match res {
-                    Ok(event) => {
-                        let kind: FileChangeKind = (&event.kind).into();
-                        for path in event.paths {
-                            if let Err(e) =
-                                tx_clone.send(FileChangeEvent { path: path.clone(), kind })
-                            {
-                                warn!("Failed to send file change event: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("File watcher error: {}", e);
-                    }
-                }
-            })
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!(
-                    "Failed to create file watcher: {}",
-                    e
-                ))
-            })?;
+        let watcher = notify::recommended_watcher(event_handler(tx.clone()))
+            .map_err(|e| watcher_error("create file watcher", Path::new(""), e))?;
 
         Ok(Self {
-            watcher,
+            watcher: Box::new(watcher),
             rx,
             watched_paths: HashSet::new(),
             _tx: tx,
+            sandbox_root: None,
         })
+    }
+
+    /// Create a watcher that periodically polls the filesystem, usable on
+    /// platforms with no native notification backend (iOS). `poll_interval`
+    /// is the delay between re-scans.
+    pub fn new_polling(poll_interval: Duration) -> crate::Result<Self> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let config = notify::Config::default().with_poll_interval(poll_interval);
+        let watcher = notify::poll::PollWatcher::new(event_handler(tx.clone()), config)
+            .map_err(|e| watcher_error("create polling file watcher", Path::new(""), e))?;
+
+        Ok(Self {
+            watcher: Box::new(watcher),
+            rx,
+            watched_paths: HashSet::new(),
+            _tx: tx,
+            sandbox_root: None,
+        })
+    }
+
+    /// Restrict watch/unwatch operations to paths beneath `root` (e.g. the
+    /// app sandbox on mobile). `None` (the default) allows any path,
+    /// preserving desktop behavior.
+    pub fn with_sandbox_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.sandbox_root = Some(root.into());
+        self
+    }
+
+    /// Reject paths outside the configured sandbox root.
+    fn ensure_in_sandbox(&self, path: &Path) -> crate::Result<()> {
+        if let Some(root) = &self.sandbox_root {
+            if !path.starts_with(root) {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Path {:?} is outside the sandbox root {:?}",
+                    path, root
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Watch a directory recursively.
     pub fn watch_directory(&mut self, path: impl AsRef<Path>) -> crate::Result<()> {
         let path = path.as_ref().to_path_buf();
+        self.ensure_in_sandbox(&path)?;
         if self.watched_paths.contains(&path) {
             debug!("Already watching directory: {:?}", path);
             return Ok(());
@@ -120,12 +167,7 @@ impl FileWatcher {
 
         self.watcher
             .watch(&path, RecursiveMode::Recursive)
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!(
-                    "Failed to watch directory {:?}: {}",
-                    path, e
-                ))
-            })?;
+            .map_err(|e| watcher_error("watch directory", &path, e))?;
 
         self.watched_paths.insert(path.clone());
         info!("Watching directory: {:?}", path);
@@ -135,16 +177,14 @@ impl FileWatcher {
     /// Stop watching a directory.
     pub fn unwatch_directory(&mut self, path: impl AsRef<Path>) -> crate::Result<()> {
         let path = path.as_ref().to_path_buf();
+        self.ensure_in_sandbox(&path)?;
         if !self.watched_paths.contains(&path) {
             return Ok(());
         }
 
-        self.watcher.unwatch(&path).map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "Failed to unwatch directory {:?}: {}",
-                path, e
-            ))
-        })?;
+        self.watcher
+            .unwatch(&path)
+            .map_err(|e| watcher_error("unwatch directory", &path, e))?;
 
         self.watched_paths.remove(&path);
         info!("Stopped watching directory: {:?}", path);
@@ -154,6 +194,7 @@ impl FileWatcher {
     /// Watch a single file (non-recursive).
     pub fn watch_file(&mut self, path: impl AsRef<Path>) -> crate::Result<()> {
         let path = path.as_ref().to_path_buf();
+        self.ensure_in_sandbox(&path)?;
         if self.watched_paths.contains(&path) {
             debug!("Already watching file: {:?}", path);
             return Ok(());
@@ -161,12 +202,7 @@ impl FileWatcher {
 
         self.watcher
             .watch(&path, RecursiveMode::NonRecursive)
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!(
-                    "Failed to watch file {:?}: {}",
-                    path, e
-                ))
-            })?;
+            .map_err(|e| watcher_error("watch file", &path, e))?;
 
         self.watched_paths.insert(path.clone());
         info!("Watching file: {:?}", path);
@@ -176,16 +212,14 @@ impl FileWatcher {
     /// Stop watching a single file.
     pub fn unwatch_file(&mut self, path: impl AsRef<Path>) -> crate::Result<()> {
         let path = path.as_ref().to_path_buf();
+        self.ensure_in_sandbox(&path)?;
         if !self.watched_paths.contains(&path) {
             return Ok(());
         }
 
-        self.watcher.unwatch(&path).map_err(|e| {
-            crate::error::SyscityError::Internal(format!(
-                "Failed to unwatch file {:?}: {}",
-                path, e
-            ))
-        })?;
+        self.watcher
+            .unwatch(&path)
+            .map_err(|e| watcher_error("unwatch file", &path, e))?;
 
         self.watched_paths.remove(&path);
         info!("Stopped watching file: {:?}", path);
@@ -334,6 +368,44 @@ mod tests {
         watcher.watch_file(&file_path).unwrap();
 
         assert!(watcher.is_watching(&file_path));
+        assert_eq!(watcher.len(), 1);
+    }
+
+    #[test]
+    fn test_sandbox_root_blocks_outside_path() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+
+        let mut watcher = FileWatcher::new().unwrap().with_sandbox_root(root.path());
+        let err = watcher.watch_directory(outside.path()).unwrap_err();
+        assert!(err.to_string().contains("outside the sandbox root"));
+        assert!(!watcher.is_watching(outside.path()));
+    }
+
+    #[test]
+    fn test_sandbox_root_allows_inside_path() {
+        let root = tempfile::tempdir().unwrap();
+        let inner = root.path().join("inner");
+        std::fs::create_dir(&inner).unwrap();
+
+        let mut watcher = FileWatcher::new().unwrap().with_sandbox_root(root.path());
+        watcher.watch_directory(&inner).unwrap();
+        assert!(watcher.is_watching(&inner));
+
+        // Unwatching an outside path is also rejected.
+        let outside = tempfile::tempdir().unwrap();
+        let err = watcher
+            .unwatch_file(outside.path().join("x.txt"))
+            .unwrap_err();
+        assert!(err.to_string().contains("outside the sandbox root"));
+    }
+
+    #[test]
+    fn test_new_polling_constructs_and_watches() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut watcher = FileWatcher::new_polling(Duration::from_millis(50)).unwrap();
+        watcher.watch_directory(temp_dir.path()).unwrap();
+        assert!(watcher.is_watching(temp_dir.path()));
         assert_eq!(watcher.len(), 1);
     }
 
