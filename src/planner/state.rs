@@ -37,6 +37,17 @@ impl TaskStateStore {
                     }
                 })?;
             }
+            // sqlx 0.8 defaults `create_if_missing` to false; explicitly create
+            // the file so a fresh install can open the database (mirrors
+            // `gateway/init/storage.rs`).
+            if !path.exists() {
+                tokio::fs::File::create(path).await.map_err(|e| {
+                    crate::error::SyscityError::Storage {
+                        context: format!("Failed to create planner state file: {:?}", path),
+                        details: e.to_string(),
+                    }
+                })?;
+            }
         }
 
         let pool = SqlitePoolOptions::new()

@@ -146,6 +146,17 @@ impl DelegationTaskStore {
                     }
                 })?;
             }
+            // sqlx 0.8 defaults `create_if_missing` to false; explicitly create
+            // the file so a fresh install can open the database (mirrors
+            // `gateway/init/storage.rs`).
+            if !path.exists() {
+                tokio::fs::File::create(path).await.map_err(|e| {
+                    crate::error::SyscityError::Storage {
+                        context: format!("Failed to create delegation task store file: {:?}", path),
+                        details: e.to_string(),
+                    }
+                })?;
+            }
         }
 
         let pool = SqlitePoolOptions::new()
@@ -521,6 +532,33 @@ mod tests {
         DelegationTaskStore::new("sqlite::memory:")
             .await
             .expect("in-memory store")
+    }
+
+    /// Regression: a fresh install has no `delegations.db` file. sqlx 0.8
+    /// defaults `create_if_missing` to false, so the store must create the
+    /// file itself (mirrors `gateway/init/storage.rs`).
+    #[tokio::test]
+    async fn test_file_store_creates_missing_db() {
+        let dir =
+            std::env::temp_dir().join(format!("syscity-delegation-test-{}", std::process::id()));
+        let db_path = dir.join("delegations.db");
+        let url = format!("sqlite://{}", db_path.display());
+        let store = DelegationTaskStore::new(&url).await.expect("file store");
+        assert!(db_path.exists(), "store must create the database file");
+        store
+            .create_task(NewTask {
+                id: "run-1",
+                root_id: "root-1",
+                parent_id: None,
+                depth: 1,
+                agent_id: "coder",
+                title: "T",
+            })
+            .await
+            .expect("create task");
+        let task = store.get_task("run-1").await.unwrap().expect("task exists");
+        assert_eq!(task.status, "running");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
