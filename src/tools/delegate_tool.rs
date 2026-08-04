@@ -43,6 +43,14 @@ const BLOCKED_TOOLS: &[&str] = &[
     "execute_code",
 ];
 
+/// Upper bound (seconds) for how long the `wait` action may block.
+///
+/// Kept well under the 120 s tool-call timeout ceiling
+/// (`ToolContext::with_timeout`), so a `wait` that has not finished by this
+/// budget returns `Ok("still running")` instead of tripping the outer timeout
+/// (which would count as a failure against the circuit breaker).
+const MAX_WAIT_SECONDS: u64 = 60;
+
 /// Task specification for child agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskSpec {
@@ -717,8 +725,11 @@ Limitations:
 - Child agents cannot use: clarify, memory, send_message, execute_code
 - Children share parent's iteration budget
 
-The child agent will execute the task independently and return results.
-Progress and results are relayed to the parent."#
+The child agent executes its task independently. Results are NOT relayed
+automatically — call action="wait" (child_id) to block for the child's
+result directly, or action="status" (child_id) to poll. If wait reports
+"still running", the child continues in the background; poll again with
+wait/status to collect the result when it finishes."#
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -727,7 +738,7 @@ Progress and results are relayed to the parent."#
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["spawn", "status", "list", "cancel", "metrics"],
+                    "enum": ["spawn", "wait", "status", "list", "cancel", "metrics"],
                     "description": "Action to perform"
                 },
                 "task": {
@@ -756,7 +767,11 @@ Progress and results are relayed to the parent."#
                 },
                 "child_id": {
                     "type": "string",
-                    "description": "Child agent ID (for status/cancel)"
+                    "description": "Child agent ID (for wait/status/cancel)"
+                },
+                "seconds": {
+                    "type": "integer",
+                    "description": "Max seconds to block for a child (wait action; 1-60, default 60)"
                 }
             },
             "required": ["action"]
@@ -910,19 +925,40 @@ impl DelegateTool {
                 })?;
 
                 match self.tracker.get_child(child_id).await {
-                    Some(child) => Ok(ToolExecutionResult::success(format!(
-                        "Child {} status: {:?}",
-                        child_id, child.status
-                    ))
-                    .with_data(json!({
-                        "child_id": child.id,
-                        "status": child.status,
-                        "result": child.result,
-                        "error": child.error,
-                        "created_at": child.created_at.to_rfc3339(),
-                    }))),
+                    Some(child) => {
+                        let hint = match child.status {
+                            ChildStatus::Pending | ChildStatus::Running => format!(
+                                ". Use delegate action=\"wait\" child_id={} to block for the result",
+                                child_id
+                            ),
+                            _ => String::new(),
+                        };
+                        Ok(ToolExecutionResult::success(format!(
+                            "Child {} status: {:?}{}",
+                            child_id, child.status, hint
+                        ))
+                        .with_data(json!({
+                            "child_id": child.id,
+                            "status": child.status,
+                            "result": child.result,
+                            "error": child.error,
+                            "created_at": child.created_at.to_rfc3339(),
+                        })))
+                    }
                     None => Ok(ToolExecutionResult::error(format!("Child {} not found", child_id))),
                 }
+            }
+
+            "wait" => {
+                let child_id = args["child_id"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "child_id is required for wait".to_string(),
+                    )
+                })?;
+                let seconds = clamp_wait_seconds(args["seconds"].as_u64().unwrap_or(60));
+                Ok(self
+                    .wait_for_child(child_id, std::time::Duration::from_secs(seconds))
+                    .await)
             }
 
             "list" => {
@@ -980,6 +1016,87 @@ impl DelegateTool {
             _ => Err(crate::error::SyscityError::Validation(format!("Unknown action: {}", action))),
         }
     }
+
+    /// Block up to `budget` for a child to finish, returning its result as soon
+    /// as it completes.
+    ///
+    /// Every exit is `Ok`: a timeout, a failed child, or an unknown child are
+    /// reported to the model as information rather than as an `Err`, so a
+    /// waiting call can never trip the circuit breaker. The caller clamps
+    /// `budget` well under the 120 s tool-call timeout ceiling (see
+    /// [`MAX_WAIT_SECONDS`]).
+    async fn wait_for_child(
+        &self,
+        child_id: &str,
+        budget: std::time::Duration,
+    ) -> ToolExecutionResult {
+        let deadline = tokio::time::Instant::now() + budget;
+        let poll = std::time::Duration::from_secs(1);
+
+        loop {
+            // Snapshot the child state, then drop the lock before sleeping —
+            // never hold the tracker lock across an await.
+            match self.tracker.get_child(child_id).await {
+                Some(child) => match child.status {
+                    ChildStatus::Completed => {
+                        let result = child.result.unwrap_or_default();
+                        return ToolExecutionResult::success(format!(
+                            "Child {} completed: {}",
+                            child_id, result
+                        ))
+                        .with_data(json!({
+                            "child_id": child.id,
+                            "status": "completed",
+                            "result": result,
+                        }));
+                    }
+                    ChildStatus::Failed => {
+                        let error = child.error.clone().unwrap_or_default();
+                        return ToolExecutionResult::error(format!(
+                            "Child {} failed: {}",
+                            child_id, error
+                        ))
+                        .with_data(json!({
+                            "child_id": child.id,
+                            "status": "failed",
+                            "error": error,
+                        }));
+                    }
+                    ChildStatus::Cancelled => {
+                        return ToolExecutionResult::success(format!(
+                            "Child {} was cancelled",
+                            child_id
+                        ));
+                    }
+                    // Pending / Running — keep waiting.
+                    _ => {}
+                },
+                None => {
+                    return ToolExecutionResult::error(format!("Child {} not found", child_id));
+                }
+            }
+
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return ToolExecutionResult::success(format!(
+                    "Child {} is still running after {}s. It continues in the background. \
+                     Poll again with wait or status to collect its result.",
+                    child_id,
+                    budget.as_secs().max(1)
+                ))
+                .with_data(json!({
+                    "child_id": child_id,
+                    "status": "running",
+                }));
+            }
+            tokio::time::sleep(poll.min(deadline.saturating_duration_since(now))).await;
+        }
+    }
+}
+
+/// Clamp a requested `wait` budget (seconds) into the safe window.
+fn clamp_wait_seconds(seconds: u64) -> u64 {
+    seconds.clamp(1, MAX_WAIT_SECONDS)
 }
 
 impl Clone for DelegationTracker {
@@ -1351,5 +1468,138 @@ mod tests {
             .await
             .expect("run still in registry");
         assert!(matches!(run.status, crate::agent::SubagentStatus::Killed));
+    }
+
+    fn make_child(id: &str, status: ChildStatus) -> ChildAgent {
+        ChildAgent {
+            id: id.to_string(),
+            parent_id: "parent".to_string(),
+            task: TaskSpec {
+                prompt: "test".to_string(),
+                output_format: None,
+                max_iterations: None,
+                allowed_tools: vec![],
+                context: HashMap::new(),
+                target_agent: None,
+                task_id: None,
+            },
+            status,
+            created_at: chrono::Utc::now(),
+            result: None,
+            error: None,
+            budget: IterationBudget::new(10),
+            iterations: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wait_returns_completed_result() {
+        let tool = DelegateTool::root();
+        let mut child = make_child("c1", ChildStatus::Completed);
+        child.result = Some("42 done".to_string());
+        tool.tracker.register_child(child).await;
+
+        let result = tool
+            .execute(json!({"action": "wait", "child_id": "c1"}), &ToolContext::new("user", "s1"))
+            .await
+            .unwrap();
+        assert!(result.success, "wait should succeed: {:?}", result.output);
+        assert!(result.output.contains("42 done"));
+        assert_eq!(result.data.as_ref().unwrap()["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn test_wait_returns_failed_child() {
+        let tool = DelegateTool::root();
+        let mut child = make_child("c1", ChildStatus::Failed);
+        child.error = Some("boom".to_string());
+        tool.tracker.register_child(child).await;
+
+        let result = tool
+            .execute(json!({"action": "wait", "child_id": "c1"}), &ToolContext::new("user", "s1"))
+            .await
+            .unwrap();
+        assert!(!result.success, "failed child must surface as an error result");
+        assert!(result.error.as_deref().unwrap_or("").contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn test_wait_returns_cancelled() {
+        let tool = DelegateTool::root();
+        tool.tracker
+            .register_child(make_child("c1", ChildStatus::Cancelled))
+            .await;
+
+        let result = tool
+            .execute(json!({"action": "wait", "child_id": "c1"}), &ToolContext::new("user", "s1"))
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("was cancelled"));
+    }
+
+    #[tokio::test]
+    async fn test_wait_unknown_child() {
+        let tool = DelegateTool::root();
+        let result = tool
+            .execute(
+                json!({"action": "wait", "child_id": "ghost"}),
+                &ToolContext::new("user", "s1"),
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap_or("").contains("ghost"));
+    }
+
+    #[tokio::test]
+    async fn test_wait_timeout_returns_still_running() {
+        // A running child with a 1 s budget times out as an Ok result, so the
+        // circuit breaker is never tripped by a waiting call.
+        let tool = DelegateTool::root();
+        tool.tracker
+            .register_child(make_child("c1", ChildStatus::Running))
+            .await;
+
+        let result = tool
+            .execute(
+                json!({"action": "wait", "child_id": "c1", "seconds": 1}),
+                &ToolContext::new("user", "s1"),
+            )
+            .await
+            .unwrap();
+        assert!(result.success, "timeout must be Ok, not Err: {:?}", result.output);
+        assert!(result.output.contains("still running"));
+    }
+
+    #[tokio::test]
+    async fn test_wait_observes_completion_mid_wait() {
+        // The child completes while the parent is waiting; the poll loop picks
+        // it up and returns the result instead of timing out.
+        let tool = DelegateTool::root();
+        let tracker = tool.tracker.clone();
+        tool.tracker
+            .register_child(make_child("c1", ChildStatus::Running))
+            .await;
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tracker.set_result("c1", "late result".to_string()).await;
+        });
+
+        let result = tool
+            .wait_for_child("c1", std::time::Duration::from_secs(2))
+            .await;
+        assert!(result.success, "wait should observe mid-wait completion: {:?}", result.output);
+        assert!(result.output.contains("late result"));
+    }
+
+    #[test]
+    fn test_clamp_wait_seconds_bounds() {
+        assert_eq!(clamp_wait_seconds(0), 1);
+        assert_eq!(clamp_wait_seconds(1), 1);
+        assert_eq!(clamp_wait_seconds(30), 30);
+        assert_eq!(clamp_wait_seconds(60), 60);
+        assert_eq!(clamp_wait_seconds(300), 60);
+        assert_eq!(clamp_wait_seconds(u64::MAX), 60);
     }
 }
