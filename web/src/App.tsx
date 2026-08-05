@@ -457,12 +457,23 @@ function ChatApp() {
     useChatStore.getState().setCurrentAgent(current?.agent);
   }, [sessionItems, transport]);
 
+  // iOS WKWebView computes the layout viewport as safe-area-exclusive
+  // (~759pt on iPhone 16) at rest, so 100%/100dvh leave a gap below the
+  // composer, while 100lvh resolves to the full screen (852pt) consistently.
+  // Do NOT drive the root height from visualViewport: vv.height drifts
+  // 759<->852 without emitting resize, which re-introduces the gap.
+
   return (
     <div
-      className="h-dvh flex bg-page text-primary"
+      className="flex bg-page text-primary"
       style={{
         paddingTop: "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
+        // iOS WKWebView computes the layout viewport as safe-area-exclusive
+        // (~759pt on iPhone 16) at rest, so 100%/100dvh leave a gap below the
+        // composer. 100lvh resolves to the full screen (852pt), and shrinks
+        // with the keyboard via interactive-widget=resizes-content.
+        height: "100lvh",
       }}
     >
       {/* Desktop: inline sidebar. Mobile: hidden, the drawer below replaces it. */}

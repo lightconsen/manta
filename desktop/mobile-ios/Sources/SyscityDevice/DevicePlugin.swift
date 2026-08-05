@@ -16,10 +16,19 @@ import CoreLocation
 import AVFoundation
 import UserNotifications
 import AudioToolbox
+import ObjectiveC
+import WebKit
 
 import Tauri
 
 class DevicePlugin: Plugin {
+
+  // Tauri calls this when the WKWebView is created. The keyboard "Done" bar is
+  // native WKWebView UI (the web side can't remove it), so swizzle it here.
+  @objc override func load(webview: WKWebView) {
+    super.load(webview: webview)
+    hideWebViewInputAccessory()
+  }
 
   private struct NotifyArgs: Decodable {
     var title: String?
@@ -577,6 +586,27 @@ extension DevicePlugin: CLLocationManagerDelegate {
   func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
     locationManagerDidChangeAuthorization(manager)
   }
+}
+
+// ── Keyboard accessory bar ("Done" button) ──────────────────────────────
+
+private var didHideInputAccessory = false
+
+/// The WKWebView input accessory bar — the "Done" button above the keyboard —
+/// is native WebKit UI that no web-side CSS/JS can remove. Replace
+/// `WKContentView.inputAccessoryView` with an IMP returning nil so the bar
+/// never appears. Runs once; if WKContentView isn't registered yet (it is by
+/// `load(webview:)` time, since the webview already exists), the flag is only
+/// set on success so a later call can retry.
+private func hideWebViewInputAccessory() {
+  guard !didHideInputAccessory else { return }
+  guard let cls = NSClassFromString("WKContentView") as? AnyClass else { return }
+  let sel = NSSelectorFromString("inputAccessoryView")
+  guard let method = class_getInstanceMethod(cls, sel) else { return }
+  let encoding = method_getTypeEncoding(method)
+  let block: @convention(block) (AnyObject) -> UIView? = { _ in nil }
+  class_replaceMethod(cls, sel, imp_implementationWithBlock(block), encoding)
+  didHideInputAccessory = true
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────

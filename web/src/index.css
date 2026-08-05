@@ -88,6 +88,18 @@ textarea[aria-label="Message input"]:focus-visible {
   outline: none;
 }
 
+/* iOS WKWebView auto-zooms into inputs whose font-size is < 16px on focus,
+ * making the composer and page visually "grow". Bump form controls to 16px on
+ * iOS so focusing never triggers the zoom. Unlayered so it beats Tailwind's
+ * `text-sm` utility; `-webkit-touch-callout` matches only iOS WebKit, so
+ * desktop and Android are unaffected. */
+@supports (-webkit-touch-callout: none) {
+  input,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 /* Semantic surface utilities */
 @layer utilities {
   .bg-page { background-color: var(--bg-page); }
