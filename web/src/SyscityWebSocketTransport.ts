@@ -1406,6 +1406,52 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
+  /* ── Shortcuts / AppIntents bus (iOS §4.6) ── */
+  /**
+   * Run an iOS Shortcut by name, optionally passing text input (§4.6).
+   * The shortcut runs in the Shortcuts app (foreground hand-off). Returns
+   * `{launched}` — `null` on unsupported platforms.
+   */
+  async runShortcut(name: string, input?: string): Promise<{ launched: boolean } | null> {
+    try {
+      const res = (await this.sendRequestAndWait(
+        "device.shortcut.run",
+        { name, input: input || null },
+        15000
+      )) as { launched?: boolean } | undefined;
+      return { launched: !!res?.launched };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * List + consume outputs returned by the SyscityOutput AppIntent (§4.6).
+   * Reading consumes the result (delete-read). `null` on unsupported platform.
+   */
+  async shortcutResults(): Promise<Array<{ output?: string; at_ms?: number; file?: string }> | null> {
+    try {
+      const res = (await this.sendRequestAndWait("device.shortcut.results", {})) as
+        | { items?: Array<{ output?: string; at_ms?: number; file?: string }> }
+        | undefined;
+      return res?.items || [];
+    } catch {
+      return null;
+    }
+  }
+
+  /** List + consume prompts sent via the AskSyscity AppIntent (§4.6). */
+  async shortcutInbox(): Promise<Array<{ prompt?: string; at_ms?: number; file?: string }> | null> {
+    try {
+      const res = (await this.sendRequestAndWait("device.shortcut.inbox", {})) as
+        | { items?: Array<{ prompt?: string; at_ms?: number; file?: string }> }
+        | undefined;
+      return res?.items || [];
+    } catch {
+      return null;
+    }
+  }
+
   /* ── In-memory message state for UI ── */
   getServerInfo(): { version?: string; conn_id?: string; features?: string[]; scopes_granted?: string[] } {
     return this.serverInfo;

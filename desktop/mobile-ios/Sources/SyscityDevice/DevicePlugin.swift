@@ -307,6 +307,102 @@ class DevicePlugin: Plugin {
     }
   }
 
+  // ── Shortcuts / AppIntents bus (§4.6) ───────────────────────────────
+
+  /// `runShortcut` — hand off to the Shortcuts app (best-effort).
+  ///
+  /// Opens the public `shortcuts://run-shortcut` URL scheme; the shortcut runs
+  /// visibly in the Shortcuts app (foreground hand-off, not headless). A
+  /// shortcut that ends with Syscity's `SyscityOutputIntent` returns its
+  /// output into the sandbox for `shortcutResults` to consume.
+  @objc public func runShortcut(_ invoke: Invoke) throws {
+    struct RunArgs: Decodable {
+      var name: String?
+      var input: String?
+    }
+    let args = try invoke.parseArgs(RunArgs.self)
+    var comps = URLComponents()
+    comps.scheme = "shortcuts"
+    comps.host = "run-shortcut"
+    var query: [URLQueryItem] = []
+    if let name = args.name, !name.isEmpty {
+      query.append(URLQueryItem(name: "name", value: name))
+    }
+    if let input = args.input {
+      query.append(URLQueryItem(name: "input", value: input))
+    }
+    comps.queryItems = query
+    guard let url = comps.url else {
+      invoke.reject("Invalid shortcut URL", code: "INVALID_ARGUMENTS")
+      return
+    }
+    DispatchQueue.main.async {
+      UIApplication.shared.open(url) { ok in
+        var out = JsonObject()
+        out["launched"] = ok
+        out["url"] = url.absoluteString
+        invoke.resolve(JsonValue.dictionary(out))
+      }
+    }
+  }
+
+  /// `shortcutResults` — list + delete-read outputs from `SyscityOutputIntent`.
+  ///
+  /// Each entry is `{output, at_ms, file}`. Reading a result consumes it (the
+  /// file is removed) so the agent never sees the same output twice.
+  @objc public func shortcutResults(_ invoke: Invoke) throws {
+    consumeShortcutDir(invoke, dir: "shortcuts")
+  }
+
+  /// `shortcutInbox` — list + delete-read prompts from `AskSyscityIntent`.
+  @objc public func shortcutInbox(_ invoke: Invoke) throws {
+    consumeShortcutDir(invoke, dir: "shortcuts/inbox")
+  }
+
+  private func consumeShortcutDir(_ invoke: Invoke, dir: String) {
+    let base = (syscityHome as NSString).appendingPathComponent(dir)
+    let fm = FileManager.default
+    let files = (try? fm.contentsOfDirectory(atPath: base)) ?? []
+    var items = [JsonObject]()
+    for f in files where f.hasSuffix(".json") {
+      let path = (base as NSString).appendingPathComponent(f)
+      var entry = JsonObject()
+      if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+      {
+        entry["output"] = obj["output"] as? String
+        entry["prompt"] = obj["prompt"] as? String
+        entry["at_ms"] = obj["at_ms"] as? NSNumber
+      }
+      entry["file"] = f
+      items.append(entry)
+      try? fm.removeItem(atPath: path)
+    }
+    var out = JsonObject()
+    out["items"] = items
+    invoke.resolve(JsonValue.dictionary(out))
+  }
+
+  /// Dead-strip anchor for the AppIntent types (§4.6).
+  ///
+  /// Nothing in the app links directly against `SyscityOutputIntent` /
+  /// `AskSyscityIntent` — the system discovers them at runtime — so the
+  /// linker would drop `AppIntents.swift.o` from the static archive and the
+  /// intents would never appear in Shortcuts. This `@objc` method lives in
+  /// `DevicePlugin.swift.o` (kept alive via the Rust-referenced
+  /// `init_plugin_syscity_device`), and referencing both metadata accessors
+  /// forces the linker to extract the AppIntents object.
+  @objc public func appIntentAnchor(_ invoke: Invoke) throws {
+    var out = JsonObject()
+    if #available(iOS 16.0, *) {
+      let anchors: [Any.Type] = [SyscityOutputIntent.self, AskSyscityIntent.self]
+      out["intent_types"] = anchors.count
+    } else {
+      out["intent_types"] = 0
+    }
+    invoke.resolve(JsonValue.dictionary(out))
+  }
+
   // ── Cron background wake (§4.3 parity, best-effort) ─────────────────
 
   /// `syncCronSchedule` — re-arm local notifications from a schedule snapshot.

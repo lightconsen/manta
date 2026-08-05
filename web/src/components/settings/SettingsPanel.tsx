@@ -135,6 +135,12 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   const [adbStatus, setAdbStatus] = useState<{ paired: boolean; devices: Array<{ serial: string; state: string }> } | null>(null);
   const [adbPairing, setAdbPairing] = useState(false);
   const [adbError, setAdbError] = useState("");
+  const [shortcutName, setShortcutName] = useState("");
+  const [shortcutInput, setShortcutInput] = useState("");
+  const [shortcutRunning, setShortcutRunning] = useState(false);
+  const [shortcutMsg, setShortcutMsg] = useState("");
+  const [shortcutResults, setShortcutResults] = useState<Array<{ output?: string; at_ms?: number; file?: string }>>([]);
+  const [shortcutInbox, setShortcutInbox] = useState<Array<{ prompt?: string; at_ms?: number; file?: string }>>([]);
   const [mcpServers, setMcpServers] = useState<Array<{
     id: string;
     transport: string;
@@ -779,6 +785,37 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       setAdbError(res.pairOutput || "Pairing failed — check the code and port");
     }
     setAdbStatus({ paired: res.connected, devices: res.devices });
+  };
+
+  // iOS Shortcuts / AppIntents bus (§4.6)
+  const isIOSDevice = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+  const runShortcut = async () => {
+    if (!shortcutName.trim()) {
+      setShortcutMsg("Enter a shortcut name");
+      return;
+    }
+    setShortcutRunning(true);
+    setShortcutMsg("");
+    const res = await transport.runShortcut(shortcutName.trim(), shortcutInput || undefined);
+    setShortcutRunning(false);
+    if (!res) {
+      setShortcutMsg("Shortcuts are only available in the Syscity iOS app");
+    } else if (res.launched) {
+      setShortcutMsg(`Launched "${shortcutName.trim()}" in the Shortcuts app`);
+    } else {
+      setShortcutMsg("Could not launch — is the shortcut name correct?");
+    }
+  };
+
+  const refreshShortcutResults = async () => {
+    const res = await transport.shortcutResults();
+    if (res) setShortcutResults(res);
+  };
+
+  const refreshShortcutInbox = async () => {
+    const res = await transport.shortcutInbox();
+    if (res) setShortcutInbox(res);
   };
 
   const handleAddMcp = async () => {
@@ -2076,6 +2113,91 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                         ))}
                       </div>
                     </section>
+
+                    {transport.isTauri() && isIOSDevice && (
+                      <section>
+                        <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Shortcuts</h3>
+                        <div className="rounded-lg bg-card border border-subtle p-3 space-y-3">
+                          <p className="text-xs text-secondary">
+                            Run an iOS Shortcut from Syscity. The shortcut opens in the Shortcuts app;
+                            if its final step is "Save Syscity Output", the output is returned here for
+                            the agent to read. "Ask Syscity" inboxes prompts from Siri / automations.
+                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-xs text-secondary mb-1">Shortcut name</label>
+                              <input
+                                placeholder="e.g. Order Coffee"
+                                value={shortcutName}
+                                onChange={(e) => setShortcutName(e.target.value)}
+                                className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-secondary mb-1">Input (optional)</label>
+                              <input
+                                placeholder="Text to pass to the shortcut"
+                                value={shortcutInput}
+                                onChange={(e) => setShortcutInput(e.target.value)}
+                                className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={runShortcut}
+                              disabled={shortcutRunning}
+                              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-600 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                            >
+                              {shortcutRunning ? "Running..." : "Run"}
+                            </button>
+                            <button
+                              onClick={refreshShortcutResults}
+                              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-card border border-subtle text-primary hover:bg-accent/50 transition-colors"
+                            >
+                              Fetch outputs
+                            </button>
+                            <button
+                              onClick={refreshShortcutInbox}
+                              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-card border border-subtle text-primary hover:bg-accent/50 transition-colors"
+                            >
+                              Fetch inbox
+                            </button>
+                          </div>
+                          {shortcutMsg && (
+                            <div className="text-xs text-secondary break-words">{shortcutMsg}</div>
+                          )}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <div className="text-[10px] text-secondary/70 uppercase tracking-wider mb-1">Outputs</div>
+                              {shortcutResults.length === 0 ? (
+                                <div className="text-xs text-secondary">None pending</div>
+                              ) : (
+                                shortcutResults.map((r, i) => (
+                                  <div key={i} className="text-xs text-primary font-mono break-all bg-accent/30 rounded px-2 py-1 mb-1">
+                                    {r.output || "(no output)"}
+                                    {r.at_ms ? <div className="text-[10px] text-secondary/70">{new Date(r.at_ms).toLocaleTimeString()}</div> : null}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-secondary/70 uppercase tracking-wider mb-1">Inbox</div>
+                              {shortcutInbox.length === 0 ? (
+                                <div className="text-xs text-secondary">None pending</div>
+                              ) : (
+                                shortcutInbox.map((p, i) => (
+                                  <div key={i} className="text-xs text-primary font-mono break-all bg-accent/30 rounded px-2 py-1 mb-1">
+                                    {p.prompt || "(no prompt)"}
+                                    {p.at_ms ? <div className="text-[10px] text-secondary/70">{new Date(p.at_ms).toLocaleTimeString()}</div> : null}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+                    )}
 
                     <section>
                       <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Wireless debugging</h3>

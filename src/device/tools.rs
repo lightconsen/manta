@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 
 use super::{
     DeviceBridge, CMD_CAPTURE_CAMERA, CMD_GET_LOCATION, CMD_HAPTIC, CMD_NOTIFY, CMD_PICK_FILE,
+    CMD_RUN_SHORTCUT, CMD_SHORTCUT_INBOX, CMD_SHORTCUT_RESULTS,
 };
 use crate::tools::{
     approval::RiskLevel, create_schema, sdk::ToolCapabilities, Tool, ToolContext,
@@ -353,6 +354,215 @@ impl Tool for DevicePickFileTool {
     }
 }
 
+/// Device shortcut hand-off tool — `ios_shortcut_run` (§4.6).
+///
+/// Hands off to the Shortcuts app via the public `shortcuts://run-shortcut`
+/// URL scheme. The shortcut runs visibly in the Shortcuts app (foreground
+/// hand-off); its final step invokes Syscity's `SyscityOutputIntent`, which
+/// writes the output into the app sandbox for `ios_shortcut_results` to pick
+/// up. iOS only.
+pub struct DeviceShortcutRunTool {
+    bridge: Option<Arc<dyn DeviceBridge>>,
+}
+
+impl DeviceShortcutRunTool {
+    pub fn new(bridge: Option<Arc<dyn DeviceBridge>>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for DeviceShortcutRunTool {
+    fn name(&self) -> &str {
+        "ios_shortcut_run"
+    }
+
+    fn description(&self) -> &str {
+        "Run an iOS Shortcut by name, optionally passing text input. The shortcut runs in the Shortcuts app; its final step can return output to Syscity via the SyscityOutput AppIntent. Only available on iOS."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        create_schema(
+            "Run an iOS Shortcut",
+            json!({
+                "name": {
+                    "type": "string",
+                    "description": "Name of the shortcut to run (as shown in the Shortcuts app)"
+                },
+                "input": {
+                    "type": "string",
+                    "description": "Optional text input passed to the shortcut"
+                }
+            }),
+            vec!["name"],
+        )
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: true,
+            risk_level: RiskLevel::Medium,
+            categories: vec!["device".to_string(), "automation".to_string()],
+            ..Default::default()
+        }
+    }
+
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        self.bridge.is_some()
+    }
+
+    async fn execute(
+        &self,
+        args: Value,
+        _context: &ToolContext,
+    ) -> crate::Result<ToolExecutionResult> {
+        let b = bridge(&self.bridge)?;
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let input = args
+            .get("input")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let data = run(&b, CMD_RUN_SHORTCUT, json!({ "name": name, "input": input })).await?;
+        let launched = data
+            .get("launched")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        Ok(ToolExecutionResult::success(if launched {
+            format!("Launched Shortcut '{name}' — it runs in the Shortcuts app")
+        } else {
+            format!("Could not launch Shortcut '{name}' (not found or hand-off denied)")
+        })
+        .with_data(data))
+    }
+}
+
+/// Device shortcut results tool — `ios_shortcut_results` (§4.6).
+///
+/// Lists and consumes outputs produced by the `SyscityOutputIntent`. Results
+/// are delete-read: once returned they are removed so the agent never sees the
+/// same output twice.
+pub struct DeviceShortcutResultsTool {
+    bridge: Option<Arc<dyn DeviceBridge>>,
+}
+
+impl DeviceShortcutResultsTool {
+    pub fn new(bridge: Option<Arc<dyn DeviceBridge>>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for DeviceShortcutResultsTool {
+    fn name(&self) -> &str {
+        "ios_shortcut_results"
+    }
+
+    fn description(&self) -> &str {
+        "List outputs returned to Syscity by the SyscityOutput AppIntent (the final step of an iOS Shortcut). Each entry is {output, at_ms}. Reading a result consumes it. Only available on iOS."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        create_schema("No parameters", json!({}), Vec::<String>::new())
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: RiskLevel::Low,
+            categories: vec!["device".to_string(), "automation".to_string()],
+            ..Default::default()
+        }
+    }
+
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        self.bridge.is_some()
+    }
+
+    async fn execute(
+        &self,
+        _args: Value,
+        _context: &ToolContext,
+    ) -> crate::Result<ToolExecutionResult> {
+        let b = bridge(&self.bridge)?;
+        let data = run(&b, CMD_SHORTCUT_RESULTS, json!({})).await?;
+        let items = data
+            .get("items")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let n = items.len();
+        Ok(
+            ToolExecutionResult::success(format!("Returned {n} shortcut output(s): {items:?}"))
+                .with_data(data),
+        )
+    }
+}
+
+/// Device shortcut inbox tool — `ios_shortcut_inbox` (§4.6).
+///
+/// Lists and consumes prompts sent in via the `AskSyscityIntent` (Siri /
+/// Shortcuts automation). Prompts are delete-read like results.
+pub struct DeviceShortcutInboxTool {
+    bridge: Option<Arc<dyn DeviceBridge>>,
+}
+
+impl DeviceShortcutInboxTool {
+    pub fn new(bridge: Option<Arc<dyn DeviceBridge>>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for DeviceShortcutInboxTool {
+    fn name(&self) -> &str {
+        "ios_shortcut_inbox"
+    }
+
+    fn description(&self) -> &str {
+        "List prompts sent to Syscity via the AskSyscity AppIntent (Siri or a Shortcuts automation). Each entry is {prompt, at_ms}. Reading a prompt consumes it. Only available on iOS."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        create_schema("No parameters", json!({}), Vec::<String>::new())
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: RiskLevel::Low,
+            categories: vec!["device".to_string(), "automation".to_string()],
+            ..Default::default()
+        }
+    }
+
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        self.bridge.is_some()
+    }
+
+    async fn execute(
+        &self,
+        _args: Value,
+        _context: &ToolContext,
+    ) -> crate::Result<ToolExecutionResult> {
+        let b = bridge(&self.bridge)?;
+        let data = run(&b, CMD_SHORTCUT_INBOX, json!({})).await?;
+        let items = data
+            .get("items")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let n = items.len();
+        Ok(ToolExecutionResult::success(format!(
+            "Returned {n} prompt(s) from the inbox: {items:?}"
+        ))
+        .with_data(data))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,11 +585,17 @@ mod tests {
         let notify = DeviceNotifyTool::new(None);
         let haptic = DeviceHapticTool::new(None);
         let pick = DevicePickFileTool::new(None);
+        let shortcut = DeviceShortcutRunTool::new(None);
+        let results = DeviceShortcutResultsTool::new(None);
+        let inbox = DeviceShortcutInboxTool::new(None);
         assert!(!camera.is_available(&context()));
         assert!(!geolocate.is_available(&context()));
         assert!(!notify.is_available(&context()));
         assert!(!haptic.is_available(&context()));
         assert!(!pick.is_available(&context()));
+        assert!(!shortcut.is_available(&context()));
+        assert!(!results.is_available(&context()));
+        assert!(!inbox.is_available(&context()));
     }
 
     #[test]
@@ -389,7 +605,10 @@ mod tests {
         assert!(DeviceGeolocateTool::new(bridge.clone()).is_available(&context()));
         assert!(DeviceNotifyTool::new(bridge.clone()).is_available(&context()));
         assert!(DeviceHapticTool::new(bridge.clone()).is_available(&context()));
-        assert!(DevicePickFileTool::new(bridge).is_available(&context()));
+        assert!(DevicePickFileTool::new(bridge.clone()).is_available(&context()));
+        assert!(DeviceShortcutRunTool::new(bridge.clone()).is_available(&context()));
+        assert!(DeviceShortcutResultsTool::new(bridge.clone()).is_available(&context()));
+        assert!(DeviceShortcutInboxTool::new(bridge).is_available(&context()));
     }
 
     #[tokio::test]
@@ -456,6 +675,58 @@ mod tests {
         assert!(result.output.contains("report.pdf"));
         assert_eq!(result.data.as_ref().unwrap()["size_bytes"], 1024);
         assert_eq!(b.calls()[0].0, CMD_PICK_FILE);
+    }
+
+    #[tokio::test]
+    async fn test_shortcut_run_forwards_payload() {
+        let b: Arc<MockDeviceBridge> = Arc::new(MockDeviceBridge::new(json!({ "launched": true })));
+        let tool = DeviceShortcutRunTool::new(Some(b.clone()));
+        let result = tool
+            .execute(json!({ "name": "Order Coffee", "input": "large" }), &context())
+            .await
+            .unwrap();
+        assert!(result.success);
+        let calls = b.calls();
+        assert_eq!(calls[0].0, CMD_RUN_SHORTCUT);
+        assert_eq!(calls[0].1["name"], "Order Coffee");
+        assert_eq!(calls[0].1["input"], "large");
+    }
+
+    #[tokio::test]
+    async fn test_shortcut_run_optional_input() {
+        let b: Arc<MockDeviceBridge> = Arc::new(MockDeviceBridge::new(json!({ "launched": true })));
+        let tool = DeviceShortcutRunTool::new(Some(b.clone()));
+        tool.execute(json!({ "name": "DoThing" }), &context())
+            .await
+            .unwrap();
+        let calls = b.calls();
+        assert_eq!(calls[0].0, CMD_RUN_SHORTCUT);
+        assert_eq!(calls[0].1["name"], "DoThing");
+        assert!(calls[0].1.get("input").is_some_and(|v| v.is_null()));
+    }
+
+    #[tokio::test]
+    async fn test_shortcut_results_consume() {
+        let b: Arc<MockDeviceBridge> = Arc::new(MockDeviceBridge::new(json!({
+            "items": [ { "output": "answer", "at_ms": 123 } ]
+        })));
+        let tool = DeviceShortcutResultsTool::new(Some(b.clone()));
+        let result = tool.execute(json!({}), &context()).await.unwrap();
+        assert!(result.output.contains("answer"));
+        assert_eq!(result.data.as_ref().unwrap()["items"][0]["output"], "answer");
+        assert_eq!(b.calls()[0].0, CMD_SHORTCUT_RESULTS);
+    }
+
+    #[tokio::test]
+    async fn test_shortcut_inbox_consume() {
+        let b: Arc<MockDeviceBridge> = Arc::new(MockDeviceBridge::new(json!({
+            "items": [ { "prompt": "what is the weather?", "at_ms": 123 } ]
+        })));
+        let tool = DeviceShortcutInboxTool::new(Some(b.clone()));
+        let result = tool.execute(json!({}), &context()).await.unwrap();
+        assert!(result.output.contains("what is the weather?"));
+        assert_eq!(result.data.as_ref().unwrap()["items"][0]["prompt"], "what is the weather?");
+        assert_eq!(b.calls()[0].0, CMD_SHORTCUT_INBOX);
     }
 
     #[tokio::test]

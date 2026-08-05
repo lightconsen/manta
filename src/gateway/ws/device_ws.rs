@@ -126,6 +126,73 @@ pub(super) async fn handle_device_permission_request(
     }
 }
 
+/// `device.shortcut.run` — hand off to the Shortcuts app (§4.6).
+pub(super) async fn handle_device_shortcut_run(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct RunPayload {
+        name: String,
+        #[serde(default)]
+        input: Option<String>,
+    }
+    let payload: RunPayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let bridge = match bridge_or_unsupported(req, state).await {
+        Ok(b) => b,
+        Err(e) => return e,
+    };
+    match bridge
+        .call(
+            crate::device::CMD_RUN_SHORTCUT,
+            json!({ "name": payload.name, "input": payload.input }),
+        )
+        .await
+    {
+        Ok(data) => WsResponse::ok(&req.id, data),
+        Err(e) => WsResponse::err(&req.id, "DEVICE_COMMAND_FAILED", format!("{}", e)),
+    }
+}
+
+/// `device.shortcut.results` — list + consume outputs from SyscityOutputIntent.
+pub(super) async fn handle_device_shortcut_results(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let bridge = match bridge_or_unsupported(req, state).await {
+        Ok(b) => b,
+        Err(e) => return e,
+    };
+    match bridge
+        .call(crate::device::CMD_SHORTCUT_RESULTS, json!({}))
+        .await
+    {
+        Ok(data) => WsResponse::ok(&req.id, data),
+        Err(e) => WsResponse::err(&req.id, "DEVICE_COMMAND_FAILED", format!("{}", e)),
+    }
+}
+
+/// `device.shortcut.inbox` — list + consume AskSyscity prompts.
+pub(super) async fn handle_device_shortcut_inbox(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let bridge = match bridge_or_unsupported(req, state).await {
+        Ok(b) => b,
+        Err(e) => return e,
+    };
+    match bridge
+        .call(crate::device::CMD_SHORTCUT_INBOX, json!({}))
+        .await
+    {
+        Ok(data) => WsResponse::ok(&req.id, data),
+        Err(e) => WsResponse::err(&req.id, "DEVICE_COMMAND_FAILED", format!("{}", e)),
+    }
+}
+
 /// `device.adb.status` — report loopback adb pairing status (§4.5).
 pub(super) async fn handle_device_adb_status(
     req: &WsRequest,

@@ -1149,7 +1149,11 @@ pub(crate) async fn create_default_tool_registry(
     registry.register(Box::new(crate::device::DeviceGeolocateTool::new(device_bridge.clone())));
     registry.register(Box::new(crate::device::DeviceNotifyTool::new(device_bridge.clone())));
     registry.register(Box::new(crate::device::DeviceHapticTool::new(device_bridge.clone())));
-    registry.register(Box::new(crate::device::DevicePickFileTool::new(device_bridge)));
+    registry.register(Box::new(crate::device::DevicePickFileTool::new(device_bridge.clone())));
+    registry.register(Box::new(crate::device::DeviceShortcutRunTool::new(device_bridge.clone())));
+    registry
+        .register(Box::new(crate::device::DeviceShortcutResultsTool::new(device_bridge.clone())));
+    registry.register(Box::new(crate::device::DeviceShortcutInboxTool::new(device_bridge)));
 
     // ── Register platform-specific capability sets ──
     {
@@ -1270,6 +1274,9 @@ pub(crate) async fn create_default_tool_registry(
     // Device tools that touch sensitive hardware / user data.
     registry.mark_privileged("device_camera");
     registry.mark_privileged("device_geolocate");
+    // Launching a user shortcut drives external app hand-off (read-only
+    // results/inbox consumption stays unprivileged).
+    registry.mark_privileged("ios_shortcut_run");
 
     Ok(registry)
 }

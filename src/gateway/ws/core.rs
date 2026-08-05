@@ -493,6 +493,9 @@ async fn dispatch_method(
         }
         "device.adb.status" => device_ws::handle_device_adb_status(req, state).await,
         "device.adb.pair" => device_ws::handle_device_adb_pair(req, state).await,
+        "device.shortcut.run" => device_ws::handle_device_shortcut_run(req, state).await,
+        "device.shortcut.results" => device_ws::handle_device_shortcut_results(req, state).await,
+        "device.shortcut.inbox" => device_ws::handle_device_shortcut_inbox(req, state).await,
         "cron.list" => tasks::handle_cron_list(req, state).await,
         "tasks.schedule" => tasks::handle_tasks_schedule(req, state).await,
         "tasks.list" => tasks::handle_tasks_list(req, state).await,

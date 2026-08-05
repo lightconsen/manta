@@ -4,8 +4,9 @@
 //! process-level abilities of a desktop host (no arbitrary subprocesses, no
 //! window system, restricted file access). The [`DeviceBridge`] trait is the
 //! single seam through which the Rust runtime reaches the platform's native
-//! APIs — camera, geolocation, notifications, haptics, SAF file picking, and
-//! loopback-ADB pairing (mobile-migration §4.1/§4.2/§4.5).
+//! APIs — camera, geolocation, notifications, haptics, SAF file picking,
+//! loopback-ADB pairing (mobile-migration §4.1/§4.2/§4.5), and the
+//! Shortcuts/AppIntents bus (§4.6).
 //!
 //! Desktop builds never construct a bridge: `GatewayState.device.bridge`
 //! stays `None`, every `device_*` tool reports unavailable, and each
@@ -17,6 +18,7 @@ mod tools;
 pub(crate) use tools::NO_BRIDGE_MSG;
 pub use tools::{
     DeviceCameraTool, DeviceGeolocateTool, DeviceHapticTool, DeviceNotifyTool, DevicePickFileTool,
+    DeviceShortcutInboxTool, DeviceShortcutResultsTool, DeviceShortcutRunTool,
 };
 
 use std::sync::Arc;
@@ -56,6 +58,17 @@ pub const CMD_REQUEST_PERMISSION: &str = "requestPermission";
 // execs adb.
 /// Sync the cron schedule into WorkManager for background wake (4.3).
 pub const CMD_CRON_SYNC: &str = "syncCronSchedule";
+// NOTE: 4.6 uses an AppIntent result channel: a shortcut's final step runs
+// Syscity's own AppIntent (`SyscityOutputIntent`), whose Swift `perform()`
+// writes `{output, at_ms}` into `<SYSCITY_HOME>/shortcuts/` — no external
+// dependency. `runShortcut` hand-off and the two read commands below are the
+// only bridge surface Rust needs.
+/// Hand off to the Shortcuts app with a shortcut name + input (4.6).
+pub const CMD_RUN_SHORTCUT: &str = "runShortcut";
+/// List and consume completed shortcut outputs (4.6).
+pub const CMD_SHORTCUT_RESULTS: &str = "shortcutResults";
+/// List and consume the AskSyscity prompt inbox (4.6).
+pub const CMD_SHORTCUT_INBOX: &str = "shortcutInbox";
 
 /// The native device bridge.
 ///
