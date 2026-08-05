@@ -11,7 +11,6 @@
 		10E7EE449B2134468A1552E6 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BFCEB8B97601633FB507841F /* Security.framework */; };
 		152B12BA8887960F19B6D625 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CEC6CAF8831A9C396EAB0482 /* MetalKit.framework */; };
 		2965568A35CEA68324944625 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A0A49B38A38E3C536A903FA /* QuartzCore.framework */; };
-		3B34A0F3537793453A657EB9 /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = 50BBAB8FEF3B68109A965EAB /* libapp.a */; };
 		3BB5EB15C27522E30961602A /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D711E7CFE63F394091C75D2 /* libapp.a */; };
 		57272D4C7F3F79C3BBB4D4F5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 20569AF4AFE336B902CEEB1A /* Assets.xcassets */; };
 		5DEF1F6A279571B01FEC1799 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 388E5C310262368787782CDC /* Metal.framework */; };
@@ -169,7 +168,7 @@
 			path = ../../src;
 			sourceTree = "<group>";
 		};
-		"TEMP_EE1ADB43-7A56-429B-B896-58A7036FF81B" /* x86_64 */ = {
+		"TEMP_95B2EE8F-9828-4A21-B335-9B83358636F9" /* x86_64 */ = {
 			isa = PBXGroup;
 			children = (
 			);
@@ -238,7 +237,6 @@
 				57272D4C7F3F79C3BBB4D4F5 /* Assets.xcassets in Resources */,
 				BABC00ED1CEB86CAD52A8E56 /* LaunchScreen.storyboard in Resources */,
 				8768060D97C009C9BD8A8209 /* assets in Resources */,
-				3B34A0F3537793453A657EB9 /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

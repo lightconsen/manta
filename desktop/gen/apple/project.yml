@@ -30,7 +30,13 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
+      # Externals holds build products (libapp.a). It must NOT be copied into
+      # the app bundle as a resource — xcodegen defaulted to that when the
+      # dir got populated and doubled the .app to ~2GB (a 1.7GB libapp.a copy
+      # next to the linked 335MB binary). Linking happens via the
+      # `dependencies: framework: libapp.a` entry instead.
       - path: Externals
+        buildPhase: none
       - path: syscity-desktop_iOS
       - path: assets
         buildPhase: resources
