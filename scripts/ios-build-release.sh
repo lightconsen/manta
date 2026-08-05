@@ -63,6 +63,11 @@ echo ""
 echo "Built: $APP_PATH"
 echo "  size: $(du -sh "$APP_PATH" | awk '{print $1}')"
 
+# The archive step strips the linked binary AFTER the App Intents metadata
+# phase re-signs it, so the built .app ships with an invalid signature and
+# SpringBoard denies launch. Re-sign adhoc so the simulator runs it.
+codesign --force --sign - --deep "$APP_PATH"
+
 if [[ "$LAUNCH" -eq 0 ]]; then
   echo "Skipping install/launch (--skip-launch)."
   exit 0
