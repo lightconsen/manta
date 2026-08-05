@@ -64,6 +64,7 @@ mod mobile_device {
     use std::sync::Arc;
 
     use tauri::plugin::PluginHandle;
+    use tauri::Manager;
 
     /// Tauri-managed state holding the registered device plugin handle.
     #[derive(Clone)]
@@ -77,7 +78,7 @@ mod mobile_device {
             &self,
             command: &str,
             payload: serde_json::Value,
-        ) -> crate::Result<serde_json::Value> {
+        ) -> syscity::Result<serde_json::Value> {
             self.plugin
                 .run_mobile_plugin_async::<serde_json::Value>(command, payload)
                 .await
@@ -102,7 +103,12 @@ mod mobile_device {
                         api.register_android_plugin("net.syscity.desktop", "DevicePlugin")?;
                     app.manage(TauriDeviceBridge { plugin: handle });
                 }
-                // iOS lands in 4.4 — nothing to register yet.
+                #[cfg(target_os = "ios")]
+                {
+                    tauri::ios_plugin_binding!(init_plugin_syscity_device);
+                    let handle = api.register_ios_plugin(init_plugin_syscity_device)?;
+                    app.manage(TauriDeviceBridge { plugin: handle });
+                }
                 Ok(())
             })
             .build()
@@ -266,6 +272,13 @@ pub fn run() {
         .manage(app_state)
         .plugin(tauri_plugin_shell::init());
 
+    // Native device bridge plugin (mobile only): registers the Kotlin
+    // DevicePlugin (android) or the Swift DevicePlugin (ios) so the gateway
+    // can reach camera / location / notifications / SAF / shortcuts. Must be
+    // added on the builder chain — `App::plugin` is not available for Wry.
+    #[cfg(mobile)]
+    let builder = builder.plugin(mobile_device::device_plugin());
+
     #[cfg(not(mobile))]
     let builder = builder.invoke_handler(tauri::generate_handler![get_api_url, reveal_in_folder]);
     #[cfg(mobile)]
@@ -279,13 +292,6 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let state = app_state_for_setup.clone();
-
-            // Register the native device plugin (mobile only) so the gateway
-            // can reach camera / location / notifications / SAF / adb.
-            #[cfg(mobile)]
-            if let Err(e) = app.plugin(mobile_device::device_plugin()) {
-                eprintln!("Failed to register device plugin: {}", e);
-            }
 
             // Set native macOS window subtitle (must be on main thread).
             if let Some(window) = app.get_webview_window("main") {

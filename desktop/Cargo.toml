@@ -41,6 +41,9 @@ objc2-foundation = "0.3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# `link_apple_library` compiles the app's Swift plugin (mobile-ios/) into the
+# iOS static library via swift-rs — see build.rs `link_ios_swift`.
+tauri-utils = "2"
 
 [lib]
 name = "syscity_desktop_lib"
