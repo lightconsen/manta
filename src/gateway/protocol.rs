@@ -258,7 +258,9 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "logs.unsubscribe"
         | "tasks.list"
         | "mcp.list"
-        | "mcp.presets" => Some(SCOPE_READ),
+        | "mcp.presets"
+        | "device.capabilities"
+        | "device.permission.status" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.rename"
@@ -276,7 +278,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "mcp.remove"
         | "mcp.connect"
         | "mcp.disconnect"
-        | "mcp.auth_cancel" => Some(SCOPE_WRITE),
+        | "mcp.auth_cancel"
+        | "device.permission.request" => Some(SCOPE_WRITE),
         "acp.spawn"
         | "acp.terminate"
         | "acp.message"
@@ -784,6 +787,8 @@ mod tests {
         assert_eq!(method_scope("tasks.list"), Some(SCOPE_READ));
         assert_eq!(method_scope("mcp.list"), Some(SCOPE_READ));
         assert_eq!(method_scope("mcp.presets"), Some(SCOPE_READ));
+        assert_eq!(method_scope("device.capabilities"), Some(SCOPE_READ));
+        assert_eq!(method_scope("device.permission.status"), Some(SCOPE_READ));
 
         // SCOPE_WRITE
         assert_eq!(method_scope("sessions.create"), Some(SCOPE_WRITE));
@@ -803,6 +808,7 @@ mod tests {
         assert_eq!(method_scope("mcp.remove"), Some(SCOPE_WRITE));
         assert_eq!(method_scope("mcp.connect"), Some(SCOPE_WRITE));
         assert_eq!(method_scope("mcp.disconnect"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("device.permission.request"), Some(SCOPE_WRITE));
 
         // SCOPE_ACP
         assert_eq!(method_scope("acp.spawn"), Some(SCOPE_ACP));

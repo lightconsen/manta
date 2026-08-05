@@ -178,6 +178,15 @@ pub struct SchedulerState {
     pub cron_scheduler: RwLock<Option<Arc<Mutex<CronScheduler>>>>,
 }
 
+/// Native device bridge state (mobile only).
+///
+/// The bridge is optional: on desktop it is always `None` and every
+/// consumer degrades gracefully (`UNSUPPORTED_PLATFORM` for WS methods,
+/// unavailable tools for the agent).
+pub struct DeviceState {
+    pub bridge: RwLock<Option<Arc<dyn crate::device::DeviceBridge>>>,
+}
+
 /// Shared gateway state grouped by domain.
 pub struct GatewayState {
     /// Configuration.
@@ -211,4 +220,5 @@ pub struct GatewayState {
     pub infra: InfraState,
     pub sdk: SdkState,
     pub scheduler: SchedulerState,
+    pub device: DeviceState,
 }

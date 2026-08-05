@@ -2,4 +2,7 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
   <external-path name="my_images" path="." />
   <cache-path name="my_cache_images" path="." />
+  <!-- Camera capture output (mobile-migration §4.1) lives under the app
+       files dir; FileProvider throws at runtime without a matching entry. -->
+  <files-path name="camera" path="syscity/camera/" />
 </paths>

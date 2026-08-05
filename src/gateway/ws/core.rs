@@ -486,6 +486,11 @@ async fn dispatch_method(
         "mcp.connect" => mcp_ws::handle_mcp_connect(req, state).await,
         "mcp.disconnect" => mcp_ws::handle_mcp_disconnect(req, state).await,
         "mcp.auth_cancel" => mcp_ws::handle_mcp_auth_cancel(req, state).await,
+        "device.capabilities" => device_ws::handle_device_capabilities(req, state).await,
+        "device.permission.status" => device_ws::handle_device_permission_status(req, state).await,
+        "device.permission.request" => {
+            device_ws::handle_device_permission_request(req, state).await
+        }
         "cron.list" => tasks::handle_cron_list(req, state).await,
         "tasks.schedule" => tasks::handle_tasks_schedule(req, state).await,
         "tasks.list" => tasks::handle_tasks_list(req, state).await,

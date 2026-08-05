@@ -948,6 +948,8 @@ pub(crate) struct ToolRegistryArgs {
     pub content_filter: Option<Arc<crate::security::content_filter::ContentFilter>>,
     /// Search provider configuration.
     pub search_config: crate::gateway::config::SearchConfig,
+    /// Native device bridge (mobile only; `None` on desktop).
+    pub device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
 }
 
 /// Create default tool registry with all built-in tools
@@ -966,6 +968,7 @@ pub(crate) async fn create_default_tool_registry(
         audit_log,
         content_filter,
         search_config,
+        device_bridge,
     } = args;
 
     let mut registry = ToolRegistry::new()
@@ -1140,6 +1143,14 @@ pub(crate) async fn create_default_tool_registry(
     // Register capability discovery tool
     registry.register(Box::new(ListCapabilitiesTool::new()));
 
+    // ── Device capability tools (mobile only; bridge is None on desktop,
+    //    so is_available() is false and these are invisible to the agent) ──
+    registry.register(Box::new(crate::device::DeviceCameraTool::new(device_bridge.clone())));
+    registry.register(Box::new(crate::device::DeviceGeolocateTool::new(device_bridge.clone())));
+    registry.register(Box::new(crate::device::DeviceNotifyTool::new(device_bridge.clone())));
+    registry.register(Box::new(crate::device::DeviceHapticTool::new(device_bridge.clone())));
+    registry.register(Box::new(crate::device::DevicePickFileTool::new(device_bridge)));
+
     // ── Register platform-specific capability sets ──
     {
         use crate::computer::platform::{
@@ -1246,6 +1257,10 @@ pub(crate) async fn create_default_tool_registry(
     // OS control tools — privileged because they modify system state.
     registry.mark_privileged("system_inspect");
     registry.mark_privileged("service_manager");
+
+    // Device tools that touch sensitive hardware / user data.
+    registry.mark_privileged("device_camera");
+    registry.mark_privileged("device_geolocate");
 
     Ok(registry)
 }

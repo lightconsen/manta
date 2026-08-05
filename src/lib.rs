@@ -51,6 +51,7 @@ pub mod core;
 pub mod cron;
 pub mod daemon;
 pub mod delegation;
+pub mod device;
 pub mod dirs;
 pub mod embed;
 pub mod error;

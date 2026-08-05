@@ -215,6 +215,9 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             heartbeat_event_tx: tokio::sync::RwLock::new(None),
             cron_scheduler: tokio::sync::RwLock::new(None),
         },
+        device: DeviceState {
+            bridge: tokio::sync::RwLock::new(None),
+        },
     }
 }
 

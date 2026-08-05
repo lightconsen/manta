@@ -231,6 +231,7 @@ pub async fn init_tools(
     audit_log_dyn: Arc<dyn AuditLogger>,
     model_router: Arc<ModelRouter>,
     task_registry: Arc<crate::gateway::task_registry::TaskRegistry>,
+    device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
 ) -> crate::Result<ToolsInit> {
     let (mcp_manager, mcp_event_rx) = init_mcp_manager().await;
     let approval_queue = Arc::new(ApprovalQueue::new());
@@ -249,6 +250,7 @@ pub async fn init_tools(
                 audit_log: audit_log_dyn,
                 content_filter: Some(Arc::new(ContentFilter::default())),
                 search_config: config.search.clone(),
+                device_bridge,
             },
         )
         .await?,

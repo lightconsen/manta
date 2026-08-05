@@ -135,6 +135,7 @@ mod agents;
 mod chat;
 mod config_ws;
 mod core;
+mod device_ws;
 mod handshake;
 mod logs;
 mod mcp_ws;
@@ -147,6 +148,7 @@ pub use core::{ws_auth_middleware, ws_handler};
 
 #[cfg(test)]
 mod tests {
+    use super::device_ws;
     use super::mcp_ws::{
         handle_mcp_add, handle_mcp_connect, handle_mcp_disconnect, handle_mcp_list,
         handle_mcp_remove,
@@ -407,5 +409,94 @@ mod tests {
         assert_eq!(params.protocol_version, 1);
         assert_eq!(params.client.as_ref().unwrap().id, "web");
         assert_eq!(params.scopes, vec!["chat", "read"]);
+    }
+
+    // ── Device handlers ──────────────────────────────────────────────────────
+
+    /// Build a test state whose device bridge returns the given canned
+    /// response for every command, then returns it alongside the bridge.
+    async fn device_test_state(
+        response: serde_json::Value,
+    ) -> (Arc<GatewayState>, Arc<crate::device::tests::MockDeviceBridge>) {
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
+        let bridge: Arc<crate::device::tests::MockDeviceBridge> =
+            Arc::new(crate::device::tests::MockDeviceBridge::new(response));
+        *state.device.bridge.write().await = Some(bridge.clone());
+        (state, bridge)
+    }
+
+    #[tokio::test]
+    async fn test_device_handlers_unsupported_without_bridge() {
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
+        // Every handler returns UNSUPPORTED_PLATFORM when the bridge is None.
+        let req = make_req("r1", "device.capabilities", serde_json::json!({}));
+        let res = device_ws::handle_device_capabilities(&req, &state).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "UNSUPPORTED_PLATFORM");
+
+        let req = make_req(
+            "r1",
+            "device.permission.request",
+            serde_json::json!({ "permission": "camera" }),
+        );
+        let res = device_ws::handle_device_permission_request(&req, &state).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "UNSUPPORTED_PLATFORM");
+    }
+
+    #[tokio::test]
+    async fn test_device_capabilities_reports_grants() {
+        let (state, bridge) = device_test_state(serde_json::json!({ "granted": true })).await;
+        let req = make_req("r1", "device.capabilities", serde_json::json!({}));
+        let res = device_ws::handle_device_capabilities(&req, &state).await;
+        assert!(res.ok);
+        let caps = res.payload.as_ref().unwrap()["capabilities"]
+            .as_array()
+            .unwrap();
+        // Camera/location/notifications query permission.status; the mock
+        // returns granted:true. Permission-free caps report granted:true.
+        assert_eq!(caps.len(), 6);
+        let camera = caps.iter().find(|c| c["id"] == "camera").unwrap();
+        assert_eq!(camera["granted"], true);
+        assert_eq!(bridge.calls().len(), 3); // camera, location, notifications
+    }
+
+    #[tokio::test]
+    async fn test_device_capabilities_missing_permissions_reported_denied() {
+        let (state, _bridge) = device_test_state(serde_json::json!({ "granted": false })).await;
+        let req = make_req("r1", "device.capabilities", serde_json::json!({}));
+        let res = device_ws::handle_device_capabilities(&req, &state).await;
+        assert!(res.ok);
+        let caps = res.payload.as_ref().unwrap()["capabilities"]
+            .as_array()
+            .unwrap();
+        let location = caps.iter().find(|c| c["id"] == "location").unwrap();
+        assert_eq!(location["granted"], false);
+        // Permission-free capabilities stay granted.
+        let haptics = caps.iter().find(|c| c["id"] == "haptics").unwrap();
+        assert_eq!(haptics["granted"], true);
+    }
+
+    #[tokio::test]
+    async fn test_device_permission_request_forwards() {
+        let (state, bridge) =
+            device_test_state(serde_json::json!({ "permission": "camera", "granted": true })).await;
+        let req = make_req(
+            "r1",
+            "device.permission.request",
+            serde_json::json!({ "permission": "camera" }),
+        );
+        let res = device_ws::handle_device_permission_request(&req, &state).await;
+        assert!(res.ok);
+        assert_eq!(res.payload.as_ref().unwrap()["granted"], true);
+        assert_eq!(bridge.calls().len(), 1);
+        assert_eq!(bridge.calls()[0].0, crate::device::CMD_REQUEST_PERMISSION);
+        assert_eq!(bridge.calls()[0].1["permission"], "camera");
     }
 }

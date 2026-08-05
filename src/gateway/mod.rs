@@ -231,9 +231,32 @@ pub struct Gateway {
     pub(crate) shutdown_token: CancellationToken,
 }
 
+/// Optional wiring supplied at construction time (mobile).
+///
+/// All fields default to `None`; desktop builds never set them, so the
+/// desktop code path is byte-for-byte unchanged.
+#[derive(Default)]
+pub struct GatewayOptions {
+    /// Native device bridge (camera/geolocation/notifications/SAF/adb).
+    ///
+    /// Only constructed on mobile; `None` on desktop keeps every `device_*`
+    /// tool and `device.*` WS method unavailable.
+    pub device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
+}
+
 impl Gateway {
-    /// Create a new gateway instance.
+    /// Create a new gateway instance (desktop default wiring).
     pub async fn new(config: GatewayConfig, config_path: Option<PathBuf>) -> crate::Result<Self> {
+        Self::with_options(config, config_path, GatewayOptions::default()).await
+    }
+
+    /// Create a new gateway instance with explicit mobile wiring.
+    pub async fn with_options(
+        config: GatewayConfig,
+        config_path: Option<PathBuf>,
+        options: GatewayOptions,
+    ) -> crate::Result<Self> {
+        let device_bridge = options.device_bridge;
         let (event_tx, _) = broadcast::channel(1000);
         let (log_tx, _) = broadcast::channel(1000);
         let (inbound_entry_tx, inbound_entry_rx) =
@@ -277,6 +300,7 @@ impl Gateway {
             audit_log_dyn.clone(),
             model_router.clone(),
             task_registry.clone(),
+            device_bridge.clone(),
         )
         .await?;
 
@@ -441,6 +465,9 @@ impl Gateway {
                 heartbeat_wake_tx: RwLock::new(None),
                 heartbeat_event_tx: RwLock::new(None),
                 cron_scheduler: RwLock::new(None),
+            },
+            device: DeviceState {
+                bridge: RwLock::new(device_bridge),
             },
         });
 

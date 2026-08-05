@@ -52,6 +52,71 @@ pub struct AppState {
     pub gateway_token: Option<String>,
 }
 
+/// Native device bridge (mobile only; mobile-migration §4.1/§4.2/§4.5).
+///
+/// Registered as the `"device"` Tauri plugin; the plugin's setup callback
+/// calls `register_android_plugin` and stores the resulting [`PluginHandle`]
+/// in managed state so the gateway task can wrap it as a
+/// [`syscity::device::DeviceBridge`]. Desktop builds never compile this
+/// module (`#[cfg(mobile)]` is set by tauri-build only for android/ios).
+#[cfg(mobile)]
+mod mobile_device {
+    use std::sync::Arc;
+
+    use tauri::plugin::PluginHandle;
+
+    /// Tauri-managed state holding the registered device plugin handle.
+    #[derive(Clone)]
+    pub(crate) struct TauriDeviceBridge {
+        plugin: PluginHandle<tauri::Wry>,
+    }
+
+    #[async_trait::async_trait]
+    impl syscity::device::DeviceBridge for TauriDeviceBridge {
+        async fn call(
+            &self,
+            command: &str,
+            payload: serde_json::Value,
+        ) -> crate::Result<serde_json::Value> {
+            self.plugin
+                .run_mobile_plugin_async::<serde_json::Value>(command, payload)
+                .await
+                .map_err(|e| {
+                    syscity::error::SyscityError::Internal(format!(
+                        "Device command '{}' failed: {}",
+                        command, e
+                    ))
+                })
+        }
+    }
+
+    /// Build the `"device"` plugin. Its setup registers the Kotlin
+    /// `DevicePlugin` (android) and stores the handle in managed state.
+    /// Tauri mobile apps always use the `Wry` runtime.
+    pub(crate) fn device_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+        tauri::plugin::Builder::new("device")
+            .setup(|app, api| {
+                #[cfg(target_os = "android")]
+                {
+                    let handle =
+                        api.register_android_plugin("net.syscity.desktop", "DevicePlugin")?;
+                    app.manage(TauriDeviceBridge { plugin: handle });
+                }
+                // iOS lands in 4.4 — nothing to register yet.
+                Ok(())
+            })
+            .build()
+    }
+
+    /// The bridge if the plugin was registered, else `None` (e.g. iOS).
+    pub(crate) fn bridge_from_app(
+        app: &tauri::AppHandle,
+    ) -> Option<Arc<dyn syscity::device::DeviceBridge>> {
+        app.try_state::<TauriDeviceBridge>()
+            .map(|b| Arc::new(b.inner().clone()) as Arc<dyn syscity::device::DeviceBridge>)
+    }
+}
+
 /// Tauri command: returns the Gateway base URL for the frontend.
 #[tauri::command]
 fn get_api_url(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> String {
@@ -215,6 +280,13 @@ pub fn run() {
             let handle = app.handle().clone();
             let state = app_state_for_setup.clone();
 
+            // Register the native device plugin (mobile only) so the gateway
+            // can reach camera / location / notifications / SAF / adb.
+            #[cfg(mobile)]
+            if let Err(e) = app.plugin(mobile_device::device_plugin()) {
+                eprintln!("Failed to register device plugin: {}", e);
+            }
+
             // Set native macOS window subtitle (must be on main thread).
             if let Some(window) = app.get_webview_window("main") {
                 set_window_subtitle(&window, &format!("v{VERSION} · Your AI Assistant"));
@@ -235,7 +307,16 @@ pub fn run() {
                     s.gateway_port = port;
                 }
 
-                if let Err(e) = start_gateway(handle.clone(), port).await {
+                #[cfg(mobile)]
+                let device_bridge: Option<
+                    std::sync::Arc<dyn syscity::device::DeviceBridge>,
+                > = mobile_device::bridge_from_app(&handle);
+                #[cfg(not(mobile))]
+                let device_bridge: Option<
+                    std::sync::Arc<dyn syscity::device::DeviceBridge>,
+                > = None;
+
+                if let Err(e) = start_gateway(handle.clone(), port, device_bridge).await {
                     eprintln!("Gateway failed: {}", e);
                 }
             });
@@ -289,8 +370,9 @@ fn set_window_subtitle(window: &tauri::WebviewWindow, subtitle: &str) {
 async fn start_gateway(
     handle: tauri::AppHandle,
     port: u16,
+    device_bridge: Option<std::sync::Arc<dyn syscity::device::DeviceBridge>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use syscity::gateway::{Gateway, GatewayConfig};
+    use syscity::gateway::{Gateway, GatewayConfig, GatewayOptions};
 
     // Ensure ~/.syscity directory exists.
     let syscity_dir = syscity::dirs::syscity_dir();
@@ -409,9 +491,13 @@ async fn start_gateway(
         gateway_config.host, gateway_config.port
     );
 
-    let gateway = Gateway::new(gateway_config.clone(), Some(config_path))
-        .await
-        .map_err(|e| format!("Failed to create gateway: {}", e))?;
+    let gateway = Gateway::with_options(
+        gateway_config.clone(),
+        Some(config_path),
+        GatewayOptions { device_bridge },
+    )
+    .await
+    .map_err(|e| format!("Failed to create gateway: {}", e))?;
 
     // Show the main window now that the backend is ready.
     if let Some(window) = handle.get_webview_window("main") {
