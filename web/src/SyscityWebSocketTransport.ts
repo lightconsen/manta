@@ -130,6 +130,14 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   private readonly reconnectCap = 15000;
   private readonly reconnectMultiplier = 1.7;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Liveness watchdog: a frozen gateway leaves pings unanswered and keeps the
+   *  TCP connection open, so `onclose` never fires. A heartbeat probe + timeout
+   *  force-closes so the reconnect path self-heals. */
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private connectTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly heartbeatIntervalMs = 15000;
+  private readonly heartbeatTimeoutMs = 10000;
+  private readonly connectTimeoutMs = 20000;
   private deviceId: string;
   private subscribedSessions: string[] = [];
   private listeners: Set<EventCallback> = new Set();
@@ -286,6 +294,10 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    // Fresh watchdog state for this attempt (old timers must not outlive the
+    // previous connection or close a newer one).
+    this.stopHeartbeat();
+    this.clearConnectTimeout();
 
     this.setStatus("connecting");
 
@@ -313,9 +325,21 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
 
     this.gatewayUrl = url;
     this.ws = new WebSocket(url);
+    const ws = this.ws;
+    // A gateway that never completes the connect handshake is also wedged
+    // (accepts the TCP upgrade but stops responding). Force-close if we
+    // haven't reached "connected" in time so the reconnect path self-heals.
+    this.connectTimeoutTimer = setTimeout(() => {
+      if (this.ws === ws && this.currentStatus !== "connected") {
+        ws.close();
+      }
+    }, this.connectTimeoutMs);
 
     this.ws.onopen = () => {
       this.reconnectDelay = 800;
+      // TCP upgrade succeeded; arm the liveness probe. Probe pings only run
+      // once the connect handshake completes (status === "connected").
+      this.startHeartbeat();
       this.sendRequest("connect", {
         protocol_version: 1,
         client: { id: "web", version: "1.0.0" },
@@ -343,6 +367,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             }
           }
           if (msg.ok && msg.payload?.protocol_version) {
+            this.clearConnectTimeout();
             this.setStatus("connected");
             this.serverInfo = {
               version: msg.payload.server?.version,
@@ -378,11 +403,15 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     };
 
     this.ws.onclose = () => {
+      this.stopHeartbeat();
+      this.clearConnectTimeout();
       this.setStatus("disconnected");
       this.scheduleReconnect();
     };
 
     this.ws.onerror = () => {
+      this.stopHeartbeat();
+      this.clearConnectTimeout();
       this.setStatus("disconnected");
       this.scheduleReconnect();
     };
@@ -398,6 +427,43 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       this.reconnectDelay * this.reconnectMultiplier,
       this.reconnectCap
     );
+  }
+
+  private clearConnectTimeout() {
+    if (this.connectTimeoutTimer) {
+      clearTimeout(this.connectTimeoutTimer);
+      this.connectTimeoutTimer = null;
+    }
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(
+      () => this.probeLiveness(),
+      this.heartbeatIntervalMs
+    );
+  }
+
+  /** Probe the gateway with a ping; force-close if it never answers. */
+  private probeLiveness() {
+    const ws = this.ws;
+    if (
+      !ws ||
+      ws.readyState !== WebSocket.OPEN ||
+      this.currentStatus !== "connected"
+    ) {
+      return;
+    }
+    this.sendRequestAndWait("ping", {}, this.heartbeatTimeoutMs).catch(() => {
+      ws.close();
+    });
   }
 
   private sendRequest(
