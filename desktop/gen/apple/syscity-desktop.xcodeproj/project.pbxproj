@@ -11,6 +11,7 @@
 		10E7EE449B2134468A1552E6 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BFCEB8B97601633FB507841F /* Security.framework */; };
 		152B12BA8887960F19B6D625 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CEC6CAF8831A9C396EAB0482 /* MetalKit.framework */; };
 		2965568A35CEA68324944625 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A0A49B38A38E3C536A903FA /* QuartzCore.framework */; };
+		3B34A0F3537793453A657EB9 /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = 50BBAB8FEF3B68109A965EAB /* libapp.a */; };
 		3BB5EB15C27522E30961602A /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D711E7CFE63F394091C75D2 /* libapp.a */; };
 		57272D4C7F3F79C3BBB4D4F5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 20569AF4AFE336B902CEEB1A /* Assets.xcassets */; };
 		5DEF1F6A279571B01FEC1799 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 388E5C310262368787782CDC /* Metal.framework */; };
@@ -28,6 +29,7 @@
 		2AF3436150AE1E817141179A /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
 		388E5C310262368787782CDC /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		3A0A49B38A38E3C536A903FA /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		50BBAB8FEF3B68109A965EAB /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		5400123D58C9E32D5F41D0B4 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		6B18FA19D535970DAA979A7E /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
 		6FDA1336E0093D94979685D1 /* syscity-desktop_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "syscity-desktop_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -111,6 +113,7 @@
 		B71C1E24934978DB7E02FC47 /* Externals */ = {
 			isa = PBXGroup;
 			children = (
+				EDF7D2AF2C0E446A9FC2FBC1 /* arm64 */,
 			);
 			path = Externals;
 			sourceTree = "<group>";
@@ -132,6 +135,22 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		CF45B3B79B882402ED04BF7C /* debug */ = {
+			isa = PBXGroup;
+			children = (
+				50BBAB8FEF3B68109A965EAB /* libapp.a */,
+			);
+			path = debug;
+			sourceTree = "<group>";
+		};
+		EDF7D2AF2C0E446A9FC2FBC1 /* arm64 */ = {
+			isa = PBXGroup;
+			children = (
+				CF45B3B79B882402ED04BF7C /* debug */,
+			);
+			path = arm64;
+			sourceTree = "<group>";
+		};
 		F570633E0C46454FE2470EF2 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -150,6 +169,13 @@
 			path = ../../src;
 			sourceTree = "<group>";
 		};
+		"TEMP_EE1ADB43-7A56-429B-B896-58A7036FF81B" /* x86_64 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = x86_64;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -161,6 +187,7 @@
 				746F410DD15824D70127251E /* Sources */,
 				FB47FA9117D368123AD22705 /* Resources */,
 				03E82A950F46593B0E1302CC /* Frameworks */,
+				8EA573745AC046FBBC4FEEA8 /* Generate App Intents Metadata */,
 			);
 			buildRules = (
 			);
@@ -211,12 +238,32 @@
 				57272D4C7F3F79C3BBB4D4F5 /* Assets.xcassets in Resources */,
 				BABC00ED1CEB86CAD52A8E56 /* LaunchScreen.storyboard in Resources */,
 				8768060D97C009C9BD8A8209 /* assets in Resources */,
+				3B34A0F3537793453A657EB9 /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		8EA573745AC046FBBC4FEEA8 /* Generate App Intents Metadata */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate App Intents Metadata";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/bash \"${SRCROOT}/../../mobile-ios/scripts/generate-appintents-metadata.sh\"";
+		};
 		D0181EA1A93697678695EEEE /* Build Rust Code */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;

@@ -88,3 +88,12 @@ targets:
         outputFiles:
           - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
           - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+    postBuildScripts:
+      # The swift-rs build compiles AppIntents.swift into libapp.a without
+      # Xcode's "Extract App Intents Metadata" phase, so Metadata.appintents is
+      # never emitted. Without it the Shortcuts/AppIntents bus (§4.6) is not
+      # link-enabled and the intents never surface in Shortcuts. This phase
+      # regenerates it from the linked binary (mobile-migration §4.6).
+      - script: /bin/bash "${SRCROOT}/../../mobile-ios/scripts/generate-appintents-metadata.sh"
+        name: Generate App Intents Metadata
+        basedOnDependencyAnalysis: false
