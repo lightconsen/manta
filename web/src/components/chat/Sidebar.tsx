@@ -174,7 +174,7 @@ export function Sidebar({
 
   return (
     <aside
-      className={`shrink-0 flex flex-col bg-sidebar transition-all duration-300 overflow-x-hidden ${
+      className={`shrink-0 h-full flex flex-col bg-sidebar transition-all duration-300 overflow-x-hidden ${
         collapsed ? "w-16" : "w-64"
       }`}
     >
