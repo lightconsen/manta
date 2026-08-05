@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { X } from "lucide-react";
+import { X, Camera, MapPin, Bell, Vibrate, FileUp, Wifi } from "lucide-react";
 import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 import { useThemeStore } from "@/stores/themeStore";
 
@@ -126,6 +126,15 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   const [logLines, setLogLines] = useState<string[]>([]);
   const [logsSubscribed, setLogsSubscribed] = useState(false);
   const logListRef = useRef<HTMLDivElement>(null);
+  const [deviceCaps, setDeviceCaps] = useState<Array<{ id: string; label: string; available: boolean; granted: boolean }> | null>(null);
+  const [deviceCapsLoading, setDeviceCapsLoading] = useState(false);
+  const [permRequesting, setPermRequesting] = useState<string>("");
+  const [adbPort, setAdbPort] = useState("");
+  const [adbConnectPort, setAdbConnectPort] = useState("");
+  const [adbCode, setAdbCode] = useState("");
+  const [adbStatus, setAdbStatus] = useState<{ paired: boolean; devices: Array<{ serial: string; state: string }> } | null>(null);
+  const [adbPairing, setAdbPairing] = useState(false);
+  const [adbError, setAdbError] = useState("");
   const [mcpServers, setMcpServers] = useState<Array<{
     id: string;
     transport: string;
@@ -257,6 +266,25 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
       }
     };
   }, [activeTab, logsSubscribed, transport]);
+
+  // Load device capabilities + adb status when the Devices tab opens
+  useEffect(() => {
+    if (activeTab !== "devices" || !transport.isTauri()) return;
+    let cancelled = false;
+    (async () => {
+      setDeviceCapsLoading(true);
+      const caps = await transport.deviceCapabilities();
+      if (!cancelled) {
+        setDeviceCaps(caps);
+        setDeviceCapsLoading(false);
+      }
+      const st = await transport.adbStatus();
+      if (!cancelled) setAdbStatus(st);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, transport]);
 
   // Listen for log.line events
   useEffect(() => {
@@ -688,6 +716,71 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     toastTimer.current = setTimeout(() => setToast(null), 3000);
   };
 
+  /* ── Devices tab (mobile §4.1/§4.5) ── */
+
+  /** Runtime permissions that need the Request button (granted via dialog). */
+  const needsDevicePermission = (id: string) =>
+    id === "camera" || id === "location" || id === "notifications";
+
+  /** Per-capability icons for the Devices tab list. */
+  const deviceCapIcon: Record<string, React.ReactNode> = {
+    camera: <Camera className="w-4 h-4" />,
+    location: <MapPin className="w-4 h-4" />,
+    notifications: <Bell className="w-4 h-4" />,
+    haptics: <Vibrate className="w-4 h-4" />,
+    file_pick: <FileUp className="w-4 h-4" />,
+    adb: <Wifi className="w-4 h-4" />,
+  };
+
+  const requestDevicePermission = async (perm: string) => {
+    setPermRequesting(perm);
+    const res = await transport.requestDevicePermission(perm);
+    setPermRequesting("");
+    if (!res) {
+      showToast(`Failed to request ${perm} permission`, "error");
+      return;
+    }
+    // Update the grant state in the list without a full reload.
+    setDeviceCaps((caps) =>
+      (caps || []).map((c) => (c.id === perm ? { ...c, granted: res.granted } : c))
+    );
+    showToast(
+      res.granted ? `${perm} permission granted` : `${perm} permission denied`,
+      res.granted ? "success" : "error"
+    );
+  };
+
+  const refreshAdbStatus = async () => {
+    const st = await transport.adbStatus();
+    setAdbStatus(st);
+  };
+
+  const pairAdb = async () => {
+    const port = parseInt(adbPort, 10);
+    if (!port || !adbCode.trim()) {
+      setAdbError("Enter the pairing port and code from the wireless-debugging screen");
+      return;
+    }
+    setAdbPairing(true);
+    setAdbError("");
+    const connectPort = adbConnectPort ? parseInt(adbConnectPort, 10) : undefined;
+    const res = await transport.adbPair(port, adbCode.trim(), connectPort);
+    setAdbPairing(false);
+    if (!res) {
+      setAdbError("Pairing failed — is wireless debugging enabled on this phone?");
+      return;
+    }
+    if (res.paired && res.connected) {
+      showToast("Paired with wireless debugging", "success");
+      setAdbError("");
+    } else if (res.paired) {
+      setAdbError(res.connectOutput || "Paired, but the adb connect failed");
+    } else {
+      setAdbError(res.pairOutput || "Pairing failed — check the code and port");
+    }
+    setAdbStatus({ paired: res.connected, devices: res.devices });
+  };
+
   const handleAddMcp = async () => {
     setAddMcpError("");
     if (!newMcp.id.trim()) {
@@ -816,6 +909,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
     { id: "mcp", label: "MCP Servers" },
     { id: "skills", label: "Skills" },
     { id: "jobs", label: "Jobs" },
+    { id: "devices", label: "Devices" },
     { id: "logs", label: "Logs" },
   ];
 
@@ -1932,6 +2026,134 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                     </div>
                   </div>
                 </section>
+              </div>
+            )}
+
+            {activeTab === "devices" && (
+              <div className="space-y-5">
+                {!transport.isTauri() || (deviceCaps === null && !deviceCapsLoading) ? (
+                  <section>
+                    <div className="rounded-lg bg-card border border-subtle px-4 py-6 text-center text-sm text-secondary">
+                      Device capabilities (camera, location, notifications, wireless debugging)
+                      are available in the Syscity mobile app.
+                    </div>
+                  </section>
+                ) : deviceCapsLoading ? (
+                  <div className="text-sm text-secondary py-6 text-center">Loading...</div>
+                ) : (
+                  <>
+                    <section>
+                      <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Capabilities</h3>
+                      <div className="space-y-2">
+                        {(deviceCaps || []).map((cap) => (
+                          <div key={cap.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                            <div className="flex items-center gap-2">
+                              <span className="text-secondary">{deviceCapIcon[cap.id]}</span>
+                              <span className="text-sm text-primary">{cap.label}</span>
+                              <span className="text-[10px] text-secondary/70 font-mono">{cap.id}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`text-xs px-2 py-0.5 rounded-full ${
+                                  cap.granted
+                                    ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                }`}
+                              >
+                                {cap.granted ? "Granted" : "Not granted"}
+                              </span>
+                              {needsDevicePermission(cap.id) && (
+                                <button
+                                  onClick={() => requestDevicePermission(cap.id)}
+                                  disabled={permRequesting === cap.id}
+                                  className="px-2.5 py-1 text-xs rounded-md bg-primary-600 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                                >
+                                  {permRequesting === cap.id ? "Requesting..." : "Request"}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section>
+                      <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">Wireless debugging</h3>
+                      <div className="rounded-lg bg-card border border-subtle p-3 space-y-3">
+                        <p className="text-xs text-secondary">
+                          Pair this phone with its own wireless-debugging adb server for on-device
+                          automation (screenshots, input, UI tree). On the phone: enable Developer
+                          options → Wireless debugging, then use "Pair device with pairing code".
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-xs text-secondary mb-1">Pairing port</label>
+                            <input
+                              inputMode="numeric"
+                              placeholder="e.g. 45678"
+                              value={adbPort}
+                              onChange={(e) => setAdbPort(e.target.value)}
+                              className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-secondary mb-1">Connect port (optional)</label>
+                            <input
+                              inputMode="numeric"
+                              placeholder="e.g. 45679"
+                              value={adbConnectPort}
+                              onChange={(e) => setAdbConnectPort(e.target.value)}
+                              className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-secondary mb-1">Pairing code</label>
+                          <input
+                            inputMode="numeric"
+                            placeholder="6-digit code"
+                            value={adbCode}
+                            onChange={(e) => setAdbCode(e.target.value)}
+                            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={pairAdb}
+                            disabled={adbPairing}
+                            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-600 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                          >
+                            {adbPairing ? "Pairing..." : "Pair"}
+                          </button>
+                          <span className="text-xs text-secondary">Pairing is per-boot.</span>
+                        </div>
+                        {adbError && (
+                          <div className="text-xs text-red-600 dark:text-red-400 break-words">{adbError}</div>
+                        )}
+                        <div className="border-t border-subtle pt-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-secondary">Status</span>
+                            <button onClick={refreshAdbStatus} className="text-xs text-primary-600 hover:underline">
+                              Refresh
+                            </button>
+                          </div>
+                          {adbStatus === null ? (
+                            <div className="text-xs text-secondary mt-1">Unknown</div>
+                          ) : adbStatus.paired ? (
+                            <div className="text-xs text-green-600 dark:text-green-400 mt-1">Paired</div>
+                          ) : (
+                            <div className="text-xs text-secondary mt-1">Not paired</div>
+                          )}
+                          {adbStatus && adbStatus.devices.length > 0 && (
+                            <div className="mt-1 font-mono text-[11px] text-secondary">
+                              {adbStatus.devices.map((d) => `${d.serial} (${d.state})`).join(", ")}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </section>
+                  </>
+                )}
               </div>
             )}
 

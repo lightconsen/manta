@@ -628,7 +628,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
 
   private sendRequestAndWait(
     method: string,
-    params?: Record<string, unknown>
+    params?: Record<string, unknown>,
+    timeoutMs = 5000
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = this.sendRequest(method, params);
@@ -642,8 +643,13 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           this.responseWaiters.delete(id);
           reject(new Error("Request timeout"));
         }
-      }, 5000);
+      }, timeoutMs);
     });
+  }
+
+  /** True when running inside a Tauri WebView (desktop or mobile). */
+  isTauri(): boolean {
+    return typeof window !== "undefined" && "__TAURI__" in window;
   }
 
   switchSession(sessionId: string): void {
@@ -1299,6 +1305,104 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /* ── Device operations (mobile §4.1/§4.2/§4.5) ── */
+  /**
+   * List device capabilities with grant state.
+   * Returns `null` when the platform is unsupported (e.g. desktop / web).
+   */
+  async deviceCapabilities(): Promise<
+    Array<{ id: string; label: string; available: boolean; granted: boolean }> | null
+  > {
+    try {
+      const res = (await this.sendRequestAndWait("device.capabilities", {})) as
+        | { capabilities?: Array<{ id: string; label: string; available: boolean; granted: boolean }> }
+        | undefined;
+      return res?.capabilities || [];
+    } catch {
+      return null;
+    }
+  }
+
+  /** Report a runtime permission's grant state. `null` on unsupported platform. */
+  async devicePermissionStatus(permission: string): Promise<{ granted: boolean; state: string } | null> {
+    try {
+      const res = (await this.sendRequestAndWait("device.permission.status", { permission })) as
+        | { granted?: boolean; state?: string }
+        | undefined;
+      return res ? { granted: !!res.granted, state: res.state || "denied" } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Ask the user to grant a runtime permission. May take up to ~60 s. */
+  async requestDevicePermission(permission: string): Promise<{ granted: boolean; state: string } | null> {
+    try {
+      const res = (await this.sendRequestAndWait("device.permission.request", { permission }, 60000)) as
+        | { granted?: boolean; state?: string }
+        | undefined;
+      return res ? { granted: !!res.granted, state: res.state || "denied" } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Report loopback adb pairing status. `null` on unsupported platform. */
+  async adbStatus(): Promise<{ paired: boolean; devices: Array<{ serial: string; state: string }> } | null> {
+    try {
+      const res = (await this.sendRequestAndWait("device.adb.status", {})) as
+        | { paired?: boolean; devices?: Array<{ serial: string; state: string }> }
+        | undefined;
+      return { paired: !!res?.paired, devices: res?.devices || [] };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Pair with the phone's own wireless-debugging adb server (§4.5).
+   * `port` is the pairing-port shown in the "Pair device with pairing code"
+   * dialog; `connectPort` (defaults to `port`) is the connect target shown on
+   * the wireless-debugging screen. May take up to ~60 s.
+   */
+  async adbPair(
+    port: number,
+    code: string,
+    connectPort?: number
+  ): Promise<{
+    paired: boolean;
+    connected: boolean;
+    pairOutput?: string;
+    connectOutput?: string;
+    devices: Array<{ serial: string; state: string }>;
+  } | null> {
+    try {
+      const res = (await this.sendRequestAndWait(
+        "device.adb.pair",
+        { port, code, connect_port: connectPort },
+        60000
+      )) as
+        | {
+            paired?: boolean;
+            connected?: boolean;
+            pair_output?: string;
+            connect_output?: string;
+            devices?: Array<{ serial: string; state: string }>;
+          }
+        | undefined;
+      if (!res) return null;
+      return {
+        paired: !!res.paired,
+        connected: !!res.connected,
+        pairOutput: res.pair_output,
+        connectOutput: res.connect_output,
+        devices: res.devices || [],
+      };
+    } catch {
+      return null;
     }
   }
 
