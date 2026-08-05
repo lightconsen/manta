@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::gateway::EmbeddingProviderType;
 use crate::gateway::GatewayConfig;
@@ -285,9 +285,12 @@ pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) -> cra
         let cron_scheduler = Arc::new(Mutex::new(cron_scheduler));
 
         let (announce_tx, mut announce_rx) = mpsc::channel::<AnnounceDelivery>(64);
+        let (schedule_change_tx, mut schedule_change_rx) =
+            mpsc::channel::<Vec<(String, Option<i64>)>>(16);
         {
             let mut scheduler = cron_scheduler.lock().await;
             scheduler.set_announce_tx(announce_tx);
+            scheduler.set_schedule_change_tx(schedule_change_tx);
         }
         let event_tx_announce = state.events.tx.clone();
         let announce_handle = tokio::spawn(async move {
@@ -321,6 +324,31 @@ pub async fn init_cron(config: &GatewayConfig, state: &Arc<GatewayState>) -> cra
             .task_registry
             .insert_join("cron:scheduler", scheduler_handle)
             .await;
+        // 4.3: forward schedule snapshots to a platform wake bridge when one
+        // is present. Without a bridge (desktop) this task never spawns, so
+        // the scheduler's `schedule_change_tx` simply stays undrained — zero
+        // behaviour change.
+        if let Some(bridge) = state.device.bridge.read().await.clone() {
+            let cron_wake_handle = tokio::spawn(async move {
+                while let Some(jobs) = schedule_change_rx.recv().await {
+                    let payload = serde_json::json!({
+                        "jobs": jobs.iter().map(|(id, at_ms)| serde_json::json!({
+                            "id": id,
+                            "at_ms": at_ms,
+                        })).collect::<Vec<_>>(),
+                    });
+                    match bridge.call(crate::device::CMD_CRON_SYNC, payload).await {
+                        Ok(_) => debug!("Cron schedule synced to platform wake"),
+                        Err(e) => warn!("Failed to sync cron schedule to platform wake: {}", e),
+                    }
+                }
+            });
+            state
+                .task_registry
+                .insert_join("cron:wake", cron_wake_handle)
+                .await;
+        }
+
         *state.scheduler.cron_scheduler.write().await = Some(cron_scheduler.clone());
         info!("Advanced cron scheduler initialized");
 

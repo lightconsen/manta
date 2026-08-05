@@ -448,6 +448,17 @@ mod tests {
         let res = device_ws::handle_device_permission_request(&req, &state).await;
         assert!(!res.ok);
         assert_eq!(res.error.as_ref().unwrap().code, "UNSUPPORTED_PLATFORM");
+
+        let req =
+            make_req("r1", "device.adb.pair", serde_json::json!({ "port": 5555, "code": "1" }));
+        let res = device_ws::handle_device_adb_pair(&req, &state).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "UNSUPPORTED_PLATFORM");
+
+        let req = make_req("r1", "device.adb.status", serde_json::json!({}));
+        let res = device_ws::handle_device_adb_status(&req, &state).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "UNSUPPORTED_PLATFORM");
     }
 
     #[tokio::test]
@@ -498,5 +509,30 @@ mod tests {
         assert_eq!(bridge.calls().len(), 1);
         assert_eq!(bridge.calls()[0].0, crate::device::CMD_REQUEST_PERMISSION);
         assert_eq!(bridge.calls()[0].1["permission"], "camera");
+    }
+
+    #[tokio::test]
+    async fn test_device_adb_pair_payload_is_validated() {
+        // `device.adb.pair` runs the local adb client Rust-side (not through
+        // the bridge), so on desktop it is gated to UNSUPPORTED_PLATFORM when
+        // the bridge is absent — but only after the payload parses. A missing
+        // port/code is a request error, not an unsupported-platform one.
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
+        let req = make_req("r1", "device.adb.pair", serde_json::json!({}));
+        let res = device_ws::handle_device_adb_pair(&req, &state).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "INVALID_REQUEST");
+
+        let req = make_req(
+            "r1",
+            "device.adb.pair",
+            serde_json::json!({ "port": 43455, "code": "123456", "connect_port": 5555 }),
+        );
+        let res = device_ws::handle_device_adb_pair(&req, &state).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "UNSUPPORTED_PLATFORM");
     }
 }

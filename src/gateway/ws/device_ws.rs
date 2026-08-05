@@ -125,3 +125,50 @@ pub(super) async fn handle_device_permission_request(
         Err(e) => WsResponse::err(&req.id, "DEVICE_COMMAND_FAILED", format!("{}", e)),
     }
 }
+
+/// `device.adb.status` — report loopback adb pairing status (§4.5).
+pub(super) async fn handle_device_adb_status(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    // Gate on the device bridge: absent on desktop, where adb runs on the
+    // host's PATH and this surface does not exist.
+    if state.device.bridge.read().await.is_none() {
+        return WsResponse::err(&req.id, "UNSUPPORTED_PLATFORM", crate::device::NO_BRIDGE_MSG);
+    }
+    match crate::computer::platform::mobile::adb_status().await {
+        Ok(data) => WsResponse::ok(&req.id, data),
+        Err(e) => WsResponse::err(&req.id, "DEVICE_COMMAND_FAILED", format!("{}", e)),
+    }
+}
+
+/// `device.adb.pair` — pair with the local wireless-debugging adb server.
+pub(super) async fn handle_device_adb_pair(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct PairPayload {
+        port: u16,
+        code: String,
+        #[serde(default)]
+        connect_port: Option<u16>,
+    }
+    let payload: PairPayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    if state.device.bridge.read().await.is_none() {
+        return WsResponse::err(&req.id, "UNSUPPORTED_PLATFORM", crate::device::NO_BRIDGE_MSG);
+    }
+    match crate::computer::platform::mobile::adb_pair(
+        payload.port,
+        &payload.code,
+        payload.connect_port,
+    )
+    .await
+    {
+        Ok(data) => WsResponse::ok(&req.id, data),
+        Err(e) => WsResponse::err(&req.id, "DEVICE_COMMAND_FAILED", format!("{}", e)),
+    }
+}

@@ -1177,6 +1177,15 @@ pub(crate) async fn create_default_tool_registry(
             tool_reg.register(Box::new(crate::computer::platform::WindowsToolset::new()));
         }
 
+        // On mobile (Android/iOS) the host OS tool sets are absent; the
+        // Android ADB bridge targets the phone itself via the bundled adb
+        // client (loopback self-pairing, §4.5). Availability is still gated
+        // at runtime by `AndroidToolset::is_available()` (bundled adb present).
+        #[cfg(mobile_os)]
+        {
+            tool_reg.register(Box::new(crate::computer::platform::AndroidToolset::new()));
+        }
+
         // Load capability profile from config
         let profile = match capabilities.profile.as_str() {
             "minimal" => CapabilityProfile::Minimal,

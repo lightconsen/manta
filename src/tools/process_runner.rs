@@ -376,17 +376,43 @@ impl AndroidShellRunner {
 }
 
 #[cfg(target_os = "android")]
+impl AndroidShellRunner {
+    /// Point a bundled native binary at its sibling libraries.
+    ///
+    /// The bundled `adb` client (mobile-migration §4.5) is dynamically linked
+    /// against `libprotobuf.so`, `libabsl_*.so`, … shipped alongside it in
+    /// nativeLibraryDir; its DT_RUNPATH points at a Termux path that does not
+    /// exist here. Bionic honors `LD_LIBRARY_PATH` for non-setuid app
+    /// processes, so set it to nativeLibraryDir for the bundled-exec path.
+    /// `sh`/toybox need nothing (they only use bionic) and are untouched.
+    fn apply_bundled_library_path(&self, eff: &mut ProcessRequest) {
+        let Some(dir) = &self.native_library_dir else {
+            return;
+        };
+        let Some(program) = eff.argv.first().map(String::as_str) else {
+            return;
+        };
+        if dir.join(program).exists() {
+            eff.env
+                .insert("LD_LIBRARY_PATH".to_string(), dir.to_string_lossy().into_owned());
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
 #[async_trait]
 impl ProcessRunner for AndroidShellRunner {
     async fn run(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
         let mut eff = req.clone();
         eff.argv = self.resolve_argv(req)?;
+        self.apply_bundled_library_path(&mut eff);
         self.inner.run(&eff).await
     }
 
     async fn spawn(&self, req: &ProcessRequest) -> Result<Child, ProcessError> {
         let mut eff = req.clone();
         eff.argv = self.resolve_argv(req)?;
+        self.apply_bundled_library_path(&mut eff);
         self.inner.spawn(&eff).await
     }
 }

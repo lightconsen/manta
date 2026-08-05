@@ -16,10 +16,20 @@ impl CronScheduler {
             store_path: None,
             announce_tx: None,
             heartbeat_wake_tx: None,
+            schedule_change_tx: None,
             rearm_notify: Arc::new(tokio::sync::Notify::new()),
             inflight: Arc::new(TokioMutex::new(Vec::new())),
         };
         (scheduler, command_rx)
+    }
+
+    /// Attach a schedule-change sender (§4.3).
+    ///
+    /// The receiver is typically drained by the gateway and forwarded to a
+    /// platform wake bridge. Not wired on desktop (`None`), where emitting a
+    /// snapshot is a no-op.
+    pub fn set_schedule_change_tx(&mut self, tx: mpsc::Sender<ScheduleChangeSnapshot>) {
+        self.schedule_change_tx = Some(tx);
     }
 
     /// Attach an announce delivery sender.
@@ -77,8 +87,14 @@ impl CronScheduler {
         let store_path = self.store_path.clone();
         let announce_tx = self.announce_tx.clone();
         let heartbeat_wake_tx = self.heartbeat_wake_tx.clone();
+        let schedule_change_tx = self.schedule_change_tx.clone();
         let inflight = Arc::clone(&self.inflight);
         let rearm_notify = Arc::clone(&self.rearm_notify);
+
+        // Emit the initial schedule snapshot after load_jobs so a background
+        // platform wake bridge (WorkManager, §4.3) re-establishes its alarm
+        // set from a fresh scheduler start / app relaunch.
+        Self::emit_schedule_snapshot(&jobs, &schedule_change_tx).await;
 
         // Spawn command handler
         let cmd_handle = tokio::spawn(async move {
@@ -86,7 +102,7 @@ impl CronScheduler {
                 tokio::select! {
                     cmd = command_rx.recv() => {
                         if let Some(cmd) = cmd {
-                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx, &inflight, &rearm_notify, cmd).await;
+                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx, &inflight, &rearm_notify, &schedule_change_tx, cmd).await;
                         }
                     }
                     _ = cmd_shutdown_rx.recv() => {
@@ -319,6 +335,7 @@ impl CronScheduler {
         heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
         inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
         rearm_notify: &Arc<tokio::sync::Notify>,
+        schedule_change_tx: &Option<mpsc::Sender<ScheduleChangeSnapshot>>,
         cmd: CronCommand,
     ) {
         match cmd {
@@ -349,6 +366,9 @@ impl CronScheduler {
                 // call site — so there is no TOCTOU window where the timer
                 // wakes up before the job is inserted into the map.
                 rearm_notify.notify_one();
+
+                // Sync the changed schedule to any platform wake bridge.
+                Self::emit_schedule_snapshot(jobs, schedule_change_tx).await;
             }
             CronCommand::Remove(id) => {
                 info!("Removing job: {}", id);
@@ -369,6 +389,9 @@ impl CronScheduler {
                 // next_run_at — preventing a phantom wake once the old
                 // sleep expires.
                 rearm_notify.notify_one();
+
+                // Sync the changed schedule to any platform wake bridge.
+                Self::emit_schedule_snapshot(jobs, schedule_change_tx).await;
             }
             CronCommand::SetEnabled(id, enabled) => {
                 let mut jobs_lock = jobs.write().await;
@@ -393,6 +416,9 @@ impl CronScheduler {
                 // for this job's next run) and when disabling (timer may be
                 // sleeping toward this job, so we recalibrate without it).
                 rearm_notify.notify_one();
+
+                // Sync the changed schedule to any platform wake bridge.
+                Self::emit_schedule_snapshot(jobs, schedule_change_tx).await;
             }
             CronCommand::Trigger(id) => {
                 info!("Triggering job: {}", id);
@@ -435,6 +461,41 @@ impl CronScheduler {
                 let jobs_lock = jobs.read().await;
                 let job = jobs_lock.get(&id).cloned();
                 let _ = tx.send(job);
+            }
+        }
+    }
+
+    /// Emit a snapshot of `(job_id, next_run_at_ms)` for every enabled job
+    /// (§4.3). If no schedule-change receiver is wired (desktop), this is a
+    /// no-op. Uses `try_send` so the command actor never blocks on a slow
+    /// consumer; a `Full` result just drops the update — the next schedule
+    /// change re-sends a fresh snapshot, and the platform bridge syncs the
+    /// full set each time.
+    async fn emit_schedule_snapshot(
+        jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
+        schedule_change_tx: &Option<mpsc::Sender<ScheduleChangeSnapshot>>,
+    ) {
+        let Some(tx) = schedule_change_tx else {
+            return;
+        };
+        let snapshot = {
+            let jobs_lock = jobs.read().await;
+            jobs_lock
+                .iter()
+                .filter(|(_, job)| job.enabled)
+                .map(|(id, job)| {
+                    let next_ms = job.state.next_run_at.map(|t| t.timestamp_millis());
+                    (id.clone(), next_ms)
+                })
+                .collect::<Vec<_>>()
+        };
+        match tx.try_send(snapshot) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                // Consumer busy; the next schedule change re-syncs.
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                debug!("schedule_change_tx receiver dropped");
             }
         }
     }

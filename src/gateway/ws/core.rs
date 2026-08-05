@@ -491,6 +491,8 @@ async fn dispatch_method(
         "device.permission.request" => {
             device_ws::handle_device_permission_request(req, state).await
         }
+        "device.adb.status" => device_ws::handle_device_adb_status(req, state).await,
+        "device.adb.pair" => device_ws::handle_device_adb_pair(req, state).await,
         "cron.list" => tasks::handle_cron_list(req, state).await,
         "tasks.schedule" => tasks::handle_tasks_schedule(req, state).await,
         "tasks.list" => tasks::handle_tasks_list(req, state).await,

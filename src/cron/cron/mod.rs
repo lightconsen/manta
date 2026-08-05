@@ -32,6 +32,11 @@ pub use types::{
     WakeMode,
 };
 
+/// A full schedule snapshot for a platform wake bridge (§4.3): every enabled
+/// job's `(job_id, next_run_at_ms)`. Kept as a named alias so the scheduler
+/// field / method signatures stay clippy-`type_complexity`-clean.
+pub type ScheduleChangeSnapshot = Vec<(String, Option<i64>)>;
+
 /// Maximum timer delay - wake at least once per minute to check for schedule
 /// changes
 const MAX_TIMER_DELAY_MS: u64 = 60_000;
@@ -88,6 +93,15 @@ pub struct CronScheduler {
     /// When a cron job has `wake_mode: HeartbeatWake`, a wake request is sent
     /// here.
     heartbeat_wake_tx: Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
+    /// Optional sender for schedule-change notifications (§4.3).
+    ///
+    /// When set, an updated snapshot of `(job_id, next_run_at_ms)` is sent
+    /// after any Add / Remove / SetEnabled (after persist + rearm) and once
+    /// after startup `load_jobs`. The gateway forwards it to a platform wake
+    /// bridge (e.g. WorkManager on Android) so due jobs can nudge the user
+    /// even while the app is backgrounded. Scheduler stays device-agnostic —
+    /// this is a plain typed channel; `None` (desktop) means no-op.
+    schedule_change_tx: Option<mpsc::Sender<ScheduleChangeSnapshot>>,
     /// Notify the timer to re-calculate next wake time
     rearm_notify: Arc<tokio::sync::Notify>,
     /// Abort handles of in-flight job tasks, each tagged with the job
@@ -429,6 +443,7 @@ mod tests {
         let (scheduler, rx) = CronScheduler::new();
         assert!(scheduler.store_path.is_none());
         assert!(scheduler.announce_tx.is_none());
+        assert!(scheduler.schedule_change_tx.is_none());
         // rx should be open
         assert!(!rx.is_closed());
     }
@@ -437,6 +452,60 @@ mod tests {
     fn test_cron_scheduler_default() {
         let scheduler: CronScheduler = Default::default();
         assert!(scheduler.store_path.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_schedule_change_snapshot_on_add_remove_enabled() {
+        let (mut scheduler, command_rx) = CronScheduler::new();
+        let (schedule_change_tx, mut schedule_change_rx) =
+            mpsc::channel::<Vec<(String, Option<i64>)>>(16);
+        scheduler.set_schedule_change_tx(schedule_change_tx);
+        scheduler.start(command_rx).await.unwrap();
+
+        // Drain the initial (empty) snapshot emitted after load_jobs.
+        let initial = tokio::time::timeout(Duration::from_millis(1000), schedule_change_rx.recv())
+            .await
+            .expect("initial snapshot timed out")
+            .expect("channel closed");
+        assert!(initial.is_empty(), "fresh scheduler should have no jobs");
+
+        // Add an enabled job with a future next run → snapshot contains it.
+        let future = Utc::now() + ChronoDuration::hours(2);
+        let job = CronJob::new(
+            "j1",
+            "job-one",
+            Schedule::At { timestamp: future },
+            ExecutionTarget::shell("echo hi"),
+        )
+        .with_delivery(DeliveryMode::None);
+        scheduler.add_job(job).await.unwrap();
+
+        let snap = tokio::time::timeout(Duration::from_millis(1000), schedule_change_rx.recv())
+            .await
+            .expect("add snapshot timed out")
+            .expect("channel closed");
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].0, "j1");
+        let at_ms = snap[0].1.expect("next run should be set");
+        assert!(at_ms > Utc::now().timestamp_millis());
+
+        // Disable the job → snapshot drops it.
+        scheduler.set_job_enabled("j1", false).await.unwrap();
+        let snap2 = tokio::time::timeout(Duration::from_millis(1000), schedule_change_rx.recv())
+            .await
+            .expect("disable snapshot timed out")
+            .expect("channel closed");
+        assert!(snap2.is_empty(), "disabled job must not be in snapshot");
+
+        // Remove the job → snapshot stays empty.
+        scheduler.remove_job("j1").await.unwrap();
+        let snap3 = tokio::time::timeout(Duration::from_millis(1000), schedule_change_rx.recv())
+            .await
+            .expect("remove snapshot timed out")
+            .expect("channel closed");
+        assert!(snap3.is_empty(), "removed job must not be in snapshot");
+
+        scheduler.shutdown().await.unwrap();
     }
 
     #[test]
