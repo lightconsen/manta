@@ -1573,12 +1573,15 @@ mod tests {
     async fn test_database_store_expiration() {
         let store = DatabaseStore::new_in_memory().await.unwrap();
 
-        let memory = Memory::new("user1", "Temporary", "fact").with_ttl(1);
+        // TTL is 2s so the present-check below cannot race across the expiry
+        // boundary on a loaded runner (a 1s TTL flaked when store→get took
+        // >1s).
+        let memory = Memory::new("user1", "Temporary", "fact").with_ttl(2);
         let id = store.store(memory).await.unwrap();
 
         assert!(store.get(&id).await.unwrap().is_some());
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
         assert!(store.get(&id).await.unwrap().is_none());
 

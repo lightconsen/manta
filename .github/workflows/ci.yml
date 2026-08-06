@@ -424,10 +424,11 @@ jobs:
         uses: taiki-e/install-action@cargo-tarpaulin
 
       - name: Generate coverage report
-        # mcp_e2e tests spawn a python subprocess; tarpaulin segfaults
-        # instrumenting them, so they are skipped (integration tests are
-        # excluded from coverage reporting anyway).
-        run: "cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e:: --skip test_mcp_manager"
+        # Integration tests are excluded from coverage reporting anyway, and
+        # tarpaulin segfaults instrumenting ones that spawn subprocesses
+        # (mcp_e2e spawns python, integrations::acp_tests uses apply_patch),
+        # so the subprocess-spawning integration binaries are skipped.
+        run: "cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e:: --skip test_mcp_manager --skip integrations::"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
