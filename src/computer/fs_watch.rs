@@ -67,7 +67,11 @@ impl From<&notify::EventKind> for FileChangeKind {
 /// Generic file-system watcher backed by `notify`.
 pub struct FileWatcher {
     /// Underlying OS watcher (native backend or `PollWatcher` fallback).
-    watcher: Box<dyn Watcher>,
+    ///
+    /// Bound to `Send` so `FileWatcher` itself is `Send`, which keeps the
+    /// platform adapters (`WaylandComputerAdapter` / `X11ComputerAdapter`)
+    /// `Sync` and their async methods' futures `Send`.
+    watcher: Box<dyn Watcher + Send>,
     /// Channel receiver for change events.
     rx: mpsc::UnboundedReceiver<FileChangeEvent>,
     /// Set of currently watched paths (tracked for rebuilds).

@@ -18,4 +18,16 @@ ignore = [
     "RUSTSEC-2026-0098",
     "RUSTSEC-2026-0099",
     "RUSTSEC-2026-0104",
+
+    # RUSTSEC-2026-0187: stack overflow in lopdf via deeply nested PDF objects.
+    # Transitive via pdf-extract 0.7.12 (which pins lopdf ^0.34); the fixed
+    # version needs lopdf >=0.42.0, a major API break no released pdf-extract
+    # pulls in yet. Syscity only extracts PDFs on explicit user request.
+    "RUSTSEC-2026-0187",
+
+    # RUSTSEC-2026-0222: wasmtime stores can mix up type indices between engines.
+    # Transitive via wiggle/wasmtime-wasi for the WASM plugin runtime; the fix
+    # requires jumping wasmtime across major versions incompatible with the
+    # pinned WASI plugin stack. Low severity, no public API exposure.
+    "RUSTSEC-2026-0222",
 ]

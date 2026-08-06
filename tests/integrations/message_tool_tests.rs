@@ -210,6 +210,9 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             heartbeat_event_tx: tokio::sync::RwLock::new(None),
             cron_scheduler: tokio::sync::RwLock::new(None),
         },
+        device: syscity::gateway::state::DeviceState {
+            bridge: tokio::sync::RwLock::new(None),
+        },
         task_registry: Arc::new(syscity::gateway::task_registry::TaskRegistry::new()),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
     }
