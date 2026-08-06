@@ -25,6 +25,8 @@ Syscity is an **agent system** — a runtime that lets AI agents act on your com
 
 Traditional AI lives inside a browser tab. Syscity lives inside your machine.
 
+**One agent runtime, every device.** Run the same local agent on **macOS**, **Windows**, **Linux**, **iOS**, and **Android** — your data, memory, and tools stay on your machine. Only model inference leaves it.
+
 **For developers** who want to build LLM-powered automation. **For power users** who want AI to control their desktop, not just chat.
 
 <picture>
@@ -34,6 +36,28 @@ Traditional AI lives inside a browser tab. Syscity lives inside your machine.
 </picture>
 <br/>
 <p align="center"><em>Agent generates a markdown report via <code>write_report</code>, then previews it in a split-panel view.</em></p>
+
+## Platforms
+
+One agent runtime, every device you own. Syscity runs natively on **macOS**, **Windows**, **Linux**, **iOS**, and **Android**.
+
+| Platform | Agent experience |
+|---|---|
+| **macOS** | Full desktop automation — click/type, UI trees, screenshots, AppleScript, shell, browser, files |
+| **Windows** | Desktop control, shell commands, file operations, browser automation, code execution |
+| **Linux** | X11/Wayland desktop control, shell, files, browser, code execution |
+| **iOS** | Chat, voice input, camera, location, notifications, Shortcuts/Siri |
+| **Android** | Chat, voice input, camera, location, notifications, device tools |
+
+Your agent runs **locally**: configuration, vector memory, knowledge bases, and artifacts all stay on your device. Only model inference goes to the LLM provider you configure — or stays fully on-device with Ollama.
+
+### Mobile Apps
+
+Take Syscity with you. The same agent runtime runs natively on **iOS** and **Android** — chat, voice input, camera, location, notifications, and device tools, all talking to your local gateway.
+
+| iOS | Android |
+|---|---|
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/mobile-ios-light.png" /><source media="(prefers-color-scheme: dark)" srcset="docs/assets/mobile-ios-dark.png" /><img src="docs/assets/mobile-ios-light.png" alt="Syscity on iOS" width="300" /></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/mobile-android-light.png" /><source media="(prefers-color-scheme: dark)" srcset="docs/assets/mobile-android-dark.png" /><img src="docs/assets/mobile-android-light.png" alt="Syscity on Android" width="300" /></picture> |
 
 ## Why Syscity?
 
@@ -45,6 +69,7 @@ Most "AI agents" today are just chatbots with function calling — they can fetc
 - **Your browser, automated** — Navigate, fill forms, capture network requests, debug console errors with sourcemaps. The agent debugs like a developer.
 - **Your tools, connected** — MCP servers, shell commands, file operations, AppleScript. Bring your own ecosystem.
 - **Your data, private** — Runs 100% locally. Vector memory, knowledge bases, artifacts all on your machine.
+- **Every platform, one agent** — macOS, Windows, Linux, iOS, Android. The same local runtime and memory, on every device you own.
 - **Multiple models, one agent** — Swap between OpenAI, Anthropic, DeepSeek, GLM, Ollama, or custom endpoints. Use the right model for each task.
 
 You don't need a new IDE, a cloud subscription, or a complex deployment. Just `curl | bash` and start.
@@ -171,6 +196,8 @@ On macOS, Syscity unlocks the full desktop automation stack:
 | `applescript` | Control Mail, Calendar, Finder, Music, etc. |
 
 Grant **Screen Recording** and **Accessibility** permissions in System Settings for full capability.
+
+Desktop control also works on **Windows** and **Linux** (X11/Wayland); macOS offers the deepest integration.
 
 ## Configuration
 
