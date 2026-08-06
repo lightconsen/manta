@@ -176,7 +176,10 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
     let url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz";
     let data = download_bytes(url).await?;
 
-    let extract_dir = dest.parent().unwrap().join(".ffmpeg_extract");
+    let parent = dest.parent().ok_or_else(|| {
+        crate::computer::ComputerError::Other(format!("{} has no parent directory", dest.display()))
+    })?;
+    let extract_dir = parent.join(".ffmpeg_extract");
     if extract_dir.exists() {
         std::fs::remove_dir_all(&extract_dir).ok();
     }
@@ -234,7 +237,10 @@ async fn download_ffmpeg(dest: &Path) -> crate::computer::Result<()> {
     let url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
     let data = download_bytes(url).await?;
 
-    let extract_dir = dest.parent().unwrap().join(".ffmpeg_extract");
+    let parent = dest.parent().ok_or_else(|| {
+        crate::computer::ComputerError::Other(format!("{} has no parent directory", dest.display()))
+    })?;
+    let extract_dir = parent.join(".ffmpeg_extract");
     if extract_dir.exists() {
         std::fs::remove_dir_all(&extract_dir).ok();
     }

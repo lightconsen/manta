@@ -436,12 +436,54 @@ pub async fn resolve_oauth_client_secret(
 mod tests {
     use super::*;
 
+    /// In-memory `CredentialBackend` used to exercise the layered store without
+    /// a live OS keychain — GitHub Actions runners have no secret-service
+    /// daemon, so a real keyring must never be required by unit tests.
+    #[cfg(feature = "keyring")]
+    #[derive(Debug, Default)]
+    struct MemoryCredentialBackend {
+        entries: std::sync::Mutex<HashMap<(String, String), String>>,
+    }
+
+    #[cfg(feature = "keyring")]
+    use crate::secrets::keyring_store::CredentialBackend;
+
+    #[cfg(feature = "keyring")]
+    impl CredentialBackend for MemoryCredentialBackend {
+        fn get(&self, service: &str, user: &str) -> crate::Result<Option<String>> {
+            let entries = self.entries.lock().unwrap();
+            Ok(entries
+                .get(&(service.to_string(), user.to_string()))
+                .cloned())
+        }
+
+        fn set(&self, service: &str, user: &str, value: &str) -> crate::Result<()> {
+            let mut entries = self.entries.lock().unwrap();
+            entries.insert((service.to_string(), user.to_string()), value.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, service: &str, user: &str) -> crate::Result<()> {
+            let mut entries = self.entries.lock().unwrap();
+            entries.remove(&(service.to_string(), user.to_string()));
+            Ok(())
+        }
+    }
+
     #[cfg(feature = "keyring")]
     #[test]
     fn test_route_with_keyring_is_layered() {
-        let store = route_store_with("mcp-env", true);
         // A layered store delegates to a concrete backend only for leaf ops;
         // exercise it through the trait to prove the chain works end to end.
+        // The primary is backed by an in-memory credential backend so the
+        // layering logic is covered without a real keychain.
+        let store = Arc::new(FallbackStore {
+            primary: Arc::new(KeyringStore::with_backend(
+                "mcp-env",
+                Arc::new(MemoryCredentialBackend::default()),
+            )),
+            secondary: Arc::new(FileStore::new("mcp-env")),
+        });
         let id = SecretId::new("mcp-env", "probe", "secret");
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {

@@ -248,7 +248,7 @@ impl Agent {
             let ctx = self
                 .build_fresh_context(&conversation_id, &user_id, &content)
                 .await;
-            let thread_id = format!("thread-{}", &conversation_id);
+            let thread_id = format!("thread-{}", conversation_id);
             // Persist the new thread record (fire-and-forget).
             if let (Some(store), Some(sid)) = (self.session_store.clone(), self.session_id.clone())
             {
@@ -675,7 +675,7 @@ impl Agent {
             let ctx = self
                 .build_fresh_context(&conversation_id, &user_id, &content)
                 .await;
-            let thread_id = format!("thread-{}", &conversation_id);
+            let thread_id = format!("thread-{}", conversation_id);
             if let (Some(store), Some(sid)) = (self.session_store.clone(), self.session_id.clone())
             {
                 let tid = thread_id.clone();

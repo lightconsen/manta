@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::computer::{
-    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, FileEntry,
-    MouseButton, Rect, Result, Screenshot, UiElement, WaitCondition,
+    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton, Rect,
+    Result, Screenshot, UiElement, WaitCondition,
 };
 use crate::tools::ToolRegistry;
 
@@ -13,15 +13,11 @@ use crate::tools::ToolRegistry;
 
 pub struct X11ComputerAdapter {
     registry: Arc<ToolRegistry>,
-    file_watcher: tokio::sync::Mutex<Option<crate::computer::FileWatcher>>,
 }
 
 impl X11ComputerAdapter {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self {
-            registry,
-            file_watcher: tokio::sync::Mutex::new(None),
-        }
+        Self { registry }
     }
 }
 
@@ -571,15 +567,11 @@ impl X11ComputerAdapter {
 
 pub struct WaylandComputerAdapter {
     registry: Arc<ToolRegistry>,
-    file_watcher: tokio::sync::Mutex<Option<crate::computer::FileWatcher>>,
 }
 
 impl WaylandComputerAdapter {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self {
-            registry,
-            file_watcher: tokio::sync::Mutex::new(None),
-        }
+        Self { registry }
     }
 }
 
@@ -1031,92 +1023,6 @@ impl WaylandComputerAdapter {
 //
 // The HeadlessComputerAdapter is now defined in `headless.rs` and re-exported
 // from `computer::mod`.  This module only provides the Linux-specific factory.
-
-// ── Shared action helpers ──────────────────────────────────────────────────
-
-async fn browse_files(
-    path: &str,
-    filter_description: Option<&str>,
-    max_results: Option<usize>,
-) -> Result<Vec<FileEntry>> {
-    use tokio::fs;
-
-    let mut entries = Vec::new();
-    let mut reader = fs::read_dir(path)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to read directory {}: {}", path, e)))?;
-
-    while let Ok(Some(entry)) = reader.next_entry().await {
-        let meta = entry.metadata().await.ok();
-        let modified = meta
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        entries.push(FileEntry {
-            path: entry.path().to_string_lossy().to_string(),
-            name: entry.file_name().to_string_lossy().to_string(),
-            size_bytes: meta.as_ref().map(|m| m.len()).unwrap_or(0),
-            modified_secs: modified,
-            is_directory: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
-        });
-    }
-
-    if let Some(filter) = filter_description {
-        let lower = filter.to_lowercase();
-        if lower.contains("recent") {
-            entries.sort_by_key(|a| std::cmp::Reverse(a.modified_secs));
-        } else if lower.contains("large") || lower.contains("big") || lower.contains("biggest") {
-            entries.sort_by_key(|a| std::cmp::Reverse(a.size_bytes));
-        } else if lower.contains("directory") || lower.contains("dir") || lower.contains("folder") {
-            entries.retain(|e| e.is_directory);
-        } else if lower.contains("file") {
-            entries.retain(|e| !e.is_directory);
-        } else {
-            entries.retain(|e| e.name.to_lowercase().contains(&lower));
-        }
-    }
-
-    if let Some(limit) = max_results {
-        entries.truncate(limit);
-    }
-
-    Ok(entries)
-}
-
-async fn read_file_chunked(path: &str, offset: u64, limit_bytes: u64) -> Result<String> {
-    use tokio::fs::File;
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
-
-    let mut file = File::open(path)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to open {}: {}", path, e)))?;
-    file.seek(std::io::SeekFrom::Start(offset))
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to seek {}: {}", path, e)))?;
-
-    let mut buf = vec![0u8; limit_bytes.min(10 * 1024 * 1024) as usize];
-    let n = file
-        .read(&mut buf)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to read {}: {}", path, e)))?;
-    buf.truncate(n);
-
-    String::from_utf8(buf)
-        .map_err(|e| ComputerError::Other(format!("File {} contains non-UTF-8 bytes: {}", path, e)))
-}
-
-async fn edit_file(path: &str, search: &str, replace: &str) -> Result<ActionResult> {
-    let content = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to read {}: {}", path, e)))?;
-    let new_content = content.replace(search, replace);
-    tokio::fs::write(path, new_content)
-        .await
-        .map_err(|e| ComputerError::Other(format!("Failed to write {}: {}", path, e)))?;
-    Ok(ActionResult::success(format!("Edited {}", path)))
-}
 
 // ── Factory ────────────────────────────────────────────────────────────────
 

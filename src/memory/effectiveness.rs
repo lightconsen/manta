@@ -230,7 +230,7 @@ impl EffectivenessTracker {
             // Update existing entries: front-pruning shifted all remaining events
             // by `excess` positions toward index 0.
             if excess > 0 {
-                for (_, (mem_id, idx)) in index_guard.iter_mut() {
+                for (mem_id, idx) in index_guard.values_mut() {
                     if *mem_id == memory_id {
                         *idx = idx.saturating_sub(excess);
                     }

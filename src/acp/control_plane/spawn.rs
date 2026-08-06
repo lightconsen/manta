@@ -110,7 +110,6 @@ impl AcpControlPlane {
                                     crate::agent::ProgressEvent::ToolResult {
                                         name,
                                         result,
-                                        data: _,
                                         ..
                                     } => {
                                         debug!(

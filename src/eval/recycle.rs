@@ -469,7 +469,7 @@ pub fn cluster_badcases(records: &[BadcaseRecord]) -> Vec<BadcaseCluster> {
         .collect();
 
     // Sort by cluster size (largest first)
-    clusters.sort_by(|a, b| b.count.cmp(&a.count));
+    clusters.sort_by_key(|c| std::cmp::Reverse(c.count));
 
     clusters
 }

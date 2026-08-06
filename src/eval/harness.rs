@@ -231,15 +231,14 @@ impl EvalSummary {
                     count += 1;
                 }
             }
-            if count > 0 {
-                Some(TurnUsage {
-                    prompt_tokens: (pt / count) as u32,
-                    completion_tokens: (ct / count) as u32,
-                    total_tokens: ((pt + ct) / count) as u32,
-                })
-            } else {
-                None
-            }
+            let divide = |sum: u64| sum.checked_div(count);
+            divide(pt).zip(divide(ct)).zip(divide(pt + ct)).map(
+                |((prompt_tokens, completion_tokens), total_tokens)| TurnUsage {
+                    prompt_tokens: prompt_tokens as u32,
+                    completion_tokens: completion_tokens as u32,
+                    total_tokens: total_tokens as u32,
+                },
+            )
         };
 
         // ── Skill sub-metrics (§04) ──────────────────────────────────

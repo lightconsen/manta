@@ -232,7 +232,7 @@ impl CronScheduler {
 
         let mut min_next_ms: Option<u64> = None;
 
-        for (_, job) in jobs_lock.iter() {
+        for job in jobs_lock.values() {
             if !job.enabled || job.state.running_at_ms.is_some() {
                 continue;
             }

@@ -139,7 +139,7 @@ impl HeartbeatRunner {
         let now = Instant::now();
 
         let mut next_wake = None;
-        for (_agent_id, state) in states.iter() {
+        for state in states.values() {
             if !state.config.enabled {
                 continue;
             }

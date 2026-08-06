@@ -531,7 +531,7 @@ async fn cmd_badcase_clusters(badcases_dir: std::path::PathBuf) -> Result<()> {
 
     // Sort clusters by size (descending)
     let mut sorted: Vec<_> = clusters.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    sorted.sort_by_key(|(_, task_ids)| std::cmp::Reverse(task_ids.len()));
 
     println!("═══ Badcase Clusters ({}) ═══", total);
     for (reason, task_ids) in &sorted {
@@ -856,12 +856,9 @@ async fn cmd_review(
                 println!("  Layer: {:?}", case.scoring_output.screening_layer);
 
                 if verbose {
-                    println!("  Input: {}", &case.input.chars().take(120).collect::<String>());
-                    println!(
-                        "  Response: {}",
-                        &case.response.chars().take(200).collect::<String>()
-                    );
-                    println!("  Judgment: {}", &case.scoring_output.judgment_basis);
+                    println!("  Input: {}", case.input.chars().take(120).collect::<String>());
+                    println!("  Response: {}", case.response.chars().take(200).collect::<String>());
+                    println!("  Judgment: {}", case.scoring_output.judgment_basis);
                     if let Some(ref v) = case.human_verdict {
                         println!("  Human verdict: {}", v);
                     }

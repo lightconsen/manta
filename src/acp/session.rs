@@ -75,15 +75,15 @@ pub enum AcpCommand {
 impl std::fmt::Debug for AcpCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AcpCommand::ExecuteSession { message, respond_to: _, .. } => f
+            AcpCommand::ExecuteSession { message, .. } => f
                 .debug_struct("ExecuteSession")
                 .field("message", message)
                 .finish(),
-            AcpCommand::ExecuteRun { message, respond_to: _, .. } => f
+            AcpCommand::ExecuteRun { message, .. } => f
                 .debug_struct("ExecuteRun")
                 .field("message", message)
                 .finish(),
-            AcpCommand::ExecuteSessionWithProgress { message, respond_to: _, .. } => f
+            AcpCommand::ExecuteSessionWithProgress { message, .. } => f
                 .debug_struct("ExecuteSessionWithProgress")
                 .field("message", message)
                 .finish(),
