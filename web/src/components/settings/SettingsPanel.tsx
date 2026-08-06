@@ -951,7 +951,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   ];
 
   const tabCls = (id: string) =>
-    `w-full text-left px-3 py-1.5 rounded-md text-sm transition ${
+    `px-3 py-1.5 rounded-md text-sm whitespace-nowrap md:w-full md:text-left transition ${
       activeTab === id
         ? "bg-primary-50/70 dark:bg-primary-900/20 text-primary-700 dark:text-primary-400 font-medium"
         : "text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
@@ -960,7 +960,7 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-page">
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-subtle shrink-0">
+      <div className="flex items-center justify-between px-4 md:px-5 py-3 border-b border-subtle shrink-0">
         <h2 className="text-base font-semibold text-primary">Settings</h2>
         <button
           onClick={onClose}
@@ -977,18 +977,18 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
           Loading configuration...
         </div>
       ) : (
-        <div className="flex-1 flex overflow-hidden">
-          {/* Left vertical tabs */}
-          <div className="w-44 border-r border-subtle shrink-0 overflow-y-auto py-3 px-2 space-y-0.5">
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+          {/* Tabs: horizontal strip on mobile, left sidebar on md+ */}
+          <div className="flex md:flex-col gap-0.5 overflow-x-auto md:overflow-y-auto md:overflow-x-hidden border-b md:border-b-0 md:border-r border-subtle shrink-0 py-2 md:py-3 px-2 md:w-44">
             {tabs.map((t) => (
-              <button key={t.id} onClick={() => setActiveTab(t.id)} className={tabCls(t.id)}>
+              <button key={t.id} onClick={() => setActiveTab(t.id)} className={`${tabCls(t.id)} shrink-0`}>
                 {t.label}
               </button>
             ))}
           </div>
 
           {/* Right content */}
-          <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="flex-1 overflow-y-auto px-4 md:px-5 py-4">
             {activeTab === "general" && (
               <div className="space-y-5">
                 <section>
@@ -998,29 +998,29 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                       const si = transport.getServerInfo();
                       return (
                         <>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-3 py-2 rounded-lg bg-card">
                             <span className="text-sm text-secondary">URL</span>
-                            <span className="text-sm text-primary font-mono">{transport.getGatewayUrl() || "—"}</span>
+                            <span className="text-sm text-primary font-mono break-all sm:text-right">{transport.getGatewayUrl() || "—"}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-3 py-2 rounded-lg bg-card">
                             <span className="text-sm text-secondary">Version</span>
-                            <span className="text-sm text-primary font-mono">{si.version || "—"}</span>
+                            <span className="text-sm text-primary font-mono break-all sm:text-right">{si.version || "—"}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-3 py-2 rounded-lg bg-card">
                             <span className="text-sm text-secondary">Connection</span>
-                            <span className="text-sm text-primary font-mono">{si.conn_id || "—"}</span>
+                            <span className="text-sm text-primary font-mono break-all sm:text-right">{si.conn_id || "—"}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-3 py-2 rounded-lg bg-card">
                             <span className="text-sm text-secondary">Features</span>
-                            <span className="text-sm text-primary">{(si.features || []).join(", ") || "—"}</span>
+                            <span className="text-sm text-primary break-all sm:text-right">{(si.features || []).join(", ") || "—"}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-3 py-2 rounded-lg bg-card">
                             <span className="text-sm text-secondary">Auth Mode</span>
-                            <span className="text-sm text-primary font-mono capitalize">{String((config as Record<string, unknown>).auth_mode || "—")}</span>
+                            <span className="text-sm text-primary font-mono break-all capitalize sm:text-right">{String((config as Record<string, unknown>).auth_mode || "—")}</span>
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-3 py-2 rounded-lg bg-card">
                             <span className="text-sm text-secondary">Scopes</span>
-                            <span className="text-sm text-primary">{(si.scopes_granted || []).join(", ") || "—"}</span>
+                            <span className="text-sm text-primary break-all sm:text-right">{(si.scopes_granted || []).join(", ") || "—"}</span>
                           </div>
                         </>
                       );
