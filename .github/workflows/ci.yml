@@ -427,8 +427,10 @@ jobs:
         # Integration tests are excluded from coverage reporting anyway, and
         # tarpaulin segfaults instrumenting ones that spawn subprocesses
         # (mcp_e2e spawns python, integrations::acp_tests uses apply_patch),
-        # so the subprocess-spawning integration binaries are skipped.
-        run: "cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e:: --skip test_mcp_manager --skip integrations::"
+        # so the subprocess-spawning integration binaries are skipped. The
+        # acp::control_plane pause/resume/step/cancel unit test spawns a real
+        # actor thread, which tarpaulin's instrumentation also crashes on.
+        run: "cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e:: --skip test_mcp_manager --skip integrations:: --skip test_pause_resume_step_cancel_emit_status_changed_after_actor_processing"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
