@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand: Syscity magenta (#B22AC2) -> app indigo (#6366F1) */
+  --color-brand-300: #e07aed;
+  --color-brand-400: #cf50e0;
+  --color-brand-500: #b22ac2;
+  --color-brand-600: #91209f;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;
+
+  /* Surfaces (dark-first) */
+  --color-ink: #f4f4f7;
+  --color-muted: #a3a3b0;
+  --color-faint: #6d6d7a;
+  --color-page: #0b0b0f;
+  --color-panel: #14141a;
+  --color-panel-2: #1a1a22;
+  --color-line: #26262f;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+body {
+  background-color: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Soft brand glow behind the hero */
+.hero-glow {
+  background:
+    radial-gradient(640px 340px at 22% -5%, rgb(178 42 194 / 0.30), transparent 62%),
+    radial-gradient(640px 340px at 78% 0%, rgb(99 102 241 / 0.26), transparent 62%);
+}
+
+/* Brand gradient headline text */
+.text-gradient {
+  background-image: linear-gradient(92deg, #d05ae0 0%, #8d8bf8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Faint brand hairline used on cards */
+.card {
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-line);
+}
