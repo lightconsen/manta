@@ -13,7 +13,7 @@ const PLATFORMS: { name: string; icon: ReactNode }[] = [
 
 function PhoneShot({ light, dark, alt }: { light: string; dark: string; alt: string }) {
   return (
-    <figure className="card relative rounded-3xl p-2.5">
+    <figure className="card relative mx-auto w-full max-w-[320px] rounded-3xl p-2.5">
       <div className="mx-auto mb-2 h-1 w-16 rounded-full bg-line" aria-hidden="true" />
       <picture>
         <source media="(prefers-color-scheme: dark)" srcSet={dark} />
@@ -22,7 +22,7 @@ function PhoneShot({ light, dark, alt }: { light: string; dark: string; alt: str
           src={light}
           alt={alt}
           loading="lazy"
-          className="h-[420px] w-full rounded-2xl object-cover"
+          className="w-full rounded-2xl object-contain"
         />
       </picture>
     </figure>
