@@ -14,7 +14,11 @@ async fn exec_goal(client: &mut FrontendSimulator, args: &str) -> serde_json::Va
 ///
 /// - Cache checks ("NOCACHE") → "NOCACHE"
 /// - Goal parsing (system prompt contains "goal analyzer") → JSON plan with
-///   `model_override: "mock-model"` so the runner resolves correctly
+///   `model_override: "mock-model"` so the runner resolves correctly. The
+///   condition is a 2-second *failing* shell check so the goal never passes
+///   in round 1 — the list/cancel tests need it to stay in `goal_cancellers`
+///   long enough to be observed. (`--max-rounds` from the test CLI overrides
+///   the JSON `max_rounds`.)
 /// - Sub-agent execution → text response ("Task completed.")
 fn goal_mock_provider() -> MockProvider {
     MockProvider::new().with_callback(|messages| {
@@ -27,7 +31,7 @@ fn goal_mock_provider() -> MockProvider {
         let is_goal_parse = messages.iter().any(|m| m.content.contains("goal analyzer"));
         if is_goal_parse {
             return ProviderMessage::assistant(
-                r#"{"description":"test goal","conditions":[{"type":"exit_code","command":"true","expected":0}],"max_rounds":1,"model_override":"mock-model"}"#,
+                r#"{"description":"test goal","conditions":[{"type":"exit_code","command":"sleep 2; exit 1","expected":0}],"max_rounds":1,"model_override":"mock-model"}"#,
             );
         }
 
