@@ -12,6 +12,7 @@ import {
 import { useChatStore } from "@/stores/chatStore";
 import { Sidebar } from "@/components/chat/Sidebar";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { WelcomeScreen } from "@/components/onboarding/WelcomeScreen";
 import { ChatContent } from "@/components/chat/ChatContent";
 import { useGoalStore } from "@/stores/goalStore";
 import { GoalPanel } from "@/components/chat/GoalPanel";
@@ -124,6 +125,8 @@ function ChatApp() {
   const [runningSessionIds, setRunningSessionIds] = useState<string[]>([]);
   const [sessionKey, setSessionKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // null = not yet checked / not connected; true = no LLM configured (Welcome).
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const previewDocument = useChatStore((s) => s.previewDocument);
@@ -169,6 +172,17 @@ function ChatApp() {
     );
   }, [transport]);
 
+  // Check whether an LLM is configured. When no models exist, show the
+  // first-launch Welcome screen so the user can add their initial model.
+  const checkModelConfig = useCallback(async () => {
+    try {
+      const { models } = await transport.listModels();
+      setNeedsSetup(models.length === 0);
+    } catch {
+      /* keep needsSetup as-is; retried on next connect */
+    }
+  }, [transport]);
+
   // Network status
   useEffect(() => {
     return transport.onStatusChange((status) => {
@@ -176,19 +190,21 @@ function ChatApp() {
       if (status === "connected") {
         refreshSessions();
         refreshAgents();
+        checkModelConfig();
       }
     });
-  }, [transport, refreshSessions, refreshAgents]);
+  }, [transport, refreshSessions, refreshAgents, checkModelConfig]);
 
   useEffect(() => {
     refreshSessions();
     refreshAgents();
+    checkModelConfig();
     const interval = setInterval(() => {
       refreshSessions();
       refreshAgents();
     }, 8000);
     return () => clearInterval(interval);
-  }, [refreshSessions, refreshAgents]);
+  }, [refreshSessions, refreshAgents, checkModelConfig]);
 
   // Track which sessions are currently running for sidebar loading indicators
   useEffect(() => {
@@ -456,6 +472,28 @@ function ChatApp() {
     const current = sessionItems.find((s) => s.id === currentId);
     useChatStore.getState().setCurrentAgent(current?.agent);
   }, [sessionItems, transport]);
+
+  // Gate: until we have confirmed whether an LLM is configured, show a
+  // minimal centered loading screen (prevents flashing the chat).
+  if (needsSetup === null) {
+    return (
+      <div
+        className="flex items-center justify-center bg-page text-primary"
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          paddingBottom: "env(safe-area-inset-bottom)",
+          height: "100lvh",
+        }}
+      >
+        <div className="w-6 h-6 border-2 border-subtle border-t-primary-500 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // No LLM configured yet — show the first-launch welcome screen.
+  if (needsSetup) {
+    return <WelcomeScreen transport={transport} onComplete={checkModelConfig} />;
+  }
 
   // iOS WKWebView computes the layout viewport as safe-area-exclusive
   // (~759pt on iPhone 16) at rest, so 100%/100dvh leave a gap below the
