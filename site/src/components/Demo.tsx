@@ -11,7 +11,7 @@ export default function Demo() {
           <span className="ml-3 text-xs text-faint">syscity — agent preview</span>
         </div>
         <img
-          src={`${base}assets/demo.gif`}
+          src={`${base}assets/demo-dark.gif`}
           alt="Syscity demo — an agent generates a markdown report and previews it in a split panel"
           className="w-full"
           loading="lazy"

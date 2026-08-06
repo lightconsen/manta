@@ -39,30 +39,34 @@ export default function Hero() {
       <div className="hero-glow pointer-events-none absolute inset-0" aria-hidden="true" />
 
       <div className="relative mx-auto flex max-w-4xl flex-col items-center px-6 pb-24 pt-20 text-center sm:pt-28">
-        <img
-          src={`${base}syscity.png`}
-          alt="Syscity logo"
-          className="mb-7 h-24 w-24 rounded-2xl object-contain drop-shadow-[0_0_28px_rgba(178,42,194,0.45)]"
-        />
+        <div className="animate-fade-up mb-7">
+          <div className="animate-float">
+            <img
+              src={`${base}syscity.png`}
+              alt="Syscity logo"
+              className="h-24 w-24 rounded-2xl object-contain drop-shadow-[0_0_28px_rgba(178,42,194,0.45)]"
+            />
+          </div>
+        </div>
 
-        <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-line bg-panel px-3.5 py-1 text-xs font-medium uppercase tracking-[0.18em] text-brand-300">
+        <p className="animate-fade-up mb-4 inline-flex items-center gap-2 rounded-full border border-line bg-panel px-3.5 py-1 text-xs font-medium uppercase tracking-[0.18em] text-brand-300 [animation-delay:80ms]">
           Syscity · AI Agent System
         </p>
 
-        <h1 className="text-4xl font-bold leading-[1.1] tracking-tight sm:text-6xl">
+        <h1 className="animate-fade-up text-4xl font-bold leading-[1.1] tracking-tight sm:text-6xl [animation-delay:160ms]">
           One agent runtime,
           <br />
           <span className="text-gradient">every device.</span>
         </h1>
 
-        <p className="mt-6 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">
+        <p className="animate-fade-up mt-6 max-w-2xl text-base leading-relaxed text-muted sm:text-lg [animation-delay:240ms]">
           Syscity turns a language model into an agent that lives inside your
           machine — clicking buttons, browsing the web, running code, and
           managing files. Runs natively on macOS, Windows, Linux, iOS, and
           Android. Your data never leaves.
         </p>
 
-        <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+        <div className="animate-fade-up mt-9 flex flex-wrap items-center justify-center gap-3 [animation-delay:320ms]">
           <a
             href="#quickstart"
             className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-brand-500 to-primary-500 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_0_24px_rgba(178,42,194,0.35)] transition hover:brightness-110"
@@ -81,7 +85,7 @@ export default function Hero() {
           </a>
         </div>
 
-        <div className="mt-10 w-full">
+        <div className="animate-fade-up mt-10 w-full [animation-delay:400ms]">
           <InstallChip />
         </div>
       </div>
