@@ -422,3 +422,169 @@ pub(super) async fn handle_models_set_default(
         Err(e) => WsResponse::err(&req.id, "MODEL_NOT_FOUND", format!("{}", e)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+    use crate::model_router::ModelAlias;
+
+    fn req(id: &str, method: &str, params: serde_json::Value) -> WsRequest {
+        WsRequest {
+            frame_type: "req".to_string(),
+            id: id.to_string(),
+            method: method.to_string(),
+            params: Some(params),
+        }
+    }
+
+    async fn register_alias(state: &GatewayState, name: &str, model: &str) {
+        state
+            .infra
+            .model_router
+            .set_alias(ModelAlias {
+                name: name.to_string(),
+                provider: "openai".to_string(),
+                model: model.to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn models_list_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = handle_models_list(&req("l", "models.list", serde_json::json!({})), &state).await;
+        assert!(res.ok);
+        let payload = res.payload.expect("payload");
+        assert_eq!(payload["models"].as_array().map(|a| a.len()), Some(0));
+        assert!(payload["default_model"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn models_list_shows_aliases_and_default() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_alias(&state, "fast", "gpt-4o-mini").await;
+        let res = handle_models_list(&req("l", "models.list", serde_json::json!({})), &state).await;
+        let models = res
+            .payload
+            .as_ref()
+            .and_then(|p| p["models"].as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["id"].as_str(), Some("fast"));
+        assert_eq!(models[0]["provider"].as_str(), Some("openai"));
+        // "name" is "alias (model)" format.
+        assert_eq!(models[0]["name"].as_str(), Some("fast (gpt-4o-mini)"));
+    }
+
+    #[tokio::test]
+    async fn models_presets_includes_builtin_providers() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res =
+            handle_models_presets(&req("p", "models.presets", serde_json::json!({})), &state).await;
+        assert!(res.ok);
+        let presets = res
+            .payload
+            .as_ref()
+            .and_then(|p| p["presets"].as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(!presets.is_empty(), "built-in provider presets expected");
+        for entry in presets.iter().take(10) {
+            assert!(entry["name"].as_str().is_some());
+            assert!(entry["display_name"].as_str().is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn models_add_registers_alias_and_sets_default() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = handle_models_add(
+            &req(
+                "a",
+                "models.add",
+                serde_json::json!({
+                    "name": "main",
+                    "provider": "openai",
+                    "model": "gpt-4o",
+                }),
+            ),
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+
+        // First alias is auto-promoted to default.
+        assert_eq!(state.infra.model_router.get_default_model().await, "main");
+        let res = handle_models_list(&req("l", "models.list", serde_json::json!({})), &state).await;
+        let models = res
+            .payload
+            .as_ref()
+            .and_then(|p| p["models"].as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["id"].as_str(), Some("main"));
+    }
+
+    #[tokio::test]
+    async fn models_remove_alias() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_alias(&state, "main", "gpt-4o").await;
+        let res = handle_models_remove(
+            &req("r", "models.remove", serde_json::json!({ "name": "main" })),
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        assert!(state.infra.model_router.list_aliases().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn models_remove_unknown_alias_errors() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = handle_models_remove(
+            &req("r", "models.remove", serde_json::json!({ "name": "nope" })),
+            &state,
+        )
+        .await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("MODEL_NOT_FOUND"));
+    }
+
+    #[tokio::test]
+    async fn models_set_default_switches_default() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_alias(&state, "main", "gpt-4o").await;
+        register_alias(&state, "alt", "claude-sonnet").await;
+        let res = handle_models_set_default(
+            &req("s", "models.set_default", serde_json::json!({ "name": "alt" })),
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        assert_eq!(
+            res.payload
+                .as_ref()
+                .and_then(|p| p["default_model"].as_str()),
+            Some("alt")
+        );
+        assert_eq!(state.infra.model_router.get_default_model().await, "alt");
+    }
+
+    #[tokio::test]
+    async fn models_set_default_unknown_errors() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = handle_models_set_default(
+            &req("s", "models.set_default", serde_json::json!({ "name": "nope" })),
+            &state,
+        )
+        .await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("MODEL_NOT_FOUND"));
+    }
+}

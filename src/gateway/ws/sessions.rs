@@ -428,3 +428,321 @@ pub(super) async fn handle_legacy_unsubscribe(
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::{
+        make_test_conn, make_test_state, make_test_state_with_store,
+    };
+    use crate::gateway::GatewayConfig;
+    use crate::model_router::ModelAlias;
+
+    fn req(id: &str, method: &str, params: serde_json::Value) -> WsRequest {
+        WsRequest {
+            frame_type: "req".to_string(),
+            id: id.to_string(),
+            method: method.to_string(),
+            params: Some(params),
+        }
+    }
+
+    async fn register_alias(state: &GatewayState, name: &str) {
+        state
+            .infra
+            .model_router
+            .set_alias(ModelAlias {
+                name: name.to_string(),
+                provider: "openai".to_string(),
+                model: "gpt-4o".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn set_model_rejects_unknown_alias() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let conn = make_test_conn(&["write"]);
+        let res = handle_sessions_set_model(
+            &req(
+                "r1",
+                "sessions.set_model",
+                serde_json::json!({ "session_id": "s1", "model": "no-such-model" }),
+            ),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("MODEL_NOT_FOUND"));
+    }
+
+    #[tokio::test]
+    async fn set_model_roundtrip_with_event_and_list() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        register_alias(&state, "alt").await;
+        let conn = make_test_conn(&["write"]);
+        let mut rx = state.events.tx.subscribe();
+
+        // Pin to the registered alias.
+        let res = handle_sessions_set_model(
+            &req(
+                "r1",
+                "sessions.set_model",
+                serde_json::json!({ "session_id": "s1", "model": "alt" }),
+            ),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        match rx.try_recv() {
+            Ok(GatewayEvent::SessionModelChanged { session_id, model }) => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(model.as_deref(), Some("alt"));
+            }
+            other => panic!("expected SessionModelChanged event, got {:?}", other.is_ok()),
+        }
+
+        // sessions.list surfaces the pin.
+        let res =
+            handle_sessions_list(&req("l", "sessions.list", serde_json::json!({})), &state).await;
+        let sessions = res
+            .payload
+            .and_then(|p| p.get("sessions").cloned())
+            .and_then(|s| s.as_array().cloned())
+            .unwrap_or_default();
+        let s1 = sessions
+            .iter()
+            .find(|s| s.get("session_id").and_then(|v| v.as_str()) == Some("s1"))
+            .expect("s1 should be listed");
+        assert_eq!(s1.get("model").and_then(|v| v.as_str()), Some("alt"));
+
+        // Clearing the pin stores NULL and emits the event with model: null.
+        let res = handle_sessions_set_model(
+            &req(
+                "r2",
+                "sessions.set_model",
+                serde_json::json!({ "session_id": "s1", "model": null }),
+            ),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        match rx.try_recv() {
+            Ok(GatewayEvent::SessionModelChanged { model, .. }) => assert_eq!(model, None),
+            other => panic!("expected SessionModelChanged event, got {:?}", other.is_ok()),
+        }
+        let res =
+            handle_sessions_list(&req("l", "sessions.list", serde_json::json!({})), &state).await;
+        let sessions = res
+            .payload
+            .and_then(|p| p.get("sessions").cloned())
+            .and_then(|s| s.as_array().cloned())
+            .unwrap_or_default();
+        let s1 = sessions
+            .iter()
+            .find(|s| s.get("session_id").and_then(|v| v.as_str()) == Some("s1"))
+            .expect("s1 should still be listed");
+        assert!(s1.get("model").unwrap().is_null());
+    }
+
+    #[tokio::test]
+    async fn set_model_empty_string_clears_pin() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        register_alias(&state, "alt").await;
+        let conn = make_test_conn(&["write"]);
+
+        for value in [serde_json::json!("alt"), serde_json::json!("")] {
+            let res = handle_sessions_set_model(
+                &req(
+                    "r",
+                    "sessions.set_model",
+                    serde_json::json!({ "session_id": "s1", "model": value }),
+                ),
+                &conn,
+                &state,
+            )
+            .await;
+            assert!(res.ok);
+        }
+        let store = state.agents.store.as_ref().unwrap();
+        let loaded = store.load_session("s1").await.unwrap().unwrap();
+        assert_eq!(loaded.metadata.model, None);
+    }
+
+    #[tokio::test]
+    async fn create_persists_agent_binding() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let conn = make_test_conn(&["write"]);
+        let res = handle_sessions_create(
+            &req(
+                "c",
+                "sessions.create",
+                serde_json::json!({ "session_id": "s1", "agent_id": "secretary" }),
+            ),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+
+        let store = state.agents.store.as_ref().unwrap();
+        let loaded = store.load_session("s1").await.unwrap().unwrap();
+        assert_eq!(loaded.metadata.agent_id, "secretary");
+        assert_eq!(loaded.metadata.bound_agent_id.as_deref(), Some("secretary"));
+    }
+
+    #[tokio::test]
+    async fn create_without_id_derives_from_channel_and_user() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        // Test conn has no client/user, so the id is "ws:anonymous".
+        let conn = make_test_conn(&["write"]);
+        let res = handle_sessions_create(
+            &req("c", "sessions.create", serde_json::json!({})),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        let payload = res.payload.unwrap();
+        assert_eq!(payload.get("session_id").and_then(|v| v.as_str()), Some("ws:anonymous"));
+    }
+
+    #[tokio::test]
+    async fn rename_roundtrip_and_empty_rejected() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let conn = make_test_conn(&["write"]);
+        handle_sessions_create(
+            &req("c", "sessions.create", serde_json::json!({ "session_id": "s1" })),
+            &conn,
+            &state,
+        )
+        .await;
+
+        let res = handle_sessions_rename(
+            &req(
+                "r",
+                "sessions.rename",
+                serde_json::json!({ "session_id": "s1", "name": "  My Chat  " }),
+            ),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        let store = state.agents.store.as_ref().unwrap();
+        let loaded = store.load_session("s1").await.unwrap().unwrap();
+        assert_eq!(loaded.metadata.name.as_deref(), Some("My Chat"));
+
+        let res = handle_sessions_rename(
+            &req(
+                "r2",
+                "sessions.rename",
+                serde_json::json!({ "session_id": "s1", "name": "   " }),
+            ),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("INVALID_REQUEST"));
+    }
+
+    #[tokio::test]
+    async fn set_pinned_roundtrip_and_event() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let conn = make_test_conn(&["write"]);
+        let mut rx = state.events.tx.subscribe();
+        handle_sessions_create(
+            &req("c", "sessions.create", serde_json::json!({ "session_id": "s1" })),
+            &conn,
+            &state,
+        )
+        .await;
+
+        let res = handle_sessions_set_pinned(
+            &req(
+                "p",
+                "sessions.set_pinned",
+                serde_json::json!({ "session_id": "s1", "pinned": true }),
+            ),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        match rx.try_recv() {
+            Ok(GatewayEvent::SessionPinned { session_id, pinned }) => {
+                assert_eq!(session_id, "s1");
+                assert!(pinned);
+            }
+            other => panic!("expected SessionPinned event, got {:?}", other.is_ok()),
+        }
+
+        let res =
+            handle_sessions_list(&req("l", "sessions.list", serde_json::json!({})), &state).await;
+        let sessions = res
+            .payload
+            .and_then(|p| p.get("sessions").cloned())
+            .and_then(|s| s.as_array().cloned())
+            .unwrap_or_default();
+        let s1 = sessions
+            .iter()
+            .find(|s| s.get("session_id").and_then(|v| v.as_str()) == Some("s1"))
+            .unwrap();
+        assert_eq!(s1.get("pinned").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[tokio::test]
+    async fn delete_and_reset_remove_session() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let conn = make_test_conn(&["write"]);
+        for sid in ["s1", "s2"] {
+            handle_sessions_create(
+                &req("c", "sessions.create", serde_json::json!({ "session_id": sid })),
+                &conn,
+                &state,
+            )
+            .await;
+        }
+
+        let res = handle_sessions_delete(
+            &req("d", "sessions.delete", serde_json::json!({ "session_id": "s1" })),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        let res = handle_sessions_reset(
+            &req("x", "sessions.reset", serde_json::json!({ "session_id": "s2" })),
+            &conn,
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+
+        let store = state.agents.store.as_ref().unwrap();
+        assert!(store.load_session("s1").await.unwrap().is_none());
+        assert!(store.load_session("s2").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn list_without_store_falls_back_to_manager() {
+        // No store wired: the handler falls back to the in-memory session
+        // manager and returns an empty list rather than erroring.
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res =
+            handle_sessions_list(&req("l", "sessions.list", serde_json::json!({})), &state).await;
+        assert!(res.ok);
+        let sessions = res
+            .payload
+            .and_then(|p| p.get("sessions").cloned())
+            .and_then(|s| s.as_array().cloned())
+            .unwrap_or_default();
+        assert!(sessions.is_empty());
+    }
+}

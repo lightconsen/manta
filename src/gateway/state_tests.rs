@@ -221,6 +221,33 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
     }
 }
 
+/// Construct a test state with an in-memory session store wired in.
+///
+/// [`make_test_state`] leaves `agents.store` as `None`; session handlers need
+/// a real store, so this variant injects one backed by in-memory SQLite.
+pub async fn make_test_state_with_store(config: GatewayConfig) -> GatewayState {
+    let mut state = make_test_state(config).await;
+    state.agents.store = Some(Arc::new(
+        crate::agent::session_store::SessionStore::new(":memory:")
+            .await
+            .expect("in-memory session store"),
+    ));
+    state
+}
+
+/// Build a handshaked protocol connection with the given scopes.
+///
+/// Most WS handlers take the connection for client identity / scope checks;
+/// this fabricates one without a real WebSocket.
+pub fn make_test_conn(
+    scopes: &[&str],
+) -> Arc<tokio::sync::RwLock<crate::gateway::protocol::ProtocolConnection>> {
+    let mut conn = crate::gateway::protocol::ProtocolConnection::new("test-conn");
+    conn.handshaked = true;
+    conn.scopes = scopes.iter().map(|s| (*s).to_string()).collect();
+    Arc::new(tokio::sync::RwLock::new(conn))
+}
+
 // ── Layer 1: Blocklist ───────────────────────────────────────────────────────
 
 #[tokio::test]

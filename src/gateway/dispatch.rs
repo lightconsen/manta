@@ -419,7 +419,7 @@ pub(crate) struct AgentDispatch {
 /// Resolve the effective model alias for a session: the session's explicit
 /// pin first, then the bound agent's configured model, else `None` (caller
 /// falls back to the global default via the model router's fallback chains).
-async fn resolve_session_model(
+pub(crate) async fn resolve_session_model(
     state: &Arc<GatewayState>,
     session_id: &str,
     agent_id: &str,
@@ -814,5 +814,83 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
         status: AgentStatus::Idle,
     }) {
         debug!("No receivers for AgentStatus event: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::session_store::SessionMetadata;
+    use crate::gateway::state_tests::{make_test_state, make_test_state_with_store};
+    use crate::gateway::GatewayConfig;
+
+    /// Persist a session row with the given pinned model (if any) for `session_id`.
+    async fn seed_session(state: &GatewayState, session_id: &str, model: Option<&str>) {
+        let store = state.agents.store.as_ref().expect("store wired in");
+        let mut meta = SessionMetadata::new(session_id, "main", "web", "u1");
+        meta.model = model.map(String::from);
+        store
+            .save_session(session_id, &meta, "{}")
+            .await
+            .expect("save session");
+    }
+
+    #[tokio::test]
+    async fn resolve_uses_session_pin_over_agent_binding() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        seed_session(&state, "s1", Some("alt")).await;
+        {
+            let mut config = state.config.write().await;
+            let cfg = Arc::make_mut(&mut config);
+            cfg.agent_models.insert("main".into(), "agent-model".into());
+        }
+        let resolved = resolve_session_model(&state, "s1", "main").await;
+        assert_eq!(resolved.as_deref(), Some("alt"));
+    }
+
+    #[tokio::test]
+    async fn resolve_falls_back_to_agent_binding_when_no_pin() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        seed_session(&state, "s1", None).await;
+        {
+            let mut config = state.config.write().await;
+            let cfg = Arc::make_mut(&mut config);
+            cfg.agent_models.insert("main".into(), "agent-model".into());
+        }
+        let resolved = resolve_session_model(&state, "s1", "main").await;
+        assert_eq!(resolved.as_deref(), Some("agent-model"));
+    }
+
+    #[tokio::test]
+    async fn resolve_ignores_empty_pin_and_falls_back() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        seed_session(&state, "s1", Some("")).await;
+        {
+            let mut config = state.config.write().await;
+            let cfg = Arc::make_mut(&mut config);
+            cfg.agent_models.insert("main".into(), "agent-model".into());
+        }
+        let resolved = resolve_session_model(&state, "s1", "main").await;
+        assert_eq!(resolved.as_deref(), Some("agent-model"));
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_none_when_neither_bound() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        seed_session(&state, "s1", None).await;
+        let resolved = resolve_session_model(&state, "s1", "main").await;
+        assert_eq!(resolved, None);
+    }
+
+    #[tokio::test]
+    async fn resolve_without_store_uses_agent_binding() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        {
+            let mut config = state.config.write().await;
+            let cfg = Arc::make_mut(&mut config);
+            cfg.agent_models.insert("main".into(), "agent-model".into());
+        }
+        let resolved = resolve_session_model(&state, "s1", "main").await;
+        assert_eq!(resolved.as_deref(), Some("agent-model"));
     }
 }

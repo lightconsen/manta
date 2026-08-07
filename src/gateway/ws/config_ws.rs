@@ -346,3 +346,198 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
         }),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+    use crate::model_router::ModelAlias;
+
+    fn req(id: &str, method: &str, params: serde_json::Value) -> WsRequest {
+        WsRequest {
+            frame_type: "req".to_string(),
+            id: id.to_string(),
+            method: method.to_string(),
+            params: Some(params),
+        }
+    }
+
+    async fn register_alias(state: &GatewayState, name: &str) {
+        state
+            .infra
+            .model_router
+            .set_alias(ModelAlias {
+                name: name.to_string(),
+                provider: "openai".to_string(),
+                model: "gpt-4o".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+    }
+
+    async fn set_and_ok(
+        state: &Arc<GatewayState>,
+        path: &str,
+        value: serde_json::Value,
+    ) -> WsResponse {
+        handle_config_set(
+            &req("r", "config.set", serde_json::json!({ "path": path, "value": value })),
+            state,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn config_get_reports_all_sections() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = handle_config_get(&req("g", "config.get", serde_json::json!({})), &state).await;
+        assert!(res.ok);
+        let p = res.payload.expect("payload");
+        assert!(p["model"].as_str().is_some());
+        assert!(p["model_provider"].as_str().is_some());
+        assert!(p["agent_models"].is_object());
+        assert!(p["heartbeat"]["enabled"].is_boolean());
+        assert!(p["channels"].is_array());
+        assert!(p["auth_mode"].as_str().is_some());
+        assert!(p["search"]["provider"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn config_set_agent_models_binds_and_clears() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = set_and_ok(&state, "agent_models.main", serde_json::json!("alt")).await;
+        assert!(res.ok);
+        assert_eq!(state.config.read().await.agent_models.get("main").cloned(), Some("alt".into()));
+
+        // Null clears the binding.
+        let res = set_and_ok(&state, "agent_models.main", serde_json::Value::Null).await;
+        assert!(res.ok);
+        assert!(!state.config.read().await.agent_models.contains_key("main"));
+    }
+
+    #[tokio::test]
+    async fn config_set_model_switches_router_and_config() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_alias(&state, "alt").await;
+        let res = set_and_ok(&state, "model", serde_json::json!("alt")).await;
+        assert!(res.ok);
+        assert_eq!(state.infra.model_router.get_default_model().await, "alt");
+        assert_eq!(state.config.read().await.model, "alt");
+    }
+
+    #[tokio::test]
+    async fn config_set_unknown_path_errors() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = set_and_ok(&state, "no.such.path", serde_json::json!(1)).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("UNKNOWN_CONFIG_PATH"));
+    }
+
+    #[tokio::test]
+    async fn config_set_default_agent_roundtrip() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        assert!(
+            set_and_ok(&state, "default_agent.temperature", serde_json::json!(0.7))
+                .await
+                .ok
+        );
+        assert!(
+            set_and_ok(&state, "default_agent.max_tokens", serde_json::json!(2048))
+                .await
+                .ok
+        );
+        assert!(
+            set_and_ok(&state, "default_agent.max_turns", serde_json::json!(5))
+                .await
+                .ok
+        );
+        assert!(
+            set_and_ok(&state, "default_agent.workspace_only", serde_json::json!(true))
+                .await
+                .ok
+        );
+
+        let res = handle_config_get(&req("g", "config.get", serde_json::json!({})), &state).await;
+        let p = res.payload.expect("payload");
+        // Temperature is stored as f32, so the f64 readback is inexact.
+        let t = p["default_agent"]["temperature"]
+            .as_f64()
+            .expect("temperature");
+        assert!((t - 0.7).abs() < 1e-6, "temperature {t} should be ~0.7");
+        assert_eq!(p["default_agent"]["max_tokens"].as_u64(), Some(2048));
+        assert_eq!(p["default_agent"]["max_turns"].as_u64(), Some(5));
+        assert_eq!(p["default_agent"]["workspace_only"].as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn config_set_heartbeat_roundtrip() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        assert!(
+            set_and_ok(&state, "heartbeat.enabled", serde_json::json!(true))
+                .await
+                .ok
+        );
+        assert!(
+            set_and_ok(&state, "heartbeat.interval_seconds", serde_json::json!(42))
+                .await
+                .ok
+        );
+        assert!(
+            set_and_ok(&state, "heartbeat.active_hours_start", serde_json::json!("09:00"))
+                .await
+                .ok
+        );
+
+        let res = handle_config_get(&req("g", "config.get", serde_json::json!({})), &state).await;
+        let p = res.payload.expect("payload");
+        assert_eq!(p["heartbeat"]["enabled"].as_bool(), Some(true));
+        assert_eq!(p["heartbeat"]["interval_seconds"].as_u64(), Some(42));
+        assert_eq!(p["heartbeat"]["active_hours_start"].as_str(), Some("09:00"));
+    }
+
+    #[tokio::test]
+    async fn config_set_channels_add_update_remove() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let add = set_and_ok(
+            &state,
+            "channels.add",
+            serde_json::json!({
+                "name": "tg",
+                "channel_type": "telegram",
+                "enabled": true,
+            }),
+        )
+        .await;
+        assert!(add.ok);
+        let added = state.config.read().await.channels.get("tg").cloned();
+        assert!(added.is_some(), "channel should be added to config");
+        assert_eq!(added.unwrap().enabled, true);
+
+        // Update flips enabled off.
+        let upd = set_and_ok(
+            &state,
+            "channels.update",
+            serde_json::json!({ "name": "tg", "enabled": false }),
+        )
+        .await;
+        assert!(upd.ok);
+        assert_eq!(
+            state
+                .config
+                .read()
+                .await
+                .channels
+                .get("tg")
+                .unwrap()
+                .enabled,
+            false
+        );
+
+        // Remove deletes the channel.
+        let rm = set_and_ok(&state, "channels.remove", serde_json::json!("tg")).await;
+        assert!(rm.ok);
+        assert!(state.config.read().await.channels.get("tg").is_none());
+    }
+}
