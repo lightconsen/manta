@@ -31,7 +31,7 @@ test-all = "test"
 
 # Coverage run using cargo-llvm-cov (source-based; replaced tarpaulin, whose
 # ptrace instrumentation segfaulted non-deterministically in CI)
-coverage = "llvm-cov --workspace --all-features --lcov --output-path lcov.info --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::"
+coverage = "llvm-cov --workspace --exclude syscity-desktop --all-features --lcov --output-path lcov.info --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::"
 
 # Benchmarks
 bench-serialization = "bench --bench serialization"

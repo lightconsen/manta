@@ -434,7 +434,9 @@ jobs:
         # slow/flaky under CI). The 55% gate matches the measured llvm-cov
         # baseline (~56.3% locally); ratchet it up as coverage improves —
         # tarpaulin's old fail-under=80 was aspirational and never met.
-        run: "cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 55 --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::"
+        # syscity-desktop is excluded: its Tauri/glib build needs GTK system
+        # libraries that CI doesn't install, and it has no tests anyway.
+        run: "cargo llvm-cov --workspace --exclude syscity-desktop --all-features --lcov --output-path lcov.info --fail-under-lines 55 --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
