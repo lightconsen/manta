@@ -67,6 +67,35 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Ensure a session row exists, creating an empty stub if absent.
+    ///
+    /// Unlike [`save_session`](Self::save_session) this never overwrites an
+    /// existing row, so concurrent metadata writes (agent binding, model pin)
+    /// are never clobbered. Safe to call from background tasks racing with the
+    /// session-create handler.
+    pub async fn ensure_session_row(&self, session_id: &str) -> Result<()> {
+        let now = Utc::now().timestamp_millis();
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count)
+            VALUES (?, '', '', '', ?, ?, 1, '{}', 0)
+            "#,
+        )
+        .bind(session_id)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            warn!("Failed to ensure session row for {}: {}", session_id, e);
+            SyscityError::Storage {
+                context: "Failed to ensure session row".to_string(),
+                details: e.to_string(),
+            }
+        })?;
+        Ok(())
+    }
+
     /// Load a session by ID
     #[instrument(skip(self))]
     pub async fn load_session(&self, session_id: &str) -> Result<Option<PersistedSession>> {
@@ -236,24 +265,7 @@ impl SessionStore {
         let now = Utc::now().timestamp_millis();
 
         // Auto-create session row if it doesn't exist (foreign key requirement)
-        sqlx::query(
-            r#"
-            INSERT OR IGNORE INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count)
-            VALUES (?, '', '', '', ?, ?, 1, '{}', 0)
-            "#,
-        )
-        .bind(params.session_id)
-        .bind(now)
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            warn!("Failed to auto-create session row for {}: {}", params.session_id, e);
-            SyscityError::Storage {
-                context: "Failed to auto-create session row".to_string(),
-                details: e.to_string(),
-            }
-        })?;
+        self.ensure_session_row(params.session_id).await?;
 
         let result = sqlx::query(
             r#"

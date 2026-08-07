@@ -416,13 +416,15 @@ impl SessionManager {
 
         self.sessions.insert(session_id.clone(), session_arc);
 
-        // Auto-persist to SessionStore if available
+        // Auto-persist to SessionStore if available. Only create the row when
+        // absent: an unconditional `save_session` with empty metadata would
+        // race with `handle_sessions_create` and clobber its richer metadata
+        // (agent binding, model pin).
         if let Some(ref store) = self.store {
             let store = store.clone();
             let sid = session_id;
             tokio::spawn(async move {
-                let metadata = crate::agent::session_store::SessionMetadata::new(&sid, "", "", "");
-                if let Err(e) = store.save_session(&sid, &metadata, "{}").await {
+                if let Err(e) = store.ensure_session_row(&sid).await {
                     tracing::warn!("Failed to auto-persist session {}: {}", sid, e);
                 }
             });
