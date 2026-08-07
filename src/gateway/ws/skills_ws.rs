@@ -259,3 +259,50 @@ pub(super) async fn handle_skills_install(
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "installed", "name": name }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str, params: Option<serde_json::Value>) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn skills_list_empty_ok() {
+        let state = state().await;
+        let resp = handle_skills_list(&req("r1", None), &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["count"], 0);
+        assert!(payload["skills"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn skills_install_missing_params_errors() {
+        let state = state().await;
+        let resp = handle_skills_install(&req("r1", None), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn skills_install_empty_name_errors() {
+        let state = state().await;
+        let params = Some(serde_json::json!({ "name": "", "content": "x" }));
+        let resp = handle_skills_install(&req("r1", params), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
+    }
+}

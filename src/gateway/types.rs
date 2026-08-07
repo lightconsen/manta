@@ -303,3 +303,173 @@ pub struct AddMentionPatternRequest {
     pub channel: String,
     pub pattern: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_search_defaults_apply() {
+        let req: MemorySearchRequest =
+            serde_json::from_value(serde_json::json!({ "query": "hello" })).unwrap();
+        assert_eq!(req.limit, 10);
+        assert_eq!(req.threshold, 0.7);
+        assert_eq!(req.collection, "");
+    }
+
+    #[test]
+    fn memory_search_accepts_explicit_values() {
+        let req: MemorySearchRequest = serde_json::from_value(serde_json::json!({
+            "query": "hello",
+            "limit": 3,
+            "threshold": 0.5,
+        }))
+        .unwrap();
+        assert_eq!(req.limit, 3);
+        assert_eq!(req.threshold, 0.5);
+    }
+
+    #[test]
+    fn mcp_connect_defaults_apply() {
+        let req: McpConnectRequest =
+            serde_json::from_value(serde_json::json!({ "command": "npx" })).unwrap();
+        assert_eq!(req.timeout_secs, 120);
+        assert!(req.auto_connect);
+        assert!(req.args.is_empty());
+        assert!(req.env.is_empty());
+    }
+
+    #[test]
+    fn switch_model_request_parses() {
+        let req: SwitchModelRequest =
+            serde_json::from_value(serde_json::json!({ "model": "fast" })).unwrap();
+        assert_eq!(req.model, "fast");
+    }
+
+    #[test]
+    fn health_report_serializes_skips_none_dream() {
+        let report = HealthReport {
+            status: "healthy".into(),
+            version: "1.0.0".into(),
+            timestamp: "t".into(),
+            overall_healthy: true,
+            subsystems: SubsystemHealth {
+                agents: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                providers: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                channels: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                vector_memory: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                memory_manager: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                cron: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                plugins: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                mcp: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                storage: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                cost_guard: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+            },
+            dream: None,
+        };
+        let value = serde_json::to_value(&report).unwrap();
+        assert_eq!(value["status"], "healthy");
+        assert_eq!(value["subsystems"]["agents"]["healthy"], true);
+        assert!(value.get("dream").is_none(), "None dream must be omitted");
+        assert_eq!(value["subsystems"]["memory_manager"]["healthy"], true);
+        // Renamed field uses the snake_case wire name.
+        assert!(value["subsystems"].get("vector_memory").is_some());
+    }
+
+    #[test]
+    fn health_report_serializes_dream_when_present() {
+        let report = HealthReport {
+            status: "healthy".into(),
+            version: "1.0.0".into(),
+            timestamp: "t".into(),
+            overall_healthy: true,
+            subsystems: SubsystemHealth {
+                agents: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                providers: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                channels: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                vector_memory: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                memory_manager: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                cron: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                plugins: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                mcp: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                storage: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+                cost_guard: HealthStatus {
+                    healthy: true,
+                    message: "ok".into(),
+                },
+            },
+            dream: Some(DreamHealthReport {
+                dreams_total: 1,
+                dreams_failed: 0,
+                memories_processed_total: 2,
+                memories_created_total: 3,
+                memories_removed_total: 0,
+                memories_promoted_total: 1,
+                memories_demoted_total: 0,
+                dream_duration_ms_total: 100,
+                llm_tokens_input_total: 10,
+                llm_tokens_output_total: 20,
+            }),
+        };
+        let value = serde_json::to_value(&report).unwrap();
+        assert_eq!(value["dream"]["dreams_total"], 1);
+        assert_eq!(value["dream"]["llm_tokens_output_total"], 20);
+    }
+}

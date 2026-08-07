@@ -893,4 +893,127 @@ mod tests {
         let resolved = resolve_session_model(&state, "s1", "main").await;
         assert_eq!(resolved.as_deref(), Some("agent-model"));
     }
+
+    fn routed_msg(
+        agent_id: &str,
+        session: &str,
+        queue_mode: crate::inbound::QueueMode,
+        suppress_delivery: bool,
+    ) -> crate::inbound::RoutedMessage {
+        let incoming = crate::channels::IncomingMessage::new(
+            "u1".to_string(),
+            session.to_string(),
+            "hello".to_string(),
+        )
+        .with_provenance(crate::channels::InputProvenance::ExternalUser {
+            channel: "web".to_string(),
+            is_direct: true,
+        });
+        crate::inbound::RoutedMessage {
+            incoming,
+            agent_id: agent_id.to_string(),
+            workspace_id: None,
+            queue_mode,
+            suppress_delivery,
+            media_results: None,
+            envelope_context: None,
+        }
+    }
+
+    #[test]
+    fn extract_session_name_strips_markdown() {
+        assert_eq!(extract_session_name("# **Hello** `world`"), "Hello world");
+    }
+
+    #[test]
+    fn extract_session_name_keeps_six_words() {
+        assert_eq!(
+            extract_session_name("one two three four five six seven"),
+            "one two three four five six"
+        );
+    }
+
+    #[test]
+    fn extract_session_name_empty_returns_new_session() {
+        assert_eq!(extract_session_name(""), "New Session");
+    }
+
+    #[test]
+    fn extract_session_name_truncates_long() {
+        let long = "a".repeat(60);
+        let name = extract_session_name(&long);
+        assert!(name.ends_with("..."));
+        assert!(name.len() <= 43);
+    }
+
+    #[tokio::test]
+    async fn dispatch_suppressed_delivery_returns_early() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        dispatch_routed_message(
+            &state,
+            routed_msg("main", "s1", crate::inbound::QueueMode::Normal, true),
+        )
+        .await;
+        let buffers = state.agents.message_buffer.read().await;
+        assert!(buffers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_normal_unknown_agent_noop() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        // Agent is neither spawned nor in the personality registry: the
+        // dispatch logs an error and returns without spawning.
+        dispatch_routed_message(
+            &state,
+            routed_msg("ghost", "s1", crate::inbound::QueueMode::Normal, false),
+        )
+        .await;
+        let agents = state.agents.agents.read().await;
+        assert!(agents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_interrupt_unknown_agent_noop() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        dispatch_routed_message(
+            &state,
+            routed_msg("ghost", "s1", crate::inbound::QueueMode::Interrupt, false),
+        )
+        .await;
+        let buffers = state.agents.message_buffer.read().await;
+        assert!(buffers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_collect_empty_buffer_sends() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        dispatch_routed_message(
+            &state,
+            routed_msg("ghost", "s1", crate::inbound::QueueMode::Collect, false),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_follow_up_flushes_after_five_messages() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        for _ in 0..5 {
+            dispatch_routed_message(
+                &state,
+                routed_msg("ghost", "s1", crate::inbound::QueueMode::FollowUp, false),
+            )
+            .await;
+        }
+        // The fifth message forces a flush; the buffer must be drained.
+        let buffers = state.agents.message_buffer.read().await;
+        assert!(buffers.get("s1").map(|b| b.is_empty()).unwrap_or(true));
+    }
+
+    #[tokio::test]
+    async fn flush_session_buffer_empty_is_noop() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        flush_session_buffer(&state, "main", "s1", None, None).await;
+        let buffers = state.agents.message_buffer.read().await;
+        assert!(buffers.is_empty());
+    }
 }

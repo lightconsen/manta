@@ -133,3 +133,61 @@ pub(super) async fn handle_logs_unsubscribe(
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::{make_test_conn, make_test_state};
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params: None,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn logs_subscribe_then_unsubscribe_ok() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel::<WsCommand>(1);
+
+        let resp = handle_logs_subscribe(&req("r1"), &conn, &state, &cmd_tx).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["status"], "subscribed");
+
+        // A cancel sender is now stored on the connection.
+        {
+            let cg = conn.read().await;
+            assert!(cg.log_cancel_tx.is_some());
+        }
+
+        let resp = handle_logs_unsubscribe(&req("r2"), &conn, &state).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["status"], "unsubscribed");
+
+        // Cancel sender taken (cleared) after unsubscribe.
+        {
+            let cg = conn.read().await;
+            assert!(cg.log_cancel_tx.is_none());
+        }
+        // Ensure the tail task is gone from the registry.
+        state.task_registry.abort("ws:log_tail:test-conn").await;
+    }
+
+    #[tokio::test]
+    async fn logs_unsubscribe_without_subscription_ok() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_logs_unsubscribe(&req("r1"), &conn, &state).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["status"], "unsubscribed");
+    }
+}

@@ -617,3 +617,162 @@ pub(crate) async fn register_hot_reload_handlers(
 
     info!("Registered hot reload handlers for all config types");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::hot_reload::ConfigChangeEvent;
+    use crate::gateway::state_tests::make_test_state;
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    fn event(
+        path: std::path::PathBuf,
+        config_type: ConfigFileType,
+        change_type: ConfigChangeType,
+    ) -> ConfigChangeEvent {
+        ConfigChangeEvent { path, config_type, change_type }
+    }
+
+    async fn write_toml<T: serde::Serialize>(
+        dir: &tempfile::TempDir,
+        name: &str,
+        value: &T,
+    ) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        let content = toml::to_string(value).expect("serialize toml");
+        tokio::fs::write(&path, content).await.expect("write toml");
+        path
+    }
+
+    #[tokio::test]
+    async fn registers_all_config_type_handlers() {
+        let manager = HotReloadManager::new().unwrap();
+        let state = state().await;
+        register_hot_reload_handlers(state.clone(), GatewayConfig::default(), &manager).await;
+
+        // Dispatch events for each supported type; the handlers must not panic.
+        let agent_tmp = tempfile::tempdir().unwrap();
+        let agent_path = write_toml(&agent_tmp, "ghost.toml", &AgentConfig::default()).await;
+        manager
+            .dispatch_for_test(event(agent_path, ConfigFileType::Agent, ConfigChangeType::Modified))
+            .await;
+
+        let mut channel_cfg = ChannelConfig::new(crate::channels::ChannelType::Telegram);
+        channel_cfg.enabled = false;
+        let channel_tmp = tempfile::tempdir().unwrap();
+        let channel_path = write_toml(&channel_tmp, "ghost.toml", &channel_cfg).await;
+        manager
+            .dispatch_for_test(event(
+                channel_path,
+                ConfigFileType::Channel,
+                ConfigChangeType::Modified,
+            ))
+            .await;
+
+        let gateway_tmp = tempfile::tempdir().unwrap();
+        let gateway_path =
+            write_toml(&gateway_tmp, "gateway.toml", &GatewayConfig::default()).await;
+        manager
+            .dispatch_for_test(event(
+                gateway_path,
+                ConfigFileType::Gateway,
+                ConfigChangeType::Modified,
+            ))
+            .await;
+
+        let agents_dir = crate::dirs::agents_dir();
+        manager
+            .dispatch_for_test(event(
+                agents_dir.join("kb-agent").join("kb.toml"),
+                ConfigFileType::KnowledgeBase,
+                ConfigChangeType::Deleted,
+            ))
+            .await;
+
+        manager
+            .dispatch_for_test(event(
+                agents_dir.join("kb-agent").join("kb.toml"),
+                ConfigFileType::KnowledgeBase,
+                ConfigChangeType::Modified,
+            ))
+            .await;
+
+        manager
+            .dispatch_for_test(event(
+                std::path::PathBuf::from("/tmp/fake/plugins/ghost/plugin.toml"),
+                ConfigFileType::Plugin,
+                ConfigChangeType::Modified,
+            ))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn agent_handler_unreadable_path_ok() {
+        let manager = HotReloadManager::new().unwrap();
+        let state = state().await;
+        register_hot_reload_handlers(state.clone(), GatewayConfig::default(), &manager).await;
+
+        manager
+            .dispatch_for_test(event(
+                std::path::PathBuf::from("/tmp/does-not-exist/agent.toml"),
+                ConfigFileType::Agent,
+                ConfigChangeType::Modified,
+            ))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn gateway_handler_applies_search_and_audits() {
+        let manager = HotReloadManager::new().unwrap();
+        let state = state().await;
+        register_hot_reload_handlers(state.clone(), GatewayConfig::default(), &manager).await;
+
+        // Change search providers so the web_search rebuild + audit diff paths run.
+        let mut new_config = GatewayConfig::default();
+        new_config.search.providers = vec!["tavily".to_string()];
+        let tmp = tempfile::tempdir().unwrap();
+        let gateway_path = write_toml(&tmp, "gateway.toml", &new_config).await;
+
+        manager
+            .dispatch_for_test(event(
+                gateway_path,
+                ConfigFileType::Gateway,
+                ConfigChangeType::Modified,
+            ))
+            .await;
+
+        // The search providers field must now reflect the hot-reloaded config.
+        let applied = state.config.read().await;
+        assert_eq!(applied.search.providers, vec!["tavily".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn gateway_handler_rejects_invalid_auth_config() {
+        let manager = HotReloadManager::new().unwrap();
+        let state = state().await;
+        register_hot_reload_handlers(state.clone(), GatewayConfig::default(), &manager).await;
+
+        // auth_mode token without a shared token fails validation and is rejected.
+        let mut new_config = GatewayConfig::default();
+        new_config.security.enabled = true;
+        new_config.security.auth_required = true;
+        new_config.security.auth_mode = crate::gateway::protocol::AuthMode::Token;
+        let tmp = tempfile::tempdir().unwrap();
+        let gateway_path = write_toml(&tmp, "gateway.toml", &new_config).await;
+
+        manager
+            .dispatch_for_test(event(
+                gateway_path,
+                ConfigFileType::Gateway,
+                ConfigChangeType::Modified,
+            ))
+            .await;
+
+        // Config must be unchanged after rejection.
+        let applied = state.config.read().await;
+        assert_eq!(applied.security.auth_mode, crate::gateway::protocol::AuthMode::None);
+    }
+}

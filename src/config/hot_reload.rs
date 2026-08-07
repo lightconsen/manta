@@ -292,6 +292,24 @@ impl HotReloadManager {
         Ok(())
     }
 
+    /// Test-only: synchronously invoke the handlers registered for the event's
+    /// config type, bypassing the file-watcher channel. Mirrors the core of
+    /// [`Self::run`] so handler bodies can be exercised deterministically.
+    #[cfg(test)]
+    pub async fn dispatch_for_test(&self, event: ConfigChangeEvent) {
+        let handlers = {
+            let handlers = self.handlers.read().await;
+            handlers.get(&event.config_type).cloned()
+        };
+        if let Some(handlers) = handlers {
+            for handler in handlers {
+                if let Err(e) = handler(event.clone()).await {
+                    error!("Handler failed for {:?}: {}", event.path, e);
+                }
+            }
+        }
+    }
+
     /// Stop watching files
     pub async fn stop(&self) -> crate::Result<()> {
         let mut files = self.watched_files.write().await;

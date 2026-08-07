@@ -608,6 +608,94 @@ pub(crate) async fn start_gateway(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn build_router_serves_live_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let state = state().await;
+        let app = build_router(state).await;
+
+        let req = Request::builder().uri("/live").body(Body::empty()).unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["alive"], true);
+    }
+
+    #[tokio::test]
+    async fn build_router_serves_web_ws_route() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let state = state().await;
+        let app = build_router(state).await;
+
+        // The /ws route is registered (GET requires an upgrade; a plain GET
+        // must be rejected with a non-panicking response).
+        let req = Request::builder().uri("/ws").body(Body::empty()).unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        // A missing upgrade should not produce a 200; any client error is fine.
+        assert!(
+            response.status().is_client_error() || response.status() == StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_gateway_clean_shutdown() {
+        let state = state().await;
+        let token = CancellationToken::new();
+        let result = stop_gateway(&token, &state).await;
+        assert!(result.is_ok(), "stop_gateway should succeed: {:?}", result);
+        assert!(token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn init_mcp_servers_empty_config_noop() {
+        let state = state().await;
+        init_mcp_servers(state, &GatewayConfig::default());
+    }
+
+    #[tokio::test]
+    async fn init_mcp_servers_skips_non_auto_connect() {
+        let state = state().await;
+        let mut config = GatewayConfig::default();
+        let mut server = crate::mcp::McpServerConfig::default();
+        server.auto_connect = false;
+        config.mcp.servers.insert("ghost".to_string(), server);
+        init_mcp_servers(state, &config);
+    }
+
+    #[tokio::test]
+    async fn register_mcp_tools_without_client_noop() {
+        let state = state().await;
+        register_mcp_tools(&state, "ghost", &[], 0).await;
+        let registry = state.tools.registry.clone();
+        assert!(
+            !registry
+                .list()
+                .iter()
+                .any(|n| n.starts_with("mcp__ghost__")),
+            "no MCP tools should be registered without a connected client"
+        );
+    }
+}
+
 // ── stop ─────────────────────────────────────────────────────────────
 
 /// Gracefully shut down the gateway and its subsystems.

@@ -270,3 +270,250 @@ fn clean_session_title(name: &str) -> String {
         name
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::protocol::AuthMode;
+    use crate::gateway::state_tests::{make_test_conn, make_test_state};
+    use crate::gateway::ws::WsAuthResult;
+    use crate::gateway::GatewayConfig;
+    use crate::security::UserId;
+
+    fn req(id: &str, params: Option<serde_json::Value>) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "connect".into(),
+            params,
+        }
+    }
+
+    fn params(overrides: serde_json::Value) -> Option<serde_json::Value> {
+        let mut p = serde_json::json!({ "protocol_version": PROTOCOL_VERSION });
+        if let Some(obj) = overrides.as_object() {
+            for (k, v) in obj {
+                p[k] = v.clone();
+            }
+        }
+        Some(p)
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    async fn dispatch_connect(
+        conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+        state: &Arc<GatewayState>,
+        auth_mode: AuthMode,
+        params: Option<serde_json::Value>,
+    ) -> WsResponse {
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel::<WsCommand>(1);
+        let pre = WsAuthResult {
+            user_id: UserId::new("u1"),
+            scopes: vec!["chat".to_string()],
+        };
+        handle_connect(&req("r1", params), conn, state, &auth_mode, &cmd_tx, &pre).await
+    }
+
+    #[tokio::test]
+    async fn connect_missing_params_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = dispatch_connect(&conn, &state, AuthMode::None, None).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn connect_invalid_params_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp =
+            dispatch_connect(&conn, &state, AuthMode::None, Some(serde_json::json!({"nope": 1})))
+                .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn connect_version_mismatch_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = dispatch_connect(
+            &conn,
+            &state,
+            AuthMode::None,
+            Some(serde_json::json!({ "protocol_version": 9999 })),
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "VERSION_MISMATCH");
+    }
+
+    #[tokio::test]
+    async fn connect_none_mode_hello_ok() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        // Requesting "admin" grants it only if present in ALL_SCOPES.
+        let resp = dispatch_connect(
+            &conn,
+            &state,
+            AuthMode::None,
+            params(serde_json::json!({
+                "scopes": ["admin"],
+                "client": { "id": "web", "version": "1.0" },
+            })),
+        )
+        .await;
+        assert!(resp.ok, "connect should succeed in None mode: {:?}", resp.error);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["protocol_version"], PROTOCOL_VERSION);
+        assert_eq!(payload["session_key"], "web:u1");
+        assert!(payload["features"]
+            .as_array()
+            .unwrap()
+            .contains(&"chat".into()));
+        assert!(payload["scopes_granted"]
+            .as_array()
+            .unwrap()
+            .contains(&"chat".into()));
+        assert!(payload["scopes_granted"]
+            .as_array()
+            .unwrap()
+            .contains(&"admin".into()));
+        assert_eq!(payload["server"]["conn_id"], "test-conn");
+
+        // Connection state mutated by the handshake.
+        let cg = conn.read().await;
+        assert!(cg.handshaked);
+        assert!(cg.scopes.contains(&"admin".to_string()));
+    }
+
+    #[tokio::test]
+    async fn connect_token_shared_secret_ok() {
+        let mut config = GatewayConfig::default();
+        config.security.auth_mode = AuthMode::Token;
+        config.security.shared_token = Some("secret-token".to_string());
+        let state = Arc::new(make_test_state(config).await);
+        let conn = make_test_conn(&[]);
+        let resp = dispatch_connect(
+            &conn,
+            &state,
+            AuthMode::Token,
+            params(serde_json::json!({
+                "auth": { "token": "secret-token" },
+                "scopes": ["read"],
+            })),
+        )
+        .await;
+        assert!(resp.ok, "shared token should authenticate: {:?}", resp.error);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["session_key"], "ws:shared");
+        assert!(payload["scopes_granted"]
+            .as_array()
+            .unwrap()
+            .contains(&"read".into()));
+    }
+
+    #[tokio::test]
+    async fn connect_token_invalid_anonymous_ok() {
+        let mut config = GatewayConfig::default();
+        config.security.auth_mode = AuthMode::Token;
+        config.security.shared_token = Some("secret-token".to_string());
+        let state = Arc::new(make_test_state(config).await);
+        let conn = make_test_conn(&[]);
+        let resp =
+            dispatch_connect(&conn, &state, AuthMode::Token, params(serde_json::json!({}))).await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["session_key"], "ws:anonymous");
+        assert!(payload["scopes_granted"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn connect_tailscale_user_ok() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp =
+            dispatch_connect(&conn, &state, AuthMode::Tailscale, params(serde_json::json!({})))
+                .await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["session_key"], "ws:tailscale");
+        assert!(payload["scopes_granted"]
+            .as_array()
+            .unwrap()
+            .contains(&"chat".into()));
+    }
+
+    #[tokio::test]
+    async fn connect_device_without_identity_errors() {
+        let mut config = GatewayConfig::default();
+        config.security.auth_mode = AuthMode::Device;
+        let state = Arc::new(make_test_state(config).await);
+        let conn = make_test_conn(&[]);
+        let resp =
+            dispatch_connect(&conn, &state, AuthMode::Device, params(serde_json::json!({}))).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[test]
+    fn ping_returns_empty_object() {
+        let resp = handle_ping(&req("r1", None));
+        assert!(resp.ok);
+        assert!(resp.payload.as_ref().unwrap().is_object());
+    }
+
+    #[tokio::test]
+    async fn generate_title_empty_message_early_returns() {
+        let router = crate::model_router::ModelRouter::new(
+            crate::model_router::ModelRouterConfig::default(),
+        );
+        let title = generate_session_title(&router, "   ").await.unwrap();
+        assert_eq!(title, "New Session");
+    }
+
+    #[tokio::test]
+    async fn fallback_name_keeps_first_six_words() {
+        assert_eq!(
+            fallback_session_name("one two three four five six seven"),
+            "one two three four five six"
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_name_empty_returns_new_session() {
+        assert_eq!(fallback_session_name("  "), "New Session");
+    }
+
+    #[tokio::test]
+    async fn fallback_name_truncates_long_title() {
+        let long = "a".repeat(60);
+        let name = fallback_session_name(&long);
+        assert!(name.ends_with("..."));
+        assert!(name.len() <= 43);
+    }
+
+    #[tokio::test]
+    async fn connect_sets_client_info() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = dispatch_connect(
+            &conn,
+            &state,
+            AuthMode::None,
+            params(serde_json::json!({
+                "client": { "id": "ios", "version": "2.1" },
+            })),
+        )
+        .await;
+        assert!(resp.ok);
+        let cg = conn.read().await;
+        let client = cg.client.as_ref().expect("client info stored");
+        assert_eq!(client.id, "ios");
+        assert_eq!(cg.scopes, vec!["chat".to_string()]);
+    }
+}
