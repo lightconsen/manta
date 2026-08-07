@@ -467,3 +467,193 @@ pub(super) async fn handle_export_session(
 
     WsResponse::ok(&req.id, serde_json::json!({ "text": "📄 No active session to export." }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::{make_test_conn, make_test_state};
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params: None,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn help_returns_commands() {
+        let resp = handle_help(&req("r1"), "");
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert!(
+            payload["text"]
+                .as_str()
+                .unwrap()
+                .contains("Syscity Commands"),
+            "help should list the header"
+        );
+        assert!(
+            payload["total_commands"].as_u64().unwrap_or(0) > 0,
+            "help should enumerate built-in commands"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_empty_state() {
+        let state = state().await;
+        let resp = handle_status(&req("r1"), &state).await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("Active agents: 0"), "empty state has no agents");
+    }
+
+    #[tokio::test]
+    async fn whoami_anonymous_default() {
+        let conn = make_test_conn(&[]);
+        let resp = handle_whoami(&req("r1"), &conn).await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("anonymous"), "no user_id means anonymous");
+    }
+
+    #[tokio::test]
+    async fn whoami_lists_scopes() {
+        let conn = make_test_conn(&["chat", "admin"]);
+        let resp = handle_whoami(&req("r1"), &conn).await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("chat"), "scopes should be listed");
+        assert!(text.contains("admin"), "scopes should be listed");
+    }
+
+    #[tokio::test]
+    async fn stop_without_subscription_reports_none() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_stop(&req("r1"), &conn, &state).await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active session"), "no subscription to cancel");
+    }
+
+    #[tokio::test]
+    async fn reset_without_subscription_reports_none() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_reset(&req("r1"), &conn, &state).await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active session"), "no subscription to reset");
+    }
+
+    #[tokio::test]
+    async fn compact_without_subscription_reports_none() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_compact(&req("r1"), &conn, &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active session"), "no subscription to compact");
+    }
+
+    #[tokio::test]
+    async fn context_without_subscription_reports_none() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_context(&req("r1"), &conn, &state).await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active session"), "no subscription to inspect");
+    }
+
+    #[tokio::test]
+    async fn export_without_subscription_reports_none() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_export_session(&req("r1"), &conn, &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active session"), "no subscription to export");
+    }
+
+    #[tokio::test]
+    async fn usage_set_mode_persists() {
+        let state = state().await;
+        let resp = handle_usage(&req("r1"), &state, "tokens").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert_eq!(settings.get("usage.mode").and_then(|v| v.as_str()), Some("tokens"));
+    }
+
+    #[tokio::test]
+    async fn usage_status_default_full() {
+        let state = state().await;
+        let resp = handle_usage(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["mode"].as_str(), Some("full"));
+        assert!(payload["text"].as_str().unwrap().contains("Usage"));
+    }
+
+    #[tokio::test]
+    async fn usage_invalid_mode_errors() {
+        let state = state().await;
+        let resp = handle_usage(&req("r1"), &state, "bogus").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn session_empty_args_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_session(&req("r1"), &conn, &state, "").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn session_idle_status_default() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_session(&req("r1"), &conn, &state, "idle").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("default"), "unset idle defaults to default");
+    }
+
+    #[tokio::test]
+    async fn session_idle_set_persists() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_session(&req("r1"), &conn, &state, "idle 30m").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert_eq!(settings.get("session.idle").and_then(|v| v.as_str()), Some("30m"));
+    }
+
+    #[tokio::test]
+    async fn session_invalid_duration_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_session(&req("r1"), &conn, &state, "idle 12furlongs").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn session_invalid_sub_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_session(&req("r1"), &conn, &state, "bogus").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+}

@@ -203,3 +203,162 @@ pub async fn cron_job_logs_handler(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cron::cron::CronScheduler;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    fn add_req(name: &str, schedule: &str) -> Json<AddCronJobRequest> {
+        Json(AddCronJobRequest {
+            name: name.into(),
+            schedule: schedule.into(),
+            command: "echo hi".into(),
+        })
+    }
+
+    /// make_test_state leaves `cron_scheduler == None`: every mutating handler
+    /// must 503 and list must report zero jobs.
+    #[tokio::test]
+    async fn all_handlers_without_scheduler() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            list_cron_jobs_handler(State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["count"].as_u64(), Some(0));
+
+        let (status, _) = body_json(
+            add_cron_job_handler(State(state.clone()), add_req("j", "* * * * * *"))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "add should 503");
+
+        let (status, _) = body_json(
+            remove_cron_job_handler(Path("j".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "remove should 503");
+
+        let (status, _) = body_json(
+            enable_cron_job_handler(Path("j".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "enable should 503");
+
+        let (status, _) = body_json(
+            disable_cron_job_handler(Path("j".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "disable should 503");
+
+        let (status, _) = body_json(
+            trigger_cron_job_handler(Path("j".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "trigger should 503");
+
+        let (status, _) = body_json(
+            cron_job_logs_handler(Path("j".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "logs should 503");
+    }
+
+    /// Inject a scheduler (channel left open but not started) so the
+    /// command-send paths succeed.
+    #[tokio::test]
+    async fn add_job_valid_and_invalid_schedule() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (sched, rx) = CronScheduler::new();
+        *state.scheduler.cron_scheduler.write().await =
+            Some(Arc::new(tokio::sync::Mutex::new(sched)));
+        let _keep_rx_alive = rx;
+
+        let (status, body) = body_json(
+            add_cron_job_handler(State(state.clone()), add_req("nightly", "0 0 * * * *"))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["success"].as_bool(), Some(true));
+        assert!(body["id"].as_str().is_some());
+
+        let (status, _) = body_json(
+            add_cron_job_handler(State(state), add_req("bad", "not-a-cron"))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn remove_enable_disable_trigger_with_scheduler() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (sched, rx) = CronScheduler::new();
+        *state.scheduler.cron_scheduler.write().await =
+            Some(Arc::new(tokio::sync::Mutex::new(sched)));
+        let _keep_rx_alive = rx;
+
+        let (status, body) = body_json(
+            remove_cron_job_handler(Path("ghost".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["success"].as_bool().unwrap_or_default());
+
+        let (status, _) = body_json(
+            enable_cron_job_handler(Path("ghost".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "enable should succeed on send");
+
+        let (status, _) = body_json(
+            disable_cron_job_handler(Path("ghost".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "disable should succeed on send");
+
+        let (status, _) = body_json(
+            trigger_cron_job_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "trigger should succeed on send");
+    }
+}

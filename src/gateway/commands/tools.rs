@@ -238,3 +238,178 @@ pub(super) async fn handle_btw(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params: None,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn tools_empty_registry_ok() {
+        let state = state().await;
+        let resp = handle_tools(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("0 total"), "empty registry should show 0 total");
+    }
+
+    #[tokio::test]
+    async fn tools_verbose_lists_heading() {
+        let state = state().await;
+        let resp = handle_tools(&req("r1"), &state, "verbose").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("Available Tools"), "verbose should list heading");
+    }
+
+    #[tokio::test]
+    async fn bash_empty_args_errors() {
+        let resp = handle_bash(&req("r1"), "   ").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn bash_runs_echo_command() {
+        let resp = handle_bash(&req("r1"), "echo hello-world").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("hello-world"), "stdout should be echoed: {}", text);
+        assert!(text.contains("exit code: 0"), "should report exit code 0");
+    }
+
+    #[tokio::test]
+    async fn skill_empty_lists_total() {
+        let state = state().await;
+        let resp = handle_skill(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("total"), "should list skills: {}", text);
+    }
+
+    #[tokio::test]
+    async fn skill_unknown_returns_not_found() {
+        let state = state().await;
+        let resp = handle_skill(&req("r1"), &state, "ghost-skill").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "SKILL_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn allowlist_empty_reports_no_levels() {
+        let state = state().await;
+        let resp = handle_allowlist(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No custom user levels"), "fresh gate has no levels");
+    }
+
+    #[tokio::test]
+    async fn allowlist_add_remove_roundtrip() {
+        let state = state().await;
+        let resp = handle_allowlist(&req("r1"), &state, "add bob admin").await;
+        assert!(resp.ok);
+        assert!(
+            resp.payload.as_ref().unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .contains("bob"),
+            "add should report the user"
+        );
+
+        // Listing now shows bob.
+        let resp = handle_allowlist(&req("r2"), &state, "list").await;
+        assert!(resp.ok);
+        assert!(
+            resp.payload.as_ref().unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .contains("bob"),
+            "list should include bob"
+        );
+
+        let resp = handle_allowlist(&req("r3"), &state, "remove bob").await;
+        assert!(resp.ok);
+        assert!(
+            resp.payload.as_ref().unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .contains("bob"),
+            "remove should report the user"
+        );
+
+        // Listing is empty again.
+        let resp = handle_allowlist(&req("r4"), &state, "").await;
+        assert!(resp.ok);
+        assert!(
+            resp.payload.as_ref().unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .contains("No custom user levels"),
+            "after remove the gate should be empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn allowlist_add_empty_user_errors() {
+        let state = state().await;
+        let resp = handle_allowlist(&req("r1"), &state, "add").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn allowlist_invalid_subcommand_errors() {
+        let state = state().await;
+        let resp = handle_allowlist(&req("r1"), &state, "bogus").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn approve_empty_reports_no_pending() {
+        let state = state().await;
+        let resp = handle_approve(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No pending approvals"));
+    }
+
+    #[tokio::test]
+    async fn approve_missing_decision_errors() {
+        let state = state().await;
+        let resp = handle_approve(&req("r1"), &state, "abc").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn approve_unknown_id_not_found() {
+        let state = state().await;
+        let resp = handle_approve(&req("r1"), &state, "abc approve").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn btw_empty_args_errors() {
+        let state = state().await;
+        let resp = handle_btw(&req("r1"), &state, "").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+}

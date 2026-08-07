@@ -126,3 +126,77 @@ pub async fn validate_config_handler(Json(config): Json<GatewayConfig>) -> impl 
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn get_config_serializes() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(get_config_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["model"].as_str().is_some());
+        assert!(body["model_provider"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn put_config_without_path_returns_501() {
+        // make_test_state leaves config_path None → handler must 501.
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            put_config_handler(State(state), Json(GatewayConfig::default()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn validate_config_accepts_default() {
+        let (status, body) = body_json(
+            validate_config_handler(Json(GatewayConfig::default()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["valid"].as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn persist_config_atomic_roundtrip() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("config.toml");
+        let cfg = GatewayConfig::default();
+        persist_config_atomic(&cfg, &path).await.expect("persist");
+        let on_disk = tokio::fs::read_to_string(&path).await.expect("read");
+        assert!(on_disk.contains("model_provider"), "TOML should round-trip");
+        let reparsed: GatewayConfig = toml::from_str(&on_disk).expect("reparse");
+        assert_eq!(reparsed.model, cfg.model);
+    }
+
+    #[tokio::test]
+    async fn persist_config_atomic_errors_on_bad_dir() {
+        let err = persist_config_atomic(
+            &GatewayConfig::default(),
+            std::path::Path::new("/nonexistent-dir-xyz/config.toml"),
+        )
+        .await;
+        assert!(err.is_err(), "write into missing dir must fail");
+    }
+}

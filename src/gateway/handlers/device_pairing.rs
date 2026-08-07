@@ -209,3 +209,209 @@ pub async fn device_qr_handler(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+    use crate::security::device_pairing::DeviceAccessResult;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    /// Seed a pending pairing request and return its code.
+    async fn seed_pending(state: &GatewayState) -> String {
+        match state
+            .auth
+            .device_pairing_store
+            .request_access("dev-1", Some("Phone"), None)
+            .await
+        {
+            DeviceAccessResult::PairingRequired { code } => code,
+            _ => panic!("expected a new pending request"),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_pending_empty_then_seeded() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            list_device_pending_handler(State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["count"].as_u64(), Some(0));
+
+        seed_pending(&state).await;
+        let (_, body) = body_json(
+            list_device_pending_handler(State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(body["count"].as_u64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn approve_flow_and_list_authorized() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let code = seed_pending(&state).await;
+
+        let (status, body) = body_json(
+            approve_device_handler(
+                State(state.clone()),
+                Json(DeviceApproveRequest { code: "WRONG".into() }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, body) = body_json(
+            approve_device_handler(
+                State(state.clone()),
+                Json(DeviceApproveRequest { code: code.clone() }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"].as_str(), Some("approved"));
+        assert!(body["token"].as_str().is_some());
+
+        let (_, body) = body_json(
+            list_device_authorized_handler(State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(body["count"].as_u64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn reject_flow() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let code = seed_pending(&state).await;
+
+        let (status, _) = body_json(
+            reject_device_handler(
+                State(state.clone()),
+                Json(DeviceApproveRequest { code: "WRONG".into() }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, body) = body_json(
+            reject_device_handler(State(state.clone()), Json(DeviceApproveRequest { code }))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"].as_str(), Some("rejected"));
+        let (_, body) = body_json(
+            list_device_pending_handler(State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(body["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn revoke_flow() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let code = seed_pending(&state).await;
+
+        let (status, _) = body_json(
+            revoke_device_handler(
+                State(state.clone()),
+                Json(DeviceRevokeRequest { device_id: "ghost".into() }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        approve_device_handler(State(state.clone()), Json(DeviceApproveRequest { code })).await;
+        let (status, _) = body_json(
+            revoke_device_handler(
+                State(state),
+                Json(DeviceRevokeRequest { device_id: "dev-1".into() }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn setup_code_paths() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let code = seed_pending(&state).await;
+        let setup = DevicePairingStore::encode_setup_code(&code);
+
+        let (status, _) = body_json(
+            setup_device_handler(State(state.clone()), Path("!!not-base64!!".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, body) = body_json(
+            setup_device_handler(State(state.clone()), Path(setup))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["device_id"].as_str(), Some("dev-1"));
+
+        // Encoded code that decodes but is not pending → 404.
+        let ghost = DevicePairingStore::encode_setup_code("ghost-code");
+        let (status, _) = body_json(
+            setup_device_handler(State(state), Path(ghost))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn qr_paths() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let code = seed_pending(&state).await;
+
+        let (status, _) = body_json(
+            device_qr_handler(State(state.clone()), Path("NOPE".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let resp = device_qr_handler(State(state), Path(code))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(resp.headers().get("content-type").is_some());
+    }
+}

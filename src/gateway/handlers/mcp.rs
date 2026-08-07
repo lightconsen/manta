@@ -377,3 +377,137 @@ pub async fn read_mcp_resource_handler(
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+    use axum::http::StatusCode;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn list_mcp_servers_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(list_mcp_servers_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn connect_mcp_server_bogus_command_500() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            connect_mcp_server_handler(
+                State(state),
+                Path("ghost".into()),
+                Json(McpConnectRequest {
+                    transport: "stdio".into(),
+                    command: Some("definitely-not-a-real-command-xyz".into()),
+                    args: vec![],
+                    env: std::collections::HashMap::new(),
+                    url: None,
+                    timeout_secs: 5,
+                    max_tools: 16,
+                    auth_type: None,
+                    client_id: None,
+                    auth_url: None,
+                    token_url: None,
+                    scopes: None,
+                    auto_connect: false,
+                }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    // Note: `mcp_auth_status_handler` is not tested here — its `has_stored_token`
+    // awaits the OAuth manager actor, which make_test_state never spawns, so it
+    // would hang the test suite.
+
+    #[tokio::test]
+    async fn disconnect_unknown_server_ok() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            disconnect_mcp_server_handler(State(state), Path("ghost".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["disconnected"].as_str(), Some("ghost"));
+    }
+
+    #[tokio::test]
+    async fn list_mcp_tools_unknown_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            list_mcp_tools_handler(State(state), Path("ghost".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn call_mcp_tool_unknown_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            call_mcp_tool_handler(
+                State(state),
+                Path(("ghost".into(), "tool".into())),
+                Json(serde_json::json!({ "a": 1 })),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn list_mcp_resources_unknown_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            list_mcp_resources_handler(State(state), Path("ghost".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn read_mcp_resource_unknown_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            read_mcp_resource_handler(
+                State(state),
+                Path("ghost".into()),
+                Json(McpReadResourceRequest { uri: "file:///tmp".into() }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+}

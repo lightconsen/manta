@@ -308,3 +308,82 @@ pub async fn redo_turn_handler(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn list_sessions_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(list_sessions_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["count"].as_u64(), Some(0));
+    }
+
+    /// An unbound session resolves to a fallback route → 404 before any agent
+    /// channel is consulted.
+    #[tokio::test]
+    async fn list_threads_unknown_session_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            list_threads_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn list_turns_unknown_session_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            list_turns_handler(Path(("ghost".into(), "thread-1".into())), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn undo_turn_unknown_session_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            undo_turn_handler(Path(("ghost".into(), "thread-1".into())), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn redo_turn_unknown_session_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            redo_turn_handler(Path(("ghost".into(), "thread-1".into())), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+}

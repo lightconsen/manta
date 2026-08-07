@@ -559,3 +559,238 @@ pub(super) async fn handle_restart(req: &WsRequest, state: &Arc<GatewayState>) -
         serde_json::json!({ "text": "🔄 Gateway restart initiated. The process will exit gracefully." }),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params: None,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    // Note: `handle_restart` is intentionally NOT tested — it spawns a task
+    // that calls `std::process::exit(0)` after a 1s delay, which would kill
+    // the test binary.
+
+    // ── /config ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn config_show_reports_model() {
+        let state = state().await;
+        let resp = handle_config(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("Model:"), "should show model line");
+    }
+
+    #[tokio::test]
+    async fn config_get_unknown_key_not_found() {
+        let state = state().await;
+        let resp = handle_config(&req("r1"), &state, "get ghost.key").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn config_set_persists_value() {
+        let state = state().await;
+        let resp = handle_config(&req("r1"), &state, "set debug.flag true").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert_eq!(
+            settings.get("debug.flag").and_then(|v| v.as_bool()),
+            Some(true),
+            "JSON values should be parsed (true -> bool)"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_unset_removes_key() {
+        let state = state().await;
+        let _ = handle_config(&req("r1"), &state, "set some.key 1").await;
+        let resp = handle_config(&req("r2"), &state, "unset some.key").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert!(settings.get("some.key").is_none());
+    }
+
+    #[tokio::test]
+    async fn config_invalid_sub_errors() {
+        let state = state().await;
+        let resp = handle_config(&req("r1"), &state, "bogus").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    // ── /plugins ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn plugins_empty_reports_none() {
+        let state = state().await;
+        let resp = handle_plugins(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No plugins loaded"));
+    }
+
+    #[tokio::test]
+    async fn plugins_enable_unknown_errors() {
+        let state = state().await;
+        let resp = handle_plugins(&req("r1"), &state, "enable ghost").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "PLUGIN_ERROR");
+    }
+
+    #[tokio::test]
+    async fn plugins_disable_unknown_errors() {
+        let state = state().await;
+        let resp = handle_plugins(&req("r1"), &state, "disable ghost").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "PLUGIN_ERROR");
+    }
+
+    #[tokio::test]
+    async fn plugins_unknown_sub_ok() {
+        let state = state().await;
+        let resp = handle_plugins(&req("r1"), &state, "reload").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("not yet implemented"));
+    }
+
+    // ── /mcp ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn mcp_empty_reports_none() {
+        let state = state().await;
+        let resp = handle_mcp(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No MCP servers connected"));
+    }
+
+    #[tokio::test]
+    async fn mcp_connect_missing_args_errors() {
+        let state = state().await;
+        let resp = handle_mcp(&req("r1"), &state, "connect").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn mcp_connect_unknown_server_without_command_errors() {
+        let state = state().await;
+        let resp = handle_mcp(&req("r1"), &state, "connect ghost").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn mcp_disconnect_unknown_ok() {
+        let state = state().await;
+        let resp = handle_mcp(&req("r1"), &state, "disconnect ghost").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("disconnected"));
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_unknown_errors() {
+        let state = state().await;
+        let resp = handle_mcp(&req("r1"), &state, "tools ghost").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "MCP_ERROR");
+    }
+
+    #[tokio::test]
+    async fn mcp_resources_missing_args_errors() {
+        let state = state().await;
+        let resp = handle_mcp(&req("r1"), &state, "resources").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn mcp_call_missing_args_errors() {
+        let state = state().await;
+        let resp = handle_mcp(&req("r1"), &state, "call ghost").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn mcp_read_missing_args_errors() {
+        let state = state().await;
+        let resp = handle_mcp(&req("r1"), &state, "read ghost").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn mcp_invalid_sub_errors() {
+        let state = state().await;
+        let resp = handle_mcp(&req("r1"), &state, "bogus").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    // ── /debug ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn debug_show_empty() {
+        let state = state().await;
+        let resp = handle_debug(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No runtime overrides"));
+    }
+
+    #[tokio::test]
+    async fn debug_set_persists_value() {
+        let state = state().await;
+        let resp = handle_debug(&req("r1"), &state, "set x.y 42").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert_eq!(settings.get("x.y").and_then(|v| v.as_u64()), Some(42));
+    }
+
+    #[tokio::test]
+    async fn debug_unset_removes_key() {
+        let state = state().await;
+        let _ = handle_debug(&req("r1"), &state, "set x.y 1").await;
+        let resp = handle_debug(&req("r2"), &state, "unset x.y").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert!(settings.get("x.y").is_none());
+    }
+
+    #[tokio::test]
+    async fn debug_reset_clears_all() {
+        let state = state().await;
+        let _ = handle_debug(&req("r1"), &state, "set a.b 1").await;
+        let _ = handle_debug(&req("r2"), &state, "set c.d 2").await;
+        let resp = handle_debug(&req("r3"), &state, "reset").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert!(settings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn debug_invalid_sub_errors() {
+        let state = state().await;
+        let resp = handle_debug(&req("r1"), &state, "bogus").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+}

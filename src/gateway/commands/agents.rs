@@ -814,3 +814,187 @@ pub(super) async fn handle_unfocus(
 
     WsResponse::ok(&req.id, serde_json::json!({ "text": "🎯 No active session to unfocus." }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::{make_test_conn, make_test_state};
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params: None,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    // ── /goal ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn goal_missing_description_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_goal(&req("r1"), &conn, &state, "").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn goal_cancel_missing_id_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_goal(&req("r1"), &conn, &state, "cancel").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn goal_cancel_unknown_goal_not_found() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_goal(&req("r1"), &conn, &state, "cancel ghost-goal").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "GOAL_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn goal_list_empty_reports_none() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_goal(&req("r1"), &conn, &state, "list").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active goals"));
+    }
+
+    // ── /subagents ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn subagents_empty_lists_none() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_subagents(&req("r1"), &conn, &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No subagents found"));
+    }
+
+    #[tokio::test]
+    async fn subagents_kill_no_session() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_subagents(&req("r1"), &conn, &state, "kill").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active session to kill"));
+    }
+
+    #[tokio::test]
+    async fn subagents_log_empty_topics() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_subagents(&req("r1"), &conn, &state, "log").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No ACP bus topics"));
+    }
+
+    // ── /acp ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn acp_status_no_session() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_acp(&req("r1"), &conn, &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active ACP session"));
+    }
+
+    #[tokio::test]
+    async fn acp_sessions_empty() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_acp(&req("r1"), &conn, &state, "sessions").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No ACP sessions"));
+    }
+
+    #[tokio::test]
+    async fn acp_spawn_creates_session() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_acp(&req("r1"), &conn, &state, "spawn parent-agent").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("Created ACP session"), "should report new session: {}", text);
+    }
+
+    // ── /steer ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn steer_empty_args_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_steer(&req("r1"), &conn, &state, "").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn steer_missing_message_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_steer(&req("r1"), &conn, &state, "agent-1").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    // ── /kill /focus /unfocus ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn kill_no_session() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_kill(&req("r1"), &conn, &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active session to kill"));
+    }
+
+    #[tokio::test]
+    async fn focus_empty_target_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_focus(&req("r1"), &conn, &state, "").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn focus_no_session() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_focus(&req("r1"), &conn, &state, "agent-1").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active session to focus"));
+    }
+
+    #[tokio::test]
+    async fn unfocus_no_session() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_unfocus(&req("r1"), &conn, &state).await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("No active session to unfocus"));
+    }
+}

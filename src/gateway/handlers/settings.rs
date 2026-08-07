@@ -61,3 +61,115 @@ pub async fn delete_setting_handler(
             .into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn list_settings_returns_all() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        state
+            .infra
+            .runtime_settings
+            .write()
+            .await
+            .insert("verbose.mode".into(), serde_json::json!("full"));
+        let (status, body) =
+            body_json(list_settings_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["verbose.mode"].as_str(), Some("full"));
+    }
+
+    #[tokio::test]
+    async fn set_setting_upserts() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let req = SetSettingRequest {
+            key: "queue.mode".into(),
+            value: serde_json::json!("interrupt"),
+        };
+        let (status, body) = body_json(
+            set_setting_handler(State(state.clone()), Json(req))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"].as_bool(), Some(true));
+        assert_eq!(
+            state.infra.runtime_settings.read().await.get("queue.mode"),
+            Some(&serde_json::json!("interrupt"))
+        );
+    }
+
+    #[tokio::test]
+    async fn get_setting_found_and_missing() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        state
+            .infra
+            .runtime_settings
+            .write()
+            .await
+            .insert("think.level".into(), serde_json::json!(2));
+        let (status, body) = body_json(
+            get_setting_handler(State(state.clone()), Path("think.level".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["value"].as_u64(), Some(2));
+
+        let (status, _) = body_json(
+            get_setting_handler(State(state), Path("nope".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_setting_existing_and_missing() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        state
+            .infra
+            .runtime_settings
+            .write()
+            .await
+            .insert("trace.enabled".into(), serde_json::json!(true));
+        let (status, body) = body_json(
+            delete_setting_handler(State(state.clone()), Path("trace.enabled".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["ok"].as_bool().unwrap_or_default());
+        assert!(!state
+            .infra
+            .runtime_settings
+            .read()
+            .await
+            .contains_key("trace.enabled"));
+
+        let (status, _) = body_json(
+            delete_setting_handler(State(state), Path("nope".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+}

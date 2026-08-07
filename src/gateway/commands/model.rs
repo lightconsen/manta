@@ -264,3 +264,158 @@ pub(super) async fn handle_queue(
         serde_json::json!({ "text": format!("📥 Queue mode set to '{}'.", mode) }),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::{make_test_conn, make_test_state};
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params: None,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn model_status_when_no_args() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_model(&req("r1"), &conn, &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("Default"), "status text should show default");
+    }
+
+    #[tokio::test]
+    async fn model_sets_runtime_override() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_model(&req("r1"), &conn, &state, "  gpt-4.1-mini  ").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert_eq!(settings.get("model.override").and_then(|v| v.as_str()), Some("gpt-4.1-mini"));
+    }
+
+    #[tokio::test]
+    async fn think_status_default_medium() {
+        let state = state().await;
+        let resp = handle_think(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
+        assert!(text.contains("medium"));
+    }
+
+    #[tokio::test]
+    async fn think_invalid_level_errors() {
+        let state = state().await;
+        let resp = handle_think(&req("r1"), &state, "bogus").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn think_set_level_persists() {
+        let state = state().await;
+        let resp = handle_think(&req("r1"), &state, "high").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert_eq!(settings.get("think.level").and_then(|v| v.as_str()), Some("high"));
+    }
+
+    #[tokio::test]
+    async fn verbose_set_and_status() {
+        let state = state().await;
+        let resp = handle_verbose(&req("r1"), &state, "on").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert_eq!(settings.get("verbose.mode").and_then(|v| v.as_str()), Some("on"));
+
+        let resp = handle_verbose(&req("r2"), &state, "").await;
+        assert!(resp.ok);
+        assert!(resp.payload.as_ref().unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .contains("on"));
+    }
+
+    #[tokio::test]
+    async fn trace_enable_and_status() {
+        let state = state().await;
+        let resp = handle_trace(&req("r1"), &state, "on").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert_eq!(settings.get("trace.enabled").and_then(|v| v.as_bool()), Some(true));
+
+        let resp = handle_trace(&req("r2"), &state, "").await;
+        assert!(resp.ok);
+        assert!(resp.payload.as_ref().unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .contains("on"));
+    }
+
+    #[tokio::test]
+    async fn fast_status_default_off() {
+        let state = state().await;
+        let resp = handle_fast(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        assert!(resp.payload.as_ref().unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .contains("off"));
+    }
+
+    #[tokio::test]
+    async fn fast_enable_and_disable() {
+        let state = state().await;
+        let resp = handle_fast(&req("r1"), &state, "on").await;
+        assert!(resp.ok);
+        {
+            let settings = state.infra.runtime_settings.read().await;
+            assert_eq!(settings.get("fast.mode").and_then(|v| v.as_bool()), Some(true));
+        }
+
+        let resp = handle_fast(&req("r2"), &state, "off").await;
+        assert!(resp.ok);
+        {
+            let settings = state.infra.runtime_settings.read().await;
+            assert_eq!(settings.get("fast.mode").and_then(|v| v.as_bool()), Some(false));
+        }
+    }
+
+    #[tokio::test]
+    async fn reasoning_status_default_on() {
+        let state = state().await;
+        let resp = handle_reasoning(&req("r1"), &state, "").await;
+        assert!(resp.ok);
+        assert!(resp.payload.as_ref().unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .contains("on"));
+    }
+
+    #[tokio::test]
+    async fn queue_invalid_mode_errors() {
+        let state = state().await;
+        let resp = handle_queue(&req("r1"), &state, "bogus").await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_ARGS");
+    }
+
+    #[tokio::test]
+    async fn queue_set_mode_persists() {
+        let state = state().await;
+        let resp = handle_queue(&req("r1"), &state, "interrupt").await;
+        assert!(resp.ok);
+        let settings = state.infra.runtime_settings.read().await;
+        assert_eq!(settings.get("queue.mode").and_then(|v| v.as_str()), Some("interrupt"));
+    }
+}

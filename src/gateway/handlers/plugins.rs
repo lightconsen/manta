@@ -369,3 +369,162 @@ pub async fn sign_plugin_handler(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn list_plugins_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(list_plugins_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn enable_and_disable_unknown_plugin_400() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            enable_plugin_handler(Path("ghost".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().is_some());
+
+        let (status, _) = body_json(
+            disable_plugin_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn unload_unknown_plugin_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            unload_plugin_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn reload_unknown_plugin_500() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            reload_plugin_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn reload_plugins_with_missing_dir_500() {
+        // make_test_state's temp plugins dir is removed when the fixture
+        // returns, so initialize() fails to read it → 500.
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(reload_plugins_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn install_plugin_unreachable_registry_500() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            install_plugin_handler(
+                State(state),
+                Json(InstallPluginRequest {
+                    name: "web-fetch".into(),
+                    registry: Some("http://localhost:1/".into()),
+                }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn uninstall_missing_plugin_500() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            uninstall_plugin_handler(
+                State(state),
+                Json(InstallPluginRequest {
+                    name: "ghost".into(),
+                    registry: None,
+                }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn search_plugins_unreachable_registry_500() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            search_plugins_handler(
+                State(state),
+                Query(SearchQuery {
+                    q: "fetch".into(),
+                    registry: Some("http://localhost:1/".into()),
+                }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn sign_plugin_without_key_400() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            sign_plugin_handler(
+                State(state),
+                Json(SignPluginRequest {
+                    name: "ghost".into(),
+                    secret_key: String::new(),
+                }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().is_some());
+    }
+}

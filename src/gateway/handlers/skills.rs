@@ -289,3 +289,145 @@ pub async fn run_skill_handler(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn list_skills_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(list_skills_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["count"].as_u64(), Some(0));
+        assert!(body["skills"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn get_skill_unknown_returns_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            get_skill_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    /// `set_skill_enabled` persists to `~/.syscity/skills.json`. Restore the
+    /// prior on-disk state so the test leaves the developer's config clean.
+    async fn skills_config_guard() -> Option<Option<Vec<u8>>> {
+        let path = crate::dirs::config_dir().join("skills.json");
+        let before = match tokio::fs::read(&path).await {
+            Ok(bytes) => Some(Some(bytes)),
+            Err(_) => Some(None),
+        };
+        before
+    }
+
+    async fn restore_skills_config(guard: Option<Option<Vec<u8>>>) {
+        if let Some(before) = guard {
+            let path = crate::dirs::config_dir().join("skills.json");
+            match before {
+                Some(bytes) => {
+                    let _ = tokio::fs::write(&path, bytes).await;
+                }
+                None => {
+                    let _ = tokio::fs::remove_file(&path).await;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn enable_and_disable_unknown_skill_returns_ok() {
+        let guard = skills_config_guard().await;
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+
+        let (status, body) = body_json(
+            enable_skill_handler(Path("ghost".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["success"].as_bool(), Some(true));
+
+        let (status, body) = body_json(
+            disable_skill_handler(Path("ghost".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["success"].as_bool(), Some(true));
+
+        restore_skills_config(guard).await;
+    }
+
+    #[tokio::test]
+    async fn install_skill_with_unreachable_registry_returns_400() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            install_skill_handler(
+                State(state),
+                Json(InstallSkillRequest {
+                    name: "web-fetch".into(),
+                    registry_url: Some("http://localhost:1/".into()),
+                }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn uninstall_unknown_skill_returns_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            uninstall_skill_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn run_skill_unknown_returns_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            run_skill_handler(
+                Path("ghost".into()),
+                State(state),
+                Json(RunSkillRequest { input: "hello".into() }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+}

@@ -165,3 +165,61 @@ pub async fn list_channels_handler(State(state): State<Arc<GatewayState>>) -> im
     let list: Vec<_> = channels.keys().cloned().collect();
     Json(list)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn list_agents_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(list_agents_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.as_array().map(|a| a.is_empty()).unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn get_agent_unknown_returns_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, _) = body_json(
+            get_agent_handler(State(state), Path("ghost".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_agent_unknown_returns_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, _) = body_json(
+            delete_agent_handler(State(state), Path("ghost".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn list_channels_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(list_channels_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.as_array().map(|a| a.is_empty()).unwrap_or(false));
+    }
+}

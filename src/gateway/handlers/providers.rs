@@ -248,3 +248,231 @@ pub async fn openai_list_models_handler(
 
     Json(serde_json::json!({ "object": "list", "data": data }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+    use crate::model_router::ModelAlias;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    async fn register_alias(state: &GatewayState, name: &str, model: &str) {
+        state
+            .infra
+            .model_router
+            .set_alias(ModelAlias {
+                name: name.to_string(),
+                provider: "openai".to_string(),
+                model: model.to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn list_providers_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(list_providers_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn get_provider_health_unknown_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            get_provider_health_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn switch_model_unknown_alias_400() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            switch_model_handler(State(state), Json(SwitchModelRequest { model: "ghost".into() }))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["success"].as_bool(), Some(false));
+    }
+
+    #[tokio::test]
+    async fn switch_model_registered_alias_ok() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_alias(&state, "alpha", "gpt-4o").await;
+        let (status, body) = body_json(
+            switch_model_handler(State(state), Json(SwitchModelRequest { model: "alpha".into() }))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["success"].as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn enable_and_disable_unknown_provider_400() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            enable_provider_handler(Path("ghost".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["success"].as_bool(), Some(false));
+
+        let (status, _) = body_json(
+            disable_provider_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn check_provider_unknown_400() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            check_provider_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["success"].as_bool(), Some(false));
+    }
+
+    #[tokio::test]
+    async fn provider_usage_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(provider_usage_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn provider_usage_by_id_unknown_404() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            provider_usage_by_id_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn fallback_chain_get_and_set() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_alias(&state, "alpha", "gpt-4o").await;
+
+        let (status, body) = body_json(
+            get_fallback_chain_handler(Path("alpha".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["alias"].as_str(), Some("alpha"));
+        assert!(body["fallback_chain"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false));
+
+        let (status, body) = body_json(
+            set_fallback_chain_handler(
+                Path("alpha".into()),
+                State(state.clone()),
+                Json(SetFallbackChainRequest {
+                    providers: vec!["openai".into()],
+                }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["success"].as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn set_fallback_chain_unknown_alias_400() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, _) = body_json(
+            set_fallback_chain_handler(
+                Path("ghost".into()),
+                State(state),
+                Json(SetFallbackChainRequest { providers: vec![] }),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_models_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) =
+            body_json(list_models_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["models"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn get_default_model_returns_string() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            get_default_model_handler(State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["default_model"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn openai_list_models_empty_state() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            openai_list_models_handler(State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["object"].as_str(), Some("list"));
+        assert!(body["data"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false));
+    }
+}

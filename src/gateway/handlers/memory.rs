@@ -101,3 +101,80 @@ pub async fn list_memory_collections_handler(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    /// With `memory.vector == None` (the make_test_state default), all three
+    /// handlers must 503 with a "not enabled" message.
+    #[tokio::test]
+    async fn search_503_when_vector_not_enabled() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let req = MemorySearchRequest {
+            query: "foo".into(),
+            limit: 5,
+            collection: String::new(),
+            threshold: 0.5,
+        };
+        let (status, body) = body_json(
+            memory_search_handler(State(state), Json(req))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not enabled"));
+    }
+
+    #[tokio::test]
+    async fn add_503_when_vector_not_enabled() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let req = MemoryAddRequest {
+            content: "remember me".into(),
+            metadata: None,
+            collection: String::new(),
+        };
+        let (status, body) = body_json(
+            memory_add_handler(State(state), Json(req))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not enabled"));
+    }
+
+    #[tokio::test]
+    async fn list_collections_503_when_vector_not_enabled() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let (status, body) = body_json(
+            list_memory_collections_handler(State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not enabled"));
+    }
+}
