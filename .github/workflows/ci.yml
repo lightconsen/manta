@@ -183,6 +183,39 @@ jobs:
       - name: Ensure web assets directory exists
         run: mkdir -p dist
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('web/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build frontend
+        # web_ui handler tests read real assets from dist/, so the job must
+        # build the frontend just like the Test / Test (macOS) / Code Coverage
+        # jobs do; otherwise asset lookups fall through and the found-path
+        # assertions fail.
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
