@@ -76,7 +76,7 @@ impl ModelRouter {
         Ok(response)
     }
 
-    /// Get cheapest model alias when budget is exceeded, or `None` if within
+    /// Get cheapest model when budget is exceeded, or `None` if within
     /// budget.
     fn cheapest_model_on_budget_exceeded(cost_aware: &CostAwareConfig) -> Option<String> {
         let budget = cost_aware.budget_limit_usd?;

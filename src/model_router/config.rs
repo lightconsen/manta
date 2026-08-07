@@ -126,22 +126,22 @@ pub struct ProviderConfig {
     /// Provider type
     pub provider_type: ProviderType,
     /// Concrete model IDs supported by this provider.
-    #[serde(default, alias = "supported_models")]
+    #[serde(default)]
     pub models: Vec<String>,
     /// Default model ID for this provider (must be in `models`).
     #[serde(default)]
     pub default_model: String,
     /// API key (single key, backward compatible). Inline value or store ref.
-    #[serde(alias = "api_key", default)]
+    #[serde(default)]
     pub api_key: ProviderKey,
     /// Multiple API keys for rotation (optional, takes precedence over api_key)
-    #[serde(default, alias = "api_keys")]
+    #[serde(default)]
     pub api_keys: Vec<String>,
     /// Auth profile configuration (optional, most flexible)
-    #[serde(default, alias = "auth_profile")]
+    #[serde(default)]
     pub auth_profile: Option<AuthProfileConfig>,
     /// OAuth 2.0 configuration for initial authorization flow
-    #[serde(default, alias = "oauth")]
+    #[serde(default)]
     pub oauth: Option<OAuthConfig>,
     /// Base URL (for custom deployments)
     pub base_url: Option<String>,
@@ -309,10 +309,8 @@ pub struct TaskRoutingRule {
     /// Task type this rule applies to
     pub task_type: TaskType,
     /// Preferred model ID
-    #[serde(alias = "preferred_alias")]
     pub preferred_model: String,
     /// Fallback model ID if preferred is unavailable
-    #[serde(alias = "fallback_alias")]
     pub fallback_model: Option<String>,
     /// Maximum input tokens for this rule (route to larger model if exceeded)
     pub max_input_tokens: Option<u32>,
@@ -327,12 +325,11 @@ pub struct TaskRoutingRule {
 pub struct CostAwareConfig {
     /// Whether cost-aware routing is enabled
     pub enabled: bool,
-    /// Cost per 1K tokens for each model alias
+    /// Cost per 1K tokens for each model ID
     pub model_costs: HashMap<String, ModelCost>,
     /// Routing rules by task type
     pub routing_rules: Vec<TaskRoutingRule>,
     /// Default model ID when no rule matches
-    #[serde(alias = "default_alias")]
     pub default_model: String,
     /// Optional daily budget limit in USD
     pub budget_limit_usd: Option<f64>,

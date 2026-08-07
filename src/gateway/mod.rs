@@ -252,7 +252,7 @@ impl Gateway {
 
     /// Create a new gateway instance with explicit mobile wiring.
     pub async fn with_options(
-        config: GatewayConfig,
+        mut config: GatewayConfig,
         config_path: Option<PathBuf>,
         options: GatewayOptions,
     ) -> crate::Result<Self> {
@@ -282,6 +282,19 @@ impl Gateway {
         let session_store = storage_init.session_store;
         let audit_log = storage_init.audit_log;
         let audit_log_dyn = storage_init.audit_log_dyn;
+
+        // Migrate legacy (alias-era) provider/model config in place before the
+        // router is built, persisting once if anything changed so disk, the
+        // live router, and the frontend agree from the first boot.
+        let migrated = init::agents::migrate_model_router_config(&mut config).await;
+        if migrated {
+            if let Some(config_path) = config_path.clone() {
+                if let Err(e) = handlers::config::persist_config_atomic(&config, &config_path).await
+                {
+                    warn!("Failed to persist migrated config: {}", e);
+                }
+            }
+        }
 
         let acp = init::agents::init_acp(&config, session_store.clone()).await;
 

@@ -69,7 +69,7 @@ pub struct ProviderHealthInfo {
 /// Models list response
 #[derive(Debug, Deserialize)]
 pub struct ModelsResponse {
-    pub aliases: Vec<String>,
+    pub models: Vec<String>,
 }
 
 /// Default model response
@@ -89,7 +89,7 @@ pub struct OperationResult {
 /// Fallback chain response
 #[derive(Debug, Deserialize)]
 pub struct FallbackChainResponse {
-    pub alias: String,
+    pub model_id: String,
     pub fallback_chain: Vec<String>,
 }
 
@@ -302,7 +302,7 @@ impl DaemonClient {
         Ok(providers)
     }
 
-    /// Get list of model aliases
+    /// Get list of models
     pub async fn get_models(&self) -> crate::Result<ModelsResponse> {
         let url = format!("{}/api/v1/models", self.base_url);
         let response =
@@ -394,9 +394,9 @@ impl DaemonClient {
         Ok(result)
     }
 
-    /// Get fallback chain for an alias
-    pub async fn get_fallback_chain(&self, alias: &str) -> crate::Result<FallbackChainResponse> {
-        let url = format!("{}/api/v1/providers/fallback/{}", self.base_url, alias);
+    /// Get fallback chain for a model ID
+    pub async fn get_fallback_chain(&self, model_id: &str) -> crate::Result<FallbackChainResponse> {
+        let url = format!("{}/api/v1/providers/fallback/{}", self.base_url, model_id);
         let response =
             self.client.get(&url).send().await.map_err(|e| {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
@@ -577,9 +577,9 @@ mod tests {
 
     #[test]
     fn test_models_response_deserialize() {
-        let json = r#"{"aliases":["gpt-4","gpt-3.5"]}"#;
+        let json = r#"{"models":["gpt-4","gpt-3.5"]}"#;
         let resp: ModelsResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.aliases, vec!["gpt-4", "gpt-3.5"]);
+        assert_eq!(resp.models, vec!["gpt-4", "gpt-3.5"]);
     }
 
     #[test]
@@ -639,9 +639,9 @@ mod tests {
 
     #[test]
     fn test_fallback_chain_response_deserialize() {
-        let json = r#"{"alias":"default","fallback_chain":["primary","secondary"]}"#;
+        let json = r#"{"model_id":"gpt-4o","fallback_chain":["primary","secondary"]}"#;
         let resp: FallbackChainResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.alias, "default");
+        assert_eq!(resp.model_id, "gpt-4o");
         assert_eq!(resp.fallback_chain, vec!["primary", "secondary"]);
     }
 

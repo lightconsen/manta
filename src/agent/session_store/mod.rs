@@ -51,7 +51,7 @@ pub struct SessionMetadata {
     /// Transcript ID for conversation grouping (transcript tracking)
     #[serde(default)]
     pub transcript_id: Option<String>,
-    /// Model alias pinned to this session (per-session model binding)
+    /// Model ID pinned to this session (per-session model binding)
     #[serde(default)]
     pub model: Option<String>,
 }

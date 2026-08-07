@@ -398,7 +398,6 @@ pub(super) async fn sync_config_from_router(state: &GatewayState) {
 pub(super) async fn handle_models_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     #[derive(Debug, Deserialize)]
     struct RemovePayload {
-        #[serde(alias = "name")]
         model_id: String,
     }
     let payload: RemovePayload = match parse_params(req) {
@@ -436,7 +435,6 @@ pub(super) async fn handle_models_set_default(
 ) -> WsResponse {
     #[derive(Debug, Deserialize)]
     struct SetDefaultPayload {
-        #[serde(alias = "name")]
         model_id: String,
     }
     let payload: SetDefaultPayload = match parse_params(req) {

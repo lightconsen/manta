@@ -1,7 +1,7 @@
 //! Model Router - Multi-provider LLM support with fallback chain
 //!
 //! Provides:
-//! - Model aliases (e.g., "fast" -> "claude-3-haiku")
+//! - Provider-owned concrete model IDs (e.g. "deepseek-chat")
 //! - Multi-provider routing (Anthropic, OpenAI, etc.)
 //! - Automatic fallback on failure
 //! - Health checking and load balancing

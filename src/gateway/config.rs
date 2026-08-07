@@ -811,6 +811,14 @@ pub struct ConfigChange {
 }
 
 impl GatewayConfig {
+    /// Find the provider name that owns a concrete model ID, if any.
+    pub fn provider_for_model(&self, model_id: &str) -> Option<&str> {
+        self.providers
+            .iter()
+            .find(|(_, cfg)| cfg.supports_model(model_id))
+            .map(|(name, _)| name.as_str())
+    }
+
     /// Capture a snapshot of all hot-reloadable fields.
     pub fn snapshot(&self) -> ConfigSnapshot {
         let mut fields = HashMap::new();
@@ -925,5 +933,29 @@ mod tests {
         assert!(!parsed.security.auth_required);
         assert_eq!(parsed.host, "127.0.0.1");
         assert_eq!(parsed.port, 18080);
+    }
+
+    #[test]
+    fn provider_for_model_finds_owning_provider() {
+        let mut config = GatewayConfig::default();
+        config.providers.insert(
+            "deepseek".to_string(),
+            crate::model_router::ProviderConfig {
+                provider_type: crate::model_router::ProviderType::OpenAi,
+                models: vec!["deepseek-chat".to_string(), "deepseek-reasoner".to_string()],
+                default_model: "deepseek-chat".to_string(),
+                api_key: String::new().into(),
+                api_keys: Vec::new(),
+                auth_profile: None,
+                oauth: None,
+                base_url: None,
+                timeout: std::time::Duration::from_secs(30),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            },
+        );
+        assert_eq!(config.provider_for_model("deepseek-chat"), Some("deepseek"));
+        assert_eq!(config.provider_for_model("deepseek-reasoner"), Some("deepseek"));
+        assert_eq!(config.provider_for_model("gpt-4o"), None);
     }
 }

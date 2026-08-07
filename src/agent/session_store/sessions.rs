@@ -412,7 +412,7 @@ impl SessionStore {
         Ok(())
     }
 
-    /// Set or clear the session's pinned model alias (`None` clears the pin).
+    /// Set or clear the session's pinned model ID (`None` clears the pin).
     ///
     /// A brand-new session has no row in `sessions` until its first message is
     /// appended (the frontend keeps new sessions client-side only), so the row

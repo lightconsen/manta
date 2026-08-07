@@ -13,13 +13,13 @@ pub enum AdminCommands {
     Status,
     /// List available LLM providers
     Providers,
-    /// List available model aliases
+    /// List available models
     Models,
     /// Show current default model
     Default,
-    /// Switch the default model alias
+    /// Switch the default model
     Switch {
-        /// Model alias to switch to (fast, smart, default)
+        /// Concrete model ID to switch to
         model: String,
     },
     /// Enable a provider
@@ -37,10 +37,10 @@ pub enum AdminCommands {
         /// Provider name
         provider: String,
     },
-    /// Show fallback chain for an alias
+    /// Show fallback chain for a model
     Fallback {
-        /// Model alias
-        alias: String,
+        /// Model ID
+        model_id: String,
     },
     /// List all agents
     Agents,
@@ -53,7 +53,7 @@ pub enum AdminCommands {
         /// Optional provider override
         #[arg(short, long)]
         provider: Option<String>,
-        /// Optional model alias override
+        /// Optional model ID override
         #[arg(short, long)]
         model: Option<String>,
     },
@@ -125,7 +125,7 @@ pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
                     let status = resp.status();
                     let text = resp.text().await.unwrap_or_default();
                     if status.is_success() {
-                        println!("Switched to model alias '{}'", model);
+                        println!("Switched to model '{}'", model);
                         println!("{}", text);
                     } else {
                         eprintln!("Failed to switch model ({}): {}", status, text);
@@ -186,8 +186,8 @@ pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
                 }
             }
         }
-        AdminCommands::Fallback { alias } => {
-            let url = format!("{}/api/v1/providers/fallback/{}", DAEMON_URL, alias);
+        AdminCommands::Fallback { model_id } => {
+            let url = format!("{}/api/v1/providers/fallback/{}", DAEMON_URL, model_id);
             match client.get(&url).send().await {
                 Ok(resp) => {
                     let body = resp.text().await.unwrap_or_default();

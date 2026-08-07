@@ -29,10 +29,10 @@ pub enum ProviderCommands {
         /// Provider ID
         id: String,
     },
-    /// Switch the default model alias
+    /// Switch the default model
     Switch {
-        /// Model alias (fast, smart, default)
-        alias: String,
+        /// Concrete model ID to switch to
+        model: String,
     },
     /// Show current default model
     Default,
@@ -162,13 +162,13 @@ pub async fn run_provider_command(
             }
             Ok(())
         }
-        ProviderCommands::Switch { alias } => {
+        ProviderCommands::Switch { model } => {
             let url = format!("{}/api/v1/providers/switch", DAEMON_URL);
-            let body = serde_json::json!({ "model": alias });
+            let body = serde_json::json!({ "model": model });
             match client.post(&url).json(&body).send().await {
                 Ok(resp) => {
                     if resp.status().is_success() {
-                        println!("✅ Switched default model to {}", alias);
+                        println!("✅ Switched default model to {}", model);
                     } else {
                         let text = resp.text().await.unwrap_or_default();
                         eprintln!("Failed to switch: {}", text);
