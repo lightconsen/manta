@@ -146,3 +146,64 @@ pub async fn list_discovered_agents_handler(
 
     Json(list)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn spawn_unknown_agent_404() {
+        let state = state().await;
+        let (status, json) = body_json(
+            spawn_discovered_agent_handler(Path("ghost".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(json["error"].as_str().unwrap().contains("ghost"));
+    }
+
+    #[tokio::test]
+    async fn spawn_all_empty_registry_ok() {
+        let state = state().await;
+        let (status, json) = body_json(
+            spawn_all_discovered_agents_handler(State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["spawned"], 0);
+        assert_eq!(json["failed"], 0);
+    }
+
+    #[tokio::test]
+    async fn list_empty_registry_ok() {
+        let state = state().await;
+        let (status, json) = body_json(
+            list_discovered_agents_handler(State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(json.is_array());
+        assert!(json.as_array().unwrap().is_empty());
+    }
+}

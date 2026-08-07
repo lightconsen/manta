@@ -383,3 +383,134 @@ pub async fn list_conversations_handler(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+    use axum::extract::{Path, Query};
+    use std::collections::HashMap;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn chat_handler_no_default_agent_503() {
+        let state = state().await;
+        let body = Json(ChatRequestCompat {
+            message: "hello".to_string(),
+            conversation_id: None,
+        });
+        let (status, json) =
+            body_json(chat_handler(State(state), body).await.into_response()).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json["error"], "No default agent available");
+    }
+
+    #[tokio::test]
+    async fn web_terminal_chat_no_receiver_500() {
+        // The test state's inbound_entry channel has no receiver, so enqueue
+        // fails and the handler reports an internal error.
+        let state = state().await;
+        let body = Json(WebTerminalChatRequest {
+            message: "hello".to_string(),
+            conversation_id: None,
+            user_id: None,
+        });
+        let (status, json) = body_json(
+            web_terminal_chat_handler(State(state), body)
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(json["error"]
+            .as_str()
+            .unwrap()
+            .contains("Failed to enqueue message"));
+    }
+
+    #[tokio::test]
+    async fn send_message_no_provider_no_receiver_500() {
+        let state = state().await;
+        let body = Json(SendMessageRequest {
+            message: "hello".to_string(),
+            user_id: None,
+            provider_override: None,
+            model_alias: None,
+            model_id: None,
+        });
+        let (status, json) = body_json(
+            send_message_handler(State(state), Path("sess-1".into()), body)
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(json["error"]
+            .as_str()
+            .unwrap()
+            .contains("Failed to enqueue message"));
+    }
+
+    #[tokio::test]
+    async fn get_conversation_history_empty_ok() {
+        let state = state().await;
+        let (status, json) = body_json(
+            get_conversation_history_handler(
+                State(state),
+                Path("conv-1".into()),
+                Query(HashMap::new()),
+            )
+            .await
+            .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["conversation_id"], "conv-1");
+        assert!(json["messages"].is_array());
+        assert!(json["messages"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_last_conversation_empty_ok() {
+        let state = state().await;
+        let mut params = HashMap::new();
+        params.insert("user_id".to_string(), "web_user".to_string());
+        let (status, json) = body_json(
+            get_last_conversation_handler(State(state), Query(params))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["user_id"], "web_user");
+    }
+
+    #[tokio::test]
+    async fn list_conversations_empty_ok() {
+        let state = state().await;
+        let mut params = HashMap::new();
+        params.insert("user_id".to_string(), "web_user".to_string());
+        let (status, json) = body_json(
+            list_conversations_handler(State(state), Query(params))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(json["conversations"].is_array());
+        assert!(json["conversations"].as_array().unwrap().is_empty());
+    }
+}

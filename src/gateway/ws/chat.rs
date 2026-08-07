@@ -319,3 +319,100 @@ pub(super) async fn handle_chat_abort(
         }),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::{
+        make_test_conn, make_test_state, make_test_state_with_store,
+    };
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str, params: Option<serde_json::Value>) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn chat_send_missing_params_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_chat_send(&req("r1", None), &conn, &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn chat_send_enqueue_fails_without_receiver() {
+        // Test state's inbound_entry channel has no receiver, so the send
+        // path reports an enqueue failure.
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let params = Some(serde_json::json!({ "message": "hello", "session_id": "s1" }));
+        let resp = handle_chat_send(&req("r1", params), &conn, &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "enqueue_failed");
+    }
+
+    #[tokio::test]
+    async fn chat_history_missing_params_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_chat_history(&req("r1", None), &conn, &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn chat_history_empty_without_store() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let params = Some(serde_json::json!({ "session_id": "s1" }));
+        let resp = handle_chat_history(&req("r1", params), &conn, &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["session_id"], "s1");
+        assert!(payload["messages"].as_array().unwrap().is_empty());
+        assert_eq!(payload["has_more"], false);
+    }
+
+    #[tokio::test]
+    async fn chat_history_empty_with_store() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let conn = make_test_conn(&[]);
+        let params = Some(serde_json::json!({ "session_id": "s1" }));
+        let resp = handle_chat_history(&req("r1", params), &conn, &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert!(payload["messages"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn chat_abort_missing_params_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_chat_abort(&req("r1", None), &conn, &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn chat_abort_unknown_session_ok() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let params = Some(serde_json::json!({ "session_id": "ghost" }));
+        let resp = handle_chat_abort(&req("r1", params), &conn, &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["status"], "aborted");
+        assert_eq!(payload["session_id"], "ghost");
+    }
+}

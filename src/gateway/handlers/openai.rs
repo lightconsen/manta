@@ -236,3 +236,72 @@ pub async fn openai_chat_completions_handler(
         Json(resp).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+    use axum::extract::Query;
+    use axum::http::{HeaderMap, StatusCode};
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    fn req(model: &str, messages: Vec<OpenAiMessage>, stream: bool) -> Json<OpenAiChatRequest> {
+        Json(OpenAiChatRequest {
+            model: model.to_string(),
+            messages,
+            stream,
+        })
+    }
+
+    fn user_msg(content: &str) -> OpenAiMessage {
+        OpenAiMessage {
+            role: "user".to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn empty_messages_returns_400() {
+        let state = state().await;
+        let resp = openai_chat_completions_handler(
+            State(state),
+            Query(ModelOverrideQuery { model: None }),
+            HeaderMap::new(),
+            req("gpt-4o", vec![], false),
+        )
+        .await;
+        let (status, json) = body_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["error"]["type"], "invalid_request_error");
+        assert_eq!(json["error"]["message"], "No user message provided");
+    }
+
+    #[tokio::test]
+    async fn no_default_agent_returns_503() {
+        let state = state().await;
+        let resp = openai_chat_completions_handler(
+            State(state),
+            Query(ModelOverrideQuery { model: None }),
+            HeaderMap::new(),
+            req("gpt-4o", vec![user_msg("hello")], false),
+        )
+        .await;
+        let (status, json) = body_json(resp).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json["error"]["type"], "server_error");
+        assert_eq!(json["error"]["message"], "No agent available");
+    }
+}

@@ -163,3 +163,86 @@ pub(super) async fn handle_system_presence(req: &WsRequest) -> WsResponse {
         }),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str, params: Option<serde_json::Value>) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn agents_list_empty_ok() {
+        let state = state().await;
+        let resp = handle_agents_list(&req("r1", None), &state).await;
+        assert!(resp.ok);
+        let agents = resp.payload.as_ref().unwrap()["agents"].as_array().unwrap();
+        assert!(agents.is_empty(), "fresh state has no agents");
+    }
+
+    #[tokio::test]
+    async fn agents_get_missing_params_errors() {
+        let state = state().await;
+        let resp = handle_agents_get(&req("r1", None), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn agents_get_unknown_agent_not_found() {
+        let state = state().await;
+        let params = Some(serde_json::json!({ "agent_id": "ghost" }));
+        let resp = handle_agents_get(&req("r1", params), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "AGENT_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn agents_get_invalid_params_errors() {
+        let state = state().await;
+        let resp =
+            handle_agents_get(&req("r1", Some(serde_json::json!({ "nope": 1 }))), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn agents_registry_empty_ok() {
+        let state = state().await;
+        let resp = handle_agents_registry(&req("r1", None), &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["count"], 0);
+        assert!(payload["agents"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn health_reports_healthy_zero_agents() {
+        let state = state().await;
+        let resp = handle_health(&req("r1", None), &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["status"], "healthy");
+        assert_eq!(payload["agents"], 0);
+        assert!(payload["protocol_version"].is_number());
+    }
+
+    #[tokio::test]
+    async fn system_presence_online() {
+        let resp = handle_system_presence(&req("r1", None)).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["online"], true);
+    }
+}

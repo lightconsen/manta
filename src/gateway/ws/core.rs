@@ -554,3 +554,208 @@ async fn handle_permissions_request_macos_accessibility(req: &WsRequest) -> WsRe
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::protocol::AuthMode;
+    use crate::gateway::state_tests::{make_test_conn, make_test_state};
+    use crate::gateway::GatewayConfig;
+    use axum::http::StatusCode;
+    use tower::ServiceExt;
+
+    fn req(id: &str, method: &str, params: Option<serde_json::Value>) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: method.into(),
+            params,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    async fn dispatch(
+        conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+        r: &WsRequest,
+    ) -> WsResponse {
+        let state = state().await;
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel::<WsCommand>(1);
+        dispatch_method(r, conn, &state, &cmd_tx).await
+    }
+
+    // ── dispatch_method ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dispatch_unknown_method_with_admin_scope_not_found() {
+        let conn = make_test_conn(&["admin"]);
+        let resp = dispatch(&conn, &req("r1", "bogus.method", None)).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "METHOD_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn dispatch_unknown_method_without_scope_forbidden() {
+        // Unknown methods default-deny to admin scope.
+        let conn = make_test_conn(&[]);
+        let resp = dispatch(&conn, &req("r1", "bogus.method", None)).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn dispatch_read_method_without_scope_forbidden() {
+        let conn = make_test_conn(&[]);
+        let resp = dispatch(&conn, &req("r1", "health", None)).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn dispatch_commands_execute_without_scope_forbidden() {
+        // Exercises the commands.execute scope-denied special case that tries
+        // to append a user + assistant error message pair (no store here, so
+        // the append is skipped).
+        let conn = make_test_conn(&[]);
+        let params = Some(serde_json::json!({ "session_id": "s1", "command": "status" }));
+        let resp = dispatch(&conn, &req("r1", "commands.execute", params)).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn dispatch_ping_ok_without_scope() {
+        let conn = make_test_conn(&[]);
+        let resp = dispatch(&conn, &req("r1", "ping", None)).await;
+        assert!(resp.ok);
+        assert!(resp.payload.as_ref().unwrap().is_object());
+    }
+
+    #[tokio::test]
+    async fn dispatch_connect_after_handshake_errors() {
+        let conn = make_test_conn(&[]);
+        let resp = dispatch(&conn, &req("r1", "connect", None)).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn dispatch_agents_list_with_admin_scope_routes() {
+        let conn = make_test_conn(&["admin"]);
+        let resp = dispatch(&conn, &req("r1", "agents.list", None)).await;
+        assert!(resp.ok);
+        assert!(resp.payload.as_ref().unwrap()["agents"].is_array());
+    }
+
+    #[tokio::test]
+    async fn dispatch_health_with_read_scope_ok() {
+        let conn = make_test_conn(&["read"]);
+        let resp = dispatch(&conn, &req("r1", "health", None)).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["status"], "healthy");
+    }
+
+    #[tokio::test]
+    async fn dispatch_subscribe_all_ok() {
+        let conn = make_test_conn(&["admin"]);
+        let resp = dispatch(&conn, &req("r1", "subscribe_all", None)).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["status"], "subscribed_all");
+    }
+
+    // ── ws_auth_middleware ───────────────────────────────────────────────────
+
+    async fn middleware_app(state: Arc<GatewayState>) -> axum::Router {
+        axum::Router::new()
+            .route("/ws", axum::routing::get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(state.clone(), ws_auth_middleware))
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_anonymous_mode_allows() {
+        let state = state().await;
+        let app = middleware_app(state).await;
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/ws")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    async fn token_state() -> Arc<GatewayState> {
+        let mut config = GatewayConfig::default();
+        config.security.auth_mode = AuthMode::Token;
+        config.security.shared_token = Some("secret-token".to_string());
+        Arc::new(make_test_state(config).await)
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_token_mode_rejects_without_credentials() {
+        let state = token_state().await;
+        let app = middleware_app(state).await;
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/ws")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_bearer_token_allows() {
+        let state = token_state().await;
+        let app = middleware_app(state).await;
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/ws")
+                    .header(axum::http::header::AUTHORIZATION, "Bearer secret-token")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_query_token_allows() {
+        let state = token_state().await;
+        let app = middleware_app(state).await;
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/ws?token=secret-token")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // ── platform-gated permission handler ────────────────────────────────────
+
+    #[tokio::test]
+    async fn permissions_macos_accessibility_platform_gated() {
+        let resp = handle_permissions_request_macos_accessibility(&req("r1", "x", None)).await;
+        if cfg!(target_os = "macos") {
+            assert!(resp.ok);
+            assert_eq!(resp.payload.as_ref().unwrap()["status"], "prompt_triggered");
+        } else {
+            assert!(!resp.ok);
+            assert_eq!(resp.error.as_ref().unwrap().code, "UNSUPPORTED_PLATFORM");
+        }
+    }
+}

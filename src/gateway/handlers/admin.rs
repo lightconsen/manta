@@ -481,3 +481,169 @@ async fn persist_config(state: &Arc<GatewayState>) -> Result<(), String> {
     info!("Persisted config to {:?}", config_path);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channels::ChannelType;
+    use crate::gateway::config::ChannelConfig;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    /// Test state whose config contains a single telegram channel with the
+    /// given `enabled` state.
+    async fn state_with_channel(enabled: bool) -> Arc<GatewayState> {
+        let state = state().await;
+        {
+            let mut config_guard = state.config.write().await;
+            let config = Arc::make_mut(&mut config_guard);
+            let mut ch = ChannelConfig::new(ChannelType::Telegram);
+            ch.enabled = enabled;
+            config.channels.insert("telegram".to_string(), ch);
+        }
+        state
+    }
+
+    #[tokio::test]
+    async fn reload_channels_scope_ok() {
+        let state = state().await;
+        let body = Json(ReloadRequest { scope: "channels".into() });
+        let (status, json) =
+            body_json(reload_all_handler(State(state), body).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["success"], true);
+        assert!(json["channels"]["note"].is_string());
+    }
+
+    #[tokio::test]
+    async fn reload_skills_scope_ok() {
+        let state = state().await;
+        let body = Json(ReloadRequest { scope: "skills".into() });
+        let (status, json) =
+            body_json(reload_all_handler(State(state), body).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["success"], true);
+        assert!(json["skills"].is_object());
+    }
+
+    #[tokio::test]
+    async fn channel_list_empty_ok() {
+        let state = state().await;
+        let (status, json) =
+            body_json(channel_list_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(json["channels"].is_array());
+        assert!(json["channels"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn channel_list_with_entry_reports_fields() {
+        let state = state_with_channel(true).await;
+        let (status, json) =
+            body_json(channel_list_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        let channels = json["channels"].as_array().unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0]["name"], "telegram");
+        assert_eq!(channels[0]["enabled"], true);
+    }
+
+    #[tokio::test]
+    async fn enable_channel_unknown_404() {
+        let state = state().await;
+        let (status, json) = body_json(
+            enable_channel_handler(Path("telegram".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(json["error"].as_str().unwrap().contains("telegram"));
+    }
+
+    #[tokio::test]
+    async fn disable_channel_unknown_404() {
+        let state = state().await;
+        let (status, json) = body_json(
+            disable_channel_handler(Path("telegram".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(json["error"].as_str().unwrap().contains("telegram"));
+    }
+
+    #[tokio::test]
+    async fn enable_already_enabled_ok() {
+        let state = state_with_channel(true).await;
+        let (status, json) = body_json(
+            enable_channel_handler(Path("telegram".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["message"], "Channel is already enabled");
+    }
+
+    #[tokio::test]
+    async fn disable_already_disabled_ok() {
+        let state = state_with_channel(false).await;
+        let (status, json) = body_json(
+            disable_channel_handler(Path("telegram".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["message"], "Channel is already disabled");
+    }
+
+    #[tokio::test]
+    async fn enable_channel_persist_fails_500() {
+        // Test state has no config_path, so flipping the enabled flag trips the
+        // persist step, which errors out.
+        let state = state_with_channel(false).await;
+        let (status, json) = body_json(
+            enable_channel_handler(Path("telegram".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(json["error"]
+            .as_str()
+            .unwrap()
+            .contains("Failed to persist config"));
+    }
+
+    #[tokio::test]
+    async fn disable_channel_persist_fails_500() {
+        let state = state_with_channel(true).await;
+        let (status, json) = body_json(
+            disable_channel_handler(Path("telegram".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(json["error"]
+            .as_str()
+            .unwrap()
+            .contains("Failed to persist config"));
+    }
+}

@@ -88,3 +88,171 @@ pub async fn deny_tool_handler(
             .into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+    use crate::tools::approval::{ApprovalLevel, PendingApproval, RiskLevel};
+    use tokio::sync::oneshot;
+
+    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    async fn submit_approval(state: &Arc<GatewayState>, id: &str) {
+        let (tx, _rx) = oneshot::channel();
+        let pa = PendingApproval::new(
+            id,
+            "bash",
+            serde_json::json!({ "command": "ls" }),
+            "alice",
+            RiskLevel::High,
+            ApprovalLevel::Ask,
+            "Run bash",
+            tx,
+        );
+        state.tools.approval_queue.submit(pa).await;
+    }
+
+    #[tokio::test]
+    async fn list_empty_state_returns_zero() {
+        let state = state().await;
+        let (status, json) =
+            body_json(list_approvals_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["count"], 0);
+        assert!(json["approvals"].is_array());
+    }
+
+    #[tokio::test]
+    async fn list_with_pending_counts_and_contains_id() {
+        let state = state().await;
+        submit_approval(&state, "app-1").await;
+        let (status, json) =
+            body_json(list_approvals_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["count"], 1);
+        assert_eq!(json["approvals"][0]["id"], "app-1");
+    }
+
+    #[tokio::test]
+    async fn get_unknown_returns_404() {
+        let state = state().await;
+        let (status, json) = body_json(
+            get_approval_handler(Path("missing".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(json["error"].as_str().unwrap().contains("missing"));
+    }
+
+    #[tokio::test]
+    async fn get_found_returns_approval() {
+        let state = state().await;
+        submit_approval(&state, "app-2").await;
+        let (status, json) = body_json(
+            get_approval_handler(Path("app-2".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["id"], "app-2");
+        assert_eq!(json["tool_name"], "bash");
+    }
+
+    #[tokio::test]
+    async fn approve_unknown_returns_404() {
+        let state = state().await;
+        let (status, json) = body_json(
+            approve_tool_handler(Path("missing".into()), State(state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(json["error"].as_str().unwrap().contains("missing"));
+    }
+
+    #[tokio::test]
+    async fn approve_pending_returns_approved() {
+        let state = state().await;
+        submit_approval(&state, "app-3").await;
+        let (status, json) = body_json(
+            approve_tool_handler(Path("app-3".into()), State(state.clone()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["id"], "app-3");
+        assert_eq!(json["status"], "approved");
+        // Resolved approval is removed from the pending queue.
+        let remaining = state
+            .tools
+            .approval_queue
+            .list_pending(ApprovalFilter::default())
+            .await;
+        assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deny_unknown_returns_404() {
+        let state = state().await;
+        let (status, json) = body_json(
+            deny_tool_handler(Path("missing".into()), State(state), None)
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(json["error"].as_str().unwrap().contains("missing"));
+    }
+
+    #[tokio::test]
+    async fn deny_pending_defaults_reason() {
+        let state = state().await;
+        submit_approval(&state, "app-4").await;
+        let (status, json) = body_json(
+            deny_tool_handler(Path("app-4".into()), State(state), None)
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["id"], "app-4");
+        assert_eq!(json["status"], "denied");
+        assert_eq!(json["reason"], "Denied by operator");
+    }
+
+    #[tokio::test]
+    async fn deny_pending_with_reason_echoes_it() {
+        let state = state().await;
+        submit_approval(&state, "app-5").await;
+        let body = Some(Json(DenyApprovalRequest {
+            reason: Some("Not authorized".into()),
+        }));
+        let (status, json) = body_json(
+            deny_tool_handler(Path("app-5".into()), State(state), body)
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["status"], "denied");
+        assert_eq!(json["reason"], "Not authorized");
+    }
+}

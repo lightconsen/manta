@@ -604,3 +604,155 @@ pub(super) async fn handle_acp_execute_run(
         Err(e) => WsResponse::err(&req.id, "EXECUTE_FAILED", format!("Execution failed: {}", e)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::{make_test_conn, make_test_state};
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str, params: Option<serde_json::Value>) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: "x".into(),
+            params,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    fn session_params(session_id: &str) -> Option<serde_json::Value> {
+        Some(serde_json::json!({ "session_id": session_id }))
+    }
+
+    #[tokio::test]
+    async fn acp_list_empty_ok() {
+        let state = state().await;
+        let resp = handle_acp_list(&req("r1", None), &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["count"], 0);
+        assert!(payload["sessions"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn acp_spawn_missing_params_errors() {
+        let state = state().await;
+        let conn = make_test_conn(&[]);
+        let resp = handle_acp_spawn(&req("r1", None), &conn, &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn acp_terminate_unknown_session_fails() {
+        let state = state().await;
+        let resp = handle_acp_terminate(&req("r1", session_params("ghost")), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "TERMINATE_FAILED");
+    }
+
+    #[tokio::test]
+    async fn acp_message_missing_params_errors() {
+        let state = state().await;
+        let resp = handle_acp_message(&req("r1", None), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn acp_message_no_active_subagents() {
+        let state = state().await;
+        let params = Some(serde_json::json!({ "session_id": "ghost", "message": "hi" }));
+        let resp = handle_acp_message(&req("r1", params), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "NO_ACTIVE_SUBAGENTS");
+    }
+
+    #[tokio::test]
+    async fn acp_status_missing_params_errors() {
+        let state = state().await;
+        let resp = handle_acp_status(&req("r1", None), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn acp_status_unknown_session_not_found() {
+        let state = state().await;
+        let resp = handle_acp_status(&req("r1", session_params("ghost")), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "SESSION_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn acp_pause_unknown_session_requested() {
+        let state = state().await;
+        let resp = handle_acp_pause(&req("r1", session_params("ghost")), &state).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["status"], "requested");
+    }
+
+    #[tokio::test]
+    async fn acp_resume_unknown_session_requested() {
+        let state = state().await;
+        let resp = handle_acp_resume(&req("r1", session_params("ghost")), &state).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["status"], "requested");
+    }
+
+    #[tokio::test]
+    async fn acp_step_unknown_session_requested() {
+        let state = state().await;
+        let resp = handle_acp_step(&req("r1", session_params("ghost")), &state).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["status"], "requested");
+    }
+
+    #[tokio::test]
+    async fn acp_cancel_unknown_session_requested() {
+        let state = state().await;
+        let resp = handle_acp_cancel(&req("r1", session_params("ghost")), &state).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["status"], "requested");
+    }
+
+    #[tokio::test]
+    async fn acp_tree_unknown_session_empty() {
+        let state = state().await;
+        let resp = handle_acp_tree(&req("r1", session_params("ghost")), &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["session_id"], "ghost");
+        assert!(payload["tree"].is_array());
+    }
+
+    #[tokio::test]
+    async fn acp_execute_session_missing_params_errors() {
+        let state = state().await;
+        let resp = handle_acp_execute_session(&req("r1", None), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn acp_execute_session_no_default_agent() {
+        let state = state().await;
+        let params = Some(serde_json::json!({ "message": "hi", "user_id": "u1" }));
+        let resp = handle_acp_execute_session(&req("r1", params), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "AGENT_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn acp_execute_run_no_default_agent() {
+        let state = state().await;
+        let params = Some(serde_json::json!({ "message": "hi", "user_id": "u1" }));
+        let resp = handle_acp_execute_run(&req("r1", params), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "AGENT_NOT_FOUND");
+    }
+}

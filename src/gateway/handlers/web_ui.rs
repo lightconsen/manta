@@ -62,3 +62,85 @@ pub async fn syscity_png_handler() -> impl IntoResponse {
     }
     StatusCode::NOT_FOUND.into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::header;
+
+    async fn body(resp: axum::response::Response) -> (StatusCode, Vec<u8>) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap()
+            .to_vec();
+        (status, bytes)
+    }
+
+    #[tokio::test]
+    async fn web_terminal_serves_html() {
+        let (status, bytes) = body(web_terminal_html_handler().await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        let html = String::from_utf8_lossy(&bytes);
+        assert!(
+            html.contains("<html") || html.contains("Syscity Chat UI"),
+            "serves html: {:.80}",
+            html
+        );
+    }
+
+    #[tokio::test]
+    async fn favicon_served_with_png_mime() {
+        let resp = favicon_handler().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
+        let (_, bytes) = body(resp).await;
+        assert!(!bytes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn asset_missing_returns_404() {
+        let (status, _) = body(
+            asset_handler(Path("nope-xyz.bin".into()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn asset_found_returns_content() {
+        let resp = asset_handler(Path("favicon.svg".into()))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let (_, bytes) = body(resp).await;
+        assert!(!bytes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn register_sw_returns_javascript() {
+        let resp = register_sw_handler().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "application/javascript");
+        let (_, bytes) = body(resp).await;
+        assert!(!bytes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn manifest_returns_json() {
+        let resp = manifest_handler().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "application/manifest+json");
+        let (_, bytes) = body(resp).await;
+        assert!(!bytes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn syscity_png_served() {
+        let resp = syscity_png_handler().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
+    }
+}
