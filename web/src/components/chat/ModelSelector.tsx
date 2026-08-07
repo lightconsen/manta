@@ -87,6 +87,15 @@ export function ModelSelector({ transport }: ModelSelectorProps) {
   // by switching back, not the currently pinned model.
   const fallback = agentModels[sessionAgentId] ?? defaultModel;
 
+  // Resolve an alias to its underlying model name so labels show e.g.
+  // "deepseek-v4-pro" instead of the alias "default". The backend formats
+  // each entry's name as "alias (model)"; fall back to the alias itself.
+  const modelNameFor = (alias: string): string => {
+    const entry = models.find((m) => m.id === alias);
+    const match = entry?.name.match(/\(([^)]*)\)$/);
+    return match ? match[1] : alias;
+  };
+
   const handleChange = (value: string) => {
     const m = value === "" ? null : value;
     setSessionModel(m); // optimistic; the model_changed event reconciles
@@ -99,14 +108,16 @@ export function ModelSelector({ transport }: ModelSelectorProps) {
     <select
       value={sessionModel ?? ""}
       onChange={(e) => handleChange(e.target.value)}
-      title={`Model: ${effective || "default"}${sessionModel ? "" : " (default)"}`}
+      title={`Model: ${effective ? modelNameFor(effective) : "default"}${sessionModel ? "" : " (default)"}`}
       aria-label="Select model"
       className="max-w-[9rem] truncate self-center rounded-lg border border-subtle bg-card px-2 py-1.5 text-xs text-secondary hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20 transition"
     >
-      <option value="">{fallback ? `${fallback} (default)` : "Default"}</option>
+      <option value="">
+        {fallback ? `${modelNameFor(fallback)} (default)` : "Default"}
+      </option>
       {models.map((m) => (
         <option key={m.id} value={m.id}>
-          {m.id}
+          {m.name}
         </option>
       ))}
     </select>
