@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
+import { Input } from "@/components/ui/Input";
 
 const PROVIDER_LOGOS: Record<string, string> = {
   openai: "/assets/providers/openai.svg",
@@ -170,43 +171,34 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
           })}
         </div>
       </div>
-      <div>
-        <label className="block text-xs text-secondary mb-1">Base URL</label>
-        <input
-          type="text"
-          value={newModel.base_url}
-          onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
-          placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
-          className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-        />
-      </div>
+      <Input
+        label="Base URL"
+        type="text"
+        value={newModel.base_url}
+        onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
+        placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
+      />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-secondary mb-1">Name</label>
-          <input
-            type="text"
-            value={newModel.name}
-            onChange={(e) => setNewModel({ ...newModel, name: e.target.value })}
-            placeholder="smart"
-            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-          />
-        </div>
+        <Input
+          label="Name"
+          type="text"
+          value={newModel.name}
+          onChange={(e) => setNewModel({ ...newModel, name: e.target.value })}
+          placeholder="smart"
+        />
         {modelPresets.find((p) => p.name === newModel.provider)?.needs_api_key !== false && (
-          <div>
-            <label className="block text-xs text-secondary mb-1">API Key</label>
-            <input
-              type="password"
-              value={newModel.api_key}
-              onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
-              onBlur={() => {
-                if (newModel.api_key.trim() && remoteModels === null && !fetchingModels) {
-                  handleFetchModels();
-                }
-              }}
-              placeholder="sk-..."
-              className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-            />
-          </div>
+          <Input
+            label="API Key"
+            type="password"
+            value={newModel.api_key}
+            onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
+            onBlur={() => {
+              if (newModel.api_key.trim() && remoteModels === null && !fetchingModels) {
+                handleFetchModels();
+              }
+            }}
+            placeholder="sk-..."
+          />
         )}
       </div>
       {(() => {
@@ -240,12 +232,11 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
                 ))}
               </select>
             ) : (
-              <input
+              <Input
                 type="text"
                 value={newModel.model}
                 onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
                 placeholder="model-id"
-                className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
               />
             )}
             {remoteModelsSource === "static" && remoteModels !== null && (
