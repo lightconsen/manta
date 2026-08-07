@@ -13,8 +13,8 @@
 #   ./scripts/ci-check-docker.sh --skip-tests  # skip cargo test steps
 #   ./scripts/ci-check-docker.sh --backend     # Rust steps only
 #
-# Requires a running Docker daemon (OrbStack on macOS). The coverage step
-# (tarpaulin) needs SYS_PTRACE, which this wrapper adds.
+# Requires a running Docker daemon (OrbStack on macOS). The SYS_PTRACE cap is
+# kept from the tarpaulin era; llvm-cov doesn't need it but it is harmless.
 #
 set -euo pipefail
 

@@ -4,7 +4,7 @@
 #
 # By default it runs the full CI mirror inside a Linux container
 # (scripts/ci-check-docker.sh) — the same checks as every job in
-# .github/workflows/ci.yml, including msrv 1.93, coverage (tarpaulin), and
+# .github/workflows/ci.yml, including msrv 1.93, coverage (llvm-cov), and
 # the ubuntu platform. Add --local to run on the macOS host instead
 # (scripts/ci-check.sh): faster, but skips msrv/coverage and runs on macOS
 # rather than Linux.

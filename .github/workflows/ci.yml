@@ -416,38 +416,28 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94"
+          components: llvm-tools-preview
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-tarpaulin
-        uses: taiki-e/install-action@cargo-tarpaulin
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report
-        # Integration tests are excluded from coverage reporting anyway, and
-        # tarpaulin segfaults instrumenting ones that spawn subprocesses
-        # (mcp_e2e spawns python, integrations::acp_tests uses apply_patch),
-        # so the subprocess-spawning integration binaries are skipped. The
-        # acp::control_plane unit tests that spawn real actor threads (the
-        # pause/resume/step/cancel test and the crash-recovery test) overflow
-        # the stack under tarpaulin's instrumentation, so they are skipped too.
-        # Both skill-manager tests in agent/mod.rs load every built-in skill
-        # (load_all), and the resulting call depth segfaults under tarpaulin's
-        # instrumentation even with the enlarged stack; RUST_MIN_STACK below is
-        # the systemic mitigation and these skips are the remaining instances
-        # that still crash even with the larger stack. The screenshot-encoder
-        # detect() test spawns convert/ffmpeg/sips subprocesses, and the system
-        # kill-process test spawns `sleep`, which tarpaulin segfaults on the
-        # same way it does for the mcp_e2e/integrations binaries, so they are
-        # skipped too (both still run in the normal suite).
-        env:
-          RUST_MIN_STACK: 67108864
-        run: "cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e:: --skip test_mcp_manager --skip integrations:: --skip test_pause_resume_step_cancel_emit_status_changed_after_actor_processing --skip test_subagent_crash_auto_recovery --skip test_skill_manager_injection_into_build_fresh_context --skip test_skill_manager_no_match_without_trigger --skip test_encoder_detect_does_not_panic --skip test_kill_process_spawn_and_kill"
+        # Source-based coverage via llvm-cov. tarpaulin's ptrace instrumentation
+        # segfaulted non-deterministically (the crash point drifted across runs:
+        # skill-manager, screenshot-encoder, system, use_loop), so it was
+        # replaced; the accumulated tarpaulin-era test skips are dropped — every
+        # test that runs in the normal suite runs here too. e2e:: is skipped
+        # for the same reason the Test job skips it (spawns gateway processes,
+        # slow/flaky under CI).
+        run: "cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: ./tarpaulin-report.xml
+          files: ./lcov.info
           fail_ci_if_error: false
           verbose: true
 

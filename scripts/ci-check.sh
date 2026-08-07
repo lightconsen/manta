@@ -136,10 +136,10 @@ else
 fi
 
 # ── Job: coverage (ci.yml `coverage`; Codecov upload is CI-only) ────────────
-if command -v cargo-tarpaulin >/dev/null 2>&1; then
-    check "coverage (tarpaulin)" cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e::
+if command -v cargo-llvm-cov >/dev/null 2>&1; then
+    check "coverage (llvm-cov)" cargo llvm-cov --workspace --all-features --summary-only --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::
 else
-    skip_with_hint "coverage (tarpaulin)" "cargo install cargo-tarpaulin"
+    skip_with_hint "coverage (llvm-cov)" "cargo install cargo-llvm-cov && rustup component add llvm-tools-preview"
 fi
 
 # ── Job: plugin-boundary (ci.yml `plugin-boundary`) ─────────────────────────
