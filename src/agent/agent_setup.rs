@@ -697,8 +697,12 @@ mod tests {
         let agent = named_agent();
 
         // Two concurrent sessions on the shared agent bind different models.
-        agent.set_session_model("conv-a", Some("alt".to_string())).await;
-        agent.set_session_model("conv-b", Some("fast".to_string())).await;
+        agent
+            .set_session_model("conv-a", Some("alt".to_string()))
+            .await;
+        agent
+            .set_session_model("conv-b", Some("fast".to_string()))
+            .await;
 
         let map = agent.session_models.read().await;
         assert_eq!(map.get("conv-a").map(String::as_str), Some("alt"));
