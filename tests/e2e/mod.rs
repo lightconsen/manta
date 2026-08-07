@@ -12,7 +12,7 @@ pub use serde_json::json;
 pub use serial_test::serial;
 pub use syscity::gateway::protocol::AuthMode;
 pub use syscity::gateway::{Gateway, GatewayConfig};
-pub use syscity::model_router::{ModelAlias, ProviderConfig, ProviderType};
+pub use syscity::model_router::{ProviderConfig, ProviderType};
 pub use syscity::providers::{
     mock::MockProvider, FunctionCall, Message as ProviderMessage, Role, ToolCall,
 };
@@ -166,6 +166,8 @@ pub fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
             };
             let provider_config = ProviderConfig {
                 provider_type,
+                models: vec![provider.model.clone()],
+                default_model: provider.model.clone(),
                 api_key: provider.api_key.into(),
                 api_keys: vec![],
                 auth_profile: None,
@@ -209,6 +211,28 @@ pub async fn start_test_gateway(port: u16, with_provider: bool) {
     panic!("Gateway did not start within 10 seconds");
 }
 
+/// Register a mock provider instance and its owned model so routing resolves
+/// `model_id` -> the "mock" provider (the provider owns its models now; there
+/// are no aliases).
+pub async fn register_mock_provider_with_model(
+    router: &std::sync::Arc<syscity::model_router::ModelRouter>,
+    mock: MockProvider,
+    model_id: &str,
+) {
+    router
+        .add_provider_instance("mock", std::sync::Arc::new(mock))
+        .await
+        .expect("Failed to register mock provider");
+    router
+        .model_catalog
+        .add_source(Box::new(syscity::model_router::model_catalog::StaticModelSource::new(vec![(
+            "mock".to_string(),
+            model_id.to_string(),
+        )])))
+        .await;
+    let _ = router.model_catalog.discover().await;
+}
+
 /// Start a test Gateway with a programmable MockProvider injected.
 ///
 /// The `mock` is pre-configured with responses (sequence or callback) and
@@ -223,22 +247,9 @@ pub async fn start_test_gateway_with_mock(port: u16, mock: MockProvider) {
         .expect("Failed to create test gateway");
 
     let router = gateway.model_router();
-    router
-        .add_provider_instance("mock", std::sync::Arc::new(mock))
-        .await
-        .expect("Failed to register mock provider");
-
-    // Register a model alias so the router can resolve "mock-model" -> mock
-    // provider
-    router
-        .set_alias(ModelAlias {
-            name: "mock-model".to_string(),
-            provider: "mock".to_string(),
-            model: "mock-model".to_string(),
-            temperature: None,
-            max_tokens: None,
-        })
-        .await;
+    // Register the mock provider and its owned model so routing resolves
+    // "mock-model" -> mock provider.
+    register_mock_provider_with_model(&router, mock, "mock-model").await;
 
     tokio::spawn(async move {
         let _ = gateway.start().await;

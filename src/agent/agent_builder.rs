@@ -21,7 +21,8 @@ pub struct AgentBuilder {
     disk_budget: Option<Arc<crate::agent::DiskBudgetManager>>,
     session_file_manager: Option<Arc<crate::agent::SessionFileManager>>,
     model_router: Option<Arc<crate::model_router::ModelRouter>>,
-    model_alias: Option<String>,
+    /// Concrete model ID used for completions routed through the model router.
+    model: Option<String>,
     /// Model name for the task planner (bypasses provider default).
     planner_model: Option<String>,
     skill_manager: Option<Arc<tokio::sync::RwLock<crate::skills::SkillManager>>>,
@@ -115,9 +116,10 @@ impl AgentBuilder {
         self
     }
 
-    /// Set model alias used when routing through the model router.
-    pub fn model_alias(mut self, alias: impl Into<String>) -> Self {
-        self.model_alias = Some(alias.into());
+    /// Set the concrete model ID used for completions routed through the model
+    /// router.
+    pub fn model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
         self
     }
 
@@ -219,8 +221,8 @@ impl AgentBuilder {
             agent = agent.with_model_router(router);
         }
 
-        if let Some(alias) = self.model_alias {
-            agent = agent.with_model_alias(alias);
+        if let Some(model) = self.model {
+            agent = agent.with_model(model);
         }
 
         if let Some(model) = self.planner_model {

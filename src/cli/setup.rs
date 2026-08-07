@@ -211,6 +211,8 @@ pub async fn run_setup() -> Result<()> {
 
     let provider_config = crate::model_router::ProviderConfig {
         provider_type,
+        models: vec![model.clone()],
+        default_model: model.clone(),
         api_key: api_key.clone().into(),
         api_keys: vec![],
         auth_profile: None,

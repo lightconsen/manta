@@ -58,8 +58,9 @@ pub struct GatewayConfig {
     /// Model provider (e.g., "anthropic", "openai")
     #[serde(default = "default_model_provider")]
     pub model_provider: String,
-    /// Per-agent model binding (agent_id -> model alias). Sessions inherit
-    /// this when they have no explicit model pin; empty map = global default.
+    /// Per-agent model binding (agent_id -> concrete model ID). Sessions
+    /// inherit this when they have no explicit model pin; empty map = global
+    /// default.
     #[serde(default)]
     pub agent_models: HashMap<String, String>,
     /// MCP server configurations (auto-connected on startup)

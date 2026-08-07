@@ -17,8 +17,7 @@ pub struct CommandProviderHint {
     /// Suggested provider identifier (e.g. "anthropic", "openai").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
-    /// Suggested model identifier or alias (e.g. "fast", "power",
-    /// "claude-3-sonnet").
+    /// Suggested concrete model ID (e.g. "claude-3-sonnet").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Human-readable reason for the hint.
@@ -26,7 +25,7 @@ pub struct CommandProviderHint {
 }
 
 impl CommandProviderHint {
-    /// Create a hint with only a model alias.
+    /// Create a hint with only a model.
     pub fn model(model: impl Into<String>, reason: impl Into<String>) -> Self {
         Self {
             provider: None,

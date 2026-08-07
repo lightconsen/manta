@@ -171,32 +171,32 @@ pub async fn provider_usage_by_id_handler(
 
 #[allow(dead_code)]
 pub async fn get_fallback_chain_handler(
-    Path(alias): Path<String>,
+    Path(model_id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let chain = state.infra.model_router.get_fallback_chain(&alias).await;
+    let chain = state.infra.model_router.get_fallback_chain(&model_id).await;
     Json(serde_json::json!({
-        "alias": alias,
+        "model_id": model_id,
         "fallback_chain": chain,
     }))
 }
 
 #[allow(dead_code)]
 pub async fn set_fallback_chain_handler(
-    Path(alias): Path<String>,
+    Path(model_id): Path<String>,
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<SetFallbackChainRequest>,
 ) -> impl IntoResponse {
     match state
         .infra
         .model_router
-        .set_fallback_chain(&alias, body.providers)
+        .set_fallback_chain(&model_id, body.providers)
         .await
     {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
-                "message": format!("Fallback chain updated for '{}'", alias),
+                "message": format!("Fallback chain updated for '{}'", model_id),
             });
             (StatusCode::OK, Json(response)).into_response()
         }
@@ -229,7 +229,7 @@ pub async fn get_default_model_handler(
 
 /// `GET /v1/models`
 ///
-/// Returns available model aliases in OpenAI wire format.
+/// Returns available concrete model IDs in OpenAI wire format.
 pub async fn openai_list_models_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
@@ -254,7 +254,7 @@ mod tests {
     use super::*;
     use crate::gateway::state_tests::make_test_state;
     use crate::gateway::GatewayConfig;
-    use crate::model_router::ModelAlias;
+    use crate::model_router::{ProviderConfig, ProviderType};
 
     async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
         let status = resp.status();
@@ -265,18 +265,26 @@ mod tests {
         (status, json)
     }
 
-    async fn register_alias(state: &GatewayState, name: &str, model: &str) {
+    async fn register_model(state: &GatewayState, model: &str) {
+        let config = ProviderConfig {
+            provider_type: ProviderType::OpenAi,
+            models: vec![model.to_string()],
+            default_model: model.to_string(),
+            api_key: "test-key".to_string().into(),
+            api_keys: vec![],
+            auth_profile: None,
+            oauth: None,
+            base_url: None,
+            timeout: std::time::Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
         state
             .infra
             .model_router
-            .set_alias(ModelAlias {
-                name: name.to_string(),
-                provider: "openai".to_string(),
-                model: model.to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
+            .add_provider("openai", config)
+            .await
+            .expect("register provider");
     }
 
     #[tokio::test]
@@ -302,7 +310,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn switch_model_unknown_alias_400() {
+    async fn switch_model_unknown_model_400() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
         let (status, body) = body_json(
             switch_model_handler(State(state), Json(SwitchModelRequest { model: "ghost".into() }))
@@ -315,11 +323,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn switch_model_registered_alias_ok() {
+    async fn switch_model_registered_model_ok() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
-        register_alias(&state, "alpha", "gpt-4o").await;
+        register_model(&state, "gpt-4o").await;
         let (status, body) = body_json(
-            switch_model_handler(State(state), Json(SwitchModelRequest { model: "alpha".into() }))
+            switch_model_handler(State(state), Json(SwitchModelRequest { model: "gpt-4o".into() }))
                 .await
                 .into_response(),
         )
@@ -387,16 +395,16 @@ mod tests {
     #[tokio::test]
     async fn fallback_chain_get_and_set() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
-        register_alias(&state, "alpha", "gpt-4o").await;
+        register_model(&state, "gpt-4o").await;
 
         let (status, body) = body_json(
-            get_fallback_chain_handler(Path("alpha".into()), State(state.clone()))
+            get_fallback_chain_handler(Path("gpt-4o".into()), State(state.clone()))
                 .await
                 .into_response(),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["alias"].as_str(), Some("alpha"));
+        assert_eq!(body["model_id"].as_str(), Some("gpt-4o"));
         assert!(body["fallback_chain"]
             .as_array()
             .map(|a| a.is_empty())
@@ -404,7 +412,7 @@ mod tests {
 
         let (status, body) = body_json(
             set_fallback_chain_handler(
-                Path("alpha".into()),
+                Path("gpt-4o".into()),
                 State(state.clone()),
                 Json(SetFallbackChainRequest {
                     providers: vec!["openai".into()],
@@ -419,7 +427,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_fallback_chain_unknown_alias_400() {
+    async fn set_fallback_chain_unknown_model_400() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
         let (status, _) = body_json(
             set_fallback_chain_handler(

@@ -434,7 +434,7 @@ impl DaemonClient {
         let body = serde_json::json!({
             "message": message,
             "provider_override": provider,
-            "model_alias": model,
+            "model_id": model,
         });
 
         let response = self

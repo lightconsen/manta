@@ -7,8 +7,6 @@
 //! Run:
 //!   cargo test --test e2e_test goal_planner -- --nocapture
 
-use std::sync::Arc;
-
 use syscity::tools::hooks::{ToolHooks, ToolPolicyDecision};
 use syscity::tools::ToolRegistry;
 
@@ -207,19 +205,7 @@ async fn goal_planner_fallback_when_no_adapter() {
 
     let router = gateway.model_router();
     let mock = llm_mock_provider_for_streaming();
-    router
-        .add_provider_instance("mock", std::sync::Arc::new(mock))
-        .await
-        .expect("Failed to register mock provider");
-    router
-        .set_alias(ModelAlias {
-            name: "mock-model".to_string(),
-            provider: "mock".to_string(),
-            model: "mock-model".to_string(),
-            temperature: None,
-            max_tokens: None,
-        })
-        .await;
+    register_mock_provider_with_model(&router, mock, "mock-model").await;
 
     tokio::spawn(async move {
         let _ = gateway.start().await;

@@ -55,7 +55,6 @@ impl Agent {
             session_file_manager: None,
             extra_params: Arc::new(RwLock::new(None)),
             model_router: None,
-            model_alias: None,
             model_override: Arc::new(RwLock::new(None)),
             session_models: Arc::new(RwLock::new(HashMap::new())),
             plans_dir: None,
@@ -86,9 +85,10 @@ impl Agent {
         *guard = model;
     }
 
-    /// Set or clear the model alias for one conversation (session-scoped model
-    /// binding). Unlike `set_model_override`, this is keyed by conversation id,
-    /// so concurrent sessions on this shared agent do not interfere.
+    /// Set or clear the concrete model ID for one conversation (session-scoped
+    /// model binding). Unlike `set_model_override`, this is keyed by
+    /// conversation id, so concurrent sessions on this shared agent do not
+    /// interfere.
     pub async fn set_session_model(&self, conversation_id: &str, model: Option<String>) {
         let mut guard = self.session_models.write().await;
         match model {
@@ -439,12 +439,6 @@ impl Agent {
     /// Attach a `ModelRouter` for advanced routing, key rotation, and fallback.
     pub fn with_model_router(mut self, router: Arc<crate::model_router::ModelRouter>) -> Self {
         self.model_router = Some(router);
-        self
-    }
-
-    /// Set the model alias used when routing through the model router.
-    pub fn with_model_alias(mut self, alias: impl Into<String>) -> Self {
-        self.model_alias = Some(alias.into());
         self
     }
 

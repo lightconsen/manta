@@ -1,3 +1,4 @@
+import type { ModelInfo } from "@/SyscityWebSocketTransport";
 import { Section } from "@/components/ui/Section";
 import { Select } from "@/components/ui/Select";
 import { Input } from "@/components/ui/Input";
@@ -25,7 +26,7 @@ interface AgentsSettingsProps {
   selectedAgentDetail: AgentDetail | null;
   agentDetailLoading: boolean;
   defaultAgent: Record<string, unknown>;
-  models: Array<{ id: string; name: string; provider: string }>;
+  models: ModelInfo[];
   agentModels: Record<string, string>;
   update: (path: string, value: unknown) => Promise<void>;
 }
@@ -68,7 +69,7 @@ export function AgentsSettings({
           <option value="">Global default</option>
           {models.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.id}
+              {m.provider_name || m.provider} - {m.name}
             </option>
           ))}
         </Select>

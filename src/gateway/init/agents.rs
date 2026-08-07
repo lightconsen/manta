@@ -14,7 +14,7 @@ use crate::agent::session_store::SessionStore;
 use crate::agent::{AgentBuilder, AgentRegistry, SessionManager};
 use crate::gateway::task_registry::TaskRegistry;
 use crate::gateway::GatewayConfig;
-use crate::model_router::{ModelAlias, ModelRouter, ModelRouterConfig};
+use crate::model_router::{ModelRouter, ModelRouterConfig};
 use crate::skills::SkillManager;
 use crate::tools::ToolRegistry;
 
@@ -51,27 +51,17 @@ pub async fn init_acp(
     acp
 }
 
-/// Initialize the model router and configure default aliases.
+/// Initialize the model router and configure providers from config.
 pub async fn init_model_router(
     config: &GatewayConfig,
     task_registry: Arc<TaskRegistry>,
     shutdown_token: CancellationToken,
 ) -> Arc<ModelRouter> {
-    let mut model_router_config = ModelRouterConfig::default();
-
-    if let Some(first_provider) = config.providers.keys().next() {
-        let alias = ModelAlias {
-            name: "default".to_string(),
-            provider: first_provider.clone(),
-            model: config.model.clone(),
-            temperature: None,
-            max_tokens: None,
-        };
-        model_router_config
-            .aliases
-            .insert("default".to_string(), alias);
-        model_router_config.default_model = "default".to_string();
-    }
+    // The default model is a concrete model ID owned by a provider.
+    let model_router_config = ModelRouterConfig {
+        default_model: config.model.clone(),
+        ..Default::default()
+    };
 
     let model_router = Arc::new(
         ModelRouter::new(model_router_config)
@@ -80,11 +70,45 @@ pub async fn init_model_router(
     );
     for (name, provider_config) in &config.providers {
         info!("Configuring provider: {}", name);
-        if let Err(e) = model_router
-            .add_provider(name, provider_config.clone())
-            .await
-        {
+        let mut provider_config = provider_config.clone();
+        // Migration: providers that predate per-provider model lists get their
+        // models and default model backfilled from the built-in preset.
+        if provider_config.models.is_empty() {
+            if let Some(preset) = crate::model_router::provider_presets().get(name.as_str()) {
+                provider_config.models = preset.models.clone();
+                provider_config.default_model = preset.models.first().cloned().unwrap_or_default();
+                warn!(
+                    "Provider '{}' had no models; backfilled {} from preset",
+                    name,
+                    provider_config.models.len()
+                );
+            }
+        }
+        if let Err(e) = model_router.add_provider(name, provider_config).await {
             warn!("Failed to add provider '{}': {}", name, e);
+        }
+    }
+
+    // Migration: a default model that no provider owns (e.g. a legacy alias
+    // name) falls back to the first provider's default model.
+    if model_router
+        .provider_for_model(&config.model)
+        .await
+        .is_none()
+    {
+        if let Some((_, first_model)) = model_router
+            .models_with_providers()
+            .await
+            .into_iter()
+            .next()
+        {
+            warn!(
+                "Default model '{}' is not owned by any provider; falling back to '{}'",
+                config.model, first_model
+            );
+            if let Err(e) = model_router.switch_default_model(&first_model).await {
+                warn!("Failed to switch default model to '{}': {}", first_model, e);
+            }
         }
     }
 
@@ -119,7 +143,7 @@ pub async fn configure_acp_agent_builder(
                 .provider(provider_clone.clone())
                 .tools(tool_registry.clone())
                 .model_router(model_router_clone.clone())
-                .model_alias(default_model.clone())
+                .model(default_model.clone())
                 .planner_model(default_model.clone())
                 .skill_manager(Arc::clone(&skills_manager_clone))
                 .build()

@@ -2,20 +2,23 @@
 
 use super::*;
 pub(super) async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    // Build model list from aliases (always available) rather than catalog
-    // which may be empty if initialize() was never called.
-    let aliases = state.infra.model_router.aliases_with_configs().await;
-    let entries: Vec<serde_json::Value> = aliases
+    // List (provider, model_id) pairs from provider configs + catalog.
+    let pairs = state.infra.model_router.models_with_providers().await;
+    let entries: Vec<serde_json::Value> = pairs
         .iter()
-        .map(|(name, alias)| {
+        .map(|(provider, model)| {
             serde_json::json!({
-                "id": name,
-                "name": format!("{} ({})", name, alias.model),
-                "provider": alias.provider,
+                "id": model,
+                "name": model,
+                "provider": provider,
+                "provider_name": crate::model_router::provider_display_name(provider),
             })
         })
         .collect();
-    let default_model = state.infra.model_router.get_default_model().await;
+    let default_model = {
+        let config = state.config.read().await;
+        config.model.clone()
+    };
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -263,9 +266,9 @@ pub(super) async fn handle_models_fetch_remote(
 pub(super) async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     #[derive(Debug, Deserialize)]
     struct ModelAddPayload {
-        name: String,
         provider: String,
-        model: String,
+        models: Vec<String>,
+        default_model: Option<String>,
         api_key: Option<String>,
         base_url: Option<String>,
     }
@@ -275,93 +278,96 @@ pub(super) async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>
     };
 
     let provider_name = payload.provider.clone();
-    let presets = crate::model_router::provider_presets();
-    let preset = presets.get(&provider_name);
-
-    // If api_key provided, configure or update the provider
-    if let Some(api_key) = payload.api_key.filter(|k| !k.is_empty()) {
-        let (provider_type, base_url) = match preset {
-            Some(p) => (
-                p.protocol.clone(),
-                payload
-                    .base_url
-                    .clone()
-                    .or_else(|| p.default_base_url.clone()),
-            ),
-            None => (
-                crate::model_router::ProviderType::Custom { name: provider_name.clone() },
-                payload.base_url.clone(),
-            ),
-        };
-
-        let provider_config = crate::model_router::ProviderConfig {
-            provider_type,
-            api_key: api_key.clone().into(),
-            api_keys: Vec::new(),
-            auth_profile: None,
-            oauth: None,
-            base_url,
-            timeout: std::time::Duration::from_secs(30),
-            max_retries: 3,
-            retry_delay_ms: 1000,
-        };
-
-        // Update GatewayConfig providers
-        {
-            let mut config_guard = state.config.write().await;
-            Arc::make_mut(&mut config_guard)
-                .providers
-                .insert(provider_name.clone(), provider_config.clone());
-        }
-
-        // Register with model router
-        if let Err(e) = state
-            .infra
-            .model_router
-            .add_provider(&provider_name, provider_config)
-            .await
-        {
-            return WsResponse::err(
-                &req.id,
-                "PROVIDER_ERROR",
-                format!("Failed to register provider: {}", e),
-            );
-        }
+    if payload.models.is_empty() {
+        return WsResponse::err(
+            &req.id,
+            "INVALID_PAYLOAD",
+            "models must contain at least one model".to_string(),
+        );
     }
 
-    // Set alias
-    let alias = crate::model_router::ModelAlias {
-        name: payload.name.clone(),
-        provider: provider_name,
-        model: payload.model,
-        temperature: None,
-        max_tokens: None,
+    // A provider name is unique — reject duplicates. The router is the
+    // authoritative registry (runtime additions + config-loaded providers).
+    if state
+        .infra
+        .model_router
+        .provider_exists(&provider_name)
+        .await
+    {
+        return WsResponse::err(
+            &req.id,
+            "PROVIDER_EXISTS",
+            format!("Provider already exists: {provider_name}"),
+        );
+    }
+
+    let preset = crate::model_router::provider_preset_for_name(&provider_name);
+    let (provider_type, base_url) = match preset {
+        Some(p) => (
+            p.protocol.clone(),
+            payload
+                .base_url
+                .clone()
+                .or_else(|| p.default_base_url.clone()),
+        ),
+        None => (
+            crate::model_router::ProviderType::Custom { name: provider_name.clone() },
+            payload.base_url.clone(),
+        ),
     };
-    state.infra.model_router.set_alias(alias).await;
 
-    // If this is the first alias, auto-set it as default
-    let aliases = state.infra.model_router.list_aliases().await;
-    if aliases.len() == 1 {
+    let default_model = payload
+        .default_model
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| payload.models[0].clone());
+
+    let provider_config = crate::model_router::ProviderConfig {
+        provider_type,
+        models: payload.models.clone(),
+        default_model: default_model.clone(),
+        api_key: payload.api_key.clone().unwrap_or_default().into(),
+        api_keys: Vec::new(),
+        auth_profile: None,
+        oauth: None,
+        base_url,
+        timeout: std::time::Duration::from_secs(30),
+        max_retries: 3,
+        retry_delay_ms: 1000,
+    };
+
+    // Register with model router (add_provider registers models in the catalog).
+    if let Err(e) = state
+        .infra
+        .model_router
+        .add_provider(&provider_name, provider_config)
+        .await
+    {
+        return WsResponse::err(
+            &req.id,
+            "PROVIDER_ERROR",
+            format!("Failed to register provider: {}", e),
+        );
+    }
+
+    // Auto-promote to default when no default model is configured yet.
+    let default_is_empty = {
+        let config = state.config.read().await;
+        config.model.is_empty()
+    };
+    if default_is_empty {
         if let Err(e) = state
             .infra
             .model_router
-            .switch_default_model(&payload.name)
+            .switch_default_model(&default_model)
             .await
         {
-            warn!("Failed to switch default model to {}: {}", payload.name, e);
+            warn!("Failed to switch default model to {}: {}", default_model, e);
         }
     }
 
-    // Register in catalog for discovery
-    let entry = crate::model_router::ModelCatalogEntry::new(
-        payload.name.clone(),
-        format!("{} ({})", payload.name, payload.name),
-        payload.name.clone(),
-    )
-    .with_alias(payload.name.clone());
-    state.infra.model_router.model_catalog.register(entry).await;
+    // Reflect the router's live state back into the persisted GatewayConfig.
+    sync_config_from_router(state).await;
 
-    // Persist GatewayConfig to config.toml
     if let Some(config_path) = state.config_path.clone() {
         let config_guard = state.config.read().await;
         if let Err(e) = persist_config_atomic(&config_guard, &config_path).await {
@@ -376,25 +382,52 @@ pub(super) async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>
     WsResponse::ok(&req.id, serde_json::json!({ "status": "added" }))
 }
 
+/// Copy the router's live provider/default state back into `GatewayConfig` so
+/// the persisted `config.toml` matches what routing actually uses.
+pub(super) async fn sync_config_from_router(state: &GatewayState) {
+    let router_config = state.infra.model_router.router_config().await;
+    let mut config_guard = state.config.write().await;
+    let config = Arc::make_mut(&mut config_guard);
+    config.providers = router_config.providers.clone();
+    config.model = router_config.default_model.clone();
+    if let Some(provider) = router_config.provider_for_model(&config.model) {
+        config.model_provider = provider.to_string();
+    }
+}
+
 pub(super) async fn handle_models_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     #[derive(Debug, Deserialize)]
     struct RemovePayload {
-        name: String,
+        #[serde(alias = "name")]
+        model_id: String,
     }
     let payload: RemovePayload = match parse_params(req) {
         Ok(p) => p,
         Err(res) => return res,
     };
-    let removed = state.infra.model_router.remove_alias(&payload.name).await;
-    if removed {
-        WsResponse::ok(&req.id, serde_json::json!({ "status": "removed" }))
-    } else {
-        WsResponse::err(
-            &req.id,
-            "MODEL_NOT_FOUND",
-            format!("Model alias '{}' not found", payload.name),
-        )
+    if let Err(e) = state
+        .infra
+        .model_router
+        .remove_model(&payload.model_id)
+        .await
+    {
+        return WsResponse::err(&req.id, "MODEL_NOT_FOUND", format!("{}", e));
     }
+
+    sync_config_from_router(state).await;
+
+    if let Some(config_path) = state.config_path.clone() {
+        let config_guard = state.config.read().await;
+        if let Err(e) = persist_config_atomic(&config_guard, &config_path).await {
+            return WsResponse::err(
+                &req.id,
+                "PERSIST_FAILED",
+                format!("Model removed but failed to persist config: {}", e),
+            );
+        }
+    }
+
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "removed" }))
 }
 
 pub(super) async fn handle_models_set_default(
@@ -403,24 +436,39 @@ pub(super) async fn handle_models_set_default(
 ) -> WsResponse {
     #[derive(Debug, Deserialize)]
     struct SetDefaultPayload {
-        name: String,
+        #[serde(alias = "name")]
+        model_id: String,
     }
     let payload: SetDefaultPayload = match parse_params(req) {
         Ok(p) => p,
         Err(res) => return res,
     };
-    match state
+    if let Err(e) = state
         .infra
         .model_router
-        .switch_default_model(&payload.name)
+        .switch_default_model(&payload.model_id)
         .await
     {
-        Ok(()) => WsResponse::ok(
-            &req.id,
-            serde_json::json!({ "status": "ok", "default_model": payload.name }),
-        ),
-        Err(e) => WsResponse::err(&req.id, "MODEL_NOT_FOUND", format!("{}", e)),
+        return WsResponse::err(&req.id, "MODEL_NOT_FOUND", format!("{}", e));
     }
+
+    sync_config_from_router(state).await;
+
+    if let Some(config_path) = state.config_path.clone() {
+        let config_guard = state.config.read().await;
+        if let Err(e) = persist_config_atomic(&config_guard, &config_path).await {
+            return WsResponse::err(
+                &req.id,
+                "PERSIST_FAILED",
+                format!("Default model set but failed to persist config: {}", e),
+            );
+        }
+    }
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "status": "ok", "default_model": payload.model_id }),
+    )
 }
 
 #[cfg(test)]
@@ -428,7 +476,7 @@ mod tests {
     use super::*;
     use crate::gateway::state_tests::make_test_state;
     use crate::gateway::GatewayConfig;
-    use crate::model_router::ModelAlias;
+    use crate::model_router::{ProviderConfig, ProviderType};
 
     fn req(id: &str, method: &str, params: serde_json::Value) -> WsRequest {
         WsRequest {
@@ -439,18 +487,29 @@ mod tests {
         }
     }
 
-    async fn register_alias(state: &GatewayState, name: &str, model: &str) {
+    fn provider_config(models: &[&str]) -> ProviderConfig {
+        ProviderConfig {
+            provider_type: ProviderType::OpenAi,
+            models: models.iter().map(|s| s.to_string()).collect(),
+            default_model: models.first().map(|s| s.to_string()).unwrap_or_default(),
+            api_key: "test-key".to_string().into(),
+            api_keys: vec![],
+            auth_profile: None,
+            oauth: None,
+            base_url: None,
+            timeout: std::time::Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        }
+    }
+
+    async fn register_provider(state: &GatewayState, name: &str, models: &[&str]) {
         state
             .infra
             .model_router
-            .set_alias(ModelAlias {
-                name: name.to_string(),
-                provider: "openai".to_string(),
-                model: model.to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
+            .add_provider(name, provider_config(models))
+            .await
+            .expect("register provider");
     }
 
     #[tokio::test]
@@ -464,9 +523,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn models_list_shows_aliases_and_default() {
+    async fn models_list_shows_provider_models_and_default() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
-        register_alias(&state, "fast", "gpt-4o-mini").await;
+        register_provider(&state, "openai", &["gpt-4o-mini"]).await;
         let res = handle_models_list(&req("l", "models.list", serde_json::json!({})), &state).await;
         let models = res
             .payload
@@ -475,10 +534,18 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(models.len(), 1);
-        assert_eq!(models[0]["id"].as_str(), Some("fast"));
+        // A concrete model ID, not an alias name.
+        assert_eq!(models[0]["id"].as_str(), Some("gpt-4o-mini"));
+        assert_eq!(models[0]["name"].as_str(), Some("gpt-4o-mini"));
         assert_eq!(models[0]["provider"].as_str(), Some("openai"));
-        // "name" is "alias (model)" format.
-        assert_eq!(models[0]["name"].as_str(), Some("fast (gpt-4o-mini)"));
+        assert_eq!(models[0]["provider_name"].as_str(), Some("OpenAI"));
+        // Default model is the configured default (not auto-promoted).
+        let default = res
+            .payload
+            .as_ref()
+            .and_then(|p| p["default_model"].as_str())
+            .unwrap_or_default();
+        assert_eq!(default, "claude-3-sonnet-20240229");
     }
 
     #[tokio::test]
@@ -501,16 +568,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn models_add_registers_alias_and_sets_default() {
+    async fn models_add_registers_provider_models() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
         let res = handle_models_add(
             &req(
                 "a",
                 "models.add",
                 serde_json::json!({
-                    "name": "main",
                     "provider": "openai",
-                    "model": "gpt-4o",
+                    "models": ["gpt-4o", "gpt-4-turbo"],
                 }),
             ),
             &state,
@@ -518,37 +584,68 @@ mod tests {
         .await;
         assert!(res.ok);
 
-        // First alias is auto-promoted to default.
-        assert_eq!(state.infra.model_router.get_default_model().await, "main");
-        let res = handle_models_list(&req("l", "models.list", serde_json::json!({})), &state).await;
-        let models = res
-            .payload
-            .as_ref()
-            .and_then(|p| p["models"].as_array())
-            .cloned()
-            .unwrap_or_default();
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0]["id"].as_str(), Some("main"));
+        // Both models are registered under the provider.
+        let pairs = state.infra.model_router.models_with_providers().await;
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs.contains(&("openai".to_string(), "gpt-4o".to_string())));
+        assert!(pairs.contains(&("openai".to_string(), "gpt-4-turbo".to_string())));
     }
 
     #[tokio::test]
-    async fn models_remove_alias() {
+    async fn models_add_rejects_duplicate_provider() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
-        register_alias(&state, "main", "gpt-4o").await;
+        register_provider(&state, "openai", &["gpt-4o"]).await;
+        let res = handle_models_add(
+            &req(
+                "a",
+                "models.add",
+                serde_json::json!({
+                    "provider": "openai",
+                    "models": ["gpt-4-turbo"],
+                }),
+            ),
+            &state,
+        )
+        .await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("PROVIDER_EXISTS"));
+    }
+
+    #[tokio::test]
+    async fn models_add_empty_models_errors() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = handle_models_add(
+            &req("a", "models.add", serde_json::json!({ "provider": "openai", "models": [] })),
+            &state,
+        )
+        .await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("INVALID_PAYLOAD"));
+    }
+
+    #[tokio::test]
+    async fn models_remove_model() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_provider(&state, "openai", &["gpt-4o"]).await;
         let res = handle_models_remove(
-            &req("r", "models.remove", serde_json::json!({ "name": "main" })),
+            &req("r", "models.remove", serde_json::json!({ "model_id": "gpt-4o" })),
             &state,
         )
         .await;
         assert!(res.ok);
-        assert!(state.infra.model_router.list_aliases().await.is_empty());
+        assert!(state
+            .infra
+            .model_router
+            .models_with_providers()
+            .await
+            .is_empty());
     }
 
     #[tokio::test]
-    async fn models_remove_unknown_alias_errors() {
+    async fn models_remove_unknown_model_errors() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
         let res = handle_models_remove(
-            &req("r", "models.remove", serde_json::json!({ "name": "nope" })),
+            &req("r", "models.remove", serde_json::json!({ "model_id": "nope" })),
             &state,
         )
         .await;
@@ -559,10 +656,10 @@ mod tests {
     #[tokio::test]
     async fn models_set_default_switches_default() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
-        register_alias(&state, "main", "gpt-4o").await;
-        register_alias(&state, "alt", "claude-sonnet").await;
+        register_provider(&state, "openai", &["gpt-4o"]).await;
+        register_provider(&state, "anthropic", &["claude-sonnet"]).await;
         let res = handle_models_set_default(
-            &req("s", "models.set_default", serde_json::json!({ "name": "alt" })),
+            &req("s", "models.set_default", serde_json::json!({ "model_id": "claude-sonnet" })),
             &state,
         )
         .await;
@@ -571,16 +668,16 @@ mod tests {
             res.payload
                 .as_ref()
                 .and_then(|p| p["default_model"].as_str()),
-            Some("alt")
+            Some("claude-sonnet")
         );
-        assert_eq!(state.infra.model_router.get_default_model().await, "alt");
+        assert_eq!(state.infra.model_router.get_default_model().await, "claude-sonnet");
     }
 
     #[tokio::test]
     async fn models_set_default_unknown_errors() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
         let res = handle_models_set_default(
-            &req("s", "models.set_default", serde_json::json!({ "name": "nope" })),
+            &req("s", "models.set_default", serde_json::json!({ "model_id": "nope" })),
             &state,
         )
         .await;

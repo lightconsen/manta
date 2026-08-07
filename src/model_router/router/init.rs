@@ -50,22 +50,6 @@ impl ModelRouter {
         self.config.read().await.clone()
     }
 
-    /// Return a clone of a single alias configuration, if it exists.
-    pub async fn alias_config(&self, name: &str) -> Option<ModelAlias> {
-        self.config.read().await.aliases.get(name).cloned()
-    }
-
-    /// Return all aliases along with their configurations.
-    pub async fn aliases_with_configs(&self) -> Vec<(String, ModelAlias)> {
-        self.config
-            .read()
-            .await
-            .aliases
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
-    }
-
     // ==================== INITIALIZATION ====================
 
     /// Initialize providers, fallback chains, and model catalog from config.
@@ -110,16 +94,20 @@ impl ModelRouter {
         // Initialize fallback chains
         self.init_fallback_chains_from_config(&config).await;
 
-        // Initialize model catalog from static aliases
-        let alias_tuples: Vec<(String, String, String)> = config
-            .aliases
-            .values()
-            .map(|a| (a.name.clone(), a.provider.clone(), a.model.clone()))
+        // Initialize model catalog from the models owned by each provider
+        let model_tuples: Vec<(String, String)> = config
+            .providers
+            .iter()
+            .flat_map(|(provider, pcfg)| {
+                pcfg.models
+                    .iter()
+                    .map(move |m| (provider.clone(), m.clone()))
+            })
             .collect();
         drop(config);
 
         self.model_catalog
-            .add_source(Box::new(model_catalog::StaticModelSource::new(alias_tuples)))
+            .add_source(Box::new(model_catalog::StaticModelSource::new(model_tuples)))
             .await;
         if let Err(e) = self.model_catalog.discover().await {
             warn!("Model catalog discovery failed: {}", e);
@@ -134,15 +122,19 @@ impl ModelRouter {
         let config = self.config.read().await;
         self.init_fallback_chains_from_config(&config).await;
 
-        let alias_tuples: Vec<(String, String, String)> = config
-            .aliases
-            .values()
-            .map(|a| (a.name.clone(), a.provider.clone(), a.model.clone()))
+        let model_tuples: Vec<(String, String)> = config
+            .providers
+            .iter()
+            .flat_map(|(provider, pcfg)| {
+                pcfg.models
+                    .iter()
+                    .map(move |m| (provider.clone(), m.clone()))
+            })
             .collect();
         drop(config);
 
         self.model_catalog
-            .add_source(Box::new(model_catalog::StaticModelSource::new(alias_tuples)))
+            .add_source(Box::new(model_catalog::StaticModelSource::new(model_tuples)))
             .await;
         if let Err(e) = self.model_catalog.discover().await {
             warn!("Model catalog discovery failed: {}", e);
@@ -151,25 +143,17 @@ impl ModelRouter {
 
     async fn init_fallback_chains_from_config(&self, config: &ModelRouterConfig) {
         let mut chains = self.fallback_chains.write().await;
-        for (alias, provider_list) in &config.fallback_chains {
-            let model = config.aliases.get(alias).map(|a| a.model.clone());
-            if model.is_none() {
-                warn!(
-                    "Fallback chain references alias '{}' which is not defined in aliases — model \
-                     will be empty",
-                    alias
-                );
-            }
+        for (model_id, provider_list) in &config.fallback_chains {
             let entries: Vec<FallbackEntry> = provider_list
                 .iter()
                 .map(|p| FallbackEntry {
                     provider: p.clone(),
-                    model: model.clone().unwrap_or_default(),
+                    model: model_id.clone(),
                     enabled: true,
                     health_score: 100,
                 })
                 .collect();
-            chains.insert(alias.clone(), entries);
+            chains.insert(model_id.clone(), entries);
         }
     }
 }

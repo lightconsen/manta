@@ -1314,17 +1314,16 @@ impl Agent {
 
         // Get completion — use model router when available for key rotation / fallback
         let response = if let Some(ref router) = self.model_router {
-            let alias = {
+            let model_id = {
                 let session_model = self.session_models.read().await.get(context.id()).cloned();
                 let guard = self.model_override.read().await;
                 session_model
                     .or_else(|| guard.as_ref().cloned())
-                    .or(self.model_alias.clone())
                     .or(self.model.clone())
                     .unwrap_or_else(|| self.provider.default_model().to_string())
             };
             let tools = request.tools.take();
-            router.complete(&alias, request.messages, tools).await?
+            router.complete(&model_id, request.messages, tools).await?
         } else {
             self.provider.complete(request).await?
         };
@@ -1594,17 +1593,16 @@ impl Agent {
 
         // Get streaming completion — use model router when available
         let (raw_stream, family) = if let Some(ref router) = self.model_router {
-            let alias = {
+            let model_id = {
                 let session_model = self.session_models.read().await.get(context.id()).cloned();
                 let guard = self.model_override.read().await;
                 session_model
                     .or_else(|| guard.as_ref().cloned())
-                    .or(self.model_alias.clone())
                     .or(self.model.clone())
                     .unwrap_or_else(|| self.provider.default_model().to_string())
             };
             let tools = request.tools.take();
-            let stream = router.stream(&alias, request.messages, tools).await?;
+            let stream = router.stream(&model_id, request.messages, tools).await?;
             // When using model router, fall back to Generic stream family
             (stream, crate::providers::stream_wrappers::ProviderStreamFamily::Generic)
         } else {

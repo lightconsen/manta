@@ -1,12 +1,13 @@
-import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
+import type { ModelInfo, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 import type { SyscityConfig } from "@/components/settings/useSettingsData";
 import { AddModelForm } from "@/components/settings/AddModelForm";
 import { Section } from "@/components/ui/Section";
 import { Button } from "@/components/ui/Button";
+import { getProviderLogo } from "@/lib/providerLogos";
 
 interface ModelsSettingsProps {
   transport: SyscityWebSocketTransport;
-  models: Array<{ id: string; name: string; provider: string }>;
+  models: ModelInfo[];
   config: SyscityConfig;
   modelActionLoading: string;
   showAddModel: boolean;
@@ -47,11 +48,20 @@ export function ModelsSettings({
           <div className="text-sm text-secondary">No models available.</div>
         ) : (
           <div className="space-y-2">
-            {models.map((m) => (
+            {models.map((m) => {
+              const logo = getProviderLogo(m.provider);
+              return (
               <div key={m.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-card">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-primary font-medium">{m.name}</span>
-                  <span className="text-xs text-secondary">{m.provider}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  {logo ? (
+                    <img src={logo} alt="" className="w-4 h-4 object-contain shrink-0" />
+                  ) : (
+                    <span className="w-4 h-4 shrink-0 rounded bg-sidebar flex items-center justify-center text-[9px] font-semibold">
+                      {(m.provider_name || m.provider).charAt(0)}
+                    </span>
+                  )}
+                  <span className="text-xs text-secondary whitespace-nowrap">{m.provider_name || m.provider}</span>
+                  <span className="text-sm text-primary font-medium truncate">{m.name}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   {config.model === m.id ? (
@@ -78,7 +88,8 @@ export function ModelsSettings({
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Section>

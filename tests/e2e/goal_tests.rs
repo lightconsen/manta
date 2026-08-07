@@ -51,33 +51,11 @@ async fn start_goal_test_gateway(port: u16) {
         .expect("Failed to create test gateway");
 
     let router = gateway.model_router();
+    // Register the mock provider and its owned model; the default is already
+    // "mock-model" (set on config.model above).
+    register_mock_provider_with_model(&router, goal_mock_provider(), "mock-model").await;
     router
-        .add_provider_instance("mock", Arc::new(goal_mock_provider()))
-        .await
-        .expect("Failed to register mock provider");
-
-    // Register both the model alias and the "default" alias so that
-    // complete_auto → "default_model" → "default" → mock provider.
-    router
-        .set_alias(ModelAlias {
-            name: "mock-model".to_string(),
-            provider: "mock".to_string(),
-            model: "mock-model".to_string(),
-            temperature: None,
-            max_tokens: None,
-        })
-        .await;
-    router
-        .set_alias(ModelAlias {
-            name: "default".to_string(),
-            provider: "mock".to_string(),
-            model: "mock-model".to_string(),
-            temperature: None,
-            max_tokens: None,
-        })
-        .await;
-    router
-        .switch_default_model("default")
+        .switch_default_model("mock-model")
         .await
         .expect("Failed to set default model");
 

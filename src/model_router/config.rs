@@ -13,25 +13,6 @@ use crate::model_router::auth_profile::{AuthKeyConfig, AuthProfileConfig};
 use crate::secrets::StoreRef;
 
 // ------------------------------------------------------------------
-// ModelAlias
-// ------------------------------------------------------------------
-
-/// Model alias configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelAlias {
-    /// Alias name (e.g., "fast", "smart", "coding")
-    pub name: String,
-    /// Provider name (e.g., "anthropic", "openai")
-    pub provider: String,
-    /// Actual model ID (e.g., "claude-3-haiku-20240307")
-    pub model: String,
-    /// Temperature override (optional)
-    pub temperature: Option<f32>,
-    /// Max tokens override (optional)
-    pub max_tokens: Option<u32>,
-}
-
-// ------------------------------------------------------------------
 // OAuthConfig
 // ------------------------------------------------------------------
 
@@ -144,6 +125,12 @@ impl From<&str> for ProviderKey {
 pub struct ProviderConfig {
     /// Provider type
     pub provider_type: ProviderType,
+    /// Concrete model IDs supported by this provider.
+    #[serde(default, alias = "supported_models")]
+    pub models: Vec<String>,
+    /// Default model ID for this provider (must be in `models`).
+    #[serde(default)]
+    pub default_model: String,
     /// API key (single key, backward compatible). Inline value or store ref.
     #[serde(alias = "api_key", default)]
     pub api_key: ProviderKey,
@@ -182,6 +169,20 @@ fn default_retry_delay_ms() -> u64 {
 }
 
 impl ProviderConfig {
+    /// The provider's default model ID, falling back to the first listed
+    /// model if `default_model` is empty or not listed.
+    pub fn default_model(&self) -> &str {
+        if self.models.contains(&self.default_model) {
+            return &self.default_model;
+        }
+        self.models.first().map(String::as_str).unwrap_or("")
+    }
+
+    /// Whether this provider supports the given concrete model ID.
+    pub fn supports_model(&self, model_id: &str) -> bool {
+        self.models.iter().any(|m| m == model_id)
+    }
+
     /// Get the effective API key to use for provider creation.
     /// Prefers auth_profile keys, then api_keys, then single api_key (inline
     /// value, or a store ref resolved via the secret store).
@@ -307,10 +308,12 @@ impl std::fmt::Display for TaskType {
 pub struct TaskRoutingRule {
     /// Task type this rule applies to
     pub task_type: TaskType,
-    /// Preferred model alias
-    pub preferred_alias: String,
-    /// Fallback alias if preferred is unavailable
-    pub fallback_alias: Option<String>,
+    /// Preferred model ID
+    #[serde(alias = "preferred_alias")]
+    pub preferred_model: String,
+    /// Fallback model ID if preferred is unavailable
+    #[serde(alias = "fallback_alias")]
+    pub fallback_model: Option<String>,
     /// Maximum input tokens for this rule (route to larger model if exceeded)
     pub max_input_tokens: Option<u32>,
 }
@@ -328,8 +331,9 @@ pub struct CostAwareConfig {
     pub model_costs: HashMap<String, ModelCost>,
     /// Routing rules by task type
     pub routing_rules: Vec<TaskRoutingRule>,
-    /// Default alias when no rule matches
-    pub default_alias: String,
+    /// Default model ID when no rule matches
+    #[serde(alias = "default_alias")]
+    pub default_model: String,
     /// Optional daily budget limit in USD
     pub budget_limit_usd: Option<f64>,
     /// Current daily spend (reset at midnight UTC)
@@ -365,56 +369,56 @@ impl Default for CostAwareConfig {
         let routing_rules = vec![
             TaskRoutingRule {
                 task_type: TaskType::Coding,
-                preferred_alias: "smart".to_string(),
-                fallback_alias: Some("default".to_string()),
+                preferred_model: "smart".to_string(),
+                fallback_model: Some("default".to_string()),
                 max_input_tokens: Some(8000),
             },
             TaskRoutingRule {
                 task_type: TaskType::Reasoning,
-                preferred_alias: "smart".to_string(),
-                fallback_alias: Some("default".to_string()),
+                preferred_model: "smart".to_string(),
+                fallback_model: Some("default".to_string()),
                 max_input_tokens: None,
             },
             TaskRoutingRule {
                 task_type: TaskType::Classification,
-                preferred_alias: "fast".to_string(),
-                fallback_alias: Some("default".to_string()),
+                preferred_model: "fast".to_string(),
+                fallback_model: Some("default".to_string()),
                 max_input_tokens: Some(4000),
             },
             TaskRoutingRule {
                 task_type: TaskType::Summarization,
-                preferred_alias: "default".to_string(),
-                fallback_alias: Some("fast".to_string()),
+                preferred_model: "default".to_string(),
+                fallback_model: Some("fast".to_string()),
                 max_input_tokens: Some(16000),
             },
             TaskRoutingRule {
                 task_type: TaskType::Extraction,
-                preferred_alias: "fast".to_string(),
-                fallback_alias: Some("default".to_string()),
+                preferred_model: "fast".to_string(),
+                fallback_model: Some("default".to_string()),
                 max_input_tokens: Some(8000),
             },
             TaskRoutingRule {
                 task_type: TaskType::Translation,
-                preferred_alias: "fast".to_string(),
-                fallback_alias: Some("default".to_string()),
+                preferred_model: "fast".to_string(),
+                fallback_model: Some("default".to_string()),
                 max_input_tokens: None,
             },
             TaskRoutingRule {
                 task_type: TaskType::Creative,
-                preferred_alias: "default".to_string(),
-                fallback_alias: Some("smart".to_string()),
+                preferred_model: "default".to_string(),
+                fallback_model: Some("smart".to_string()),
                 max_input_tokens: None,
             },
             TaskRoutingRule {
                 task_type: TaskType::Chat,
-                preferred_alias: "default".to_string(),
-                fallback_alias: Some("fast".to_string()),
+                preferred_model: "default".to_string(),
+                fallback_model: Some("fast".to_string()),
                 max_input_tokens: Some(4000),
             },
             TaskRoutingRule {
                 task_type: TaskType::Unknown,
-                preferred_alias: "default".to_string(),
-                fallback_alias: Some("fast".to_string()),
+                preferred_model: "default".to_string(),
+                fallback_model: Some("fast".to_string()),
                 max_input_tokens: None,
             },
         ];
@@ -423,7 +427,7 @@ impl Default for CostAwareConfig {
             enabled: false,
             model_costs,
             routing_rules,
-            default_alias: "default".to_string(),
+            default_model: "default".to_string(),
             budget_limit_usd: None,
             daily_spend_usd: 0.0,
         }
@@ -590,6 +594,34 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
     m
 }
 
+/// Resolve a provider preset by its config key or by its display name
+/// (case-insensitive). Lets a user-entered name like "DeepSeek" resolve to the
+/// `deepseek` preset's protocol/base URL even when the config key differs.
+pub fn provider_preset_for_name(name: &str) -> Option<ProviderPreset> {
+    let presets = provider_presets();
+    if let Some(p) = presets.get(name) {
+        return Some(p.clone());
+    }
+    presets
+        .values()
+        .find(|p| p.display_name.eq_ignore_ascii_case(name))
+        .cloned()
+}
+
+/// Human-readable display name for a provider config key (e.g. "deepseek" →
+/// "DeepSeek"). Falls back to the key itself for custom providers.
+pub fn provider_display_name(key: &str) -> String {
+    let presets = provider_presets();
+    if let Some(p) = presets.get(key) {
+        return p.display_name.clone();
+    }
+    presets
+        .values()
+        .find(|p| p.display_name.eq_ignore_ascii_case(key))
+        .map(|p| p.display_name.clone())
+        .unwrap_or_else(|| key.to_string())
+}
+
 // ------------------------------------------------------------------
 // FallbackEntry
 // ------------------------------------------------------------------
@@ -614,13 +646,11 @@ pub struct FallbackEntry {
 /// Model router configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRouterConfig {
-    /// Default model alias
+    /// Default model ID
     pub default_model: String,
-    /// Model aliases
-    pub aliases: HashMap<String, ModelAlias>,
-    /// Provider configurations
+    /// Provider configurations (unique by provider name)
     pub providers: HashMap<String, ProviderConfig>,
-    /// Fallback chain: alias -> ordered list of providers
+    /// Fallback chain: model ID -> ordered list of providers
     pub fallback_chains: HashMap<String, Vec<String>>,
     /// Health check interval
     pub health_check_interval_secs: u64,
@@ -637,7 +667,6 @@ impl Default for ModelRouterConfig {
     fn default() -> Self {
         Self {
             default_model: String::new(),
-            aliases: HashMap::new(),
             providers: HashMap::new(),
             fallback_chains: HashMap::new(),
             health_check_interval_secs: 60,
@@ -645,6 +674,16 @@ impl Default for ModelRouterConfig {
             circuit_breaker_reset_secs: 300,
             cost_aware: None,
         }
+    }
+}
+
+impl ModelRouterConfig {
+    /// Find the provider name that owns the given concrete model ID.
+    pub fn provider_for_model(&self, model_id: &str) -> Option<&str> {
+        self.providers
+            .iter()
+            .find(|(_, cfg)| cfg.supports_model(model_id))
+            .map(|(name, _)| name.as_str())
     }
 }
 
@@ -750,6 +789,8 @@ mod tests {
     async fn provider_config_effective_key_prefers_auth_profile() {
         let mut config = ProviderConfig {
             provider_type: ProviderType::OpenAi,
+            models: vec!["gpt-4o".to_string()],
+            default_model: "gpt-4o".to_string(),
             api_key: "single-key".to_string().into(),
             api_keys: vec!["multi-key".to_string()],
             auth_profile: None,
@@ -782,6 +823,8 @@ mod tests {
         // no entry for the synthetic id → empty key.
         let config = ProviderConfig {
             provider_type: ProviderType::OpenAi,
+            models: vec!["gpt-4o".to_string()],
+            default_model: "gpt-4o".to_string(),
             api_key: ProviderKey::Ref(crate::secrets::StoreRef::new("llm", "nope", "api_key")),
             api_keys: Vec::new(),
             auth_profile: None,
@@ -839,6 +882,27 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.model_costs.len(), 3);
         assert_eq!(config.routing_rules.len(), 9);
-        assert_eq!(config.default_alias, "default");
+        assert_eq!(config.default_model, "default");
+    }
+
+    #[test]
+    fn provider_preset_for_name_matches_key_or_display_name() {
+        // Exact config key.
+        let by_key = provider_preset_for_name("deepseek").unwrap();
+        assert_eq!(by_key.display_name, "DeepSeek");
+
+        // Case-insensitive display-name match (e.g. user typed "DeepSeek").
+        let by_display = provider_preset_for_name("DeepSeek").unwrap();
+        assert_eq!(format!("{:?}", by_display.protocol), format!("{:?}", by_key.protocol));
+
+        // Unknown provider.
+        assert!(provider_preset_for_name("no-such-provider").is_none());
+    }
+
+    #[test]
+    fn provider_display_name_resolves_preset_or_falls_back_to_key() {
+        assert_eq!(provider_display_name("deepseek"), "DeepSeek");
+        assert_eq!(provider_display_name("DeepSeek"), "DeepSeek");
+        assert_eq!(provider_display_name("my-custom"), "my-custom");
     }
 }

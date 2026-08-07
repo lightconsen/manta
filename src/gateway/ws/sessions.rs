@@ -256,15 +256,11 @@ pub(super) async fn handle_sessions_set_model(
     // Treat an empty string the same as clearing the pin.
     let model = params.model.filter(|m| !m.is_empty());
 
-    // Validate the alias against the model router when pinning.
+    // Validate the concrete model ID against the model router when pinning.
     if let Some(ref m) = model {
-        let aliases = state.infra.model_router.aliases_with_configs().await;
-        if !aliases.iter().any(|(name, _)| name == m) {
-            return WsResponse::err(
-                &req.id,
-                "MODEL_NOT_FOUND",
-                format!("Unknown model alias: {}", m),
-            );
+        let models = state.infra.model_router.models_with_providers().await;
+        if !models.iter().any(|(_, model_id)| model_id == m) {
+            return WsResponse::err(&req.id, "MODEL_NOT_FOUND", format!("Unknown model: {}", m));
         }
     }
 
@@ -436,7 +432,7 @@ mod tests {
         make_test_conn, make_test_state, make_test_state_with_store,
     };
     use crate::gateway::GatewayConfig;
-    use crate::model_router::ModelAlias;
+    use crate::model_router::{ProviderConfig, ProviderType};
 
     fn req(id: &str, method: &str, params: serde_json::Value) -> WsRequest {
         WsRequest {
@@ -447,22 +443,30 @@ mod tests {
         }
     }
 
-    async fn register_alias(state: &GatewayState, name: &str) {
+    async fn register_model(state: &GatewayState, model_id: &str) {
+        let config = ProviderConfig {
+            provider_type: ProviderType::OpenAi,
+            models: vec![model_id.to_string()],
+            default_model: model_id.to_string(),
+            api_key: "test-key".to_string().into(),
+            api_keys: vec![],
+            auth_profile: None,
+            oauth: None,
+            base_url: None,
+            timeout: std::time::Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
         state
             .infra
             .model_router
-            .set_alias(ModelAlias {
-                name: name.to_string(),
-                provider: "openai".to_string(),
-                model: "gpt-4o".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
+            .add_provider("openai", config)
+            .await
+            .expect("register provider");
     }
 
     #[tokio::test]
-    async fn set_model_rejects_unknown_alias() {
+    async fn set_model_rejects_unknown_model() {
         let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
         let conn = make_test_conn(&["write"]);
         let res = handle_sessions_set_model(
@@ -482,16 +486,16 @@ mod tests {
     #[tokio::test]
     async fn set_model_roundtrip_with_event_and_list() {
         let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
-        register_alias(&state, "alt").await;
+        register_model(&state, "gpt-4o").await;
         let conn = make_test_conn(&["write"]);
         let mut rx = state.events.tx.subscribe();
 
-        // Pin to the registered alias.
+        // Pin to the registered concrete model ID.
         let res = handle_sessions_set_model(
             &req(
                 "r1",
                 "sessions.set_model",
-                serde_json::json!({ "session_id": "s1", "model": "alt" }),
+                serde_json::json!({ "session_id": "s1", "model": "gpt-4o" }),
             ),
             &conn,
             &state,
@@ -501,7 +505,7 @@ mod tests {
         match rx.try_recv() {
             Ok(GatewayEvent::SessionModelChanged { session_id, model }) => {
                 assert_eq!(session_id, "s1");
-                assert_eq!(model.as_deref(), Some("alt"));
+                assert_eq!(model.as_deref(), Some("gpt-4o"));
             }
             other => panic!("expected SessionModelChanged event, got {:?}", other.is_ok()),
         }
@@ -518,7 +522,7 @@ mod tests {
             .iter()
             .find(|s| s.get("session_id").and_then(|v| v.as_str()) == Some("s1"))
             .expect("s1 should be listed");
-        assert_eq!(s1.get("model").and_then(|v| v.as_str()), Some("alt"));
+        assert_eq!(s1.get("model").and_then(|v| v.as_str()), Some("gpt-4o"));
 
         // Clearing the pin stores NULL and emits the event with model: null.
         let res = handle_sessions_set_model(
@@ -553,10 +557,10 @@ mod tests {
     #[tokio::test]
     async fn set_model_empty_string_clears_pin() {
         let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
-        register_alias(&state, "alt").await;
+        register_model(&state, "gpt-4o").await;
         let conn = make_test_conn(&["write"]);
 
-        for value in [serde_json::json!("alt"), serde_json::json!("")] {
+        for value in [serde_json::json!("gpt-4o"), serde_json::json!("")] {
             let res = handle_sessions_set_model(
                 &req(
                     "r",

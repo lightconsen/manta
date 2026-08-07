@@ -58,6 +58,14 @@ export interface ChatMessage {
 export type MessagesCallback = (messages: ChatMessage[]) => void;
 export type SessionCallback = () => void;
 
+/** A concrete model owned by a provider, as returned by `models.list`. */
+export interface ModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  provider_name: string;
+}
+
 function makeTextPart(text: string): TextMessagePart {
   return { type: "text", text };
 }
@@ -1097,8 +1105,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
-  async listModels(): Promise<{ models: Array<{ id: string; name: string; provider: string }>; default_model: string }> {
-    const res = await this.sendRequestAndWait("models.list", {}) as { models: Array<{ id: string; name: string; provider: string }>; default_model: string } | undefined;
+  async listModels(): Promise<{ models: ModelInfo[]; default_model: string }> {
+    const res = await this.sendRequestAndWait("models.list", {}) as { models: ModelInfo[]; default_model: string } | undefined;
     return res || { models: [], default_model: "" };
   }
 
@@ -1162,27 +1170,27 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
-  async addModel(payload: { name: string; provider: string; model: string; api_key?: string; base_url?: string }): Promise<boolean> {
+  async addModel(payload: { provider: string; models: string[]; default_model?: string; api_key?: string; base_url?: string }): Promise<{ ok: boolean; error?: string }> {
     try {
       await this.sendRequestAndWait("models.add", payload);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async removeModel(modelId: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("models.remove", { model_id: modelId });
       return true;
     } catch {
       return false;
     }
   }
 
-  async removeModel(name: string): Promise<boolean> {
+  async setDefaultModel(modelId: string): Promise<boolean> {
     try {
-      await this.sendRequestAndWait("models.remove", { name });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async setDefaultModel(name: string): Promise<boolean> {
-    try {
-      await this.sendRequestAndWait("models.set_default", { name });
+      await this.sendRequestAndWait("models.set_default", { model_id: modelId });
       return true;
     } catch {
       return false;

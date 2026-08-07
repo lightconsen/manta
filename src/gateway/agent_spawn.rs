@@ -171,8 +171,7 @@ pub(crate) async fn spawn_agent_inner(
             .with_disk_budget(Arc::clone(&state.infra.disk_budget))
             .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
             .with_model_router(Arc::clone(&state.infra.model_router))
-            .with_skill_manager(Arc::clone(&state.tools.skills_manager))
-            .with_model_alias(model.clone());
+            .with_skill_manager(Arc::clone(&state.tools.skills_manager));
         if let Some(adapter) = computer_adapter.clone() {
             builder = builder
                 .with_computer_adapter(adapter)
@@ -194,8 +193,7 @@ pub(crate) async fn spawn_agent_inner(
             .with_artifact_store(Arc::clone(&state.infra.artifact_store))
             .with_disk_budget(Arc::clone(&state.infra.disk_budget))
             .with_session_file_manager(Arc::clone(&state.infra.session_file_manager))
-            .with_model_router(Arc::clone(&state.infra.model_router))
-            .with_model_alias(model.clone());
+            .with_model_router(Arc::clone(&state.infra.model_router));
         if let Some(adapter) = computer_adapter.clone() {
             builder = builder
                 .with_computer_adapter(adapter)

@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
-import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
+import type { ModelInfo, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 
 interface ModelSelectorProps {
   transport: SyscityWebSocketTransport;
-}
-
-interface ModelEntry {
-  id: string;
-  name: string;
-  provider: string;
 }
 
 // Compact model picker for the chat composer. Shows the effective model for
@@ -16,7 +10,7 @@ interface ModelEntry {
 // default) and persists a session-level pin via sessions.set_model on change.
 export function ModelSelector({ transport }: ModelSelectorProps) {
   const [sessionId, setSessionId] = useState(() => transport.getSessionId());
-  const [models, setModels] = useState<ModelEntry[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const [defaultModel, setDefaultModel] = useState("");
   const [agentModels, setAgentModels] = useState<Record<string, string>>({});
   const [sessionModel, setSessionModel] = useState<string | null>(null);
@@ -87,14 +81,13 @@ export function ModelSelector({ transport }: ModelSelectorProps) {
   // by switching back, not the currently pinned model.
   const fallback = agentModels[sessionAgentId] ?? defaultModel;
 
-  // Resolve an alias to its underlying model name so labels show e.g.
-  // "deepseek-v4-pro" instead of the alias "default". The backend formats
-  // each entry's name as "alias (model)"; fall back to the alias itself.
-  const modelNameFor = (alias: string): string => {
-    const entry = models.find((m) => m.id === alias);
-    const match = entry?.name.match(/\(([^)]*)\)$/);
-    return match ? match[1] : alias;
-  };
+  // Group models by provider for the option list.
+  const byProvider = new Map<string, ModelInfo[]>();
+  for (const m of models) {
+    const list = byProvider.get(m.provider) || [];
+    list.push(m);
+    byProvider.set(m.provider, list);
+  }
 
   const handleChange = (value: string) => {
     const m = value === "" ? null : value;
@@ -108,17 +101,21 @@ export function ModelSelector({ transport }: ModelSelectorProps) {
     <select
       value={sessionModel ?? ""}
       onChange={(e) => handleChange(e.target.value)}
-      title={`Model: ${effective ? modelNameFor(effective) : "default"}${sessionModel ? "" : " (default)"}`}
+      title={`Model: ${effective || "default"}${sessionModel ? "" : " (default)"}`}
       aria-label="Select model"
-      className="max-w-[9rem] truncate self-center rounded-lg border border-subtle bg-card px-2 py-1.5 text-xs text-secondary hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20 transition"
+      className="max-w-[10rem] truncate self-center rounded-lg border border-subtle bg-card px-2 py-1.5 text-xs text-secondary hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20 transition"
     >
       <option value="">
-        {fallback ? `${modelNameFor(fallback)} (default)` : "Default"}
+        {fallback ? `${fallback} (default)` : "Default model"}
       </option>
-      {models.map((m) => (
-        <option key={m.id} value={m.id}>
-          {m.name}
-        </option>
+      {Array.from(byProvider.entries()).map(([provider, ms]) => (
+        <optgroup key={provider} label={ms[0]?.provider_name || provider}>
+          {ms.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.provider_name} - {m.name}
+            </option>
+          ))}
+        </optgroup>
       ))}
     </select>
   );

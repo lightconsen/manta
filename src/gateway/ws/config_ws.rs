@@ -68,8 +68,8 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
         Err(res) => return res,
     };
 
-    // Handle model switching outside the config write lock so the lock is not
-    // held across an async model-router operation.
+    // Handle model switching and agent model bindings outside the config write
+    // lock so the lock is not held across an async model-router operation.
     let model_update = if params.path == "model" {
         if let Some(v) = params.value.as_str() {
             match state.infra.model_router.switch_default_model(v).await {
@@ -84,6 +84,27 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
             }
         } else {
             None
+        }
+    } else {
+        None
+    };
+
+    let agent_model_update = if params.path.starts_with("agent_models.") {
+        let agent_id = params.path["agent_models.".len()..].to_string();
+        match params.value.as_str().filter(|s| !s.is_empty()) {
+            Some(v) => {
+                let models = state.infra.model_router.models_with_providers().await;
+                if !models.iter().any(|(_, id)| id == v) {
+                    return WsResponse::err(
+                        &req.id,
+                        "MODEL_NOT_FOUND",
+                        format!("Unknown model: {v}"),
+                    );
+                }
+                Some((agent_id, v.to_string()))
+            }
+            // null / empty clears the binding; no validation needed.
+            None => Some((agent_id, String::new())),
         }
     } else {
         None
@@ -104,18 +125,11 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
             }
         }
         p if p.starts_with("agent_models.") => {
-            let agent_id = &p["agent_models.".len()..];
-            if !agent_id.is_empty() {
-                match params.value.as_str() {
-                    Some(v) if !v.is_empty() => {
-                        config
-                            .agent_models
-                            .insert(agent_id.to_string(), v.to_string());
-                    }
-                    // null / empty clears the per-agent binding
-                    _ => {
-                        config.agent_models.remove(agent_id);
-                    }
+            if let Some((agent_id, v)) = agent_model_update.clone() {
+                if v.is_empty() {
+                    config.agent_models.remove(&agent_id);
+                } else {
+                    config.agent_models.insert(agent_id, v);
                 }
             }
         }
@@ -352,7 +366,7 @@ mod tests {
     use super::*;
     use crate::gateway::state_tests::make_test_state;
     use crate::gateway::GatewayConfig;
-    use crate::model_router::ModelAlias;
+    use crate::model_router::{ProviderConfig, ProviderType};
 
     fn req(id: &str, method: &str, params: serde_json::Value) -> WsRequest {
         WsRequest {
@@ -363,18 +377,26 @@ mod tests {
         }
     }
 
-    async fn register_alias(state: &GatewayState, name: &str) {
+    async fn register_provider(state: &GatewayState, name: &str, models: &[&str]) {
+        let config = ProviderConfig {
+            provider_type: ProviderType::OpenAi,
+            models: models.iter().map(|s| s.to_string()).collect(),
+            default_model: models.first().map(|s| s.to_string()).unwrap_or_default(),
+            api_key: "test-key".to_string().into(),
+            api_keys: vec![],
+            auth_profile: None,
+            oauth: None,
+            base_url: None,
+            timeout: std::time::Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
         state
             .infra
             .model_router
-            .set_alias(ModelAlias {
-                name: name.to_string(),
-                provider: "openai".to_string(),
-                model: "gpt-4o".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
+            .add_provider(name, config)
+            .await
+            .expect("register provider");
     }
 
     async fn set_and_ok(
@@ -407,9 +429,13 @@ mod tests {
     #[tokio::test]
     async fn config_set_agent_models_binds_and_clears() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
-        let res = set_and_ok(&state, "agent_models.main", serde_json::json!("alt")).await;
+        register_provider(&state, "openai", &["gpt-4o"]).await;
+        let res = set_and_ok(&state, "agent_models.main", serde_json::json!("gpt-4o")).await;
         assert!(res.ok);
-        assert_eq!(state.config.read().await.agent_models.get("main").cloned(), Some("alt".into()));
+        assert_eq!(
+            state.config.read().await.agent_models.get("main").cloned(),
+            Some("gpt-4o".into())
+        );
 
         // Null clears the binding.
         let res = set_and_ok(&state, "agent_models.main", serde_json::Value::Null).await;
@@ -418,13 +444,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn config_set_agent_models_rejects_unknown_model() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = set_and_ok(&state, "agent_models.main", serde_json::json!("nope")).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("MODEL_NOT_FOUND"));
+        assert!(!state.config.read().await.agent_models.contains_key("main"));
+    }
+
+    #[tokio::test]
     async fn config_set_model_switches_router_and_config() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
-        register_alias(&state, "alt").await;
-        let res = set_and_ok(&state, "model", serde_json::json!("alt")).await;
+        register_provider(&state, "openai", &["gpt-4o"]).await;
+        let res = set_and_ok(&state, "model", serde_json::json!("gpt-4o")).await;
         assert!(res.ok);
-        assert_eq!(state.infra.model_router.get_default_model().await, "alt");
-        assert_eq!(state.config.read().await.model, "alt");
+        assert_eq!(state.infra.model_router.get_default_model().await, "gpt-4o");
+        assert_eq!(state.config.read().await.model, "gpt-4o");
     }
 
     #[tokio::test]

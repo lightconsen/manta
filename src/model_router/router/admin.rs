@@ -1,4 +1,6 @@
-//! `ModelRouter` provider/alias/fallback-chain management.
+//! `ModelRouter` provider/model/fallback-chain management.
+
+use std::collections::HashSet;
 
 use super::*;
 
@@ -38,54 +40,78 @@ impl ModelRouter {
         }
     }
 
-    // ==================== ALIAS MANAGEMENT ====================
+    // ==================== MODEL MANAGEMENT ====================
 
-    /// List available model aliases
-    pub async fn list_aliases(&self) -> Vec<String> {
-        let config = self.config.read().await;
-        config.aliases.keys().cloned().collect()
+    /// List all `(provider, model_id)` pairs from provider configs and
+    /// catalog-discovered models. Catalog entries are only included for
+    /// providers that still exist in config, so removed providers do not
+    /// resurrect their models.
+    pub async fn models_with_providers(&self) -> Vec<(String, String)> {
+        let mut seen = HashSet::new();
+        let mut result = Vec::new();
+
+        {
+            let config = self.config.read().await;
+            for (provider, pcfg) in &config.providers {
+                for model in &pcfg.models {
+                    if seen.insert(model.clone()) {
+                        result.push((provider.clone(), model.clone()));
+                    }
+                }
+            }
+        }
+
+        let provider_names: Vec<String> = {
+            let config = self.config.read().await;
+            config.providers.keys().cloned().collect()
+        };
+
+        for entry in self.model_catalog.list().await {
+            if provider_names.contains(&entry.provider) && seen.insert(entry.id.clone()) {
+                result.push((entry.provider, entry.id));
+            }
+        }
+
+        result
     }
 
-    /// Add or update a model alias
-    pub async fn set_alias(&self, alias: ModelAlias) {
-        let mut config = self.config.write().await;
-        config.aliases.insert(alias.name.clone(), alias);
+    /// Resolve the provider that owns a concrete model ID, checking provider
+    /// configs first and then the model catalog (for API-discovered models).
+    pub async fn provider_for_model(&self, model_id: &str) -> Option<String> {
+        {
+            let config = self.config.read().await;
+            if let Some(provider) = config.provider_for_model(model_id) {
+                return Some(provider.to_string());
+            }
+        }
+        self.model_catalog
+            .list()
+            .await
+            .into_iter()
+            .find(|e| e.id == model_id)
+            .map(|e| e.provider)
     }
 
-    /// Remove a model alias
-    pub async fn remove_alias(&self, name: &str) -> bool {
-        let mut config = self.config.write().await;
-        config.aliases.remove(name).is_some()
-    }
-
-    /// Switch the default model alias
-    pub async fn switch_default_model(&self, alias_name: &str) -> crate::Result<()> {
-        let config = self.config.read().await;
-        if !config.aliases.contains_key(alias_name) {
+    /// Switch the default model to a concrete model ID.
+    pub async fn switch_default_model(&self, model_id: &str) -> crate::Result<()> {
+        if self.provider_for_model(model_id).await.is_none() {
             return Err(crate::error::ConfigError::InvalidValue {
                 key: "default_model".to_string(),
-                message: format!("Unknown model alias: {alias_name}"),
+                message: format!("Unknown model: {model_id}"),
             }
             .into());
         }
-        drop(config);
 
         let mut config = self.config.write().await;
-        info!("Switching default model from '{}' to '{alias_name}'", config.default_model);
-        config.default_model = alias_name.to_string();
+        info!("Switching default model from '{}' to '{model_id}'", config.default_model);
+        config.default_model = model_id.to_string();
         Ok(())
     }
 
-    /// Get current default model alias
+    /// Get the current default concrete model ID.
     pub async fn get_default_model(&self) -> String {
         let config = self.config.read().await;
         config.default_model.clone()
-    }
-
-    /// Resolve an alias to its actual model ID.
-    pub async fn resolve_alias(&self, alias_name: &str) -> Option<String> {
-        let config = self.config.read().await;
-        config.aliases.get(alias_name).map(|a| a.model.clone())
     }
 
     // ==================== PROVIDER MANAGEMENT ====================
@@ -169,9 +195,27 @@ impl ModelRouter {
         }
     }
 
-    /// Add a new provider at runtime
+    /// Check whether a provider name is already registered.
+    pub async fn provider_exists(&self, name: &str) -> bool {
+        let providers = self.providers.read().await;
+        providers.contains_key(name)
+    }
+
+    /// Add a new provider at runtime. Rejects a provider name that already
+    /// exists.
     pub async fn add_provider(&self, name: &str, config: ProviderConfig) -> crate::Result<()> {
         info!("Adding new provider at runtime: {name}");
+
+        {
+            let providers = self.providers.read().await;
+            if providers.contains_key(name) {
+                return Err(crate::error::ConfigError::InvalidValue {
+                    key: "provider".to_string(),
+                    message: format!("Provider already exists: {name}"),
+                }
+                .into());
+            }
+        }
 
         let auth_config = config.derived_auth_profile_config();
         self.auth_profiles
@@ -190,9 +234,24 @@ impl ModelRouter {
             health.insert(name.to_string(), ProviderHealth::default());
         }
 
+        let model_ids = config.models.clone();
         {
             let mut router_config = self.config.write().await;
             router_config.providers.insert(name.to_string(), config);
+        }
+
+        // Register the provider's models in the model catalog so capability
+        // routing and model listing can see them immediately.
+        self.model_catalog
+            .add_source(Box::new(model_catalog::StaticModelSource::new(
+                model_ids
+                    .iter()
+                    .map(|m| (name.to_string(), m.clone()))
+                    .collect(),
+            )))
+            .await;
+        if let Err(e) = self.model_catalog.discover().await {
+            warn!("Model catalog discovery failed: {}", e);
         }
 
         Ok(())
@@ -242,6 +301,63 @@ impl ModelRouter {
         {
             let mut config = self.config.write().await;
             config.providers.remove(name);
+        }
+
+        Ok(())
+    }
+
+    /// Remove a concrete model ID from its provider. If the provider ends up
+    /// with no models it is removed entirely. If the removed model was the
+    /// default, fall back to another provider's default model (deterministic:
+    /// lowest provider name).
+    pub async fn remove_model(&self, model_id: &str) -> crate::Result<()> {
+        let provider_name = self.provider_for_model(model_id).await.ok_or_else(|| {
+            crate::error::ConfigError::InvalidValue {
+                key: "model".to_string(),
+                message: format!("Unknown model: {model_id}"),
+            }
+        })?;
+
+        let provider_emptied = {
+            let mut config = self.config.write().await;
+            let Some(pcfg) = config.providers.get_mut(&provider_name) else {
+                return Err(crate::error::ConfigError::InvalidValue {
+                    key: "provider".to_string(),
+                    message: format!("Unknown provider: {provider_name}"),
+                }
+                .into());
+            };
+            pcfg.models.retain(|m| m != model_id);
+            pcfg.models.is_empty()
+        };
+
+        if provider_emptied {
+            info!("Provider '{provider_name}' has no remaining models; removing it");
+            self.remove_provider(&provider_name).await?;
+        }
+
+        {
+            let mut config = self.config.write().await;
+            config.fallback_chains.remove(model_id);
+        }
+
+        {
+            let mut config = self.config.write().await;
+            if config.default_model == model_id {
+                let mut candidates: Vec<(String, String)> = config
+                    .providers
+                    .iter()
+                    .filter(|(_, c)| !c.models.is_empty())
+                    .map(|(name, c)| (name.clone(), c.default_model().to_string()))
+                    .collect();
+                candidates.sort_by(|a, b| a.0.cmp(&b.0));
+                let new_default = candidates
+                    .first()
+                    .map(|(_, m)| m.clone())
+                    .unwrap_or_default();
+                info!("Default model '{model_id}' removed; falling back to '{new_default}'");
+                config.default_model = new_default;
+            }
         }
 
         Ok(())
@@ -372,41 +488,34 @@ impl ModelRouter {
 
     // ==================== FALLBACK CHAINS ====================
 
-    /// Get fallback chain for an alias
-    pub async fn get_fallback_chain(&self, alias_name: &str) -> Vec<String> {
+    /// Get fallback chain for a model ID
+    pub async fn get_fallback_chain(&self, model_id: &str) -> Vec<String> {
         let chains = self.fallback_chains.read().await;
         chains
-            .get(alias_name)
+            .get(model_id)
             .map(|entries| entries.iter().map(|e| e.provider.clone()).collect())
             .unwrap_or_default()
     }
 
-    /// Update fallback chain for an alias at runtime
+    /// Update fallback chain for a model ID at runtime
     pub async fn set_fallback_chain(
         &self,
-        alias_name: &str,
+        model_id: &str,
         provider_chain: Vec<String>,
     ) -> crate::Result<()> {
-        let config = self.config.read().await;
-        if !config.aliases.contains_key(alias_name) {
+        if self.provider_for_model(model_id).await.is_none() {
             return Err(crate::error::ConfigError::InvalidValue {
-                key: "alias".to_string(),
-                message: format!("Unknown alias: {alias_name}"),
+                key: "model".to_string(),
+                message: format!("Unknown model: {model_id}"),
             }
             .into());
         }
-        let model = config
-            .aliases
-            .get(alias_name)
-            .map(|a| a.model.clone())
-            .unwrap_or_default();
-        drop(config);
 
         let entries: Vec<FallbackEntry> = provider_chain
             .iter()
             .map(|p| FallbackEntry {
                 provider: p.clone(),
-                model: model.clone(),
+                model: model_id.to_string(),
                 enabled: true,
                 health_score: 100,
             })
@@ -414,14 +523,14 @@ impl ModelRouter {
 
         {
             let mut chains = self.fallback_chains.write().await;
-            chains.insert(alias_name.to_string(), entries);
+            chains.insert(model_id.to_string(), entries);
         }
 
         {
             let mut config = self.config.write().await;
             config
                 .fallback_chains
-                .insert(alias_name.to_string(), provider_chain);
+                .insert(model_id.to_string(), provider_chain);
         }
 
         Ok(())

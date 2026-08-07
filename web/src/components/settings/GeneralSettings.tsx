@@ -1,15 +1,16 @@
-import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
+import type { ModelInfo, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 import { useThemeStore } from "@/stores/themeStore";
 import type { SyscityConfig } from "@/components/settings/useSettingsData";
 import { Section } from "@/components/ui/Section";
 import { Select } from "@/components/ui/Select";
 import { Input } from "@/components/ui/Input";
 import { Toggle } from "@/components/ui/Toggle";
+import { getProviderLogo } from "@/lib/providerLogos";
 
 interface GeneralSettingsProps {
   transport: SyscityWebSocketTransport;
   config: SyscityConfig;
-  models: Array<{ id: string; name: string; provider: string }>;
+  models: ModelInfo[];
   currentTheme: string;
   update: (path: string, value: unknown) => Promise<void>;
 }
@@ -57,11 +58,24 @@ export function GeneralSettings({ transport, config, models, currentTheme, updat
             value={config.model || ""}
             onChange={(e) => update("model", e.target.value)}
           >
-            {models.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.provider})</option>)}
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.provider_name || m.provider} - {m.name}
+              </option>
+            ))}
           </Select>
           <div>
             <label className="block text-sm text-secondary mb-1">Provider</label>
-            <input type="text" value={config.model_provider || ""} readOnly className="w-full rounded-lg border border-subtle bg-sidebar px-3 py-2 text-sm text-secondary cursor-not-allowed" />
+            <div className="flex items-center gap-2 w-full rounded-lg border border-subtle bg-sidebar px-3 py-2 text-sm text-secondary cursor-not-allowed">
+              {(() => {
+                const owner = models.find((m) => m.id === config.model);
+                const logo = owner ? getProviderLogo(owner.provider) : undefined;
+                return logo ? (
+                  <img src={logo} alt="" className="w-4 h-4 object-contain shrink-0" />
+                ) : null;
+              })()}
+              <span>{config.model_provider || "—"}</span>
+            </div>
           </div>
         </div>
       </Section>

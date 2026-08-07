@@ -1,7 +1,7 @@
 //! ModelRouter — multi-provider LLM routing with fallback chains
 //!
 //! Provides the primary [`ModelRouter`] struct with support for:
-//! - Model aliases (e.g. "fast" → "claude-3-haiku")
+//! - Providers that own one or more concrete model IDs
 //! - Multi-provider routing with automatic fallback
 //! - Health checking and circuit breaker
 //! - Auth profile / API key rotation
@@ -15,7 +15,7 @@
 //! - `routing`: completion/streaming request flow with fallback
 //! - `cost_aware`: cost-aware automatic model selection
 //! - `quota`: usage snapshots with remote/local quota
-//! - `admin`: provider/alias/fallback-chain management
+//! - `admin`: provider/model/fallback-chain management
 
 mod admin;
 mod cost_aware;
@@ -39,7 +39,7 @@ use crate::gateway::task_registry::TaskRegistry;
 use crate::model_router::auth_profile::{AuthProfileManager, ProfileStatus};
 use crate::model_router::classifier::{KeywordTaskClassifier, TaskClassifierImpl};
 use crate::model_router::config::{
-    CircuitState, CostAwareConfig, FallbackEntry, ModelAlias, ModelRouterConfig, ProviderConfig,
+    CircuitState, CostAwareConfig, FallbackEntry, ModelRouterConfig, ProviderConfig,
     ProviderHealth, ProviderHealthInfo, ProviderInfo, ProviderType, TaskType,
 };
 use crate::model_router::failure_class::FailureClass;
@@ -118,158 +118,108 @@ mod tests {
     use crate::gateway::task_registry::TaskRegistry;
     use crate::model_router::auth_profile::{AuthKeyConfig, AuthProfileConfig};
     use crate::model_router::config::{
-        CircuitState, CostAwareConfig, ModelAlias, ModelRouterConfig, ProviderConfig, ProviderType,
+        CircuitState, CostAwareConfig, ModelRouterConfig, ProviderConfig, ProviderType,
     };
+    use crate::model_router::model_catalog::ModelCatalogEntry;
     use crate::model_router::usage_fetcher::UsageFetcher;
     use crate::model_router::usage_tracker::{QuotaSource, UsageQuota};
     use crate::providers::{
         CompletionRequest, CompletionResponse, CompletionStream, Message, Provider, Usage,
     };
 
+    /// Build a test provider config that owns the given model IDs.
+    fn test_provider_config(models: &[&str]) -> ProviderConfig {
+        ProviderConfig {
+            provider_type: ProviderType::Anthropic,
+            models: models.iter().map(|s| s.to_string()).collect(),
+            default_model: models.first().map(|s| s.to_string()).unwrap_or_default(),
+            api_key: "test-key".to_string().into(),
+            api_keys: vec![],
+            auth_profile: None,
+            oauth: None,
+            base_url: None,
+            timeout: Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        }
+    }
+
     #[tokio::test]
-    async fn default_config_has_no_aliases() {
+    async fn default_config_has_no_providers() {
         let config = ModelRouterConfig::default();
-        assert!(config.aliases.is_empty());
+        assert!(config.providers.is_empty());
         assert_eq!(config.default_model, "");
     }
 
     #[tokio::test]
-    async fn aliases_with_configs_returns_all_aliases() {
+    async fn models_with_providers_returns_provider_model_pairs() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         router
-            .set_alias(ModelAlias {
-                name: "fast".to_string(),
-                provider: "openai".to_string(),
-                model: "gpt-3.5".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
+            .add_provider("openai", test_provider_config(&["gpt-4o", "gpt-4-turbo"]))
+            .await
+            .unwrap();
         router
-            .set_alias(ModelAlias {
-                name: "smart".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
+            .add_provider("anthropic", test_provider_config(&["claude-3-5-sonnet"]))
+            .await
+            .unwrap();
 
-        let aliases = router.aliases_with_configs().await;
-        assert_eq!(aliases.len(), 2);
-        assert!(aliases.iter().any(|(n, _)| n == "fast"));
-        assert!(aliases.iter().any(|(n, _)| n == "smart"));
+        let models = router.models_with_providers().await;
+        assert_eq!(models.len(), 3);
+        assert!(models.contains(&("openai".to_string(), "gpt-4o".to_string())));
+        assert!(models.contains(&("openai".to_string(), "gpt-4-turbo".to_string())));
+        assert!(models.contains(&("anthropic".to_string(), "claude-3-5-sonnet".to_string())));
     }
 
     #[tokio::test]
-    async fn alias_config_returns_single_alias() {
+    async fn add_provider_rejects_duplicate_name() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         router
-            .set_alias(ModelAlias {
-                name: "default".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
+            .add_provider("openai", test_provider_config(&["gpt-4o"]))
+            .await
+            .unwrap();
+        let result = router
+            .add_provider("openai", test_provider_config(&["gpt-4"]))
             .await;
+        assert!(result.is_err());
+    }
 
-        let alias = router.alias_config("default").await;
-        assert!(alias.is_some());
-        assert_eq!(alias.unwrap().provider, "anthropic");
-        assert!(router.alias_config("missing").await.is_none());
+    #[tokio::test]
+    async fn provider_exists_reports_registration() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        assert!(!router.provider_exists("openai").await);
+        router
+            .add_provider("openai", test_provider_config(&["gpt-4o"]))
+            .await
+            .unwrap();
+        assert!(router.provider_exists("openai").await);
+        assert!(!router.provider_exists("anthropic").await);
     }
 
     #[tokio::test]
     async fn router_config_returns_clone() {
         let mut config = ModelRouterConfig::default();
-        config.default_model = "default".to_string();
+        config.default_model = "claude-3".to_string();
         let router = ModelRouter::new(config);
 
         let snapshot = router.router_config().await;
-        assert_eq!(snapshot.default_model, "default");
-    }
-
-    #[tokio::test]
-    async fn list_aliases_returns_empty_by_default() {
-        let router = ModelRouter::new(ModelRouterConfig::default());
-        let aliases = router.list_aliases().await;
-        assert!(aliases.is_empty());
-    }
-
-    #[tokio::test]
-    async fn set_alias_adds_new_alias() {
-        let router = ModelRouter::new(ModelRouterConfig::default());
-        let alias = ModelAlias {
-            name: "coding".to_string(),
-            provider: "openai".to_string(),
-            model: "gpt-4".to_string(),
-            temperature: Some(0.2),
-            max_tokens: Some(4096),
-        };
-        router.set_alias(alias.clone()).await;
-
-        let aliases = router.list_aliases().await;
-        assert_eq!(aliases.len(), 1);
-        assert!(aliases.contains(&"coding".to_string()));
-    }
-
-    #[tokio::test]
-    async fn remove_alias_deletes_alias() {
-        let router = ModelRouter::new(ModelRouterConfig::default());
-        router
-            .set_alias(ModelAlias {
-                name: "fast".to_string(),
-                provider: "openai".to_string(),
-                model: "gpt-3.5".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
-
-        let removed = router.remove_alias("fast").await;
-        assert!(removed);
-
-        let aliases = router.list_aliases().await;
-        assert!(aliases.is_empty());
-    }
-
-    #[tokio::test]
-    async fn remove_unknown_alias_returns_false() {
-        let router = ModelRouter::new(ModelRouterConfig::default());
-        let removed = router.remove_alias("nonexistent").await;
-        assert!(!removed);
+        assert_eq!(snapshot.default_model, "claude-3");
     }
 
     #[tokio::test]
     async fn switch_default_model_changes_default() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         router
-            .set_alias(ModelAlias {
-                name: "default".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
-        router
-            .set_alias(ModelAlias {
-                name: "fast".to_string(),
-                provider: "openai".to_string(),
-                model: "gpt-3.5".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
-        router.switch_default_model("fast").await.unwrap();
+            .add_provider("openai", test_provider_config(&["gpt-3.5", "gpt-4"]))
+            .await
+            .unwrap();
+        router.switch_default_model("gpt-3.5").await.unwrap();
 
         let default = router.get_default_model().await;
-        assert_eq!(default, "fast");
+        assert_eq!(default, "gpt-3.5");
     }
 
     #[tokio::test]
-    async fn switch_unknown_model_fails() {
+    async fn switch_default_model_rejects_unknown_model_id() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let result = router.switch_default_model("nonexistent").await;
         assert!(result.is_err());
@@ -285,17 +235,7 @@ mod tests {
     #[tokio::test]
     async fn add_and_remove_provider() {
         let router = ModelRouter::new(ModelRouterConfig::default());
-        let config = ProviderConfig {
-            provider_type: ProviderType::Anthropic,
-            api_key: "test-key".to_string().into(),
-            api_keys: vec![],
-            auth_profile: None,
-            oauth: None,
-            base_url: None,
-            timeout: Duration::from_secs(30),
-            max_retries: 3,
-            retry_delay_ms: 1000,
-        };
+        let config = test_provider_config(&["test-model"]);
 
         router.add_provider("test-provider", config).await.unwrap();
         let providers = router.list_providers().await;
@@ -310,17 +250,7 @@ mod tests {
     #[tokio::test]
     async fn enable_disable_provider() {
         let router = ModelRouter::new(ModelRouterConfig::default());
-        let config = ProviderConfig {
-            provider_type: ProviderType::Anthropic,
-            api_key: "test-key".to_string().into(),
-            api_keys: vec![],
-            auth_profile: None,
-            oauth: None,
-            base_url: None,
-            timeout: Duration::from_secs(30),
-            max_retries: 3,
-            retry_delay_ms: 1000,
-        };
+        let config = test_provider_config(&["test-model"]);
 
         router.add_provider("p1", config).await.unwrap();
 
@@ -347,30 +277,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_chain_roundtrip() {
+    async fn fallback_chain_roundtrip_by_model_id() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         router
-            .set_alias(ModelAlias {
-                name: "default".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
+            .add_provider("anthropic", test_provider_config(&["claude-3"]))
+            .await
+            .unwrap();
         router
-            .set_fallback_chain("default", vec!["p1".to_string(), "p2".to_string()])
+            .set_fallback_chain("claude-3", vec!["p1".to_string(), "p2".to_string()])
             .await
             .unwrap();
 
-        let chain = router.get_fallback_chain("default").await;
+        let chain = router.get_fallback_chain("claude-3").await;
         assert_eq!(chain.len(), 2);
         assert_eq!(chain[0], "p1");
         assert_eq!(chain[1], "p2");
     }
 
     #[tokio::test]
-    async fn fallback_chain_for_unknown_alias_returns_empty() {
+    async fn fallback_chain_for_unknown_model_returns_empty() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let chain = router.get_fallback_chain("nonexistent").await;
         assert!(chain.is_empty());
@@ -379,17 +304,7 @@ mod tests {
     #[tokio::test]
     async fn get_provider_health_returns_info() {
         let router = ModelRouter::new(ModelRouterConfig::default());
-        let config = ProviderConfig {
-            provider_type: ProviderType::Anthropic,
-            api_key: "test-key".to_string().into(),
-            api_keys: vec![],
-            auth_profile: None,
-            oauth: None,
-            base_url: None,
-            timeout: Duration::from_secs(30),
-            max_retries: 3,
-            retry_delay_ms: 1000,
-        };
+        let config = test_provider_config(&["test-model"]);
 
         router.add_provider("p1", config).await.unwrap();
 
@@ -419,17 +334,7 @@ mod tests {
     #[tokio::test]
     async fn provider_list_includes_circuit_state() {
         let router = ModelRouter::new(ModelRouterConfig::default());
-        let config = ProviderConfig {
-            provider_type: ProviderType::OpenAi,
-            api_key: "key".to_string().into(),
-            api_keys: vec![],
-            auth_profile: None,
-            oauth: None,
-            base_url: None,
-            timeout: Duration::from_secs(30),
-            max_retries: 3,
-            retry_delay_ms: 1000,
-        };
+        let config = test_provider_config(&["test-model"]);
 
         router.add_provider("p1", config).await.unwrap();
         let providers = router.list_providers().await;
@@ -444,29 +349,24 @@ mod tests {
     async fn fallback_chain_set_and_clear() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         router
-            .set_alias(ModelAlias {
-                name: "default".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
-
-        router
-            .set_fallback_chain("default", vec!["a".to_string(), "b".to_string()])
+            .add_provider("anthropic", test_provider_config(&["claude-3"]))
             .await
             .unwrap();
-        let chain = router.get_fallback_chain("default").await;
+
+        router
+            .set_fallback_chain("claude-3", vec!["a".to_string(), "b".to_string()])
+            .await
+            .unwrap();
+        let chain = router.get_fallback_chain("claude-3").await;
         assert_eq!(chain, vec!["a", "b"]);
 
-        router.set_fallback_chain("default", vec![]).await.unwrap();
-        let chain = router.get_fallback_chain("default").await;
+        router.set_fallback_chain("claude-3", vec![]).await.unwrap();
+        let chain = router.get_fallback_chain("claude-3").await;
         assert!(chain.is_empty());
     }
 
     #[tokio::test]
-    async fn set_fallback_chain_unknown_alias_fails() {
+    async fn set_fallback_chain_unknown_model_fails() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let result = router
             .set_fallback_chain("nonexistent", vec!["a".to_string()])
@@ -478,41 +378,19 @@ mod tests {
     async fn switch_default_model_persists() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         router
-            .set_alias(ModelAlias {
-                name: "default".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
+            .add_provider("openai", test_provider_config(&["gpt-3.5", "gpt-4"]))
+            .await
+            .unwrap();
         router
-            .set_alias(ModelAlias {
-                name: "fast".to_string(),
-                provider: "openai".to_string(),
-                model: "gpt-3.5".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
-        router
-            .set_alias(ModelAlias {
-                name: "smart".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3-opus".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
-            .await;
+            .add_provider("anthropic", test_provider_config(&["claude-3", "claude-3-opus"]))
+            .await
+            .unwrap();
 
-        router.switch_default_model("fast").await.unwrap();
-        assert_eq!(router.get_default_model().await, "fast");
+        router.switch_default_model("gpt-3.5").await.unwrap();
+        assert_eq!(router.get_default_model().await, "gpt-3.5");
 
-        router.switch_default_model("smart").await.unwrap();
-        assert_eq!(router.get_default_model().await, "smart");
-
-        router.switch_default_model("default").await.unwrap();
-        assert_eq!(router.get_default_model().await, "default");
+        router.switch_default_model("claude-3-opus").await.unwrap();
+        assert_eq!(router.get_default_model().await, "claude-3-opus");
     }
 
     #[tokio::test]
@@ -535,7 +413,7 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.model_costs.len(), 3);
         assert_eq!(config.routing_rules.len(), 9);
-        assert_eq!(config.default_alias, "default");
+        assert_eq!(config.default_model, "default");
     }
 
     #[tokio::test]
@@ -812,17 +690,12 @@ mod tests {
             .await;
 
         router
-            .set_alias(ModelAlias {
-                name: "test".to_string(),
-                provider: "rotator".to_string(),
-                model: "rotator-model".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
+            .model_catalog
+            .register(ModelCatalogEntry::new("rotator-model", "rotator-model", "rotator"))
             .await;
 
         let response = router
-            .complete("test", vec![Message::user("hi")], None)
+            .complete("rotator-model", vec![Message::user("hi")], None)
             .await
             .expect("complete should succeed after key rotation");
         assert_eq!(response.message.content, "ok");
@@ -883,17 +756,12 @@ mod tests {
             .unwrap();
 
         router
-            .set_alias(ModelAlias {
-                name: "test".to_string(),
-                provider: "content-policy".to_string(),
-                model: "model".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
+            .model_catalog
+            .register(ModelCatalogEntry::new("model", "model", "content-policy"))
             .await;
 
         let result = router
-            .complete("test", vec![Message::user("hi")], None)
+            .complete("model", vec![Message::user("hi")], None)
             .await;
         assert!(result.is_err());
         assert_eq!(*provider.calls.lock().unwrap(), 1);
@@ -954,23 +822,20 @@ mod tests {
             .await
             .unwrap();
         router
-            .set_alias(ModelAlias {
-                name: "test".to_string(),
-                provider: "slow".to_string(),
-                model: "slow-model".to_string(),
-                temperature: None,
-                max_tokens: None,
-            })
+            .model_catalog
+            .register(ModelCatalogEntry::new("slow-model", "slow-model", "slow"))
             .await;
 
         let r1 = router.clone();
         let r2 = router.clone();
         let (first, second) = tokio::join!(
             tokio::time::timeout(Duration::from_secs(2), async move {
-                r1.complete("test", vec![Message::user("a")], None).await
+                r1.complete("slow-model", vec![Message::user("a")], None)
+                    .await
             }),
             tokio::time::timeout(Duration::from_secs(2), async move {
-                r2.complete("test", vec![Message::user("b")], None).await
+                r2.complete("slow-model", vec![Message::user("b")], None)
+                    .await
             }),
         );
 

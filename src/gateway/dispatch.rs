@@ -416,9 +416,10 @@ pub(crate) struct AgentDispatch {
     pub queue_mode: Option<String>,
 }
 
-/// Resolve the effective model alias for a session: the session's explicit
-/// pin first, then the bound agent's configured model, else `None` (caller
-/// falls back to the global default via the model router's fallback chains).
+/// Resolve the effective concrete model ID for a session: the session's
+/// explicit pin first, then the bound agent's configured model, else `None`
+/// (caller falls back to the global default via the model router's fallback
+/// chains).
 pub(crate) async fn resolve_session_model(
     state: &Arc<GatewayState>,
     session_id: &str,

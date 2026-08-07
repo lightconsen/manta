@@ -1,19 +1,7 @@
 import { useState, useEffect } from "react";
 import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 import { Input } from "@/components/ui/Input";
-
-const PROVIDER_LOGOS: Record<string, string> = {
-  openai: "/assets/providers/openai.svg",
-  deepseek: "/assets/providers/deepseek.svg",
-  ollama: "/assets/providers/ollama.svg",
-  qwen: "/assets/providers/qwen.svg",
-  kimi: "/assets/providers/moonshot.svg",
-  anthropic: "/assets/providers/anthropic.svg",
-  azure: "/assets/providers/azure.svg",
-  gemini: "/assets/providers/gemini.svg",
-  glm: "/assets/providers/chatglm.svg",
-  minimax: "/assets/providers/minimax.svg",
-};
+import { getProviderLogo } from "@/lib/providerLogos";
 
 type ModelPreset = {
   name: string;
@@ -31,35 +19,39 @@ interface AddModelFormProps {
 
 export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
   const [addModelError, setAddModelError] = useState("");
-  const [newModel, setNewModel] = useState({ name: "", provider: "anthropic", model: "", api_key: "", base_url: "" });
+  const [providerName, setProviderName] = useState("");
+  const [provider, setProvider] = useState("anthropic");
+  const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const [modelActionLoading, setModelActionLoading] = useState<string>("");
   const [modelPresets, setModelPresets] = useState<ModelPreset[]>([]);
   const [remoteModels, setRemoteModels] = useState<string[] | null>(null);
   const [remoteModelsSource, setRemoteModelsSource] = useState<"remote" | "static">("static");
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState("");
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [defaultModel, setDefaultModel] = useState("");
 
   // Load provider presets on mount.
   useEffect(() => {
     transport.listModelPresets().then(setModelPresets).catch(() => {});
   }, [transport]);
 
-  const selectModelProvider = (provider: string) => {
-    const preset = modelPresets.find((p) => p.name === provider);
-    setNewModel({
-      ...newModel,
-      provider,
-      model: preset?.models[0] || "",
-      base_url: preset?.base_url || "",
-    });
+  const selectModelProvider = (p: string) => {
+    const preset = modelPresets.find((x) => x.name === p);
+    setProvider(p);
+    setProviderName(preset?.display_name || p);
+    setBaseUrl(preset?.base_url || "");
     setRemoteModels(null);
     setFetchModelsError("");
+    setSelectedModels([]);
+    setDefaultModel("");
     // Providers without auth (e.g. Ollama) can fetch immediately.
     if (preset && preset.needs_api_key === false) {
       setFetchingModels(true);
       transport
         .fetchRemoteModels({
-          provider,
+          provider: p,
           base_url: preset.base_url || undefined,
         })
         .then((res) => {
@@ -68,7 +60,8 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
           setRemoteModelsSource(res.source);
           if (res.error) setFetchModelsError(res.error);
           if (res.models.length > 0) {
-            setNewModel((prev) => ({ ...prev, model: res.models[0] }));
+            setSelectedModels([res.models[0]]);
+            setDefaultModel(res.models[0]);
           }
         });
     }
@@ -77,64 +70,79 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
   const handleFetchModels = async () => {
     setFetchModelsError("");
     setRemoteModels(null);
-    const preset = modelPresets.find((p) => p.name === newModel.provider);
+    const preset = modelPresets.find((p) => p.name === provider);
     setFetchingModels(true);
     const res = await transport.fetchRemoteModels({
-      provider: newModel.provider,
-      base_url: newModel.base_url.trim() || undefined,
-      api_key: newModel.api_key.trim() || undefined,
-      protocol: newModel.provider === "custom" ? (preset?.protocol ?? "open_ai") : undefined,
+      provider,
+      base_url: baseUrl.trim() || undefined,
+      api_key: apiKey.trim() || undefined,
+      protocol: provider === "custom" ? (preset?.protocol ?? "open_ai") : undefined,
     });
     setFetchingModels(false);
     setRemoteModels(res.models);
     setRemoteModelsSource(res.source);
     if (res.error) setFetchModelsError(res.error);
     if (res.models.length > 0) {
-      setNewModel((prev) => ({
-        ...prev,
-        model: res.models.includes(prev.model) ? prev.model : res.models[0],
-      }));
+      const kept = selectedModels.filter((m) => res.models.includes(m));
+      const nextSelected = kept.length > 0 ? kept : [res.models[0]];
+      setSelectedModels(nextSelected);
+      setDefaultModel((prev) =>
+        prev && res.models.includes(prev) ? prev : nextSelected[0]
+      );
     }
   };
 
   // Auto-fetch the model list shortly after the API key is entered.
   useEffect(() => {
-    const preset = modelPresets.find((p) => p.name === newModel.provider);
+    const preset = modelPresets.find((p) => p.name === provider);
     if (!preset || preset.needs_api_key === false) return;
-    const key = newModel.api_key.trim();
+    const key = apiKey.trim();
     if (key.length < 20) return;
     const t = setTimeout(() => {
       if (!fetchingModels) handleFetchModels();
     }, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newModel.api_key, newModel.provider]);
+  }, [apiKey, provider]);
+
+  const toggleModel = (m: string) => {
+    const next = selectedModels.includes(m)
+      ? selectedModels.filter((x) => x !== m)
+      : [...selectedModels, m];
+    setSelectedModels(next);
+    if (!next.includes(defaultModel)) setDefaultModel(next[0] || "");
+  };
 
   const handleAddModel = async () => {
     setAddModelError("");
-    if (!newModel.name.trim()) {
-      setAddModelError("Model alias is required");
+    if (!providerName.trim()) {
+      setAddModelError("Provider name is required");
       return;
     }
-    if (!newModel.model.trim()) {
-      setAddModelError("Model ID is required");
+    if (selectedModels.length === 0) {
+      setAddModelError("Select at least one model");
       return;
     }
     setModelActionLoading("add");
-    const ok = await transport.addModel({
-      name: newModel.name.trim(),
-      provider: newModel.provider,
-      model: newModel.model.trim(),
-      api_key: newModel.api_key.trim() || undefined,
-      base_url: newModel.base_url.trim() || undefined,
+    const res = await transport.addModel({
+      provider: providerName.trim(),
+      models: selectedModels,
+      default_model: defaultModel || undefined,
+      api_key: apiKey.trim() || undefined,
+      base_url: baseUrl.trim() || undefined,
     });
-    if (ok) {
-      setNewModel({ name: "", provider: "anthropic", model: "", api_key: "", base_url: "" });
+    if (res.ok) {
+      setProviderName("");
+      setProvider("anthropic");
+      setApiKey("");
+      setBaseUrl("");
+      setSelectedModels([]);
+      setDefaultModel("");
       setRemoteModels(null);
       setFetchModelsError("");
       onAdded?.();
     } else {
-      setAddModelError("Failed to add model");
+      setAddModelError(res.error || "Failed to add provider");
     }
     setModelActionLoading("");
   };
@@ -145,8 +153,8 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
         <label className="block text-xs text-secondary mb-1">Provider</label>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {modelPresets.map((p) => {
-            const logo = PROVIDER_LOGOS[p.name];
-            const selected = newModel.provider === p.name;
+            const logo = getProviderLogo(p.name);
+            const selected = provider === p.name;
             return (
               <button
                 key={p.name}
@@ -171,29 +179,22 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
           })}
         </div>
       </div>
-      <Input
-        label="Base URL"
-        type="text"
-        value={newModel.base_url}
-        onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
-        placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
-      />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Input
-          label="Name"
+          label="Provider Name"
           type="text"
-          value={newModel.name}
-          onChange={(e) => setNewModel({ ...newModel, name: e.target.value })}
-          placeholder="smart"
+          value={providerName}
+          onChange={(e) => setProviderName(e.target.value)}
+          placeholder="DeepSeek"
         />
-        {modelPresets.find((p) => p.name === newModel.provider)?.needs_api_key !== false && (
+        {modelPresets.find((p) => p.name === provider)?.needs_api_key !== false && (
           <Input
             label="API Key"
             type="password"
-            value={newModel.api_key}
-            onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
             onBlur={() => {
-              if (newModel.api_key.trim() && remoteModels === null && !fetchingModels) {
+              if (apiKey.trim() && remoteModels === null && !fetchingModels) {
                 handleFetchModels();
               }
             }}
@@ -201,13 +202,20 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
           />
         )}
       </div>
+      <Input
+        label="Base URL"
+        type="text"
+        value={baseUrl}
+        onChange={(e) => setBaseUrl(e.target.value)}
+        placeholder={modelPresets.find((p) => p.name === provider)?.base_url || "https://..."}
+      />
       {(() => {
-        const preset = modelPresets.find((p) => p.name === newModel.provider);
+        const preset = modelPresets.find((p) => p.name === provider);
         const optionList = remoteModels && remoteModels.length > 0 ? remoteModels : (preset?.models ?? []);
         return (
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs text-secondary">Model</label>
+              <label className="block text-xs text-secondary">Models</label>
               <button
                 type="button"
                 onClick={handleFetchModels}
@@ -222,20 +230,31 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
                 Loading model list...
               </div>
             ) : optionList.length > 0 ? (
-              <select
-                value={newModel.model}
-                onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
-                className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-              >
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-subtle bg-card p-2 space-y-1">
                 {optionList.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <label
+                    key={m}
+                    className="flex items-center gap-2 px-2 py-1 rounded hover:bg-black/[0.03] dark:hover:bg-white/[0.04] text-sm cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedModels.includes(m)}
+                      onChange={() => toggleModel(m)}
+                      className="accent-primary-500"
+                    />
+                    <span className="truncate text-primary">{m}</span>
+                  </label>
                 ))}
-              </select>
+              </div>
             ) : (
               <Input
                 type="text"
-                value={newModel.model}
-                onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
+                value={selectedModels[0] || ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSelectedModels(v ? [v] : []);
+                  setDefaultModel(v);
+                }}
                 placeholder="model-id"
               />
             )}
@@ -245,6 +264,20 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
           </div>
         );
       })()}
+      {selectedModels.length > 0 && (
+        <div>
+          <label className="block text-xs text-secondary mb-1">Default Model</label>
+          <select
+            value={defaultModel}
+            onChange={(e) => setDefaultModel(e.target.value)}
+            className="w-full rounded-lg border border-subtle bg-card px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+          >
+            {selectedModels.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+      )}
       {fetchModelsError && (
         <div className="text-xs text-amber-600 dark:text-amber-400">{fetchModelsError}</div>
       )}
@@ -257,7 +290,7 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
           disabled={modelActionLoading === "add"}
           className="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white text-xs font-medium transition"
         >
-          {modelActionLoading === "add" ? "Adding..." : "Add Model"}
+          {modelActionLoading === "add" ? "Adding..." : "Add Provider"}
         </button>
       </div>
     </div>

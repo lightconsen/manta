@@ -145,8 +145,15 @@ pub(super) async fn handle_fast(
     let enabled = mode == "on";
 
     if enabled {
-        // Resolve the fast model alias and read the current default model once.
-        let fast_model = state.infra.model_router.resolve_alias("fast").await;
+        // The fast model is a configured concrete model ID (runtime setting);
+        // fall back to the current default model when none is set.
+        let fast_model = {
+            let settings = state.infra.runtime_settings.read().await;
+            settings
+                .get("fast_model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
         let current_model = state.config.read().await.model.clone();
         let active_model = fast_model.clone().unwrap_or_else(|| current_model.clone());
 
@@ -165,7 +172,7 @@ pub(super) async fn handle_fast(
         } else {
             WsResponse::ok(
                 &req.id,
-                serde_json::json!({ "text": "⚡ Fast mode enabled (no fast alias configured, using current model)." }),
+                serde_json::json!({ "text": "⚡ Fast mode enabled (no fast model configured, using current model)." }),
             )
         }
     } else {

@@ -89,17 +89,19 @@ impl ModelRouter {
         }
     }
 
-    /// Resolve an alias, upgrading to a capability-compatible model if needed.
-    pub(super) async fn resolve_alias_with_capabilities(
+    /// Resolve a model, upgrading to a capability-compatible model if needed.
+    /// Returns `(provider, model_id)`.
+    pub(super) async fn resolve_model_with_capabilities(
         &self,
-        alias: &ModelAlias,
+        provider: &str,
+        model_id: &str,
         request: &CompletionRequest,
-    ) -> ModelAlias {
+    ) -> (String, String) {
         if !request.requires_vision && !request.requires_tools && !request.requires_reasoning {
-            return alias.clone();
+            return (provider.to_string(), model_id.to_string());
         }
 
-        let entry = self.model_catalog.get(&alias.provider, &alias.model).await;
+        let entry = self.model_catalog.get(provider, model_id).await;
 
         let compatible = entry.is_some_and(|e| {
             (!request.requires_vision || e.supports_vision)
@@ -108,7 +110,7 @@ impl ModelRouter {
         });
 
         if compatible {
-            return alias.clone();
+            return (provider.to_string(), model_id.to_string());
         }
 
         // Search catalog for cheapest compatible model
@@ -133,40 +135,40 @@ impl ModelRouter {
 
         if let Some((entry, _)) = best {
             info!(
-                "Capability routing: upgraded '{}' (provider={}, model={}) to '{}' (provider={}, \
-                 model={}) for vision={} tools={} reasoning={}",
-                alias.name,
-                alias.provider,
-                alias.model,
-                entry.name,
-                entry.provider,
+                "Capability routing: upgraded '{}' (provider={}) to '{}' (provider={}) for \
+                 vision={} tools={} reasoning={}",
+                model_id,
+                provider,
                 entry.id,
+                entry.provider,
                 request.requires_vision,
                 request.requires_tools,
                 request.requires_reasoning,
             );
-            let mut upgraded = alias.clone();
-            upgraded.provider = entry.provider.clone();
-            upgraded.model = entry.id.clone();
-            return upgraded;
+            return (entry.provider.clone(), entry.id.clone());
         }
 
-        alias.clone()
+        (provider.to_string(), model_id.to_string())
     }
 
     // ==================== PROVIDER CHAIN ====================
 
-    /// Get the ordered list of providers to try
-    pub(super) async fn get_provider_chain(&self, alias: &ModelAlias) -> Vec<FallbackEntry> {
+    /// Get the ordered list of providers to try for a model, falling back to
+    /// the provider that owns the model when no chain is configured.
+    pub(super) async fn get_provider_chain(
+        &self,
+        provider: &str,
+        model_id: &str,
+    ) -> Vec<FallbackEntry> {
         let chains = self.fallback_chains.read().await;
 
-        if let Some(chain) = chains.get(&alias.name) {
+        if let Some(chain) = chains.get(model_id) {
             return chain.clone();
         }
 
         vec![FallbackEntry {
-            provider: alias.provider.clone(),
-            model: alias.model.clone(),
+            provider: provider.to_string(),
+            model: model_id.to_string(),
             enabled: true,
             health_score: 100,
         }]

@@ -96,7 +96,7 @@ export interface ToastState {
 
 export function useSettingsData(transport: SyscityWebSocketTransport) {
   const [config, setConfig] = useState<SyscityConfig>({});
-  const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
+  const [models, setModels] = useState<Array<{ id: string; name: string; provider: string; provider_name: string }>>([]);
   const [agentRegistry, setAgentRegistry] = useState<Array<{ id: string; display_name: string; emoji?: string; is_valid: boolean; has_heartbeat: boolean }>>([]);
   const [crons, setCrons] = useState<Array<Record<string, unknown>>>([]);
   const [skills, setSkills] = useState<Array<Record<string, unknown>>>([]);
@@ -272,20 +272,20 @@ export function useSettingsData(transport: SyscityWebSocketTransport) {
     setChannelActionLoading("");
   };
 
-  const handleRemoveModel = async (name: string) => {
-    if (!confirm(`Remove model "${name}"?`)) return;
-    setModelActionLoading(name);
-    await transport.removeModel(name);
+  const handleRemoveModel = async (modelId: string) => {
+    if (!confirm(`Remove model "${modelId}"?`)) return;
+    setModelActionLoading(modelId);
+    await transport.removeModel(modelId);
     await refreshModels();
     setModelActionLoading("");
   };
 
-  const handleSetDefaultModel = async (name: string) => {
-    setModelActionLoading(`default_${name}`);
-    const ok = await transport.setDefaultModel(name);
+  const handleSetDefaultModel = async (modelId: string) => {
+    setModelActionLoading(`default_${modelId}`);
+    const ok = await transport.setDefaultModel(modelId);
     if (ok) {
       await refreshModels();
-      setConfig((prev) => ({ ...prev, model: name }));
+      setConfig((prev) => ({ ...prev, model: modelId }));
     }
     setModelActionLoading("");
   };

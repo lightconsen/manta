@@ -13,18 +13,18 @@ impl ModelRouter {
     ) -> crate::Result<CompletionResponse> {
         let config = self.config.read().await;
 
-        let alias_name = if let Some(ref cost_aware) = config.cost_aware {
+        let model_id = if let Some(ref cost_aware) = config.cost_aware {
             if cost_aware.enabled {
                 drop(config);
                 return self.complete_with_cost_routing(messages, tools).await;
             }
-            cost_aware.default_alias.clone()
+            cost_aware.default_model.clone()
         } else {
             config.default_model.clone()
         };
         drop(config);
 
-        self.complete(&alias_name, messages, tools).await
+        self.complete(&model_id, messages, tools).await
     }
 
     /// Internal: route based on task classification and cost
@@ -49,24 +49,24 @@ impl ModelRouter {
             return self.complete(&cheapest, messages, tools).await;
         }
 
-        // Resolve alias from routing rules
-        let alias_name = Self::resolve_alias_for_task(cost_aware, &task_type, &messages);
+        // Resolve model from routing rules
+        let model_id = Self::resolve_model_for_task(cost_aware, &task_type, &messages);
         drop(config);
 
         // Complete and track cost
-        let alias_name_for_cost = alias_name.clone();
-        let response = self.complete(&alias_name, messages, tools).await?;
+        let model_id_for_cost = model_id.clone();
+        let response = self.complete(&model_id, messages, tools).await?;
 
         // Track cost: config is lock #1 (per doc at line 48-58) and we hold
         // no other locks at this point, so acquiring config.write() is safe.
         if let Some(ref usage) = response.usage {
             let mut config = self.config.write().await;
             if let Some(ref mut cost_aware) = config.cost_aware {
-                if let Some(cost) = cost_aware.model_costs.get(&alias_name_for_cost) {
+                if let Some(cost) = cost_aware.model_costs.get(&model_id_for_cost) {
                     let estimated = cost.estimate(usage);
                     cost_aware.daily_spend_usd += estimated;
                     info!(
-                        "Cost tracked: ${estimated:.4} for '{alias_name_for_cost}' (task: \
+                        "Cost tracked: ${estimated:.4} for '{model_id_for_cost}' (task: \
                          {task_type:?})"
                     );
                 }
@@ -99,13 +99,12 @@ impl ModelRouter {
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(name, _)| name.clone())
-            .unwrap_or_else(|| cost_aware.default_alias.clone());
+            .unwrap_or_else(|| cost_aware.default_model.clone());
         Some(cheapest)
     }
 
-    /// Resolve the model alias to use for a given task type based on routing
-    /// rules.
-    fn resolve_alias_for_task(
+    /// Resolve the model to use for a given task type based on routing rules.
+    fn resolve_model_for_task(
         cost_aware: &CostAwareConfig,
         task_type: &TaskType,
         messages: &[Message],
@@ -122,7 +121,7 @@ impl ModelRouter {
             });
 
         let Some(rule) = rule else {
-            return cost_aware.default_alias.clone();
+            return cost_aware.default_model.clone();
         };
 
         let estimated_tokens: u32 = messages.iter().map(|m| m.content.len() as u32 / 4).sum();
@@ -131,15 +130,15 @@ impl ModelRouter {
                 info!(
                     "Estimated tokens ({estimated_tokens}) exceeds max for '{}' ({max_tokens}), \
                      using fallback",
-                    rule.preferred_alias
+                    rule.preferred_model
                 );
                 return rule
-                    .fallback_alias
+                    .fallback_model
                     .clone()
-                    .unwrap_or_else(|| rule.preferred_alias.clone());
+                    .unwrap_or_else(|| rule.preferred_model.clone());
             }
         }
-        rule.preferred_alias.clone()
+        rule.preferred_model.clone()
     }
 
     /// Get current daily spend

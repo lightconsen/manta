@@ -24,7 +24,7 @@ pub struct WsQuery {
 /// Request body for switching default model
 #[derive(Debug, Deserialize)]
 pub struct SwitchModelRequest {
-    /// Model alias to switch to (e.g., "fast", "smart", "default")
+    /// Concrete model ID to switch to (e.g., "deepseek-v4-pro")
     pub model: String,
 }
 
@@ -39,9 +39,7 @@ pub struct SendMessageRequest {
     pub user_id: Option<String>,
     /// Optional provider override (e.g., "anthropic", "openai")
     pub provider_override: Option<String>,
-    /// Optional model alias override (e.g., "fast", "smart")
-    pub model_alias: Option<String>,
-    /// Optional specific model ID override
+    /// Optional concrete model ID override
     pub model_id: Option<String>,
 }
 

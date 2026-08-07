@@ -195,12 +195,10 @@ pub struct Agent {
     extra_params: Arc<RwLock<Option<serde_json::Value>>>,
     /// Optional model router for advanced routing, key rotation, and fallback.
     model_router: Option<Arc<crate::model_router::ModelRouter>>,
-    /// Model alias used when routing through the model router.
-    model_alias: Option<String>,
     /// Temporary model override set per-request (e.g. from OpenAI-compatible
-    /// API). Takes precedence over `model_alias` and `model`.
+    /// API). Takes precedence over `model`.
     model_override: Arc<RwLock<Option<String>>>,
-    /// Per-conversation model alias (session-scoped model binding). Keyed by
+    /// Per-conversation model ID (session-scoped model binding). Keyed by
     /// conversation/session id so concurrent sessions on this shared agent do
     /// not interfere. Takes precedence over `model_override`.
     session_models: Arc<RwLock<HashMap<String, String>>>,

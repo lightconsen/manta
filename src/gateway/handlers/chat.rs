@@ -448,7 +448,6 @@ mod tests {
             message: "hello".to_string(),
             user_id: None,
             provider_override: None,
-            model_alias: None,
             model_id: None,
         });
         let (status, json) = body_json(

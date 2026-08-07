@@ -8,16 +8,17 @@ impl ModelRouter {
     /// Complete a request using the model router
     pub async fn complete(
         &self,
-        alias_or_model: &str,
+        model_id: &str,
         messages: Vec<Message>,
         tools: Option<Vec<ToolDefinition>>,
     ) -> crate::Result<CompletionResponse> {
-        let (alias, request) = self
-            .build_request(alias_or_model, messages, tools, false)
-            .await?;
-        let providers_to_try = self.get_providers_to_try(&alias, &request).await;
+        let (provider, model_id, request) =
+            self.build_request(model_id, messages, tools, false).await?;
+        let providers_to_try = self
+            .get_providers_to_try(&provider, &model_id, &request)
+            .await;
 
-        self.route_with_fallback(alias, request, providers_to_try, |provider, req| async move {
+        self.route_with_fallback(&model_id, request, providers_to_try, |provider, req| async move {
             provider.complete(req).await
         })
         .await
@@ -26,47 +27,53 @@ impl ModelRouter {
     /// Stream a completion through the router with fallback and key rotation.
     pub async fn stream(
         &self,
-        alias_or_model: &str,
+        model_id: &str,
         messages: Vec<Message>,
         tools: Option<Vec<ToolDefinition>>,
     ) -> crate::Result<CompletionStream> {
-        let (alias, request) = self
-            .build_request(alias_or_model, messages, tools, true)
-            .await?;
-        let providers_to_try = self.get_providers_to_try(&alias, &request).await;
+        let (provider, model_id, request) =
+            self.build_request(model_id, messages, tools, true).await?;
+        let providers_to_try = self
+            .get_providers_to_try(&provider, &model_id, &request)
+            .await;
 
-        self.route_with_fallback(alias, request, providers_to_try, |provider, req| async move {
+        self.route_with_fallback(&model_id, request, providers_to_try, |provider, req| async move {
             provider.stream(req).await
         })
         .await
     }
 
-    /// Build a CompletionRequest and resolve the alias.
+    /// Build a CompletionRequest and resolve the model to its provider.
+    /// Returns `(provider, model_id, request)`. Unknown models fall back to
+    /// the global default model.
     async fn build_request(
         &self,
-        alias_or_model: &str,
+        model_id: &str,
         messages: Vec<Message>,
         tools: Option<Vec<ToolDefinition>>,
         stream: bool,
-    ) -> crate::Result<(ModelAlias, CompletionRequest)> {
-        let alias = {
-            let config = self.config.read().await;
-            config
-                .aliases
-                .get(alias_or_model)
-                .or_else(|| config.aliases.get(&config.default_model))
-                .cloned()
-                .ok_or_else(|| crate::error::ConfigError::InvalidValue {
-                    key: "model_alias".to_string(),
-                    message: format!("Unknown model alias: {alias_or_model}"),
-                })?
+    ) -> crate::Result<(String, String, CompletionRequest)> {
+        let (provider, resolved_model) = {
+            if let Some(provider) = self.provider_for_model(model_id).await {
+                (provider, model_id.to_string())
+            } else {
+                let default_model = self.get_default_model().await;
+                let provider = self
+                    .provider_for_model(&default_model)
+                    .await
+                    .ok_or_else(|| crate::error::ConfigError::InvalidValue {
+                        key: "model".to_string(),
+                        message: format!("Unknown model: {model_id}"),
+                    })?;
+                (provider, default_model)
+            }
         };
 
         let request = CompletionRequest {
-            model: Some(alias.model.clone()),
+            model: Some(resolved_model.clone()),
             messages,
-            temperature: alias.temperature,
-            max_tokens: alias.max_tokens,
+            temperature: None,
+            max_tokens: None,
             stream,
             tools,
             stop: None,
@@ -77,25 +84,24 @@ impl ModelRouter {
             ..Default::default()
         };
 
-        let alias = self.resolve_alias_with_capabilities(&alias, &request).await;
-        Ok((alias, request))
+        let (provider, resolved_model) = self
+            .resolve_model_with_capabilities(&provider, &resolved_model, &request)
+            .await;
+        Ok((provider, resolved_model, request))
     }
 
     /// Build the provider chain to try, including fallbacks.
     async fn get_providers_to_try(
         &self,
-        alias: &ModelAlias,
+        provider: &str,
+        model_id: &str,
         request: &CompletionRequest,
     ) -> Vec<FallbackEntry> {
-        let mut providers_to_try = self.get_provider_chain(alias).await;
+        let mut providers_to_try = self.get_provider_chain(provider, model_id).await;
 
         for fallback in &request.fallback_models {
-            let fb_alias = {
-                let config = self.config.read().await;
-                config.aliases.get(fallback).cloned()
-            };
-            if let Some(fb_alias) = fb_alias {
-                let fb_chain = self.get_provider_chain(&fb_alias).await;
+            if let Some(fb_provider) = self.provider_for_model(fallback).await {
+                let fb_chain = self.get_provider_chain(&fb_provider, fallback).await;
                 for entry in fb_chain {
                     if !providers_to_try
                         .iter()
@@ -115,7 +121,7 @@ impl ModelRouter {
     /// Handles the common fallback loop shared by [`complete`] and [`stream`].
     async fn route_with_fallback<T, F, Fut>(
         &self,
-        _alias: ModelAlias,
+        _model_id: &str,
         request: CompletionRequest,
         providers_to_try: Vec<FallbackEntry>,
         provider_fn: F,

@@ -169,7 +169,7 @@ pub enum GatewayEvent {
     SessionRenamed { session_id: String, name: String },
     /// Session pin status changed
     SessionPinned { session_id: String, pinned: bool },
-    /// Session model binding changed (pinned alias set or cleared)
+    /// Session model binding changed (pinned model ID set or cleared)
     SessionModelChanged {
         session_id: String,
         model: Option<String>,

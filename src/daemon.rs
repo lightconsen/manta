@@ -173,6 +173,8 @@ fn apply_env_provider_overrides(config: &mut crate::gateway::GatewayConfig) {
         if should_insert {
             let provider_config = crate::model_router::ProviderConfig {
                 provider_type,
+                models: Vec::new(),
+                default_model: String::new(),
                 api_key: api_key.into(),
                 api_keys: Vec::new(),
                 auth_profile: None,
@@ -196,6 +198,8 @@ fn apply_env_provider_overrides(config: &mut crate::gateway::GatewayConfig) {
         if should_insert {
             let provider_config = crate::model_router::ProviderConfig {
                 provider_type: crate::model_router::ProviderType::Anthropic,
+                models: Vec::new(),
+                default_model: String::new(),
                 api_key: api_key.into(),
                 api_keys: Vec::new(),
                 auth_profile: None,
@@ -219,6 +223,8 @@ fn apply_env_provider_overrides(config: &mut crate::gateway::GatewayConfig) {
         if should_insert {
             let provider_config = crate::model_router::ProviderConfig {
                 provider_type: crate::model_router::ProviderType::OpenAi,
+                models: Vec::new(),
+                default_model: String::new(),
                 api_key: api_key.into(),
                 api_keys: Vec::new(),
                 auth_profile: None,
@@ -1052,6 +1058,8 @@ mod tests {
             "openai".to_string(),
             ProviderConfig {
                 provider_type: ProviderType::OpenAi,
+                models: vec!["gpt-4o".to_string()],
+                default_model: "gpt-4o".to_string(),
                 api_key: "config-openai-key".to_string().into(),
                 api_keys: Vec::new(),
                 auth_profile: None,
@@ -1085,6 +1093,8 @@ mod tests {
             "openai".to_string(),
             ProviderConfig {
                 provider_type: ProviderType::OpenAi,
+                models: vec!["gpt-4o".to_string()],
+                default_model: "gpt-4o".to_string(),
                 api_key: "config-openai-key".to_string().into(),
                 api_keys: Vec::new(),
                 auth_profile: None,

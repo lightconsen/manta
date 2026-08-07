@@ -32,9 +32,6 @@ pub struct ModelCatalogEntry {
     pub name: String,
     /// Provider name (e.g. "openai", "anthropic")
     pub provider: String,
-    /// Optional alias in this deployment
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alias: Option<String>,
     /// Context window size in tokens
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_window: Option<usize>,
@@ -64,7 +61,6 @@ impl ModelCatalogEntry {
             id: id.into(),
             name: name.into(),
             provider: provider.into(),
-            alias: None,
             context_window: None,
             supports_vision: false,
             supports_tools: false,
@@ -73,12 +69,6 @@ impl ModelCatalogEntry {
             pricing: None,
             capabilities: Vec::new(),
         }
-    }
-
-    /// Set the alias.
-    pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
-        self.alias = Some(alias.into());
-        self
     }
 
     /// Set the context window.
@@ -131,15 +121,15 @@ pub trait ModelDiscoverySource: Send + Sync {
     async fn discover(&self) -> crate::Result<Vec<ModelCatalogEntry>>;
 }
 
-/// Static discovery source that returns models from configuration aliases.
+/// Static discovery source that returns models owned by configured providers.
 pub struct StaticModelSource {
-    aliases: Vec<(String, String, String)>, // (alias, provider, model_id)
+    models: Vec<(String, String)>, // (provider, model_id)
 }
 
 impl StaticModelSource {
-    /// Create a source from alias mappings.
-    pub fn new(aliases: Vec<(String, String, String)>) -> Self {
-        Self { aliases }
+    /// Create a source from `(provider, model_id)` pairs.
+    pub fn new(models: Vec<(String, String)>) -> Self {
+        Self { models }
     }
 }
 
@@ -147,13 +137,9 @@ impl StaticModelSource {
 impl ModelDiscoverySource for StaticModelSource {
     async fn discover(&self) -> crate::Result<Vec<ModelCatalogEntry>> {
         let mut entries = Vec::new();
-        for (alias, provider, model_id) in &self.aliases {
-            let mut entry = ModelCatalogEntry::new(
-                model_id.clone(),
-                format!("{} ({})", model_id, alias),
-                provider.clone(),
-            )
-            .with_alias(alias.clone());
+        for (provider, model_id) in &self.models {
+            let mut entry =
+                ModelCatalogEntry::new(model_id.clone(), model_id.clone(), provider.clone());
 
             // Heuristic: set known context windows and capabilities
             entry = apply_known_model_metadata(entry, model_id);
@@ -322,15 +308,6 @@ impl ModelCatalog {
         entries.get(&key).cloned()
     }
 
-    /// Get an entry by alias.
-    pub async fn get_by_alias(&self, alias: &str) -> Option<ModelCatalogEntry> {
-        let entries = self.entries.read().await;
-        entries
-            .values()
-            .find(|e| e.alias.as_deref() == Some(alias))
-            .cloned()
-    }
-
     /// List all non-suppressed entries.
     pub async fn list(&self) -> Vec<ModelCatalogEntry> {
         let entries = self.entries.read().await;
@@ -418,14 +395,12 @@ mod tests {
     #[test]
     fn test_entry_builder() {
         let entry = ModelCatalogEntry::new("gpt-4o", "GPT-4o", "openai")
-            .with_alias("smart")
             .with_context_window(128_000)
             .with_vision()
             .with_tools()
             .with_capability("json_mode");
 
         assert_eq!(entry.id, "gpt-4o");
-        assert_eq!(entry.alias, Some("smart".to_string()));
         assert_eq!(entry.context_window, Some(128_000));
         assert!(entry.supports_vision);
         assert!(entry.supports_tools);
@@ -486,27 +461,19 @@ mod tests {
     #[tokio::test]
     async fn test_static_source_discovery() {
         let source = StaticModelSource::new(vec![
-            (
-                "default".to_string(),
-                "anthropic".to_string(),
-                "claude-3-5-sonnet-20241022".to_string(),
-            ),
-            (
-                "fast".to_string(),
-                "anthropic".to_string(),
-                "claude-3-haiku-20240307".to_string(),
-            ),
+            ("anthropic".to_string(), "claude-3-5-sonnet-20241022".to_string()),
+            ("anthropic".to_string(), "claude-3-haiku-20240307".to_string()),
         ]);
 
         let entries = source.discover().await.unwrap();
         assert_eq!(entries.len(), 2);
 
-        let default = entries
+        let sonnet = entries
             .iter()
-            .find(|e| e.alias.as_deref() == Some("default"))
+            .find(|e| e.id == "claude-3-5-sonnet-20241022")
             .unwrap();
-        assert_eq!(default.provider, "anthropic");
-        assert!(default.supports_tools);
+        assert_eq!(sonnet.provider, "anthropic");
+        assert!(sonnet.supports_tools);
     }
 
     #[tokio::test]
@@ -514,7 +481,6 @@ mod tests {
         let catalog = ModelCatalog::new();
         catalog
             .add_source(Box::new(StaticModelSource::new(vec![(
-                "default".to_string(),
                 "anthropic".to_string(),
                 "claude-3-5-sonnet-20241022".to_string(),
             )])))
