@@ -25,6 +25,8 @@ interface AgentsSettingsProps {
   selectedAgentDetail: AgentDetail | null;
   agentDetailLoading: boolean;
   defaultAgent: Record<string, unknown>;
+  models: Array<{ id: string; name: string; provider: string }>;
+  agentModels: Record<string, string>;
   update: (path: string, value: unknown) => Promise<void>;
 }
 
@@ -35,6 +37,8 @@ export function AgentsSettings({
   selectedAgentDetail,
   agentDetailLoading,
   defaultAgent,
+  models,
+  agentModels,
   update,
 }: AgentsSettingsProps) {
   return (
@@ -54,6 +58,23 @@ export function AgentsSettings({
             ))}
           </Select>
         )}
+      </Section>
+
+      <Section title="Model">
+        <Select
+          value={agentModels[selectedAgentId] ?? ""}
+          onChange={(e) => update(`agent_models.${selectedAgentId}`, e.target.value || null)}
+        >
+          <option value="">Global default</option>
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.id}
+            </option>
+          ))}
+        </Select>
+        <div className="mt-1 text-[11px] text-secondary/70">
+          Sessions for "{selectedAgentId}" use this model unless a session overrides it. Empty = global default.
+        </div>
       </Section>
 
       {agentDetailLoading && (

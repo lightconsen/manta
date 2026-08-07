@@ -57,6 +57,7 @@ impl Agent {
             model_router: None,
             model_alias: None,
             model_override: Arc::new(RwLock::new(None)),
+            session_models: Arc::new(RwLock::new(HashMap::new())),
             plans_dir: None,
             pii_detector: None,
             computer_adapter: None,
@@ -83,6 +84,21 @@ impl Agent {
     pub async fn set_model_override(&self, model: Option<String>) {
         let mut guard = self.model_override.write().await;
         *guard = model;
+    }
+
+    /// Set or clear the model alias for one conversation (session-scoped model
+    /// binding). Unlike `set_model_override`, this is keyed by conversation id,
+    /// so concurrent sessions on this shared agent do not interfere.
+    pub async fn set_session_model(&self, conversation_id: &str, model: Option<String>) {
+        let mut guard = self.session_models.write().await;
+        match model {
+            Some(m) => {
+                guard.insert(conversation_id.to_string(), m);
+            }
+            None => {
+                guard.remove(conversation_id);
+            }
+        }
     }
 
     /// Patch a [`CompletionRequest`] with provider-specific reasoning
@@ -674,6 +690,26 @@ mod tests {
 
     fn scope(task_id: &str) -> DelegationScope {
         DelegationScope::new("root-1", task_id, 2, 3)
+    }
+
+    #[tokio::test]
+    async fn test_session_models_are_per_conversation() {
+        let agent = named_agent();
+
+        // Two concurrent sessions on the shared agent bind different models.
+        agent.set_session_model("conv-a", Some("alt".to_string())).await;
+        agent.set_session_model("conv-b", Some("fast".to_string())).await;
+
+        let map = agent.session_models.read().await;
+        assert_eq!(map.get("conv-a").map(String::as_str), Some("alt"));
+        assert_eq!(map.get("conv-b").map(String::as_str), Some("fast"));
+
+        // Clearing one conversation does not disturb the other.
+        drop(map);
+        agent.set_session_model("conv-a", None).await;
+        let map = agent.session_models.read().await;
+        assert_eq!(map.get("conv-a"), None);
+        assert_eq!(map.get("conv-b").map(String::as_str), Some("fast"));
     }
 
     #[test]

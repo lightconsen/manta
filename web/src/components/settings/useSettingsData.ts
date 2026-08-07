@@ -7,6 +7,7 @@ import { useThemeStore } from "@/stores/themeStore";
 export interface SyscityConfig {
   model?: string;
   model_provider?: string;
+  agent_models?: Record<string, string>;
   default_agent?: {
     temperature?: number;
     max_tokens?: number;

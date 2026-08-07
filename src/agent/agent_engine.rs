@@ -1315,10 +1315,10 @@ impl Agent {
         // Get completion — use model router when available for key rotation / fallback
         let response = if let Some(ref router) = self.model_router {
             let alias = {
+                let session_model = self.session_models.read().await.get(context.id()).cloned();
                 let guard = self.model_override.read().await;
-                guard
-                    .as_ref()
-                    .cloned()
+                session_model
+                    .or_else(|| guard.as_ref().cloned())
                     .or(self.model_alias.clone())
                     .or(self.model.clone())
                     .unwrap_or_else(|| self.provider.default_model().to_string())
@@ -1595,10 +1595,10 @@ impl Agent {
         // Get streaming completion — use model router when available
         let (raw_stream, family) = if let Some(ref router) = self.model_router {
             let alias = {
+                let session_model = self.session_models.read().await.get(context.id()).cloned();
                 let guard = self.model_override.read().await;
-                guard
-                    .as_ref()
-                    .cloned()
+                session_model
+                    .or_else(|| guard.as_ref().cloned())
                     .or(self.model_alias.clone())
                     .or(self.model.clone())
                     .unwrap_or_else(|| self.provider.default_model().to_string())

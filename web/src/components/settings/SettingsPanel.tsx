@@ -78,6 +78,8 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
                 selectedAgentDetail={d.selectedAgentDetail}
                 agentDetailLoading={d.agentDetailLoading}
                 defaultAgent={d.da}
+                models={d.models}
+                agentModels={d.config.agent_models || {}}
                 update={d.update}
               />
             )}

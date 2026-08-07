@@ -9,6 +9,7 @@ pub(super) async fn handle_config_get(req: &WsRequest, state: &Arc<GatewayState>
         serde_json::json!({
             "model": config.model,
             "model_provider": config.model_provider,
+            "agent_models": config.agent_models,
             "default_agent": {
                 "temperature": config.default_agent.temperature,
                 "max_tokens": config.default_agent.max_tokens,
@@ -100,6 +101,22 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
         "model_provider" => {
             if let Some(v) = params.value.as_str() {
                 config.model_provider = v.to_string();
+            }
+        }
+        p if p.starts_with("agent_models.") => {
+            let agent_id = &p["agent_models.".len()..];
+            if !agent_id.is_empty() {
+                match params.value.as_str() {
+                    Some(v) if !v.is_empty() => {
+                        config
+                            .agent_models
+                            .insert(agent_id.to_string(), v.to_string());
+                    }
+                    // null / empty clears the per-agent binding
+                    _ => {
+                        config.agent_models.remove(agent_id);
+                    }
+                }
             }
         }
         "default_agent.temperature" => {

@@ -200,6 +200,10 @@ pub struct Agent {
     /// Temporary model override set per-request (e.g. from OpenAI-compatible
     /// API). Takes precedence over `model_alias` and `model`.
     model_override: Arc<RwLock<Option<String>>>,
+    /// Per-conversation model alias (session-scoped model binding). Keyed by
+    /// conversation/session id so concurrent sessions on this shared agent do
+    /// not interfere. Takes precedence over `model_override`.
+    session_models: Arc<RwLock<HashMap<String, String>>>,
     /// Directory for persisting active plans (JSON files).
     plans_dir: Option<std::path::PathBuf>,
     /// PII detector for output content filtering.

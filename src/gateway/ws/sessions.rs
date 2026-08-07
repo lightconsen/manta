@@ -23,6 +23,7 @@ pub(super) async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewaySta
                         "last_activity": meta.last_activity.to_rfc3339(),
                         "is_active": meta.is_active,
                         "pinned": meta.pinned,
+                        "model": meta.model,
                         "created_at": meta.created_at.to_rfc3339(),
                     })
                 })
@@ -230,6 +231,58 @@ pub(super) async fn handle_sessions_set_pinned(
         pinned: params.pinned,
     }) {
         tracing::debug!("No receivers for SessionPinned event: {}", e);
+    }
+
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "ok" }))
+}
+
+pub(super) async fn handle_sessions_set_model(
+    req: &WsRequest,
+    _conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct SetModelParams {
+        session_id: String,
+        #[serde(default)]
+        model: Option<String>,
+    }
+
+    let params: SetModelParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    // Treat an empty string the same as clearing the pin.
+    let model = params.model.filter(|m| !m.is_empty());
+
+    // Validate the alias against the model router when pinning.
+    if let Some(ref m) = model {
+        let aliases = state.infra.model_router.aliases_with_configs().await;
+        if !aliases.iter().any(|(name, _)| name == m) {
+            return WsResponse::err(
+                &req.id,
+                "MODEL_NOT_FOUND",
+                format!("Unknown model alias: {}", m),
+            );
+        }
+    }
+
+    if let Some(ref store) = state.agents.store {
+        if let Err(e) = store
+            .set_session_model(&params.session_id, model.as_deref())
+            .await
+        {
+            warn!("Failed to set model for session {}: {}", params.session_id, e);
+            return WsResponse::err(&req.id, "INTERNAL_ERROR", e.to_string());
+        }
+    }
+
+    if let Err(e) = state.events.tx.send(GatewayEvent::SessionModelChanged {
+        session_id: params.session_id.clone(),
+        model: model.clone(),
+    }) {
+        tracing::debug!("No receivers for SessionModelChanged event: {}", e);
     }
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "ok" }))

@@ -416,6 +416,30 @@ pub(crate) struct AgentDispatch {
     pub queue_mode: Option<String>,
 }
 
+/// Resolve the effective model alias for a session: the session's explicit
+/// pin first, then the bound agent's configured model, else `None` (caller
+/// falls back to the global default via the model router's fallback chains).
+async fn resolve_session_model(
+    state: &Arc<GatewayState>,
+    session_id: &str,
+    agent_id: &str,
+) -> Option<String> {
+    if let Some(ref store) = state.agents.store {
+        if let Ok(Some(ps)) = store.load_session(session_id).await {
+            if let Some(m) = ps.metadata.model.filter(|m| !m.is_empty()) {
+                return Some(m);
+            }
+        }
+    }
+    state
+        .config
+        .read()
+        .await
+        .agent_models
+        .get(agent_id)
+        .cloned()
+}
+
 /// Send a single message to an agent via the ACP controller.
 ///
 /// This routes execution through the centralized ACP actor queue,
@@ -518,6 +542,15 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
         Some(serde_json::json!({ "thinking": { "type": "enabled", "budget_tokens": budget } }))
     });
     agent_handle.agent.set_extra_params(extra).await;
+
+    // Resolve the per-session model binding (session pin -> agent binding ->
+    // global default) and apply it scoped to this conversation so concurrent
+    // sessions on this shared agent do not interfere.
+    let session_model = resolve_session_model(state, session_id, agent_id).await;
+    agent_handle
+        .agent
+        .set_session_model(session_id, session_model)
+        .await;
 
     // Check queue mode and apply interrupt behavior if needed
     if queue_mode.as_deref() == Some("interrupt") {

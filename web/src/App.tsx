@@ -109,6 +109,7 @@ function ChatApp() {
       label?: string;
       agent_id?: string;
       pinned?: boolean;
+      model?: string | null;
       last_activity?: number;
     }>
   >([]);
@@ -247,6 +248,17 @@ function ChatApp() {
         setSessions((prev) =>
           prev.map((s) =>
             s.id === pinnedSessionId ? { ...s, pinned } : s
+          )
+        );
+      }
+      if (evt.event === "session.model_changed") {
+        const p = evt.payload as Record<string, unknown> | undefined;
+        if (!p) return;
+        const modelSessionId = p.session_id as string;
+        const model = (p.model as string | null) ?? null;
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === modelSessionId ? { ...s, model } : s
           )
         );
       }

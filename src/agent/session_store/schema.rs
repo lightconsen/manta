@@ -107,7 +107,8 @@ impl SessionStore {
                 message_count INTEGER NOT NULL DEFAULT 0,
                 name TEXT,
                 bound_agent_id TEXT,
-                transcript_id TEXT
+                transcript_id TEXT,
+                model TEXT
             )
             "#,
         )
@@ -156,6 +157,16 @@ impl SessionStore {
         {
             if !e.to_string().contains("duplicate column name") {
                 warn!("Failed to add transcript_id column to sessions: {}", e);
+            }
+        }
+
+        // Migrate: add model column if it doesn't exist
+        if let Err(e) = sqlx::query("ALTER TABLE sessions ADD COLUMN model TEXT")
+            .execute(&self.pool)
+            .await
+        {
+            if !e.to_string().contains("duplicate column name") {
+                warn!("Failed to add model column to sessions: {}", e);
             }
         }
 

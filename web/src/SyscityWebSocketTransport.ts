@@ -557,6 +557,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       label?: string;
       agent_id?: string;
       pinned?: boolean;
+      model?: string | null;
       last_activity?: number;
     }>
   > {
@@ -572,6 +573,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
               name?: string;
               agent_id?: string;
               pinned?: boolean;
+              model?: string | null;
               last_activity?: string;
             }>;
           }
@@ -583,6 +585,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           label: string;
           agent_id?: string;
           pinned?: boolean;
+          model?: string | null;
           last_activity?: number;
         }
       >();
@@ -591,6 +594,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           label: s.name || this.sessionLabel(s.session_id),
           agent_id: s.agent_id,
           pinned: s.pinned,
+          model: s.model ?? null,
           last_activity: s.last_activity
             ? new Date(s.last_activity).getTime()
             : undefined,
@@ -606,10 +610,26 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         label: data.label,
         agent_id: data.agent_id,
         pinned: data.pinned,
+        model: data.model ?? null,
         last_activity: data.last_activity,
       }));
     } catch {
       return local.map((id) => ({ id, label: this.sessionLabel(id) }));
+    }
+  }
+
+  async setSessionModel(
+    sessionId: string,
+    model: string | null
+  ): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("sessions.set_model", {
+        session_id: sessionId,
+        model,
+      });
+      return true;
+    } catch {
+      return false;
     }
   }
 

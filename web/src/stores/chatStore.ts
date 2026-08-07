@@ -22,7 +22,9 @@ interface ChatState {
   sessions: Array<{
     id: string;
     label?: string;
+    agent_id?: string;
     pinned?: boolean;
+    model?: string | null;
     last_activity?: number;
   }>;
   currentSessionId: string;
@@ -48,7 +50,9 @@ interface ChatState {
     sessions: Array<{
       id: string;
       label?: string;
+      agent_id?: string;
       pinned?: boolean;
+      model?: string | null;
       last_activity?: number;
     }>
   ) => void;

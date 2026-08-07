@@ -7,6 +7,7 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { MessageBubble } from "./MessageBubble";
 import { CommandPalette } from "./CommandPalette";
+import { ModelSelector } from "./ModelSelector";
 import { getCommandCompletions, type CommandDef } from "@/slash-commands";
 import { useChatStore } from "@/stores/chatStore";
 import { Mic, Image, Paperclip, Square, Send, ChevronDown } from "lucide-react";
@@ -430,6 +431,7 @@ export function ChatContent({ transport }: ChatContentProps) {
                 >
                   <Paperclip className="w-5 h-5" />
                 </button>
+                <ModelSelector transport={transport} />
               </div>
               {isRunning ? (
                 <button

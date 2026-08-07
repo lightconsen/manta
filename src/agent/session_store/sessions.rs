@@ -27,8 +27,8 @@ impl SessionStore {
 
         sqlx::query(
             r#"
-            INSERT INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, pinned, state_json, message_count, name, bound_agent_id, transcript_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, pinned, state_json, message_count, name, bound_agent_id, transcript_id, model)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 channel = excluded.channel,
@@ -39,7 +39,8 @@ impl SessionStore {
                 state_json = excluded.state_json,
                 name = excluded.name,
                 bound_agent_id = excluded.bound_agent_id,
-                transcript_id = excluded.transcript_id
+                transcript_id = excluded.transcript_id,
+                model = excluded.model
             "#,
         )
         .bind(session_id)
@@ -55,6 +56,7 @@ impl SessionStore {
         .bind(&metadata.name)
         .bind(&metadata.bound_agent_id)
         .bind(&metadata.transcript_id)
+        .bind(&metadata.model)
         .execute(&self.pool)
         .await
         .map_err(|e| SyscityError::Storage { context: "Failed to save session".to_string(), details: e.to_string() })?;
@@ -101,7 +103,7 @@ impl SessionStore {
     pub async fn load_session(&self, session_id: &str) -> Result<Option<PersistedSession>> {
         let row = sqlx::query(
             r#"
-            SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, pinned, state_json, message_count, name, bound_agent_id, transcript_id
+            SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, pinned, state_json, message_count, name, bound_agent_id, transcript_id, model
             FROM sessions
             WHERE id = ?
             "#,
@@ -130,6 +132,7 @@ impl SessionStore {
                     name: row.get("name"),
                     bound_agent_id: row.get("bound_agent_id"),
                     transcript_id: row.get("transcript_id"),
+                    model: row.get("model"),
                 };
 
                 let session = PersistedSession {
@@ -164,7 +167,7 @@ impl SessionStore {
     ) -> Result<Vec<SessionMetadata>> {
         let mut query = String::from(
             "SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, \
-             pinned, message_count, name, bound_agent_id, transcript_id FROM sessions WHERE 1=1",
+             pinned, message_count, name, bound_agent_id, transcript_id, model FROM sessions WHERE 1=1",
         );
 
         if agent_id.is_some() {
@@ -194,6 +197,7 @@ impl SessionStore {
                 i64,
                 i64,
                 i64,
+                Option<String>,
                 Option<String>,
                 Option<String>,
                 Option<String>,
@@ -234,6 +238,7 @@ impl SessionStore {
                     name,
                     bound_agent_id,
                     transcript_id,
+                    model,
                 )| {
                     SessionMetadata {
                         session_id: id,
@@ -250,6 +255,7 @@ impl SessionStore {
                         name,
                         bound_agent_id,
                         transcript_id,
+                        model,
                     }
                 },
             )
@@ -406,6 +412,43 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Set or clear the session's pinned model alias (`None` clears the pin).
+    ///
+    /// A brand-new session has no row in `sessions` until its first message is
+    /// appended (the frontend keeps new sessions client-side only), so the row
+    /// is auto-created here — mirroring `append_message` — before the UPDATE.
+    /// Otherwise the pin would silently match 0 rows and be lost.
+    pub async fn set_session_model(&self, session_id: &str, model: Option<&str>) -> Result<()> {
+        let now = Utc::now().timestamp_millis();
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count)
+            VALUES (?, '', '', '', ?, ?, 1, '{}', 0)
+            "#,
+        )
+        .bind(session_id)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SyscityError::Storage {
+            context: "Failed to auto-create session row for model pin".to_string(),
+            details: e.to_string(),
+        })?;
+
+        sqlx::query("UPDATE sessions SET model = ? WHERE id = ?")
+            .bind(model)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SyscityError::Storage {
+                context: "Failed to update session model".to_string(),
+                details: e.to_string(),
+            })?;
+
+        Ok(())
+    }
+
     /// Set session display name
     pub async fn set_session_name(&self, session_id: &str, name: &str) -> Result<()> {
         sqlx::query("UPDATE sessions SET name = ?, last_activity = ? WHERE id = ?")
@@ -523,6 +566,130 @@ mod tests {
         assert_eq!(loaded.id, "test-session");
         assert_eq!(loaded.metadata.agent_id, "main");
         assert_eq!(loaded.metadata.channel, "discord");
+    }
+
+    #[tokio::test]
+    async fn test_session_model_roundtrip_set_clear() {
+        let store = create_test_store().await;
+
+        // Save a session with a pinned model.
+        let mut metadata = SessionMetadata::new("m-session", "main", "web", "user1");
+        metadata.model = Some("smart".to_string());
+        store
+            .save_session("m-session", &metadata, "{}")
+            .await
+            .expect("Failed to save session");
+
+        // Round-trip: the model survives save -> load.
+        let loaded = store
+            .load_session("m-session")
+            .await
+            .expect("Failed to load session")
+            .expect("Session not found");
+        assert_eq!(loaded.metadata.model.as_deref(), Some("smart"));
+
+        // find_sessions surfaces the model too.
+        let found = store
+            .find_sessions(None, None, None, false)
+            .await
+            .expect("Failed to find sessions");
+        assert_eq!(found[0].model.as_deref(), Some("smart"));
+
+        // Update the pin via set_session_model.
+        store
+            .set_session_model("m-session", Some("fast"))
+            .await
+            .expect("Failed to set session model");
+        let loaded = store
+            .load_session("m-session")
+            .await
+            .expect("Failed to load session")
+            .expect("Session not found");
+        assert_eq!(loaded.metadata.model.as_deref(), Some("fast"));
+
+        // Clearing stores NULL.
+        store
+            .set_session_model("m-session", None)
+            .await
+            .expect("Failed to clear session model");
+        let loaded = store
+            .load_session("m-session")
+            .await
+            .expect("Failed to load session")
+            .expect("Session not found");
+        assert_eq!(loaded.metadata.model, None);
+    }
+
+    #[tokio::test]
+    async fn test_set_session_model_auto_creates_row() {
+        let store = create_test_store().await;
+
+        // Session has no row yet (as with a brand-new frontend session before
+        // its first message). Setting a model must auto-create the row and
+        // persist the pin rather than silently matching 0 rows.
+        store
+            .set_session_model("fresh-session", Some("fast"))
+            .await
+            .expect("Failed to set model on fresh session");
+
+        let loaded = store
+            .load_session("fresh-session")
+            .await
+            .expect("Failed to load session")
+            .expect("Session should have been auto-created");
+        assert_eq!(loaded.metadata.model.as_deref(), Some("fast"));
+
+        // Clearing a model on the auto-created row also works.
+        store
+            .set_session_model("fresh-session", None)
+            .await
+            .expect("Failed to clear model");
+        let loaded = store
+            .load_session("fresh-session")
+            .await
+            .expect("Failed to load session")
+            .expect("Session not found");
+        assert_eq!(loaded.metadata.model, None);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_session_row_does_not_clobber() {
+        let store = create_test_store().await;
+
+        // A session created via the WS handler already has rich metadata.
+        let mut metadata = SessionMetadata::new("race-session", "secretary", "web", "u1");
+        metadata.bound_agent_id = Some("secretary".to_string());
+        metadata.model = Some("alt".to_string());
+        store
+            .save_session("race-session", &metadata, "{}")
+            .await
+            .expect("Failed to save session");
+
+        // `SessionManager::create_session`'s background auto-persist calls
+        // ensure_session_row; it must NOT overwrite the existing metadata.
+        store
+            .ensure_session_row("race-session")
+            .await
+            .expect("Failed to ensure session row");
+        let loaded = store
+            .load_session("race-session")
+            .await
+            .expect("Failed to load session")
+            .expect("Session not found");
+        assert_eq!(loaded.metadata.agent_id, "secretary");
+        assert_eq!(loaded.metadata.model.as_deref(), Some("alt"));
+
+        // For a brand-new session the row is created as an empty stub.
+        store
+            .ensure_session_row("brand-new-session")
+            .await
+            .expect("Failed to ensure brand-new session row");
+        let loaded = store
+            .load_session("brand-new-session")
+            .await
+            .expect("Failed to load session")
+            .expect("Session should have been auto-created");
+        assert_eq!(loaded.metadata.agent_id, "");
     }
 
     #[tokio::test]
