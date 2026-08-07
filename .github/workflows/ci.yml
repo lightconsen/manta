@@ -431,8 +431,10 @@ jobs:
         # replaced; the accumulated tarpaulin-era test skips are dropped — every
         # test that runs in the normal suite runs here too. e2e:: is skipped
         # for the same reason the Test job skips it (spawns gateway processes,
-        # slow/flaky under CI).
-        run: "cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::"
+        # slow/flaky under CI). The 55% gate matches the measured llvm-cov
+        # baseline (~56.3% locally); ratchet it up as coverage improves —
+        # tarpaulin's old fail-under=80 was aspirational and never met.
+        run: "cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 55 --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

@@ -137,7 +137,7 @@ fi
 
 # ── Job: coverage (ci.yml `coverage`; Codecov upload is CI-only) ────────────
 if command -v cargo-llvm-cov >/dev/null 2>&1; then
-    check "coverage (llvm-cov)" cargo llvm-cov --workspace --all-features --summary-only --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::
+    check "coverage (llvm-cov)" cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 55 --ignore-filename-regex '(^|/)(tests|target)/' -- --skip e2e::
 else
     skip_with_hint "coverage (llvm-cov)" "cargo install cargo-llvm-cov && rustup component add llvm-tools-preview"
 fi
