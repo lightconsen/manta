@@ -431,7 +431,14 @@ jobs:
         # acp::control_plane unit tests that spawn real actor threads (the
         # pause/resume/step/cancel test and the crash-recovery test) overflow
         # the stack under tarpaulin's instrumentation, so they are skipped too.
-        run: "cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e:: --skip test_mcp_manager --skip integrations:: --skip test_pause_resume_step_cancel_emit_status_changed_after_actor_processing --skip test_subagent_crash_auto_recovery"
+        # test_skill_manager_injection_into_build_fresh_context segfaults under
+        # tarpaulin without spawning threads, which points at stack exhaustion
+        # from instrumentation depth rather than thread stacks; RUST_MIN_STACK
+        # below is the systemic mitigation and this skip is the remaining
+        # instance that still crashes even with the larger stack.
+        env:
+          RUST_MIN_STACK: 67108864
+        run: "cargo tarpaulin --config .tarpaulin.toml --all-features -- --skip e2e:: --skip test_mcp_manager --skip integrations:: --skip test_pause_resume_step_cancel_emit_status_changed_after_actor_processing --skip test_subagent_crash_auto_recovery --skip test_skill_manager_injection_into_build_fresh_context"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
