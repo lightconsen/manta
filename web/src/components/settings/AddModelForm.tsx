@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import type { ModelInfo, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 import { Input } from "@/components/ui/Input";
-import { getProviderLogo } from "@/lib/providerLogos";
+import { ProviderLogo } from "@/components/ui/ProviderLogo";
 
 type ModelPreset = {
   name: string;
@@ -200,7 +200,6 @@ export function AddModelForm({
         <label className="block text-xs text-secondary mb-1">Provider</label>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {modelPresets.map((p) => {
-            const logo = getProviderLogo(p.name);
             const selected = provider === p.name;
             const alreadyConfigured = models.some(
               (m) => m.provider.toLowerCase() === p.name.toLowerCase()
@@ -216,13 +215,7 @@ export function AddModelForm({
                     : "border-subtle text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
                 }`}
               >
-                {logo ? (
-                  <img src={logo} alt="" className="w-5 h-5 object-contain shrink-0" />
-                ) : (
-                  <span className="w-5 h-5 shrink-0 rounded bg-sidebar flex items-center justify-center text-[10px] font-semibold">
-                    {p.display_name.charAt(0)}
-                  </span>
-                )}
+                <ProviderLogo provider={p.name} name={p.display_name} className="w-5 h-5" />
                 <span className="truncate">{p.display_name}</span>
                 {alreadyConfigured && (
                   <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 shrink-0">

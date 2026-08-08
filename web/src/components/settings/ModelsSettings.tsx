@@ -3,7 +3,7 @@ import type { SyscityConfig } from "@/components/settings/useSettingsData";
 import { AddModelForm } from "@/components/settings/AddModelForm";
 import { Section } from "@/components/ui/Section";
 import { Button } from "@/components/ui/Button";
-import { getProviderLogo } from "@/lib/providerLogos";
+import { ProviderLogo } from "@/components/ui/ProviderLogo";
 
 interface ModelsSettingsProps {
   transport: SyscityWebSocketTransport;
@@ -35,18 +35,11 @@ function ProviderCard({
   onSetDefault: (id: string) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
 }) {
-  const logo = getProviderLogo(provider);
   const hasDefault = ms.some((m) => config.model === m.id);
   return (
     <div className="rounded-lg border border-subtle bg-card overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 bg-black/[0.02] dark:bg-white/[0.03]">
-        {logo ? (
-          <img src={logo} alt="" className="w-5 h-5 object-contain shrink-0" />
-        ) : (
-          <span className="w-5 h-5 shrink-0 rounded bg-sidebar flex items-center justify-center text-[10px] font-semibold text-secondary">
-            {providerName.charAt(0)}
-          </span>
-        )}
+        <ProviderLogo provider={provider} name={providerName} className="w-5 h-5" />
         <span className="text-sm text-primary font-medium truncate">{providerName}</span>
         <span className="text-xs text-secondary whitespace-nowrap">
           {ms.length} {ms.length === 1 ? "model" : "models"}

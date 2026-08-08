@@ -14,7 +14,29 @@ const PROVIDER_LOGOS: Record<string, string> = {
   minimax: "/assets/providers/minimax.svg",
 };
 
-/** Return the logo asset path for a provider, or undefined if unknown. */
-export function getProviderLogo(providerName: string): string | undefined {
-  return PROVIDER_LOGOS[providerName.toLowerCase()] ?? PROVIDER_LOGOS[providerName];
+// Monochrome marks that need a theme variant. These SVGs render as pure black
+// (`fill="currentColor"` defaults to black inside a standalone <img>) or pure
+// white (`fill="#fff"`), so a single version is illegible on one of the themes.
+const WHITE_VARIANT_PROVIDERS = new Set(["openai", "ollama"]); // black mark -> white for dark
+const DARK_VARIANT_PROVIDERS = new Set(["kimi"]); // white mark -> dark glyph for light
+
+/**
+ * Return the theme-appropriate logo path for a provider. Monochrome marks swap
+ * to a `-white.svg` / `-dark.svg` sibling file so the logo stays legible on
+ * both light and dark backgrounds.
+ */
+export function getProviderLogoSrc(
+  providerName: string,
+  theme: "light" | "dark"
+): string | undefined {
+  const key = providerName.toLowerCase();
+  const base = PROVIDER_LOGOS[key] ?? PROVIDER_LOGOS[providerName];
+  if (!base) return undefined;
+  if (WHITE_VARIANT_PROVIDERS.has(key) && theme === "dark") {
+    return base.replace(/\.svg$/, "-white.svg");
+  }
+  if (DARK_VARIANT_PROVIDERS.has(key) && theme === "light") {
+    return base.replace(/\.svg$/, "-dark.svg");
+  }
+  return base;
 }

@@ -1,23 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import type { ModelInfo, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
-import { getProviderLogo } from "@/lib/providerLogos";
+import { ProviderLogo } from "@/components/ui/ProviderLogo";
 
 interface ModelSelectorProps {
   transport: SyscityWebSocketTransport;
-}
-
-/** Provider logo (or a first-letter fallback for unknown providers). */
-function ProviderLogo({ provider, providerName }: { provider: string; providerName: string }) {
-  const logo = getProviderLogo(provider);
-  if (logo) {
-    return <img src={logo} alt="" className="w-4 h-4 object-contain shrink-0" />;
-  }
-  return (
-    <span className="w-4 h-4 shrink-0 rounded bg-sidebar flex items-center justify-center text-[9px] font-semibold text-secondary">
-      {(providerName || provider).charAt(0).toUpperCase()}
-    </span>
-  );
 }
 
 // Compact model picker for the chat composer. Shows the effective model for
@@ -150,7 +137,7 @@ export function ModelSelector({ transport }: ModelSelectorProps) {
         className="flex items-center gap-1.5 max-w-[10rem] rounded-lg border border-subtle bg-card px-2 py-1.5 text-xs text-secondary hover:text-primary focus:outline-none transition"
       >
         {effectiveModel ? (
-          <ProviderLogo provider={effectiveModel.provider} providerName={effectiveModel.provider_name} />
+          <ProviderLogo provider={effectiveModel.provider} name={effectiveModel.provider_name} className="w-4 h-4" />
         ) : (
           <span className="w-4 h-4 shrink-0 rounded bg-sidebar flex items-center justify-center text-[9px] font-semibold text-secondary">
             {(effective || "D").charAt(0).toUpperCase()}
@@ -212,7 +199,7 @@ export function ModelSelector({ transport }: ModelSelectorProps) {
                         : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
                     }`}
                   >
-                    <ProviderLogo provider={m.provider} providerName={m.provider_name} />
+                    <ProviderLogo provider={m.provider} name={m.provider_name} className="w-4 h-4" />
                     <span className="flex-1 min-w-0 truncate text-sm text-primary">
                       {m.provider_name} - {m.name}
                     </span>

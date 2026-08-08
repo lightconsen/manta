@@ -5,7 +5,7 @@ import { Section } from "@/components/ui/Section";
 import { Select } from "@/components/ui/Select";
 import { Input } from "@/components/ui/Input";
 import { Toggle } from "@/components/ui/Toggle";
-import { getProviderLogo } from "@/lib/providerLogos";
+import { ProviderLogo } from "@/components/ui/ProviderLogo";
 
 interface GeneralSettingsProps {
   transport: SyscityWebSocketTransport;
@@ -69,9 +69,8 @@ export function GeneralSettings({ transport, config, models, currentTheme, updat
             <div className="flex items-center gap-2 w-full rounded-lg border border-subtle bg-sidebar px-3 py-2 text-sm text-secondary cursor-not-allowed">
               {(() => {
                 const owner = models.find((m) => m.id === config.model);
-                const logo = owner ? getProviderLogo(owner.provider) : undefined;
-                return logo ? (
-                  <img src={logo} alt="" className="w-4 h-4 object-contain shrink-0" />
+                return owner ? (
+                  <ProviderLogo provider={owner.provider} name={owner.provider_name} className="w-4 h-4" />
                 ) : null;
               })()}
               <span>{config.model_provider || "—"}</span>
