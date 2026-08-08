@@ -12,12 +12,25 @@ const PROVIDER_LOGOS: Record<string, string> = {
   gemini: "/assets/providers/gemini.svg",
   glm: "/assets/providers/chatglm.svg",
   minimax: "/assets/providers/minimax.svg",
+  doubao: "/assets/providers/doubao.svg",
+  hunyuan: "/assets/providers/hunyuan.svg",
+  grok: "/assets/providers/grok.svg",
+  mistral: "/assets/providers/mistral.svg",
+  cohere: "/assets/providers/cohere.svg",
 };
 
 // Monochrome marks that need a theme variant. These SVGs render as pure black
 // (`fill="currentColor"` defaults to black inside a standalone <img>) or pure
 // white (`fill="#fff"`), so a single version is illegible on one of the themes.
-const WHITE_VARIANT_PROVIDERS = new Set(["openai", "ollama"]); // black mark -> white for dark
+const WHITE_VARIANT_PROVIDERS = new Set([
+  "openai",
+  "ollama",
+  "doubao",
+  "hunyuan",
+  "grok",
+  "mistral",
+  "cohere",
+]); // black mark -> white for dark
 const DARK_VARIANT_PROVIDERS = new Set(["kimi"]); // white mark -> dark glyph for light
 
 /**
