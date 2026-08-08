@@ -64,6 +64,12 @@ export interface ModelInfo {
   name: string;
   provider: string;
   provider_name: string;
+  /** Whether the provider has an API key configured (masked below). */
+  has_api_key?: boolean;
+  /** Masked API key for display (e.g. "sk-••••abcd"); never the raw value. */
+  api_key_masked?: string;
+  /** Provider base URL, when configured. */
+  base_url?: string;
 }
 
 function makeTextPart(text: string): TextMessagePart {

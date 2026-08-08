@@ -51,6 +51,13 @@ export function AddModelForm({
   // the config key is "deepseek").
   const providerKey = providerName.trim().toLowerCase();
   const existingProvider = models.find((m) => m.provider.toLowerCase() === providerKey)?.provider || "";
+  // First stored model entry for the matched provider, carrying credential metadata.
+  const existingConfig = existingProvider
+    ? models.find((m) => m.provider === existingProvider)
+    : undefined;
+  const savedKey = existingConfig?.has_api_key
+    ? existingConfig.api_key_masked || "saved"
+    : undefined;
 
   // When the user lands on a provider that is already configured, preselect its
   // current models and default so the form reads as an update. Only repopulate
@@ -66,6 +73,7 @@ export function AddModelForm({
     setSelectedModels(ids);
     const prefer = globalDefaultModel && ids.includes(globalDefaultModel) ? globalDefaultModel : existing[0].id;
     setDefaultModel(prefer);
+    if (existing[0]?.base_url) setBaseUrl(existing[0].base_url);
     setAddModelError("");
   }, [existingProvider, models, globalDefaultModel]);
 
@@ -235,18 +243,25 @@ export function AddModelForm({
           placeholder="DeepSeek"
         />
         {modelPresets.find((p) => p.name === provider)?.needs_api_key !== false && (
-          <Input
-            label="API Key"
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            onBlur={() => {
-              if (apiKey.trim() && remoteModels === null && !fetchingModels) {
-                handleFetchModels();
-              }
-            }}
-            placeholder="sk-..."
-          />
+          <div>
+            <Input
+              label="API Key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              onBlur={() => {
+                if (apiKey.trim() && remoteModels === null && !fetchingModels) {
+                  handleFetchModels();
+                }
+              }}
+              placeholder={savedKey ? savedKey : "sk-..."}
+            />
+            {savedKey && (
+              <p className="mt-1 text-[11px] text-secondary">
+                A key is already saved — leave blank to keep it, or enter a new one to replace it.
+              </p>
+            )}
+          </div>
         )}
       </div>
       <Input

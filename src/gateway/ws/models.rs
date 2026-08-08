@@ -1,17 +1,57 @@
 //! models.list / presets / fetch_remote / add / remove / set_default.
 
 use super::*;
+/// Mask an API key for display: keep the first 3 and last 4 characters, hide
+/// the rest. Short keys are fully masked.
+fn mask_api_key(key: &str) -> String {
+    let k = key.trim();
+    if k.len() <= 6 {
+        return "••••".to_string();
+    }
+    let head = k.get(..3).unwrap_or("");
+    let tail = k.get(k.len() - 4..).unwrap_or("");
+    format!("{head}••••{tail}")
+}
+
 pub(super) async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     // List (provider, model_id) pairs from provider configs + catalog.
     let pairs = state.infra.model_router.models_with_providers().await;
+
+    // Per-provider credential metadata so the UI can render the add/update form
+    // (e.g. show that a key is already saved) without exposing the raw key.
+    let provider_meta: std::collections::HashMap<String, (bool, Option<String>, Option<String>)> = {
+        let router_config = state.infra.model_router.router_config().await;
+        router_config
+            .providers
+            .iter()
+            .map(|(name, pcfg)| {
+                let masked = pcfg
+                    .api_key
+                    .inline_value()
+                    .filter(|k| !k.is_empty())
+                    .map(mask_api_key);
+                let has_key = masked.is_some()
+                    || matches!(pcfg.api_key, crate::model_router::ProviderKey::Ref(_));
+                (name.clone(), (has_key, masked, pcfg.base_url.clone()))
+            })
+            .collect()
+    };
+
     let entries: Vec<serde_json::Value> = pairs
         .iter()
         .map(|(provider, model)| {
+            let (has_api_key, api_key_masked, base_url) = provider_meta
+                .get(provider)
+                .cloned()
+                .unwrap_or((false, None, None));
             serde_json::json!({
                 "id": model,
                 "name": model,
                 "provider": provider,
                 "provider_name": crate::model_router::provider_display_name(provider),
+                "has_api_key": has_api_key,
+                "api_key_masked": api_key_masked,
+                "base_url": base_url,
             })
         })
         .collect();
@@ -102,7 +142,7 @@ pub(super) fn parse_gemini_models(body: &serde_json::Value) -> Vec<String> {
 
 pub(super) async fn handle_models_fetch_remote(
     req: &WsRequest,
-    _state: &Arc<GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> WsResponse {
     #[derive(Debug, Deserialize)]
     struct FetchRemotePayload {
@@ -163,7 +203,29 @@ pub(super) async fn handle_models_fetch_remote(
     let auth_method = variant
         .map(|v| v.auth_method.clone())
         .unwrap_or(crate::providers::AuthMethod::Bearer);
-    let api_key = payload.api_key.filter(|k| !k.is_empty());
+
+    // Fall back to the provider's stored key when the request does not carry one
+    // (e.g. the UI is editing an already-configured provider whose field is
+    // blank to mean "keep the saved key"). Prefer the resolved auth-profile key,
+    // then the raw config value.
+    let api_key = if let Some(key) = payload.api_key.as_ref().filter(|k| !k.is_empty()) {
+        Some(key.clone())
+    } else if let Some(key) = state
+        .infra
+        .model_router
+        .auth_profiles
+        .current_key(&payload.provider)
+        .await
+    {
+        Some(key)
+    } else {
+        let router_config = state.infra.model_router.router_config().await;
+        router_config
+            .providers
+            .get(&payload.provider)
+            .and_then(|p| p.api_key.inline_value())
+            .map(|s| s.to_string())
+    };
 
     let static_fallback = || {
         crate::model_router::provider_presets()
@@ -295,18 +357,33 @@ pub(super) async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>
         .await;
 
     let preset = crate::model_router::provider_preset_for_name(&provider_name);
-    let (provider_type, base_url) = match preset {
-        Some(p) => (
-            p.protocol.clone(),
-            payload
-                .base_url
-                .clone()
-                .or_else(|| p.default_base_url.clone()),
-        ),
-        None => (
-            crate::model_router::ProviderType::Custom { name: provider_name.clone() },
-            payload.base_url.clone(),
-        ),
+    let (provider_type, preset_base_url) = match &preset {
+        Some(p) => (p.protocol.clone(), p.default_base_url.clone()),
+        None => (crate::model_router::ProviderType::Custom { name: provider_name.clone() }, None),
+    };
+
+    // On update, blank credentials mean "keep the existing ones" — never wipe
+    // the stored key or base URL just because the form left them empty.
+    let existing_cfg = state
+        .infra
+        .model_router
+        .router_config()
+        .await
+        .providers
+        .get(&provider_name)
+        .cloned();
+
+    let base_url = match &payload.base_url {
+        Some(u) if !u.is_empty() => Some(u.clone()),
+        _ => existing_cfg
+            .as_ref()
+            .and_then(|c| c.base_url.clone())
+            .or(preset_base_url),
+    };
+
+    let api_key = match &payload.api_key {
+        Some(k) if !k.is_empty() => crate::model_router::ProviderKey::from(k.clone()),
+        _ => existing_cfg.map(|c| c.api_key.clone()).unwrap_or_default(),
     };
 
     let default_model = payload
@@ -318,7 +395,7 @@ pub(super) async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>
         provider_type,
         models: payload.models.clone(),
         default_model: default_model.clone(),
-        api_key: payload.api_key.clone().unwrap_or_default().into(),
+        api_key,
         api_keys: Vec::new(),
         auth_profile: None,
         oauth: None,
@@ -502,6 +579,13 @@ mod tests {
         }
     }
 
+    #[test]
+    fn mask_api_key_hides_middle() {
+        assert_eq!(mask_api_key("sk-1234567890abcd"), "sk-••••abcd");
+        assert_eq!(mask_api_key("abc"), "••••");
+        assert_eq!(mask_api_key(""), "••••");
+    }
+
     fn provider_config(models: &[&str]) -> ProviderConfig {
         ProviderConfig {
             provider_type: ProviderType::OpenAi,
@@ -554,6 +638,10 @@ mod tests {
         assert_eq!(models[0]["name"].as_str(), Some("gpt-4o-mini"));
         assert_eq!(models[0]["provider"].as_str(), Some("openai"));
         assert_eq!(models[0]["provider_name"].as_str(), Some("OpenAI"));
+        // Credential metadata is exposed without the raw key.
+        assert_eq!(models[0]["has_api_key"].as_bool(), Some(true));
+        assert_eq!(models[0]["api_key_masked"].as_str(), Some("tes••••-key"));
+        assert_eq!(models[0]["base_url"], serde_json::Value::Null);
         // Default model is the configured default (not auto-promoted).
         let default = res
             .payload
@@ -632,6 +720,70 @@ mod tests {
         assert!(pairs.contains(&("openai".to_string(), "gpt-4o".to_string())));
         assert!(pairs.contains(&("openai".to_string(), "gpt-4-turbo".to_string())));
         assert_eq!(state.infra.model_router.get_default_model().await, "gpt-4-turbo");
+    }
+
+    #[tokio::test]
+    async fn models_add_update_preserves_existing_key() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_provider(&state, "openai", &["gpt-4o"]).await;
+        let res = handle_models_add(
+            &req(
+                "a",
+                "models.add",
+                serde_json::json!({
+                    "provider": "openai",
+                    "models": ["gpt-4o", "gpt-4-turbo"],
+                    // No api_key: the existing key must survive the update.
+                }),
+            ),
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        let cfg = state.infra.model_router.router_config().await;
+        let p = cfg.providers.get("openai").unwrap();
+        assert_eq!(p.api_key.inline_value(), Some("test-key"));
+        // A blank key string behaves the same as an omitted one.
+        let res = handle_models_add(
+            &req(
+                "a",
+                "models.add",
+                serde_json::json!({
+                    "provider": "openai",
+                    "models": ["gpt-4o"],
+                    "api_key": "",
+                }),
+            ),
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        let cfg = state.infra.model_router.router_config().await;
+        let p = cfg.providers.get("openai").unwrap();
+        assert_eq!(p.api_key.inline_value(), Some("test-key"));
+    }
+
+    #[tokio::test]
+    async fn models_add_update_replaces_key_when_provided() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_provider(&state, "openai", &["gpt-4o"]).await;
+        let res = handle_models_add(
+            &req(
+                "a",
+                "models.add",
+                serde_json::json!({
+                    "provider": "openai",
+                    "models": ["gpt-4o"],
+                    "api_key": "new-key",
+                }),
+            ),
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+        let cfg = state.infra.model_router.router_config().await;
+        let p = cfg.providers.get("openai").unwrap();
+        assert_eq!(p.api_key.inline_value(), Some("new-key"));
     }
 
     #[tokio::test]
