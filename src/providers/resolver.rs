@@ -298,6 +298,40 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_doubao_preset() {
+        let provider =
+            resolve_provider("doubao", Some("sk-test".into()), None, None, None).unwrap();
+        assert_eq!(provider.default_model(), "doubao-seed-1-6-250615");
+    }
+
+    #[test]
+    fn test_resolve_hunyuan_preset() {
+        let provider =
+            resolve_provider("hunyuan", Some("sk-test".into()), None, None, None).unwrap();
+        assert_eq!(provider.default_model(), "hunyuan-turbos-latest");
+    }
+
+    #[test]
+    fn test_resolve_grok_preset() {
+        let provider = resolve_provider("grok", Some("sk-test".into()), None, None, None).unwrap();
+        assert_eq!(provider.default_model(), "grok-3");
+    }
+
+    #[test]
+    fn test_resolve_mistral_preset() {
+        let provider =
+            resolve_provider("mistral", Some("sk-test".into()), None, None, None).unwrap();
+        assert_eq!(provider.default_model(), "mistral-large-latest");
+    }
+
+    #[test]
+    fn test_resolve_cohere_preset() {
+        let provider =
+            resolve_provider("cohere", Some("sk-test".into()), None, None, None).unwrap();
+        assert_eq!(provider.default_model(), "command-a-plus-05-2026");
+    }
+
+    #[test]
     fn test_resolve_invalid_protocol_for_preset_fails() {
         let result = resolve_provider("ollama", None, None, None, Some(Protocol::Anthropic));
         assert!(result.is_err());

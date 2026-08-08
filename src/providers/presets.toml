@@ -155,3 +155,73 @@ default_max_context = 128000
 default_supports_vision = false
 default_supports_tools = true
 default_stream_family = "Minimax"
+
+# Doubao via Volcengine Ark (火山方舟), OpenAI-compatible endpoint.
+[doubao]
+display_name = "豆包 (Volcengine)"
+[[doubao.variants]]
+protocol = "open_ai"
+default_base_url = "https://ark.cn-beijing.volces.com/api/v3"
+default_model = "doubao-seed-1-6-250615"
+auth_method = "bearer"
+models_endpoint = "/models"
+default_max_context = 128000
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "OpenAi"
+
+# Tencent Hunyuan (腾讯混元), OpenAI-compatible endpoint.
+[hunyuan]
+display_name = "Hunyuan (Tencent)"
+[[hunyuan.variants]]
+protocol = "open_ai"
+default_base_url = "https://api.hunyuan.cloud.tencent.com/v1"
+default_model = "hunyuan-turbos-latest"
+auth_method = "bearer"
+models_endpoint = "/models"
+default_max_context = 128000
+default_supports_vision = false
+default_supports_tools = true
+default_stream_family = "OpenAi"
+
+# xAI Grok, OpenAI-compatible endpoint.
+[grok]
+display_name = "xAI (Grok)"
+[[grok.variants]]
+protocol = "open_ai"
+default_base_url = "https://api.x.ai/v1"
+default_model = "grok-3"
+auth_method = "bearer"
+models_endpoint = "/models"
+default_max_context = 131072
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "OpenAi"
+
+# Mistral, OpenAI-compatible endpoint.
+[mistral]
+display_name = "Mistral"
+[[mistral.variants]]
+protocol = "open_ai"
+default_base_url = "https://api.mistral.ai/v1"
+default_model = "mistral-large-latest"
+auth_method = "bearer"
+models_endpoint = "/models"
+default_max_context = 128000
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "OpenAi"
+
+# Cohere, official OpenAI-compatible endpoint.
+[cohere]
+display_name = "Cohere"
+[[cohere.variants]]
+protocol = "open_ai"
+default_base_url = "https://api.cohere.ai/compatibility/v1"
+default_model = "command-a-plus-05-2026"
+auth_method = "bearer"
+models_endpoint = "/models"
+default_max_context = 128000
+default_supports_vision = true
+default_supports_tools = true
+default_stream_family = "OpenAi"

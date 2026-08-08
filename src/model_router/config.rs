@@ -588,6 +588,74 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             models: vec![],
         },
     );
+    m.insert(
+        "doubao".to_string(),
+        ProviderPreset {
+            display_name: "豆包 (Volcengine)".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://ark.cn-beijing.volces.com/api/v3".to_string()),
+            models: vec![
+                "doubao-seed-1-6-250615".to_string(),
+                "doubao-1-5-pro-32k-250115".to_string(),
+                "doubao-1-5-lite-32k-250115".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "hunyuan".to_string(),
+        ProviderPreset {
+            display_name: "Hunyuan (Tencent)".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://api.hunyuan.cloud.tencent.com/v1".to_string()),
+            models: vec![
+                "hunyuan-turbos-latest".to_string(),
+                "hunyuan-turbo-latest".to_string(),
+                "hunyuan-standard".to_string(),
+                "hunyuan-lite".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "grok".to_string(),
+        ProviderPreset {
+            display_name: "xAI (Grok)".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://api.x.ai/v1".to_string()),
+            models: vec![
+                "grok-3".to_string(),
+                "grok-3-mini".to_string(),
+                "grok-4".to_string(),
+                "grok-4-fast".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "mistral".to_string(),
+        ProviderPreset {
+            display_name: "Mistral".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://api.mistral.ai/v1".to_string()),
+            models: vec![
+                "mistral-large-latest".to_string(),
+                "mistral-small-latest".to_string(),
+                "mistral-nemo".to_string(),
+                "codestral-latest".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "cohere".to_string(),
+        ProviderPreset {
+            display_name: "Cohere".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://api.cohere.ai/compatibility/v1".to_string()),
+            models: vec![
+                "command-a-plus-05-2026".to_string(),
+                "command-a-03-2025".to_string(),
+                "command-r-plus-08-2024".to_string(),
+            ],
+        },
+    );
     m
 }
 

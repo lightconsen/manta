@@ -117,6 +117,11 @@ mod tests {
         assert!(providers.contains_key("minimax"));
         assert!(providers.contains_key("azure"));
         assert!(providers.contains_key("glm"));
+        assert!(providers.contains_key("doubao"));
+        assert!(providers.contains_key("hunyuan"));
+        assert!(providers.contains_key("grok"));
+        assert!(providers.contains_key("mistral"));
+        assert!(providers.contains_key("cohere"));
     }
 
     #[test]
