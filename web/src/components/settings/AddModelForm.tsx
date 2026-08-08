@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
+import { useState, useEffect, useRef } from "react";
+import type { ModelInfo, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 import { Input } from "@/components/ui/Input";
 import { getProviderLogo } from "@/lib/providerLogos";
 
@@ -14,10 +14,19 @@ type ModelPreset = {
 
 interface AddModelFormProps {
   transport: SyscityWebSocketTransport;
+  /** Already-configured models, used to mark added models and enable updates. */
+  models?: ModelInfo[];
+  /** Current global default model id, used to preselect on update. */
+  globalDefaultModel?: string;
   onAdded?: () => void;
 }
 
-export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
+export function AddModelForm({
+  transport,
+  models = [],
+  globalDefaultModel,
+  onAdded,
+}: AddModelFormProps) {
   const [addModelError, setAddModelError] = useState("");
   const [providerName, setProviderName] = useState("");
   const [provider, setProvider] = useState("anthropic");
@@ -36,6 +45,29 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
   useEffect(() => {
     transport.listModelPresets().then(setModelPresets).catch(() => {});
   }, [transport]);
+
+  // Match the typed provider name against configured providers
+  // (case-insensitive: preset buttons fill display names like "DeepSeek" while
+  // the config key is "deepseek").
+  const providerKey = providerName.trim().toLowerCase();
+  const existingProvider = models.find((m) => m.provider.toLowerCase() === providerKey)?.provider || "";
+
+  // When the user lands on a provider that is already configured, preselect its
+  // current models and default so the form reads as an update. Only repopulate
+  // when the matched provider changes, so manual toggles are preserved.
+  const lastMatchedRef = useRef("");
+  useEffect(() => {
+    if (!existingProvider) return;
+    if (existingProvider.toLowerCase() === lastMatchedRef.current) return;
+    lastMatchedRef.current = existingProvider.toLowerCase();
+    const existing = models.filter((m) => m.provider === existingProvider);
+    if (existing.length === 0) return;
+    const ids = existing.map((m) => m.id);
+    setSelectedModels(ids);
+    const prefer = globalDefaultModel && ids.includes(globalDefaultModel) ? globalDefaultModel : existing[0].id;
+    setDefaultModel(prefer);
+    setAddModelError("");
+  }, [existingProvider, models, globalDefaultModel]);
 
   const selectModelProvider = (p: string) => {
     const preset = modelPresets.find((x) => x.name === p);
@@ -124,8 +156,11 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
       return;
     }
     setModelActionLoading("add");
+    // Submit the canonical config key when updating an existing provider so a
+    // display-name spelling ("DeepSeek") does not create a duplicate key.
+    const submittedProvider = existingProvider || providerName.trim();
     const res = await transport.addModel({
-      provider: providerName.trim(),
+      provider: submittedProvider,
       models: selectedModels,
       default_model: defaultModel || undefined,
       api_key: apiKey.trim() || undefined,
@@ -140,12 +175,16 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
       setDefaultModel("");
       setRemoteModels(null);
       setFetchModelsError("");
+      lastMatchedRef.current = "";
       onAdded?.();
     } else {
       setAddModelError(res.error || "Failed to add provider");
     }
     setModelActionLoading("");
   };
+
+  const configuredForProvider = (m: string) =>
+    models.some((x) => x.id === m && x.provider.toLowerCase() === providerKey);
 
   return (
     <div className="p-4 rounded-lg bg-card space-y-3">
@@ -155,6 +194,9 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
           {modelPresets.map((p) => {
             const logo = getProviderLogo(p.name);
             const selected = provider === p.name;
+            const alreadyConfigured = models.some(
+              (m) => m.provider.toLowerCase() === p.name.toLowerCase()
+            );
             return (
               <button
                 key={p.name}
@@ -174,6 +216,11 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
                   </span>
                 )}
                 <span className="truncate">{p.display_name}</span>
+                {alreadyConfigured && (
+                  <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 shrink-0">
+                    Configured
+                  </span>
+                )}
               </button>
             );
           })}
@@ -209,6 +256,11 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
         onChange={(e) => setBaseUrl(e.target.value)}
         placeholder={modelPresets.find((p) => p.name === provider)?.base_url || "https://..."}
       />
+      {existingProvider && (
+        <div className="text-xs px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400">
+          Provider already configured — submitting updates its models, default, and credentials.
+        </div>
+      )}
       {(() => {
         const preset = modelPresets.find((p) => p.name === provider);
         const optionList = remoteModels && remoteModels.length > 0 ? remoteModels : (preset?.models ?? []);
@@ -243,6 +295,11 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
                       className="accent-primary-500"
                     />
                     <span className="truncate text-primary">{m}</span>
+                    {configuredForProvider(m) && (
+                      <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 shrink-0">
+                        Configured
+                      </span>
+                    )}
                   </label>
                 ))}
               </div>
@@ -290,7 +347,13 @@ export function AddModelForm({ transport, onAdded }: AddModelFormProps) {
           disabled={modelActionLoading === "add"}
           className="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white text-xs font-medium transition"
         >
-          {modelActionLoading === "add" ? "Adding..." : "Add Provider"}
+          {modelActionLoading === "add"
+            ? existingProvider
+              ? "Updating..."
+              : "Adding..."
+            : existingProvider
+              ? "Update Provider"
+              : "Add Provider"}
         </button>
       </div>
     </div>

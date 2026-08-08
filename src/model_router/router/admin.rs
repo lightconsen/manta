@@ -257,6 +257,94 @@ impl ModelRouter {
         Ok(())
     }
 
+    /// Replace an existing provider's configuration at runtime (models,
+    /// default model, credentials, base URL). The provider instance is rebuilt
+    /// from the new config; circuit-breaker health state is preserved.
+    pub async fn update_provider(&self, name: &str, config: ProviderConfig) -> crate::Result<()> {
+        info!("Updating provider at runtime: {name}");
+
+        {
+            let providers = self.providers.read().await;
+            if !providers.contains_key(name) {
+                return Err(crate::error::ConfigError::InvalidValue {
+                    key: "provider".to_string(),
+                    message: format!("Unknown provider: {name}"),
+                }
+                .into());
+            }
+        }
+
+        let auth_config = config.derived_auth_profile_config();
+        self.auth_profiles
+            .register_from_config(name, &auth_config)
+            .await;
+
+        let provider = self.create_provider(&config).await?;
+        {
+            let mut providers = self.providers.write().await;
+            providers.insert(name.to_string(), provider);
+        }
+
+        // Swap the persisted provider entry. Remember the models dropped by
+        // the update so stale fallback chains can be cleaned up below.
+        let dropped_models: Vec<String> = {
+            let mut router_config = self.config.write().await;
+            let old_models = router_config
+                .providers
+                .get(name)
+                .map(|p| p.models.clone())
+                .unwrap_or_default();
+            router_config
+                .providers
+                .insert(name.to_string(), config.clone());
+            old_models
+                .into_iter()
+                .filter(|m| !config.models.contains(m))
+                .collect()
+        };
+
+        // Refresh the provider's static catalog source so discovery sees the
+        // new model list immediately.
+        self.model_catalog
+            .add_source(Box::new(model_catalog::StaticModelSource::new(
+                config
+                    .models
+                    .iter()
+                    .map(|m| (name.to_string(), m.clone()))
+                    .collect(),
+            )))
+            .await;
+        if let Err(e) = self.model_catalog.discover().await {
+            warn!("Model catalog discovery failed: {}", e);
+        }
+
+        // Drop fallback chains for models that no longer exist anywhere.
+        let gone: Vec<String> = {
+            let owned: HashSet<String> = {
+                let router_config = self.config.read().await;
+                router_config
+                    .providers
+                    .values()
+                    .flat_map(|p| p.models.iter().cloned())
+                    .collect()
+            };
+            dropped_models
+                .into_iter()
+                .filter(|m| !owned.contains(m))
+                .collect()
+        };
+        if !gone.is_empty() {
+            let mut chains = self.fallback_chains.write().await;
+            let mut router_config = self.config.write().await;
+            for m in &gone {
+                chains.remove(m);
+                router_config.fallback_chains.remove(m);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Add a pre-built provider instance at runtime (e.g. from a plugin).
     pub async fn add_provider_instance(
         &self,

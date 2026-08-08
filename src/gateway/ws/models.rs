@@ -286,20 +286,13 @@ pub(super) async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>
         );
     }
 
-    // A provider name is unique — reject duplicates. The router is the
-    // authoritative registry (runtime additions + config-loaded providers).
-    if state
+    // A provider name is unique. When it already exists this request is an
+    // update: the provider's models/default/credentials are replaced wholesale.
+    let is_update = state
         .infra
         .model_router
         .provider_exists(&provider_name)
-        .await
-    {
-        return WsResponse::err(
-            &req.id,
-            "PROVIDER_EXISTS",
-            format!("Provider already exists: {provider_name}"),
-        );
-    }
+        .await;
 
     let preset = crate::model_router::provider_preset_for_name(&provider_name);
     let (provider_type, base_url) = match preset {
@@ -335,26 +328,45 @@ pub(super) async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>
         retry_delay_ms: 1000,
     };
 
-    // Register with model router (add_provider registers models in the catalog).
-    if let Err(e) = state
-        .infra
-        .model_router
-        .add_provider(&provider_name, provider_config)
-        .await
-    {
+    // Register (or replace) the provider; add_provider registers its models in
+    // the catalog, update_provider refreshes the catalog source.
+    let result = if is_update {
+        state
+            .infra
+            .model_router
+            .update_provider(&provider_name, provider_config)
+            .await
+    } else {
+        state
+            .infra
+            .model_router
+            .add_provider(&provider_name, provider_config)
+            .await
+    };
+    if let Err(e) = result {
         return WsResponse::err(
             &req.id,
             "PROVIDER_ERROR",
-            format!("Failed to register provider: {}", e),
+            format!("Failed to {} provider: {}", if is_update { "update" } else { "register" }, e),
         );
     }
 
-    // Auto-promote to default when no default model is configured yet.
-    let default_is_empty = {
+    // Reflect the router's live state back into the persisted GatewayConfig.
+    sync_config_from_router(state).await;
+
+    // Promote to default when none is configured yet, or the update removed
+    // the model that was the default.
+    let default_missing = {
         let config = state.config.read().await;
         config.model.is_empty()
+            || state
+                .infra
+                .model_router
+                .provider_for_model(&config.model)
+                .await
+                .is_none()
     };
-    if default_is_empty {
+    if default_missing {
         if let Err(e) = state
             .infra
             .model_router
@@ -363,10 +375,8 @@ pub(super) async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>
         {
             warn!("Failed to switch default model to {}: {}", default_model, e);
         }
+        sync_config_from_router(state).await;
     }
-
-    // Reflect the router's live state back into the persisted GatewayConfig.
-    sync_config_from_router(state).await;
 
     if let Some(config_path) = state.config_path.clone() {
         let config_guard = state.config.read().await;
@@ -374,12 +384,19 @@ pub(super) async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>
             return WsResponse::err(
                 &req.id,
                 "PERSIST_FAILED",
-                format!("Model added but failed to persist config: {}", e),
+                format!(
+                    "Provider {} but failed to persist config: {}",
+                    if is_update { "updated" } else { "added" },
+                    e
+                ),
             );
         }
     }
 
-    WsResponse::ok(&req.id, serde_json::json!({ "status": "added" }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "status": if is_update { "updated" } else { "added" } }),
+    )
 }
 
 /// Copy the router's live provider/default state back into `GatewayConfig` so
@@ -590,7 +607,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn models_add_rejects_duplicate_provider() {
+    async fn models_add_updates_existing_provider() {
         let state = Arc::new(make_test_state(GatewayConfig::default()).await);
         register_provider(&state, "openai", &["gpt-4o"]).await;
         let res = handle_models_add(
@@ -599,14 +616,22 @@ mod tests {
                 "models.add",
                 serde_json::json!({
                     "provider": "openai",
-                    "models": ["gpt-4-turbo"],
+                    "models": ["gpt-4o", "gpt-4-turbo"],
+                    "default_model": "gpt-4-turbo",
                 }),
             ),
             &state,
         )
         .await;
-        assert!(!res.ok);
-        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("PROVIDER_EXISTS"));
+        assert!(res.ok);
+        assert_eq!(res.payload.as_ref().and_then(|p| p["status"].as_str()), Some("updated"));
+
+        // The provider keeps a single entry whose models were replaced.
+        let pairs = state.infra.model_router.models_with_providers().await;
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs.contains(&("openai".to_string(), "gpt-4o".to_string())));
+        assert!(pairs.contains(&("openai".to_string(), "gpt-4-turbo".to_string())));
+        assert_eq!(state.infra.model_router.get_default_model().await, "gpt-4-turbo");
     }
 
     #[tokio::test]

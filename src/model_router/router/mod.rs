@@ -184,6 +184,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_provider_replaces_models_and_keeps_provider() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        router
+            .add_provider("openai", test_provider_config(&["gpt-4o"]))
+            .await
+            .unwrap();
+
+        // Disable the provider, then update it: health state must survive.
+        router.disable_provider("openai").await.unwrap();
+        let updated = test_provider_config(&["gpt-4o", "gpt-4-turbo"]);
+        router.update_provider("openai", updated).await.unwrap();
+
+        let pairs = router.models_with_providers().await;
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs.contains(&("openai".to_string(), "gpt-4o".to_string())));
+        assert!(pairs.contains(&("openai".to_string(), "gpt-4-turbo".to_string())));
+
+        let health = router.get_provider_health("openai").await.unwrap();
+        assert_eq!(health.state, "Open");
+    }
+
+    #[tokio::test]
+    async fn update_provider_rejects_unknown_provider() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let result = router
+            .update_provider("openai", test_provider_config(&["gpt-4o"]))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn provider_exists_reports_registration() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         assert!(!router.provider_exists("openai").await);
