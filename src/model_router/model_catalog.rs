@@ -119,17 +119,30 @@ impl ModelCatalogEntry {
 pub trait ModelDiscoverySource: Send + Sync {
     /// Discover available models from this source.
     async fn discover(&self) -> crate::Result<Vec<ModelCatalogEntry>>;
+
+    /// Whether this source is the static source for the given provider.
+    /// Defaults to `false`; [`StaticModelSource`] matches its owning provider
+    /// so [`ModelCatalog::replace_static_source`] can drop stale per-provider
+    /// sources on update.
+    fn matches_provider(&self, _provider: &str) -> bool {
+        false
+    }
 }
 
-/// Static discovery source that returns models owned by configured providers.
+/// Static discovery source that returns models owned by a configured provider.
 pub struct StaticModelSource {
+    /// Owning provider key, used for source replacement on update.
+    provider: String,
     models: Vec<(String, String)>, // (provider, model_id)
 }
 
 impl StaticModelSource {
-    /// Create a source from `(provider, model_id)` pairs.
-    pub fn new(models: Vec<(String, String)>) -> Self {
-        Self { models }
+    /// Create a source owned by `provider` from `(provider, model_id)` pairs.
+    pub fn new(provider: impl Into<String>, models: Vec<(String, String)>) -> Self {
+        Self {
+            provider: provider.into(),
+            models,
+        }
     }
 }
 
@@ -146,6 +159,10 @@ impl ModelDiscoverySource for StaticModelSource {
             entries.push(entry);
         }
         Ok(entries)
+    }
+
+    fn matches_provider(&self, provider: &str) -> bool {
+        self.provider == provider
     }
 }
 
@@ -271,6 +288,27 @@ impl ModelCatalog {
     pub async fn add_source(&self, source: Box<dyn ModelDiscoverySource>) {
         let mut sources = self.sources.write().await;
         sources.push(source);
+    }
+
+    /// Replace the static discovery source for a provider, dropping any
+    /// entries it previously contributed. Used when a provider is added,
+    /// updated, or re-added so stale model IDs do not linger in the catalog.
+    pub async fn replace_static_source(&self, provider: &str, models: Vec<String>) {
+        {
+            let mut sources = self.sources.write().await;
+            sources.retain(|s| !s.matches_provider(provider));
+            sources.push(Box::new(StaticModelSource::new(
+                provider.to_string(),
+                models
+                    .into_iter()
+                    .map(|m| (provider.to_string(), m))
+                    .collect(),
+            )));
+        }
+        {
+            let mut entries = self.entries.write().await;
+            entries.retain(|key, _| key.rsplit_once(':').map(|(p, _)| p) != Some(provider));
+        }
     }
 
     /// Run discovery from all registered sources and merge results.
@@ -460,10 +498,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_source_discovery() {
-        let source = StaticModelSource::new(vec![
-            ("anthropic".to_string(), "claude-3-5-sonnet-20241022".to_string()),
-            ("anthropic".to_string(), "claude-3-haiku-20240307".to_string()),
-        ]);
+        let source = StaticModelSource::new(
+            "anthropic",
+            vec![
+                ("anthropic".to_string(), "claude-3-5-sonnet-20241022".to_string()),
+                ("anthropic".to_string(), "claude-3-haiku-20240307".to_string()),
+            ],
+        );
 
         let entries = source.discover().await.unwrap();
         assert_eq!(entries.len(), 2);
@@ -480,10 +521,10 @@ mod tests {
     async fn test_catalog_discover() {
         let catalog = ModelCatalog::new();
         catalog
-            .add_source(Box::new(StaticModelSource::new(vec![(
-                "anthropic".to_string(),
-                "claude-3-5-sonnet-20241022".to_string(),
-            )])))
+            .add_source(Box::new(StaticModelSource::new(
+                "anthropic",
+                vec![("anthropic".to_string(), "claude-3-5-sonnet-20241022".to_string())],
+            )))
             .await;
 
         let count = catalog.discover().await.unwrap();
@@ -491,6 +532,35 @@ mod tests {
 
         let list = catalog.list().await;
         assert_eq!(list.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_replace_static_source_drops_stale_entries() {
+        let catalog = ModelCatalog::new();
+        catalog
+            .replace_static_source("deepseek", vec!["deepseek-chat".to_string()])
+            .await;
+        catalog.discover().await.unwrap();
+        assert_eq!(catalog.list().await.len(), 1);
+
+        // Replacing the same provider must not leave the old model behind.
+        catalog
+            .replace_static_source("deepseek", vec!["deepseek-v4-flash".to_string()])
+            .await;
+        catalog.discover().await.unwrap();
+        let list = catalog.list().await;
+        let ids: Vec<String> = list.iter().map(|e| e.id.clone()).collect();
+        assert_eq!(ids, vec!["deepseek-v4-flash".to_string()]);
+
+        // Another provider is untouched by the replacement.
+        catalog
+            .replace_static_source("openai", vec!["gpt-4o".to_string()])
+            .await;
+        catalog.discover().await.unwrap();
+        let ids: Vec<String> = catalog.list().await.iter().map(|e| e.id.clone()).collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.iter().any(|id| id == "deepseek-v4-flash"));
+        assert!(ids.iter().any(|id| id == "gpt-4o"));
     }
 
     #[test]

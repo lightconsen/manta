@@ -43,7 +43,7 @@ use crate::model_router::config::{
     ProviderHealth, ProviderHealthInfo, ProviderInfo, ProviderType, TaskType,
 };
 use crate::model_router::failure_class::FailureClass;
-use crate::model_router::model_catalog::{self, ModelCatalog, ModelCatalogEntry};
+use crate::model_router::model_catalog::{ModelCatalog, ModelCatalogEntry};
 use crate::model_router::oauth_credential::Credential;
 use crate::model_router::usage_fetcher::{
     LocalBudgetFetcher, OpenAiUsageFetcher, UsageFetcher, UsageFetcherRegistry,
@@ -203,6 +203,29 @@ mod tests {
 
         let health = router.get_provider_health("openai").await.unwrap();
         assert_eq!(health.state, "Open");
+    }
+
+    #[tokio::test]
+    async fn update_provider_drops_removed_models_from_catalog() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        router
+            .add_provider("openai", test_provider_config(&["gpt-4o", "gpt-4-turbo"]))
+            .await
+            .unwrap();
+        // Discover so catalog entries exist for both models.
+        router.model_catalog.discover().await.unwrap();
+        assert!(router.provider_for_model("gpt-4-turbo").await.is_some());
+
+        // Shrink the provider's model list. The dropped model must not linger
+        // in the catalog (the update replaces the static source) or resolve.
+        let updated = test_provider_config(&["gpt-4o"]);
+        router.update_provider("openai", updated).await.unwrap();
+
+        let pairs = router.models_with_providers().await;
+        assert_eq!(pairs.len(), 1);
+        assert!(!pairs.contains(&("openai".to_string(), "gpt-4-turbo".to_string())));
+        assert!(router.provider_for_model("gpt-4-turbo").await.is_none());
+        assert!(router.provider_for_model("gpt-4o").await.is_some());
     }
 
     #[tokio::test]

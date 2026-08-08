@@ -94,21 +94,21 @@ impl ModelRouter {
         // Initialize fallback chains
         self.init_fallback_chains_from_config(&config).await;
 
-        // Initialize model catalog from the models owned by each provider
-        let model_tuples: Vec<(String, String)> = config
+        // Initialize model catalog from the models owned by each provider.
+        // Replace per provider so a combined source cannot resurrect models
+        // dropped by a later runtime update.
+        let provider_models: Vec<(String, Vec<String>)> = config
             .providers
             .iter()
-            .flat_map(|(provider, pcfg)| {
-                pcfg.models
-                    .iter()
-                    .map(move |m| (provider.clone(), m.clone()))
-            })
+            .map(|(provider, pcfg)| (provider.clone(), pcfg.models.clone()))
             .collect();
         drop(config);
 
-        self.model_catalog
-            .add_source(Box::new(model_catalog::StaticModelSource::new(model_tuples)))
-            .await;
+        for (provider, models) in &provider_models {
+            self.model_catalog
+                .replace_static_source(provider, models.clone())
+                .await;
+        }
         if let Err(e) = self.model_catalog.discover().await {
             warn!("Model catalog discovery failed: {}", e);
         }
@@ -122,20 +122,18 @@ impl ModelRouter {
         let config = self.config.read().await;
         self.init_fallback_chains_from_config(&config).await;
 
-        let model_tuples: Vec<(String, String)> = config
+        let provider_models: Vec<(String, Vec<String>)> = config
             .providers
             .iter()
-            .flat_map(|(provider, pcfg)| {
-                pcfg.models
-                    .iter()
-                    .map(move |m| (provider.clone(), m.clone()))
-            })
+            .map(|(provider, pcfg)| (provider.clone(), pcfg.models.clone()))
             .collect();
         drop(config);
 
-        self.model_catalog
-            .add_source(Box::new(model_catalog::StaticModelSource::new(model_tuples)))
-            .await;
+        for (provider, models) in &provider_models {
+            self.model_catalog
+                .replace_static_source(provider, models.clone())
+                .await;
+        }
         if let Err(e) = self.model_catalog.discover().await {
             warn!("Model catalog discovery failed: {}", e);
         }

@@ -100,7 +100,9 @@ export function AddModelForm({
           setRemoteModelsSource(res.source);
           if (res.error) setFetchModelsError(res.error);
           if (res.models.length > 0) {
-            setSelectedModels([res.models[0]]);
+            // Adopt the whole fetched list so an existing provider does not
+            // collapse to a single model.
+            setSelectedModels(existingProvider ? [...res.models] : [res.models[0]]);
             setDefaultModel(res.models[0]);
           }
         });
@@ -124,7 +126,11 @@ export function AddModelForm({
     if (res.error) setFetchModelsError(res.error);
     if (res.models.length > 0) {
       const kept = selectedModels.filter((m) => res.models.includes(m));
-      const nextSelected = kept.length > 0 ? kept : [res.models[0]];
+      // When updating an existing provider whose current models no longer
+      // overlap the freshly fetched list, adopt the full fetched list instead
+      // of collapsing to a single entry.
+      const nextSelected =
+        kept.length > 0 ? kept : existingProvider ? [...res.models] : [res.models[0]];
       setSelectedModels(nextSelected);
       setDefaultModel((prev) =>
         prev && res.models.includes(prev) ? prev : nextSelected[0]
@@ -271,7 +277,18 @@ export function AddModelForm({
       )}
       {(() => {
         const preset = modelPresets.find((p) => p.name === provider);
-        const optionList = remoteModels && remoteModels.length > 0 ? remoteModels : (preset?.models ?? []);
+        // Prefer the models actually configured for this provider over the
+        // static preset list, so re-opening a configured provider shows its
+        // real models rather than the stale preset defaults.
+        const configuredModelIds = models
+          .filter((m) => m.provider.toLowerCase() === providerKey)
+          .map((m) => m.id);
+        const optionList =
+          remoteModels && remoteModels.length > 0
+            ? remoteModels
+            : configuredModelIds.length > 0
+              ? configuredModelIds
+              : (preset?.models ?? []);
         return (
           <div>
             <div className="flex items-center justify-between mb-1">

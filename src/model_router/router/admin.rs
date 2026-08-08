@@ -241,14 +241,11 @@ impl ModelRouter {
         }
 
         // Register the provider's models in the model catalog so capability
-        // routing and model listing can see them immediately.
+        // routing and model listing can see them immediately. Replace (rather
+        // than append) so entries from a prior add of the same name do not
+        // linger after a remove + re-add.
         self.model_catalog
-            .add_source(Box::new(model_catalog::StaticModelSource::new(
-                model_ids
-                    .iter()
-                    .map(|m| (name.to_string(), m.clone()))
-                    .collect(),
-            )))
+            .replace_static_source(name, model_ids)
             .await;
         if let Err(e) = self.model_catalog.discover().await {
             warn!("Model catalog discovery failed: {}", e);
@@ -304,15 +301,10 @@ impl ModelRouter {
         };
 
         // Refresh the provider's static catalog source so discovery sees the
-        // new model list immediately.
+        // new model list immediately. Replace (don't append) so models removed
+        // by the update do not linger in the catalog.
         self.model_catalog
-            .add_source(Box::new(model_catalog::StaticModelSource::new(
-                config
-                    .models
-                    .iter()
-                    .map(|m| (name.to_string(), m.clone()))
-                    .collect(),
-            )))
+            .replace_static_source(name, config.models.clone())
             .await;
         if let Err(e) = self.model_catalog.discover().await {
             warn!("Model catalog discovery failed: {}", e);
