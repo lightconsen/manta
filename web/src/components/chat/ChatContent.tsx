@@ -14,6 +14,7 @@ import { Mic, Image, Paperclip, Square, Send, ChevronDown } from "lucide-react";
 import { MessageSkeleton } from "@/components/ui/Skeleton";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useTextToSpeech } from "@/hooks/useTextToSpeech";
+import { resolveSpeechLang, useSpeechStore } from "@/stores/speechStore";
 import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 
 interface ChatContentProps {
@@ -33,6 +34,7 @@ export function ChatContent({ transport }: ChatContentProps) {
   const isRunning = useChatStore((s) => s.isRunning);
   const voiceMode = useChatStore((s) => s.voiceMode);
   const setVoiceMode = useChatStore((s) => s.setVoiceMode);
+  const speechLang = resolveSpeechLang(useSpeechStore((s) => s.lang));
   const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
   const hasMoreHistory = useChatStore((s) => s.hasMoreHistory);
   const setIsLoadingHistory = useChatStore((s) => s.setIsLoadingHistory);
@@ -46,7 +48,7 @@ export function ChatContent({ transport }: ChatContentProps) {
     stop: stopSpeaking,
     supported: ttsSupported,
   } = useTextToSpeech({
-    lang: "zh-CN",
+    lang: speechLang,
     onEnd: () => {
       // After speaking, re-start listening if still in voice mode
       if (useChatStore.getState().voiceMode) {
@@ -81,7 +83,7 @@ export function ChatContent({ transport }: ChatContentProps) {
       }
     },
     autoSubmit: true,
-    lang: "zh-CN",
+    lang: speechLang,
   });
 
   const voiceSupported = sttSupported && ttsSupported;

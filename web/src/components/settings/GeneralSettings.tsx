@@ -1,5 +1,6 @@
 import type { ModelInfo, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 import { useThemeStore } from "@/stores/themeStore";
+import { useSpeechStore, type SpeechLangChoice } from "@/stores/speechStore";
 import type { SyscityConfig } from "@/components/settings/useSettingsData";
 import { Section } from "@/components/ui/Section";
 import { Select } from "@/components/ui/Select";
@@ -18,6 +19,7 @@ interface GeneralSettingsProps {
 export function GeneralSettings({ transport, config, models, currentTheme, update }: GeneralSettingsProps) {
   const hb = config.heartbeat || {};
   const si = transport.getServerInfo();
+  const speechLang = useSpeechStore((s) => s.lang);
 
   return (
     <div className="space-y-5">
@@ -99,6 +101,25 @@ export function GeneralSettings({ transport, config, models, currentTheme, updat
               ))}
             </div>
           </div>
+        </div>
+      </Section>
+
+      <Section title="Voice">
+        <Select
+          label="Recognition Language"
+          labelClassName="block text-sm text-secondary mb-1"
+          value={speechLang}
+          onChange={(e) => useSpeechStore.getState().setLang(e.target.value as SpeechLangChoice)}
+        >
+          <option value="system">Follow system</option>
+          <option value="zh-CN">中文（普通话）</option>
+          <option value="zh-TW">中文（繁體）</option>
+          <option value="en-US">English (US)</option>
+          <option value="ja-JP">日本語</option>
+          <option value="ko-KR">한국어</option>
+        </Select>
+        <div className="mt-1 text-[11px] text-secondary/70">
+          Used by voice input (speech recognition) and spoken replies. One language per voice session.
         </div>
       </Section>
 
