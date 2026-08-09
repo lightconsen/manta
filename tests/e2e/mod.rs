@@ -225,10 +225,10 @@ pub async fn register_mock_provider_with_model(
         .expect("Failed to register mock provider");
     router
         .model_catalog
-        .add_source(Box::new(syscity::model_router::model_catalog::StaticModelSource::new(vec![(
-            "mock".to_string(),
-            model_id.to_string(),
-        )])))
+        .add_source(Box::new(syscity::model_router::model_catalog::StaticModelSource::new(
+            "mock",
+            vec![("mock".to_string(), model_id.to_string())],
+        )))
         .await;
     let _ = router.model_catalog.discover().await;
 }
