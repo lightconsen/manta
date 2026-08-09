@@ -198,12 +198,6 @@ pub enum SearchProvider {
     /// DuckDuckGo (HTML scraping)
     #[default]
     DuckDuckGo,
-    /// Bing Web Search API (requires key)
-    /// https://www.microsoft.com/en-us/bing/apis/bing-web-search-api
-    Bing { api_key: String, endpoint: String },
-    /// Google Custom Search JSON API (requires key and cx)
-    /// https://developers.google.com/custom-search/v1/overview
-    Google { api_key: String, cx: String },
     /// Brave Search API (requires key)
     /// https://brave.com/search/api/
     Brave { api_key: String },
@@ -226,6 +220,12 @@ pub enum SearchProvider {
     /// Firecrawl Search API (requires key)
     /// https://docs.firecrawl.dev/
     Firecrawl { api_key: String },
+    /// Serper Google Search API (requires key)
+    /// https://serper.dev/
+    Serper { api_key: String },
+    /// Bocha AI Web Search API (requires key)
+    /// https://bochaai.com/
+    Bocha { api_key: String },
 }
 
 impl Default for WebSearchTool {
@@ -287,13 +287,13 @@ impl WebSearchTool {
 fn provider_name(provider: &SearchProvider) -> &'static str {
     match provider {
         SearchProvider::DuckDuckGo => "duckduckgo",
-        SearchProvider::Bing { .. } => "bing",
-        SearchProvider::Google { .. } => "google",
         SearchProvider::Brave { .. } => "brave",
         SearchProvider::Tavily { .. } => "tavily",
         SearchProvider::SerpApi { .. } => "serpapi",
         SearchProvider::Exa { .. } => "exa",
         SearchProvider::Firecrawl { .. } => "firecrawl",
+        SearchProvider::Serper { .. } => "serper",
+        SearchProvider::Bocha { .. } => "bocha",
         SearchProvider::Custom { .. } => "custom",
     }
 }
@@ -313,12 +313,6 @@ impl WebSearchTool {
         let result = tokio::time::timeout(PROVIDER_TIMEOUT, async {
             match provider {
                 SearchProvider::DuckDuckGo => self.search_duckduckgo(query, limit).await,
-                SearchProvider::Bing { api_key, endpoint } => {
-                    self.search_bing(api_key, endpoint, query, limit).await
-                }
-                SearchProvider::Google { api_key, cx } => {
-                    self.search_google(api_key, cx, query, limit).await
-                }
                 SearchProvider::Brave { api_key } => self.search_brave(api_key, query, limit).await,
                 SearchProvider::Tavily { api_key } => {
                     self.search_tavily(api_key, query, limit).await
@@ -330,6 +324,10 @@ impl WebSearchTool {
                 SearchProvider::Firecrawl { api_key } => {
                     self.search_firecrawl(api_key, query, limit).await
                 }
+                SearchProvider::Serper { api_key } => {
+                    self.search_serper(api_key, query, limit).await
+                }
+                SearchProvider::Bocha { api_key } => self.search_bocha(api_key, query, limit).await,
                 SearchProvider::Custom {
                     url,
                     api_key,
@@ -502,143 +500,6 @@ impl WebSearchTool {
         }
 
         results
-    }
-
-    /// Search using Bing Web Search API
-    async fn search_bing(
-        &self,
-        api_key: &str,
-        endpoint: &str,
-        query: &str,
-        limit: usize,
-    ) -> crate::Result<Vec<SearchResult>> {
-        let url = format!(
-            "{}/v7.0/search?q={}&count={}",
-            endpoint.trim_end_matches('/'),
-            urlencoding::encode(query),
-            limit.min(50)
-        );
-
-        let response = self
-            .client
-            .get(&url)
-            .header("Ocp-Apim-Subscription-Key", api_key)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!("Bing search request failed: {}", e))
-            })?;
-
-        if !response.status().is_success() {
-            return Err(crate::error::SyscityError::Internal(format!(
-                "Bing search failed: HTTP {}",
-                response.status()
-            )));
-        }
-
-        let json: serde_json::Value = response.json().await.map_err(|e| {
-            crate::error::SyscityError::Internal(format!("Failed to parse Bing response: {}", e))
-        })?;
-
-        let mut results = Vec::new();
-
-        // Parse Bing API response
-        if let Some(web_pages) = json.get("webPages").and_then(|wp| wp.get("value")) {
-            if let Some(items) = web_pages.as_array() {
-                for item in items.iter().take(limit) {
-                    let title = item
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let url = item
-                        .get("url")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let snippet = item
-                        .get("snippet")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    if !title.is_empty() && !url.is_empty() {
-                        results.push(SearchResult { title, url, snippet });
-                    }
-                }
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Search using Google Custom Search JSON API
-    async fn search_google(
-        &self,
-        api_key: &str,
-        cx: &str,
-        query: &str,
-        limit: usize,
-    ) -> crate::Result<Vec<SearchResult>> {
-        let url = format!(
-            "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&num={}",
-            api_key,
-            cx,
-            urlencoding::encode(query),
-            limit.min(10)
-        );
-
-        let response = self
-            .client
-            .get(&url)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| {
-                crate::error::SyscityError::Internal(format!("Google search request failed: {}", e))
-            })?;
-
-        if !response.status().is_success() {
-            return Err(crate::error::SyscityError::Internal(format!(
-                "Google search failed: HTTP {} - {}",
-                response.status(),
-                response.text().await.unwrap_or_default()
-            )));
-        }
-
-        let json: serde_json::Value = response.json().await.map_err(|e| {
-            crate::error::SyscityError::Internal(format!("Failed to parse Google response: {}", e))
-        })?;
-
-        let mut results = Vec::new();
-
-        // Parse Google Custom Search response
-        if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
-            for item in items.iter().take(limit) {
-                let title = item
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let url = item
-                    .get("link")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let snippet = item
-                    .get("snippet")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                if !title.is_empty() && !url.is_empty() {
-                    results.push(SearchResult { title, url, snippet });
-                }
-            }
-        }
-
-        Ok(results)
     }
 
     /// Search using Brave Search API
@@ -913,6 +774,115 @@ impl WebSearchTool {
                     url: item["url"].as_str().unwrap_or("").to_string(),
                     snippet: item["description"].as_str().unwrap_or("").to_string(),
                 });
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Search using Serper Google Search API
+    async fn search_serper(
+        &self,
+        api_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        let body = serde_json::json!({
+            "q": query,
+            "num": limit.min(20),
+        });
+
+        let response = self
+            .client
+            .post("https://google.serper.dev/search")
+            .header("X-API-KEY", api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Serper search failed: {}", e))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(crate::error::SyscityError::Internal(format!(
+                "Serper search failed: HTTP {} - {}",
+                status, body_text
+            )));
+        }
+
+        let data: serde_json::Value = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to parse Serper response: {}", e))
+        })?;
+
+        let mut results = Vec::new();
+        if let Some(items) = data["organic"].as_array() {
+            for item in items.iter().take(limit) {
+                let title = item["title"].as_str().unwrap_or("").to_string();
+                let url = item["link"].as_str().unwrap_or("").to_string();
+                if !title.is_empty() && !url.is_empty() {
+                    results.push(SearchResult {
+                        title,
+                        url,
+                        snippet: item["snippet"].as_str().unwrap_or("").to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Search using Bocha AI Web Search API
+    async fn search_bocha(
+        &self,
+        api_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        let body = serde_json::json!({
+            "query": query,
+            "summary": true,
+            "count": limit.min(50),
+        });
+
+        let response = self
+            .client
+            .post("https://api.bochaai.com/v1/web-search")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Bocha search failed: {}", e))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(crate::error::SyscityError::Internal(format!(
+                "Bocha search failed: HTTP {} - {}",
+                status, body_text
+            )));
+        }
+
+        let data: serde_json::Value = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to parse Bocha response: {}", e))
+        })?;
+
+        let mut results = Vec::new();
+        if let Some(items) = data["data"]["webPages"]["value"].as_array() {
+            for item in items.iter().take(limit) {
+                let title = item["name"].as_str().unwrap_or("").to_string();
+                let url = item["url"].as_str().unwrap_or("").to_string();
+                if !title.is_empty() && !url.is_empty() {
+                    results.push(SearchResult {
+                        title,
+                        url,
+                        snippet: item["snippet"].as_str().unwrap_or("").to_string(),
+                    });
+                }
             }
         }
 

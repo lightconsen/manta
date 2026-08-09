@@ -488,21 +488,15 @@ pub(crate) async fn register_hot_reload_handlers(
                                         .api_key_for("firecrawl")
                                         .unwrap_or_default(),
                                 }),
-                                "duckduckgo" => Some(crate::tools::web::SearchProvider::DuckDuckGo),
-                                "bing" => Some(crate::tools::web::SearchProvider::Bing {
-                                    api_key: search_config.api_key_for("bing").unwrap_or_default(),
-                                    endpoint: "https://api.bing.microsoft.com".to_string(),
-                                }),
-                                "google" => Some(crate::tools::web::SearchProvider::Google {
+                                "serper" => Some(crate::tools::web::SearchProvider::Serper {
                                     api_key: search_config
-                                        .api_key_for("google")
-                                        .unwrap_or_default(),
-                                    cx: search_config
-                                        .keys
-                                        .get("google_cx")
-                                        .cloned()
+                                        .api_key_for("serper")
                                         .unwrap_or_default(),
                                 }),
+                                "bocha" => Some(crate::tools::web::SearchProvider::Bocha {
+                                    api_key: search_config.api_key_for("bocha").unwrap_or_default(),
+                                }),
+                                "duckduckgo" => Some(crate::tools::web::SearchProvider::DuckDuckGo),
                                 "brave" => Some(crate::tools::web::SearchProvider::Brave {
                                     api_key: search_config.api_key_for("brave").unwrap_or_default(),
                                 }),

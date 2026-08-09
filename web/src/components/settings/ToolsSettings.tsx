@@ -8,8 +8,8 @@ const SEARCH_PROVIDERS = [
   { id: "serpapi", label: "SerpAPI", needsKey: true },
   { id: "exa", label: "Exa", needsKey: true },
   { id: "firecrawl", label: "Firecrawl", needsKey: true },
-  { id: "bing", label: "Bing", needsKey: true },
-  { id: "google", label: "Google", needsKey: true },
+  { id: "serper", label: "Serper", needsKey: true },
+  { id: "bocha", label: "Bocha", needsKey: true },
   { id: "brave", label: "Brave", needsKey: true },
 ];
 
@@ -93,18 +93,6 @@ export function ToolsSettings({ config, update }: ToolsSettingsProps) {
               />
             </div>
           ))}
-          {/* Google CX special case */}
-          <div className="flex items-center gap-3">
-            <label className="w-28 text-sm text-secondary shrink-0">Google CX</label>
-            <input
-              type="password"
-              placeholder={config.search?.keys?.google_cx === "true" ? "••••••••" : ""}
-              value=""
-              onChange={(e) => update("search.keys.google_cx", e.target.value)}
-              onFocus={(e) => (e.target.value = "")}
-              className={KEY_INPUT_CLASS}
-            />
-          </div>
         </div>
       </Section>
     </div>
