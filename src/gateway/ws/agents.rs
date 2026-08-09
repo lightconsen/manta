@@ -61,9 +61,15 @@ pub(super) async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>
             )
         }
         None => {
-            // Agent not spawned but may have a personality on disk
+            // Agent not spawned but may have a personality on disk. Show the
+            // effective config (personality base + persisted overrides) so the
+            // UI displays the values the agent will actually run with.
             if let Some(p) = personality {
-                let cfg = p.to_agent_config();
+                let mut cfg = p.to_agent_config();
+                {
+                    let config = state.config.read().await;
+                    config.apply_agent_overrides(&params.agent_id, &mut cfg);
+                }
                 let config_json = match serde_json::to_value(&cfg) {
                     Ok(v) => v,
                     Err(e) => {
@@ -207,6 +213,49 @@ mod tests {
         let resp = handle_agents_get(&req("r1", params), &state).await;
         assert!(!resp.ok);
         assert_eq!(resp.error.as_ref().unwrap().code, "AGENT_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn agents_get_stopped_shows_effective_config_with_overrides() {
+        let state = state().await;
+
+        // Register a stopped agent (personality only, not spawned).
+        let personality = crate::agent::AgentPersonality {
+            id: "alice".into(),
+            identity: "Alice".into(),
+            is_valid: true,
+            ..Default::default()
+        };
+        state
+            .agents
+            .registry
+            .write()
+            .await
+            .insert_for_test(personality);
+
+        // Baseline: personality-derived temperature.
+        let params = Some(serde_json::json!({ "agent_id": "alice" }));
+        let resp = handle_agents_get(&req("r1", params), &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.unwrap();
+        assert_eq!(payload["status"], "stopped");
+        let base_t = payload["config"]["temperature"].as_f64().unwrap();
+        assert!((base_t - 0.7).abs() < 1e-6, "base temperature {base_t}");
+
+        // Persisted override must be reflected in the stopped-agent display.
+        {
+            let mut guard = state.config.write().await;
+            let config = Arc::make_mut(&mut guard);
+            config
+                .apply_agent_override_field("alice", "temperature", &serde_json::json!(0.3))
+                .unwrap();
+        }
+        let params = Some(serde_json::json!({ "agent_id": "alice" }));
+        let resp = handle_agents_get(&req("r2", params), &state).await;
+        assert!(resp.ok);
+        let payload = resp.payload.unwrap();
+        let t = payload["config"]["temperature"].as_f64().unwrap();
+        assert!((t - 0.3).abs() < 1e-6, "effective temperature {t} should be ~0.3");
     }
 
     #[tokio::test]

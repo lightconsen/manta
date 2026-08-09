@@ -129,10 +129,44 @@ pub use turns::{Thread, ThreadManager, Turn, TurnState};
 
 use self::session_store::SessionStore;
 
+/// A clone-by-value cell for the agent's runtime configuration.
+///
+/// `Agent` derives `Clone` in several places; if the config field were a plain
+/// `RwLock`, cloning would share the same lock, so an update through one clone
+/// would leak into every other. This wrapper copies the inner value on clone
+/// instead, so each `Agent` clone owns an independent snapshot while still
+/// allowing `update_config(&self)` on a shared `&Agent`.
+#[derive(Debug, Default)]
+pub(crate) struct ConfigCell(std::sync::RwLock<AgentConfig>);
+
+impl Clone for ConfigCell {
+    fn clone(&self) -> Self {
+        ConfigCell(std::sync::RwLock::new(self.snapshot()))
+    }
+}
+
+impl From<AgentConfig> for ConfigCell {
+    fn from(config: AgentConfig) -> Self {
+        ConfigCell(std::sync::RwLock::new(config))
+    }
+}
+
+impl ConfigCell {
+    /// Copy the current config value (never held across an await point).
+    fn snapshot(&self) -> AgentConfig {
+        self.0.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Replace the stored config value.
+    fn replace(&self, new_config: AgentConfig) {
+        *self.0.write().unwrap_or_else(|p| p.into_inner()) = new_config;
+    }
+}
+
 #[derive(Clone)]
 pub struct Agent {
-    /// Agent configuration
-    config: AgentConfig,
+    /// Agent configuration (runtime-updatable, copy-on-clone).
+    config: ConfigCell,
     /// The LLM provider
     provider: Arc<dyn Provider>,
     /// Model name to use (overrides provider default)
@@ -563,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_agent_update_config() {
-        let mut agent = Agent::new(
+        let agent = Agent::new(
             AgentConfig::default(),
             Arc::new(crate::providers::mock::MockProvider::new()),
             Arc::new(ToolRegistry::new()),
@@ -572,8 +606,25 @@ mod tests {
         new_config.temperature = 0.3;
         new_config.max_tokens = 512;
         agent.update_config(new_config);
-        assert_eq!(agent.config.temperature, 0.3);
-        assert_eq!(agent.config.max_tokens, 512);
+        let cfg = agent.config_snapshot();
+        assert_eq!(cfg.temperature, 0.3);
+        assert_eq!(cfg.max_tokens, 512);
+    }
+
+    #[test]
+    fn test_agent_config_clone_copies_instead_of_sharing() {
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Arc::new(crate::providers::mock::MockProvider::new()),
+            Arc::new(ToolRegistry::new()),
+        );
+        let cloned = agent.clone();
+        // Updating the clone must not leak into the original.
+        let mut cfg = AgentConfig::default();
+        cfg.temperature = 0.1;
+        cloned.update_config(cfg);
+        assert_eq!(agent.config_snapshot().temperature, AgentConfig::default().temperature);
+        assert_eq!(cloned.config_snapshot().temperature, 0.1);
     }
 
     #[test]

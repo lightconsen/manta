@@ -98,6 +98,16 @@ pub(crate) async fn spawn_agent_inner(
     config.agent_id = Some(id.clone());
     info!("Spawning agent: {}", id);
 
+    // Capture the base config before merging per-agent overrides so a later
+    // `config.set agent_overrides.*` can recompute the effective config from
+    // the same base and push it to this running agent.
+    let base_config = config.clone();
+    state
+        .config
+        .read()
+        .await
+        .apply_agent_overrides(&id, &mut config);
+
     // Reserve the agent ID across the async setup to prevent concurrent
     // callers from both passing the duplicate check and creating ghost tasks.
     {
@@ -231,6 +241,7 @@ pub(crate) async fn spawn_agent_inner(
     let handle = super::AgentHandle {
         id: id.clone(),
         config: config.clone(),
+        base_config,
         tx: tx.clone(),
         query_tx: query_tx.clone(),
         busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -373,6 +384,10 @@ pub(crate) async fn run_agent_loop(
                             let mut agents = state.agents.agents.write().await;
                             if let Some(handle) = agents.get_mut(&agent_id) {
                                 handle.config = new_config.clone();
+                                // Apply to the actual runtime too, not just the
+                                // display copy, so hot-reload / config.set takes
+                                // effect from the next turn onward.
+                                handle.agent.update_config(new_config);
                                 info!("Agent {} configuration updated", agent_id);
                             }
                         }
@@ -1277,4 +1292,81 @@ pub(crate) async fn create_default_tool_registry(
     registry.mark_privileged("ios_shortcut_run");
 
     Ok(registry)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    /// `AgentCommand::UpdateConfig` must reach the running agent's runtime
+    /// config, not just the display copy on the handle. Otherwise hot-reload /
+    /// `config.set agent_overrides.*` would appear to succeed without taking
+    /// effect.
+    #[tokio::test]
+    async fn update_config_command_reaches_agent() {
+        let state = std::sync::Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
+
+        let provider: Arc<dyn crate::providers::Provider> =
+            Arc::new(crate::providers::mock::MockProvider::new());
+        let tools = Arc::new(crate::tools::ToolRegistry::new());
+        let agent_config = crate::agent::AgentConfig::default();
+        let agent = Arc::new(crate::agent::Agent::new(agent_config.clone(), provider, tools));
+
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let (query_tx, query_rx) = tokio::sync::mpsc::channel::<crate::gateway::AgentQuery>(32);
+        let busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let handle = crate::gateway::AgentHandle {
+            id: "agent-a".to_string(),
+            config: agent_config.clone(),
+            base_config: agent_config,
+            tx: tx.clone(),
+            query_tx: query_tx.clone(),
+            busy: busy.clone(),
+            agent: agent.clone(),
+        };
+        state
+            .agents
+            .agents
+            .write()
+            .await
+            .insert("agent-a".to_string(), handle);
+
+        let loop_state = state.clone();
+        let loop_agent_id = "agent-a".to_string();
+        let loop_agent = agent.clone();
+        let loop_busy = busy.clone();
+        let loop_task = tokio::spawn(async move {
+            run_agent_loop(loop_state, loop_agent_id, loop_agent, loop_busy, rx, query_rx, true)
+                .await;
+        });
+
+        let mut new_config = crate::agent::AgentConfig::default();
+        new_config.temperature = 0.9;
+        tx.send(crate::gateway::AgentCommand::UpdateConfig(new_config))
+            .await
+            .unwrap();
+
+        // The loop processes the update asynchronously; poll for the effect.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if agent.config_snapshot().temperature == 0.9 {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                panic!("UpdateConfig did not reach the running agent's config");
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        tx.send(crate::gateway::AgentCommand::Shutdown)
+            .await
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(2), loop_task).await;
+    }
 }

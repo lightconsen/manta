@@ -61,7 +61,8 @@ mod tests {
         });
         let handle = AgentHandle {
             id: "parent-123".to_string(),
-            config: agent_config,
+            config: agent_config.clone(),
+            base_config: agent_config,
             tx: tokio::sync::mpsc::channel(1).0,
             query_tx: tokio::sync::mpsc::channel(1).0,
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),

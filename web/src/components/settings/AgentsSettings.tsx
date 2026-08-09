@@ -1,7 +1,10 @@
+import { useState } from "react";
 import type { ModelInfo } from "@/SyscityWebSocketTransport";
 import { Section } from "@/components/ui/Section";
 import { Select } from "@/components/ui/Select";
 import { Input } from "@/components/ui/Input";
+import { Toggle } from "@/components/ui/Toggle";
+import type { AgentParamOverrides } from "@/components/settings/useSettingsData";
 
 interface AgentRegistryItem {
   id: string;
@@ -26,9 +29,13 @@ interface AgentsSettingsProps {
   selectedAgentDetail: AgentDetail | null;
   agentDetailLoading: boolean;
   defaultAgent: Record<string, unknown>;
+  agentOverrides?: AgentParamOverrides;
   models: ModelInfo[];
   agentModels: Record<string, string>;
   update: (path: string, value: unknown) => Promise<void>;
+  updateAgentParam: (agentId: string, field: string, value: unknown) => Promise<void>;
+  resetAgentParam: (agentId: string, field: string) => Promise<void>;
+  resetAgentParams: (agentId: string) => Promise<void>;
 }
 
 export function AgentsSettings({
@@ -38,10 +45,82 @@ export function AgentsSettings({
   selectedAgentDetail,
   agentDetailLoading,
   defaultAgent,
+  agentOverrides,
   models,
   agentModels,
   update,
+  updateAgentParam,
+  resetAgentParam,
+  resetAgentParams,
 }: AgentsSettingsProps) {
+  const [paramTab, setParamTab] = useState<"general" | "prompt">("general");
+
+  const agentId = selectedAgentId || "default";
+  const isDefault = agentId === "default";
+  const ov: AgentParamOverrides = agentOverrides ?? {};
+  const da = defaultAgent;
+
+  const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
+
+  // Effective value shown in each control: per-agent override when set,
+  // otherwise the global default (default_agent), otherwise a built-in fallback.
+  const eff = {
+    temperature: ov.temperature ?? num(da.temperature) ?? 0.7,
+    max_tokens: ov.max_tokens ?? num(da.max_tokens) ?? 2048,
+    max_turns: ov.max_turns ?? num(da.max_turns) ?? null,
+    max_concurrent_tools: ov.max_concurrent_tools ?? num(da.max_concurrent_tools) ?? 5,
+    max_context_tokens: ov.max_context_tokens ?? num(da.max_context_tokens) ?? 4096,
+    workspace_only: ov.workspace_only ?? (da.workspace_only as boolean | undefined) ?? true,
+  };
+
+  const isOverridden = (field: keyof AgentParamOverrides) =>
+    !isDefault && ov[field] !== null && ov[field] !== undefined;
+  const anyOverride = (Object.keys(ov) as Array<keyof AgentParamOverrides>).some(
+    (k) => ov[k] !== null && ov[k] !== undefined,
+  );
+
+  const writeField = (field: string, value: unknown) => updateAgentParam(agentId, field, value);
+
+  /** Empty input clears the override for named agents (inherit); for the
+   * default agent it writes null where the field supports it. */
+  const writeNumber = (field: string, raw: string, allowNull = false) => {
+    if (raw === "") {
+      if (isDefault) {
+        if (allowNull) void updateAgentParam(agentId, field, null);
+      } else {
+        void resetAgentParam(agentId, field);
+      }
+      return;
+    }
+    const v = parseInt(raw, 10);
+    if (!Number.isNaN(v)) void writeField(field, v);
+  };
+
+  /** Small "inherits global" badge / reset button shown next to a field label. */
+  const overrideHint = (field: keyof AgentParamOverrides) => {
+    if (isDefault) return null;
+    if (isOverridden(field)) {
+      return (
+        <button
+          type="button"
+          onClick={() => void resetAgentParam(agentId, field)}
+          className="text-[11px] text-primary-600 dark:text-primary-400 hover:underline"
+          title="Reset to global default"
+        >
+          Reset
+        </button>
+      );
+    }
+    return <span className="text-[10px] text-secondary/60">Inherits global</span>;
+  };
+
+  const paramTabCls = (id: string) =>
+    `px-3 py-1.5 text-sm rounded-t-md transition border-b-2 -mb-px ${
+      paramTab === id
+        ? "border-primary-500 text-primary-700 dark:text-primary-400 font-medium"
+        : "border-transparent text-secondary hover:text-primary"
+    }`;
+
   return (
     <div className="space-y-5">
       <Section title="Select Agent">
@@ -164,60 +243,144 @@ export function AgentsSettings({
       )}
 
       <section>
-        {(() => {
-          const hasAgentCfg = selectedAgentDetail?.config != null;
-          const ac = (selectedAgentDetail?.config as Record<string, unknown> | null) ?? defaultAgent;
-          return (
-            <>
-              <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2">
-                {hasAgentCfg ? `${selectedAgentDetail!.agent_id} Parameters` : "Global Default Parameters"}
-              </h3>
-              {hasAgentCfg && (
-                <div className="text-[11px] text-secondary/70 mb-2">Editing individual agent parameters is not yet supported. Changes here affect the global default.</div>
-              )}
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm text-secondary mb-1">Temperature</label>
-                    <div className="flex items-center gap-2">
-                      <input type="range" min="0" max="2" step="0.1" value={(ac.temperature as number | undefined) ?? 0.7} onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))} className="flex-1 h-1.5 bg-secondary/20 dark:bg-secondary/20 rounded-lg appearance-none cursor-pointer accent-primary-500" />
-                      <span className="text-sm text-secondary w-10 text-right tabular-nums">{((ac.temperature as number | undefined) ?? 0.7).toFixed(2)}</span>
-                    </div>
-                  </div>
-                  <Input
-                    label="Max Tokens"
-                    labelClassName="block text-sm text-secondary mb-1"
-                    type="number"
-                    value={(ac.max_tokens as number | undefined) ?? 2048}
-                    onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))}
-                  />
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider">
+            {isDefault ? "Default Agent Parameters" : `${agentId} Parameters`}
+          </h3>
+          {anyOverride && (
+            <button
+              type="button"
+              onClick={() => void resetAgentParams(agentId)}
+              className="text-[11px] text-primary-600 dark:text-primary-400 hover:underline"
+              title="Reset all parameters to global defaults"
+            >
+              Reset all
+            </button>
+          )}
+        </div>
+
+        <div className="flex gap-1 border-b border-subtle mb-3">
+          <button type="button" className={paramTabCls("general")} onClick={() => setParamTab("general")}>
+            General
+          </button>
+          <button type="button" className={paramTabCls("prompt")} onClick={() => setParamTab("prompt")}>
+            System Prompt
+          </button>
+        </div>
+
+        {paramTab === "general" && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm text-secondary">Temperature</label>
+                  {overrideHint("temperature")}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Input
-                    label="Max Turns"
-                    labelClassName="block text-sm text-secondary mb-1"
-                    type="number"
-                    value={(ac.max_turns as number | undefined) ?? ""}
-                    placeholder="Unlimited"
-                    onChange={(e) => update("default_agent.max_turns", e.target.value ? parseInt(e.target.value) : null)}
-                  />
-                  <Input
-                    label="Max Concurrent Tools"
-                    labelClassName="block text-sm text-secondary mb-1"
-                    type="number"
-                    value={(ac.max_concurrent_tools as number | undefined) ?? 5}
-                    onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-secondary mb-1">System Prompt</label>
-                  <textarea value={(ac.system_prompt as string | undefined) || ""} onChange={(e) => update("default_agent.system_prompt", e.target.value)} className="w-full h-[60vh] rounded-lg border border-subtle bg-card px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20 resize-none font-mono" />
+                <div className="flex items-center gap-2">
+                  <input type="range" min="0" max="2" step="0.1" value={eff.temperature} onChange={(e) => void writeField("temperature", parseFloat(e.target.value))} className="flex-1 h-1.5 bg-secondary/20 dark:bg-secondary/20 rounded-lg appearance-none cursor-pointer accent-primary-500" />
+                  <span className="text-sm text-secondary w-10 text-right tabular-nums">{eff.temperature.toFixed(2)}</span>
                 </div>
               </div>
-            </>
-          );
-        })()}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm text-secondary">Max Tokens</label>
+                  {overrideHint("max_tokens")}
+                </div>
+                <Input
+                  type="number"
+                  value={eff.max_tokens}
+                  onChange={(e) => writeNumber("max_tokens", e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm text-secondary">Max Turns</label>
+                  {overrideHint("max_turns")}
+                </div>
+                <Input
+                  type="number"
+                  value={eff.max_turns ?? ""}
+                  placeholder="Unlimited"
+                  onChange={(e) => writeNumber("max_turns", e.target.value, true)}
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm text-secondary">Max Concurrent Tools</label>
+                  {overrideHint("max_concurrent_tools")}
+                </div>
+                <Input
+                  type="number"
+                  value={eff.max_concurrent_tools}
+                  onChange={(e) => writeNumber("max_concurrent_tools", e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm text-secondary">Max Context Tokens</label>
+                  {overrideHint("max_context_tokens")}
+                </div>
+                <Input
+                  type="number"
+                  value={eff.max_context_tokens}
+                  onChange={(e) => writeNumber("max_context_tokens", e.target.value)}
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm text-secondary">Workspace Only</label>
+                  {overrideHint("workspace_only")}
+                </div>
+                <div className="px-3 py-2 rounded-lg bg-card flex items-center justify-between">
+                  <span className="text-xs text-secondary/70">{eff.workspace_only ? "Restricted to workspace" : "Unrestricted"}</span>
+                  <Toggle
+                    checked={eff.workspace_only}
+                    onChange={() => void writeField("workspace_only", !eff.workspace_only)}
+                    variant="preset"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {paramTab === "prompt" && (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm text-secondary">System Prompt</label>
+              {overrideHint("system_prompt")}
+            </div>
+            {isDefault ? (
+              <textarea
+                value={(da.system_prompt as string | undefined) || ""}
+                onChange={(e) => void writeField("system_prompt", e.target.value)}
+                className="w-full h-[60vh] rounded-lg border border-subtle bg-card px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20 resize-none font-mono"
+              />
+            ) : (
+              <>
+                <textarea
+                  value={ov.system_prompt ?? ""}
+                  onChange={(e) =>
+                    e.target.value
+                      ? void writeField("system_prompt", e.target.value)
+                      : void resetAgentParam(agentId, "system_prompt")
+                  }
+                  placeholder="Leave empty to inherit the personality-derived prompt"
+                  className="w-full h-[60vh] rounded-lg border border-subtle bg-card px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary-500/20 resize-none font-mono"
+                />
+                <div className="mt-1 text-[11px] text-secondary/70">
+                  A custom prompt overrides this agent's personality-derived prompt. Empty = inherit.
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );
 }
+

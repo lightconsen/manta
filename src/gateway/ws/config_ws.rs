@@ -15,9 +15,11 @@ pub(super) async fn handle_config_get(req: &WsRequest, state: &Arc<GatewayState>
                 "max_tokens": config.default_agent.max_tokens,
                 "max_turns": config.default_agent.max_turns,
                 "max_concurrent_tools": config.default_agent.max_concurrent_tools,
+                "max_context_tokens": config.default_agent.max_context_tokens,
                 "system_prompt": config.default_agent.system_prompt,
                 "workspace_only": config.default_agent.workspace_only,
             },
+            "agent_overrides": config.agent_overrides,
             "heartbeat": {
                 "enabled": heartbeat.enabled,
                 "interval_seconds": heartbeat.interval_seconds,
@@ -113,6 +115,11 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
     let mut config_guard = state.config.write().await;
     let config = Arc::make_mut(&mut config_guard);
 
+    // Agents whose running instance must receive an UpdateConfig push after
+    // the write lock is dropped (the push re-reads state.config).
+    let mut push_override_agent: Option<String> = None;
+    let push_default_agent = params.path.starts_with("default_agent.");
+
     match params.path.as_str() {
         "model" => {
             if let Some(v) = model_update {
@@ -149,6 +156,11 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
         "default_agent.max_concurrent_tools" => {
             if let Some(v) = params.value.as_u64() {
                 config.default_agent.max_concurrent_tools = v as usize;
+            }
+        }
+        "default_agent.max_context_tokens" => {
+            if let Some(v) = params.value.as_u64() {
+                config.default_agent.max_context_tokens = v as usize;
             }
         }
         "default_agent.system_prompt" => {
@@ -318,6 +330,21 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
                 }
             }
         }
+        p if p.starts_with("agent_overrides.") => {
+            let rest = &p["agent_overrides.".len()..];
+            let Some((agent_id, field)) = rest.rsplit_once('.') else {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_PARAMS",
+                    "Expected path agent_overrides.<agent_id>.<field>",
+                );
+            };
+            match config.apply_agent_override_field(agent_id, field, &params.value) {
+                Ok(true) => push_override_agent = Some(agent_id.to_string()),
+                Ok(false) => {}
+                Err(e) => return WsResponse::err(&req.id, "INVALID_PARAMS", e.to_string()),
+            }
+        }
         _ => {
             return WsResponse::err(
                 &req.id,
@@ -352,6 +379,15 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
     }
     drop(config_guard);
 
+    // Push the recomputed effective config to running agents so the change
+    // takes effect from their next turn instead of only on respawn.
+    if let Some(agent_id) = push_override_agent {
+        push_agent_param_update(state, &agent_id).await;
+    }
+    if push_default_agent {
+        push_default_agent_update(state).await;
+    }
+
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -359,6 +395,59 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
             "path": params.path,
         }),
     )
+}
+
+/// Recompute `agent_id`'s effective config (`base_config + agent_overrides`)
+/// and push it to the running instance. No-op when the agent is not running —
+/// the persisted override is merged at next spawn.
+async fn push_agent_param_update(state: &Arc<GatewayState>, agent_id: &str) {
+    let handle = {
+        let agents = state.agents.agents.read().await;
+        agents.get(agent_id).cloned()
+    };
+    let Some(handle) = handle else {
+        debug!("Agent '{}' is not running; override applies on next spawn", agent_id);
+        return;
+    };
+    let mut effective = handle.base_config.clone();
+    {
+        let config = state.config.read().await;
+        config.apply_agent_overrides(agent_id, &mut effective);
+    }
+    if let Err(e) = handle
+        .tx
+        .send(crate::gateway::AgentCommand::UpdateConfig(effective))
+        .await
+    {
+        warn!("Failed to push config update to agent '{}': {}", agent_id, e);
+    }
+}
+
+/// Push the current `default_agent` config to the running `default` agent,
+/// re-applying the spawn-time identity augmentation to the system prompt.
+async fn push_default_agent_update(state: &Arc<GatewayState>) {
+    let handle = {
+        let agents = state.agents.agents.read().await;
+        agents.get("default").cloned()
+    };
+    let Some(handle) = handle else {
+        debug!("Default agent is not running; change applies on next spawn");
+        return;
+    };
+    let effective = {
+        let config = state.config.read().await;
+        let mut effective = crate::gateway::augment_default_agent_config(&config.default_agent);
+        effective.agent_id = Some("default".to_string());
+        config.apply_agent_overrides("default", &mut effective);
+        effective
+    };
+    if let Err(e) = handle
+        .tx
+        .send(crate::gateway::AgentCommand::UpdateConfig(effective))
+        .await
+    {
+        warn!("Failed to push config update to default agent: {}", e);
+    }
 }
 
 #[cfg(test)]
@@ -574,5 +663,88 @@ mod tests {
         let rm = set_and_ok(&state, "channels.remove", serde_json::json!("tg")).await;
         assert!(rm.ok);
         assert!(state.config.read().await.channels.get("tg").is_none());
+    }
+
+    #[tokio::test]
+    async fn config_set_agent_overrides_roundtrip() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res =
+            set_and_ok(&state, "agent_overrides.alice.temperature", serde_json::json!(0.3)).await;
+        assert!(res.ok);
+
+        let res = handle_config_get(&req("g", "config.get", serde_json::json!({})), &state).await;
+        let p = res.payload.expect("payload");
+        let t = p["agent_overrides"]["alice"]["temperature"]
+            .as_f64()
+            .expect("temperature override");
+        assert!((t - 0.3).abs() < 1e-6, "temperature {t} should be ~0.3");
+
+        // Null clears the override; the now-empty entry is dropped.
+        let res =
+            set_and_ok(&state, "agent_overrides.alice.temperature", serde_json::Value::Null).await;
+        assert!(res.ok);
+        let res = handle_config_get(&req("g2", "config.get", serde_json::json!({})), &state).await;
+        let p = res.payload.expect("payload");
+        assert!(p["agent_overrides"]["alice"].is_null());
+    }
+
+    #[tokio::test]
+    async fn config_set_agent_overrides_rejects_unknown_field() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = set_and_ok(&state, "agent_overrides.alice.nope", serde_json::json!(1)).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().map(|e| e.code.as_str()), Some("INVALID_PARAMS"));
+    }
+
+    #[tokio::test]
+    async fn config_set_agent_overrides_pushes_to_running_agent() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+
+        // Insert a fake running agent with a known base config.
+        let provider: Arc<dyn crate::providers::Provider> =
+            Arc::new(crate::providers::mock::MockProvider::new());
+        let tools = Arc::new(crate::tools::ToolRegistry::new());
+        let base = crate::agent::AgentConfig {
+            temperature: 0.8,
+            ..Default::default()
+        };
+        let agent = Arc::new(crate::agent::Agent::new(base.clone(), provider, tools));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let (query_tx, _query_rx) = tokio::sync::mpsc::channel(1);
+        let handle = crate::gateway::AgentHandle {
+            id: "alice".to_string(),
+            config: base.clone(),
+            base_config: base,
+            tx,
+            query_tx,
+            busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            agent,
+        };
+        state
+            .agents
+            .agents
+            .write()
+            .await
+            .insert("alice".to_string(), handle);
+
+        let res =
+            set_and_ok(&state, "agent_overrides.alice.temperature", serde_json::json!(0.3)).await;
+        assert!(res.ok);
+
+        // The push sends UpdateConfig(base + overrides) on the command channel.
+        let cmd = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("push should send a command")
+            .expect("channel open");
+        match cmd {
+            crate::gateway::AgentCommand::UpdateConfig(cfg) => {
+                assert!(
+                    (cfg.temperature - 0.3).abs() < 1e-6,
+                    "pushed temperature {} should be ~0.3",
+                    cfg.temperature
+                );
+            }
+            other => panic!("expected UpdateConfig, got {:?}", other),
+        }
     }
 }

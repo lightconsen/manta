@@ -511,6 +511,8 @@ impl Agent {
     ) -> crate::Result<OutgoingMessage> {
         debug!("Processing message with progress from user: {}", message.user_id);
 
+        let cfg = self.config_snapshot();
+
         let conversation_id = message.conversation_id.0.clone();
         let user_id = message.user_id.0.clone();
         let content = message.content.clone();
@@ -934,8 +936,7 @@ impl Agent {
                 let engine = engine.clone();
                 let mm = self.memory_manager.clone();
                 let uid = user_id.clone();
-                let criteria = self
-                    .config
+                let criteria = cfg
                     .reflection_config
                     .as_ref()
                     .map(|rc| rc.criteria.clone())
@@ -1244,13 +1245,13 @@ impl Agent {
         context: &mut Context,
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
+        let cfg = self.config_snapshot();
         // If the context is over-budget, try to reduce it before sending.
         if context.needs_pruning() {
-            if let Some(ref compaction_model) = self.config.compaction_model {
+            if let Some(ref compaction_model) = cfg.compaction_model {
                 // LLM-assisted compaction: produce a high-quality summary.
-                let compressor = crate::agent::compressor::ContextCompressor::new(
-                    self.config.max_context_tokens,
-                );
+                let compressor =
+                    crate::agent::compressor::ContextCompressor::new(cfg.max_context_tokens);
                 let history = context.history().to_vec();
                 let compacted = compressor
                     .compact_with_llm(
@@ -1281,8 +1282,8 @@ impl Agent {
         let mut request = CompletionRequest {
             model: self.model.clone(),
             messages,
-            temperature: Some(self.config.temperature),
-            max_tokens: Some(self.config.max_tokens),
+            temperature: Some(cfg.temperature),
+            max_tokens: Some(cfg.max_tokens),
             stream: false,
             extra,
             ..Default::default()
@@ -1363,6 +1364,7 @@ impl Agent {
         tool_calls: &[ToolCall],
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
+        let cfg = self.config_snapshot();
         // Check iteration limit before processing
         if !context.increment_tool_iteration() {
             warn!("Tool iteration limit reached ({}), stopping", context.tool_iterations());
@@ -1396,7 +1398,7 @@ impl Agent {
         // which is required by APIs like DeepSeek that enforce strict pairing.
         let filtered_tool_calls: Vec<ToolCall> = tool_calls
             .iter()
-            .take(self.config.max_concurrent_tools)
+            .take(cfg.max_concurrent_tools)
             .filter(|tc| {
                 let tool_name = &tc.function.name;
                 let tool_args = &tc.function.arguments;
@@ -1533,6 +1535,7 @@ impl Agent {
         progress_cb: ProgressCallback,
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
+        let cfg = self.config_snapshot();
         let messages = context.to_messages();
         let user_msg_count = messages.iter().filter(|m| m.role == Role::User).count();
         let assistant_msg_count = messages
@@ -1558,8 +1561,8 @@ impl Agent {
         let mut request = CompletionRequest {
             model: self.model.clone(),
             messages,
-            temperature: Some(self.config.temperature),
-            max_tokens: Some(self.config.max_tokens),
+            temperature: Some(cfg.temperature),
+            max_tokens: Some(cfg.max_tokens),
             stream: true,
             extra,
             ..Default::default()
@@ -1768,6 +1771,7 @@ impl Agent {
         progress_cb: ProgressCallback,
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
+        let cfg = self.config_snapshot();
         // Accumulate token usage from the LLM response that produced these tool calls
         if let Some(ref usage) = original_response.usage {
             context.accumulate_turn_token_usage(
@@ -1820,7 +1824,7 @@ impl Agent {
         // which is required by APIs like DeepSeek that enforce strict pairing.
         let filtered_tool_calls: Vec<ToolCall> = tool_calls
             .iter()
-            .take(self.config.max_concurrent_tools)
+            .take(cfg.max_concurrent_tools)
             .filter(|tc| {
                 let tool_name = &tc.function.name;
                 let tool_args = &tc.function.arguments;

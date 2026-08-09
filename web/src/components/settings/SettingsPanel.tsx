@@ -74,13 +74,17 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
               <AgentsSettings
                 agentRegistry={d.agentRegistry}
                 selectedAgentId={d.selectedAgentId}
-                onSelectAgent={d.setSelectedAgentId}
+                onSelectAgent={d.handleSelectAgent}
                 selectedAgentDetail={d.selectedAgentDetail}
                 agentDetailLoading={d.agentDetailLoading}
                 defaultAgent={d.da}
+                agentOverrides={d.config.agent_overrides?.[d.selectedAgentId]}
                 models={d.models}
                 agentModels={d.config.agent_models || {}}
                 update={d.update}
+                updateAgentParam={d.updateAgentParam}
+                resetAgentParam={d.resetAgentParam}
+                resetAgentParams={d.resetAgentParams}
               />
             )}
             {d.activeTab === "channels" && (

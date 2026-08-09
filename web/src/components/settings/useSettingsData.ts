@@ -4,6 +4,18 @@ import { useThemeStore } from "@/stores/themeStore";
 
 // Shared settings-domain types -------------------------------------------------
 
+/** Per-agent parameter overrides. A null/undefined field means "inherit the
+ * global default" (default_agent). */
+export interface AgentParamOverrides {
+  temperature?: number | null;
+  max_tokens?: number | null;
+  max_turns?: number | null;
+  max_concurrent_tools?: number | null;
+  workspace_only?: boolean | null;
+  system_prompt?: string | null;
+  max_context_tokens?: number | null;
+}
+
 export interface SyscityConfig {
   model?: string;
   model_provider?: string;
@@ -13,9 +25,11 @@ export interface SyscityConfig {
     max_tokens?: number;
     max_turns?: number | null;
     max_concurrent_tools?: number;
+    max_context_tokens?: number;
     system_prompt?: string;
     workspace_only?: boolean;
   };
+  agent_overrides?: Record<string, AgentParamOverrides>;
   heartbeat?: {
     enabled?: boolean;
     interval_seconds?: number;
@@ -130,19 +144,21 @@ export function useSettingsData(transport: SyscityWebSocketTransport) {
   } | null>(null);
   const [agentDetailLoading, setAgentDetailLoading] = useState(false);
 
-  const loadAgentDetail = async (agentId: string) => {
+  const loadAgentDetail = async (agentId: string, background = false) => {
     if (!agentId) {
       setSelectedAgentDetail(null);
       return;
     }
-    setAgentDetailLoading(true);
+    // Background refreshes (after a param edit) keep the current card visible
+    // instead of flashing the loading spinner.
+    if (!background) setAgentDetailLoading(true);
     try {
       const detail = await transport.getAgent(agentId);
       setSelectedAgentDetail(detail);
     } catch {
-      setSelectedAgentDetail(null);
+      if (!background) setSelectedAgentDetail(null);
     } finally {
-      setAgentDetailLoading(false);
+      if (!background) setAgentDetailLoading(false);
     }
   };
 
@@ -238,10 +254,70 @@ export function useSettingsData(transport: SyscityWebSocketTransport) {
           const section = { ...(next[parts[0] as keyof SyscityConfig] as Record<string, unknown>) };
           section[parts[1]] = value;
           (next as Record<string, unknown>)[parts[0]] = section as never;
+        } else if (parts.length === 3) {
+          // agent_overrides.<agent_id>.<field>
+          const section = { ...((next[parts[0] as keyof SyscityConfig] as Record<string, unknown>) ?? {}) };
+          const entry = { ...((section[parts[1]] as Record<string, unknown>) ?? {}) };
+          if (value === null) {
+            delete entry[parts[2]];
+          } else {
+            entry[parts[2]] = value;
+          }
+          if (Object.keys(entry).length === 0) {
+            delete section[parts[1]];
+          } else {
+            section[parts[1]] = entry;
+          }
+          (next as Record<string, unknown>)[parts[0]] = section as never;
         }
         return next;
       });
     }
+  };
+
+  /** Selecting an agent loads its detail so the panel shows that agent's
+   * parameters instead of the previously selected one. */
+  const handleSelectAgent = (id: string) => {
+    setSelectedAgentId(id);
+    loadAgentDetail(id);
+  };
+
+  /** Route a parameter edit to the right config path: the default agent edits
+   * `default_agent.*`; named agents write a per-agent override. A null value
+   * (or empty string for system_prompt) clears the override. */
+  const updateAgentParam = async (agentId: string, field: string, value: unknown) => {
+    if (!agentId) return;
+    if (agentId === "default") {
+      await update(`default_agent.${field}`, value);
+    } else {
+      await update(`agent_overrides.${agentId}.${field}`, value);
+    }
+    // Refresh the detail card so it reflects the new effective config.
+    await loadAgentDetail(agentId, true);
+  };
+
+  /** Clear a single override so the agent inherits the global default. */
+  const resetAgentParam = async (agentId: string, field: string) => {
+    if (!agentId || agentId === "default") return;
+    await update(`agent_overrides.${agentId}.${field}`, null);
+    await loadAgentDetail(agentId, true);
+  };
+
+  /** Clear every override for an agent. */
+  const resetAgentParams = async (agentId: string) => {
+    if (!agentId || agentId === "default") return;
+    for (const field of [
+      "temperature",
+      "max_tokens",
+      "max_turns",
+      "max_concurrent_tools",
+      "workspace_only",
+      "system_prompt",
+      "max_context_tokens",
+    ]) {
+      await update(`agent_overrides.${agentId}.${field}`, null);
+    }
+    await loadAgentDetail(agentId, true);
   };
 
   const da = config.default_agent || {};
@@ -515,6 +591,10 @@ export function useSettingsData(transport: SyscityWebSocketTransport) {
     agentRegistry,
     selectedAgentId,
     setSelectedAgentId,
+    handleSelectAgent,
+    updateAgentParam,
+    resetAgentParam,
+    resetAgentParams,
     selectedAgentDetail,
     agentDetailLoading,
     loadAgentDetail,

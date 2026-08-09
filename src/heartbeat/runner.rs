@@ -603,7 +603,8 @@ mod tests {
         let agent = Arc::new(crate::agent::Agent::new(agent_config.clone(), provider, tools));
         crate::gateway::AgentHandle {
             id: id.to_string(),
-            config: agent_config,
+            config: agent_config.clone(),
+            base_config: agent_config,
             tx,
             query_tx,
             busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),

@@ -26,6 +26,10 @@ pub struct AgentHandle {
     pub id: String,
     /// Agent configuration
     pub config: AgentConfig,
+    /// Base configuration before per-agent overrides were applied. Captured at
+    /// spawn so a later `config.set agent_overrides.*` can recompute the
+    /// effective config (`base + overrides`) and push it to the running agent.
+    pub base_config: AgentConfig,
     /// Fire-and-forget command channel (ProcessMessage, Cancel, UpdateConfig,
     /// Shutdown)
     pub tx: mpsc::Sender<AgentCommand>,

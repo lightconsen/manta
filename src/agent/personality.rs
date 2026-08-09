@@ -739,6 +739,14 @@ impl AgentRegistry {
         self.personalities.get(id)
     }
 
+    /// Insert a personality directly. Test-only: production code populates the
+    /// registry via `discover` / `discover_in_dir`.
+    #[cfg(test)]
+    pub(crate) fn insert_for_test(&mut self, personality: AgentPersonality) {
+        self.personalities
+            .insert(personality.id.clone(), personality);
+    }
+
     /// Get all personality IDs
     pub fn list(&self) -> Vec<String> {
         self.personalities.keys().cloned().collect()

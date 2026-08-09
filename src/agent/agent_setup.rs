@@ -29,7 +29,7 @@ impl Agent {
         });
 
         Self {
-            config,
+            config: config.into(),
             provider,
             model: None,
             tools,
@@ -208,19 +208,21 @@ impl Agent {
         let user_id = user_id.into();
         let conversation_id = conversation_id.into();
 
+        let cfg = self.config_snapshot();
+
         let model_capabilities = crate::tools::ModelCapabilities {
             has_vision: self.infer_model_vision(),
             supports_tool_use: self.provider.supports_tools(),
             max_context_length: None,
         };
 
-        let agent_workspace = self.config.resolve_workspace_dir();
+        let agent_workspace = cfg.resolve_workspace_dir();
 
         let mut ctx = ToolContext::new(user_id.clone(), conversation_id)
             .with_timeout(Duration::from_secs(120))
             .with_skill_trust(self.current_skill_trust())
             .with_workspace_root(agent_workspace.clone())
-            .with_workspace_only(self.config.workspace_only)
+            .with_workspace_only(cfg.workspace_only)
             .with_model_name(self.model.clone().unwrap_or_default())
             .with_provider_name(self.provider.name().to_string())
             .with_sender_id(user_id)
@@ -448,12 +450,20 @@ impl Agent {
         self
     }
 
+    /// Snapshot the agent's current configuration.
+    ///
+    /// Config reads take a copy at the start of each request/context build, so
+    /// a config update mid-turn is only picked up from the next turn onward.
+    pub(crate) fn config_snapshot(&self) -> AgentConfig {
+        self.config.snapshot()
+    }
+
     /// Update agent configuration at runtime.
     ///
     /// Applies fields from `new_config` to the running agent.  The update is
     /// applied immediately; in-flight requests use the previous values.
-    pub fn update_config(&mut self, new_config: AgentConfig) {
-        self.config = new_config;
+    pub fn update_config(&self, new_config: AgentConfig) {
+        self.config.replace(new_config);
     }
 
     /// Get chat history for a conversation
@@ -491,6 +501,7 @@ impl Agent {
         user_id: &str,
         user_message: &str,
     ) -> Context {
+        let cfg = self.config_snapshot();
         // Build dynamic prompt context
         let mut prompt_ctx = PromptContext::new(user_message);
         prompt_ctx.detect_task_type();
@@ -513,10 +524,10 @@ impl Agent {
         prompt_ctx.available_tools = tool_defs;
 
         // Get base prompt
-        let base_prompt = self.config.full_system_prompt_with_personality().await;
+        let base_prompt = cfg.full_system_prompt_with_personality().await;
 
         // Derive KB collection from agent_id (e.g. "kb-sre")
-        let kb_collection = self.config.agent_id.as_ref().map(|id| format!("kb-{}", id));
+        let kb_collection = cfg.agent_id.as_ref().map(|id| format!("kb-{}", id));
 
         // Retrieve relevant memories via MemoryManager and inject into context
         let memory_context = if let Some(ref mm) = self.memory_manager {
@@ -552,7 +563,7 @@ impl Agent {
         let base_with_dynamic = PromptBuilder::build_from_context(
             &base_prompt,
             &prompt_ctx,
-            self.config.max_context_tokens / 4,
+            cfg.max_context_tokens / 4,
         );
 
         // Combine with memory context and skills
@@ -583,7 +594,7 @@ impl Agent {
                         .join("\n\n");
                     prompt = format!("{}\n\n## Active Skills\n\n{}", prompt, skills_text);
                 }
-            } else if let Some(ref static_skills) = self.config.skills_prompt {
+            } else if let Some(ref static_skills) = cfg.skills_prompt {
                 // Fallback to static skills prompt if skill_manager not set
                 prompt = format!("{}\n\n{}", prompt, static_skills);
             }
@@ -592,11 +603,11 @@ impl Agent {
         };
 
         let mut context =
-            Context::new(conversation_id.to_string(), full_prompt, self.config.max_context_tokens);
+            Context::new(conversation_id.to_string(), full_prompt, cfg.max_context_tokens);
 
         // Apply turn cap from config so the agent never accumulates an
         // unbounded conversation history.
-        if let Some(max_turns) = self.config.max_turns {
+        if let Some(max_turns) = cfg.max_turns {
             context = context.with_max_turns(max_turns);
         }
 
@@ -605,7 +616,7 @@ impl Agent {
         // leak wrong/stale context from other sessions).
         if let Some(ref store) = self.chat_history {
             match store
-                .get_conversation_history(conversation_id, self.config.max_turns.unwrap_or(50) * 2)
+                .get_conversation_history(conversation_id, cfg.max_turns.unwrap_or(50) * 2)
                 .await
             {
                 Ok(history) => {

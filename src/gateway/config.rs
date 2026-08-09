@@ -63,6 +63,12 @@ pub struct GatewayConfig {
     /// default.
     #[serde(default)]
     pub agent_models: HashMap<String, String>,
+    /// Per-agent parameter overrides (agent_id -> overrides). A named agent's
+    /// effective runtime config is its personality-derived base config with
+    /// these fields layered on top. The default agent has no entry — it is
+    /// configured directly through `default_agent`.
+    #[serde(default)]
+    pub agent_overrides: HashMap<String, AgentOverrides>,
     /// MCP server configurations (auto-connected on startup)
     #[serde(default)]
     pub mcp: McpSettings,
@@ -103,6 +109,68 @@ pub struct GatewayConfig {
     /// Knowledge Base configuration for auto-ingest and watcher.
     #[serde(default)]
     pub knowledge_base: KnowledgeBaseConfig,
+}
+
+/// Per-agent parameter overrides layered on top of an agent's base config.
+///
+/// `None` fields mean "inherit the base value" (personality-derived for named
+/// agents, `default_agent` for the default agent). All fields are optional so
+/// an agent may override only the parameters it cares about.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentOverrides {
+    /// Default temperature for completions.
+    pub temperature: Option<f32>,
+    /// Maximum tokens per completion.
+    pub max_tokens: Option<u32>,
+    /// Hard cap on conversation turns kept in context.
+    pub max_turns: Option<usize>,
+    /// Maximum number of concurrent tool calls.
+    pub max_concurrent_tools: Option<usize>,
+    /// Restrict file operations to the agent's workspace directory.
+    pub workspace_only: Option<bool>,
+    /// Overrides the personality-derived system prompt when set.
+    pub system_prompt: Option<String>,
+    /// Maximum context window size (in tokens).
+    pub max_context_tokens: Option<usize>,
+}
+
+impl AgentOverrides {
+    /// True when no field is overridden.
+    pub fn is_empty(&self) -> bool {
+        self.temperature.is_none()
+            && self.max_tokens.is_none()
+            && self.max_turns.is_none()
+            && self.max_concurrent_tools.is_none()
+            && self.workspace_only.is_none()
+            && self.system_prompt.is_none()
+            && self.max_context_tokens.is_none()
+    }
+
+    /// Overlay every non-`None` field onto a base `AgentConfig`.
+    pub fn apply_to(&self, cfg: &mut AgentConfig) {
+        if let Some(v) = self.temperature {
+            cfg.temperature = v;
+        }
+        if let Some(v) = self.max_tokens {
+            cfg.max_tokens = v;
+        }
+        if let Some(v) = self.max_turns {
+            cfg.max_turns = Some(v);
+        }
+        if let Some(v) = self.max_concurrent_tools {
+            cfg.max_concurrent_tools = v;
+        }
+        if let Some(v) = self.workspace_only {
+            cfg.workspace_only = v;
+        }
+        if let Some(v) = self.system_prompt.clone() {
+            cfg.system_prompt = v;
+        }
+        if let Some(v) = self.max_context_tokens {
+            cfg.max_context_tokens = v;
+        }
+    }
 }
 
 /// Knowledge Base auto-ingest configuration.
@@ -704,6 +772,7 @@ impl Default for GatewayConfig {
             model: default_model(),
             model_provider: default_model_provider(),
             agent_models: HashMap::new(),
+            agent_overrides: HashMap::new(),
             mcp: McpSettings::default(),
             cost_guard: CostGuardConfig::default(),
             workspace_dir: None,
@@ -817,6 +886,175 @@ impl GatewayConfig {
             .iter()
             .find(|(_, cfg)| cfg.supports_model(model_id))
             .map(|(name, _)| name.as_str())
+    }
+
+    /// Merge the persisted per-agent overrides for `agent_id` into `base` in
+    /// place. `base` is the agent's personality-derived config (named agents)
+    /// or `default_agent` (default agent); agents with no override entry are
+    /// left untouched.
+    pub fn apply_agent_overrides(&self, agent_id: &str, base: &mut AgentConfig) {
+        if let Some(overrides) = self.agent_overrides.get(agent_id) {
+            overrides.apply_to(base);
+        }
+    }
+
+    /// Apply a single per-agent override field from a `config.set` JSON value.
+    ///
+    /// `field` is the final path segment (e.g. `"temperature"`). A `Null`
+    /// value (or an empty string for `system_prompt`) clears the override so
+    /// the agent falls back to its base value. Returns `Ok(true)` when the
+    /// stored override changed.
+    pub fn apply_agent_override_field(
+        &mut self,
+        agent_id: &str,
+        field: &str,
+        value: &serde_json::Value,
+    ) -> crate::Result<bool> {
+        use crate::error::ConfigError;
+        let invalid = |msg: String| ConfigError::InvalidValue {
+            key: format!("agent_overrides.{}.{}", agent_id, field),
+            message: msg,
+        };
+
+        let overrides = self
+            .agent_overrides
+            .entry(agent_id.to_string())
+            .or_default();
+        let changed = match field {
+            "temperature" => {
+                if value.is_null() {
+                    let c = overrides.temperature.is_some();
+                    overrides.temperature = None;
+                    c
+                } else {
+                    let v = value
+                        .as_f64()
+                        .map(|f| f as f32)
+                        .ok_or_else(|| invalid("temperature must be a number".into()))?;
+                    let c = overrides.temperature != Some(v);
+                    overrides.temperature = Some(v);
+                    c
+                }
+            }
+            "max_tokens" => {
+                if value.is_null() {
+                    let c = overrides.max_tokens.is_some();
+                    overrides.max_tokens = None;
+                    c
+                } else {
+                    let v = value
+                        .as_u64()
+                        .and_then(|n| u32::try_from(n).ok())
+                        .ok_or_else(|| {
+                            invalid("max_tokens must be a non-negative integer".into())
+                        })?;
+                    let c = overrides.max_tokens != Some(v);
+                    overrides.max_tokens = Some(v);
+                    c
+                }
+            }
+            "max_turns" => {
+                if value.is_null() {
+                    let c = overrides.max_turns.is_some();
+                    overrides.max_turns = None;
+                    c
+                } else {
+                    let v = value
+                        .as_u64()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .ok_or_else(|| {
+                            invalid("max_turns must be a non-negative integer".into())
+                        })?;
+                    let c = overrides.max_turns != Some(v);
+                    overrides.max_turns = Some(v);
+                    c
+                }
+            }
+            "max_concurrent_tools" => {
+                if value.is_null() {
+                    let c = overrides.max_concurrent_tools.is_some();
+                    overrides.max_concurrent_tools = None;
+                    c
+                } else {
+                    let v = value
+                        .as_u64()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .ok_or_else(|| {
+                            invalid("max_concurrent_tools must be a non-negative integer".into())
+                        })?;
+                    let c = overrides.max_concurrent_tools != Some(v);
+                    overrides.max_concurrent_tools = Some(v);
+                    c
+                }
+            }
+            "workspace_only" => {
+                if value.is_null() {
+                    let c = overrides.workspace_only.is_some();
+                    overrides.workspace_only = None;
+                    c
+                } else {
+                    let v = value
+                        .as_bool()
+                        .ok_or_else(|| invalid("workspace_only must be a boolean".into()))?;
+                    let c = overrides.workspace_only != Some(v);
+                    overrides.workspace_only = Some(v);
+                    c
+                }
+            }
+            "system_prompt" => {
+                // Empty string means "inherit the personality prompt".
+                if value.is_null() || value.as_str().is_none_or(|s| s.is_empty()) {
+                    let c = overrides.system_prompt.is_some();
+                    overrides.system_prompt = None;
+                    c
+                } else {
+                    let v = value
+                        .as_str()
+                        .ok_or_else(|| invalid("system_prompt must be a string".into()))?
+                        .to_string();
+                    let c = overrides.system_prompt != Some(v.clone());
+                    overrides.system_prompt = Some(v);
+                    c
+                }
+            }
+            "max_context_tokens" => {
+                if value.is_null() {
+                    let c = overrides.max_context_tokens.is_some();
+                    overrides.max_context_tokens = None;
+                    c
+                } else {
+                    let v = value
+                        .as_u64()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .ok_or_else(|| {
+                            invalid("max_context_tokens must be a non-negative integer".into())
+                        })?;
+                    let c = overrides.max_context_tokens != Some(v);
+                    overrides.max_context_tokens = Some(v);
+                    c
+                }
+            }
+            other => {
+                return Err(crate::SyscityError::Config(ConfigError::InvalidValue {
+                    key: format!("agent_overrides.{}.{}", agent_id, other),
+                    message: format!("Unknown agent parameter field: {}", other),
+                }))
+            }
+        };
+
+        // Drop empty override entries so they stop appearing in config.get and
+        // don't linger as empty TOML tables. Applies even when this call made
+        // no change — a clear on an already-empty agent would otherwise
+        // re-create an empty entry via `entry().or_default()` above.
+        if overrides.is_empty() {
+            self.agent_overrides.remove(agent_id);
+        }
+        Ok(changed)
+    }
+
+    /// Remove all overrides for an agent (full reset to base config).
+    pub fn clear_agent_overrides(&mut self, agent_id: &str) {
+        self.agent_overrides.remove(agent_id);
     }
 
     /// Capture a snapshot of all hot-reloadable fields.
@@ -957,5 +1195,118 @@ mod tests {
         assert_eq!(config.provider_for_model("deepseek-chat"), Some("deepseek"));
         assert_eq!(config.provider_for_model("deepseek-reasoner"), Some("deepseek"));
         assert_eq!(config.provider_for_model("gpt-4o"), None);
+    }
+
+    // ── agent_overrides ───────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_agent_overrides_merges_non_none_fields() {
+        let mut config = GatewayConfig::default();
+        config.agent_overrides.insert(
+            "coder".to_string(),
+            AgentOverrides {
+                temperature: Some(0.2),
+                max_tokens: Some(4096),
+                system_prompt: Some("You are a code reviewer".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let mut base = AgentConfig::default();
+        config.apply_agent_overrides("coder", &mut base);
+
+        assert_eq!(base.temperature, 0.2);
+        assert_eq!(base.max_tokens, 4096);
+        assert_eq!(base.system_prompt, "You are a code reviewer");
+        // Unset fields keep the base value.
+        assert_eq!(base.max_concurrent_tools, AgentConfig::default().max_concurrent_tools);
+    }
+
+    #[test]
+    fn apply_agent_overrides_no_entry_is_noop() {
+        let config = GatewayConfig::default();
+        let mut base = AgentConfig::default();
+        config.apply_agent_overrides("ghost", &mut base);
+        assert_eq!(base.temperature, AgentConfig::default().temperature);
+    }
+
+    #[test]
+    fn apply_agent_override_field_roundtrip() {
+        let mut config = GatewayConfig::default();
+
+        assert!(config
+            .apply_agent_override_field("coder", "temperature", &serde_json::json!(0.5))
+            .unwrap());
+        assert_eq!(config.agent_overrides.get("coder").unwrap().temperature, Some(0.5));
+
+        // Same value again → no change.
+        assert!(!config
+            .apply_agent_override_field("coder", "temperature", &serde_json::json!(0.5))
+            .unwrap());
+
+        // null clears the field; the now-empty entry is dropped.
+        assert!(config
+            .apply_agent_override_field("coder", "temperature", &serde_json::Value::Null)
+            .unwrap());
+        assert!(!config.agent_overrides.contains_key("coder"));
+    }
+
+    #[test]
+    fn apply_agent_override_field_empty_prompt_clears() {
+        let mut config = GatewayConfig::default();
+        config
+            .apply_agent_override_field("coder", "system_prompt", &serde_json::json!("hi"))
+            .unwrap();
+        assert_eq!(
+            config
+                .agent_overrides
+                .get("coder")
+                .unwrap()
+                .system_prompt
+                .as_deref(),
+            Some("hi")
+        );
+        config
+            .apply_agent_override_field("coder", "system_prompt", &serde_json::json!(""))
+            .unwrap();
+        // Clearing the only override drops the whole entry.
+        assert!(!config.agent_overrides.contains_key("coder"));
+    }
+
+    #[test]
+    fn apply_agent_override_field_rejects_unknown_field() {
+        let mut config = GatewayConfig::default();
+        let res = config.apply_agent_override_field("coder", "bogus", &serde_json::json!(1));
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn clear_agent_overrides_resets_whole_agent() {
+        let mut config = GatewayConfig::default();
+        config
+            .apply_agent_override_field("coder", "max_tokens", &serde_json::json!(512))
+            .unwrap();
+        assert!(config.agent_overrides.contains_key("coder"));
+        config.clear_agent_overrides("coder");
+        assert!(!config.agent_overrides.contains_key("coder"));
+    }
+
+    #[test]
+    fn agent_overrides_serialize_roundtrip() {
+        let mut config = GatewayConfig::default();
+        config
+            .apply_agent_override_field("coder", "max_context_tokens", &serde_json::json!(8192))
+            .unwrap();
+
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let parsed: GatewayConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(
+            parsed
+                .agent_overrides
+                .get("coder")
+                .unwrap()
+                .max_context_tokens,
+            Some(8192)
+        );
     }
 }

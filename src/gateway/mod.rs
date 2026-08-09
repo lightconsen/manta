@@ -62,6 +62,25 @@ use handlers::*;
 
 // Configuration types live in `gateway::config` (re-exported above).
 
+/// Derive the runtime config for the built-in `default` agent from the
+/// persisted `default_agent` config by appending the agent-identity block to
+/// its system prompt. Used both at startup spawn and when pushing live
+/// `default_agent.*` updates so the running agent keeps its identity context.
+pub(crate) fn augment_default_agent_config(
+    base: &crate::agent::AgentConfig,
+) -> crate::agent::AgentConfig {
+    let mut config = base.clone();
+    let default_agent_dir = crate::dirs::agents_dir().join("default");
+    config.system_prompt = format!(
+        "{}\n\n## Agent Identity\n\nYour agent ID is: `default`\nYour agent directory is: \
+         `{}`\nYou may edit files in your agent directory (including HEARTBEAT.md) to manage your \
+         personality and periodic tasks when explicitly asked by the user.",
+        config.system_prompt,
+        default_agent_dir.display()
+    );
+    config
+}
+
 impl GatewayState {
     /// Centralized access check for incoming messages.
     ///
