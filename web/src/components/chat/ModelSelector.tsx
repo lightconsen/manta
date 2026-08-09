@@ -134,7 +134,7 @@ export function ModelSelector({ transport }: ModelSelectorProps) {
         aria-label="Select model"
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex items-center gap-1.5 max-w-[10rem] rounded-lg border border-subtle bg-card px-2 py-1.5 text-xs text-secondary hover:text-primary focus:outline-none transition"
+        className="flex items-center gap-1.5 max-w-[10rem] rounded-lg px-2 py-1.5 text-xs text-secondary hover:text-primary hover:bg-black/[0.04] dark:hover:bg-white/[0.06] focus:outline-none transition"
       >
         {effectiveModel ? (
           <ProviderLogo provider={effectiveModel.provider} name={effectiveModel.provider_name} className="w-4 h-4" />
