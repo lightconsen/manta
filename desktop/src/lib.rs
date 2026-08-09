@@ -123,6 +123,29 @@ mod mobile_device {
     }
 }
 
+/// Native speech-recognition bridge (mobile only).
+///
+/// Unlike the device bridge, nothing on the gateway side calls this plugin —
+/// the WebView invokes `plugin:speech|*` commands directly to drive the
+/// composer voice mode — so no managed state is kept. Android registers the
+/// Kotlin `SpeechPlugin`; iOS is a no-op until an `SFSpeechRecognizer` impl
+/// lands (the JS probe then reports unsupported).
+#[cfg(mobile)]
+mod mobile_speech {
+    /// Build the `"speech"` plugin.
+    pub(crate) fn speech_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+        tauri::plugin::Builder::new("speech")
+            .setup(|_app, api| {
+                #[cfg(target_os = "android")]
+                api.register_android_plugin("net.syscity.desktop", "SpeechPlugin")?;
+                #[cfg(not(target_os = "android"))]
+                let _ = api;
+                Ok(())
+            })
+            .build()
+    }
+}
+
 /// Tauri command: returns the Gateway base URL for the frontend.
 #[tauri::command]
 fn get_api_url(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> String {
@@ -278,6 +301,11 @@ pub fn run() {
     // added on the builder chain — `App::plugin` is not available for Wry.
     #[cfg(mobile)]
     let builder = builder.plugin(mobile_device::device_plugin());
+
+    // Native speech recognition (mobile only): the WebView invokes
+    // `plugin:speech|*` directly for composer voice input.
+    #[cfg(mobile)]
+    let builder = builder.plugin(mobile_speech::speech_plugin());
 
     #[cfg(not(mobile))]
     let builder = builder.invoke_handler(tauri::generate_handler![get_api_url, reveal_in_folder]);
