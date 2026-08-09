@@ -80,7 +80,7 @@ export function McpSettings({
         </Section>
       )}
       <Section
-        title="MCP Servers"
+        title="MCP Server"
         right={
           <button onClick={() => setShowAddMcp(true)} className="text-xs px-2 py-1 rounded bg-primary-500 text-white hover:bg-primary-600 transition">
             + Add

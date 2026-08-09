@@ -560,7 +560,7 @@ export function useSettingsData(transport: SyscityWebSocketTransport) {
     { id: "agents", label: "Agents" },
     { id: "channels", label: "Channels" },
     { id: "tools", label: "Web Search" },
-    { id: "mcp", label: "MCP Servers" },
+    { id: "mcp", label: "MCP Server" },
     { id: "skills", label: "Skills" },
     { id: "jobs", label: "Jobs" },
     { id: "devices", label: "Devices" },
