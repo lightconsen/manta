@@ -448,6 +448,8 @@ async fn start_gateway(
     {
         let provider_config = syscity::model_router::ProviderConfig {
             provider_type: syscity::model_router::ProviderType::OpenAi,
+            models: Vec::new(),
+            default_model: String::new(),
             api_key: api_key.into(),
             api_keys: Vec::new(),
             auth_profile: None,
@@ -463,6 +465,8 @@ async fn start_gateway(
     } else if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
         let provider_config = syscity::model_router::ProviderConfig {
             provider_type: syscity::model_router::ProviderType::Anthropic,
+            models: Vec::new(),
+            default_model: String::new(),
             api_key: api_key.into(),
             api_keys: Vec::new(),
             auth_profile: None,
@@ -478,6 +482,8 @@ async fn start_gateway(
     } else if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
         let provider_config = syscity::model_router::ProviderConfig {
             provider_type: syscity::model_router::ProviderType::OpenAi,
+            models: Vec::new(),
+            default_model: String::new(),
             api_key: api_key.into(),
             api_keys: Vec::new(),
             auth_profile: None,
