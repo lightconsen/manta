@@ -20,7 +20,7 @@ display_name = "OpenAI"
 [[openai.variants]]
 protocol = "open_ai"
 default_base_url = "https://api.openai.com/v1"
-default_model = "gpt-4o-mini"
+default_model = "gpt-5.4-mini"
 auth_method = "bearer"
 models_endpoint = "/models"
 default_max_context = 128000
@@ -33,7 +33,7 @@ display_name = "DeepSeek"
 [[deepseek.variants]]
 protocol = "open_ai"
 default_base_url = "https://api.deepseek.com/v1"
-default_model = "deepseek-chat"
+default_model = "deepseek-v4-flash"
 auth_method = "bearer"
 models_endpoint = "/models"
 default_max_context = 128000
@@ -46,7 +46,7 @@ display_name = "Ollama"
 [[ollama.variants]]
 protocol = "open_ai"
 default_base_url = "http://localhost:11434/v1"
-default_model = "llama3.2"
+default_model = "qwen3"
 auth_method = "none"
 models_endpoint = "/models"
 default_max_context = 8192
@@ -59,7 +59,7 @@ display_name = "Qwen"
 [[qwen.variants]]
 protocol = "open_ai"
 default_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-default_model = "qwen-max"
+default_model = "qwen3.7-plus"
 auth_method = "bearer"
 models_endpoint = "/models"
 default_max_context = 128000
@@ -73,7 +73,7 @@ display_name = "Moonshot (Kimi)"
 [[kimi.variants]]
 protocol = "open_ai"
 default_base_url = "https://api.moonshot.cn/v1"
-default_model = "kimi-k2"
+default_model = "kimi-k2.6"
 auth_method = "bearer"
 models_endpoint = "/models"
 default_max_context = 128000
@@ -83,7 +83,7 @@ default_stream_family = "Moonshot"
 [[kimi.variants]]
 protocol = "anthropic"
 default_base_url = "https://api.moonshot.cn/anthropic"
-default_model = "kimi-k2"
+default_model = "kimi-k2.6"
 auth_method = "api_key_header"
 models_endpoint = "/v1/models"
 default_max_context = 128000
@@ -96,7 +96,7 @@ display_name = "Anthropic"
 [[anthropic.variants]]
 protocol = "anthropic"
 default_base_url = "https://api.anthropic.com"
-default_model = "claude-sonnet-4-20250514"
+default_model = "claude-sonnet-4-6"
 auth_method = "api_key_header"
 models_endpoint = "/v1/models"
 default_max_context = 200000
@@ -109,7 +109,7 @@ display_name = "Azure OpenAI"
 [[azure.variants]]
 protocol = "open_ai"
 default_base_url = "https://YOUR_RESOURCE.openai.azure.com"
-default_model = "gpt-4o"
+default_model = "gpt-5.4"
 auth_method = "bearer"
 models_endpoint = "/models"
 default_max_context = 128000
@@ -122,7 +122,7 @@ display_name = "Gemini"
 [[gemini.variants]]
 protocol = "gemini"
 default_base_url = "https://generativelanguage.googleapis.com/v1beta"
-default_model = "gemini-2.0-flash"
+default_model = "gemini-2.5-flash"
 auth_method = "google_api_key"
 models_endpoint = "/models"
 default_max_context = 1048576
@@ -135,7 +135,7 @@ display_name = "GLM (Zhipu)"
 [[glm.variants]]
 protocol = "open_ai"
 default_base_url = "https://open.bigmodel.cn/api/paas/v4"
-default_model = "glm-4-flash"
+default_model = "glm-5.2"
 auth_method = "bearer"
 models_endpoint = "/models"
 default_max_context = 128000
@@ -148,7 +148,7 @@ display_name = "MiniMax"
 [[minimax.variants]]
 protocol = "open_ai"
 default_base_url = "https://api.minimax.chat/v1"
-default_model = "abab6.5s-chat"
+default_model = "MiniMax-M3"
 auth_method = "bearer"
 models_endpoint = "/models"
 default_max_context = 128000
@@ -156,13 +156,14 @@ default_supports_vision = false
 default_supports_tools = true
 default_stream_family = "Minimax"
 
-# Doubao via Volcengine Ark (火山方舟), OpenAI-compatible endpoint.
-[doubao]
-display_name = "豆包 (Volcengine)"
-[[doubao.variants]]
+# Volcengine Ark (火山方舟) — Doubao models, OpenAI-compatible endpoint.
+# Legacy config key "doubao" resolves here via PROVIDER_ALIASES.
+[volcengine]
+display_name = "Volcengine (火山引擎)"
+[[volcengine.variants]]
 protocol = "open_ai"
 default_base_url = "https://ark.cn-beijing.volces.com/api/v3"
-default_model = "doubao-seed-1-6-250615"
+default_model = "doubao-seed-2-1-pro-260628"
 auth_method = "bearer"
 models_endpoint = "/models"
 default_max_context = 128000
@@ -190,7 +191,7 @@ display_name = "xAI (Grok)"
 [[grok.variants]]
 protocol = "open_ai"
 default_base_url = "https://api.x.ai/v1"
-default_model = "grok-3"
+default_model = "grok-4.3"
 auth_method = "bearer"
 models_endpoint = "/models"
 default_max_context = 131072

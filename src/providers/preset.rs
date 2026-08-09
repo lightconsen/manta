@@ -28,6 +28,20 @@ struct RawPreset {
     variants: Vec<ProtocolVariant>,
 }
 
+/// Legacy provider-name aliases: old config key → current preset key. Kept so
+/// configs written before a rename still resolve (e.g. `"doubao"` → `"volcengine"`).
+pub const PROVIDER_ALIASES: &[(&str, &str)] = &[("doubao", "volcengine")];
+
+/// Canonicalize a provider name through the alias table. Unknown names pass
+/// through unchanged so callers can keep their existing error handling.
+pub fn canonical_provider_name(name: &str) -> &str {
+    PROVIDER_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map(|(_, canonical)| *canonical)
+        .unwrap_or(name)
+}
+
 /// All built-in provider definitions.
 ///
 /// The key is the preset name used in config (e.g. `"openai"`, `"kimi"`).
@@ -69,7 +83,7 @@ fn fallback_providers() -> HashMap<&'static str, ProviderDefinition> {
             variants: vec![ProtocolVariant {
                 protocol: Protocol::OpenAi,
                 default_base_url: "https://api.openai.com/v1".into(),
-                default_model: "gpt-4o-mini".into(),
+                default_model: "gpt-5.4-mini".into(),
                 auth_method: AuthMethod::Bearer,
                 models_endpoint: Some("/models".into()),
                 default_max_context: 128_000,
@@ -87,7 +101,7 @@ fn fallback_providers() -> HashMap<&'static str, ProviderDefinition> {
             variants: vec![ProtocolVariant {
                 protocol: Protocol::Anthropic,
                 default_base_url: "https://api.anthropic.com".into(),
-                default_model: "claude-sonnet-4-20250514".into(),
+                default_model: "claude-sonnet-4-6".into(),
                 auth_method: AuthMethod::ApiKeyHeader,
                 models_endpoint: Some("/v1/models".into()),
                 default_max_context: 200_000,
@@ -117,7 +131,7 @@ mod tests {
         assert!(providers.contains_key("minimax"));
         assert!(providers.contains_key("azure"));
         assert!(providers.contains_key("glm"));
-        assert!(providers.contains_key("doubao"));
+        assert!(providers.contains_key("volcengine"));
         assert!(providers.contains_key("hunyuan"));
         assert!(providers.contains_key("grok"));
         assert!(providers.contains_key("mistral"));
@@ -188,6 +202,13 @@ mod tests {
         let providers = builtin_providers();
         let gemini = providers.get("gemini").unwrap();
         assert_eq!(gemini.variants[0].auth_method, AuthMethod::GoogleApiKey);
+    }
+
+    #[test]
+    fn test_provider_aliases() {
+        assert_eq!(canonical_provider_name("doubao"), "volcengine");
+        assert_eq!(canonical_provider_name("volcengine"), "volcengine");
+        assert_eq!(canonical_provider_name("openai"), "openai");
     }
 
     #[test]

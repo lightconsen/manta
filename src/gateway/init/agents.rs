@@ -74,7 +74,8 @@ pub async fn init_model_router(
         // Migration: providers that predate per-provider model lists get their
         // models and default model backfilled from the built-in preset.
         if provider_config.models.is_empty() {
-            if let Some(preset) = crate::model_router::provider_presets().get(name.as_str()) {
+            let key = crate::providers::preset::canonical_provider_name(name.as_str());
+            if let Some(preset) = crate::model_router::provider_presets().get(key) {
                 provider_config.models = preset.models.clone();
                 provider_config.default_model = preset.models.first().cloned().unwrap_or_default();
                 warn!(
@@ -140,7 +141,8 @@ pub async fn migrate_model_router_config(config: &mut GatewayConfig) -> bool {
     // 1. Backfill per-provider model lists and fix provider default models.
     for (name, pcfg) in config.providers.iter_mut() {
         if pcfg.models.is_empty() {
-            if let Some(preset) = crate::model_router::provider_presets().get(name.as_str()) {
+            let key = crate::providers::preset::canonical_provider_name(name.as_str());
+            if let Some(preset) = crate::model_router::provider_presets().get(key) {
                 pcfg.models = preset.models.clone();
                 pcfg.default_model = preset.models.first().cloned().unwrap_or_default();
                 changed = true;
@@ -336,8 +338,8 @@ mod tests {
 
         assert!(changed);
         let p = config.providers.get("deepseek").unwrap();
-        assert_eq!(p.models, vec!["deepseek-chat", "deepseek-reasoner"]);
-        assert_eq!(p.default_model, "deepseek-chat");
+        assert_eq!(p.models, vec!["deepseek-v4-flash", "deepseek-v4-pro"]);
+        assert_eq!(p.default_model, "deepseek-v4-flash");
     }
 
     #[tokio::test]

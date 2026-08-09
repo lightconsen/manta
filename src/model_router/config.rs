@@ -458,11 +458,10 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::Anthropic,
             default_base_url: None,
             models: vec![
+                "claude-opus-4-6".to_string(),
+                "claude-sonnet-4-6".to_string(),
+                "claude-haiku-4-5-20251001".to_string(),
                 "claude-sonnet-4-20250514".to_string(),
-                "claude-3-5-sonnet-20241022".to_string(),
-                "claude-3-opus-20240229".to_string(),
-                "claude-3-sonnet-20240229".to_string(),
-                "claude-3-haiku-20240307".to_string(),
             ],
         },
     );
@@ -473,10 +472,11 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::OpenAi,
             default_base_url: Some("https://api.openai.com/v1".to_string()),
             models: vec![
+                "gpt-5.5".to_string(),
+                "gpt-5.4".to_string(),
+                "gpt-5.4-mini".to_string(),
+                "gpt-5.4-nano".to_string(),
                 "gpt-4o".to_string(),
-                "gpt-4o-mini".to_string(),
-                "gpt-4-turbo".to_string(),
-                "gpt-3.5-turbo".to_string(),
             ],
         },
     );
@@ -486,7 +486,10 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             display_name: "DeepSeek".to_string(),
             protocol: ProviderType::OpenAi,
             default_base_url: Some("https://api.deepseek.com/v1".to_string()),
-            models: vec!["deepseek-chat".to_string(), "deepseek-reasoner".to_string()],
+            models: vec![
+                "deepseek-v4-flash".to_string(),
+                "deepseek-v4-pro".to_string(),
+            ],
         },
     );
     m.insert(
@@ -496,9 +499,9 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::OpenAi,
             default_base_url: Some("https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()),
             models: vec![
-                "qwen-max".to_string(),
-                "qwen-plus".to_string(),
-                "qwen-turbo".to_string(),
+                "qwen3.8-max".to_string(),
+                "qwen3.7-plus".to_string(),
+                "qwen3.7-flash".to_string(),
             ],
         },
     );
@@ -509,10 +512,11 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::Moonshot,
             default_base_url: None,
             models: vec![
-                "kimi-k2".to_string(),
-                "kimi-moonshot-v1-8k".to_string(),
-                "kimi-moonshot-v1-32k".to_string(),
-                "kimi-moonshot-v1-128k".to_string(),
+                "kimi-k2.5".to_string(),
+                "kimi-k2.6".to_string(),
+                "kimi-k2.7-code".to_string(),
+                "kimi-k2.7-code-highspeed".to_string(),
+                "kimi-k3".to_string(),
             ],
         },
     );
@@ -523,9 +527,9 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::Gemini,
             default_base_url: None,
             models: vec![
-                "gemini-1.5-pro".to_string(),
-                "gemini-1.5-flash".to_string(),
-                "gemini-2.5-pro-preview-03-25".to_string(),
+                "gemini-2.5-pro".to_string(),
+                "gemini-2.5-flash".to_string(),
+                "gemini-2.5-flash-lite".to_string(),
             ],
         },
     );
@@ -536,10 +540,9 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::OpenAi,
             default_base_url: Some("https://open.bigmodel.cn/api/paas/v4".to_string()),
             models: vec![
-                "glm-4.5".to_string(),
-                "glm-4.5-air".to_string(),
-                "glm-4-plus".to_string(),
-                "glm-4-flash".to_string(),
+                "glm-4.7".to_string(),
+                "glm-5-turbo".to_string(),
+                "glm-5.2".to_string(),
             ],
         },
     );
@@ -549,7 +552,11 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             display_name: "MiniMax".to_string(),
             protocol: ProviderType::Minimax,
             default_base_url: None,
-            models: vec!["abab6.5s-chat".to_string(), "abab6-chat".to_string()],
+            models: vec![
+                "MiniMax-M3".to_string(),
+                "MiniMax-M2.7".to_string(),
+                "MiniMax-M2.7-highspeed".to_string(),
+            ],
         },
     );
     m.insert(
@@ -559,9 +566,9 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::Azure,
             default_base_url: None,
             models: vec![
+                "gpt-5.4".to_string(),
+                "gpt-5.4-mini".to_string(),
                 "gpt-4o".to_string(),
-                "gpt-4".to_string(),
-                "gpt-35-turbo".to_string(),
             ],
         },
     );
@@ -572,10 +579,10 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::Ollama,
             default_base_url: Some("http://localhost:11434".to_string()),
             models: vec![
-                "llama3".to_string(),
-                "llama3.1".to_string(),
-                "mistral".to_string(),
-                "qwen2".to_string(),
+                "qwen3".to_string(),
+                "llama4".to_string(),
+                "deepseek-r1".to_string(),
+                "gemma3".to_string(),
             ],
         },
     );
@@ -589,15 +596,15 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
         },
     );
     m.insert(
-        "doubao".to_string(),
+        "volcengine".to_string(),
         ProviderPreset {
-            display_name: "豆包 (Volcengine)".to_string(),
+            display_name: "Volcengine (火山引擎)".to_string(),
             protocol: ProviderType::OpenAi,
             default_base_url: Some("https://ark.cn-beijing.volces.com/api/v3".to_string()),
             models: vec![
-                "doubao-seed-1-6-250615".to_string(),
-                "doubao-1-5-pro-32k-250115".to_string(),
-                "doubao-1-5-lite-32k-250115".to_string(),
+                "doubao-seed-2-1-pro-260628".to_string(),
+                "doubao-seed-2-1-turbo-260628".to_string(),
+                "doubao-seed-evolving".to_string(),
             ],
         },
     );
@@ -608,8 +615,8 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::OpenAi,
             default_base_url: Some("https://api.hunyuan.cloud.tencent.com/v1".to_string()),
             models: vec![
+                "hunyuan-t1-latest".to_string(),
                 "hunyuan-turbos-latest".to_string(),
-                "hunyuan-turbo-latest".to_string(),
                 "hunyuan-standard".to_string(),
                 "hunyuan-lite".to_string(),
             ],
@@ -622,10 +629,10 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             protocol: ProviderType::OpenAi,
             default_base_url: Some("https://api.x.ai/v1".to_string()),
             models: vec![
-                "grok-3".to_string(),
-                "grok-3-mini".to_string(),
-                "grok-4".to_string(),
-                "grok-4-fast".to_string(),
+                "grok-4.5".to_string(),
+                "grok-4.3".to_string(),
+                "grok-4.1-fast".to_string(),
+                "grok-code-fast-1".to_string(),
             ],
         },
     );
@@ -637,8 +644,9 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             default_base_url: Some("https://api.mistral.ai/v1".to_string()),
             models: vec![
                 "mistral-large-latest".to_string(),
+                "mistral-medium-latest".to_string(),
+                "magistral-medium-latest".to_string(),
                 "mistral-small-latest".to_string(),
-                "mistral-nemo".to_string(),
                 "codestral-latest".to_string(),
             ],
         },
@@ -663,6 +671,7 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
 /// (case-insensitive). Lets a user-entered name like "DeepSeek" resolve to the
 /// `deepseek` preset's protocol/base URL even when the config key differs.
 pub fn provider_preset_for_name(name: &str) -> Option<ProviderPreset> {
+    let name = crate::providers::preset::canonical_provider_name(name);
     let presets = provider_presets();
     if let Some(p) = presets.get(name) {
         return Some(p.clone());
@@ -676,6 +685,7 @@ pub fn provider_preset_for_name(name: &str) -> Option<ProviderPreset> {
 /// Human-readable display name for a provider config key (e.g. "deepseek" →
 /// "DeepSeek"). Falls back to the key itself for custom providers.
 pub fn provider_display_name(key: &str) -> String {
+    let key = crate::providers::preset::canonical_provider_name(key);
     let presets = provider_presets();
     if let Some(p) = presets.get(key) {
         return p.display_name.clone();

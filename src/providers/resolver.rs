@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use super::preset::builtin_providers;
+use super::preset::{builtin_providers, canonical_provider_name};
 use super::stream_wrappers::ProviderStreamFamily;
 use super::{AnthropicProvider, GeminiProvider, OpenAiProvider, Provider};
 use super::{AuthMethod, Protocol, ProviderInstanceConfig};
@@ -30,6 +30,7 @@ pub fn resolve_provider(
     protocol: Option<Protocol>,
 ) -> crate::Result<Arc<dyn Provider>> {
     let presets = builtin_providers();
+    let provider_type = canonical_provider_name(provider_type);
 
     if provider_type == "custom" || !presets.contains_key(provider_type) {
         // Custom provider: protocol is required
@@ -113,6 +114,7 @@ pub fn resolve_from_config(
     auth_method: Option<AuthMethod>,
 ) -> crate::Result<Arc<dyn Provider>> {
     let presets = builtin_providers();
+    let provider_type = canonical_provider_name(provider_type);
 
     let instance = if provider_type == "custom" || !presets.contains_key(provider_type) {
         let proto = protocol.ok_or_else(|| crate::error::ConfigError::InvalidValue {
@@ -214,28 +216,28 @@ mod tests {
     fn test_resolve_openai_preset() {
         let provider = resolve_provider("openai", None, None, None, None).unwrap();
         assert!(provider.supports_tools());
-        assert_eq!(provider.default_model(), "gpt-4o-mini");
+        assert_eq!(provider.default_model(), "gpt-5.4-mini");
     }
 
     #[test]
     fn test_resolve_anthropic_preset() {
         let provider =
             resolve_provider("anthropic", Some("sk-test".into()), None, None, None).unwrap();
-        assert_eq!(provider.default_model(), "claude-sonnet-4-20250514");
+        assert_eq!(provider.default_model(), "claude-sonnet-4-6");
     }
 
     #[test]
     fn test_resolve_gemini_preset() {
         let provider =
             resolve_provider("gemini", Some("test-key".into()), None, None, None).unwrap();
-        assert_eq!(provider.default_model(), "gemini-2.0-flash");
+        assert_eq!(provider.default_model(), "gemini-2.5-flash");
     }
 
     #[test]
     fn test_resolve_kimi_default_variant() {
         // Default Kimi should use OpenAI protocol (first variant)
         let provider = resolve_provider("kimi", Some("sk-test".into()), None, None, None).unwrap();
-        assert_eq!(provider.default_model(), "kimi-k2");
+        assert_eq!(provider.default_model(), "kimi-k2.6");
     }
 
     #[test]
@@ -244,7 +246,7 @@ mod tests {
         let provider =
             resolve_provider("kimi", Some("sk-test".into()), None, None, Some(Protocol::Anthropic))
                 .unwrap();
-        assert_eq!(provider.default_model(), "kimi-k2");
+        assert_eq!(provider.default_model(), "kimi-k2.6");
     }
 
     #[test]
@@ -287,21 +289,29 @@ mod tests {
     #[test]
     fn test_resolve_ollama_preset() {
         let provider = resolve_provider("ollama", None, None, None, None).unwrap();
-        assert_eq!(provider.default_model(), "llama3.2");
+        assert_eq!(provider.default_model(), "qwen3");
     }
 
     #[test]
     fn test_resolve_minimax_preset() {
         let provider =
             resolve_provider("minimax", Some("sk-test".into()), None, None, None).unwrap();
-        assert_eq!(provider.default_model(), "abab6.5s-chat");
+        assert_eq!(provider.default_model(), "MiniMax-M3");
     }
 
     #[test]
-    fn test_resolve_doubao_preset() {
+    fn test_resolve_volcengine_preset() {
+        let provider =
+            resolve_provider("volcengine", Some("sk-test".into()), None, None, None).unwrap();
+        assert_eq!(provider.default_model(), "doubao-seed-2-1-pro-260628");
+    }
+
+    #[test]
+    fn test_resolve_doubao_alias() {
+        // Legacy config key "doubao" must still resolve to the volcengine preset.
         let provider =
             resolve_provider("doubao", Some("sk-test".into()), None, None, None).unwrap();
-        assert_eq!(provider.default_model(), "doubao-seed-1-6-250615");
+        assert_eq!(provider.default_model(), "doubao-seed-2-1-pro-260628");
     }
 
     #[test]
@@ -314,7 +324,7 @@ mod tests {
     #[test]
     fn test_resolve_grok_preset() {
         let provider = resolve_provider("grok", Some("sk-test".into()), None, None, None).unwrap();
-        assert_eq!(provider.default_model(), "grok-3");
+        assert_eq!(provider.default_model(), "grok-4.3");
     }
 
     #[test]
