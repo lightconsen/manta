@@ -128,8 +128,9 @@ mod mobile_device {
 /// Unlike the device bridge, nothing on the gateway side calls this plugin —
 /// the WebView invokes `plugin:speech|*` commands directly to drive the
 /// composer voice mode — so no managed state is kept. Android registers the
-/// Kotlin `SpeechPlugin`; iOS is a no-op until an `SFSpeechRecognizer` impl
-/// lands (the JS probe then reports unsupported).
+/// Kotlin `SpeechPlugin` (SpeechRecognizer); iOS registers the Swift
+/// `SpeechPlugin` (SFSpeechRecognizer). Both share the same command/event
+/// contract so the web layer drives them identically.
 #[cfg(mobile)]
 mod mobile_speech {
     /// Build the `"speech"` plugin.
@@ -138,8 +139,11 @@ mod mobile_speech {
             .setup(|_app, api| {
                 #[cfg(target_os = "android")]
                 api.register_android_plugin("net.syscity.desktop", "SpeechPlugin")?;
-                #[cfg(not(target_os = "android"))]
-                let _ = api;
+                #[cfg(target_os = "ios")]
+                {
+                    tauri::ios_plugin_binding!(init_plugin_syscity_speech);
+                    let _ = api.register_ios_plugin(init_plugin_syscity_speech)?;
+                }
                 Ok(())
             })
             .build()

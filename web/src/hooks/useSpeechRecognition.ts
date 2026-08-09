@@ -17,6 +17,22 @@ type NativeSpeechEvent =
   | { type: "state"; value: string };
 
 /**
+ * Set when the web SpeechRecognition API exists but fails fatally at runtime
+ * (e.g. iOS WKWebView exposes the constructor but TCC/service gating rejects
+ * every session). Sticky for the page session: once the web engine proves
+ * broken, all later voice sessions go straight to the native bridge.
+ */
+let webSpeechFailed = false;
+
+/** Web Speech API error codes that mean "this engine cannot run here". */
+const FATAL_WEB_ERRORS = [
+  "not-allowed",
+  "service-not-allowed",
+  "audio-capture",
+  "language-not-supported",
+];
+
+/**
  * Voice input with two engines behind one hook:
  * - web: the Web Speech API (Chromium / Safari / WebView2), used whenever the
  *   webview exposes `SpeechRecognition`.
@@ -48,7 +64,7 @@ export function useSpeechRecognition({
   useEffect(() => {
     const SpeechRecognitionCtor =
       window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognitionCtor) {
+    if (SpeechRecognitionCtor && !webSpeechFailed) {
       engineRef.current = "web";
       setSupported(true);
       return;
@@ -69,101 +85,6 @@ export function useSpeechRecognition({
         });
     }
   }, []);
-
-  // ── Web engine ────────────────────────────────────────────────────────────
-  // Build / rebuild recognition instance when lang changes (native engine
-  // needs no eager setup).
-  useEffect(() => {
-    if (engineRef.current !== "web") return;
-    const SpeechRecognitionCtor =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognitionCtor) return;
-
-    const recognition = new SpeechRecognitionCtor();
-    // Use continuous=false for reliable final results;
-    // auto-restart in onend keeps the loop going.
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = lang;
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      setIsListening(true);
-    };
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let finalTranscript = "";
-      let interimTranscript = "";
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-
-      if (interimTranscript) {
-        onInterim?.(interimTranscript);
-      }
-      if (finalTranscript) {
-        onResult(finalTranscript);
-        if (autoSubmit && finalTranscript.trim()) {
-          if (submitTimerRef.current) {
-            clearTimeout(submitTimerRef.current);
-          }
-          submitTimerRef.current = setTimeout(() => {
-            onSubmit?.();
-            submitTimerRef.current = null;
-          }, 300);
-        }
-      }
-    };
-
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      // "no-speech" is normal — onend will auto-restart.
-      // "aborted" happens when we call .stop() / .abort().
-      if (event.error !== "aborted" && event.error !== "no-speech") {
-        onError?.(event.error);
-      }
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-      // Auto-restart if voice mode is still active.
-      if (shouldRestartRef.current) {
-        restartTimerRef.current = setTimeout(() => {
-          if (shouldRestartRef.current) {
-            try {
-              recognitionRef.current?.start();
-            } catch {
-              // Already started or other race — ignore.
-            }
-          }
-        }, 300);
-      }
-    };
-
-    recognitionRef.current = recognition;
-
-    return () => {
-      shouldRestartRef.current = false;
-      if (restartTimerRef.current) {
-        clearTimeout(restartTimerRef.current);
-        restartTimerRef.current = null;
-      }
-      if (submitTimerRef.current) {
-        clearTimeout(submitTimerRef.current);
-        submitTimerRef.current = null;
-      }
-      try {
-        recognition.abort();
-      } catch {
-        // ignore
-      }
-    };
-  }, [lang, onResult, onInterim, onError, onSubmit, autoSubmit]);
 
   // ── Native engine (Tauri speech plugin) ───────────────────────────────────
 
@@ -248,6 +169,145 @@ export function useSpeechRecognition({
       // Shell without the plugin — nothing to stop.
     }
   }, []);
+
+  // Switch from the web engine to the native bridge after a fatal web error
+  // (the constructor exists but the shell can't actually run recognition).
+  // Sticky for the page session via `webSpeechFailed`; retries the pending
+  // start on the native engine when voice mode is active.
+  const fallbackToNative = useCallback(() => {
+    if (webSpeechFailed) return;
+    webSpeechFailed = true;
+    try {
+      recognitionRef.current?.abort();
+    } catch {
+      // ignore
+    }
+    import("@tauri-apps/api/core")
+      .then(({ invoke }) =>
+        invoke<{ available?: boolean }>("plugin:speech|is_available")
+      )
+      .then((res) => {
+        if (res?.available) {
+          engineRef.current = "native";
+          if (shouldRestartRef.current) {
+            void startNative();
+          }
+        } else {
+          shouldRestartRef.current = false;
+          setIsListening(false);
+          setSupported(false);
+        }
+      })
+      .catch(() => {
+        shouldRestartRef.current = false;
+        setIsListening(false);
+        setSupported(false);
+      });
+  }, [startNative]);
+
+  // ── Web engine ────────────────────────────────────────────────────────────
+  // Build / rebuild recognition instance when lang changes (native engine
+  // needs no eager setup). Skipped once the web engine has failed fatally.
+  useEffect(() => {
+    if (engineRef.current !== "web" || webSpeechFailed) return;
+    const SpeechRecognitionCtor =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) return;
+
+    const recognition = new SpeechRecognitionCtor();
+    // Use continuous=false for reliable final results;
+    // auto-restart in onend keeps the loop going.
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = lang;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let finalTranscript = "";
+      let interimTranscript = "";
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+
+      if (interimTranscript) {
+        onInterim?.(interimTranscript);
+      }
+      if (finalTranscript) {
+        onResult(finalTranscript);
+        if (autoSubmit && finalTranscript.trim()) {
+          if (submitTimerRef.current) {
+            clearTimeout(submitTimerRef.current);
+          }
+          submitTimerRef.current = setTimeout(() => {
+            onSubmit?.();
+            submitTimerRef.current = null;
+          }, 300);
+        }
+      }
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      // "no-speech" is normal — onend will auto-restart.
+      // "aborted" happens when we call .stop() / .abort().
+      if (event.error === "aborted" || event.error === "no-speech") {
+        return;
+      }
+      if (FATAL_WEB_ERRORS.includes(event.error)) {
+        // The webview claims the API but can't actually run it (e.g. iOS
+        // WKWebView gating): switch to the native bridge for the rest of
+        // the session and retry the pending start there.
+        fallbackToNative();
+        return;
+      }
+      onError?.(event.error);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      // Auto-restart if voice mode is still active and the web engine is
+      // still the selected one (a fatal error may have moved us to native).
+      if (shouldRestartRef.current && engineRef.current === "web") {
+        restartTimerRef.current = setTimeout(() => {
+          if (shouldRestartRef.current) {
+            try {
+              recognitionRef.current?.start();
+            } catch {
+              // Already started or other race — ignore.
+            }
+          }
+        }, 300);
+      }
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      shouldRestartRef.current = false;
+      if (restartTimerRef.current) {
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = null;
+      }
+      if (submitTimerRef.current) {
+        clearTimeout(submitTimerRef.current);
+        submitTimerRef.current = null;
+      }
+      try {
+        recognition.abort();
+      } catch {
+        // ignore
+      }
+    };
+  }, [lang, onResult, onInterim, onError, onSubmit, autoSubmit, fallbackToNative]);
 
   // Stop the native session when the component unmounts mid-listen.
   useEffect(() => {
