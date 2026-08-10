@@ -111,7 +111,7 @@ async fn get_config_value(key: &str) -> Result<()> {
     Ok(())
 }
 
-async fn set_config_value(key_value: &str, file: Option<&PathBuf>) -> Result<()> {
+pub(crate) async fn set_config_value(key_value: &str, file: Option<&PathBuf>) -> Result<()> {
     let parts: Vec<&str> = key_value.splitn(2, '=').collect();
     if parts.len() != 2 {
         eprintln!("Invalid format. Use: key=value");
@@ -142,7 +142,7 @@ async fn set_config_value(key_value: &str, file: Option<&PathBuf>) -> Result<()>
     Ok(())
 }
 
-async fn unset_config_value(key: &str, file: Option<&PathBuf>) -> Result<()> {
+pub(crate) async fn unset_config_value(key: &str, file: Option<&PathBuf>) -> Result<()> {
     let config_path = file
         .cloned()
         .unwrap_or_else(crate::dirs::default_config_file);

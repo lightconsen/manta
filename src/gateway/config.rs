@@ -540,6 +540,7 @@ pub enum CredentialPrecedence {
 
 /// Security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SecurityConfig {
     /// Enable security features (auth, rate limiting, security headers)
     pub enabled: bool,

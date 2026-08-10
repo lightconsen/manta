@@ -15,6 +15,7 @@ mod admin;
 mod agent;
 mod approval;
 mod audit;
+mod auth;
 mod capability;
 mod channel;
 mod config_cmd;
@@ -40,6 +41,7 @@ pub use admin::AdminCommands;
 pub use agent::AgentCommands;
 pub use approval::ApprovalCommands;
 pub use audit::AuditCommands;
+pub use auth::AuthCommands;
 pub use channel::ChannelCommands;
 pub use config_cmd::ConfigCommands;
 pub use cron::CronCommands;
@@ -257,6 +259,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: AuditCommands,
     },
+    /// Auth management (shared token lifecycle, mode)
+    Auth {
+        /// Auth subcommand
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
     /// Provider management (list, enable, disable, switch)
     Provider {
         /// Provider subcommand
@@ -435,6 +443,7 @@ impl Cli {
             Commands::Device { command } => device::run_device_command(command).await,
             Commands::Approval { command } => approval::run_approval_command(command).await,
             Commands::Audit { command } => audit::run_audit_command(command).await,
+            Commands::Auth { command } => auth::run_auth_command(command).await,
             Commands::Provider { command } => provider::run_provider_command(command, config).await,
             Commands::Doctor { command } => doctor::run_doctor_command(command).await,
             Commands::Capabilities => capability::run_capability_check().await,
