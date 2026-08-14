@@ -37,6 +37,7 @@ pub struct TurnMetricsCollector {
     turn_id: String,
     session_id: Option<String>,
     conversation_id: String,
+    agent_id: String,
     thread_id: String,
     turn_index: u32,
     start: Instant,
@@ -59,6 +60,7 @@ impl TurnMetricsCollector {
     pub fn new(
         session_id: Option<String>,
         conversation_id: String,
+        agent_id: String,
         thread_id: String,
         turn_index: usize,
         user_message: &str,
@@ -67,6 +69,7 @@ impl TurnMetricsCollector {
         Self::with_writer(
             session_id,
             conversation_id,
+            agent_id,
             thread_id,
             turn_index,
             user_message,
@@ -79,6 +82,7 @@ impl TurnMetricsCollector {
     pub fn with_writer(
         session_id: Option<String>,
         conversation_id: String,
+        agent_id: String,
         thread_id: String,
         turn_index: usize,
         user_message: &str,
@@ -96,6 +100,7 @@ impl TurnMetricsCollector {
             turn_id: uuid::Uuid::new_v4().to_string(),
             session_id,
             conversation_id,
+            agent_id,
             thread_id,
             turn_index: turn_index as u32,
             start: now,
@@ -275,6 +280,7 @@ impl TurnMetricsCollector {
             turn_id: self.turn_id.clone(),
             session_id: self.session_id.clone(),
             conversation_id: self.conversation_id.clone(),
+            agent_id: self.agent_id.clone(),
             thread_id: self.thread_id.clone(),
             turn_index: self.turn_index,
             state,
@@ -403,6 +409,7 @@ mod tests {
         TurnMetricsCollector::with_writer(
             Some("s1".into()),
             "c1".into(),
+            "worker".into(),
             "main".into(),
             0,
             "hello",
@@ -433,6 +440,7 @@ mod tests {
         assert_eq!(rec.assistant_text_preview, "done");
         assert_eq!(rec.llm_rounds.len(), 1);
         assert!(rec.ttft_ms.is_some());
+        assert_eq!(rec.agent_id, "worker");
     }
 
     #[tokio::test]

@@ -27,9 +27,11 @@ impl Agent {
                 None
             }
         });
+        let agent_id = config.agent_id.clone().unwrap_or_default();
 
         Self {
             config: config.into(),
+            agent_id,
             provider,
             model: None,
             tools,

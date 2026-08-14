@@ -167,6 +167,11 @@ impl ConfigCell {
 pub struct Agent {
     /// Agent configuration (runtime-updatable, copy-on-clone).
     config: ConfigCell,
+    /// Stable agent identifier set at spawn time.
+    ///
+    /// Empty string when spawned without an explicit id (e.g. ephemeral
+    /// subagents); used to tag turn observability records.
+    pub(crate) agent_id: String,
     /// The LLM provider
     provider: Arc<dyn Provider>,
     /// Model name to use (overrides provider default)

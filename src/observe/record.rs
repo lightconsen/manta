@@ -83,6 +83,11 @@ pub struct TurnRecord {
     pub turn_id: String,
     pub session_id: Option<String>,
     pub conversation_id: String,
+    /// Stable agent identifier that handled this turn (empty for ephemeral
+    /// subagents). Backward-compatible: old records without the field default
+    /// to an empty string.
+    #[serde(default)]
+    pub agent_id: String,
     pub thread_id: String,
     pub turn_index: u32,
     pub state: TurnEndState,
@@ -166,6 +171,7 @@ mod tests {
             turn_id: "t1".into(),
             session_id: Some("s1".into()),
             conversation_id: "c1".into(),
+            agent_id: "main".into(),
             thread_id: "main".into(),
             turn_index: 0,
             state: TurnEndState::Complete,

@@ -231,6 +231,7 @@ mod tests {
             turn_id: id.into(),
             session_id: Some("s".into()),
             conversation_id: "c".into(),
+            agent_id: "worker".into(),
             thread_id: "main".into(),
             turn_index: 0,
             state,

@@ -53,7 +53,7 @@ impl SessionStore {
         )
         .bind(&rec.turn_id)
         .bind(&rec.session_id)
-        .bind(&rec.conversation_id) // agent identity per conversation
+        .bind(&rec.agent_id)
         .bind(&rec.model)
         .bind(started_at)
         .bind(rec.queue_wait_ms.map(|v| v as i64))
@@ -84,7 +84,7 @@ impl SessionStore {
             )
             .bind(&rec.turn_id)
             .bind(&rec.session_id)
-            .bind(&rec.conversation_id)
+            .bind(&rec.agent_id)
             .bind(round.round)
             .bind(&round.provider)
             .bind(&round.model)
@@ -186,8 +186,8 @@ impl SessionStore {
 
         let turns = {
             let sql = format!(
-                "SELECT turn_id, state, duration_ms, ttft_ms, queue_wait_ms, llm_rounds, \
-                 tool_calls, cache_hit, model FROM turn_outcomes{}",
+                "SELECT turn_id, agent_id, state, duration_ms, ttft_ms, queue_wait_ms, \
+                 llm_rounds, tool_calls, cache_hit, model FROM turn_outcomes{}",
                 since_clause
             );
             let mut q = sqlx::query(&sql);
@@ -207,6 +207,7 @@ impl SessionStore {
             rows.iter()
                 .map(|r| TurnOutcomeRow {
                     turn_id: r.get("turn_id"),
+                    agent_id: r.get("agent_id"),
                     state: r.get("state"),
                     duration_ms: r.get("duration_ms"),
                     ttft_ms: r.get("ttft_ms"),
@@ -221,7 +222,7 @@ impl SessionStore {
 
         let llm_calls = {
             let sql = format!(
-                "SELECT provider, model, duration_ms, ttft_ms, prompt_tokens, \
+                "SELECT turn_id, provider, model, duration_ms, ttft_ms, prompt_tokens, \
                  completion_tokens, cache_read_tokens, cache_creation_tokens, finish_reason, \
                  error FROM llm_calls{}",
                 since_clause
@@ -242,6 +243,7 @@ impl SessionStore {
                 })?;
             rows.iter()
                 .map(|r| LlmCallRow {
+                    turn_id: r.get("turn_id"),
                     provider: r.get("provider"),
                     model: r.get("model"),
                     duration_ms: r.get("duration_ms"),
@@ -257,8 +259,10 @@ impl SessionStore {
         };
 
         let tool_calls = {
-            let sql =
-                format!("SELECT name, duration_ms, success FROM tool_call_metrics{}", since_clause);
+            let sql = format!(
+                "SELECT turn_id, name, duration_ms, success FROM tool_call_metrics{}",
+                since_clause
+            );
             let mut q = sqlx::query(&sql);
             if let Some(s) = since_ms {
                 q = q.bind(s);
@@ -275,6 +279,7 @@ impl SessionStore {
                 })?;
             rows.iter()
                 .map(|r| ToolCallMetricRow {
+                    turn_id: r.get("turn_id"),
                     name: r.get("name"),
                     duration_ms: r.get("duration_ms"),
                     success: r.get::<i64, _>("success") != 0,
@@ -290,6 +295,7 @@ impl SessionStore {
 #[derive(Debug, Clone)]
 pub struct TurnOutcomeRow {
     pub turn_id: String,
+    pub agent_id: String,
     pub state: String,
     pub duration_ms: i64,
     pub ttft_ms: Option<i64>,
@@ -303,6 +309,7 @@ pub struct TurnOutcomeRow {
 /// An LLM call row from `llm_calls`.
 #[derive(Debug, Clone)]
 pub struct LlmCallRow {
+    pub turn_id: String,
     pub provider: String,
     pub model: String,
     pub duration_ms: i64,
@@ -318,6 +325,7 @@ pub struct LlmCallRow {
 /// A tool call row from `tool_call_metrics`.
 #[derive(Debug, Clone)]
 pub struct ToolCallMetricRow {
+    pub turn_id: String,
     pub name: String,
     pub duration_ms: i64,
     pub success: bool,
@@ -357,6 +365,7 @@ mod tests {
             turn_id: "t1".into(),
             session_id: Some("s1".into()),
             conversation_id: "c1".into(),
+            agent_id: "worker".into(),
             thread_id: "main".into(),
             turn_index: 0,
             state: TurnEndState::Complete,
@@ -416,11 +425,14 @@ mod tests {
         assert_eq!(rows.turns.len(), 1);
         assert_eq!(rows.turns[0].state, "complete");
         assert!(rows.turns[0].cache_hit);
+        assert_eq!(rows.turns[0].agent_id, "worker");
         assert_eq!(rows.llm_calls.len(), 1);
         assert_eq!(rows.llm_calls[0].prompt_tokens, 100);
         assert_eq!(rows.llm_calls[0].cache_read_tokens, 40);
+        assert_eq!(rows.llm_calls[0].turn_id, "t1");
         assert_eq!(rows.tool_calls.len(), 1);
         assert_eq!(rows.tool_calls[0].name, "file_read");
+        assert_eq!(rows.tool_calls[0].turn_id, "t1");
     }
 
     #[tokio::test]

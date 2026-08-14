@@ -7,7 +7,7 @@
 //! metric tables (falling back to the JSON turn files when the DB is absent),
 //! and `show` / `list` / `export` read the JSON files directly.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use clap::Subcommand;
 use serde_json::json;
@@ -32,6 +32,9 @@ pub enum ObserveCommands {
         /// Only the last N days (inclusive of today)
         #[arg(long)]
         days: Option<u32>,
+        /// Only turns handled by the given agent ID
+        #[arg(long)]
+        agent: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -41,6 +44,9 @@ pub enum ObserveCommands {
         /// Filter by session ID
         #[arg(long)]
         session: Option<String>,
+        /// Filter by agent ID
+        #[arg(long)]
+        agent: Option<String>,
         /// Only turns that ended in error or abort
         #[arg(long)]
         errors: bool,
@@ -82,10 +88,16 @@ pub enum ObserveCommands {
 /// Run an observe subcommand.
 pub async fn run_observe_command(command: &ObserveCommands) -> Result<()> {
     match command {
-        ObserveCommands::Stats { today, days, json } => run_stats(*today, *days, *json).await,
-        ObserveCommands::List { session, errors, days, limit } => {
-            run_list(session.as_deref(), *errors, *days, *limit).await
+        ObserveCommands::Stats { today, days, agent, json } => {
+            run_stats(*today, *days, agent.as_deref(), *json).await
         }
+        ObserveCommands::List {
+            session,
+            agent,
+            errors,
+            days,
+            limit,
+        } => run_list(session.as_deref(), agent.as_deref(), *errors, *days, *limit).await,
         ObserveCommands::Show { turn_id, json } => run_show(turn_id, *json).await,
         ObserveCommands::Export { turn_id, md, context } => {
             run_export(turn_id, *md, *context).await
@@ -390,7 +402,7 @@ fn print_stats(stats: &Stats, json: bool) {
     }
 }
 
-async fn run_stats(today: bool, days: Option<u32>, json: bool) -> Result<()> {
+async fn run_stats(today: bool, days: Option<u32>, agent: Option<&str>, json: bool) -> Result<()> {
     let (since_ms, since_date) = match (today, days) {
         (true, _) => (
             Some(crate::observe::prune::cutoff_ms(0)),
@@ -406,7 +418,10 @@ async fn run_stats(today: bool, days: Option<u32>, json: bool) -> Result<()> {
     // Prefer the SQLite metric tables; fall back to the JSON turn files.
     if let Some(store) = open_store().await? {
         match store.load_metric_rows(since_ms, None).await {
-            Ok(rows) => {
+            Ok(mut rows) => {
+                if let Some(agent) = agent {
+                    filter_rows_by_agent(&mut rows, agent);
+                }
                 let stats = stats_from_rows(&rows);
                 print_stats(&stats, json);
                 return Ok(());
@@ -417,18 +432,37 @@ async fn run_stats(today: bool, days: Option<u32>, json: bool) -> Result<()> {
         }
     }
 
-    let (records, skipped) =
+    let (mut records, skipped) =
         aggregate::load_records(&crate::dirs::turns_dir(), since_date.as_deref());
     if skipped > 0 {
         debug!("Skipped {} unparseable turn records", skipped);
+    }
+    if let Some(agent) = agent {
+        records.retain(|r| r.agent_id == agent);
     }
     let stats = aggregate::compute_stats(&records);
     print_stats(&stats, json);
     Ok(())
 }
 
+/// Restrict metric rows to a single agent. `turn_outcomes` carries `agent_id`;
+/// `llm_calls` / `tool_call_metrics` do not, so their rows are filtered by the
+/// surviving `turn_id` set.
+fn filter_rows_by_agent(rows: &mut MetricRows, agent: &str) {
+    let turn_ids: HashSet<String> = rows
+        .turns
+        .iter()
+        .filter(|t| t.agent_id == agent)
+        .map(|t| t.turn_id.clone())
+        .collect();
+    rows.turns.retain(|t| t.agent_id == agent);
+    rows.llm_calls.retain(|c| turn_ids.contains(&c.turn_id));
+    rows.tool_calls.retain(|c| turn_ids.contains(&c.turn_id));
+}
+
 async fn run_list(
     session: Option<&str>,
+    agent: Option<&str>,
     errors: bool,
     days: Option<u32>,
     limit: usize,
@@ -445,6 +479,10 @@ async fn run_list(
             Some(s) => r.session_id.as_deref() == Some(s),
             None => true,
         })
+        .filter(|r| match agent {
+            Some(a) => r.agent_id == a,
+            None => true,
+        })
         .filter(|r| !errors || matches!(r.state, TurnEndState::Error | TurnEndState::Aborted))
         .collect();
     matches.sort_by(|a, b| b.started_at.cmp(&a.started_at));
@@ -457,14 +495,22 @@ async fn run_list(
     }
 
     println!(
-        "{:<10} {:<36} {:<25} {:>9} {:<14} {:>4} {:>4}",
-        "STATE", "TURN_ID", "STARTED_AT", "DURATION", "MODEL", "RNDS", "TOOLS"
+        "{:<10} {:<8} {:<36} {:<25} {:>9} {:<14} {:>4} {:>4}",
+        "STATE", "AGENT", "TURN_ID", "STARTED_AT", "DURATION", "MODEL", "RNDS", "TOOLS"
     );
-    println!("{}", "-".repeat(112));
+    println!("{}", "-".repeat(117));
     for r in &matches {
         println!(
-            "{:<10} {:<36} {:<25} {:>8}ms {:<14} {:>4} {:>4}",
+            "{:<10} {:<8} {:<36} {:<25} {:>8}ms {:<14} {:>4} {:>4}",
             state_label(&r.state),
+            truncate_mid(
+                if r.agent_id.is_empty() {
+                    "-"
+                } else {
+                    &r.agent_id
+                },
+                8
+            ),
             truncate_mid(&r.turn_id, 36),
             r.started_at,
             r.duration_ms,
@@ -473,7 +519,7 @@ async fn run_list(
             r.tool_calls.len(),
         );
     }
-    println!("{}", "-".repeat(112));
+    println!("{}", "-".repeat(117));
     println!("{} records shown ({} matched)", matches.len(), total);
     Ok(())
 }
@@ -517,6 +563,14 @@ fn print_turn_human(rec: &TurnRecord) {
     println!(
         "  usage:      {} in / {} out / {} cache-read",
         rec.usage.prompt_tokens, rec.usage.completion_tokens, rec.usage.cache_read_tokens
+    );
+    println!(
+        "  agent:      {}",
+        if rec.agent_id.is_empty() {
+            "(none)"
+        } else {
+            &rec.agent_id
+        }
     );
     println!("  session:    {}", rec.session_id.as_deref().unwrap_or("n/a"));
     println!(
@@ -632,7 +686,7 @@ async fn run_export(turn_id: &str, md: bool, context: Option<usize>) -> Result<(
         }
     }
 
-    let personality = load_personality(&rec.conversation_id).await;
+    let personality = load_personality(&rec.agent_id, &rec.conversation_id).await;
     let system_prompt = personality.as_ref().map(system_prompt_text);
 
     if md {
@@ -642,7 +696,7 @@ async fn run_export(turn_id: &str, md: bool, context: Option<usize>) -> Result<(
             "turn": &rec,
             "messages": turn_messages,
             "context_messages": context_messages,
-            "agent_id": rec.conversation_id,
+            "agent_id": rec.agent_id,
             "system_prompt": system_prompt,
         });
         println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
@@ -695,10 +749,16 @@ fn partition_messages(
 }
 
 /// Best-effort load of the agent personality (system prompt source) for a
-/// conversation, preferring the conversation's agent id and falling back to
-/// the default agent.
-async fn load_personality(conversation_id: &str) -> Option<crate::agent::AgentPersonality> {
-    for id in [conversation_id, "default"] {
+/// turn, preferring the turn's stable agent id, then the conversation id, and
+/// falling back to the default agent.
+async fn load_personality(
+    agent_id: &str,
+    conversation_id: &str,
+) -> Option<crate::agent::AgentPersonality> {
+    for id in [agent_id, conversation_id, "default"] {
+        if id.is_empty() {
+            continue;
+        }
         let dir = crate::dirs::agent_dir(id);
         match crate::agent::AgentPersonality::load(&dir).await {
             Ok(p) if p.is_valid => return Some(p),
@@ -741,6 +801,14 @@ fn print_export_md(
     println!("| field | value |");
     println!("|---|---|");
     println!("| state | {} |", state_label(&rec.state));
+    println!(
+        "| agent | {} |",
+        if rec.agent_id.is_empty() {
+            "(none)"
+        } else {
+            &rec.agent_id
+        }
+    );
     println!("| started | {} |", rec.started_at);
     println!("| finished | {} |", rec.finished_at);
     println!("| duration | {} ms |", rec.duration_ms);
@@ -876,6 +944,7 @@ mod tests {
         MetricRows {
             turns: vec![TurnOutcomeRow {
                 turn_id: "t1".into(),
+                agent_id: "worker".into(),
                 state: "complete".into(),
                 duration_ms: 1000,
                 ttft_ms: Some(120),
@@ -886,6 +955,7 @@ mod tests {
                 model: "m".into(),
             }],
             llm_calls: vec![LlmCallRow {
+                turn_id: "t1".into(),
                 provider: "p".into(),
                 model: "m".into(),
                 duration_ms: 900,
@@ -898,6 +968,7 @@ mod tests {
                 error: None,
             }],
             tool_calls: vec![ToolCallMetricRow {
+                turn_id: "t1".into(),
                 name: "file_read".into(),
                 duration_ms: 10,
                 success: true,
@@ -911,6 +982,7 @@ mod tests {
             turn_id: "t1".into(),
             session_id: Some("s1".into()),
             conversation_id: "c1".into(),
+            agent_id: "worker".into(),
             thread_id: "main".into(),
             turn_index,
             state: TurnEndState::Complete,
@@ -966,6 +1038,79 @@ mod tests {
         let stats = stats_from_rows(&MetricRows::default());
         assert_eq!(stats.turn_count, 0);
         assert_eq!(stats.llm_calls, 0);
+    }
+
+    #[test]
+    fn filter_rows_by_agent_keeps_matching_turn_ids() {
+        let mut rows = MetricRows {
+            turns: vec![
+                TurnOutcomeRow {
+                    turn_id: "t1".into(),
+                    agent_id: "worker".into(),
+                    state: "complete".into(),
+                    duration_ms: 1000,
+                    ttft_ms: None,
+                    queue_wait_ms: None,
+                    llm_rounds: 1,
+                    tool_calls: 1,
+                    cache_hit: false,
+                    model: "m".into(),
+                },
+                TurnOutcomeRow {
+                    turn_id: "t2".into(),
+                    agent_id: "main".into(),
+                    state: "complete".into(),
+                    duration_ms: 500,
+                    ttft_ms: None,
+                    queue_wait_ms: None,
+                    llm_rounds: 1,
+                    tool_calls: 0,
+                    cache_hit: false,
+                    model: "m".into(),
+                },
+            ],
+            llm_calls: vec![
+                LlmCallRow {
+                    turn_id: "t1".into(),
+                    provider: "p".into(),
+                    model: "m".into(),
+                    duration_ms: 900,
+                    ttft_ms: None,
+                    prompt_tokens: 100,
+                    completion_tokens: 50,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    finish_reason: None,
+                    error: None,
+                },
+                LlmCallRow {
+                    turn_id: "t2".into(),
+                    provider: "p".into(),
+                    model: "m".into(),
+                    duration_ms: 400,
+                    ttft_ms: None,
+                    prompt_tokens: 80,
+                    completion_tokens: 40,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    finish_reason: None,
+                    error: None,
+                },
+            ],
+            tool_calls: vec![ToolCallMetricRow {
+                turn_id: "t1".into(),
+                name: "file_read".into(),
+                duration_ms: 10,
+                success: true,
+            }],
+        };
+
+        filter_rows_by_agent(&mut rows, "worker");
+        assert_eq!(rows.turns.len(), 1);
+        assert_eq!(rows.turns[0].turn_id, "t1");
+        assert_eq!(rows.llm_calls.len(), 1);
+        assert_eq!(rows.llm_calls[0].turn_id, "t1");
+        assert_eq!(rows.tool_calls.len(), 1);
     }
 
     #[test]

@@ -595,6 +595,7 @@ impl Agent {
                 let mut cache_collector = TurnMetricsCollector::new(
                     self.session_id.clone(),
                     conversation_id.clone(),
+                    self.agent_id.clone(),
                     format!("thread-{}", conversation_id),
                     0,
                     &content,
@@ -770,6 +771,7 @@ impl Agent {
         let mut collector = TurnMetricsCollector::new(
             self.session_id.clone(),
             conversation_id.clone(),
+            self.agent_id.clone(),
             thread.id.clone(),
             turn_idx,
             &content,
