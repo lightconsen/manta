@@ -8,6 +8,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::agent::turns::ToolCallRecord;
 use crate::channels::{IncomingMessage, OutgoingMessage};
+use crate::observe::{ErrorSource, TurnMetricsCollector, TurnMetricsSink};
 use crate::providers::{CompletionRequest, Message, Role, ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolExecutionChunk};
 
@@ -589,6 +590,24 @@ impl Agent {
                 })
                 .await;
 
+                // Record the cache hit as a completed turn with no LLM rounds so
+                // cache-hit rate / cost statistics stay accurate.
+                let mut cache_collector = TurnMetricsCollector::new(
+                    self.session_id.clone(),
+                    conversation_id.clone(),
+                    format!("thread-{}", conversation_id),
+                    0,
+                    &content,
+                    Some(message.metadata.timestamp),
+                )
+                .with_metrics_sink(
+                    self.session_store
+                        .clone()
+                        .map(|s| -> Arc<dyn TurnMetricsSink> { s }),
+                );
+                cache_collector.mark_cache_hit();
+                cache_collector.finish(&cached.response).await;
+
                 // Return cached response
                 return Ok(OutgoingMessage::new(
                     crate::channels::ConversationId(conversation_id),
@@ -747,10 +766,26 @@ impl Agent {
         let turn_idx = thread.push_turn(&content);
         thread.turns[turn_idx].start();
 
+        // Per-turn observability collector (persisted on finish/fail/abort).
+        let mut collector = TurnMetricsCollector::new(
+            self.session_id.clone(),
+            conversation_id.clone(),
+            thread.id.clone(),
+            turn_idx,
+            &content,
+            Some(message.metadata.timestamp),
+        )
+        .with_metrics_sink(
+            self.session_store
+                .clone()
+                .map(|s| -> Arc<dyn TurnMetricsSink> { s }),
+        );
+
         // Get response from LLM with progress (lock NOT held).
         let llm_result = self
             .get_completion_with_progress(
                 &mut thread.context,
+                &mut collector,
                 progress_cb.clone(),
                 &message.user_id.0,
             )
@@ -767,19 +802,28 @@ impl Agent {
                     let tid = thread.id.clone();
                     let user_c = content.clone();
                     let t_idx = turn_idx as i64;
+                    let asst_text_spawn = asst_text.clone();
                     tokio::spawn(async move {
                         if let Err(e) = store
-                            .append_turn(&sid, &tid, t_idx, &user_c, &asst_text, "complete")
+                            .append_turn(&sid, &tid, t_idx, &user_c, &asst_text_spawn, "complete")
                             .await
                         {
                             warn!("Failed to persist turn {} for session {}: {}", t_idx, sid, e);
                         }
                     });
                 }
+                // Controller checkpoints return Ok with finish_reason="cancelled";
+                // treat that as an abort, not a successful completion.
+                if resp.finish_reason.as_deref() == Some("cancelled") {
+                    collector.abort().await;
+                } else {
+                    collector.finish(&asst_text).await;
+                }
                 Ok(resp)
             }
             Err(e) => {
                 thread.turns[turn_idx].mark_error();
+                collector.fail(ErrorSource::Llm, &e.to_string()).await;
                 Err(e)
             }
         };
@@ -1532,6 +1576,7 @@ impl Agent {
     async fn get_completion_with_progress(
         &self,
         context: &mut Context,
+        collector: &mut TurnMetricsCollector,
         progress_cb: ProgressCallback,
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
@@ -1595,24 +1640,47 @@ impl Agent {
         (progress_cb)(ProgressEvent::Generating { content: None }).await;
 
         // Get streaming completion — use model router when available
-        let (raw_stream, family) = if let Some(ref router) = self.model_router {
-            let model_id = {
-                let session_model = self.session_models.read().await.get(context.id()).cloned();
-                let guard = self.model_override.read().await;
-                session_model
-                    .or_else(|| guard.as_ref().cloned())
-                    .or(self.model.clone())
-                    .unwrap_or_else(|| self.provider.default_model().to_string())
+        let (raw_stream, family, round_model, round_provider) =
+            if let Some(ref router) = self.model_router {
+                let model_id = {
+                    let session_model = self.session_models.read().await.get(context.id()).cloned();
+                    let guard = self.model_override.read().await;
+                    session_model
+                        .or_else(|| guard.as_ref().cloned())
+                        .or(self.model.clone())
+                        .unwrap_or_else(|| self.provider.default_model().to_string())
+                };
+                let tools = request.tools.take();
+                let stream = router.stream(&model_id, request.messages, tools).await?;
+                let provider = router
+                    .provider_for_model(&model_id)
+                    .await
+                    .unwrap_or_else(|| "router".to_string());
+                // When using model router, fall back to Generic stream family
+                (
+                    stream,
+                    crate::providers::stream_wrappers::ProviderStreamFamily::Generic,
+                    model_id,
+                    provider,
+                )
+            } else {
+                let round_model = request
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| self.provider.default_model().to_string());
+                let round_provider = self.provider.name().to_string();
+                (
+                    self.provider.stream(request).await?,
+                    self.provider.stream_family(),
+                    round_model,
+                    round_provider,
+                )
             };
-            let tools = request.tools.take();
-            let stream = router.stream(&model_id, request.messages, tools).await?;
-            // When using model router, fall back to Generic stream family
-            (stream, crate::providers::stream_wrappers::ProviderStreamFamily::Generic)
-        } else {
-            (self.provider.stream(request).await?, self.provider.stream_family())
-        };
         let registry = crate::providers::stream_wrappers::StreamFamilyRegistry::default();
         let mut stream = registry.apply(family, raw_stream);
+
+        // Begin an observability round for this LLM call.
+        collector.begin_round(&round_provider, &round_model);
 
         let mut accumulated_text = String::new();
         let mut accumulated_reasoning = String::new();
@@ -1624,6 +1692,8 @@ impl Agent {
             // Emit reasoning delta
             if let Some(ref reasoning_delta) = chunk.reasoning_content {
                 if !reasoning_delta.is_empty() {
+                    collector.round_first_token();
+                    collector.push_reasoning_delta(reasoning_delta);
                     accumulated_reasoning.push_str(reasoning_delta);
                     (progress_cb)(ProgressEvent::Generating {
                         content: Some(reasoning_delta.clone()),
@@ -1635,6 +1705,8 @@ impl Agent {
             // Emit text delta
             if let Some(ref text_delta) = chunk.content {
                 if !text_delta.is_empty() {
+                    collector.round_first_token();
+                    collector.push_text_delta(text_delta);
                     accumulated_text.push_str(text_delta);
                     (progress_cb)(ProgressEvent::ContentDelta { text: text_delta.clone() }).await;
                 }
@@ -1688,6 +1760,14 @@ impl Agent {
             }
         }
 
+        // Close the observability round with usage and an accurate finish reason.
+        let round_finish_reason = if accumulated_tool_calls.is_empty() {
+            "stop".to_string()
+        } else {
+            "tool_calls".to_string()
+        };
+        collector.end_round(usage.as_ref(), Some(round_finish_reason));
+
         // Build the final message
         let final_message = Message {
             role: Role::Assistant,
@@ -1738,6 +1818,7 @@ impl Agent {
                 return self
                     .handle_tool_calls_with_progress(
                         context,
+                        &mut *collector,
                         &response,
                         tool_calls,
                         progress_cb,
@@ -1752,11 +1833,7 @@ impl Agent {
 
         // Accumulate token usage for non-tool-call responses
         if let Some(ref usage) = response.usage {
-            context.accumulate_turn_token_usage(
-                usage.prompt_tokens,
-                usage.completion_tokens,
-                usage.total_tokens,
-            );
+            context.accumulate_turn_token_usage(usage);
         }
 
         Ok(response)
@@ -1766,6 +1843,7 @@ impl Agent {
     async fn handle_tool_calls_with_progress(
         &self,
         context: &mut Context,
+        collector: &mut TurnMetricsCollector,
         original_response: &crate::providers::CompletionResponse,
         tool_calls: &[ToolCall],
         progress_cb: ProgressCallback,
@@ -1774,11 +1852,7 @@ impl Agent {
         let cfg = self.config_snapshot();
         // Accumulate token usage from the LLM response that produced these tool calls
         if let Some(ref usage) = original_response.usage {
-            context.accumulate_turn_token_usage(
-                usage.prompt_tokens,
-                usage.completion_tokens,
-                usage.total_tokens,
-            );
+            context.accumulate_turn_token_usage(usage);
         }
 
         // Check iteration limit before processing
@@ -1924,13 +1998,15 @@ impl Agent {
                 _start.elapsed()
             );
 
-            context.push_tool_call_record(ToolCallRecord {
+            let rec = ToolCallRecord {
                 name: tool_name.clone(),
                 args: tool_call.function.arguments.to_string(),
                 result: result.content.clone(),
                 success: !result.is_error.unwrap_or(false),
                 duration_ms: _start.elapsed().as_millis() as u64,
-            });
+            };
+            collector.record_tool(&rec);
+            context.push_tool_call_record(rec);
 
             results.push(result);
         }
@@ -1991,8 +2067,13 @@ impl Agent {
         // Get final response with progress (recursive LLM call)
         let recursive_llm_start = std::time::Instant::now();
         info!("handle_tool_calls_with_progress: calling recursive get_completion_with_progress ({} tools executed)", results.len());
-        let mut final_response =
-            Box::pin(self.get_completion_with_progress(context, progress_cb, user_id)).await?;
+        let mut final_response = Box::pin(self.get_completion_with_progress(
+            context,
+            &mut *collector,
+            progress_cb,
+            user_id,
+        ))
+        .await?;
         info!(
             "handle_tool_calls_with_progress: recursive get_completion_with_progress returned in {:?}",
             recursive_llm_start.elapsed()
@@ -2000,11 +2081,7 @@ impl Agent {
 
         // Accumulate token usage from this LLM completion in the tool loop
         if let Some(ref usage) = final_response.usage {
-            context.accumulate_turn_token_usage(
-                usage.prompt_tokens,
-                usage.completion_tokens,
-                usage.total_tokens,
-            );
+            context.accumulate_turn_token_usage(usage);
         }
 
         // Preserve tool calls from the original assistant message so that

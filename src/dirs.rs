@@ -170,6 +170,11 @@ pub fn transcripts_dir() -> PathBuf {
     syscity_dir().join("transcripts")
 }
 
+/// Get the turn observability records directory (~/.syscity/turns)
+pub fn turns_dir() -> PathBuf {
+    syscity_dir().join("turns")
+}
+
 /// Get the artifacts directory (~/.syscity/artifacts)
 pub fn artifacts_dir() -> PathBuf {
     syscity_dir().join("artifacts")

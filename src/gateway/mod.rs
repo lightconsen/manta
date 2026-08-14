@@ -563,6 +563,51 @@ impl Gateway {
                 .await;
         }
 
+        // One-shot observability retention sweep at startup, then idle until
+        // shutdown (`observe.retention_days`; 0 disables auto-cleanup).
+        if config.observe.retention_days > 0 {
+            let store = session_store.clone();
+            let days = config.observe.retention_days;
+            let shutdown_token = shutdown_token.clone();
+            let retention_handle = tokio::spawn(async move {
+                let cutoff = crate::observe::prune::cutoff_date(days);
+                let (dirs, files) =
+                    crate::observe::prune::prune_turn_dirs(&crate::dirs::turns_dir(), &cutoff);
+                let db_rows = match store.as_ref() {
+                    Some(s) => match s
+                        .delete_metrics_before(crate::observe::prune::cutoff_ms(days))
+                        .await
+                    {
+                        Ok((l, t, o)) => Some(l + t + o),
+                        Err(e) => {
+                            warn!("Observability retention sweep failed (DB): {}", e);
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                info!(
+                    "Observability retention: pruned {} dirs / {} files{} ({} days)",
+                    dirs,
+                    files,
+                    match db_rows {
+                        Some(rows) => format!(", {} DB rows", rows),
+                        None => String::new(),
+                    },
+                    days
+                );
+                tokio::select! {
+                    _ = shutdown_token.cancelled() => {
+                        info!("Observability retention task received shutdown signal, exiting");
+                    }
+                }
+            });
+            state
+                .task_registry
+                .insert_join("observe_retention", retention_handle)
+                .await;
+        }
+
         if let Err(e) = state.auth.audit_log.init().await {
             warn!("Failed to initialize persistent audit log: {}", e);
         }

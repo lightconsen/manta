@@ -35,7 +35,7 @@ pub struct ToolCallRecord {
 }
 
 /// Token consumption for a single turn's LLM interactions.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct TurnUsage {
     /// Tokens consumed by the prompt(s).
     pub prompt_tokens: u32,
@@ -43,6 +43,12 @@ pub struct TurnUsage {
     pub completion_tokens: u32,
     /// Total tokens consumed across all LLM calls in this turn.
     pub total_tokens: u32,
+    /// Tokens read from the provider-side prompt cache.
+    #[serde(default)]
+    pub cache_read_tokens: u32,
+    /// Tokens written to the provider-side prompt cache.
+    #[serde(default)]
+    pub cache_creation_tokens: u32,
 }
 
 /// Lifecycle state of a single turn.

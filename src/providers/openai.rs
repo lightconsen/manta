@@ -234,11 +234,7 @@ impl OpenAiProvider {
 
         Ok(CompletionResponse {
             message,
-            usage: resp.usage.map(|u| Usage {
-                prompt_tokens: u.prompt_tokens,
-                completion_tokens: u.completion_tokens,
-                total_tokens: u.total_tokens,
-            }),
+            usage: resp.usage.map(|u| u.to_usage()),
             model: resp.model,
             finish_reason: choice.finish_reason,
         })
@@ -313,6 +309,7 @@ impl Provider for OpenAiProvider {
             temperature: request.temperature.unwrap_or(0.7),
             max_tokens: request.max_tokens,
             stream: Some(false),
+            stream_options: None,
             stop: request.stop,
         };
 
@@ -364,6 +361,7 @@ impl Provider for OpenAiProvider {
             temperature: request.temperature.unwrap_or(0.7),
             max_tokens: request.max_tokens,
             stream: Some(true),
+            stream_options: Some(serde_json::json!({"include_usage": true})),
             stop: request.stop,
         };
 
@@ -416,6 +414,8 @@ struct OpenAiRequest {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop: Option<Vec<String>>,
 }
@@ -477,11 +477,43 @@ struct OpenAiChoice {
     finish_reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct OpenAiUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
     total_tokens: u32,
+    /// OpenAI-style nested cache details
+    prompt_tokens_details: Option<PromptTokensDetails>,
+    /// DeepSeek-style flat cache fields
+    prompt_cache_hit_tokens: Option<u32>,
+    #[allow(dead_code)]
+    prompt_cache_miss_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PromptTokensDetails {
+    cached_tokens: Option<u32>,
+}
+
+impl OpenAiUsage {
+    /// Tokens served from the provider-side prompt cache.
+    fn cache_read_tokens(&self) -> u32 {
+        self.prompt_tokens_details
+            .as_ref()
+            .and_then(|d| d.cached_tokens)
+            .or(self.prompt_cache_hit_tokens)
+            .unwrap_or(0)
+    }
+
+    fn to_usage(&self) -> Usage {
+        Usage {
+            prompt_tokens: self.prompt_tokens,
+            completion_tokens: self.completion_tokens,
+            total_tokens: self.total_tokens,
+            cache_read_tokens: self.cache_read_tokens(),
+            cache_creation_tokens: 0,
+        }
+    }
 }
 
 // SSE Streaming types
@@ -494,6 +526,8 @@ struct OpenAiStreamResponse {
     created: u64,
     model: String,
     choices: Vec<OpenAiStreamChoice>,
+    /// Present in the final chunk when `stream_options.include_usage` is set
+    usage: Option<OpenAiUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -605,7 +639,17 @@ impl OpenAiStream {
                         reasoning_content,
                         tool_calls,
                         is_done,
-                        usage: None, // Usage not typically sent in stream chunks
+                        usage: response.usage.as_ref().map(|u| u.to_usage()),
+                    });
+                }
+                // Usage-only final chunk (choices empty when include_usage set)
+                if let Some(usage) = response.usage.as_ref() {
+                    return Some(CompletionChunk {
+                        content: None,
+                        reasoning_content: None,
+                        tool_calls: None,
+                        is_done: true,
+                        usage: Some(usage.to_usage()),
                     });
                 }
             }
@@ -993,6 +1037,7 @@ mod tests {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: 15,
+                ..Default::default()
             }),
         };
         let result = provider.from_openai_response(resp).unwrap();
@@ -1138,6 +1183,7 @@ mod tests {
             temperature: 0.7,
             max_tokens: Some(100),
             stream: Some(false),
+            stream_options: None,
             stop: Some(vec!["STOP".to_string()]),
         };
         let json = serde_json::to_string(&req).unwrap();
@@ -1146,6 +1192,55 @@ mod tests {
         assert!(json.contains("\"max_tokens\":100"));
         assert!(json.contains("\"stream\":false"));
         assert!(json.contains("\"stop\""));
+    }
+
+    #[test]
+    fn test_openai_usage_openai_cache_tokens() {
+        let json = serde_json::json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "prompt_tokens_details": {"cached_tokens": 80}
+        });
+        let usage: OpenAiUsage = serde_json::from_value(json).unwrap();
+        assert_eq!(usage.cache_read_tokens(), 80);
+        assert_eq!(usage.to_usage().cache_read_tokens, 80);
+    }
+
+    #[test]
+    fn test_openai_usage_deepseek_cache_tokens() {
+        let json = serde_json::json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "prompt_cache_hit_tokens": 64,
+            "prompt_cache_miss_tokens": 36
+        });
+        let usage: OpenAiUsage = serde_json::from_value(json).unwrap();
+        assert_eq!(usage.cache_read_tokens(), 64);
+    }
+
+    #[test]
+    fn test_openai_usage_no_cache_defaults_zero() {
+        let json = serde_json::json!({
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15
+        });
+        let usage: OpenAiUsage = serde_json::from_value(json).unwrap();
+        assert_eq!(usage.cache_read_tokens(), 0);
+        assert_eq!(usage.to_usage().cache_creation_tokens, 0);
+    }
+
+    #[test]
+    fn test_parse_usage_only_final_chunk() {
+        // When stream_options.include_usage is set, OpenAI/DeepSeek send a
+        // final chunk with empty choices and populated usage.
+        let data = r#"{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":50,"completion_tokens":10,"total_tokens":60,"prompt_tokens_details":{"cached_tokens":30}}}"#;
+        let response: OpenAiStreamResponse = serde_json::from_str(data).unwrap();
+        assert!(response.choices.is_empty());
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.to_usage().cache_read_tokens, 30);
     }
 
     #[tokio::test]

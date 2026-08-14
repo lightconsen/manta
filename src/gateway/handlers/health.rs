@@ -367,6 +367,15 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         ));
     }
 
+    // Observability record write failures (per-turn JSON files)
+    lines
+        .push("# HELP syscity_observe_write_failures_total Total per-turn observability record write failures".to_string());
+    lines.push("# TYPE syscity_observe_write_failures_total counter".to_string());
+    lines.push(format!(
+        "syscity_observe_write_failures_total {}",
+        crate::observe::WRITE_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
+    ));
+
     lines.push(String::new());
     lines.join("\n")
 }

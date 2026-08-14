@@ -946,6 +946,7 @@ mod tests {
             prompt_tokens: 1000,
             completion_tokens: 500,
             total_tokens: 1500,
+            ..Default::default()
         };
         let estimated = cost.estimate(&usage);
         assert!((estimated - 10.5).abs() < 0.001);

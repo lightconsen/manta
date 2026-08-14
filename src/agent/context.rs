@@ -199,23 +199,22 @@ impl Context {
     }
 
     /// Accumulate token counts into the turn's usage tracker.
-    pub fn accumulate_turn_token_usage(
-        &mut self,
-        prompt_tokens: u32,
-        completion_tokens: u32,
-        total_tokens: u32,
-    ) {
+    pub fn accumulate_turn_token_usage(&mut self, usage: &crate::providers::Usage) {
         match self.turn_token_usage {
-            Some(ref mut usage) => {
-                usage.prompt_tokens += prompt_tokens;
-                usage.completion_tokens += completion_tokens;
-                usage.total_tokens += total_tokens;
+            Some(ref mut acc) => {
+                acc.prompt_tokens += usage.prompt_tokens;
+                acc.completion_tokens += usage.completion_tokens;
+                acc.total_tokens += usage.total_tokens;
+                acc.cache_read_tokens += usage.cache_read_tokens;
+                acc.cache_creation_tokens += usage.cache_creation_tokens;
             }
             None => {
                 self.turn_token_usage = Some(TurnUsage {
-                    prompt_tokens,
-                    completion_tokens,
-                    total_tokens,
+                    prompt_tokens: usage.prompt_tokens,
+                    completion_tokens: usage.completion_tokens,
+                    total_tokens: usage.total_tokens,
+                    cache_read_tokens: usage.cache_read_tokens,
+                    cache_creation_tokens: usage.cache_creation_tokens,
                 });
             }
         }

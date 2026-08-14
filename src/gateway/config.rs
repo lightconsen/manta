@@ -109,6 +109,28 @@ pub struct GatewayConfig {
     /// Knowledge Base configuration for auto-ingest and watcher.
     #[serde(default)]
     pub knowledge_base: KnowledgeBaseConfig,
+    /// Observability retention configuration for per-turn records.
+    #[serde(default)]
+    pub observe: ObserveConfig,
+}
+
+/// Observability (per-turn records) retention configuration.
+///
+/// Backs the daemon-startup sweep that prunes old turn JSON files and SQLite
+/// metric rows (`llm_calls` / `tool_call_metrics` / `turn_outcomes`). Manual
+/// `syscity observe prune --older-than` overrides this for a one-off run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ObserveConfig {
+    /// Keep turn records for this many days. Records older than this are
+    /// pruned at daemon startup. `0` disables auto-cleanup.
+    pub retention_days: u32,
+}
+
+impl Default for ObserveConfig {
+    fn default() -> Self {
+        Self { retention_days: 30 }
+    }
 }
 
 /// Per-agent parameter overrides layered on top of an agent's base config.
@@ -787,6 +809,7 @@ impl Default for GatewayConfig {
             search: SearchConfig::default(),
             quality_gate: crate::gateway::quality_gate::QualityGateConfig::default(),
             knowledge_base: KnowledgeBaseConfig::default(),
+            observe: ObserveConfig::default(),
         }
     }
 }

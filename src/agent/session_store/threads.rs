@@ -11,6 +11,18 @@ use crate::error::{Result, SyscityError};
 
 use super::{SessionStats, SessionStore};
 
+/// A persisted session message row, surfaced for observability export.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StoredMessage {
+    pub role: String,
+    pub content: String,
+    pub reasoning_content: Option<String>,
+    pub tool_calls_json: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub thread_id: Option<String>,
+    pub turn_index: Option<i64>,
+}
+
 impl SessionStore {
     /// Upsert a thread record. Call when a Thread is first created for a
     /// session.
@@ -111,6 +123,53 @@ impl SessionStore {
 
         debug!("Turn appended: {}/{} index={}", session_id, thread_id, turn_index);
         Ok(())
+    }
+
+    /// Load a session's messages oldest-first with their turn metadata
+    /// (`thread_id`, `turn_index`). Used by `syscity observe export` to
+    /// reconstruct the full (untruncated) message context of a turn.
+    pub async fn get_session_messages_with_turns(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<StoredMessage>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT role, content, reasoning_content, tool_calls_json, created_at,
+                   thread_id, turn_index
+            FROM session_messages
+            WHERE session_id = ?
+            ORDER BY id
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| SyscityError::Storage {
+            context: "Failed to load session messages for observability export".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let role: String = row.get("role");
+            let content: String = row.get("content");
+            let reasoning_content: Option<String> = row.get("reasoning_content");
+            let tool_calls_json: Option<String> = row.get("tool_calls_json");
+            let created_at_ms: i64 = row.get("created_at");
+            let thread_id: Option<String> = row.get("thread_id");
+            let turn_index: Option<i64> = row.get("turn_index");
+            messages.push(StoredMessage {
+                role,
+                content,
+                reasoning_content,
+                tool_calls_json,
+                created_at: chrono::DateTime::from_timestamp_millis(created_at_ms)
+                    .unwrap_or(Utc::now()),
+                thread_id,
+                turn_index,
+            });
+        }
+        Ok(messages)
     }
 
     /// Load all threads for a session together with their turns.

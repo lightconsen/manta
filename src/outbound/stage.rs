@@ -4,7 +4,7 @@
 //! for each existing pipeline step.
 //!
 //! The default stage list mirrors the current hard-coded order:
-//! `Trajectory → Canvas → SSE → ReplyPrefix → Dispatch → SideEffects`
+//! `Canvas → SSE → ReplyPrefix → Dispatch → SideEffects`
 
 use std::sync::Arc;
 
@@ -12,7 +12,6 @@ use async_trait::async_trait;
 
 use super::{
     OutboundContext, OutboundResult, ReplyDispatcher, SideEffectExecutor, SseEvent, SseStreamer,
-    TrajectoryWriter,
 };
 use crate::canvas::CanvasComponent;
 use crate::canvas::CanvasUpdate;
@@ -82,46 +81,6 @@ pub trait OutboundStage: Send + Sync {
 }
 
 // ── Built-in stage wrappers ──────────────────────────────────────────────────
-
-/// Trajectory persistence stage.
-pub struct TrajectoryStage {
-    writer: Arc<TrajectoryWriter>,
-}
-
-impl TrajectoryStage {
-    pub fn new(writer: TrajectoryWriter) -> Self {
-        Self { writer: Arc::new(writer) }
-    }
-
-    /// Create from an already-`Arc`-wrapped writer (avoids double-wrap).
-    pub fn from_arc(writer: Arc<TrajectoryWriter>) -> Self {
-        Self { writer }
-    }
-}
-
-#[async_trait]
-impl OutboundStage for TrajectoryStage {
-    fn name(&self) -> &str {
-        "trajectory"
-    }
-
-    async fn process(&self, ctx: &mut OutboundStageContext) -> OutboundStageAction {
-        if !ctx.input.trajectory.entries.is_empty() {
-            if let Err(e) = self
-                .writer
-                .append_log(&ctx.input.session_id, &ctx.input.trajectory)
-                .await
-            {
-                tracing::warn!(
-                    "Failed to persist trajectory for session {}: {}",
-                    ctx.input.session_id,
-                    e
-                );
-            }
-        }
-        OutboundStageAction::Continue
-    }
-}
 
 /// Canvas rendering stage – detects A2UI components in agent output.
 pub struct CanvasStage;
@@ -348,9 +307,8 @@ pub async fn run_outbound_stages(
 /// Build the default list of outbound stages from Arc-wrapped dependencies.
 ///
 /// Used by [`DefaultOutboundPipeline`] which holds `Arc<T>` references.
-/// Stages: Trajectory → Canvas → SSE → ReplyPrefix → Dispatch → SideEffects
+/// Stages: Canvas → SSE → ReplyPrefix → Dispatch → SideEffects
 pub fn default_outbound_stages_from_arcs(
-    trajectory_writer: Option<Arc<TrajectoryWriter>>,
     sse: Option<Arc<SseStreamer>>,
     reply_prefix_engine: Option<ReplyPrefixEngine>,
     dispatcher: Arc<ReplyDispatcher>,
@@ -358,9 +316,6 @@ pub fn default_outbound_stages_from_arcs(
 ) -> Vec<Box<dyn OutboundStage>> {
     let mut stages: Vec<Box<dyn OutboundStage>> = Vec::new();
 
-    if let Some(writer) = trajectory_writer {
-        stages.push(Box::new(TrajectoryStage::from_arc(writer)));
-    }
     stages.push(Box::new(CanvasStage));
 
     if let Some(sse) = sse {
@@ -378,9 +333,8 @@ pub fn default_outbound_stages_from_arcs(
 /// Build the default list of outbound stages matching the current pipeline
 /// order.
 ///
-/// Stages: Trajectory → Canvas → SSE → ReplyPrefix → Dispatch → SideEffects
+/// Stages: Canvas → SSE → ReplyPrefix → Dispatch → SideEffects
 pub fn default_outbound_stages(
-    trajectory_writer: Option<TrajectoryWriter>,
     sse: Option<SseStreamer>,
     reply_prefix_engine: Option<ReplyPrefixEngine>,
     dispatcher: ReplyDispatcher,
@@ -388,9 +342,6 @@ pub fn default_outbound_stages(
 ) -> Vec<Box<dyn OutboundStage>> {
     let mut stages: Vec<Box<dyn OutboundStage>> = Vec::new();
 
-    if let Some(writer) = trajectory_writer {
-        stages.push(Box::new(TrajectoryStage::new(writer)));
-    }
     stages.push(Box::new(CanvasStage));
 
     if let Some(sse) = sse {
@@ -411,7 +362,6 @@ mod tests {
     use crate::channels::reply_prefix::ReplyPrefixTemplate;
     use crate::channels::ConversationId;
     use crate::outbound::ReplyDispatchConfig;
-    use crate::outbound::TrajectoryLog;
 
     // ── Mock Channel for DispatchStage tests ─────────────────────────────
 
@@ -494,7 +444,6 @@ mod tests {
             agent_id: "agent-1".into(),
             raw_output: "hello world".into(),
             tool_calls: vec![],
-            trajectory: TrajectoryLog { entries: vec![] },
             usage: None,
             side_effects: vec![],
             model_name: None,

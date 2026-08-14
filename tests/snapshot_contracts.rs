@@ -97,12 +97,15 @@ fn snapshot_usage() {
         prompt_tokens: 150,
         completion_tokens: 42,
         total_tokens: 192,
+        ..Default::default()
     };
     assert_json_snapshot!(usage, @r###"
     {
       "prompt_tokens": 150,
       "completion_tokens": 42,
-      "total_tokens": 192
+      "total_tokens": 192,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0
     }
     "###);
 }

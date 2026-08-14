@@ -193,6 +193,7 @@ impl Provider for MockProvider {
                     .sum(),
                 completion_tokens: 0,
                 total_tokens: 0,
+                ..Default::default()
             }),
             finish_reason: Some("stop".to_string()),
         })
@@ -228,6 +229,7 @@ impl Provider for MockProvider {
                 prompt_tokens,
                 completion_tokens: message.content.len() as u32 / 4,
                 total_tokens: prompt_tokens + message.content.len() as u32 / 4,
+                ..Default::default()
             }),
         }) {
             warn!("MockProvider stream: failed to send done chunk: {}", e);

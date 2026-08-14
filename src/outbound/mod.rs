@@ -5,7 +5,6 @@
 //!
 //! ```text
 //! Agent Output
-//! -> Trajectory (capture execution trace)
 //! -> Canvas (render dynamic UI)
 //! -> SSE (stream to connected clients)
 //! -> Reply Dispatcher (route to correct channel)
@@ -18,12 +17,10 @@ pub mod reply_dispatcher;
 pub mod side_effects;
 pub mod sse;
 pub mod stage;
-pub mod trajectory;
 
 pub use reply_dispatcher::{ReplyDispatchConfig, ReplyDispatcher};
 pub use side_effects::{SideEffect, SideEffectContext, SideEffectExecutor, SideEffectRegistry};
 pub use sse::{SseEvent, SseStreamer};
-pub use trajectory::{TrajectoryEntry, TrajectoryLog, TrajectoryWriter};
 
 use self::stage::{default_outbound_stages_from_arcs, run_outbound_stages, OutboundStageContext};
 use crate::channels::reply_prefix::ReplyPrefixEngine;
@@ -60,7 +57,6 @@ pub struct OutboundContext {
     pub agent_id: String,
     pub raw_output: String,
     pub tool_calls: Vec<crate::providers::ToolCall>,
-    pub trajectory: TrajectoryLog,
     /// Optional token usage statistics.
     pub usage: Option<crate::providers::Usage>,
     /// Side effects to execute after the reply is dispatched.
@@ -75,13 +71,11 @@ pub struct OutboundContext {
 
 /// Default outbound pipeline implementation.
 ///
-/// Wires all stages together: trajectory -> canvas -> sse -> reply -> side
-/// effects.
+/// Wires all stages together: canvas -> sse -> reply -> side effects.
 pub struct DefaultOutboundPipeline {
     reply_dispatcher: Arc<ReplyDispatcher>,
     side_effects: Arc<SideEffectExecutor>,
     sse: Option<Arc<SseStreamer>>,
-    trajectory_writer: Option<Arc<TrajectoryWriter>>,
     /// Optional reply prefix engine for prepending model info / metadata.
     reply_prefix_engine: Option<ReplyPrefixEngine>,
 }
@@ -91,13 +85,11 @@ impl DefaultOutboundPipeline {
         reply_dispatcher: Arc<ReplyDispatcher>,
         side_effects: Arc<SideEffectExecutor>,
         sse: Option<Arc<SseStreamer>>,
-        trajectory_writer: Option<Arc<TrajectoryWriter>>,
     ) -> Self {
         Self {
             reply_dispatcher,
             side_effects,
             sse,
-            trajectory_writer,
             reply_prefix_engine: None,
         }
     }
@@ -114,7 +106,6 @@ impl DefaultOutboundPipeline {
 impl OutboundPipeline for DefaultOutboundPipeline {
     async fn process(&self, ctx: OutboundContext) -> OutboundResult {
         let stages = default_outbound_stages_from_arcs(
-            self.trajectory_writer.clone(),
             self.sse.clone(),
             self.reply_prefix_engine.clone(),
             self.reply_dispatcher.clone(),

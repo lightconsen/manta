@@ -491,25 +491,13 @@ async fn process_message_acp(
         is_direct: true,
     });
 
-    let trajectory = Arc::new(tokio::sync::Mutex::new(crate::outbound::TrajectoryLog::new()));
-    {
-        let mut traj = trajectory.lock().await;
-        traj.push(crate::outbound::TrajectoryEntry::Start {
-            timestamp: std::time::SystemTime::now(),
-            session_id: session_id.to_string(),
-            agent_id: agent_id.to_string(),
-        });
-    }
-
     let progress_state = state.clone();
     let progress_session_id = session_id.to_string();
     let progress_agent_id = agent_id.to_string();
-    let progress_trajectory = trajectory.clone();
     let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
         let state = progress_state.clone();
         let session_id = progress_session_id.clone();
         let agent_id = progress_agent_id.clone();
-        let trajectory = progress_trajectory.clone();
         Box::pin(async move {
             match event {
                 crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
@@ -523,20 +511,8 @@ async fn process_message_acp(
                             arguments: arguments.clone(),
                         },
                     );
-                    let mut traj = trajectory.lock().await;
-                    traj.push(crate::outbound::TrajectoryEntry::ToolCall {
-                        timestamp: std::time::SystemTime::now(),
-                        name: name.clone(),
-                        arguments: serde_json::from_str(&arguments)
-                            .unwrap_or(serde_json::Value::String(arguments)),
-                    });
                 }
-                crate::agent::ProgressEvent::ToolResult {
-                    name,
-                    result,
-                    data,
-                    execution_time_ms,
-                } => {
+                crate::agent::ProgressEvent::ToolResult { name, result, data, .. } => {
                     info!("ToolResult event: {} for session {}", name, session_id);
                     emit_event(
                         &state.events.tx,
@@ -548,14 +524,6 @@ async fn process_message_acp(
                             data: data.clone(),
                         },
                     );
-                    let mut traj = trajectory.lock().await;
-                    traj.push(crate::outbound::TrajectoryEntry::ToolResult {
-                        timestamp: std::time::SystemTime::now(),
-                        name: name.clone(),
-                        result: serde_json::from_str(&result)
-                            .unwrap_or(serde_json::Value::String(result)),
-                        duration_ms: execution_time_ms,
-                    });
                 }
                 crate::agent::ProgressEvent::Completed { response } => {
                     emit_event(
@@ -588,20 +556,10 @@ async fn process_message_acp(
     {
         Ok(outgoing) => {
             let reasoning = outgoing.reasoning_content.clone();
-            let mut traj = trajectory.lock().await;
-            traj.push(crate::outbound::TrajectoryEntry::Finish {
-                timestamp: std::time::SystemTime::now(),
-                output: outgoing.content.clone(),
-            });
             (outgoing.content, outgoing.usage, reasoning)
         }
         Err(e) => {
             error!("Agent {} failed to process message: {}", agent_id, e);
-            let mut traj = trajectory.lock().await;
-            traj.push(crate::outbound::TrajectoryEntry::Error {
-                timestamp: std::time::SystemTime::now(),
-                message: e.to_string(),
-            });
             (format!("Error processing message: {}", e), None, None)
         }
     };
@@ -648,11 +606,6 @@ async fn process_message_acp(
         },
     );
 
-    let trajectory = {
-        let traj = trajectory.lock().await;
-        traj.clone()
-    };
-
     let outbound_ctx = {
         let cfg = state.config.read().await;
         crate::outbound::OutboundContext {
@@ -661,7 +614,6 @@ async fn process_message_acp(
             agent_id: agent_id.to_string(),
             raw_output: response_content,
             tool_calls: vec![],
-            trajectory,
             usage: response_usage,
             side_effects: vec![],
             model_name: Some(cfg.model.clone()),

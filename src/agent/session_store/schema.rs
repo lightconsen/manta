@@ -432,6 +432,107 @@ impl SessionStore {
         .map_err(|e| warn!("Failed to create index idx_acp_sessions_parent: {}", e))
         .ok();
 
+        // ── Observability metric tables ──────────────────────────────────────
+        // Numeric per-turn facts backing `syscity observe stats` / `prune`.
+        // One row per LLM call.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS llm_calls (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn_id              TEXT NOT NULL,
+                session_id           TEXT,
+                agent_id             TEXT,
+                round                INTEGER NOT NULL,
+                provider             TEXT NOT NULL,
+                model                TEXT NOT NULL,
+                started_at           INTEGER NOT NULL,
+                duration_ms          INTEGER NOT NULL,
+                ttft_ms              INTEGER,
+                prompt_tokens        INTEGER NOT NULL DEFAULT 0,
+                completion_tokens    INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens    INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                finish_reason        TEXT,
+                error                TEXT
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SyscityError::Storage {
+            context: "Failed to create llm_calls table".to_string(),
+            details: e.to_string(),
+        })?;
+
+        // One row per tool call.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS tool_call_metrics (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn_id     TEXT NOT NULL,
+                session_id  TEXT,
+                round       INTEGER NOT NULL,
+                name        TEXT NOT NULL,
+                started_at  INTEGER NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                success     INTEGER NOT NULL,
+                error       TEXT
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SyscityError::Storage {
+            context: "Failed to create tool_call_metrics table".to_string(),
+            details: e.to_string(),
+        })?;
+
+        // One row per turn (small; drives the Turns block).
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS turn_outcomes (
+                turn_id       TEXT PRIMARY KEY,
+                session_id    TEXT,
+                agent_id      TEXT,
+                model         TEXT,
+                started_at    INTEGER NOT NULL,
+                queue_wait_ms INTEGER,
+                duration_ms   INTEGER NOT NULL,
+                ttft_ms       INTEGER,
+                llm_rounds    INTEGER NOT NULL DEFAULT 0,
+                tool_calls    INTEGER NOT NULL DEFAULT 0,
+                cache_hit     INTEGER NOT NULL DEFAULT 0,
+                state         TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SyscityError::Storage {
+            context: "Failed to create turn_outcomes table".to_string(),
+            details: e.to_string(),
+        })?;
+
+        for (table, index, cols) in [
+            ("llm_calls", "idx_llm_calls_started", "started_at"),
+            ("llm_calls", "idx_llm_calls_session", "session_id"),
+            ("llm_calls", "idx_llm_calls_model", "model"),
+            ("llm_calls", "idx_llm_calls_turn", "turn_id"),
+            ("llm_calls", "idx_llm_calls_provider", "provider"),
+            ("tool_call_metrics", "idx_tool_metrics_started", "started_at"),
+            ("tool_call_metrics", "idx_tool_metrics_name", "name"),
+            ("tool_call_metrics", "idx_tool_metrics_turn", "turn_id"),
+            ("turn_outcomes", "idx_turn_outcomes_started", "started_at"),
+            ("turn_outcomes", "idx_turn_outcomes_session", "session_id"),
+            ("turn_outcomes", "idx_turn_outcomes_state", "state"),
+        ] {
+            sqlx::query(&format!("CREATE INDEX IF NOT EXISTS {} ON {}({})", index, table, cols))
+                .execute(&self.pool)
+                .await
+                .map_err(|e| warn!("Failed to create session store index {}: {}", index, e))
+                .ok();
+        }
+
         info!("Session storage schema initialized");
         Ok(())
     }

@@ -81,7 +81,6 @@ pub async fn init_pipelines(
         reply_dispatcher.clone(),
         side_effect_executor.clone(),
         Some(sse_streamer.clone()),
-        None,
     ));
 
     Ok(PipelinesInit {

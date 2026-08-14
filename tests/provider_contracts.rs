@@ -204,6 +204,7 @@ fn usage_serializes_to_expected_shape() {
         prompt_tokens: 150,
         completion_tokens: 42,
         total_tokens: 192,
+        ..Default::default()
     };
 
     let json = serde_json::to_value(&usage).unwrap();
@@ -218,6 +219,7 @@ fn usage_roundtrips_through_json() {
         prompt_tokens: 1000,
         completion_tokens: 500,
         total_tokens: 1500,
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&original).unwrap();
@@ -237,6 +239,7 @@ fn completion_response_field_contract() {
             prompt_tokens: 10,
             completion_tokens: 2,
             total_tokens: 12,
+            ..Default::default()
         }),
         model: "claude-sonnet-4-6".to_string(),
         finish_reason: Some("stop".to_string()),
@@ -343,6 +346,7 @@ fn full_provider_flow_serialization_contract() {
         prompt_tokens: 15,
         completion_tokens: 7,
         total_tokens: 22,
+        ..Default::default()
     };
     let msg_json = serde_json::to_string(&resp_message).unwrap();
     let msg_value: serde_json::Value = serde_json::from_str(&msg_json).unwrap();

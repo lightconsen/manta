@@ -232,6 +232,7 @@ mod tests {
                 prompt_tokens: tokens / 2,
                 completion_tokens: tokens / 2,
                 total_tokens: tokens,
+                ..Default::default()
             },
             estimated_cost_usd: cost,
         }
@@ -249,6 +250,7 @@ mod tests {
                 prompt_tokens: 500,
                 completion_tokens: 500,
                 total_tokens: 1000,
+                ..Default::default()
             },
             estimated_cost_usd: 0.0042,
             quota: None,
@@ -311,6 +313,7 @@ mod tests {
             prompt_tokens: 100,
             completion_tokens: 50,
             total_tokens: 150,
+            ..Default::default()
         };
         assert_eq!(format_tokens(&usage), "100 prompt / 50 completion / 150 total");
     }

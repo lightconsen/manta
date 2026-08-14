@@ -344,6 +344,7 @@ mod tests {
             prompt_tokens: 100,
             completion_tokens: 50,
             total_tokens: 150,
+            ..Default::default()
         };
         window.record(usage, 0.001);
         assert_eq!(window.requests, 1);
@@ -358,6 +359,7 @@ mod tests {
             prompt_tokens: 1_000_000,
             completion_tokens: 500_000,
             total_tokens: 1_500_000,
+            ..Default::default()
         };
         let cost = tracker.estimate_cost(usage, "gpt-4o");
         // (1M * $2.50 + 0.5M * $10.00) / 1M = $2.50 + $5.00 = $7.50
@@ -371,6 +373,7 @@ mod tests {
             prompt_tokens: 1_000_000,
             completion_tokens: 500_000,
             total_tokens: 1_500_000,
+            ..Default::default()
         };
         let cost = tracker.estimate_cost(usage, "claude-3-opus");
         // (1M * $15 + 0.5M * $75) / 1M = $15 + $37.5 = $52.5
@@ -384,6 +387,7 @@ mod tests {
             prompt_tokens: 100,
             completion_tokens: 50,
             total_tokens: 150,
+            ..Default::default()
         };
         tracker.record("openai", usage, "gpt-4o").await;
 
@@ -409,6 +413,7 @@ mod tests {
             prompt_tokens: 10,
             completion_tokens: 5,
             total_tokens: 15,
+            ..Default::default()
         };
         tracker.record("openai", usage, "gpt-4o").await;
         tracker.record("anthropic", usage, "claude-sonnet").await;
@@ -429,6 +434,7 @@ mod tests {
             prompt_tokens: 1_000_000,
             completion_tokens: 0,
             total_tokens: 1_000_000,
+            ..Default::default()
         };
         tracker.record("openai", usage, "gpt-4o").await;
 
@@ -474,6 +480,7 @@ mod tests {
             prompt_tokens: 1_000_000,
             completion_tokens: 500_000,
             total_tokens: 1_500_000,
+            ..Default::default()
         };
         let cost = tracker.estimate_cost(usage, "custom-model");
         // $1.00 input + $1.00 output = $2.00
@@ -492,6 +499,7 @@ mod tests {
             prompt_tokens: 1_000_000,
             completion_tokens: 500_000,
             total_tokens: 1_500_000,
+            ..Default::default()
         };
         let cost = tracker.estimate_cost(usage, "gpt-4o");
         assert!((cost - 7.5).abs() < 0.01);

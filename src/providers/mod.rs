@@ -316,6 +316,12 @@ pub struct Usage {
     pub completion_tokens: u32,
     /// Total number of tokens
     pub total_tokens: u32,
+    /// Tokens read from the provider-side prompt cache (0 if unsupported)
+    #[serde(default)]
+    pub cache_read_tokens: u32,
+    /// Tokens written to the provider-side prompt cache
+    #[serde(default)]
+    pub cache_creation_tokens: u32,
 }
 
 /// A request for text completion

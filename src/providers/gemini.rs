@@ -236,6 +236,7 @@ impl GeminiProvider {
                 prompt_tokens: u.prompt_token_count,
                 completion_tokens: u.candidates_token_count,
                 total_tokens: u.total_token_count,
+                ..Default::default()
             }),
             model: model.to_string(),
             finish_reason,
@@ -685,6 +686,7 @@ impl GeminiStream {
                         prompt_tokens: u.prompt_token_count,
                         completion_tokens: u.candidates_token_count,
                         total_tokens: u.total_token_count,
+                        ..Default::default()
                     }),
                 });
             }
@@ -700,6 +702,7 @@ impl GeminiStream {
                         prompt_tokens: usage.prompt_token_count,
                         completion_tokens: usage.candidates_token_count,
                         total_tokens: usage.total_token_count,
+                        ..Default::default()
                     }),
                 });
             }

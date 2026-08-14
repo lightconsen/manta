@@ -12,12 +12,14 @@ use sqlx::{Pool, Sqlite};
 use tokio::sync::RwLock;
 
 mod acp_sessions;
+pub mod metrics;
 mod schema;
 mod sessions;
 mod subagent_runs;
 mod threads;
 
 pub use self::subagent_runs::SubagentRunRecord;
+pub use self::threads::StoredMessage;
 
 /// Session metadata for querying
 #[derive(Debug, Clone, Serialize, Deserialize)]

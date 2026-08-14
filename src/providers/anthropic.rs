@@ -110,10 +110,24 @@ struct AnthropicResponse {
 }
 
 /// Anthropic usage statistics
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct AnthropicUsage {
     input_tokens: u32,
     output_tokens: u32,
+    cache_creation_input_tokens: Option<u32>,
+    cache_read_input_tokens: Option<u32>,
+}
+
+impl AnthropicUsage {
+    fn to_usage(&self) -> Usage {
+        Usage {
+            prompt_tokens: self.input_tokens,
+            completion_tokens: self.output_tokens,
+            total_tokens: self.input_tokens + self.output_tokens,
+            cache_read_tokens: self.cache_read_input_tokens.unwrap_or(0),
+            cache_creation_tokens: self.cache_creation_input_tokens.unwrap_or(0),
+        }
+    }
 }
 
 /// Anthropic error response
@@ -177,11 +191,52 @@ struct StreamMessage {
 }
 
 /// Usage in streaming
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[allow(dead_code)]
 struct StreamUsage {
     input_tokens: Option<u32>,
     output_tokens: Option<u32>,
+    cache_creation_input_tokens: Option<u32>,
+    cache_read_input_tokens: Option<u32>,
+}
+
+/// Accumulates usage across a stream's SSE events. `message_start` carries
+/// input (and cache) tokens; `message_delta` carries output tokens; the final
+/// `message_stop` chunk reports the merged total.
+#[derive(Debug, Default)]
+struct UsageAccum {
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    cache_creation_input_tokens: Option<u32>,
+    cache_read_input_tokens: Option<u32>,
+}
+
+impl UsageAccum {
+    fn merge(&mut self, u: &StreamUsage) {
+        if let Some(v) = u.input_tokens {
+            self.input_tokens = Some(v);
+        }
+        if let Some(v) = u.output_tokens {
+            self.output_tokens = Some(v);
+        }
+        if let Some(v) = u.cache_creation_input_tokens {
+            self.cache_creation_input_tokens = Some(v);
+        }
+        if let Some(v) = u.cache_read_input_tokens {
+            self.cache_read_input_tokens = Some(v);
+        }
+    }
+
+    fn to_usage(&self) -> Option<Usage> {
+        let input = self.input_tokens?;
+        Some(Usage {
+            prompt_tokens: input,
+            completion_tokens: self.output_tokens.unwrap_or(0),
+            total_tokens: input + self.output_tokens.unwrap_or(0),
+            cache_read_tokens: self.cache_read_input_tokens.unwrap_or(0),
+            cache_creation_tokens: self.cache_creation_input_tokens.unwrap_or(0),
+        })
+    }
 }
 
 impl AnthropicProvider {
@@ -391,11 +446,7 @@ impl AnthropicProvider {
                 tool_call_id: None,
                 metadata: None,
             },
-            usage: Some(Usage {
-                prompt_tokens: response.usage.input_tokens,
-                completion_tokens: response.usage.output_tokens,
-                total_tokens: response.usage.input_tokens + response.usage.output_tokens,
-            }),
+            usage: Some(response.usage.to_usage()),
             model: response.model,
             finish_reason: response.stop_reason,
         }
@@ -413,7 +464,7 @@ impl AnthropicProvider {
     /// Parse Server-Sent Events (SSE) from a complete chunk of SSE data.
     ///
     /// Handles text deltas, tool_use start/delta/stop events, and message_stop.
-    fn parse_sse_events(text: &str) -> Vec<CompletionChunk> {
+    fn parse_sse_events(text: &str, usage_accum: &mut UsageAccum) -> Vec<CompletionChunk> {
         let mut chunks = Vec::new();
         // Tool call accumulation state across events within the same parse call
         struct ToolAccum {
@@ -514,12 +565,21 @@ impl AnthropicProvider {
                                     reasoning_content: None,
                                     tool_calls: None,
                                     is_done: true,
-                                    usage: None,
+                                    usage: usage_accum.to_usage(),
                                 });
                             }
+                            "message_start" => {
+                                if let Some(message) = &event.message {
+                                    if let Some(u) = &message.usage {
+                                        usage_accum.merge(u);
+                                    }
+                                }
+                            }
                             "message_delta" => {
-                                // May contain usage or stop_reason updates;
-                                // skip for now, message_stop signals completion
+                                // Carries output_tokens (and stop_reason)
+                                if let Some(u) = &event.usage {
+                                    usage_accum.merge(u);
+                                }
                             }
                             _ => {
                                 // Ignore other event types (message_start,
@@ -539,7 +599,11 @@ impl AnthropicProvider {
 
     /// Parse a raw byte chunk from the HTTP response body, buffering partial
     /// SSE lines across calls. Returns completed SSE lines.
-    fn parse_sse_chunk(incoming: &str, buffer: &mut String) -> Vec<CompletionChunk> {
+    fn parse_sse_chunk(
+        incoming: &str,
+        buffer: &mut String,
+        usage_accum: &mut UsageAccum,
+    ) -> Vec<CompletionChunk> {
         buffer.push_str(incoming);
 
         // Find the last complete SSE event boundary (ends with "\n\n" or "\n")
@@ -569,7 +633,7 @@ impl AnthropicProvider {
         if complete.is_empty() {
             Vec::new()
         } else {
-            Self::parse_sse_events(&complete)
+            Self::parse_sse_events(&complete, usage_accum)
         }
     }
 }
@@ -679,11 +743,12 @@ impl Provider for AnthropicProvider {
         let body_stream = response.bytes_stream();
         let stream = async_stream::stream! {
             let mut line_buffer = String::new();
+            let mut usage_accum = UsageAccum::default();
             for await chunk in body_stream {
                 match chunk {
                     Ok(bytes) => {
                         let text = String::from_utf8_lossy(&bytes);
-                        for event in Self::parse_sse_chunk(&text, &mut line_buffer) {
+                        for event in Self::parse_sse_chunk(&text, &mut line_buffer, &mut usage_accum) {
                             yield event;
                         }
                     }
@@ -701,7 +766,7 @@ impl Provider for AnthropicProvider {
             }
             // Process any remaining data in the buffer
             if !line_buffer.is_empty() {
-                for event in Self::parse_sse_events(&line_buffer) {
+                for event in Self::parse_sse_events(&line_buffer, &mut usage_accum) {
                     yield event;
                 }
             }
@@ -836,7 +901,7 @@ mod tests {
     #[test]
     fn test_parse_sse_text_delta() {
         let sse = "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n";
-        let chunks = AnthropicProvider::parse_sse_events(sse);
+        let chunks = AnthropicProvider::parse_sse_events(sse, &mut UsageAccum::default());
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].content, Some("Hello".to_string()));
         assert!(!chunks[0].is_done);
@@ -845,7 +910,7 @@ mod tests {
     #[test]
     fn test_parse_sse_message_stop() {
         let sse = "data: {\"type\":\"message_stop\"}\n\n";
-        let chunks = AnthropicProvider::parse_sse_events(sse);
+        let chunks = AnthropicProvider::parse_sse_events(sse, &mut UsageAccum::default());
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].is_done);
         assert!(chunks[0].content.is_none());
@@ -854,7 +919,7 @@ mod tests {
     #[test]
     fn test_parse_sse_done_signal() {
         let sse = "data: [DONE]\n\n";
-        let chunks = AnthropicProvider::parse_sse_events(sse);
+        let chunks = AnthropicProvider::parse_sse_events(sse, &mut UsageAccum::default());
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].is_done);
     }
@@ -862,14 +927,14 @@ mod tests {
     #[test]
     fn test_parse_sse_unknown_event_ignored() {
         let sse = "data: {\"type\":\"ping\"}\n\n";
-        let chunks = AnthropicProvider::parse_sse_events(sse);
+        let chunks = AnthropicProvider::parse_sse_events(sse, &mut UsageAccum::default());
         assert!(chunks.is_empty());
     }
 
     #[test]
     fn test_parse_sse_malformed_json_ignored() {
         let sse = "data: not-json\n\n";
-        let chunks = AnthropicProvider::parse_sse_events(sse);
+        let chunks = AnthropicProvider::parse_sse_events(sse, &mut UsageAccum::default());
         assert!(chunks.is_empty());
     }
 
@@ -881,7 +946,7 @@ data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\"
 data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"}\"}}\n\n
 data: {\"type\":\"content_block_stop\"}\n\n
 data: {\"type\":\"message_stop\"}\n\n";
-        let chunks = AnthropicProvider::parse_sse_events(sse);
+        let chunks = AnthropicProvider::parse_sse_events(sse, &mut UsageAccum::default());
         // Content_block_stop yields a tool call chunk, message_stop yields a done chunk
         let tool_chunks: Vec<_> = chunks.iter().filter(|c| c.tool_calls.is_some()).collect();
         assert_eq!(tool_chunks.len(), 1);
@@ -903,7 +968,7 @@ data: {\"type\":\"message_stop\"}\n\n";
 data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello \"}}\n\n
 data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"world\"}}\n\n
 data: {\"type\":\"message_stop\"}\n\n";
-        let chunks = AnthropicProvider::parse_sse_events(sse);
+        let chunks = AnthropicProvider::parse_sse_events(sse, &mut UsageAccum::default());
         let text_chunks: Vec<_> = chunks.iter().filter_map(|c| c.content.clone()).collect();
         assert_eq!(text_chunks, vec!["Hello ".to_string(), "world".to_string()]);
     }
@@ -911,7 +976,44 @@ data: {\"type\":\"message_stop\"}\n\n";
     #[test]
     fn test_parse_sse_message_delta_ignored() {
         let sse = "data: {\"type\":\"message_delta\"}\n\n";
-        let chunks = AnthropicProvider::parse_sse_events(sse);
+        let chunks = AnthropicProvider::parse_sse_events(sse, &mut UsageAccum::default());
         assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_streaming_usage_with_cache() {
+        let sse = "\
+data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":100,\"cache_read_input_tokens\":60,\"cache_creation_input_tokens\":10}}}\n\n
+data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n
+data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":20}}\n\n
+data: {\"type\":\"message_stop\"}\n\n";
+        let mut accum = UsageAccum::default();
+        let chunks = AnthropicProvider::parse_sse_events(sse, &mut accum);
+        let done = chunks.iter().find(|c| c.is_done).unwrap();
+        let usage = done.usage.expect("message_stop should carry usage");
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 20);
+        assert_eq!(usage.total_tokens, 120);
+        assert_eq!(usage.cache_read_tokens, 60);
+        assert_eq!(usage.cache_creation_tokens, 10);
+    }
+
+    #[test]
+    fn test_parse_sse_usage_split_across_calls() {
+        // Usage accumulates across separate parse calls (TCP fragmentation).
+        let mut accum = UsageAccum::default();
+        AnthropicProvider::parse_sse_events(
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":42,\"cache_read_input_tokens\":42}}}\n\n",
+            &mut accum,
+        );
+        let chunks = AnthropicProvider::parse_sse_events(
+            "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+            &mut accum,
+        );
+        let done = chunks.iter().find(|c| c.is_done).unwrap();
+        let usage = done.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 42);
+        assert_eq!(usage.completion_tokens, 7);
+        assert_eq!(usage.cache_read_tokens, 42);
     }
 }

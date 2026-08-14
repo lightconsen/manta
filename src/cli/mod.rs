@@ -29,6 +29,7 @@ mod export;
 mod kb;
 mod mcp;
 mod memory;
+mod observe;
 mod plugin;
 mod provider;
 mod secrets;
@@ -54,6 +55,7 @@ pub use export::ExportCommands;
 pub use kb::KbCommands;
 pub use mcp::McpCommands;
 pub use memory::MemoryCommands;
+pub use observe::ObserveCommands;
 pub use plugin::PluginCommands;
 pub use provider::ProviderCommands;
 pub use secrets::SecretsCommands;
@@ -232,6 +234,12 @@ pub enum Commands {
         /// Session subcommand
         #[command(subcommand)]
         command: SessionCommands,
+    },
+    /// Per-turn observability records (stats, list, show, export, prune)
+    Observe {
+        /// Observe subcommand
+        #[command(subcommand)]
+        command: ObserveCommands,
     },
     /// Secret store management (list, migrate, purge)
     Secrets {
@@ -438,6 +446,7 @@ impl Cli {
             Commands::Kb { command } => kb::run_kb_command(command).await,
             Commands::Security { command } => security::run_security_command(command).await,
             Commands::Session { command } => session::run_session_command(command).await,
+            Commands::Observe { command } => observe::run_observe_command(command).await,
             Commands::Secrets { command } => secrets::run_secrets_command(command).await,
             Commands::Setup => setup::run_setup().await,
             Commands::Device { command } => device::run_device_command(command).await,
