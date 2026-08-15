@@ -699,6 +699,12 @@ mod tests {
         DelegationScope::new("root-1", task_id, 2, 3)
     }
 
+    #[test]
+    fn test_agent_id_populated_from_config() {
+        let agent = named_agent();
+        assert_eq!(agent.agent_id, "worker");
+    }
+
     #[tokio::test]
     async fn test_session_models_are_per_conversation() {
         let agent = named_agent();

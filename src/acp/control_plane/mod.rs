@@ -28,10 +28,11 @@ pub struct AcpControlPlane {
     /// ACP sessions
     pub(crate) sessions: Arc<RwLock<HashMap<AcpSessionId, AcpSession>>>,
     /// Default agent builder (set after initialization when provider/tools are
-    /// ready)
+    /// ready). Receives the id of the subagent being constructed so the agent
+    /// can be tagged with it (observability, per-subagent configuration).
     #[allow(clippy::type_complexity)]
     pub(crate) default_agent_builder:
-        Arc<RwLock<Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>>>,
+        Arc<RwLock<Option<Arc<dyn Fn(&str) -> crate::Result<Agent> + Send + Sync>>>>,
     /// Command channel to the ACP actor loop
     pub(crate) command_tx: mpsc::Sender<AcpCommand>,
     /// Optional session store for persisting subagent run records
@@ -102,7 +103,7 @@ impl AcpControlPlane {
     /// Set the default agent builder (consuming self).
     pub fn with_agent_builder<F>(self, builder: F) -> Self
     where
-        F: Fn() -> crate::Result<Agent> + Send + Sync + 'static,
+        F: Fn(&str) -> crate::Result<Agent> + Send + Sync + 'static,
     {
         {
             // The RwLock was created with `AcpControlPlane::new` and no other
@@ -144,7 +145,7 @@ impl AcpControlPlane {
     /// Use this when the builder depends on resources created after the ACP.
     pub async fn set_agent_builder<F>(&self, builder: F)
     where
-        F: Fn() -> crate::Result<Agent> + Send + Sync + 'static,
+        F: Fn(&str) -> crate::Result<Agent> + Send + Sync + 'static,
     {
         let mut guard = self.default_agent_builder.write().await;
         *guard = Some(Arc::new(builder));

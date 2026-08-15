@@ -178,7 +178,7 @@ pub(crate) struct ActorContext {
     pub(crate) max_iterations: usize,
     #[allow(clippy::type_complexity)]
     pub(crate) default_agent_builder:
-        Arc<RwLock<Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>>>,
+        Arc<RwLock<Option<Arc<dyn Fn(&str) -> crate::Result<Agent> + Send + Sync>>>>,
     pub(crate) control_plane: AcpControlPlane,
 }
 
@@ -381,7 +381,10 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                 let agent = {
                     let builder_guard = ctx.default_agent_builder.read().await;
                     match builder_guard.as_ref() {
-                        Some(builder) => match builder() {
+                        // Bridge agents are not named subagents; the builder
+                        // receives an empty id so it falls back to its default
+                        // identity.
+                        Some(builder) => match builder("") {
                             Ok(agent) => Arc::new(agent),
                             Err(e) => {
                                 let _ = respond_to.send(Err(e));

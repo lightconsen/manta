@@ -53,11 +53,12 @@ impl AcpControlPlane {
         // Create command channel
         let (command_tx, mut command_rx) = mpsc::channel::<SubagentCommand>(100);
 
-        // Create the agent (acquire builder, call, release)
+        // Create the agent (acquire builder, call, release). The builder is
+        // given the subagent id so the constructed agent is tagged with it.
         let agent = {
             let builder_guard = self.default_agent_builder.read().await;
             let result = if let Some(ref builder) = *builder_guard {
-                builder()
+                builder(&subagent_id)
             } else {
                 Err(crate::error::SyscityError::Internal("No agent builder configured".to_string()))
             };

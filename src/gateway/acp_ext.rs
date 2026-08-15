@@ -51,7 +51,7 @@ mod tests {
         let tools = std::sync::Arc::new(crate::tools::ToolRegistry::new());
         let agent_config = crate::agent::AgentConfig::default();
         let agent = crate::agent::Agent::new(agent_config.clone(), provider, tools);
-        let acp = AcpControlPlane::new(50).with_agent_builder(move || {
+        let acp = AcpControlPlane::new(50).with_agent_builder(move |_subagent_id| {
             let provider = std::sync::Arc::new(
                 crate::providers::mock::MockProvider::new()
                     .with_responses(vec![crate::providers::Message::assistant("mock response")]),

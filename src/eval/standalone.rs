@@ -146,12 +146,12 @@ pub async fn run_standalone_suite(
     {
         let tools_for_builder = tool_registry.clone();
         let provider_for_builder = provider.clone();
-        acp.set_agent_builder(move || {
-            Ok(Agent::new(
-                crate::agent::AgentConfig::default(),
-                provider_for_builder.clone(),
-                tools_for_builder.clone(),
-            ))
+        acp.set_agent_builder(move |subagent_id| {
+            let cfg = crate::agent::AgentConfig {
+                agent_id: Some(subagent_id.to_string()),
+                ..crate::agent::AgentConfig::default()
+            };
+            Ok(Agent::new(cfg, provider_for_builder.clone(), tools_for_builder.clone()))
         })
         .await;
     }

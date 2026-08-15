@@ -234,9 +234,11 @@ pub async fn configure_acp_agent_builder(
         let model_router_clone = model_router.clone();
         let default_model = config.model.clone();
         let skills_manager_clone = Arc::clone(&skills_manager);
-        acp.set_agent_builder(move || {
+        acp.set_agent_builder(move |subagent_id| {
+            let mut cfg = default_agent_config.clone();
+            cfg.agent_id = Some(subagent_id.to_string());
             AgentBuilder::new()
-                .config(default_agent_config.clone())
+                .config(cfg)
                 .provider(provider_clone.clone())
                 .tools(tool_registry.clone())
                 .model_router(model_router_clone.clone())

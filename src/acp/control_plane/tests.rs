@@ -10,8 +10,8 @@ use crate::acp::subagent::SubagentCommand;
 use crate::agent::{Agent, AgentConfig};
 use crate::channels::IncomingMessage;
 
-fn mock_agent_builder() -> impl Fn() -> crate::Result<Agent> + Send + Sync + 'static {
-    || {
+fn mock_agent_builder() -> impl Fn(&str) -> crate::Result<Agent> + Send + Sync + 'static {
+    |_subagent_id| {
         let provider = Arc::new(
             crate::providers::mock::MockProvider::new()
                 .with_responses(vec![crate::providers::Message::assistant("mock response")]),
@@ -34,7 +34,7 @@ async fn test_subagent_crash_auto_recovery() {
             max_retries: 1,
             backoff_seconds: vec![0],
         })
-        .with_agent_builder(move || {
+        .with_agent_builder(move |_subagent_id| {
             let crashed = crashed_for_builder.clone();
             let provider = Arc::new(crate::providers::mock::MockProvider::new().with_callback(
                 move |_messages| {
@@ -417,7 +417,7 @@ async fn test_pause_resume_step_cancel_emit_status_changed_after_actor_processin
     acp.set_event_tx(event_tx).await;
 
     // Create a session actor by executing a message.
-    let agent = mock_agent_builder()().expect("mock agent builds");
+    let agent = mock_agent_builder()("test-subagent").expect("mock agent builds");
     let msg = IncomingMessage::new("user1", "conv1", "hello");
     let _ = acp.execute_session(Arc::new(agent), msg).await.ok();
 
@@ -487,5 +487,37 @@ async fn test_pause_resume_step_cancel_emit_status_changed_after_actor_processin
         ),
         "expected AcpStatusChanged(cancelled), got {:?}",
         event
+    );
+}
+
+#[tokio::test]
+async fn test_agent_builder_receives_subagent_id() {
+    use std::sync::Mutex;
+
+    let received: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let received_for_builder = Arc::clone(&received);
+    let acp = AcpControlPlane::new(50).with_agent_builder(move |subagent_id| {
+        *received_for_builder.lock().unwrap() = Some(subagent_id.to_string());
+        let provider = Arc::new(
+            crate::providers::mock::MockProvider::new()
+                .with_responses(vec![crate::providers::Message::assistant("mock response")]),
+        );
+        let tools = Arc::new(crate::tools::ToolRegistry::new());
+        let config = AgentConfig {
+            agent_id: Some(subagent_id.to_string()),
+            ..AgentConfig::default()
+        };
+        Ok(Agent::new(config, provider, tools))
+    });
+
+    let session_id = acp.create_session("parent".to_string()).await;
+    let handle = acp
+        .spawn_subagent(session_id, "parent".to_string(), SubagentConfig::default())
+        .await
+        .expect("subagent spawns");
+    assert_eq!(
+        received.lock().unwrap().as_deref(),
+        Some(handle.id.as_str()),
+        "agent builder must receive the subagent id so turn records are tagged"
     );
 }
