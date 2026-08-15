@@ -107,6 +107,61 @@ impl DaemonManager {
 
         Ok(())
     }
+
+    /// Check whether the daemon is currently running.
+    ///
+    /// Returns `false` when there is no PID file or the recorded process is
+    /// gone (a stale PID file). Used by the updater to decide whether to
+    /// restart the daemon after installing a new binary.
+    pub async fn is_running(&self) -> crate::Result<bool> {
+        match self.read_pid().await {
+            Some(pid) => Ok(self.is_process_running(pid).await),
+            None => Ok(false),
+        }
+    }
+
+    /// Spawn a detached helper that restarts the daemon after the running
+    /// binary has been replaced by the self-updater.
+    ///
+    /// The helper is this same executable invoked as `restart --pid <self>`
+    /// with the old process's PID. It waits for the old daemon to exit (freeing
+    /// the port), then starts a fresh daemon — which, since `current_exe` was
+    /// atomically renamed, is the newly installed binary. Returns immediately;
+    /// the caller is expected to shut down promptly so the helper can take
+    /// over. This is only used from the web/daemon update flow, where the
+    /// process performing the update is the process that must be replaced.
+    pub fn spawn_restart_helper(host: &str, port: u16, old_pid: u32) -> crate::Result<()> {
+        let exe_path = std::env::current_exe().map_err(crate::error::SyscityError::Io)?;
+        let log_path = crate::logs::log_file_path();
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent).map_err(crate::error::SyscityError::Io)?;
+        }
+        let log_file_std = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(crate::error::SyscityError::Io)?;
+
+        std::process::Command::new(&exe_path)
+            .arg("restart")
+            .arg("--pid")
+            .arg(old_pid.to_string())
+            .arg("--host")
+            .arg(host)
+            .arg("--port")
+            .arg(port.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(
+                log_file_std
+                    .try_clone()
+                    .map_err(crate::error::SyscityError::Io)?,
+            )
+            .stderr(log_file_std)
+            .spawn()
+            .map_err(crate::error::SyscityError::Io)?;
+
+        Ok(())
+    }
 }
 
 /// Apply environment variable overrides for security credentials,
@@ -495,6 +550,17 @@ workspace_only = true
         println!("✅ Gateway ready");
         println!("   URL: http://{}:{}", gateway_config.host, gateway_config.port);
 
+        // Background self-update check (warms the web banner cache and logs).
+        if gateway_config.update.enabled && gateway_config.update.auto_check {
+            let shutdown = gateway.shutdown_token();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = crate::update::github::check_and_log(crate::VERSION) => {}
+                    _ = shutdown.cancelled() => {}
+                }
+            });
+        }
+
         // Watch for shutdown signals and cancel the gateway token so that
         // `gateway.start()` returns and we can run the full shutdown sequence.
         let shutdown_token = gateway.shutdown_token();
@@ -680,7 +746,7 @@ workspace_only = true
     }
 
     /// Check if a process is running
-    async fn is_process_running(&self, pid: u32) -> bool {
+    pub async fn is_process_running(&self, pid: u32) -> bool {
         #[cfg(unix)]
         {
             use nix::unistd::Pid;

@@ -376,6 +376,21 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         crate::observe::WRITE_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
     ));
 
+    // Online self-update counters
+    lines
+        .push("# HELP syscity_update_check_total Total online update checks performed".to_string());
+    lines.push("# TYPE syscity_update_check_total counter".to_string());
+    lines.push(format!(
+        "syscity_update_check_total {}",
+        state.update.checks_total.load(Ordering::Relaxed)
+    ));
+    lines.push("# HELP syscity_update_failures_total Total online update failures".to_string());
+    lines.push("# TYPE syscity_update_failures_total counter".to_string());
+    lines.push(format!(
+        "syscity_update_failures_total {}",
+        state.update.failures_total.load(Ordering::Relaxed)
+    ));
+
     lines.push(String::new());
     lines.join("\n")
 }

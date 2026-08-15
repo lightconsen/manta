@@ -37,6 +37,7 @@ mod security;
 mod session;
 mod setup;
 mod skill;
+mod update;
 
 pub use admin::AdminCommands;
 pub use agent::AgentCommands;
@@ -62,6 +63,7 @@ pub use secrets::SecretsCommands;
 pub use security::{GateCommands, PairingCommands, SecurityCommands};
 pub use session::SessionCommands;
 pub use skill::SkillCommands;
+pub use update::UpdateCommands;
 
 /// Syscity - Your AI assistant
 #[derive(Debug, Parser)]
@@ -196,6 +198,18 @@ pub enum Commands {
     Reload,
     /// Check daemon status
     Status,
+    /// Restart the daemon (used internally by the self-update helper)
+    Restart {
+        /// PID of the old daemon process to wait for before starting
+        #[arg(long)]
+        pid: Option<u32>,
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// Port for gateway API, WebSocket, and SPA
+        #[arg(short, long, default_value = "18080")]
+        port: u16,
+    },
     /// Show and tail daemon logs
     Logs {
         /// Number of lines to show (default: 50)
@@ -240,6 +254,12 @@ pub enum Commands {
         /// Observe subcommand
         #[command(subcommand)]
         command: ObserveCommands,
+    },
+    /// Self-update from GitHub Releases (bare `update` installs the latest)
+    Update {
+        /// Update subcommand (bare `syscity update` installs the latest)
+        #[command(subcommand)]
+        command: Option<UpdateCommands>,
     },
     /// Secret store management (list, migrate, purge)
     Secrets {
@@ -440,6 +460,9 @@ impl Cli {
             Commands::Stop { force } => daemon::run_stop_daemon(*force).await,
             Commands::Reload => daemon::run_reload_daemon().await,
             Commands::Status => daemon::run_daemon_status().await,
+            Commands::Restart { pid, host, port } => {
+                daemon::run_restart_daemon(*pid, host, *port).await
+            }
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,
             Commands::Mcp { command } => mcp::run_mcp_command(command).await,
             Commands::Memory { command } => memory::run_memory_command(command).await,
@@ -447,6 +470,7 @@ impl Cli {
             Commands::Security { command } => security::run_security_command(command).await,
             Commands::Session { command } => session::run_session_command(command).await,
             Commands::Observe { command } => observe::run_observe_command(command).await,
+            Commands::Update { command } => update::run_update_command(command).await,
             Commands::Secrets { command } => secrets::run_secrets_command(command).await,
             Commands::Setup => setup::run_setup().await,
             Commands::Device { command } => device::run_device_command(command).await,

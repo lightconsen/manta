@@ -84,11 +84,18 @@ jobs:
           tar czvf ../../../${{ matrix.asset_name }}.tar.gz syscity
           cd -
 
+      - name: Checksum
+        shell: bash
+        run: |
+          sha256sum ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: ./${{ matrix.asset_name }}.tar.gz
+          path: |
+            ./${{ matrix.asset_name }}.tar.gz
+            ./${{ matrix.asset_name }}.tar.gz.sha256
 
   build-desktop:
     name: Build Desktop Apps
@@ -99,15 +106,23 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             asset_prefix: syscity-desktop-linux-amd64
+            updater_target: linux
+            updater_arch: x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
             asset_prefix: syscity-desktop-macos-arm64
+            updater_target: darwin
+            updater_arch: aarch64
           - os: macos-latest
             target: x86_64-apple-darwin
             asset_prefix: syscity-desktop-macos-amd64
+            updater_target: darwin
+            updater_arch: x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset_prefix: syscity-desktop-windows-amd64
+            updater_target: windows
+            updater_arch: x86_64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -161,31 +176,109 @@ jobs:
       - name: Build Tauri App
         working-directory: desktop
         run: cargo tauri build --target ${{ matrix.target }}
+        env:
+          # minisign signing key — set once in the repo secrets (see plan).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Collect artifacts
         shell: bash
         run: |
+          set -euo pipefail
           BUNDLE_DIR="desktop/target/${{ matrix.target }}/release/bundle"
           OUTPUT_DIR="desktop-artifacts"
           mkdir -p "$OUTPUT_DIR"
+          PREFIX="${{ matrix.asset_prefix }}"
+          UPDATER_JSON="syscity-desktop-${{ matrix.updater_target }}-${{ matrix.updater_arch }}.json"
+          UPDATER_BASE="https://github.com/lightconsen/syscity/releases/latest/download"
 
           # macOS
           for f in "$BUNDLE_DIR"/dmg/*.dmg; do
-            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/${{ matrix.asset_prefix }}.dmg"
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.dmg"
           done
 
           # Windows
           for f in "$BUNDLE_DIR"/msi/*.msi; do
-            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/${{ matrix.asset_prefix }}.msi"
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.msi"
+          done
+          for f in "$BUNDLE_DIR"/nsis/*.exe; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.exe"
           done
 
           # Linux
           for f in "$BUNDLE_DIR"/deb/*.deb; do
-            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/${{ matrix.asset_prefix }}.deb"
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.deb"
           done
           for f in "$BUNDLE_DIR"/appimage/*.AppImage; do
-            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/${{ matrix.asset_prefix }}.AppImage"
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.AppImage"
           done
+
+          # Updater payload + signatures. The updater payload is the `.app.tar.gz`
+          # on macOS and the installer (`.msi` / `.AppImage`) on other platforms;
+          # the client verifies the signature embedded in the updater JSON, so the
+          # standalone `.sig` files are published for completeness/debugging.
+          for f in "$BUNDLE_DIR"/macos/*.app.tar.gz; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.app.tar.gz"
+          done
+          for f in "$BUNDLE_DIR"/macos/*.app.tar.gz.sig; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.app.tar.gz.sig"
+          done
+          for f in "$BUNDLE_DIR"/msi/*.msi.sig; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.msi.sig"
+          done
+          for f in "$BUNDLE_DIR"/nsis/*.exe.sig; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.exe.sig"
+          done
+          for f in "$BUNDLE_DIR"/appimage/*.AppImage.sig; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.AppImage.sig"
+          done
+          for f in "$BUNDLE_DIR"/deb/*.deb.sig; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.deb.sig"
+          done
+
+          # Tauri writes `latest.json` per bundle type with relative artifact URLs.
+          # Rewrite the URL for this platform to an absolute GitHub download link
+          # and publish it under the endpoint's placeholder name.
+          python3 - "$BUNDLE_DIR" "$OUTPUT_DIR" "$UPDATER_JSON" "$PREFIX" "$UPDATER_BASE" "${{ matrix.updater_target }}" "${{ matrix.updater_arch }}" <<'PY'
+          import json, os, sys
+
+          bundle_dir, out_dir, updater_json, prefix, base, target, arch = sys.argv[1:]
+          payload = {
+              "darwin": f"{prefix}.app.tar.gz",
+              "linux": f"{prefix}.AppImage",
+              "windows": f"{prefix}.msi",
+          }[target]
+          platform_key = f"{target}-{arch}"
+
+          candidates = []
+          for root, _dirs, files in os.walk(bundle_dir):
+              if "latest.json" in files:
+                  candidates.append(os.path.join(root, "latest.json"))
+
+          # Prefer the updater's preferred bundle type per platform.
+          def rank(p):
+              for i, name in enumerate(["appimage", "nsis", "msi", "deb", "macos"]):
+                  if name in p:
+                      return i
+              return 99
+
+          candidates.sort(key=rank)
+          chosen = None
+          for c in candidates:
+              with open(c) as fh:
+                  data = json.load(fh)
+              if platform_key in data.get("platforms", {}):
+                  data["platforms"][platform_key]["url"] = f"{base}/{payload}"
+                  chosen = data
+                  break
+
+          if chosen is None:
+              print(f"::warning::No updater latest.json for {platform_key}")
+              sys.exit(0)
+
+          with open(os.path.join(out_dir, updater_json), "w") as fh:
+              json.dump(chosen, fh, indent=2)
+          PY
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

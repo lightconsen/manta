@@ -501,6 +501,8 @@ impl Gateway {
             device: DeviceState {
                 bridge: RwLock::new(device_bridge),
             },
+            update: UpdateState::new(),
+            embedded: std::env::var("SYSCITY_EMBEDDED").is_ok(),
         });
 
         if let Some(ref store) = state.agents.store {

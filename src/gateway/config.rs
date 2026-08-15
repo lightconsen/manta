@@ -112,6 +112,33 @@ pub struct GatewayConfig {
     /// Observability retention configuration for per-turn records.
     #[serde(default)]
     pub observe: ObserveConfig,
+    /// Online update configuration (self-update via GitHub Releases).
+    #[serde(default)]
+    pub update: UpdateConfig,
+}
+
+/// Online update (self-update) configuration.
+///
+/// Controls whether the daemon checks for new releases and applies them via
+/// `syscity update` / the web update flow. Set `enabled = false` to disable
+/// the update endpoints entirely; `auto_check = false` disables the
+/// background check at daemon startup (manual checks still work).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// Master switch for online updates.
+    pub enabled: bool,
+    /// Check for new releases in the background at daemon startup.
+    pub auto_check: bool,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_check: true,
+        }
+    }
 }
 
 /// Observability (per-turn records) retention configuration.
@@ -810,6 +837,7 @@ impl Default for GatewayConfig {
             quality_gate: crate::gateway::quality_gate::QualityGateConfig::default(),
             knowledge_base: KnowledgeBaseConfig::default(),
             observe: ObserveConfig::default(),
+            update: UpdateConfig::default(),
         }
     }
 }

@@ -4,7 +4,7 @@
 
 set -e
 
-REPO="syscity/syscity"
+REPO="lightconsen/syscity"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 BINARY="syscity"
 
@@ -46,6 +46,31 @@ echo "Installing Syscity $LATEST for $TARGET..."
 echo "Downloading..."
 TMPDIR=$(mktemp -d)
 curl -sSL "https://github.com/$REPO/releases/download/$LATEST/syscity-$TARGET.tar.gz" -o "$TMPDIR/syscity.tar.gz"
+
+# Verify sha256 checksum (published alongside the tarball; matches `syscity update`)
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA=sha256sum
+elif command -v shasum >/dev/null 2>&1; then
+    SHA="shasum -a 256"
+else
+    SHA=""
+fi
+if [ -n "$SHA" ]; then
+    CHECKSUM=$(curl -sSL "https://github.com/$REPO/releases/download/$LATEST/syscity-$TARGET.tar.gz.sha256" | awk '{print $1}')
+    if [ -n "$CHECKSUM" ]; then
+        ACTUAL=$($SHA "$TMPDIR/syscity.tar.gz" | awk '{print $1}')
+        if [ "$ACTUAL" != "$CHECKSUM" ]; then
+            echo "Checksum mismatch! Expected $CHECKSUM, got $ACTUAL."
+            rm -rf "$TMPDIR"
+            exit 1
+        fi
+        echo "Checksum verified."
+    else
+        echo "WARNING: no checksum published for $LATEST; skipping verification."
+    fi
+else
+    echo "WARNING: no sha256 utility found; skipping checksum verification."
+fi
 
 # Extract
 echo "Extracting..."

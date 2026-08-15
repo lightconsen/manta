@@ -7,6 +7,7 @@ import { Select } from "@/components/ui/Select";
 import { Input } from "@/components/ui/Input";
 import { Toggle } from "@/components/ui/Toggle";
 import { ProviderLogo } from "@/components/ui/ProviderLogo";
+import { UpdateSection } from "@/components/update/UpdateSection";
 
 interface GeneralSettingsProps {
   transport: SyscityWebSocketTransport;
@@ -51,6 +52,8 @@ export function GeneralSettings({ transport, config, models, currentTheme, updat
           </div>
         </div>
       </Section>
+
+      <UpdateSection />
 
       <Section title="Model & Provider">
         <div className="space-y-3">

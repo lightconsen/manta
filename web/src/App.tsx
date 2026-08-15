@@ -17,6 +17,7 @@ import { ChatContent } from "@/components/chat/ChatContent";
 import { useGoalStore } from "@/stores/goalStore";
 import { GoalPanel } from "@/components/chat/GoalPanel";
 import { DocumentPreviewPanel } from "@/components/shared/DocumentPreviewPanel";
+import { UpdateBanner } from "@/components/update/UpdateBanner";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
 /* ── Agent emoji pool — ensures each agent has a unique icon ── */
@@ -605,6 +606,8 @@ function ChatApp() {
       )}
 
       <main className="flex-1 flex flex-col overflow-hidden">
+        {/* New-release banner; the settings General tab shows the full controls. */}
+        {!settingsOpen && <UpdateBanner />}
         {settingsOpen ? (
           <SettingsPanel transport={transport} onClose={() => setSettingsOpen(false)} />
         ) : previewDocument && !isMobile ? (

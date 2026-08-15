@@ -176,6 +176,9 @@ flate2 = "1.1.9"
 zip = "2"
 tar = "0.4"
 
+# Self-update staging (download into temp dir before atomic rename)
+tempfile = "3.10"
+
 # Audio capture (cross-platform I/O)
 cpal = "0.15"
 
@@ -277,7 +280,6 @@ mobile = [
 [dev-dependencies]
 # Testing
 wiremock = "0.6"
-tempfile = "3.10"
 futures-util = "0.3"
 
 # Concurrency control for tests

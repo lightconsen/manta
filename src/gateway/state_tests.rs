@@ -218,6 +218,9 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         device: DeviceState {
             bridge: tokio::sync::RwLock::new(None),
         },
+        update: UpdateState::new(),
+        // Tests control `embedded` explicitly; production captures the env.
+        embedded: false,
     }
 }
 

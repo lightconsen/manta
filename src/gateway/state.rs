@@ -187,6 +187,91 @@ pub struct DeviceState {
     pub bridge: RwLock<Option<Arc<dyn crate::device::DeviceBridge>>>,
 }
 
+/// Online self-update (GitHub Releases) status and progress state.
+pub struct UpdateState {
+    /// Last checked release info, cached for the status TTL.
+    pub status_cache: RwLock<Option<UpdateStatusCache>>,
+    /// In-flight or last update run progress.
+    pub progress: RwLock<UpdateProgress>,
+    /// Total update checks performed (Prometheus counter).
+    pub checks_total: std::sync::atomic::AtomicU64,
+    /// Total update failures (Prometheus counter).
+    pub failures_total: std::sync::atomic::AtomicU64,
+}
+
+impl UpdateState {
+    /// Create an idle update state.
+    pub fn new() -> Self {
+        Self {
+            status_cache: RwLock::new(None),
+            progress: RwLock::new(UpdateProgress::default()),
+            checks_total: std::sync::atomic::AtomicU64::new(0),
+            failures_total: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl Default for UpdateState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A cached `UpdateInfo` plus the time it was fetched.
+pub struct UpdateStatusCache {
+    pub info: crate::update::UpdateInfo,
+    pub checked_at: Instant,
+}
+
+/// Phase of the self-update run surfaced to the web UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdatePhase {
+    /// No update in progress.
+    Idle,
+    /// Checking GitHub for a newer release.
+    Checking,
+    /// Downloading and verifying the release tarball.
+    Downloading,
+    /// SHA-256 verification passed; staging the binary.
+    Verifying,
+    /// Replacing the running binary.
+    Applying,
+    /// Binary replaced; the daemon restart helper has been detached.
+    Restarting,
+    /// The last update attempt failed.
+    Error,
+}
+
+/// Progress of the current (or last) self-update run.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UpdateProgress {
+    pub phase: UpdatePhase,
+    pub percent: u8,
+    pub error: Option<String>,
+    pub current: String,
+    pub latest: Option<String>,
+}
+
+impl UpdateProgress {
+    /// An idle progress with the given installed version.
+    pub fn idle(current: impl Into<String>) -> Self {
+        Self {
+            phase: UpdatePhase::Idle,
+            percent: 0,
+            error: None,
+            current: current.into(),
+            latest: None,
+        }
+    }
+}
+
+impl Default for UpdateProgress {
+    fn default() -> Self {
+        Self::idle(crate::VERSION)
+    }
+}
+
 /// Shared gateway state grouped by domain.
 pub struct GatewayState {
     /// Configuration.
@@ -221,4 +306,9 @@ pub struct GatewayState {
     pub sdk: SdkState,
     pub scheduler: SchedulerState,
     pub device: DeviceState,
+    pub update: UpdateState,
+    /// Whether this gateway runs inside the desktop app (in-process). Captured
+    /// from the `SYSCITY_EMBEDDED` env var at construction time; embedded
+    /// instances must refuse self-replacement and defer to the desktop updater.
+    pub embedded: bool,
 }

@@ -78,6 +78,7 @@ pub mod standing_orders;
 pub mod test_helpers;
 pub mod tools;
 pub mod tui;
+pub mod update;
 pub mod utils;
 
 // Re-export commonly used types

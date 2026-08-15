@@ -247,6 +247,40 @@ fn reveal_in_folder(filename: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Tauri command: check for a newer release, download + install it, and
+/// restart the app. Emits `update-status` events so the frontend can show
+/// progress. Desktop only — mobile apps update through their app stores.
+#[cfg(not(mobile))]
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+    run_update_check(app).await
+}
+
+/// Shared update logic for the `check_for_updates` command and the tray item.
+#[cfg(not(mobile))]
+async fn run_update_check(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app
+        .updater()
+        .map_err(|e| format!("Updater not available: {e}"))?;
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            app.emit("update-status", "downloading").ok();
+            update
+                .download_and_install(|_current, _total| {}, || {})
+                .await
+                .map_err(|e| format!("Failed to install update: {e}"))?;
+            app.emit("update-status", "restarting").ok();
+            // `restart` never returns — the process is replaced immediately.
+            app.restart()
+        }
+        Ok(None) => Ok("up-to-date".into()),
+        Err(e) => Err(format!("Update check failed: {e}")),
+    }
+}
+
 /// Entry point used by `src/main.rs`.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -299,6 +333,13 @@ pub fn run() {
         .manage(app_state)
         .plugin(tauri_plugin_shell::init());
 
+    // Self-update via the Tauri updater (desktop only; mobile apps update
+    // through their app stores). Registration is inert until a minisign
+    // pubkey is set in `plugins.updater.pubkey` — see desktop/README or the
+    // Part 1 release prerequisites.
+    #[cfg(not(mobile))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
     // Native device bridge plugin (mobile only): registers the Kotlin
     // DevicePlugin (android) or the Swift DevicePlugin (ios) so the gateway
     // can reach camera / location / notifications / SAF / shortcuts. Must be
@@ -312,7 +353,11 @@ pub fn run() {
     let builder = builder.plugin(mobile_speech::speech_plugin());
 
     #[cfg(not(mobile))]
-    let builder = builder.invoke_handler(tauri::generate_handler![get_api_url, reveal_in_folder]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        get_api_url,
+        reveal_in_folder,
+        check_for_updates
+    ]);
     #[cfg(mobile)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         get_api_url,
@@ -411,6 +456,12 @@ async fn start_gateway(
     device_bridge: Option<std::sync::Arc<dyn syscity::device::DeviceBridge>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use syscity::gateway::{Gateway, GatewayConfig, GatewayOptions};
+
+    // The desktop app embeds the gateway in-process, so the binary-replacement
+    // update flow (`POST /api/v1/update`) must be refused: this instance is
+    // updated by replacing the whole app bundle via the Tauri updater instead.
+    // The web UI reads this flag and routes the update button to `invoke`.
+    std::env::set_var("SYSCITY_EMBEDDED", "1");
 
     // Ensure ~/.syscity directory exists.
     let syscity_dir = syscity::dirs::syscity_dir();
@@ -576,10 +627,15 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> Result<(), Box<dyn std::error::E
     let show_i = MenuItemBuilder::new("Show Window")
         .id("show")
         .build(handle)?;
+    let update_i = MenuItemBuilder::new("Check for Updates")
+        .id("update")
+        .build(handle)?;
     let quit_i = MenuItemBuilder::new("Quit").id("quit").build(handle)?;
 
     let tray_menu = MenuBuilder::new(handle)
         .item(&show_i)
+        .separator()
+        .item(&update_i)
         .separator()
         .item(&quit_i)
         .build()?;
@@ -598,6 +654,14 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> Result<(), Box<dyn std::error::E
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+            }
+            "update" => {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = run_update_check(handle).await {
+                        eprintln!("Update check failed: {}", e);
+                    }
+                });
             }
             "quit" => {
                 app.exit(0);

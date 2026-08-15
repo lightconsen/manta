@@ -192,6 +192,54 @@ pub async fn run_stop_daemon(force: bool) -> Result<()> {
     }
 }
 
+/// Restart the daemon after a self-update, waiting for the old process to
+/// exit first.
+///
+/// The old daemon spawns this helper (via `syscity restart --pid <self>`)
+/// after atomically replacing its own binary, then exits. This helper waits
+/// for the recorded PID to disappear so the port is freed, then starts a fresh
+/// daemon — which is the newly installed binary. Used only by the web/daemon
+/// update flow.
+pub async fn run_restart_daemon(pid: Option<u32>, host: &str, port: u16) -> Result<()> {
+    if let Some(pid) = pid {
+        let daemon = DaemonManager::new(DaemonConfig {
+            host: host.to_string(),
+            port,
+            pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
+            remote_control_host: None,
+            remote_control_user: None,
+            remote_control_port: 0,
+            remote_control_protocol: "ssh".to_string(),
+            remote_control_key: None,
+            headless: false,
+            headless_display: String::new(),
+        })?;
+
+        // Wait up to 15s for the old daemon to fully exit so the port is free
+        // before starting the replacement.
+        for _ in 0..150 {
+            if !daemon.is_process_running(pid).await {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    let daemon = DaemonManager::new(DaemonConfig {
+        host: host.to_string(),
+        port,
+        pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
+        remote_control_host: None,
+        remote_control_user: None,
+        remote_control_port: 0,
+        remote_control_protocol: "ssh".to_string(),
+        remote_control_key: None,
+        headless: false,
+        headless_display: String::new(),
+    })?;
+    daemon.start().await
+}
+
 /// Check daemon status
 pub async fn run_daemon_status() -> Result<()> {
     let daemon_config = DaemonConfig {
