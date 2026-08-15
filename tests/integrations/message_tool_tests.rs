@@ -215,6 +215,9 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         },
         task_registry: Arc::new(syscity::gateway::task_registry::TaskRegistry::new()),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
+        update: syscity::gateway::state::UpdateState::new(),
+        // Tests control `embedded` explicitly; production captures the env.
+        embedded: false,
     }
 }
 
