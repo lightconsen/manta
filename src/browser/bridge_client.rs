@@ -409,6 +409,7 @@ impl BridgeClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[tokio::test]
     async fn test_bridge_client_create() {
@@ -417,6 +418,9 @@ mod tests {
         assert_eq!(client.health_check().await, HealthStatus::Unreachable);
     }
 
+    // Both env tests mutate the same process-global BROWSER_BRIDGE_* vars, so
+    // they must never run concurrently — see tests/e2e for the serial pattern.
+    #[serial]
     #[test]
     fn test_bridge_client_from_env_missing() {
         // Save any existing env vars so the test is independent of the
@@ -439,6 +443,7 @@ mod tests {
         }
     }
 
+    #[serial]
     #[test]
     fn test_bridge_client_from_env_present() {
         std::env::set_var("BROWSER_BRIDGE_URL", "http://localhost:18800");
