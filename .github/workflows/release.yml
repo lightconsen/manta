@@ -21,9 +21,9 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             asset_name: syscity-linux-arm64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            asset_name: syscity-macos-amd64
+          # Intel macOS is intentionally excluded: ort (ONNX Runtime, used by
+          # the `vision` feature) ships no prebuilt binary for
+          # x86_64-apple-darwin, and compiling it from source in CI is not viable.
           - os: macos-latest
             target: aarch64-apple-darwin
             asset_name: syscity-macos-arm64
@@ -76,6 +76,10 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} --all-features
+        env:
+          # llama.cpp requires std::filesystem (macOS 10.15+). Cross-target builds
+          # default the deployment target lower, so pin it on macOS builds.
+          MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '10.15' || '' }}
 
       - name: Package
         shell: bash
@@ -113,11 +117,6 @@ jobs:
             asset_prefix: syscity-desktop-macos-arm64
             updater_target: darwin
             updater_arch: aarch64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            asset_prefix: syscity-desktop-macos-amd64
-            updater_target: darwin
-            updater_arch: x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset_prefix: syscity-desktop-windows-amd64
@@ -180,6 +179,9 @@ jobs:
           # minisign signing key — set once in the repo secrets (see plan).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # llama.cpp requires std::filesystem (macOS 10.15+). cargo tauri build
+          # defaults the deployment target lower, so pin it on macOS builds.
+          MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '10.15' || '' }}
 
       - name: Collect artifacts
         shell: bash
