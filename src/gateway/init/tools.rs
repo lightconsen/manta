@@ -280,6 +280,13 @@ pub async fn init_tools(
         computer_adapter.clone(),
         shared_ocr,
     )));
+    #[cfg(feature = "vision")]
+    tool_registry.register_dynamic(Arc::new(
+        crate::tools::screen_state::ScreenUiDetectTool::new(
+            computer_adapter.clone(),
+            crate::tools::screen_state::new_shared_ui_detector(),
+        ),
+    ));
 
     // Create shared planner handle and register PlannerTool.
     let planner_handle: Arc<std::sync::RwLock<Option<Arc<crate::planner::GoalPlanner>>>> =

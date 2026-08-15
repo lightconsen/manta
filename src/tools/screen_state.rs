@@ -6,6 +6,9 @@
 //! - [`ScreenOcrTool`] (`screen_ocr`): on-demand OCR of the full screen or a
 //!   region, for text the accessibility tree cannot see (PDFs, dialogs,
 //!   image-based UIs).
+//! - [`ScreenUiDetectTool`] (`screen_ui_detect`): on-demand UI element
+//!   detection (buttons, text fields, checkboxes, icons) via ONNX (OmniParser),
+//!   for when the accessibility tree is empty or incomplete.
 
 use std::sync::Arc;
 
@@ -46,6 +49,42 @@ async fn lock_ocr(
                 .await
                 .map_err(|e| {
                     crate::error::SyscityError::Internal(format!("OCR init failed: {}", e))
+                })?,
+        );
+    }
+    Ok(guard)
+}
+
+/// Lazily-initialized shared vision UI-element detector (OmniParser). Model
+/// loading is expensive, so it only happens on first use.
+#[cfg(feature = "vision")]
+pub type SharedUiDetector =
+    Arc<tokio::sync::Mutex<Option<crate::computer::vision::ui_onnx::OmniParserDetector>>>;
+
+#[cfg(feature = "vision")]
+pub fn new_shared_ui_detector() -> SharedUiDetector {
+    Arc::new(tokio::sync::Mutex::new(None))
+}
+
+/// Lock the shared UI-element detector, initializing it on first use. The
+/// returned guard may be held across `.await` (it is a `tokio::sync::Mutex`)
+/// and also serializes concurrent detection calls.
+#[cfg(feature = "vision")]
+async fn lock_ui_detector(
+    shared: &SharedUiDetector,
+) -> crate::Result<
+    tokio::sync::MutexGuard<'_, Option<crate::computer::vision::ui_onnx::OmniParserDetector>>,
+> {
+    let mut guard = shared.lock().await;
+    if guard.is_none() {
+        *guard = Some(
+            crate::computer::vision::ui_onnx::OmniParserDetector::new_auto()
+                .await
+                .map_err(|e| {
+                    crate::error::SyscityError::Internal(format!(
+                        "UI detector init failed: {}",
+                        e
+                    ))
                 })?,
         );
     }
@@ -341,6 +380,136 @@ Use when the accessibility tree lacks the text you need: PDF viewers, dialogs, i
             Ok(ToolExecutionResult::success(output).with_data(json!({
                 "text": text,
                 "regions": regions,
+            })))
+        }
+    }
+}
+
+// ── screen_ui_detect ───────────────────────────────────────────────────────
+
+/// Tool that detects interactive UI elements (buttons, text fields, checkboxes,
+/// icons, links) from a screenshot via ONNX (OmniParser), as a fallback when
+/// the accessibility tree is empty or incomplete.
+pub struct ScreenUiDetectTool {
+    adapter: Option<Arc<dyn ComputerAdapter>>,
+    #[cfg(feature = "vision")]
+    detector: SharedUiDetector,
+}
+
+impl ScreenUiDetectTool {
+    pub fn new(
+        adapter: Option<Arc<dyn ComputerAdapter>>,
+        #[cfg(feature = "vision")] detector: SharedUiDetector,
+    ) -> Self {
+        Self {
+            adapter,
+            #[cfg(feature = "vision")]
+            detector,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for ScreenUiDetectTool {
+    fn name(&self) -> &str {
+        "screen_ui_detect"
+    }
+
+    fn description(&self) -> &str {
+        r#"Detect interactive UI elements (buttons, text fields, checkboxes, icons, links) from a screenshot using ONNX (OmniParser). Returns each element's role, screen bounds, and confidence.
+
+Use when the accessibility tree is empty or incomplete: games, image-based UIs, remote desktops, webviews without accessibility support."#
+    }
+
+    fn parameters_schema(&self) -> Value {
+        create_schema("Detect UI elements from the screen", json!({}), Vec::<String>::new())
+    }
+
+    fn capabilities(&self) -> ToolCapabilities {
+        ToolCapabilities {
+            requires_approval: false,
+            risk_level: RiskLevel::Low,
+            categories: vec!["computer".to_string(), "desktop".to_string()],
+            ..Default::default()
+        }
+    }
+
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        self.adapter.is_some() && cfg!(feature = "vision")
+    }
+
+    async fn execute(
+        &self,
+        _args: Value,
+        _context: &ToolContext,
+    ) -> crate::Result<ToolExecutionResult> {
+        #[cfg(not(feature = "vision"))]
+        {
+            return Ok(ToolExecutionResult::error(
+                "screen_ui_detect requires the 'vision' feature".to_string(),
+            ));
+        }
+
+        #[cfg(feature = "vision")]
+        {
+            let adapter = self.adapter.as_ref().ok_or_else(|| {
+                crate::error::SyscityError::Unsupported(
+                    "Computer adapter is not configured".to_string(),
+                )
+            })?;
+
+            let screenshot = adapter
+                .screenshot(None)
+                .await
+                .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
+
+            let mut guard = lock_ui_detector(&self.detector).await?;
+            let detector = guard.as_mut().ok_or_else(|| {
+                crate::error::SyscityError::Internal("UI detector unavailable".to_string())
+            })?;
+            let detected = detector
+                .detect_elements(&screenshot)
+                .await
+                .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
+            drop(guard);
+
+            let elements: Vec<Value> = detected
+                .iter()
+                .map(|d| {
+                    json!({
+                        "role": d.role,
+                        "x": d.bounds.x,
+                        "y": d.bounds.y,
+                        "width": d.bounds.width,
+                        "height": d.bounds.height,
+                        "confidence": d.confidence,
+                    })
+                })
+                .collect();
+
+            let output = if elements.is_empty() {
+                "No UI elements detected.".to_string()
+            } else {
+                let lines = detected
+                    .iter()
+                    .map(|d| {
+                        format!(
+                            "{} at ({}, {}) {}x{} (conf {:.2})",
+                            d.role,
+                            d.bounds.x,
+                            d.bounds.y,
+                            d.bounds.width,
+                            d.bounds.height,
+                            d.confidence
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!("Detected {} UI elements:\n{}", elements.len(), lines)
+            };
+
+            Ok(ToolExecutionResult::success(output).with_data(json!({
+                "elements": elements,
             })))
         }
     }
