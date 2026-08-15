@@ -38,6 +38,11 @@ config.yaml
 config.json
 !config.example.yaml
 
+# Desktop updater signing keys (minisign). The private key MUST stay local;
+# only its base64 value goes into tauri.conf.json + the GitHub secret.
+syscity.key
+syscity.pub
+
 # Node.js / pnpm
 node_modules/
 
