@@ -14,6 +14,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
+#[cfg(feature = "vision")]
+use tracing::warn;
 
 use crate::computer::vision::ScreenState;
 #[cfg(feature = "vision")]
@@ -81,10 +83,7 @@ async fn lock_ui_detector(
             crate::computer::vision::ui_onnx::OmniParserDetector::new_auto()
                 .await
                 .map_err(|e| {
-                    crate::error::SyscityError::Internal(format!(
-                        "UI detector init failed: {}",
-                        e
-                    ))
+                    crate::error::SyscityError::Internal(format!("UI detector init failed: {}", e))
                 })?,
         );
     }
@@ -98,17 +97,22 @@ pub struct ScreenStateTool {
     adapter: Option<Arc<dyn ComputerAdapter>>,
     #[cfg(feature = "vision")]
     ocr: SharedOcr,
+    #[cfg(feature = "vision")]
+    ui_detector: SharedUiDetector,
 }
 
 impl ScreenStateTool {
     pub fn new(
         adapter: Option<Arc<dyn ComputerAdapter>>,
         #[cfg(feature = "vision")] ocr: SharedOcr,
+        #[cfg(feature = "vision")] ui_detector: SharedUiDetector,
     ) -> Self {
         Self {
             adapter,
             #[cfg(feature = "vision")]
             ocr,
+            #[cfg(feature = "vision")]
+            ui_detector,
         }
     }
 }
@@ -122,7 +126,9 @@ impl Tool for ScreenStateTool {
     fn description(&self) -> &str {
         r#"Capture the current screen state: a screenshot plus the accessibility UI tree (windows, buttons, text fields in hierarchy), with optional OCR text.
 
-Use this BEFORE desktop actions to see what is on screen instead of operating blind. The UI tree gives structured element positions; OCR reads text the tree cannot see (PDFs, image-based UIs). OCR is slow (seconds) — only enable it when the tree is insufficient."#
+Use this BEFORE desktop actions to see what is on screen instead of operating blind. The UI tree gives structured element positions; OCR reads text the tree cannot see (PDFs, image-based UIs). OCR is slow (seconds) — only enable it when the tree is insufficient.
+
+When the accessibility tree is empty (games, image-based UIs, remote desktops, webviews), interactive elements are auto-detected from the screenshot via OmniParser; disable with ui_fallback=false."#
     }
 
     fn parameters_schema(&self) -> Value {
@@ -132,6 +138,10 @@ Use this BEFORE desktop actions to see what is on screen instead of operating bl
                 "include_ocr": {
                     "type": "boolean",
                     "description": "Also run OCR to extract visible text (slow, seconds). Default false."
+                },
+                "ui_fallback": {
+                    "type": "boolean",
+                    "description": "Run OmniParser UI detection when the accessibility tree is empty (slow, downloads model on first use). Default true."
                 },
                 "max_tree_lines": {
                     "type": "integer",
@@ -198,6 +208,37 @@ Use this BEFORE desktop actions to see what is on screen instead of operating bl
             state.ocr_text = "(OCR unavailable: built without 'vision' feature)".to_string();
         }
 
+        // OmniParser UI-detection fallback: when the accessibility tree is empty,
+        // detect interactive elements from the screenshot so the LLM is not blind.
+        // Deliberately *not* in ScreenState::capture_light — that path feeds the
+        // cheap verification loop (~300ms) and must never run slow vision inference.
+        let want_fallback = args["ui_fallback"].as_bool().unwrap_or(true);
+        let mut ui_source = "accessibility";
+        let mut fallback_count = 0usize;
+
+        #[cfg(feature = "vision")]
+        if want_fallback && state.ui_tree.is_empty() {
+            match lock_ui_detector(&self.ui_detector).await {
+                Ok(mut guard) => {
+                    if let Some(detector) = guard.as_mut() {
+                        match detector.detect_elements(&state.screenshot).await {
+                            Ok(detected) if !detected.is_empty() => {
+                                fallback_count = detected.len();
+                                state.ui_tree =
+                                    crate::computer::vision::ui_onnx::OmniParserDetector::to_ui_elements(
+                                        detected,
+                                    );
+                                ui_source = "omniparser";
+                            }
+                            Ok(_) => warn!("OmniParser fallback found no elements"),
+                            Err(e) => warn!("OmniParser fallback inference failed: {}", e),
+                        }
+                    }
+                }
+                Err(e) => warn!("OmniParser fallback init failed: {}", e),
+            }
+        }
+
         // Format: indented UI-tree outline + OCR text + screenshot in data.
         let mut output = String::from("UI tree:\n");
         let mut lines = 0usize;
@@ -206,8 +247,19 @@ Use this BEFORE desktop actions to see what is on screen instead of operating bl
         }
         if state.ui_tree.is_empty() {
             output.push_str("(empty — no accessibility tree available)\n");
-        } else if lines >= max_lines {
-            output.push_str("… (tree truncated)\n");
+            #[cfg(not(feature = "vision"))]
+            if want_fallback {
+                output.push_str("(UI detection unavailable: built without 'vision' feature)\n");
+            }
+        } else {
+            if ui_source == "omniparser" {
+                output.push_str(&format!(
+                    "(accessibility tree empty — {fallback_count} UI elements detected via OmniParser)\n"
+                ));
+            }
+            if lines >= max_lines {
+                output.push_str("… (tree truncated)\n");
+            }
         }
         if !state.ocr_text.is_empty() {
             output.push_str("\nOCR text:\n");
@@ -219,6 +271,7 @@ Use this BEFORE desktop actions to see what is on screen instead of operating bl
             "screenshot_width": state.screenshot.width,
             "screenshot_height": state.screenshot.height,
             "ui_tree": serde_json::to_value(&state.ui_tree).unwrap_or_default(),
+            "ui_source": ui_source,
             "ocr_text": state.ocr_text,
             "ocr_regions": serde_json::to_value(&state.ocr_regions).unwrap_or_default(),
         });
@@ -241,11 +294,21 @@ fn format_element(
     }
     *lines += 1;
     let indent = "  ".repeat(depth);
-    let label = el.label.as_deref().unwrap_or("");
+    // Omit the quoted label entirely when it is empty (e.g. OmniParser-detected
+    // elements carry no accessibility label), instead of rendering `""`.
+    let label = el.label.as_deref().filter(|l| !l.is_empty());
+    let label_part = label.map(|l| format!(" {:?}", l)).unwrap_or_default();
     let state = if el.enabled { "" } else { " [disabled]" };
     out.push_str(&format!(
-        "{}{} \"{}\"{} at ({},{}) {}x{}\n",
-        indent, el.role, label, state, el.bounds.x, el.bounds.y, el.bounds.width, el.bounds.height
+        "{}{}{}{} at ({},{}) {}x{}\n",
+        indent,
+        el.role,
+        label_part,
+        state,
+        el.bounds.x,
+        el.bounds.y,
+        el.bounds.width,
+        el.bounds.height
     ));
     for child in &el.children {
         format_element(child, depth + 1, out, lines, max_lines);
@@ -552,6 +615,17 @@ mod tests {
         assert!(out.contains("window \"App\" at (10,20) 100x30"));
         assert!(out.contains("  button \"OK\""));
         assert_eq!(lines, 2);
+    }
+
+    #[test]
+    fn format_element_omits_empty_label() {
+        // OmniParser-detected elements carry no label — render without quotes.
+        let tree = el("button", None, vec![]);
+        let mut out = String::new();
+        let mut lines = 0;
+        format_element(&tree, 0, &mut out, &mut lines, 100);
+        assert_eq!(out, "button at (10,20) 100x30\n");
+        assert!(!out.contains("\"\""));
     }
 
     #[test]

@@ -11,9 +11,18 @@
 //! Requires the `vision` feature (enabled by default).
 
 use std::io::Cursor;
+use std::sync::Arc;
 
+use async_trait::async_trait;
 use base64::Engine;
 use image::DynamicImage;
+use syscity::computer::types::Screenshot;
+use syscity::computer::{
+    ActionResult, ComputerAdapter, DesktopAction, Rect, Result as ComputerResult, UiElement,
+    WaitCondition,
+};
+use syscity::tools::screen_state::{new_shared_ocr, new_shared_ui_detector, ScreenStateTool};
+use syscity::tools::{Tool, ToolContext};
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -325,4 +334,154 @@ fn test_yolo_parse_transposed_layout() {
     assert!((detections[0].1 - 0.9).abs() < 0.01);
     assert_eq!(detections[1].0, 1);
     assert!((detections[1].1 - 0.7).abs() < 0.01);
+}
+
+// ── ScreenStateTool OmniParser fallback ──────────────────────────────
+//
+// These tests exercise the `ScreenStateTool` visual fallback: when the
+// accessibility tree is empty, interactive elements are detected from the
+// screenshot via OmniParser. They require the real ONNX model (auto-downloaded
+// on first use, ~12MB), so they are ignored by default. Run with:
+//
+// ```bash
+// cargo test --all-features --test integration_test vision -- --include-ignored
+// ```
+
+/// Synthetic 640x480 "window" with distinct rectangular UI widgets, so the
+/// OmniParser icon-detect model has visible elements to find.
+fn synthetic_ui_image(width: u32, height: u32) -> DynamicImage {
+    fn fill(img: &mut DynamicImage, x0: u32, y0: u32, w: u32, h: u32, rgb: [u8; 3]) {
+        for y in y0..y0 + h {
+            for x in x0..x0 + w {
+                img.as_mut_rgb8().unwrap().put_pixel(x, y, image::Rgb(rgb));
+            }
+        }
+    }
+
+    let mut img = DynamicImage::new_rgb8(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let gray = if y < 24 || y >= height - 24 {
+                250u8
+            } else {
+                235u8
+            };
+            img.as_mut_rgb8()
+                .unwrap()
+                .put_pixel(x, y, image::Rgb([gray, gray, gray]));
+        }
+    }
+    // Title-bar text patch, three buttons of distinct colors, and an input field.
+    fill(&mut img, 20, 8, 200, 8, [60, 60, 60]);
+    fill(&mut img, 80, 200, 140, 48, [70, 130, 230]);
+    fill(&mut img, 300, 200, 140, 48, [90, 180, 90]);
+    fill(&mut img, 240, 300, 160, 40, [240, 180, 60]);
+    fill(&mut img, 60, 300, 120, 40, [255, 255, 255]);
+    img
+}
+
+/// Minimal `ComputerAdapter` whose accessibility tree is always empty — the
+/// OmniParser visual fallback in `ScreenStateTool` is the only way to obtain a
+/// UI tree from this adapter.
+struct EmptyTreeAdapter {
+    screenshot_base64: String,
+    width: u32,
+    height: u32,
+}
+
+#[async_trait]
+impl ComputerAdapter for EmptyTreeAdapter {
+    async fn screenshot(&self, _region: Option<Rect>) -> ComputerResult<Screenshot> {
+        Ok(Screenshot::new(self.screenshot_base64.clone(), self.width, self.height))
+    }
+
+    async fn read_ui_tree(&self, _app: Option<&str>) -> ComputerResult<Vec<UiElement>> {
+        Ok(Vec::new())
+    }
+
+    async fn execute(&self, _action: DesktopAction) -> ComputerResult<ActionResult> {
+        Ok(ActionResult::success("done"))
+    }
+
+    async fn wait_for(
+        &self,
+        _condition: WaitCondition,
+        _timeout: std::time::Duration,
+    ) -> ComputerResult<bool> {
+        Ok(true)
+    }
+}
+
+fn empty_tree_adapter() -> EmptyTreeAdapter {
+    let ss = make_test_screenshot(&synthetic_ui_image(640, 480));
+    EmptyTreeAdapter {
+        screenshot_base64: ss.base64,
+        width: ss.width,
+        height: ss.height,
+    }
+}
+
+fn screen_state_tool() -> ScreenStateTool {
+    ScreenStateTool::new(
+        Some(Arc::new(empty_tree_adapter())),
+        new_shared_ocr(),
+        new_shared_ui_detector(),
+    )
+}
+
+#[tokio::test]
+#[ignore = "Requires ONNX model download (omniparser.onnx ~12MB)"]
+async fn test_screen_state_omniparser_fallback_on_empty_tree() {
+    let tool = screen_state_tool();
+    let result = tool
+        .execute(serde_json::json!({}), &ToolContext::default())
+        .await
+        .expect("execute should succeed");
+    let data = result.data.expect("data should be present");
+
+    // Happy path: OmniParser detects widgets on the synthetic screenshot and
+    // they become the UI tree. The `ui_fallback=false` test below covers the
+    // graceful-degradation branch.
+    assert_eq!(
+        data["ui_source"], "omniparser",
+        "tree should be flagged as coming from OmniParser"
+    );
+    let tree = data["ui_tree"]
+        .as_array()
+        .expect("ui_tree should be an array");
+    assert!(!tree.is_empty(), "OmniParser fallback should populate the UI tree");
+    assert!(
+        result
+            .output
+            .contains("UI elements detected via OmniParser"),
+        "output should note the fallback source, got: {}",
+        result.output
+    );
+}
+
+#[tokio::test]
+#[ignore = "Requires ONNX model download (omniparser.onnx ~12MB)"]
+async fn test_screen_state_fallback_disabled_keeps_tree_empty() {
+    let tool = screen_state_tool();
+    let result = tool
+        .execute(serde_json::json!({ "ui_fallback": false }), &ToolContext::default())
+        .await
+        .expect("execute should succeed");
+    let data = result.data.expect("data should be present");
+
+    assert_eq!(data["ui_source"], "accessibility");
+    assert!(
+        data["ui_tree"]
+            .as_array()
+            .expect("ui_tree should be an array")
+            .is_empty(),
+        "ui_fallback=false must keep the tree empty"
+    );
+    assert!(
+        result
+            .output
+            .contains("(empty — no accessibility tree available)"),
+        "output should keep the empty-tree marker, got: {}",
+        result.output
+    );
 }
