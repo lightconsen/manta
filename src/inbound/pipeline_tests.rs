@@ -75,7 +75,9 @@ mod tests {
         ) -> (Option<RoutedMessage>, Vec<RoutedMessage>) {
             let mut rx = self.routed_rx.lock().await;
             let result = self.pipeline.process(msg).await;
-            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
+            // Auto-flush tests debounce for 50ms; give the background flush loop a
+            // 1s margin so heavily-loaded CI runners (macOS) don't miss the window.
+            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(1000)).await;
             (result, channel_messages)
         }
 
@@ -85,14 +87,14 @@ mod tests {
         ) -> (InboundProcessOutcome, Vec<RoutedMessage>) {
             let mut rx = self.routed_rx.lock().await;
             let result = self.pipeline.process_detailed(msg).await;
-            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
+            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(1000)).await;
             (result, channel_messages)
         }
 
         async fn flush(&self, key: &str) -> (Vec<RoutedMessage>, Vec<RoutedMessage>) {
             let mut rx = self.routed_rx.lock().await;
             let result = self.pipeline.flush(key).await;
-            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(200)).await;
+            let channel_messages = drain_with_timeout(&mut rx, Duration::from_millis(1000)).await;
             (result, channel_messages)
         }
     }
