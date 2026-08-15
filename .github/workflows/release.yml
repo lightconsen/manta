@@ -18,15 +18,23 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             asset_name: syscity-linux-amd64
+            cargo_args: --all-features
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             asset_name: syscity-linux-arm64
-          # Intel macOS is intentionally excluded: ort (ONNX Runtime, used by
-          # the `vision` feature) ships no prebuilt binary for
-          # x86_64-apple-darwin, and compiling it from source in CI is not viable.
+            cargo_args: --all-features
           - os: macos-latest
             target: aarch64-apple-darwin
             asset_name: syscity-macos-arm64
+            cargo_args: --all-features
+          # Intel macOS: ort (ONNX Runtime, used by `vision`) ships no prebuilt
+          # binary for x86_64-apple-darwin, and compiling it from source in CI is
+          # not viable. Build the `intel-macos` profile (default features minus
+          # `vision`) so Intel Macs still get a binary, minus ONNX OCR/UI detection.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset_name: syscity-macos-amd64
+            cargo_args: --no-default-features --features intel-macos
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,7 +83,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} --all-features
+        run: cargo build --release --target ${{ matrix.target }} ${{ matrix.cargo_args }}
         env:
           # llama.cpp requires std::filesystem (macOS 10.15+). Cross-target builds
           # default the deployment target lower, so pin it on macOS builds.
@@ -117,6 +125,13 @@ jobs:
             asset_prefix: syscity-desktop-macos-arm64
             updater_target: darwin
             updater_arch: aarch64
+          # Intel macOS desktop: syscity is built via the `intel-macos` profile
+          # (default minus `vision`) — see the target table in desktop/Cargo.toml.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset_prefix: syscity-desktop-macos-amd64
+            updater_target: darwin
+            updater_arch: x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset_prefix: syscity-desktop-windows-amd64
