@@ -1,5 +1,11 @@
+// `tauri_utils::build::link_apple_library` is cfg(target_os = "macos"), so the
+// Swift link helpers below only exist on a macOS build host (they're compiled
+// for the host regardless of the cross-target).
+#[cfg(target_os = "macos")]
+use std::env;
+#[cfg(target_os = "macos")]
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -17,11 +23,14 @@ fn main() {
     // their `ios/` packages (tauri-plugin-2.x/src/build/mobile.rs): the Tauri
     // Swift framework is copied into `mobile-ios/.tauri/tauri-api` and the
     // plugin package's `Package.swift` resolves `Tauri` from that relative path.
+    // `link_apple_library` is macOS-host-only, so the whole branch is gated.
+    #[cfg(target_os = "macos")]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
         link_ios_swift();
     }
 }
 
+#[cfg(target_os = "macos")]
 fn link_ios_swift() {
     let tauri_library_path = env::var("DEP_TAURI_IOS_LIBRARY_PATH")
         .expect("missing DEP_TAURI_IOS_LIBRARY_PATH; the `tauri` crate must be a dependency");
@@ -39,6 +48,7 @@ fn link_ios_swift() {
 
 /// Recursively copy a directory tree, skipping any path segment that starts
 /// with one of `ignore_prefixes` (same exclusion list as tauri-plugin).
+#[cfg(target_os = "macos")]
 fn copy_dir_recursive(source: &Path, target: &Path, ignore_prefixes: &[&str]) -> io::Result<()> {
     if !source.is_dir() {
         return Ok(());
