@@ -207,17 +207,7 @@ async fn goal_planner_fallback_when_no_adapter() {
     let mock = llm_mock_provider_for_streaming();
     register_mock_provider_with_model(&router, mock, "mock-model").await;
 
-    tokio::spawn(async move {
-        let _ = gateway.start().await;
-    });
-
-    let url = format!("ws://127.0.0.1:{}/ws", 40502);
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        if connect_async(&url).await.is_ok() {
-            break;
-        }
-    }
+    start_gateway_and_wait(40502, gateway).await;
 
     let mut client = FrontendSimulator::connect(40502).await;
     let sid = client.create_session().await;

@@ -21,6 +21,7 @@ pub use tokio_tungstenite::{
     connect_async, connect_async_with_config, tungstenite::protocol::Message,
     tungstenite::protocol::WebSocketConfig,
 };
+use tracing_subscriber::EnvFilter;
 
 // ── Type Aliases
 // ──────────────────────────────────────────────────────────────
@@ -191,24 +192,158 @@ pub fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
     config
 }
 
+// ── Gateway startup ─────────────────────────────────────────────
+//
+// e2e tests spawn an in-process gateway whose `info!`/`warn!` logs would
+// otherwise go nowhere (tests install no tracing subscriber). We install a
+// buffered subscriber once per process: it captures gateway logs (bounded)
+// and only dumps them to stderr when a gateway fails to start, so a CI
+// failure shows the failing startup step instead of a bare timeout panic.
+// `RUST_LOG` widens the default `warn,syscity=info` filter.
+
+/// Startup wait window — 30s, aligned with the SQLite pool `acquire_timeout`
+/// in `DelegationTaskStore` so a contended pool connection cannot outlive the
+/// wait and read as a spurious "did not start" failure.
+pub const GATEWAY_START_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Cap on captured log bytes. Bounds memory in long-running chat tests while
+/// keeping the tail (the part relevant to a failure) available.
+const LOG_BUFFER_CAP: usize = 4 * 1024 * 1024;
+
+/// Global captured tracing output, appended by `CaptureWriter`.
+static LOG_BUFFER: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+
+/// `io::Write` sink that appends into `LOG_BUFFER`, keeping at most
+/// `LOG_BUFFER_CAP` bytes (dropping the head when full).
+#[derive(Clone, Default)]
+struct CaptureWriter;
+
+impl std::io::Write for CaptureWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut guard = match LOG_BUFFER.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if guard.len() >= LOG_BUFFER_CAP {
+            guard.clear();
+            guard.extend_from_slice(b"[logs truncated: capture buffer full]\n");
+        }
+        let available = LOG_BUFFER_CAP.saturating_sub(guard.len());
+        let take = buf.len().min(available);
+        guard.extend_from_slice(&buf[..take]);
+        if take < buf.len() {
+            guard.extend_from_slice(b"[logs truncated]\n");
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Install the buffered tracing subscriber once. Idempotent across the
+/// parallel test processes' threads (a second `try_init` is a no-op).
+fn init_test_tracing() {
+    let filter = match EnvFilter::try_from_default_env() {
+        Ok(filter) => filter,
+        Err(_) => EnvFilter::new("warn,syscity=info"),
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        // `with_writer` accepts a closure returning a `Write`; each returned
+        // writer appends into the shared `LOG_BUFFER` via `CaptureWriter`.
+        .with_writer(|| CaptureWriter)
+        .with_ansi(false)
+        .try_init();
+}
+
+/// Print captured logs to stderr and clear the buffer. Called only when a
+/// gateway fails to start, so the failing startup step is visible in CI.
+pub fn dump_captured_logs() {
+    let mut guard = match LOG_BUFFER.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let captured = std::mem::take(&mut *guard);
+    drop(guard);
+    if captured.is_empty() {
+        return;
+    }
+    eprint!(
+        "--- captured tracing logs (set RUST_LOG to widen filter) ---\n{}",
+        String::from_utf8_lossy(&captured)
+    );
+    eprintln!("--- end captured logs ---");
+}
+
+/// Spawn `gateway.start()` in a task and wait for its WS listener to accept
+/// connections.
+///
+/// `start()`'s `Result` is captured over a oneshot channel so a timeout can
+/// distinguish "start() returned Err (step N)" from "start() still running",
+/// and any captured gateway logs are dumped before panicking.
+pub async fn start_gateway_and_wait(port: u16, gateway: Gateway) {
+    init_test_tracing();
+
+    let url = format!("ws://127.0.0.1:{}/ws", port);
+    let (started_tx, mut started_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let result = gateway.start().await;
+        let _ = started_tx.send(result);
+    });
+
+    let deadline = tokio::time::Instant::now() + GATEWAY_START_TIMEOUT;
+    let mut last_connect_err = None;
+    while tokio::time::Instant::now() < deadline {
+        match timeout(Duration::from_secs(5), connect_async(&url)).await {
+            Ok(Ok(_)) => return,
+            Ok(Err(e)) => last_connect_err = Some(e.to_string()),
+            Err(_) => last_connect_err = Some("connect timed out".to_string()),
+        }
+        // If `start()` already returned (typically a fast failure like a bind
+        // error), report it now instead of polling for the full window.
+        if let Ok(started) = started_rx.try_recv() {
+            panic_gateway_start(Some(started), &last_connect_err);
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    // Deadline reached without a listener. Report whether `start()` has
+    // returned in the meantime, or is still running.
+    match started_rx.try_recv() {
+        Ok(started) => panic_gateway_start(Some(started), &last_connect_err),
+        Err(_) => panic_gateway_start(None, &last_connect_err),
+    }
+}
+
+/// Panic with a diagnostic distinguishing `start()`'s result from "still
+/// running", dumping any captured gateway logs.
+fn panic_gateway_start(
+    started: Option<syscity::Result<()>>,
+    last_connect_err: &Option<String>,
+) -> ! {
+    let mut msg = format!("Gateway startup failed (last connect error: {:?})", last_connect_err);
+    match started {
+        Some(Ok(())) => {
+            msg.push_str("; gateway.start() returned Ok but never bound the WS listener")
+        }
+        Some(Err(e)) => msg.push_str(&format!("; gateway.start() returned an error: {e}")),
+        None => msg.push_str(&format!(
+            "; gateway.start() is still running after the {}-second wait window",
+            GATEWAY_START_TIMEOUT.as_secs()
+        )),
+    }
+    dump_captured_logs();
+    panic!("{msg}");
+}
+
 pub async fn start_test_gateway(port: u16, with_provider: bool) {
     let config = test_config(port, with_provider);
     let gateway = Gateway::new(config, None)
         .await
         .expect("Failed to create test gateway");
-
-    tokio::spawn(async move {
-        let _ = gateway.start().await;
-    });
-
-    let url = format!("ws://127.0.0.1:{}/ws", port);
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        if connect_async(&url).await.is_ok() {
-            return;
-        }
-    }
-    panic!("Gateway did not start within 10 seconds");
+    start_gateway_and_wait(port, gateway).await;
 }
 
 /// Register a mock provider instance and its owned model so routing resolves
@@ -251,18 +386,7 @@ pub async fn start_test_gateway_with_mock(port: u16, mock: MockProvider) {
     // "mock-model" -> mock provider.
     register_mock_provider_with_model(&router, mock, "mock-model").await;
 
-    tokio::spawn(async move {
-        let _ = gateway.start().await;
-    });
-
-    let url = format!("ws://127.0.0.1:{}/ws", port);
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        if connect_async(&url).await.is_ok() {
-            return;
-        }
-    }
-    panic!("Gateway did not start within 10 seconds");
+    start_gateway_and_wait(port, gateway).await;
 }
 
 // ── Mock Provider Builders ───────────────────────────────────────────────────

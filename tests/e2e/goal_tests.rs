@@ -59,18 +59,7 @@ async fn start_goal_test_gateway(port: u16) {
         .await
         .expect("Failed to set default model");
 
-    tokio::spawn(async move {
-        let _ = gateway.start().await;
-    });
-
-    let url = format!("ws://127.0.0.1:{}/ws", port);
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        if connect_async(&url).await.is_ok() {
-            return;
-        }
-    }
-    panic!("Gateway did not start within 10 seconds");
+    start_gateway_and_wait(port, gateway).await;
 }
 
 #[tokio::test]
