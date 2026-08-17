@@ -26,6 +26,7 @@
 //!   tasks.rs     cron + task scheduler
 //!   skills_ws.rs skills.list / skills.install
 //!   logs.rs      logs.subscribe / logs.unsubscribe
+//!   workspace.rs workspace.list / workspace.read (agent workspace browser)
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -143,6 +144,7 @@ mod models;
 mod sessions;
 mod skills_ws;
 mod tasks;
+mod workspace;
 
 pub use core::{ws_auth_middleware, ws_handler};
 

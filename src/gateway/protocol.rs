@@ -256,6 +256,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "skills.install"
         | "logs.subscribe"
         | "logs.unsubscribe"
+        | "workspace.list"
+        | "workspace.read"
         | "tasks.list"
         | "mcp.list"
         | "mcp.presets"

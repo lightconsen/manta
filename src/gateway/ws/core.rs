@@ -507,6 +507,8 @@ async fn dispatch_method(
         "skills.install" => skills_ws::handle_skills_install(req, state).await,
         "logs.subscribe" => logs::handle_logs_subscribe(req, conn, state, cmd_tx).await,
         "logs.unsubscribe" => logs::handle_logs_unsubscribe(req, conn, state).await,
+        "workspace.list" => workspace::handle_workspace_list(req, state).await,
+        "workspace.read" => workspace::handle_workspace_read(req, state).await,
         "acp.list" => acp::handle_acp_list(req, state).await,
         "acp.spawn" => acp::handle_acp_spawn(req, conn, state).await,
         "acp.terminate" => acp::handle_acp_terminate(req, state).await,

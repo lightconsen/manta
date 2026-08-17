@@ -17,6 +17,7 @@ import { ChatContent } from "@/components/chat/ChatContent";
 import { useGoalStore } from "@/stores/goalStore";
 import { GoalPanel } from "@/components/chat/GoalPanel";
 import { DocumentPreviewPanel } from "@/components/shared/DocumentPreviewPanel";
+import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
 import { UpdateBanner } from "@/components/update/UpdateBanner";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
@@ -133,6 +134,9 @@ function ChatApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const previewDocument = useChatStore((s) => s.previewDocument);
   const setPreviewDocument = useChatStore((s) => s.setPreviewDocument);
+  const workspacePanelOpen = useChatStore((s) => s.workspacePanelOpen);
+  const setWorkspacePanelOpen = useChatStore((s) => s.setWorkspacePanelOpen);
+  const currentAgent = useChatStore((s) => s.currentAgent);
 
   // Resizable split panel state
   const [previewRatio, setPreviewRatio] = useState(() => {
@@ -610,7 +614,7 @@ function ChatApp() {
         {!settingsOpen && <UpdateBanner />}
         {settingsOpen ? (
           <SettingsPanel transport={transport} onClose={() => setSettingsOpen(false)} />
-        ) : previewDocument && !isMobile ? (
+        ) : (previewDocument || workspacePanelOpen) && !isMobile ? (
           <div
             ref={splitContainerRef}
             className="flex flex-row h-full overflow-hidden"
@@ -654,15 +658,24 @@ function ChatApp() {
                 window.addEventListener("mouseup", onUp);
               }}
             />
-            {/* Right: document preview */}
+            {/* Right: workspace browser or document preview (mutually
+                exclusive — enforced by the store setters) */}
             <div
               className="min-w-0 overflow-hidden flex flex-col"
               style={{ flex: `${previewRatio} 1 0%` }}
             >
-              <DocumentPreviewPanel
-                document={previewDocument}
-                onClose={() => setPreviewDocument(null)}
-              />
+              {workspacePanelOpen ? (
+                <WorkspacePanel
+                  key={currentAgent?.id ?? "default"}
+                  transport={transport}
+                  onClose={() => setWorkspacePanelOpen(false)}
+                />
+              ) : previewDocument ? (
+                <DocumentPreviewPanel
+                  document={previewDocument}
+                  onClose={() => setPreviewDocument(null)}
+                />
+              ) : null}
             </div>
           </div>
         ) : (

@@ -41,6 +41,7 @@ interface ChatState {
   hasMoreHistory: boolean;
   aiInternalsVisibility: Record<string, boolean>;
   previewDocument: { filename: string; title: string; format: string } | null;
+  workspacePanelOpen: boolean;
 
   setMessages: (messages: ChatMessage[]) => void;
   prependMessages: (messages: ChatMessage[]) => void;
@@ -66,6 +67,7 @@ interface ChatState {
   setHasMoreHistory: (hasMore: boolean) => void;
   setAiInternalsVisibility: (messageId: string, visible: boolean) => void;
   setPreviewDocument: (doc: { filename: string; title: string; format: string } | null) => void;
+  setWorkspacePanelOpen: (open: boolean) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -80,6 +82,7 @@ export const useChatStore = create<ChatState>((set) => ({
   hasMoreHistory: false,
   aiInternalsVisibility: loadInternalsVisibility(),
   previewDocument: null,
+  workspacePanelOpen: false,
 
   setMessages: (messages) => set({ messages }),
   prependMessages: (messages) => set((s) => ({ messages: [...messages, ...s.messages] })),
@@ -106,5 +109,10 @@ export const useChatStore = create<ChatState>((set) => ({
       saveInternalsVisibility(next);
       return { aiInternalsVisibility: next };
     }),
-  setPreviewDocument: (doc) => set({ previewDocument: doc }),
+  // The workspace panel and document preview share the right-side pane;
+  // opening one closes the other.
+  setPreviewDocument: (doc) =>
+    set(doc ? { previewDocument: doc, workspacePanelOpen: false } : { previewDocument: doc }),
+  setWorkspacePanelOpen: (open) =>
+    set(open ? { workspacePanelOpen: true, previewDocument: null } : { workspacePanelOpen: false }),
 }));

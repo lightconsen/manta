@@ -797,3 +797,4 @@ mod session_tests;
 mod tool_chat_tests;
 #[cfg(feature = "vision")]
 mod vision_tests;
+mod workspace_tests;

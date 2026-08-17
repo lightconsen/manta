@@ -557,6 +557,69 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
+  /** List one directory level of an agent's workspace (undefined = default agent). */
+  async workspaceList(
+    agentId: string | undefined,
+    path: string
+  ): Promise<{
+    root: string;
+    path: string;
+    entries: Array<{
+      name: string;
+      path: string;
+      kind: "dir" | "file";
+      size: number;
+      modified?: number;
+    }>;
+  }> {
+    const params: Record<string, unknown> = { path };
+    if (agentId) params.agent_id = agentId;
+    const res = (await this.sendRequestAndWait("workspace.list", params)) as
+      | {
+          root?: string;
+          path?: string;
+          entries?: Array<{
+            name: string;
+            path: string;
+            kind: "dir" | "file";
+            size: number;
+            modified?: number;
+          }>;
+        }
+      | undefined;
+    return { root: res?.root ?? "", path: res?.path ?? path, entries: res?.entries ?? [] };
+  }
+
+  /** Read a text file from an agent's workspace (undefined = default agent). */
+  async workspaceRead(
+    agentId: string | undefined,
+    path: string
+  ): Promise<{
+    path: string;
+    size: number;
+    truncated: boolean;
+    binary: boolean;
+    content?: string;
+  }> {
+    const params: Record<string, unknown> = { path };
+    if (agentId) params.agent_id = agentId;
+    const res = (await this.sendRequestAndWait("workspace.read", params)) as
+      | {
+          size?: number;
+          truncated?: boolean;
+          binary?: boolean;
+          content?: string;
+        }
+      | undefined;
+    return {
+      path,
+      size: res?.size ?? 0,
+      truncated: res?.truncated ?? false,
+      binary: res?.binary ?? false,
+      content: res?.content,
+    };
+  }
+
   getLocalSessions(): string[] {
     try {
       return JSON.parse(localStorage.getItem("syscity_sessions") || "[]");
