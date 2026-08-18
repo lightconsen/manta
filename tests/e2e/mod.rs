@@ -792,6 +792,7 @@ mod health_tests;
 mod llm_chat_tests;
 mod mock_chat_tests;
 mod planner_tests;
+mod post_execute_tests;
 mod screen_recorder_tests;
 mod session_tests;
 mod tool_chat_tests;

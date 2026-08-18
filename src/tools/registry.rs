@@ -10,8 +10,8 @@ use tracing::{info, warn};
 use super::util::consume_stream;
 use super::{
     ApprovalDecision, ApprovalQueue, BoxedTool, PendingApproval, PolicyEvaluationContext,
-    SharedTool, SkillTrust, Tool, ToolContext, ToolExecutionChunk, ToolExecutionResult, ToolHooks,
-    ToolPolicyDecision,
+    PostExecuteDecision, SharedTool, SkillTrust, Tool, ToolContext, ToolExecutionChunk,
+    ToolExecutionResult, ToolHooks, ToolPolicyDecision,
 };
 use crate::providers::{FunctionCall, FunctionDefinition};
 
@@ -856,7 +856,9 @@ impl ToolRegistry {
                     .run_after(name, &args, exec_result)
                     .await;
             }
-            return self.filter_and_audit(name, context, Some(result)).await;
+            return self
+                .finalize_result(name, &args, context, Some(result))
+                .await;
         }
 
         // Execute the tool — clone args so the original remains for after-hooks
@@ -907,7 +909,9 @@ impl ToolRegistry {
         }
 
         let _t_filter = std::time::Instant::now();
-        let result = self.filter_and_audit(name, context, execution_result).await;
+        let result = self
+            .finalize_result(name, &args, context, execution_result)
+            .await;
         info!("[Timing] filter_and_audit({}) done in {:?}", name, _t_filter.elapsed());
         result
     }
@@ -1001,6 +1005,56 @@ impl ToolRegistry {
         result
     }
 
+    /// Run the post-execute hook chain on a finished result, then apply
+    /// content filtering and audit logging.
+    ///
+    /// This is the single choke point every execution path funnels through
+    /// (buffered, streaming, cached, and bare `execute_call`). Post-execute
+    /// hooks see the raw result and may replace its output or confiscate it
+    /// with corrective feedback; the content filter always has the final
+    /// word on whatever the hooks leave behind.
+    async fn finalize_result(
+        &self,
+        name: &str,
+        args: &Value,
+        context: &ToolContext,
+        result: Option<crate::Result<ToolExecutionResult>>,
+    ) -> Option<crate::Result<ToolExecutionResult>> {
+        let result = match result {
+            Some(Ok(exec_result)) if self.active_hooks().has_post_execute_hooks() => {
+                let decision = self
+                    .active_hooks()
+                    .run_post_execute(name, args, &exec_result)
+                    .await;
+                Some(Ok(Self::apply_post_execute(name, exec_result, decision)))
+            }
+            other => other,
+        };
+        self.filter_and_audit(name, context, result).await
+    }
+
+    /// Apply a post-execute decision to a finished result.
+    fn apply_post_execute(
+        name: &str,
+        result: ToolExecutionResult,
+        decision: PostExecuteDecision,
+    ) -> ToolExecutionResult {
+        match decision {
+            PostExecuteDecision::Accept => result,
+            PostExecuteDecision::ReplaceOutput(output) => ToolExecutionResult { output, ..result },
+            PostExecuteDecision::Block(feedback) => {
+                warn!("Tool '{}' result blocked by post-execute policy: {}", name, feedback);
+                ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(feedback),
+                    data: None,
+                    execution_time: result.execution_time,
+                }
+            }
+        }
+    }
+
     /// Execute a tool by name, skipping the cache layer but still running the
     /// full policy, approval, hooks, and audit pipeline.
     ///
@@ -1079,7 +1133,9 @@ impl ToolRegistry {
         }
 
         let _t_filter = std::time::Instant::now();
-        let result = self.filter_and_audit(name, context, execution_result).await;
+        let result = self
+            .finalize_result(name, &args, context, execution_result)
+            .await;
         info!("[Timing] filter_and_audit({}) done in {:?}", name, _t_filter.elapsed());
         result
     }
@@ -1134,7 +1190,7 @@ impl ToolRegistry {
         // Try static tools first
         if let Some(tool) = self.get(&tool_name) {
             let exec_start = std::time::Instant::now();
-            let exec_future = tool.execute(args, context);
+            let exec_future = tool.execute(args.clone(), context);
             let result: crate::Result<ToolExecutionResult> =
                 tokio::time::timeout(timeout, exec_future)
                     .await
@@ -1152,7 +1208,16 @@ impl ToolRegistry {
                 exec_start.elapsed(),
                 timeout
             );
-            return result;
+            return match self
+                .finalize_result(&tool_name, &args, context, Some(result))
+                .await
+            {
+                Some(r) => r,
+                None => Err(crate::error::SyscityError::Validation(format!(
+                    "Tool '{}' finalization failed",
+                    tool_name
+                ))),
+            };
         }
 
         // Try dynamic tools
@@ -1165,7 +1230,7 @@ impl ToolRegistry {
         if let Some(tool) = dynamic_tool {
             if !self.is_blocked(&tool_name) && !self.is_degraded(&tool_name) {
                 let exec_start = std::time::Instant::now();
-                let exec_future = tool.execute(args, context);
+                let exec_future = tool.execute(args.clone(), context);
                 let result: crate::Result<ToolExecutionResult> =
                     tokio::time::timeout(timeout, exec_future)
                         .await
@@ -1183,7 +1248,16 @@ impl ToolRegistry {
                     exec_start.elapsed(),
                     timeout
                 );
-                return result;
+                return match self
+                    .finalize_result(&tool_name, &args, context, Some(result))
+                    .await
+                {
+                    Some(r) => r,
+                    None => Err(crate::error::SyscityError::Validation(format!(
+                        "Tool '{}' finalization failed",
+                        tool_name
+                    ))),
+                };
             }
         }
 
@@ -1315,7 +1389,7 @@ impl ToolRegistry {
         collected: ToolExecutionResult,
     ) -> Option<crate::Result<ToolExecutionResult>> {
         self.active_hooks().run_after(name, args, &collected).await;
-        self.filter_and_audit(name, context, Some(Ok(collected)))
+        self.finalize_result(name, args, context, Some(Ok(collected)))
             .await
     }
 }

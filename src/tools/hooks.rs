@@ -83,6 +83,49 @@ impl ToolPolicyDecision {
     }
 }
 
+// ── Post-execute decision
+// ───────────────────────────────────────────────────────────
+
+/// The decision a post-execute hook makes for a finished tool call.
+///
+/// Post-execute hooks run after the tool body completes and before content
+/// filtering / audit. Unlike [`ToolPolicyDecision`] (which gates *whether*
+/// a call runs), a post-execute decision governs *what the model gets to
+/// see* of the result — it can replace the output, or confiscate the result
+/// with corrective feedback so the model self-corrects on its next request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostExecuteDecision {
+    /// Keep the result unchanged.
+    Accept,
+    /// Replace the model-facing output; success flag, error, and the
+    /// structured `data` side-channel are preserved.
+    ReplaceOutput(String),
+    /// Confiscate the result: it becomes an error whose message IS the
+    /// feedback. The original output, error, and `data` are discarded
+    /// entirely — a blocked result cannot smuggle content through any
+    /// side channel.
+    Block(String),
+}
+
+/// A boxed async function called after a tool executes, with the power to
+/// replace or block the result before it goes back to the model.
+///
+/// Receives the tool name, the call arguments, the original (read-only)
+/// result, and the upstream decision from hooks registered earlier. Hooks
+/// run in registration order as a chain: each hook's returned decision
+/// becomes the next hook's upstream; the chain starts from
+/// [`PostExecuteDecision::Accept`].
+pub type PostExecuteHookFn = Arc<
+    dyn Fn(
+            &str,
+            &Value,
+            &ToolExecutionResult,
+            PostExecuteDecision,
+        ) -> Pin<Box<dyn Future<Output = PostExecuteDecision> + Send>>
+        + Send
+        + Sync,
+>;
+
 // ── Hook type aliases
 // ─────────────────────────────────────────────────────────
 
@@ -141,6 +184,7 @@ pub struct ToolHooks {
     before_call: Vec<BeforeHookFn>,
     after_call: Vec<AfterHookFn>,
     policy_hooks: Vec<PolicyHookFn>,
+    post_execute_hooks: Vec<PostExecuteHookFn>,
 }
 
 impl std::fmt::Debug for ToolHooks {
@@ -149,6 +193,7 @@ impl std::fmt::Debug for ToolHooks {
             .field("before_hooks", &self.before_call.len())
             .field("after_hooks", &self.after_call.len())
             .field("policy_hooks", &self.policy_hooks.len())
+            .field("post_execute_hooks", &self.post_execute_hooks.len())
             .finish()
     }
 }
@@ -202,14 +247,45 @@ impl ToolHooks {
         self
     }
 
+    /// Add a post-execute hook that can replace or block a tool result.
+    ///
+    /// The hook receives the tool name, the call arguments, the original
+    /// (read-only) result, and the upstream decision. Returning
+    /// [`PostExecuteDecision::Block`] confiscates the result: the model sees
+    /// an error whose content is the feedback, and the original output is
+    /// discarded.
+    pub fn post_execute<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(&str, &Value, &ToolExecutionResult, PostExecuteDecision) -> Fut
+            + Send
+            + Sync
+            + 'static,
+        Fut: Future<Output = PostExecuteDecision> + Send + 'static,
+    {
+        self.post_execute_hooks
+            .push(Arc::new(move |name, args, result, decision| {
+                Box::pin(f(name, args, result, decision))
+                    as Pin<Box<dyn Future<Output = PostExecuteDecision> + Send>>
+            }));
+        self
+    }
+
     /// Returns `true` if no hooks are registered.
     pub fn is_empty(&self) -> bool {
-        self.before_call.is_empty() && self.after_call.is_empty() && self.policy_hooks.is_empty()
+        self.before_call.is_empty()
+            && self.after_call.is_empty()
+            && self.policy_hooks.is_empty()
+            && self.post_execute_hooks.is_empty()
     }
 
     /// Returns `true` if at least one policy hook is registered.
     pub fn has_policy_hooks(&self) -> bool {
         !self.policy_hooks.is_empty()
+    }
+
+    /// Returns `true` if at least one post-execute hook is registered.
+    pub fn has_post_execute_hooks(&self) -> bool {
+        !self.post_execute_hooks.is_empty()
     }
 
     /// Run all registered policy hooks for the given tool call.
@@ -238,6 +314,43 @@ impl ToolHooks {
         for hook in &self.after_call {
             hook(name, args, result).await;
         }
+    }
+
+    /// Run the post-execute decision chain for a finished tool call.
+    ///
+    /// Hooks run in registration order; each receives the original result
+    /// (read-only) and the upstream decision, and its returned decision
+    /// becomes the next hook's upstream. A panicking hook fails closed: the
+    /// result is confiscated with a generic feedback message rather than
+    /// passed through uninspected (the panic payload is logged, never
+    /// forwarded to the model).
+    pub async fn run_post_execute(
+        &self,
+        name: &str,
+        args: &Value,
+        result: &ToolExecutionResult,
+    ) -> PostExecuteDecision {
+        use futures::FutureExt;
+
+        let mut decision = PostExecuteDecision::Accept;
+        for hook in &self.post_execute_hooks {
+            let pending = std::panic::AssertUnwindSafe(hook(name, args, result, decision));
+            match pending.catch_unwind().await {
+                Ok(d) => decision = d,
+                Err(payload) => {
+                    let detail = payload
+                        .downcast_ref::<&str>()
+                        .map(|s| (*s).to_string())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "unknown panic".to_string());
+                    tracing::error!("post-execute hook panicked for tool '{}': {}", name, detail);
+                    decision = PostExecuteDecision::Block(
+                        "Tool result withheld: a post-execute policy hook failed.".to_string(),
+                    );
+                }
+            }
+        }
+        decision
     }
 }
 
@@ -378,6 +491,59 @@ mod tests {
         let hooks = ToolHooks::new();
         let decision = hooks.run_policy("any", &serde_json::json!({})).await;
         assert_eq!(decision, ToolPolicyDecision::Allow);
+    }
+
+    // ── Post-execute decision chain ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_post_execute_no_hooks_accepts() {
+        let hooks = ToolHooks::new();
+        let result = ToolExecutionResult::success("ok".to_string());
+        let decision = hooks
+            .run_post_execute("read", &serde_json::json!({}), &result)
+            .await;
+        assert_eq!(decision, PostExecuteDecision::Accept);
+    }
+
+    #[tokio::test]
+    async fn test_post_execute_chain_accumulates_decisions() {
+        // Hook 1 upgrades Accept → ReplaceOutput; hook 2 must observe the
+        // upstream decision and escalates to Block.
+        let hooks = ToolHooks::new()
+            .post_execute(|_, _, _, upstream| async move {
+                assert_eq!(upstream, PostExecuteDecision::Accept);
+                PostExecuteDecision::ReplaceOutput("replaced".to_string())
+            })
+            .post_execute(|_, _, _, upstream| async move {
+                assert_eq!(upstream, PostExecuteDecision::ReplaceOutput("replaced".to_string()));
+                PostExecuteDecision::Block("confiscated".to_string())
+            });
+
+        let result = ToolExecutionResult::success("original".to_string());
+        let decision = hooks
+            .run_post_execute("read", &serde_json::json!({}), &result)
+            .await;
+        assert_eq!(decision, PostExecuteDecision::Block("confiscated".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_post_execute_hook_panic_fails_closed() {
+        let hooks = ToolHooks::new().post_execute(|_, _, _, _| async move {
+            panic!("boom");
+        });
+
+        let result = ToolExecutionResult::success("sensitive".to_string());
+        let decision = hooks
+            .run_post_execute("read", &serde_json::json!({}), &result)
+            .await;
+        // A panicking policy hook must never pass the result through.
+        match decision {
+            PostExecuteDecision::Block(feedback) => {
+                assert!(!feedback.contains("boom"), "panic payload must not leak");
+                assert!(feedback.contains("post-execute policy hook failed"));
+            }
+            other => panic!("expected Block, got {:?}", other),
+        }
     }
 
     #[tokio::test]

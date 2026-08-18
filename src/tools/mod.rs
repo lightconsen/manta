@@ -85,7 +85,7 @@ pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
 pub use gateway::GatewayTool;
 pub use grep::GrepTool;
 pub use heartbeat_tool::HeartbeatTool;
-pub use hooks::{ToolHooks, ToolPolicyDecision};
+pub use hooks::{PostExecuteDecision, ToolHooks, ToolPolicyDecision};
 pub use image::{ImageGenerateTool, ImageTool};
 pub use list_capabilities::ListCapabilitiesTool;
 pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
@@ -756,6 +756,117 @@ mod tests {
         let result = registry.execute_call(&call, &ctx).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().output, "ok");
+    }
+
+    // ── Post-execute hook pipeline ────────────────────────────────────────
+
+    struct DataTool;
+
+    #[async_trait]
+    impl Tool for DataTool {
+        fn name(&self) -> &str {
+            "data_tool"
+        }
+
+        fn description(&self) -> &str {
+            "A tool returning structured data"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            create_schema("Data", serde_json::json!({}), Vec::<String>::new())
+        }
+
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &ToolContext,
+        ) -> crate::Result<ToolExecutionResult> {
+            Ok(ToolExecutionResult::success("raw output").with_data(serde_json::json!({"k": 1})))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_post_execute_block_on_execute_call() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ReadTool));
+        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _| async move {
+            PostExecuteDecision::Block("write to workspace instead".to_string())
+        }));
+
+        let call = crate::providers::FunctionCall {
+            name: "read".to_string(),
+            arguments: "{}".to_string(),
+        };
+        let ctx = ToolContext::new("user", "conv1");
+        let result = registry.execute_call(&call, &ctx).await.unwrap();
+
+        // Blocked: original output is confiscated, error carries the feedback.
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("write to workspace instead"));
+        assert!(result.output.is_empty());
+        // What the model sees via to_tool_result:
+        let tool_result = result.to_tool_result("c1");
+        assert_eq!(tool_result.is_error, Some(true));
+        assert_eq!(tool_result.content, "Error: write to workspace instead");
+    }
+
+    #[tokio::test]
+    async fn test_post_execute_replace_output_preserves_data() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DataTool));
+        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _| async move {
+            PostExecuteDecision::ReplaceOutput("preview…".to_string())
+        }));
+
+        let ctx = ToolContext::new("user", "conv1");
+        let result = registry
+            .execute("data_tool", serde_json::json!({}), &ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.output, "preview…");
+        assert_eq!(result.data, Some(serde_json::json!({"k": 1})));
+    }
+
+    #[tokio::test]
+    async fn test_post_execute_block_on_streaming() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(StreamingTool));
+        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _| async move {
+            PostExecuteDecision::Block("blocked after stream".to_string())
+        }));
+
+        let call = crate::providers::FunctionCall {
+            name: "streaming_test".to_string(),
+            arguments: "{}".to_string(),
+        };
+        let ctx = ToolContext::new("user", "conv1");
+        let result = registry
+            .execute_call_streaming(&call, &ctx, |_chunk| async move {})
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("blocked after stream"));
+    }
+
+    #[tokio::test]
+    async fn test_post_execute_absent_passes_through() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DataTool));
+
+        let ctx = ToolContext::new("user", "conv1");
+        let result = registry
+            .execute("data_tool", serde_json::json!({}), &ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.output, "raw output");
+        assert_eq!(result.data, Some(serde_json::json!({"k": 1})));
     }
 
     // ── Streaming tool tests ─────────────────────────────────────────────────
