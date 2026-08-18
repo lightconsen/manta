@@ -577,24 +577,15 @@ impl Agent {
                 prompt = format!("{}\n\n{}", prompt, mem_ctx);
             }
 
-            // Add dynamically filtered skills based on user message
+            // Add the stable skills catalog (name + description only).
+            // Skill bodies are loaded on demand via the `skill` tool, so
+            // the system prompt prefix stays identical across messages and
+            // provider prompt caches remain effective.
             if let Some(ref skill_manager) = self.skill_manager {
-                debug!("SkillManager is active, prefiltering skills");
                 let mgr = skill_manager.read().await;
-                let max_skills = mgr.max_skills_in_prompt();
-                let max_chars = mgr.max_skills_prompt_chars();
-                let matching_skills = mgr
-                    .prefilter_skills(user_message, max_skills, max_chars)
-                    .await;
-                if !matching_skills.is_empty() {
-                    // Use token-optimised sections with individual char budget
-                    let budget_per_skill = max_chars / matching_skills.len().max(1);
-                    let skills_text = matching_skills
-                        .iter()
-                        .map(|s| s.to_prompt_section(Some(budget_per_skill)))
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
-                    prompt = format!("{}\n\n## Active Skills\n\n{}", prompt, skills_text);
+                let catalog = mgr.build_catalog().await;
+                if !catalog.is_empty() {
+                    prompt = format!("{}\n\n{}", prompt, catalog);
                 }
             } else if let Some(ref static_skills) = cfg.skills_prompt {
                 // Fallback to static skills prompt if skill_manager not set

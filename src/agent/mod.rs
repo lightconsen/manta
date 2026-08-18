@@ -775,27 +775,31 @@ mod tests {
         )
         .with_skill_manager(skill_manager);
 
-        // Build context with a message that should trigger the weather skill
+        // The prompt carries the stable catalog regardless of message content.
         let ctx = agent
             .build_fresh_context("conv1", "user1", "what's the weather in Beijing")
             .await;
 
         let prompt = ctx.system_prompt();
         assert!(
-            prompt.contains("## Active Skills"),
-            "Expected '## Active Skills' section in prompt, got: {}",
+            prompt.contains("## Available Skills"),
+            "Expected '## Available Skills' catalog in prompt, got: {}",
             prompt
         );
         assert!(
             prompt.contains("**weather**")
                 && prompt.contains("Get weather information for locations"),
-            "Expected weather skill content in prompt, got: {}",
+            "Expected weather catalog row in prompt, got: {}",
             prompt
+        );
+        assert!(
+            !prompt.contains("# Weather Skill"),
+            "Skill bodies must not be inlined into the prompt"
         );
     }
 
     #[tokio::test]
-    async fn test_skill_manager_no_match_without_trigger() {
+    async fn test_skill_catalog_stable_regardless_of_message() {
         let mut skill_manager = crate::skills::SkillManager::new().await.unwrap();
         skill_manager.load_all().await.unwrap();
         let skill_manager = Arc::new(RwLock::new(skill_manager));
@@ -807,15 +811,16 @@ mod tests {
         )
         .with_skill_manager(skill_manager);
 
-        // Generic message should not trigger any skills
+        // Even a message matching no trigger gets the same catalog — the
+        // prompt prefix no longer varies per message.
         let ctx = agent
             .build_fresh_context("conv2", "user1", "hello there")
             .await;
 
         let prompt = ctx.system_prompt();
         assert!(
-            !prompt.contains("## Active Skills"),
-            "Expected no skills section for generic message, got: {}",
+            prompt.contains("## Available Skills"),
+            "Catalog must be present for any message, got: {}",
             prompt
         );
     }

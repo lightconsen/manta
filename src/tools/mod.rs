@@ -67,6 +67,7 @@ pub mod sdk;
 pub mod session;
 pub mod shell;
 pub mod shell_safety;
+pub mod skill_tool;
 pub(crate) mod spill;
 pub mod stt;
 pub mod time;
@@ -105,6 +106,7 @@ pub use session::{
     SessionStatusTool, SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
 };
 pub use shell::ShellTool;
+pub use skill_tool::SkillTool;
 pub(crate) use spill::head_tail_truncate;
 pub use stt::SttTool;
 pub use time::TimeTool;

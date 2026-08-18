@@ -224,6 +224,7 @@ pub async fn init_plugin_manager(
 }
 
 /// Initialize the full tool subsystem.
+#[allow(clippy::too_many_arguments)] // boot wiring: each dep is a distinct shared handle
 pub async fn init_tools(
     config: &GatewayConfig,
     acp: Arc<AcpControlPlane>,
@@ -232,6 +233,7 @@ pub async fn init_tools(
     model_router: Arc<ModelRouter>,
     task_registry: Arc<crate::gateway::task_registry::TaskRegistry>,
     device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
+    skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
 ) -> crate::Result<ToolsInit> {
     let (mcp_manager, mcp_event_rx) = init_mcp_manager().await;
     let approval_queue = Arc::new(ApprovalQueue::new());
@@ -251,6 +253,7 @@ pub async fn init_tools(
                 content_filter: Some(Arc::new(ContentFilter::default())),
                 search_config: config.search.clone(),
                 device_bridge,
+                skills_manager,
             },
         )
         .await?,

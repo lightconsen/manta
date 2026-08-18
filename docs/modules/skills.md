@@ -6,6 +6,10 @@ Skill system for extending agent behavior with modular, trigger-activated prompt
 
 A **skill** is a reusable prompt bundle with YAML frontmatter metadata, trigger conditions, runtime requirements, and optional dependencies. Skills are stored at multiple levels and can be hot-reloaded.
 
+### Prompt Injection: catalog + on-demand bodies
+
+The system prompt carries only a **stable catalog** — name + description for every eligible skill (`SkillManager::build_catalog`), identical across messages so provider prompt caches stay effective. Skill bodies are **not** inlined: the model loads full instructions on demand via the `skill` tool (`SkillTool`), which returns the body plus any dependencies in dependency order. Explicit invocations (the `/cmd` slash triggers, the REST run endpoint) still prepend the full body directly.
+
 - **`Skill`** — Core skill struct: name, description, prompt, triggers, metadata, dependencies
 - **`SkillRegistry`** — Remote registry client for discovery and installation (ClawHub, skills.syscity.dev)
 - **`SkillStorage`** / **`StorageLevel`** — Multi-level storage:

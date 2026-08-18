@@ -915,6 +915,8 @@ pub(crate) struct ToolRegistryArgs {
     pub search_config: crate::gateway::config::SearchConfig,
     /// Native device bridge (mobile only; `None` on desktop).
     pub device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
+    /// Shared skill manager for the on-demand `skill` tool.
+    pub skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
 }
 
 /// Create default tool registry with all built-in tools
@@ -934,6 +936,7 @@ pub(crate) async fn create_default_tool_registry(
         content_filter,
         search_config,
         device_bridge,
+        skills_manager,
     } = args;
 
     let mut registry = ToolRegistry::new()
@@ -950,6 +953,9 @@ pub(crate) async fn create_default_tool_registry(
     registry.register(Box::new(crate::tools::WriteReportTool::new()));
     registry.register(Box::new(GlobTool::new()));
     registry.register(Box::new(GrepTool::new()));
+
+    // On-demand skill body loader (the prompt carries only the catalog).
+    registry.register(Box::new(SkillTool::new(skills_manager)));
 
     // Register shell/execution tools wrapped in sandbox for path & timeout
     // enforcement. ShellTool needs network access (git, curl, etc.);

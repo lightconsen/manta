@@ -333,6 +333,7 @@ impl Gateway {
             model_router.clone(),
             task_registry.clone(),
             device_bridge.clone(),
+            skills_manager.clone(),
         )
         .await?;
 

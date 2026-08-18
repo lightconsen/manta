@@ -200,6 +200,12 @@ impl SkillManager {
         skills.get(name).cloned()
     }
 
+    /// Insert a skill directly, bypassing guard/validation — test-only.
+    #[cfg(test)]
+    pub(crate) async fn insert_for_test(&self, skill: Skill) {
+        self.skills.write().await.insert(skill.name.clone(), skill);
+    }
+
     /// Activate a skill with runtime requirement verification.
     ///
     /// Unlike `get_skill()` which returns the cached skill,
@@ -353,6 +359,40 @@ impl SkillManager {
             output.push('\n');
         }
 
+        output
+    }
+
+    /// Render the stable name+description catalog of all eligible skills.
+    ///
+    /// The catalog contains no skill bodies — the model loads them on demand
+    /// via the `skill` tool. It is identical across messages (changing only
+    /// on skill add/remove/reload), which keeps the system prompt prefix
+    /// stable and provider prompt caches effective. Returns an empty string
+    /// when no eligible skills exist.
+    pub async fn build_catalog(&self) -> String {
+        let mut skills = self.list_eligible_skills().await;
+        if skills.is_empty() {
+            return String::new();
+        }
+
+        // Deterministic order: trust first, then name — the catalog must be
+        // byte-identical across messages.
+        skills.sort_by(|a, b| {
+            std::cmp::Reverse(a.metadata.trust)
+                .cmp(&std::cmp::Reverse(b.metadata.trust))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        let max = self.max_skills_in_prompt();
+        if max > 0 {
+            skills.truncate(max);
+        }
+
+        let mut output = String::from("## Available Skills\n\n");
+        for skill in &skills {
+            output.push_str(skill.format_for_prompt(false).trim_end());
+            output.push('\n');
+        }
+        output.push_str("\nCall the `skill` tool with a skill name to load its full instructions.");
         output
     }
 
@@ -809,6 +849,39 @@ mod tests {
 
         let order = manager.resolve_dependencies("app").await.unwrap();
         assert_eq!(order, vec!["base", "app"]);
+    }
+
+    #[tokio::test]
+    async fn test_build_catalog_format_and_stability() {
+        let manager = SkillManager::new().await.unwrap();
+        {
+            let mut skills = manager.skills.write().await;
+            skills.insert(
+                "alpha".to_string(),
+                Skill::new("alpha", "Alpha does X", "FULL_BODY_ALPHA"),
+            );
+            skills.insert("beta".to_string(), Skill::new("beta", "Beta does Y", "FULL_BODY_BETA"));
+            let mut hidden = Skill::new("hidden", "Hidden", "HIDDEN_BODY");
+            hidden.is_eligible = false;
+            skills.insert("hidden".to_string(), hidden);
+        }
+
+        let catalog = manager.build_catalog().await;
+        assert!(catalog.starts_with("## Available Skills"));
+        assert!(catalog.contains("**alpha**"));
+        assert!(catalog.contains("Alpha does X"));
+        assert!(catalog.contains("**beta**"));
+        assert!(!catalog.contains("hidden"), "ineligible skills excluded");
+        assert!(!catalog.contains("FULL_BODY"), "catalog carries no bodies");
+        assert!(catalog.contains("`skill` tool"), "usage note present");
+        // Byte-identical across calls — prompt prefix stability.
+        assert_eq!(catalog, manager.build_catalog().await);
+    }
+
+    #[tokio::test]
+    async fn test_build_catalog_empty() {
+        let manager = SkillManager::new().await.unwrap();
+        assert_eq!(manager.build_catalog().await, "");
     }
 
     #[tokio::test]
