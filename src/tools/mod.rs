@@ -67,6 +67,7 @@ pub mod sdk;
 pub mod session;
 pub mod shell;
 pub mod shell_safety;
+pub(crate) mod spill;
 pub mod stt;
 pub mod time;
 pub mod todo_tool;
@@ -104,6 +105,7 @@ pub use session::{
     SessionStatusTool, SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
 };
 pub use shell::ShellTool;
+pub(crate) use spill::head_tail_truncate;
 pub use stt::SttTool;
 pub use time::TimeTool;
 pub use todo_tool::TodoTool;
@@ -867,6 +869,160 @@ mod tests {
         assert!(result.success);
         assert_eq!(result.output, "raw output");
         assert_eq!(result.data, Some(serde_json::json!({"k": 1})));
+    }
+
+    // ── Spill stage ───────────────────────────────────────────────────────
+
+    struct BigTool;
+
+    #[async_trait]
+    impl Tool for BigTool {
+        fn name(&self) -> &str {
+            "big"
+        }
+
+        fn description(&self) -> &str {
+            "A tool returning an oversized output"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            create_schema("Big", serde_json::json!({}), Vec::<String>::new())
+        }
+
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &ToolContext,
+        ) -> crate::Result<ToolExecutionResult> {
+            Ok(ToolExecutionResult::success("x".repeat(500)))
+        }
+    }
+
+    fn tmp_workspace() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("syscity_spill_reg_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn spill_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let spill_dir = dir.join(".syscity/spill");
+        match std::fs::read_dir(&spill_dir) {
+            Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_spill_oversized_output_via_execute_call() {
+        let tmp = tmp_workspace();
+        let mut registry = ToolRegistry::new().with_spill_threshold(Some(64));
+        registry.register(Box::new(BigTool));
+
+        let ctx = ToolContext::new("user", "conv1").with_workspace_root(tmp.clone());
+        let call = crate::providers::FunctionCall {
+            name: "big".to_string(),
+            arguments: "{}".to_string(),
+        };
+        let result = registry.execute_call(&call, &ctx).await.unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains(".syscity/spill/"), "preview points at spill file");
+        assert!(result.output.contains("file_read"), "retrieval hint present");
+        assert!(result.output.len() <= 64 + 260, "bounded: {}", result.output.len());
+        assert_eq!(result.data.as_ref().unwrap()["spill"]["total_bytes"], serde_json::json!(500));
+
+        let files = spill_files(&tmp);
+        assert_eq!(files.len(), 1);
+        let on_disk = std::fs::read_to_string(&files[0]).unwrap();
+        assert_eq!(on_disk.len(), 500, "full output preserved on disk");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_spill_skipped_under_threshold() {
+        let tmp = tmp_workspace();
+        let mut registry = ToolRegistry::new(); // default 32KB threshold
+        registry.register(Box::new(BigTool));
+
+        let ctx = ToolContext::new("user", "conv1").with_workspace_root(tmp.clone());
+        let call = crate::providers::FunctionCall {
+            name: "big".to_string(),
+            arguments: "{}".to_string(),
+        };
+        let result = registry.execute_call(&call, &ctx).await.unwrap();
+
+        assert_eq!(result.output, "x".repeat(500), "untouched under threshold");
+        assert!(spill_files(&tmp).is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_spill_skipped_after_hook_block() {
+        let tmp = tmp_workspace();
+        let mut registry = ToolRegistry::new().with_spill_threshold(Some(64));
+        registry.register(Box::new(BigTool));
+        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _| async move {
+            PostExecuteDecision::Block("confiscated".to_string())
+        }));
+
+        let ctx = ToolContext::new("user", "conv1").with_workspace_root(tmp.clone());
+        let call = crate::providers::FunctionCall {
+            name: "big".to_string(),
+            arguments: "{}".to_string(),
+        };
+        let result = registry.execute_call(&call, &ctx).await.unwrap();
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("confiscated"));
+        assert!(spill_files(&tmp).is_empty(), "blocked results are never spilled");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_spill_exempts_file_read() {
+        let tmp = tmp_workspace();
+        let mut registry = ToolRegistry::new().with_spill_threshold(Some(64));
+        registry.register(Box::new(FileReadBigTool));
+
+        let ctx = ToolContext::new("user", "conv1").with_workspace_root(tmp.clone());
+        let call = crate::providers::FunctionCall {
+            name: "file_read".to_string(),
+            arguments: "{}".to_string(),
+        };
+        let result = registry.execute_call(&call, &ctx).await.unwrap();
+
+        assert_eq!(result.output.len(), 500, "file_read output never spilled");
+        assert!(spill_files(&tmp).is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    struct FileReadBigTool;
+
+    #[async_trait]
+    impl Tool for FileReadBigTool {
+        fn name(&self) -> &str {
+            "file_read"
+        }
+
+        fn description(&self) -> &str {
+            "Stand-in for the real file_read tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            create_schema("FileRead", serde_json::json!({}), Vec::<String>::new())
+        }
+
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &ToolContext,
+        ) -> crate::Result<ToolExecutionResult> {
+            Ok(ToolExecutionResult::success("y".repeat(500)))
+        }
     }
 
     // ── Streaming tool tests ─────────────────────────────────────────────────

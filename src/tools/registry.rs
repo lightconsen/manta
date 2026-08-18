@@ -65,6 +65,10 @@ pub struct ToolRegistry {
     /// Shared provider list for the web_search tool. Hot-reload updates this
     /// directly when `[search]` configuration changes.
     web_search_providers: Option<WebSearchProviders>,
+    /// Oversized successful tool outputs above this many bytes are spilled
+    /// to a workspace file and replaced with a head/tail preview.
+    /// `None` disables spilling.
+    spill_threshold: Option<usize>,
 }
 
 impl Default for ToolRegistry {
@@ -84,6 +88,7 @@ impl Default for ToolRegistry {
             content_filter: None,
             audit_log: None,
             web_search_providers: None,
+            spill_threshold: Some(Self::DEFAULT_SPILL_THRESHOLD),
         }
     }
 }
@@ -109,6 +114,10 @@ impl ToolRegistry {
     /// Number of consecutive failures before a tool is circuit-broken.
     pub const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
 
+    /// Default byte budget above which a successful tool output is spilled
+    /// to a workspace file and replaced with a head/tail preview.
+    pub const DEFAULT_SPILL_THRESHOLD: usize = 32 * 1024;
+
     /// Create a new empty registry
     pub fn new() -> Self {
         Self {
@@ -126,6 +135,7 @@ impl ToolRegistry {
             content_filter: None,
             audit_log: None,
             web_search_providers: None,
+            spill_threshold: Some(Self::DEFAULT_SPILL_THRESHOLD),
         }
     }
 
@@ -146,6 +156,7 @@ impl ToolRegistry {
             content_filter: None,
             audit_log: None,
             web_search_providers: None,
+            spill_threshold: Some(Self::DEFAULT_SPILL_THRESHOLD),
         }
     }
 
@@ -153,6 +164,12 @@ impl ToolRegistry {
     /// without rebuilding the registry.
     pub fn with_web_search_providers(mut self, providers: WebSearchProviders) -> Self {
         self.web_search_providers = Some(providers);
+        self
+    }
+
+    /// Override the spill threshold (bytes). `None` disables spilling.
+    pub fn with_spill_threshold(mut self, threshold: Option<usize>) -> Self {
+        self.spill_threshold = threshold;
         self
     }
 
@@ -1030,7 +1047,76 @@ impl ToolRegistry {
             }
             other => other,
         };
+        // Spill bounds whatever the hooks produced; a hook Block yields
+        // success=false and is naturally skipped.
+        let result = match result {
+            Some(Ok(exec_result)) => Some(Ok(self.maybe_spill(name, context, exec_result).await)),
+            other => other,
+        };
         self.filter_and_audit(name, context, result).await
+    }
+
+    /// Spill an oversized successful output to a workspace file, replacing
+    /// the model-facing output with a head/tail preview plus a retrieval
+    /// hint. Best-effort: a failed write keeps the original output — a
+    /// successful call must never turn into a failure here.
+    async fn maybe_spill(
+        &self,
+        name: &str,
+        context: &ToolContext,
+        result: ToolExecutionResult,
+    ) -> ToolExecutionResult {
+        let Some(threshold) = self.spill_threshold else {
+            return result;
+        };
+        // `file_read` is exempt: spilling its output would force the model
+        // into a read -> spill -> read loop.
+        if name == "file_read" || !result.success || result.output.len() <= threshold {
+            return result;
+        }
+
+        let root = context.workspace_root().clone();
+        let tool_name = name.to_string();
+        let output = result.output.clone();
+        let spilled = tokio::task::spawn_blocking(move || {
+            super::spill::spill_output(&root, &tool_name, &output, threshold)
+        })
+        .await;
+
+        match spilled {
+            Ok(Ok(outcome)) => {
+                info!(
+                    "Tool '{}' output spilled ({} bytes) to {}",
+                    name,
+                    outcome.total_bytes,
+                    outcome.path.display()
+                );
+                let mut result = ToolExecutionResult {
+                    output: outcome.replacement,
+                    ..result
+                };
+                let spill_meta = serde_json::json!({
+                    "path": outcome.rel_path,
+                    "total_bytes": outcome.total_bytes,
+                });
+                result.data = Some(match result.data.take() {
+                    Some(mut data) => {
+                        data["spill"] = spill_meta;
+                        data
+                    }
+                    None => serde_json::json!({ "spill": spill_meta }),
+                });
+                result
+            }
+            Ok(Err(e)) => {
+                warn!("Failed to spill tool '{}' output ({}); keeping original", name, e);
+                result
+            }
+            Err(e) => {
+                warn!("Spill task failed for tool '{}' ({}); keeping original", name, e);
+                result
+            }
+        }
     }
 
     /// Apply a post-execute decision to a finished result.

@@ -795,6 +795,7 @@ mod planner_tests;
 mod post_execute_tests;
 mod screen_recorder_tests;
 mod session_tests;
+mod spill_tests;
 mod tool_chat_tests;
 #[cfg(feature = "vision")]
 mod vision_tests;

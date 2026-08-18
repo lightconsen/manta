@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
-use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use super::{create_schema, head_tail_truncate, Tool, ToolContext, ToolExecutionResult};
 use crate::tools::process_runner::{ProcessError, ProcessRequest};
 use crate::tools::sdk::ToolCapabilities;
 
@@ -26,7 +26,9 @@ impl Default for ShellTool {
     fn default() -> Self {
         Self {
             default_cwd: None,
-            max_output_size: 10 * 1024, // 10 KB
+            // Hard memory-safety cap. Model-facing presentation of large
+            // outputs is the registry's spill stage, so this can be generous.
+            max_output_size: 256 * 1024, // 256 KB
         }
     }
 }
@@ -49,18 +51,10 @@ impl ShellTool {
         self
     }
 
-    /// Truncate output if it exceeds the limit
+    /// Truncate output if it exceeds the limit, keeping both the head and
+    /// the tail — long-running command errors usually sit at the end.
     fn truncate_output(&self, output: String) -> String {
-        if output.len() > self.max_output_size {
-            let mut end = self.max_output_size;
-            while end > 0 && !output.is_char_boundary(end) {
-                end -= 1;
-            }
-            let truncated = &output[..end];
-            format!("{}\n[Output truncated: {} bytes total]", truncated, output.len())
-        } else {
-            output
-        }
+        head_tail_truncate(&output, self.max_output_size)
     }
 }
 
@@ -284,7 +278,7 @@ impl Tool for ShellTool {
             }
         }
 
-        let result = crate::tools::process_runner::run(&req).await;
+        let result = crate::tools::process_runner::run_collect(&req).await;
 
         let duration = start_time.elapsed();
 
@@ -299,11 +293,34 @@ impl Tool for ShellTool {
                     format!("{}{}", stdout, stderr)
                 };
 
+                let total_bytes = combined_output.len();
                 let truncated = self.truncate_output(combined_output);
+                let data = serde_json::json!({
+                    "exit_code": output.exit_code(),
+                    "timed_out": output.timed_out,
+                    "duration_ms": duration.as_millis() as u64,
+                });
 
-                if output.success() {
+                if output.timed_out {
+                    warn!("Command timed out after {:?}: {}", context.timeout(), command_str);
+                    let message = if truncated.is_empty() {
+                        format!("Command timed out after {:?}", context.timeout())
+                    } else {
+                        format!(
+                            "Command timed out after {:?}. Partial output ({} bytes):\n{}",
+                            context.timeout(),
+                            total_bytes,
+                            truncated
+                        )
+                    };
+                    Ok(ToolExecutionResult::error(message)
+                        .with_data(data)
+                        .with_execution_time(duration))
+                } else if output.success() {
                     info!("Command executed successfully in {:?}", duration);
-                    Ok(ToolExecutionResult::success(truncated).with_execution_time(duration))
+                    Ok(ToolExecutionResult::success(truncated)
+                        .with_data(data)
+                        .with_execution_time(duration))
                 } else {
                     let exit_code = output.exit_code().unwrap_or(-1);
                     warn!("Command failed with exit code {}: {}", exit_code, command_str);
@@ -311,6 +328,7 @@ impl Tool for ShellTool {
                         "Exit code {}: {}",
                         exit_code, truncated
                     ))
+                    .with_data(data)
                     .with_execution_time(duration))
                 }
             }
@@ -377,10 +395,19 @@ mod tests {
         let tool = ShellTool::new().with_max_output_size(10);
         let output = "This is a very long string that definitely exceeds the limit".to_string();
         let truncated = tool.truncate_output(output.clone());
-        // Truncated output contains the truncation message
-        assert!(truncated.contains("truncated"));
-        // The output was actually truncated (contains the prefix of the original)
+        // Degenerate budget: plain head truncation, prefix preserved.
+        assert!(truncated.len() <= 10);
         assert!(truncated.starts_with("This is a "));
+    }
+
+    #[test]
+    fn test_truncate_output_keeps_tail() {
+        let tool = ShellTool::new().with_max_output_size(300);
+        let output = "x".repeat(2000);
+        let truncated = tool.truncate_output(output);
+        assert!(truncated.contains("bytes omitted"));
+        assert!(truncated.len() <= 320, "marker overhead bounded");
+        assert!(truncated.starts_with('x') && truncated.ends_with('x'));
     }
 
     #[tokio::test]
@@ -424,6 +451,54 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_shell_tool_timeout_keeps_partial_output() {
+        let tool = ShellTool::new();
+        let context = ToolContext::new("user", "conv1").with_timeout(Duration::from_secs(1));
+
+        let args = serde_json::json!({
+            "command": "echo partial-out; sleep 100"
+        });
+
+        let start = Instant::now();
+        let result = tool.execute(args, &context).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(!result.success);
+        let error = result.error.as_ref().unwrap();
+        assert!(error.contains("timed out"), "expected timeout, got {error:?}");
+        assert!(
+            error.contains("partial-out"),
+            "partial output must survive the timeout, got {error:?}"
+        );
+        let data = result.data.expect("orthogonal fields present");
+        assert_eq!(data["timed_out"], true);
+        assert!(data["exit_code"].is_null());
+        assert!(elapsed < Duration::from_secs(3));
+    }
+
+    #[tokio::test]
+    async fn test_shell_tool_result_data_fields() {
+        let tool = ShellTool::new();
+        let context = ToolContext::new("user", "conv1");
+
+        let ok = tool
+            .execute(serde_json::json!({"command": "echo hi"}), &context)
+            .await
+            .unwrap();
+        let data = ok.data.expect("data present");
+        assert_eq!(data["exit_code"], 0);
+        assert_eq!(data["timed_out"], false);
+        assert!(data["duration_ms"].is_number());
+
+        let fail = tool
+            .execute(serde_json::json!({"command": "exit 3"}), &context)
+            .await
+            .unwrap();
+        assert!(!fail.success);
+        assert_eq!(fail.data.as_ref().unwrap()["exit_code"], 3);
+    }
+
     #[test]
     fn test_truncate_output_utf8_safe() {
         // Test that truncation does not panic on multi-byte UTF-8 characters.
@@ -432,8 +507,7 @@ mod tests {
         let tool = ShellTool::new().with_max_output_size(10);
         let output = "Hello 😀 world".to_string(); // 😀 is 4 bytes
         let truncated = tool.truncate_output(output.clone());
-        assert!(truncated.contains("truncated"));
-        // The prefix must be valid UTF-8 (no split multi-byte char)
+        // The result must be valid UTF-8 (no split multi-byte char)
         assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
     }
 
@@ -443,8 +517,7 @@ mod tests {
         let output = "😀😀😀".to_string(); // 12 bytes, each 😀 is 4 bytes
         let truncated = tool.truncate_output(output.clone());
         // With max 4 bytes, should keep exactly one emoji
-        assert!(truncated.starts_with("😀"));
-        assert!(truncated.contains("truncated"));
+        assert_eq!(truncated, "😀");
     }
 
     #[test]

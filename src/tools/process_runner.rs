@@ -72,6 +72,9 @@ pub struct CommandOutput {
     pub status: Option<ExitStatus>,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    /// True when the run was cut short by its timeout. `status` is `None`
+    /// and the buffers hold whatever partial output was collected.
+    pub timed_out: bool,
 }
 
 impl CommandOutput {
@@ -118,6 +121,25 @@ pub trait ProcessRunner: Send + Sync {
     /// `timeout(.., cmd.output())` behavior).
     async fn run(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError>;
 
+    /// Run `req` like [`run`](ProcessRunner::run), but on timeout the child
+    /// is killed and whatever partial output was collected is returned with
+    /// `timed_out: true` instead of an error.
+    ///
+    /// The default implementation preserves legacy `run` semantics (no
+    /// partial capture) for runners that do not override it.
+    async fn run_collect(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+        match self.run(req).await {
+            Ok(out) => Ok(out),
+            Err(ProcessError::Timeout { .. }) => Ok(CommandOutput {
+                status: None,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                timed_out: true,
+            }),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Spawn `req` and return a live [`Child`] for long-running process
     /// management (tracked status, detached wait). Stdio follows
     /// `ProcessRequest::stdio` ([`StdioMode::Null`] by default).
@@ -158,6 +180,7 @@ impl ProcessRunner for StdProcessRunner {
                             status: Some(o.status),
                             stdout: o.stdout,
                             stderr: o.stderr,
+                            timed_out: false,
                         })
                         .map_err(|source| spawn_err(req, source))
                 })
@@ -172,6 +195,7 @@ impl ProcessRunner for StdProcessRunner {
                             status: Some(o.status),
                             stdout: o.stdout,
                             stderr: o.stderr,
+                            timed_out: false,
                         })
                         .map_err(|source| spawn_err(req, source))
                 })
@@ -195,6 +219,83 @@ impl ProcessRunner for StdProcessRunner {
             }
         }
         cmd.spawn().map_err(|source| spawn_err(req, source))
+    }
+
+    async fn run_collect(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut cmd = build_command(req)?;
+        let mut child = cmd
+            .stdin(if req.stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| spawn_err(req, source))?;
+
+        if let Some(input) = &req.stdin {
+            if let Some(mut stdin) = child.stdin.take() {
+                // Closing stdin on drop signals EOF to the child.
+                let _ = stdin.write_all(input).await;
+            }
+        }
+
+        let mut out_pipe = child
+            .stdout
+            .take()
+            .ok_or_else(|| spawn_err(req, std::io::Error::other("stdout pipe missing")))?;
+        let mut err_pipe = child
+            .stderr
+            .take()
+            .ok_or_else(|| spawn_err(req, std::io::Error::other("stderr pipe missing")))?;
+        // Pump pipes in background tasks so they keep draining across the
+        // timeout boundary; after exit/kill they hit EOF and return their
+        // buffers.
+        let out_task = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let res = out_pipe.read_to_end(&mut buf).await;
+            res.map(|_| buf)
+        });
+        let err_task = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let res = err_pipe.read_to_end(&mut buf).await;
+            res.map(|_| buf)
+        });
+
+        let (status, timed_out) = match req.timeout {
+            Some(duration) => match tokio::time::timeout(duration, child.wait()).await {
+                Ok(res) => (Some(res.map_err(|source| spawn_err(req, source))?), false),
+                Err(_) => {
+                    // Kill the runaway child (tokio does not kill on drop)
+                    // and reap it before collecting partial output.
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    (None, true)
+                }
+            },
+            None => (
+                Some(
+                    child
+                        .wait()
+                        .await
+                        .map_err(|source| spawn_err(req, source))?,
+                ),
+                false,
+            ),
+        };
+
+        let stdout = out_task.await.ok().and_then(|r| r.ok()).unwrap_or_default();
+        let stderr = err_task.await.ok().and_then(|r| r.ok()).unwrap_or_default();
+
+        Ok(CommandOutput {
+            status,
+            stdout,
+            stderr,
+            timed_out,
+        })
     }
 }
 
@@ -269,6 +370,13 @@ fn default_process_runner() -> Arc<dyn ProcessRunner> {
 /// Run a subprocess to completion, capturing output. See [`ProcessRunner::run`].
 pub async fn run(req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
     process_runner().run(req).await
+}
+
+/// Run a subprocess to completion via [`ProcessRunner::run_collect`]: on
+/// timeout the child is killed and partial output is returned with
+/// `timed_out: true` rather than an error.
+pub async fn run_collect(req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+    process_runner().run_collect(req).await
 }
 
 /// Spawn a detached subprocess. See [`ProcessRunner::spawn`].
@@ -407,6 +515,13 @@ impl ProcessRunner for AndroidShellRunner {
         eff.argv = self.resolve_argv(req)?;
         self.apply_bundled_library_path(&mut eff);
         self.inner.run(&eff).await
+    }
+
+    async fn run_collect(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+        let mut eff = req.clone();
+        eff.argv = self.resolve_argv(req)?;
+        self.apply_bundled_library_path(&mut eff);
+        self.inner.run_collect(&eff).await
     }
 
     async fn spawn(&self, req: &ProcessRequest) -> Result<Child, ProcessError> {
