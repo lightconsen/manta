@@ -211,6 +211,14 @@ pub(crate) async fn start_gateway(
         let db_url =
             format!("sqlite://{}", crate::dirs::data_dir().join("delegations.db").display());
         let delegation_store = Arc::new(DelegationTaskStore::new(&db_url).await?);
+        // Sweep rows left in-flight by a previous process: they belong to
+        // executions that died with it and would otherwise read as "running"
+        // forever.
+        match delegation_store.fail_orphaned_runs().await {
+            Ok(0) => {}
+            Ok(n) => warn!("Marked {} orphaned delegation task(s) as failed", n),
+            Err(e) => warn!("Failed to sweep orphaned delegation tasks: {}", e),
+        }
         state
             .tools
             .registry

@@ -244,6 +244,26 @@ impl DelegationTaskStore {
         Ok(params.id.to_string())
     }
 
+    /// Mark tasks left in `running`/`waiting_handoff` by a previous process
+    /// as failed. Called once at startup: those rows belong to executions
+    /// that died with the last process and will never settle on their own.
+    /// Returns the number of rows swept.
+    pub async fn fail_orphaned_runs(&self) -> crate::Result<u64> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let result = sqlx::query(
+            "UPDATE delegation_tasks SET status = 'failed', updated_at = ?1 \
+             WHERE status IN ('running', 'waiting_handoff')",
+        )
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to sweep orphaned delegation tasks".to_string(),
+            details: e.to_string(),
+        })?;
+        Ok(result.rows_affected())
+    }
+
     /// Load one task row.
     pub async fn get_task(&self, id: &str) -> crate::Result<Option<DelegationTask>> {
         let row = sqlx::query("SELECT * FROM delegation_tasks WHERE id = ?1")
@@ -587,6 +607,41 @@ mod tests {
         assert_eq!(task.state().len(), 0);
 
         assert!(store.get_task("missing").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_fail_orphaned_runs_sweeps_inflight_rows() {
+        let store = test_store().await;
+        store
+            .create_task(NewTask {
+                id: "run-orphan",
+                root_id: "root-1",
+                parent_id: None,
+                depth: 1,
+                agent_id: "coder",
+                title: "Orphaned",
+            })
+            .await
+            .unwrap();
+        store
+            .create_task(NewTask {
+                id: "run-done",
+                root_id: "root-1",
+                parent_id: None,
+                depth: 1,
+                agent_id: "coder",
+                title: "Done",
+            })
+            .await
+            .unwrap();
+        store.set_status("run-done", "completed").await.unwrap();
+
+        let swept = store.fail_orphaned_runs().await.expect("sweep");
+        assert_eq!(swept, 1, "only the in-flight row is swept");
+        assert_eq!(store.get_task("run-orphan").await.unwrap().unwrap().status, "failed");
+        assert_eq!(store.get_task("run-done").await.unwrap().unwrap().status, "completed");
+        // Idempotent: a second sweep finds nothing.
+        assert_eq!(store.fail_orphaned_runs().await.unwrap(), 0);
     }
 
     #[tokio::test]
