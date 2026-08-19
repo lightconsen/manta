@@ -801,3 +801,4 @@ mod tool_chat_tests;
 #[cfg(feature = "vision")]
 mod vision_tests;
 mod workspace_tests;
+mod write_guard_tests;

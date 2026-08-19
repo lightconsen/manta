@@ -15,6 +15,9 @@ async fn tool_shell_invoked_via_chat() {
 #[tokio::test]
 #[serial]
 async fn tool_file_invoked_via_chat() {
+    // Fresh target: the write guard would otherwise reject overwriting a
+    // leftover from a previous run.
+    let _ = std::fs::remove_file("/tmp/syscity-e2e-test.txt");
     let _results = run_tool_chat_test(
         40080,
         "Use ONLY the file_write tool. Create /tmp/syscity-e2e-test.txt with content \
@@ -224,13 +227,111 @@ async fn tool_cron_invoked_via_chat() {
 #[tokio::test]
 #[serial]
 async fn tool_file_edit_invoked_via_chat() {
-    let _results = run_tool_chat_test(
-        40098,
-        "Call ONLY the file_edit tool. Do NOT use file_read. Pass \
-         file_path='/tmp/syscity-e2e-edit.txt', old_string='old text', new_string='new text'.",
-        "file_edit",
-    )
+    // The write guard requires read-before-edit: arrange a target file and
+    // drive the read → edit flow (file_edit without a prior file_read is
+    // rejected by design).
+    std::fs::write("/tmp/syscity-e2e-edit.txt", "old text").expect("seed edit target");
+    let port = 40098;
+
+    /// Mock: read the target first, then edit it — the flow the write guard
+    /// enforces.
+    fn read_then_edit_mock() -> MockProvider {
+        MockProvider::new().with_callback(|messages| {
+            if messages.len() == 1 && messages[0].content.contains("NOCACHE") {
+                return ProviderMessage::assistant("NOCACHE");
+            }
+            let tool_results = messages.iter().filter(|m| m.role == Role::Tool).count();
+            match tool_results {
+                0 => ProviderMessage::assistant("Reading the file first.").with_tool_calls(vec![
+                    ToolCall {
+                        id: "call_read".to_string(),
+                        call_type: "function".to_string(),
+                        function: FunctionCall {
+                            name: "file_read".to_string(),
+                            arguments: r#"{"path":"/tmp/syscity-e2e-edit.txt"}"#.to_string(),
+                        },
+                        index: None,
+                        result: None,
+                    },
+                ]),
+                1 => ProviderMessage::assistant("Now editing.").with_tool_calls(vec![ToolCall {
+                    id: "call_edit".to_string(),
+                    call_type: "function".to_string(),
+                    function: FunctionCall {
+                        name: "file_edit".to_string(),
+                        arguments: r#"{"path":"/tmp/syscity-e2e-edit.txt","old_string":"old text","new_string":"new text"}"#
+                            .to_string(),
+                    },
+                    index: None,
+                    result: None,
+                }]),
+                _ => ProviderMessage::assistant("Done."),
+            }
+        })
+    }
+
+    if pick_test_provider().is_some() {
+        start_test_gateway(port, true).await;
+    } else {
+        start_test_gateway_with_mock(port, read_then_edit_mock()).await;
+    }
+    let mut client = FrontendSimulator::connect(port).await;
+
+    let sid = client.create_session().await;
+    client.subscribe(vec![sid.clone()]).await;
+
+    client
+        .send_chat(
+            &sid,
+            "First read /tmp/syscity-e2e-edit.txt with file_read, then use file_edit to replace \
+             'old text' with 'new text'.",
+        )
+        .await;
+
+    let result = timeout(Duration::from_secs(120), async {
+        let mut tools_called: Vec<String> = Vec::new();
+        let mut chat_final = None;
+        while let Some(msg) = client.read.next().await {
+            let msg = msg.unwrap();
+            if let Message::Text(text) = msg {
+                if let Ok(event) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if event.get("type").and_then(|v| v.as_str()) == Some("event") {
+                        match event.get("event").and_then(|v| v.as_str()) {
+                            Some("tool.calling") => {
+                                if let Some(name) = event
+                                    .get("payload")
+                                    .and_then(|p| p.get("tool_name"))
+                                    .and_then(|v| v.as_str())
+                                {
+                                    tools_called.push(name.to_string());
+                                }
+                            }
+                            Some("chat.final") => {
+                                chat_final = event.get("payload").cloned();
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        (tools_called, chat_final)
+    })
     .await;
+
+    let (tools_called, chat_final) = result.expect("Timed out waiting for chat.final event");
+    assert!(chat_final.is_some(), "Expected chat.final event");
+    assert!(
+        tools_called
+            .windows(2)
+            .any(|w| w == ["file_read", "file_edit"]),
+        "expected file_read followed by file_edit, got: {:?}",
+        tools_called
+    );
+    let content = std::fs::read_to_string("/tmp/syscity-e2e-edit.txt").unwrap();
+    assert_eq!(content, "new text");
+    let _ = std::fs::remove_file("/tmp/syscity-e2e-edit.txt");
 }
 
 #[tokio::test]

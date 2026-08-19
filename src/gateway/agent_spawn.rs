@@ -946,10 +946,12 @@ pub(crate) async fn create_default_tool_registry(
         registry = registry.with_content_filter(filter);
     }
 
-    // Register file system tools
-    registry.register(Box::new(FileReadTool::new()));
-    registry.register(Box::new(FileWriteTool::new()));
-    registry.register(Box::new(FileEditTool::new()));
+    // Register file system tools. The shared WriteGuard enforces
+    // read-before-write and rejects stale overwrites per conversation.
+    let write_guard = Arc::new(crate::tools::WriteGuard::new());
+    registry.register(Box::new(FileReadTool::new().with_write_guard(write_guard.clone())));
+    registry.register(Box::new(FileWriteTool::new().with_write_guard(write_guard.clone())));
+    registry.register(Box::new(FileEditTool::new().with_write_guard(write_guard)));
     registry.register(Box::new(crate::tools::WriteReportTool::new()));
     registry.register(Box::new(GlobTool::new()));
     registry.register(Box::new(GrepTool::new()));

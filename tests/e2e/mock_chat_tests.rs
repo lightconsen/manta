@@ -122,6 +122,9 @@ fn file_mock_provider() -> MockProvider {
 #[tokio::test]
 #[serial]
 async fn mock_file_tool_invoked_via_chat() {
+    // Fresh target: the write guard would otherwise reject overwriting a
+    // leftover from a previous run.
+    let _ = std::fs::remove_file("/tmp/syscity-mock-e2e.txt");
     let port = 41071;
     start_test_gateway_with_mock(port, file_mock_provider()).await;
     let mut client = FrontendSimulator::connect(port).await;

@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::fs as tokio_fs;
-use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
@@ -20,14 +19,45 @@ const MAX_FILE_SIZE: u64 = 1024 * 1024;
 /// Maximum file size to write (10MB)
 const MAX_WRITE_SIZE: usize = 10 * 1024 * 1024;
 
+/// Atomically write `content` to `path`: write a temp file in the same
+/// directory, then rename over the target.
+async fn atomic_write(path: &std::path::Path, content: &str) -> crate::Result<()> {
+    let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    tokio_fs::write(&tmp, content)
+        .await
+        .map_err(crate::error::SyscityError::Io)?;
+    // Windows rename refuses to overwrite an existing target.
+    #[cfg(target_os = "windows")]
+    if path.exists() {
+        tokio_fs::remove_file(path)
+            .await
+            .map_err(crate::error::SyscityError::Io)?;
+    }
+    if let Err(e) = tokio_fs::rename(&tmp, path).await {
+        let _ = tokio_fs::remove_file(&tmp).await;
+        return Err(crate::error::SyscityError::Io(e));
+    }
+    Ok(())
+}
+
 /// File read tool
 #[derive(Debug, Default)]
-pub struct FileReadTool;
+pub struct FileReadTool {
+    /// Shared observation store; when present, successful reads record the
+    /// file version so guarded writes can prove the model saw the content.
+    write_guard: Option<std::sync::Arc<super::WriteGuard>>,
+}
 
 impl FileReadTool {
     /// Create a new file read tool
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Attach the shared write-guard observation store.
+    pub fn with_write_guard(mut self, guard: std::sync::Arc<super::WriteGuard>) -> Self {
+        self.write_guard = Some(guard);
+        self
     }
 
     /// Check if file is binary
@@ -141,6 +171,12 @@ impl Tool for FileReadTool {
             .await
             .map_err(crate::error::SyscityError::Io)?;
 
+        // Record the observation so guarded writes know the model saw this
+        // version of the file.
+        if let Some(ref guard) = self.write_guard {
+            guard.record(&context.conversation_id, &path);
+        }
+
         // Check if binary
         if Self::is_binary(&data) {
             return Ok(ToolExecutionResult::success(format!(
@@ -169,11 +205,16 @@ impl Tool for FileReadTool {
 pub struct FileWriteTool {
     /// Whether to backup existing files
     backup: bool,
+    /// Shared observation store enforcing read-before-overwrite.
+    write_guard: Option<std::sync::Arc<super::WriteGuard>>,
 }
 
 impl Default for FileWriteTool {
     fn default() -> Self {
-        Self { backup: true }
+        Self {
+            backup: true,
+            write_guard: None,
+        }
     }
 }
 
@@ -186,6 +227,12 @@ impl FileWriteTool {
     /// Disable backup of existing files
     pub fn without_backup(mut self) -> Self {
         self.backup = false;
+        self
+    }
+
+    /// Attach the shared write-guard observation store.
+    pub fn with_write_guard(mut self, guard: std::sync::Arc<super::WriteGuard>) -> Self {
+        self.write_guard = Some(guard);
         self
     }
 }
@@ -249,6 +296,26 @@ impl Tool for FileWriteTool {
             )));
         }
 
+        // Guard: overwriting an existing file requires a fresh observation
+        // in this conversation (read-before-write, stale-write rejection).
+        if let Some(ref guard) = self.write_guard {
+            if let Err(e) = guard.check(&context.conversation_id, &path) {
+                let msg = match e {
+                    super::WriteGuardError::MustReadFirst => format!(
+                        "File '{}' already exists and has not been read in this conversation. \
+                         Use file_read on it first, then write.",
+                        path.display()
+                    ),
+                    super::WriteGuardError::StaleSinceRead => format!(
+                        "File '{}' changed on disk since you last read it. \
+                         Re-read it with file_read, then apply your changes.",
+                        path.display()
+                    ),
+                };
+                return Ok(ToolExecutionResult::error(msg));
+            }
+        }
+
         // Backup existing file if requested
         if self.backup && path.exists() {
             let backup_path = path.with_extension("bak");
@@ -266,16 +333,13 @@ impl Tool for FileWriteTool {
                 .map_err(crate::error::SyscityError::Io)?;
         }
 
-        // Write file
-        let mut file = tokio_fs::File::create(&path)
-            .await
-            .map_err(crate::error::SyscityError::Io)?;
+        // Write file atomically (temp file + rename in the same directory)
+        atomic_write(&path, content).await?;
 
-        file.write_all(content.as_bytes())
-            .await
-            .map_err(crate::error::SyscityError::Io)?;
-
-        file.flush().await.map_err(crate::error::SyscityError::Io)?;
+        // The write establishes a fresh observation for this conversation.
+        if let Some(ref guard) = self.write_guard {
+            guard.record(&context.conversation_id, &path);
+        }
 
         info!("Wrote {} bytes to {}", content.len(), path.display());
 
@@ -298,12 +362,21 @@ impl Tool for FileWriteTool {
 
 /// File edit tool (find and replace)
 #[derive(Debug, Default)]
-pub struct FileEditTool;
+pub struct FileEditTool {
+    /// Shared observation store enforcing read-before-edit.
+    write_guard: Option<std::sync::Arc<super::WriteGuard>>,
+}
 
 impl FileEditTool {
     /// Create a new file edit tool
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Attach the shared write-guard observation store.
+    pub fn with_write_guard(mut self, guard: std::sync::Arc<super::WriteGuard>) -> Self {
+        self.write_guard = Some(guard);
+        self
     }
 }
 
@@ -373,6 +446,26 @@ impl Tool for FileEditTool {
             )));
         }
 
+        // Guard: editing an existing file requires a fresh observation in
+        // this conversation (read-before-edit, stale-write rejection).
+        if let Some(ref guard) = self.write_guard {
+            if let Err(e) = guard.check(&context.conversation_id, &path) {
+                let msg = match e {
+                    super::WriteGuardError::MustReadFirst => format!(
+                        "File '{}' has not been read in this conversation. \
+                         Use file_read on it first, then edit.",
+                        path.display()
+                    ),
+                    super::WriteGuardError::StaleSinceRead => format!(
+                        "File '{}' changed on disk since you last read it. \
+                         Re-read it with file_read, then apply your edit.",
+                        path.display()
+                    ),
+                };
+                return Ok(ToolExecutionResult::error(msg));
+            }
+        }
+
         // Read file
         let content = tokio_fs::read_to_string(&path)
             .await
@@ -390,10 +483,14 @@ impl Tool for FileEditTool {
         let new_content = content.replace(old_string, new_string);
         let replacements = content.matches(old_string).count();
 
-        // Write back
-        tokio_fs::write(&path, new_content)
-            .await
-            .map_err(crate::error::SyscityError::Io)?;
+        // Write back atomically (temp file + rename in the same directory)
+        atomic_write(&path, &new_content).await?;
+
+        // The edit establishes a fresh observation for this conversation,
+        // so follow-up edits on the same file do not require a re-read.
+        if let Some(ref guard) = self.write_guard {
+            guard.record(&context.conversation_id, &path);
+        }
 
         info!("Made {} replacement(s) in {}", replacements, path.display());
 
@@ -971,6 +1068,144 @@ mod tests {
         let result = tool.execute(args, &context).await.unwrap();
         assert!(result.success);
         assert!(test_file.exists());
+
+        let _ = tokio_fs::remove_file(&test_file).await;
+    }
+
+    // ── Write-guard integration ─────────────────────────────────────────
+
+    fn guard_ctx(dir: &std::path::Path) -> ToolContext {
+        ToolContext::new("user", "conv1").with_workspace_root(dir)
+    }
+
+    #[tokio::test]
+    async fn test_guard_blocks_overwrite_without_read() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("syscity_wg_write_{}.txt", uuid::Uuid::new_v4()));
+        tokio_fs::write(&test_file, "old").await.unwrap();
+
+        let guard = std::sync::Arc::new(crate::tools::WriteGuard::new());
+        let write = FileWriteTool::new().with_write_guard(guard.clone());
+        let read = FileReadTool::new().with_write_guard(guard);
+        let context = guard_ctx(&temp_dir);
+
+        // Overwrite an existing file without reading → rejected, file intact.
+        let result = write
+            .execute(
+                serde_json::json!({"path": test_file.to_string_lossy(), "content": "new"}),
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("file_read"));
+        assert_eq!(tokio_fs::read_to_string(&test_file).await.unwrap(), "old");
+
+        // Read, then write → allowed.
+        let rr = read
+            .execute(serde_json::json!({"path": test_file.to_string_lossy()}), &context)
+            .await
+            .unwrap();
+        assert!(rr.success);
+        let result = write
+            .execute(
+                serde_json::json!({"path": test_file.to_string_lossy(), "content": "new"}),
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert_eq!(tokio_fs::read_to_string(&test_file).await.unwrap(), "new");
+
+        let _ = tokio_fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_guard_allows_new_file_without_read() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("syscity_wg_new_{}.txt", uuid::Uuid::new_v4()));
+
+        let guard = std::sync::Arc::new(crate::tools::WriteGuard::new());
+        let write = FileWriteTool::new()
+            .without_backup()
+            .with_write_guard(guard);
+        let context = guard_ctx(&temp_dir);
+
+        let result = write
+            .execute(
+                serde_json::json!({"path": test_file.to_string_lossy(), "content": "fresh"}),
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert!(test_file.exists());
+
+        let _ = tokio_fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_guard_rejects_stale_edit_and_allows_after_reread() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("syscity_wg_edit_{}.txt", uuid::Uuid::new_v4()));
+        tokio_fs::write(&test_file, "hello world").await.unwrap();
+
+        let guard = std::sync::Arc::new(crate::tools::WriteGuard::new());
+        let edit = FileEditTool::new().with_write_guard(guard.clone());
+        let read = FileReadTool::new().with_write_guard(guard);
+        let context = guard_ctx(&temp_dir);
+
+        // Read establishes the observation; edit succeeds.
+        read.execute(serde_json::json!({"path": test_file.to_string_lossy()}), &context)
+            .await
+            .unwrap();
+        let result = edit
+            .execute(
+                serde_json::json!({
+                    "path": test_file.to_string_lossy(),
+                    "old_string": "world",
+                    "new_string": "there"
+                }),
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(result.success);
+
+        // External modification invalidates the observation.
+        tokio_fs::write(&test_file, "externally changed world")
+            .await
+            .unwrap();
+        let result = edit
+            .execute(
+                serde_json::json!({
+                    "path": test_file.to_string_lossy(),
+                    "old_string": "world",
+                    "new_string": "nope"
+                }),
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("changed on disk"));
+
+        // Re-reading refreshes the observation; edit works again.
+        read.execute(serde_json::json!({"path": test_file.to_string_lossy()}), &context)
+            .await
+            .unwrap();
+        let result = edit
+            .execute(
+                serde_json::json!({
+                    "path": test_file.to_string_lossy(),
+                    "old_string": "world",
+                    "new_string": "again"
+                }),
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(result.success);
 
         let _ = tokio_fs::remove_file(&test_file).await;
     }

@@ -75,6 +75,7 @@ pub mod todo_tool;
 pub mod tts;
 pub mod update_plan;
 pub mod web;
+pub mod write_guard;
 
 pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
 pub use agents_list::AgentsListTool;
@@ -114,6 +115,7 @@ pub use todo_tool::TodoTool;
 pub use tts::TtsTool;
 pub use update_plan::UpdatePlanTool;
 pub use web::{WebFetchTool, WebSearchTool};
+pub use write_guard::{WriteGuard, WriteGuardError};
 
 // Re-exported from the top-level mcp module for backward compatibility.
 pub use crate::mcp::{McpConnectionTool, McpManager};
