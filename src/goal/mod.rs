@@ -19,6 +19,6 @@ pub mod plan;
 pub mod runner;
 
 pub use condition::{CheckResult, Comparison, GoalCondition};
-pub use event::GoalEvent;
+pub use event::{BlockedReason, BlockedReasonCode, GoalEvent};
 pub use plan::GoalPlan;
 pub use runner::GoalRunner;

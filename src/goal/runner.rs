@@ -153,6 +153,10 @@ impl GoalRunner {
                     reason: "cancelled".to_string(),
                     round: self.round,
                     results: Vec::new(),
+                    blocked_reason: Some(crate::goal::BlockedReason {
+                        code: crate::goal::BlockedReasonCode::Cancelled,
+                        message: "cancelled by user".to_string(),
+                    }),
                 });
                 self.cleanup_store().await;
                 return;
@@ -173,6 +177,10 @@ impl GoalRunner {
                     reason: format!("agent_error: {}", e),
                     round: self.round,
                     results: Vec::new(),
+                    blocked_reason: Some(crate::goal::BlockedReason {
+                        code: crate::goal::BlockedReasonCode::AgentError,
+                        message: e.to_string(),
+                    }),
                 });
                 self.cleanup_store().await;
                 return;
@@ -218,6 +226,22 @@ impl GoalRunner {
                 return;
             }
 
+            // A cancel that arrived mid-round now wins over any policy stop:
+            // a cancelled round must not leave a persisted terminal checkpoint.
+            if self.cancel.is_cancelled() {
+                self.emit(GoalEvent::Aborted {
+                    reason: "cancelled".to_string(),
+                    round: self.round,
+                    results,
+                    blocked_reason: Some(crate::goal::BlockedReason {
+                        code: crate::goal::BlockedReasonCode::Cancelled,
+                        message: "cancelled by user".to_string(),
+                    }),
+                });
+                self.cleanup_store().await;
+                return;
+            }
+
             // Save checkpoint after each round.
             self.save_checkpoint().await;
 
@@ -227,14 +251,20 @@ impl GoalRunner {
                 results: results.clone(),
             });
             if self.detect_loop() {
-                self.emit(GoalEvent::Aborted {
-                    reason: "loop_detected: same conditions failed 3 rounds in a row with \
-                             identical output"
+                let reason = crate::goal::BlockedReason {
+                    code: crate::goal::BlockedReasonCode::LoopDetected,
+                    message: "same conditions failed 3 rounds in a row with identical output"
                         .to_string(),
+                };
+                self.emit(GoalEvent::Aborted {
+                    reason: format!("loop_detected: {}", reason.message),
                     round: self.round,
                     results,
+                    blocked_reason: Some(reason.clone()),
                 });
-                self.cleanup_store().await;
+                // Policy stop: keep the checkpoint with the reason so the
+                // cause survives and a human can resume deliberately.
+                self.save_terminal(reason).await;
                 return;
             }
 
@@ -247,12 +277,18 @@ impl GoalRunner {
             .last()
             .map(|r| r.results.clone())
             .unwrap_or_default();
+        let reason = crate::goal::BlockedReason {
+            code: crate::goal::BlockedReasonCode::MaxRounds,
+            message: format!("reached {} rounds", self.plan.max_rounds),
+        };
         self.emit(GoalEvent::Aborted {
-            reason: format!("max_rounds: reached {} rounds", self.plan.max_rounds),
+            reason: format!("max_rounds: {}", reason.message),
             round: self.plan.max_rounds,
             results,
+            blocked_reason: Some(reason.clone()),
         });
-        self.cleanup_store().await;
+        // Policy stop: keep the checkpoint with the reason (see above).
+        self.save_terminal(reason).await;
     }
 
     /// Run the agent for one round.
@@ -413,9 +449,29 @@ impl GoalRunner {
                 &self.plan,
                 self.round,
                 &self.condition_history,
+                None,
             );
             if let Err(e) = store_guard.save(&state).await {
                 tracing::warn!("[goal {}] Failed to save checkpoint: {}", self.id, e);
+            }
+        }
+    }
+
+    /// Save the final checkpoint with its blocking reason, keeping the file
+    /// so the cause survives and the goal can be resumed deliberately.
+    async fn save_terminal(&self, reason: crate::goal::BlockedReason) {
+        if let Some(ref store) = self.store {
+            let store_guard = store.read().await;
+            let state = persist::to_persisted(
+                &self.id,
+                &self.parent_session_id,
+                &self.plan,
+                self.round,
+                &self.condition_history,
+                Some(reason),
+            );
+            if let Err(e) = store_guard.save(&state).await {
+                tracing::warn!("[goal {}] Failed to save terminal state: {}", self.id, e);
             }
         }
     }

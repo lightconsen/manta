@@ -30,6 +30,11 @@ pub struct PersistedGoalState {
     pub plan: GoalPlan,
     pub round: usize,
     pub condition_history: Vec<PersistedRoundResult>,
+    /// Set when the goal was blocked by a policy stop (loop detected, round
+    /// budget exhausted) instead of finishing. `None` for ordinary
+    /// checkpoints; resuming clears it.
+    #[serde(default)]
+    pub blocked_reason: Option<crate::goal::event::BlockedReason>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -146,6 +151,7 @@ pub fn to_persisted(
     plan: &GoalPlan,
     round: usize,
     condition_history: &[crate::goal::runner::RoundResult],
+    blocked_reason: Option<crate::goal::event::BlockedReason>,
 ) -> PersistedGoalState {
     let now = Utc::now();
     PersistedGoalState {
@@ -160,6 +166,7 @@ pub fn to_persisted(
                 results: r.results.clone(),
             })
             .collect(),
+        blocked_reason,
         created_at: now,
         updated_at: now,
     }
@@ -223,6 +230,7 @@ mod tests {
                     detail: "tests failed".to_string(),
                 }],
             }],
+            blocked_reason: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -249,7 +257,7 @@ mod tests {
             },
         );
 
-        let state = to_persisted("goal_1", "session_1", &plan, 3, &condition_history);
+        let state = to_persisted("goal_1", "session_1", &plan, 3, &condition_history, None);
         assert_eq!(state.goal_id, "goal_1");
         assert_eq!(state.parent_session_id, "session_1");
         assert_eq!(state.round, 3);
@@ -306,6 +314,47 @@ mod tests {
 
         // Cleanup
         let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_blocked_reason_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("goal_test_{}", uuid::Uuid::new_v4()));
+        let store = GoalStore::with_dir(dir.clone());
+
+        let mut state = sample_state("goal_blocked_test");
+        state.blocked_reason = Some(crate::goal::BlockedReason {
+            code: crate::goal::BlockedReasonCode::LoopDetected,
+            message: "same conditions failed 3 rounds in a row".to_string(),
+        });
+        store.save(&state).await.unwrap();
+
+        let loaded = store.load_all().await;
+        assert_eq!(loaded.len(), 1);
+        let reason = loaded[0]
+            .blocked_reason
+            .as_ref()
+            .expect("blocked_reason persisted");
+        assert_eq!(reason.code, crate::goal::BlockedReasonCode::LoopDetected);
+        assert!(reason.message.contains("3 rounds"));
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[test]
+    fn test_persisted_state_without_blocked_reason_deserializes() {
+        // Files written before the blocked_reason field existed must load.
+        let json = serde_json::json!({
+            "goal_id": "goal_old",
+            "parent_session_id": "session_1",
+            "plan": {"description": "d", "conditions": [], "max_rounds": 5, "model_override": null},
+            "round": 1,
+            "condition_history": [],
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        });
+        let state: PersistedGoalState = serde_json::from_value(json).unwrap();
+        assert_eq!(state.goal_id, "goal_old");
+        assert!(state.blocked_reason.is_none());
     }
 
     #[test]

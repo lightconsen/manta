@@ -6,6 +6,30 @@
 
 use crate::goal::condition::CheckResult;
 
+/// Machine-readable code for why a goal was aborted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BlockedReasonCode {
+    /// The same conditions failed with identical output N rounds in a row.
+    LoopDetected,
+    /// The goal exhausted its round budget.
+    MaxRounds,
+    /// The round-driving agent errored.
+    AgentError,
+    /// A human cancelled the goal.
+    Cancelled,
+}
+
+/// Structured abort reason: a stable code for programmatic consumers plus a
+/// human-readable message. Carried on `goal.aborted` events and persisted in
+/// the goal's checkpoint file when the goal is blocked (loop/max-rounds) so
+/// the cause survives and the goal can be resumed deliberately.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BlockedReason {
+    pub code: BlockedReasonCode,
+    pub message: String,
+}
+
 /// Events emitted by a [`GoalRunner`](super::runner::GoalRunner) during
 /// execution.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -43,5 +67,9 @@ pub enum GoalEvent {
         reason: String,
         round: usize,
         results: Vec<CheckResult>,
+        /// Structured form of `reason` — additive; `reason` stays as-is for
+        /// existing consumers.
+        #[serde(default)]
+        blocked_reason: Option<BlockedReason>,
     },
 }

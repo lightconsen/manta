@@ -12,7 +12,7 @@ pub(super) async fn handle_goal(
 
     // Parse subcommands (e.g., /goal cancel <id>).
     let first_word = trimmed.split_whitespace().next().unwrap_or("");
-    if first_word == "cancel" || first_word == "list" {
+    if first_word == "cancel" || first_word == "list" || first_word == "resume" {
         let rest = trimmed.split_once(' ').map(|x| x.1).unwrap_or("").trim();
         match first_word {
             "cancel" => {
@@ -37,30 +37,123 @@ pub(super) async fn handle_goal(
                         &req.id,
                         serde_json::json!({ "text": format!("🎯 Goal `{}` cancelled.", rest) }),
                     );
-                } else {
-                    return WsResponse::err(
-                        &req.id,
-                        "GOAL_NOT_FOUND",
-                        format!("Goal `{}` not found or already completed.", rest),
-                    );
                 }
-            }
-            "list" => {
-                let cancellers = state.agents.goal_cancellers.read().await;
-                let ids: Vec<&String> = cancellers.keys().collect();
-                if ids.is_empty() {
+                // Not running — it may be a suspended/blocked checkpoint.
+                // Cancelling a suspended goal discards its persisted state.
+                let store = crate::goal::persist::GoalStore::new();
+                let persisted = store
+                    .load_all()
+                    .await
+                    .into_iter()
+                    .any(|p| p.goal_id == rest);
+                if persisted {
+                    store.delete(rest).await;
                     return WsResponse::ok(
                         &req.id,
-                        serde_json::json!({ "text": "🎯 No active goals." }),
+                        serde_json::json!({ "text": format!("🎯 Goal `{}` cancelled (suspended state discarded).", rest) }),
                     );
+                }
+                return WsResponse::err(
+                    &req.id,
+                    "GOAL_NOT_FOUND",
+                    format!("Goal `{}` not found or already completed.", rest),
+                );
+            }
+            "list" => {
+                let running: Vec<String> = {
+                    let cancellers = state.agents.goal_cancellers.read().await;
+                    cancellers.keys().cloned().collect()
+                };
+                let suspended = crate::gateway::goal_spawn::list_suspended(state).await;
+
+                if running.is_empty() && suspended.is_empty() {
+                    return WsResponse::ok(&req.id, serde_json::json!({ "text": "🎯 No goals." }));
+                }
+
+                let mut lines = Vec::new();
+                if !running.is_empty() {
+                    lines.push("**Running Goals**".to_string());
+                    for id in &running {
+                        lines.push(format!("- {}", id));
+                    }
+                }
+                if !suspended.is_empty() {
+                    lines.push("**Suspended Goals** (resume with `/goal resume <id>`)".to_string());
+                    for g in &suspended {
+                        let mut line =
+                            format!("- {} (round {}/{})", g.goal_id, g.round, g.max_rounds);
+                        if let Some(ref reason) = g.blocked_reason {
+                            line.push_str(&format!(
+                                " — blocked: {}: {}",
+                                serde_json::to_value(reason.code)
+                                    .ok()
+                                    .and_then(|v| v.as_str().map(String::from))
+                                    .unwrap_or_default(),
+                                reason.message
+                            ));
+                        }
+                        lines.push(line);
+                    }
                 }
                 return WsResponse::ok(
                     &req.id,
                     serde_json::json!({
-                        "text": format!("🎯 **Active Goals**\n\n{}", ids.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n")),
-                        "goals": ids,
+                        "text": format!("🎯 {}", lines.join("\n")),
+                        "goals": running,
+                        "suspended": suspended.iter().map(|g| g.goal_id.clone()).collect::<Vec<_>>(),
                     }),
                 );
+            }
+            "resume" => {
+                if rest.is_empty() {
+                    return WsResponse::err(
+                        &req.id,
+                        "INVALID_ARGS",
+                        "Usage: /goal resume <goal_id>",
+                    );
+                }
+                // A goal that already has a live runner cannot be resumed.
+                {
+                    let cancellers = state.agents.goal_cancellers.read().await;
+                    if cancellers.contains_key(rest) {
+                        return WsResponse::err(
+                            &req.id,
+                            "GOAL_ALREADY_RUNNING",
+                            format!("Goal `{}` is already running.", rest),
+                        );
+                    }
+                }
+                let store = crate::goal::persist::GoalStore::new();
+                let persisted = store
+                    .load_all()
+                    .await
+                    .into_iter()
+                    .find(|p| p.goal_id == rest);
+                match persisted {
+                    Some(p) => {
+                        let round = p.round;
+                        let max_rounds = p.plan.max_rounds;
+                        let goal_id =
+                            crate::gateway::goal_spawn::spawn_goal_runner(state, &p).await;
+                        return WsResponse::ok(
+                            &req.id,
+                            serde_json::json!({
+                                "text": format!("🎯 Goal `{}` resumed (round {}/{}).", goal_id, round, max_rounds),
+                                "goal_id": goal_id,
+                            }),
+                        );
+                    }
+                    None => {
+                        return WsResponse::err(
+                            &req.id,
+                            "GOAL_NOT_FOUND",
+                            format!(
+                                "Goal `{}` not found — it may have finished or been cancelled.",
+                                rest
+                            ),
+                        );
+                    }
+                }
             }
             _ => unreachable!(),
         }
@@ -870,7 +963,7 @@ mod tests {
         let resp = handle_goal(&req("r1"), &conn, &state, "list").await;
         assert!(resp.ok);
         let text = resp.payload.as_ref().unwrap()["text"].as_str().unwrap();
-        assert!(text.contains("No active goals"));
+        assert!(text.contains("No goals"));
     }
 
     // ── /subagents ────────────────────────────────────────────────

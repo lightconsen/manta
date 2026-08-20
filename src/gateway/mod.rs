@@ -48,6 +48,7 @@ pub use acp_ext::*;
 pub mod agent_spawn;
 pub(crate) use agent_spawn::{create_default_tool_registry, spawn_agent_inner};
 pub mod dispatch;
+pub(crate) mod goal_spawn;
 pub mod hot_reload;
 pub mod lifecycle;
 pub mod runtime;
