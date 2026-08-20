@@ -48,6 +48,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tracing::warn;
 
+use crate::error::SyscityError;
+
 use super::{
     CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, Message, Provider,
     Usage,
@@ -55,6 +57,11 @@ use super::{
 
 /// Callback signature for dynamic mock responses.
 type MockCallback = Box<dyn Fn(&[Message]) -> Message + Send + Sync>;
+
+/// Callback signature for injecting a provider error before a response is
+/// resolved. Returning `Some` fails the call with that error; `None` proceeds
+/// normally.
+type MockErrorCallback = Box<dyn Fn(&[Message]) -> Option<SyscityError> + Send + Sync>;
 
 /// Internal mutable state for the mock provider.
 struct MockState {
@@ -64,6 +71,9 @@ struct MockState {
     index: usize,
     /// Optional dynamic callback that inspects the conversation history.
     callback: Option<MockCallback>,
+    /// Optional callback that can fail the call (e.g. simulate a
+    /// context-length rejection) before a response is resolved.
+    error_callback: Option<MockErrorCallback>,
     /// Record of every `CompletionRequest` received.
     history: Vec<CompletionRequest>,
 }
@@ -85,6 +95,7 @@ impl MockProvider {
                 responses: Vec::new(),
                 index: 0,
                 callback: None,
+                error_callback: None,
                 history: Vec::new(),
             })),
         }
@@ -118,6 +129,23 @@ impl MockProvider {
         self
     }
 
+    /// Inject an error callback that can fail a call before a response is
+    /// resolved.
+    ///
+    /// The callback inspects the incoming messages; returning `Some(err)`
+    /// makes `complete()`/`stream()` fail with that error (the failed call is
+    /// NOT recorded in `history()`), while `None` proceeds normally. Useful for
+    /// testing retry paths such as the context-length overflow compaction.
+    pub fn with_error_callback<F>(self, callback: F) -> Self
+    where
+        F: Fn(&[Message]) -> Option<SyscityError> + Send + Sync + 'static,
+    {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.error_callback = Some(Box::new(callback));
+        drop(state);
+        self
+    }
+
     /// Return every `CompletionRequest` that has been sent to this provider.
     pub fn history(&self) -> Vec<CompletionRequest> {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -136,6 +164,18 @@ impl MockProvider {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.index = 0;
         state.history.clear();
+    }
+
+    /// Fail the call if an error callback is installed and rejects the
+    /// request. An injected failure is not recorded in `history()`.
+    fn check_error(&self, request: &CompletionRequest) -> crate::Result<()> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref cb) = state.error_callback {
+            if let Some(err) = cb(&request.messages) {
+                return Err(err);
+            }
+        }
+        Ok(())
     }
 
     /// Resolve the next message to return, advancing the sequence if needed.
@@ -181,6 +221,7 @@ impl Provider for MockProvider {
     }
 
     async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse> {
+        self.check_error(&request)?;
         let message = self.resolve_message(&request);
         Ok(CompletionResponse {
             message,
@@ -200,6 +241,7 @@ impl Provider for MockProvider {
     }
 
     async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
+        self.check_error(&request)?;
         let message = self.resolve_message(&request);
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -343,6 +385,43 @@ mod tests {
         let history = mock.history();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].messages[0].content, "hello");
+    }
+
+    #[test]
+    fn test_error_callback_injects_error_not_recorded() {
+        let mock = MockProvider::new()
+            .with_responses(vec![Message::assistant("ok")])
+            .with_error_callback(|messages| {
+                if messages.iter().any(|m| m.content.contains("TOO_LONG")) {
+                    Some(SyscityError::ExternalService {
+                        source: "Test provider: maximum context length is 2048 tokens".into(),
+                        cause: None,
+                    })
+                } else {
+                    None
+                }
+            });
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // A rejected request fails and is not recorded in history.
+        let reject = CompletionRequest {
+            messages: vec![Message::user("this TOO_LONG request")],
+            ..Default::default()
+        };
+        match rt.block_on(mock.stream(reject)) {
+            Err(e) => assert!(e.to_string().contains("maximum context length")),
+            Ok(_) => panic!("expected injected error"),
+        }
+        assert_eq!(mock.call_count(), 0, "injected failures must not enter history");
+
+        // A normal request still resolves.
+        let ok_req = CompletionRequest {
+            messages: vec![Message::user("hello")],
+            ..Default::default()
+        };
+        assert!(rt.block_on(mock.stream(ok_req)).is_ok());
+        assert_eq!(mock.call_count(), 1);
     }
 
     #[test]

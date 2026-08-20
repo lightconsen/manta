@@ -786,6 +786,7 @@ mod agent_tests;
 #[cfg(feature = "browser")]
 mod browser_chat_tests;
 mod command_tests;
+mod compaction_tests;
 mod computer_tests;
 mod goal_tests;
 mod health_tests;
