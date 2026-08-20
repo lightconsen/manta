@@ -16,8 +16,8 @@ use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tracing::{debug, info, instrument, warn};
 
 use super::{
-    ChatHistoryStore, ChatMessage, Memory, MemoryEntryType, MemoryId, MemoryQuery, MemoryStats,
-    MemoryStore,
+    ChatHistoryStore, ChatMessage, ConversationCompaction, Memory, MemoryEntryType, MemoryId,
+    MemoryQuery, MemoryStats, MemoryStore,
 };
 
 /// Unified database store with WAL, FTS5, and access tracking
@@ -211,6 +211,28 @@ impl DatabaseStore {
         .await
         .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create chat_messages table".to_string(),
+            details: e.to_string(),
+        })?;
+
+        // --- conversation_compactions table ---
+        // Durable compaction boundary: one active record per conversation.
+        // `boundary_role`/`boundary_content` anchor the first message the mask
+        // keeps; `summary` is replayed verbatim on rehydration.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS conversation_compactions (
+                conversation_id TEXT PRIMARY KEY,
+                boundary_role TEXT NOT NULL,
+                boundary_content TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to create conversation_compactions table".to_string(),
             details: e.to_string(),
         })?;
 
@@ -1278,6 +1300,156 @@ impl ChatHistoryStore for DatabaseStore {
         Ok(messages)
     }
 
+    async fn record_compaction(
+        &self,
+        conversation_id: &str,
+        boundary_role: &str,
+        boundary_content: &str,
+        summary: &str,
+    ) -> crate::Result<()> {
+        debug!("Recording compaction for {} (boundary role={})", conversation_id, boundary_role);
+
+        let now = Self::system_time_to_secs(SystemTime::now());
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_compactions
+                (conversation_id, boundary_role, boundary_content, summary, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET
+                boundary_role = excluded.boundary_role,
+                boundary_content = excluded.boundary_content,
+                summary = excluded.summary,
+                created_at = excluded.created_at
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(boundary_role)
+        .bind(boundary_content)
+        .bind(summary)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to record conversation compaction".to_string(),
+            details: e.to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    async fn get_compaction(
+        &self,
+        conversation_id: &str,
+    ) -> crate::Result<Option<ConversationCompaction>> {
+        let row = sqlx::query(
+            r#"
+            SELECT conversation_id, boundary_role, boundary_content, summary, created_at
+            FROM conversation_compactions
+            WHERE conversation_id = ?
+            "#,
+        )
+        .bind(conversation_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to load conversation compaction".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let created_at_secs: i64 = row
+            .try_get("created_at")
+            .map_err(|e| col_err("created_at", e))?;
+        Ok(Some(ConversationCompaction {
+            conversation_id: row
+                .try_get("conversation_id")
+                .map_err(|e| col_err("conversation_id", e))?,
+            boundary_role: row
+                .try_get("boundary_role")
+                .map_err(|e| col_err("boundary_role", e))?,
+            boundary_content: row
+                .try_get("boundary_content")
+                .map_err(|e| col_err("boundary_content", e))?,
+            summary: row.try_get("summary").map_err(|e| col_err("summary", e))?,
+            created_at: Self::secs_to_system_time(created_at_secs).unwrap_or_else(SystemTime::now),
+        }))
+    }
+
+    async fn get_conversation_history_since(
+        &self,
+        conversation_id: &str,
+        boundary_role: &str,
+        boundary_content: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<ChatMessage>> {
+        debug!(
+            "Getting conversation history for {} since boundary (role={})",
+            conversation_id, boundary_role
+        );
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, conversation_id, user_id, role, content, created_at, metadata, rowid
+            FROM chat_messages
+            WHERE conversation_id = ?
+              AND rowid >= (
+                  SELECT MAX(rowid) FROM chat_messages
+                  WHERE conversation_id = ? AND role = ? AND content = ?
+              )
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(conversation_id)
+        .bind(boundary_role)
+        .bind(boundary_content)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to get conversation history since boundary".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let created_at_secs: i64 = row
+                .try_get("created_at")
+                .map_err(|e| col_err("created_at", e))?;
+            let metadata_str: Option<String> = row
+                .try_get("metadata")
+                .map_err(|e| col_err("metadata", e))?;
+
+            messages.push(ChatMessage {
+                id: row.try_get("id").map_err(|e| col_err("id", e))?,
+                conversation_id: row
+                    .try_get("conversation_id")
+                    .map_err(|e| col_err("conversation_id", e))?,
+                user_id: row.try_get("user_id").map_err(|e| col_err("user_id", e))?,
+                role: row.try_get("role").map_err(|e| col_err("role", e))?,
+                content: row.try_get("content").map_err(|e| col_err("content", e))?,
+                created_at: Self::secs_to_system_time(created_at_secs)
+                    .unwrap_or_else(SystemTime::now),
+                metadata: metadata_str
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()
+                    .map_err(|e| crate::error::SyscityError::Storage {
+                        context: "Failed to deserialize chat message metadata".to_string(),
+                        details: e.to_string(),
+                    })?,
+            });
+        }
+
+        // Return messages in chronological order (oldest first).
+        messages.reverse();
+
+        Ok(messages)
+    }
+
     async fn get_user_conversations(
         &self,
         user_id: &str,
@@ -1326,6 +1498,16 @@ impl ChatHistoryStore for DatabaseStore {
             .await
             .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to delete conversation".to_string(),
+                details: e.to_string(),
+            })?;
+
+        // Cascade: drop any durable compaction record for the conversation.
+        sqlx::query("DELETE FROM conversation_compactions WHERE conversation_id = ?")
+            .bind(conversation_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to delete conversation compaction record".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -1614,6 +1796,114 @@ mod tests {
         store.delete_conversation("conv1").await.unwrap();
         let history = store.get_conversation_history("conv1", 10).await.unwrap();
         assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_compaction_record_roundtrip() {
+        let store = DatabaseStore::new_in_memory().await.unwrap();
+
+        assert!(store.get_compaction("conv-c").await.unwrap().is_none());
+
+        store
+            .record_compaction("conv-c", "user", "boundary msg", "[Summary of 10 messages]")
+            .await
+            .unwrap();
+        let comp = store
+            .get_compaction("conv-c")
+            .await
+            .unwrap()
+            .expect("compaction recorded");
+        assert_eq!(comp.conversation_id, "conv-c");
+        assert_eq!(comp.boundary_role, "user");
+        assert_eq!(comp.boundary_content, "boundary msg");
+        assert_eq!(comp.summary, "[Summary of 10 messages]");
+
+        // A later compaction overwrites the previous one.
+        store
+            .record_compaction("conv-c", "assistant", "newer boundary", "[Summary of 20 messages]")
+            .await
+            .unwrap();
+        let comp = store
+            .get_compaction("conv-c")
+            .await
+            .unwrap()
+            .expect("compaction still present");
+        assert_eq!(comp.boundary_content, "newer boundary");
+        assert_eq!(comp.summary, "[Summary of 20 messages]");
+    }
+
+    #[tokio::test]
+    async fn test_conversation_history_since_boundary() {
+        let store = DatabaseStore::new_in_memory().await.unwrap();
+
+        for (role, content) in [
+            ("user", "m0"),
+            ("assistant", "a0"),
+            ("user", "m1"),
+            ("assistant", "a1"),
+            ("user", "m2"),
+            ("assistant", "a2"),
+        ] {
+            store
+                .store_message(ChatMessage::new("conv-s", "u1", role, content))
+                .await
+                .unwrap();
+        }
+
+        // Boundary anchored at the third user message → mask keeps it + everything after.
+        let since = store
+            .get_conversation_history_since("conv-s", "user", "m2", 50)
+            .await
+            .unwrap();
+        let roles: Vec<&str> = since.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(roles, vec!["user", "assistant"]);
+
+        // Anchoring on an assistant message yields a different tail start.
+        let since = store
+            .get_conversation_history_since("conv-s", "assistant", "a1", 50)
+            .await
+            .unwrap();
+        let roles: Vec<&str> = since.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(roles, vec!["assistant", "user", "assistant"]);
+
+        // The `limit` still applies from the boundary onward.
+        let since = store
+            .get_conversation_history_since("conv-s", "user", "m0", 2)
+            .await
+            .unwrap();
+        assert_eq!(since.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_conversation_history_since_anchor_miss_returns_empty() {
+        let store = DatabaseStore::new_in_memory().await.unwrap();
+        store
+            .store_message(ChatMessage::new("conv-m", "u1", "user", "hello"))
+            .await
+            .unwrap();
+
+        let since = store
+            .get_conversation_history_since("conv-m", "user", "does-not-exist", 50)
+            .await
+            .unwrap();
+        assert!(since.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_conversation_cascades_compaction() {
+        let store = DatabaseStore::new_in_memory().await.unwrap();
+        store
+            .store_message(ChatMessage::new("conv-d", "u1", "user", "hello"))
+            .await
+            .unwrap();
+        store
+            .record_compaction("conv-d", "user", "hello", "[Summary]")
+            .await
+            .unwrap();
+        assert!(store.get_compaction("conv-d").await.unwrap().is_some());
+
+        store.delete_conversation("conv-d").await.unwrap();
+        assert!(store.get_compaction("conv-d").await.unwrap().is_none());
     }
 
     #[tokio::test]

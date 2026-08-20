@@ -551,6 +551,28 @@ impl ChatMessage {
     }
 }
 
+/// A durable compaction record for a conversation.
+///
+/// When an agent context is compacted (LLM or heuristic), the summary and a
+/// boundary anchor are recorded here so that a later restart can replay
+/// `[summary] + messages-after-boundary` instead of the full history. The
+/// original messages stay in `chat_messages` untouched; this record only
+/// remembers where the compaction mask starts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationCompaction {
+    /// Conversation the record belongs to (one active record per conversation).
+    pub conversation_id: String,
+    /// Role of the boundary message (`"user"` or `"assistant"`).
+    pub boundary_role: String,
+    /// Content of the boundary message — the first message the compaction mask
+    /// keeps. Used as an anchor to locate the boundary in `chat_messages`.
+    pub boundary_content: String,
+    /// Summary message content, replayed verbatim in front of the tail.
+    pub summary: String,
+    /// When the record was created.
+    pub created_at: SystemTime,
+}
+
 /// Trait for chat history storage
 #[async_trait]
 pub trait ChatHistoryStore: Send + Sync {
@@ -576,6 +598,38 @@ pub trait ChatHistoryStore: Send + Sync {
 
     /// Get the most recent conversation ID for a user
     async fn get_last_conversation(&self, user_id: &str) -> crate::Result<Option<String>>;
+
+    /// Record the durable boundary of a context compaction.
+    ///
+    /// The boundary anchor is the first message the mask keeps (everything
+    /// before it is replaced by `summary` on rehydration). One active record
+    /// per conversation — a later compaction overwrites the previous one.
+    async fn record_compaction(
+        &self,
+        conversation_id: &str,
+        boundary_role: &str,
+        boundary_content: &str,
+        summary: &str,
+    ) -> crate::Result<()>;
+
+    /// Load the active compaction record for a conversation, if any.
+    async fn get_compaction(
+        &self,
+        conversation_id: &str,
+    ) -> crate::Result<Option<ConversationCompaction>>;
+
+    /// Get conversation history starting at the boundary anchor (the first
+    /// message whose `(role, content)` matches, i.e. the last occurrence).
+    ///
+    /// Returns an empty vec when the anchor cannot be located — callers
+    /// should fall back to the full history.
+    async fn get_conversation_history_since(
+        &self,
+        conversation_id: &str,
+        boundary_role: &str,
+        boundary_content: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<ChatMessage>>;
 }
 
 /// Calculate cosine similarity between two vectors

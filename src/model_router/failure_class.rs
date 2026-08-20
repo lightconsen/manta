@@ -179,6 +179,16 @@ impl FailureClass {
             Self::ConnectionError
         } else if msg.contains("overloaded") || msg.contains("service unavailable") {
             Self::Overloaded
+        } else if msg.contains("context length")
+            || msg.contains("context window")
+            || msg.contains("maximum context")
+            || msg.contains("too many tokens")
+            || msg.contains("max_tokens")
+            || msg.contains("token limit")
+        {
+            // Providers often surface this without an HTTP status code (or the
+            // code is lost when an error is rewrapped), so keyword-match it.
+            Self::ContextLength
         } else {
             Self::Unknown
         }
@@ -206,17 +216,31 @@ impl FailureClass {
         }
 
         // Also scan for a standalone 3-digit code anywhere in the message
-        // (e.g. "429 rate limit", "401 unauthorized")
+        // (e.g. "429 rate limit", "401 unauthorized"). Only accept a digit run
+        // of exactly 3 characters bounded by non-alphanumerics so numbers like
+        // "250000 tokens" or "128k" do not yield bogus status codes.
         let chars: Vec<char> = msg.chars().collect();
-        for window in chars.windows(3) {
-            if window.iter().all(|c| c.is_ascii_digit()) {
-                let digits: String = window.iter().collect();
-                if let Ok(code) = digits.parse::<u16>() {
-                    // Validate it's a known HTTP status code range
-                    if (100..=599).contains(&code) {
-                        return Some(code);
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i].is_ascii_digit() {
+                let start = i;
+                while i < chars.len() && chars[i].is_ascii_digit() {
+                    i += 1;
+                }
+                let run_len = i - start;
+                let bounded_left = start == 0 || !chars[start - 1].is_alphanumeric();
+                let bounded_right = i == chars.len() || !chars[i].is_alphanumeric();
+                if run_len == 3 && bounded_left && bounded_right {
+                    let digits: String = chars[start..i].iter().collect();
+                    if let Ok(code) = digits.parse::<u16>() {
+                        // Validate it's a known HTTP status code range
+                        if (100..=599).contains(&code) {
+                            return Some(code);
+                        }
                     }
                 }
+            } else {
+                i += 1;
             }
         }
 
@@ -331,6 +355,41 @@ mod tests {
         };
         let class = FailureClass::from_error(&err, None);
         assert_eq!(class, FailureClass::AuthTemporary);
+    }
+
+    #[test]
+    fn test_from_error_string_context_length_without_status_code() {
+        // Provider errors are often rewrapped (e.g. "Provider x failed: ...")
+        // with the status code lost — keyword matching must still classify.
+        let err = SyscityError::ExternalService {
+            source: "Provider anthropic failed: prompt is too long: 250000 tokens > maximum \
+                     context length"
+                .into(),
+            cause: None,
+        };
+        assert_eq!(FailureClass::from_error(&err, None), FailureClass::ContextLength);
+    }
+
+    #[test]
+    fn test_from_error_string_context_length_variants() {
+        for msg in [
+            "context window exhausted",
+            "maximum context is 128k tokens",
+            "request exceeds max_tokens limit",
+            "too many tokens in the request",
+            "token limit exceeded",
+        ] {
+            let err = SyscityError::ExternalService {
+                source: msg.into(),
+                cause: None,
+            };
+            assert_eq!(
+                FailureClass::from_error(&err, None),
+                FailureClass::ContextLength,
+                "msg: {}",
+                msg
+            );
+        }
     }
 
     #[test]

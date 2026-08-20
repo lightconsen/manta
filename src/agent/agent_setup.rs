@@ -608,11 +608,66 @@ impl Agent {
         // instead of relying only on the memory-injected summary (which can
         // leak wrong/stale context from other sessions).
         if let Some(ref store) = self.chat_history {
-            match store
-                .get_conversation_history(conversation_id, cfg.max_turns.unwrap_or(50) * 2)
-                .await
-            {
+            let limit = cfg.max_turns.unwrap_or(50) * 2;
+            // A durable compaction record rehydrates as `[summary] + tail`
+            // instead of the full history, keeping the token mask effective
+            // across restarts.
+            let compaction = match store.get_compaction(conversation_id).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load compaction record for {}: {}",
+                        conversation_id,
+                        e
+                    );
+                    None
+                }
+            };
+            let mut summary: Option<String> = None;
+            let history = match &compaction {
+                Some(comp) => {
+                    match store
+                        .get_conversation_history_since(
+                            conversation_id,
+                            &comp.boundary_role,
+                            &comp.boundary_content,
+                            limit,
+                        )
+                        .await
+                    {
+                        Ok(tail) if !tail.is_empty() => {
+                            summary = Some(comp.summary.clone());
+                            Ok(tail)
+                        }
+                        Ok(_) => {
+                            tracing::warn!(
+                                "Could not locate compaction boundary for {} (role={}, content={:?}) — falling back to full history",
+                                conversation_id,
+                                comp.boundary_role,
+                                comp.boundary_content
+                            );
+                            store.get_conversation_history(conversation_id, limit).await
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to load compacted history for {}: {} — falling back to full history",
+                                conversation_id,
+                                e
+                            );
+                            store.get_conversation_history(conversation_id, limit).await
+                        }
+                    }
+                }
+                None => store.get_conversation_history(conversation_id, limit).await,
+            };
+
+            match history {
                 Ok(history) => {
+                    if let Some(ref summary) = summary {
+                        let mut summary_msg = crate::providers::Message::system(summary.clone());
+                        summary_msg.name = Some("compaction_summary".to_string());
+                        context.add_message(summary_msg);
+                    }
                     for msg in history {
                         let role = match msg.role.as_str() {
                             "user" => crate::providers::Role::User,
@@ -761,5 +816,64 @@ mod tests {
         // No delegation → workspace stays the agent's own, no allowlist.
         assert_eq!(ctx.workspace_root(), &crate::dirs::agent_workspace_dir("worker"));
         assert!(ctx.allowed_paths().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_build_fresh_context_rehydrates_compaction_boundary() {
+        use crate::memory::{ChatHistoryStore, ChatMessage};
+        let store = Arc::new(crate::memory::DatabaseStore::new_in_memory().await.unwrap());
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Arc::new(MockProvider::new()),
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_chat_history(store.clone());
+
+        // Populate persisted history and record a compaction whose boundary is
+        // the final user turn — everything before it is "masked" by the summary.
+        for i in 0..6 {
+            store
+                .store_message(ChatMessage::new(
+                    "conv-c",
+                    "u",
+                    "user",
+                    format!("original user {i}"),
+                ))
+                .await
+                .unwrap();
+            store
+                .store_message(ChatMessage::new(
+                    "conv-c",
+                    "u",
+                    "assistant",
+                    format!("original assistant {i}"),
+                ))
+                .await
+                .unwrap();
+        }
+        store
+            .record_compaction("conv-c", "user", "original user 5", "DUMMY SUMMARY")
+            .await
+            .unwrap();
+
+        let ctx = agent.build_fresh_context("conv-c", "u", "follow up").await;
+
+        // Rehydration replays `[summary] + tail` instead of the full history.
+        let messages = ctx.history();
+        assert_eq!(messages[0].role, crate::providers::Role::System);
+        assert_eq!(messages[0].name.as_deref(), Some("compaction_summary"));
+        assert!(messages[0].content.contains("DUMMY SUMMARY"));
+        let tail: Vec<(crate::providers::Role, &str)> = messages[1..]
+            .iter()
+            .map(|m| (m.role, m.content.as_str()))
+            .collect();
+        assert_eq!(
+            tail,
+            vec![
+                (crate::providers::Role::User, "original user 5"),
+                (crate::providers::Role::Assistant, "original assistant 5"),
+            ],
+            "only the tail after the boundary is replayed"
+        );
     }
 }

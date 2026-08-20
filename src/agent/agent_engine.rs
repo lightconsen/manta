@@ -1292,29 +1292,9 @@ impl Agent {
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
         let cfg = self.config_snapshot();
-        // If the context is over-budget, try to reduce it before sending.
-        if context.needs_pruning() {
-            if let Some(ref compaction_model) = cfg.compaction_model {
-                // LLM-assisted compaction: produce a high-quality summary.
-                let compressor =
-                    crate::agent::compressor::ContextCompressor::new(cfg.max_context_tokens);
-                let history = context.history().to_vec();
-                let compacted = compressor
-                    .compact_with_llm(
-                        &history,
-                        &self.provider,
-                        Some(compaction_model.as_str()),
-                        2,
-                        6,
-                    )
-                    .await;
-                context.replace_messages(compacted);
-            } else {
-                // Fallback: drop middle messages and insert a placeholder summary.
-                // This keeps the context coherent without an extra LLM call.
-                context.summarize();
-            }
-        }
+        // If the context is over-budget, reduce it before sending (persisting
+        // the compaction mask so a restart can rehydrate the same boundary).
+        self.compact_context_if_needed(context, &cfg).await;
 
         let messages = context.to_messages();
 
@@ -1323,6 +1303,21 @@ impl Agent {
             self.build_tool_context(user_id, context.id(), context.delegation().cloned());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
+
+        // Convert FunctionDefinition to ToolDefinition. Kept owned so the
+        // request can be re-armed after a compaction retry below.
+        let tools: Vec<crate::providers::ToolDefinition> =
+            if has_tools && self.provider.supports_tools() {
+                tool_defs
+                    .into_iter()
+                    .map(|f| crate::providers::ToolDefinition {
+                        tool_type: "function".to_string(),
+                        function: f,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
         let extra = self.extra_params.read().await.clone();
         let mut request = CompletionRequest {
@@ -1335,17 +1330,8 @@ impl Agent {
             ..Default::default()
         };
         self.patch_request_for_reasoning(&mut request);
-
-        if has_tools && self.provider.supports_tools() {
-            // Convert FunctionDefinition to ToolDefinition
-            let tools: Vec<crate::providers::ToolDefinition> = tool_defs
-                .into_iter()
-                .map(|f| crate::providers::ToolDefinition {
-                    tool_type: "function".to_string(),
-                    function: f,
-                })
-                .collect();
-            request.tools = Some(tools);
+        if !tools.is_empty() {
+            request.tools = Some(tools.clone());
         }
 
         // Check live cost guard before calling provider
@@ -1359,20 +1345,48 @@ impl Agent {
             }
         }
 
-        // Get completion — use model router when available for key rotation / fallback
-        let response = if let Some(ref router) = self.model_router {
-            let model_id = {
-                let session_model = self.session_models.read().await.get(context.id()).cloned();
-                let guard = self.model_override.read().await;
-                session_model
-                    .or_else(|| guard.as_ref().cloned())
-                    .or(self.model.clone())
-                    .unwrap_or_else(|| self.provider.default_model().to_string())
+        // Get completion — use model router when available for key rotation /
+        // fallback. If the provider rejects the request as over its context
+        // window, compact the context and retry once instead of failing.
+        let mut retried = false;
+        let response = loop {
+            let outcome = if let Some(ref router) = self.model_router {
+                let model_id = {
+                    let session_model = self.session_models.read().await.get(context.id()).cloned();
+                    let guard = self.model_override.read().await;
+                    session_model
+                        .or_else(|| guard.as_ref().cloned())
+                        .or(self.model.clone())
+                        .unwrap_or_else(|| self.provider.default_model().to_string())
+                };
+                let req_tools = request.tools.take();
+                router
+                    .complete(&model_id, request.messages, req_tools)
+                    .await
+            } else {
+                self.provider.complete(request.clone()).await
             };
-            let tools = request.tools.take();
-            router.complete(&model_id, request.messages, tools).await?
-        } else {
-            self.provider.complete(request).await?
+
+            match outcome {
+                Ok(r) => break r,
+                Err(e)
+                    if !retried
+                        && crate::model_router::FailureClass::from_error(&e, None)
+                            == crate::model_router::FailureClass::ContextLength =>
+                {
+                    retried = true;
+                    info!(
+                        "[compaction] provider rejected context as too long — compacting and \
+                         retrying once"
+                    );
+                    self.compact_context_forced(context, &cfg).await;
+                    request.messages = context.to_messages();
+                    if !tools.is_empty() {
+                        request.tools = Some(tools.clone());
+                    }
+                }
+                Err(e) => return Err(e),
+            }
         };
 
         // Record token usage in cost guard
@@ -1400,6 +1414,81 @@ impl Agent {
         context.add_message(response.message.clone());
 
         Ok(response)
+    }
+
+    /// If `context` is over-budget, compact it and persist a durable
+    /// compaction record so a later restart can rehydrate `[summary] + tail`
+    /// instead of replaying the full history.
+    async fn compact_context_if_needed(
+        &self,
+        context: &mut Context,
+        cfg: &crate::agent::AgentConfig,
+    ) {
+        // If the context is over-budget, try to reduce it before sending.
+        if context.needs_pruning() {
+            self.compact_context_forced(context, cfg).await;
+        }
+    }
+
+    /// Force a compaction regardless of the local token budget, then persist
+    /// the boundary. Used by the overflow retry: when the provider rejects the
+    /// request as over its real context window, `needs_pruning()` may still be
+    /// false (our estimate is larger than the model's limit), so compaction
+    /// must not be gated on it.
+    async fn compact_context_forced(&self, context: &mut Context, cfg: &crate::agent::AgentConfig) {
+        if let Some(ref compaction_model) = cfg.compaction_model {
+            // LLM-assisted compaction: produce a high-quality summary.
+            let compressor =
+                crate::agent::compressor::ContextCompressor::new(cfg.max_context_tokens);
+            let history = context.history().to_vec();
+            let compacted = compressor
+                .compact_with_llm(&history, &self.provider, Some(compaction_model.as_str()), 2, 6)
+                .await;
+            context.replace_messages(compacted);
+        } else {
+            // Fallback: drop middle messages and insert a placeholder summary.
+            // This keeps the context coherent without an extra LLM call.
+            context.summarize();
+        }
+        self.record_compaction_boundary(context).await;
+    }
+
+    /// Persist the current compaction mask.
+    ///
+    /// The boundary anchor is the first message after the summary that is safe
+    /// to replay from persistence: a user message or an assistant message
+    /// without tool calls. Tool results and tool-calling assistant turns are
+    /// not stored in `chat_messages`, so anchoring on them would leave a broken
+    /// pair on rehydration.
+    async fn record_compaction_boundary(&self, context: &Context) {
+        let Some(summary_idx) = context
+            .history()
+            .iter()
+            .position(|m| m.name.as_deref() == Some("compaction_summary"))
+        else {
+            return;
+        };
+        let summary = context.history()[summary_idx].content.clone();
+        let Some(boundary) = context.history()[summary_idx + 1..].iter().find(|m| {
+            m.role != crate::providers::Role::Tool
+                && !(m.role == crate::providers::Role::Assistant && m.tool_calls.is_some())
+        }) else {
+            return;
+        };
+        let Some(ref store) = self.chat_history else {
+            return;
+        };
+        if let Err(e) = store
+            .record_compaction(
+                context.id(),
+                &boundary.role.to_string(),
+                &boundary.content,
+                &summary,
+            )
+            .await
+        {
+            warn!("[compaction] failed to persist compaction boundary: {}", e);
+        }
     }
 
     /// Handle tool calls from the LLM
@@ -1616,15 +1705,22 @@ impl Agent {
         };
         self.patch_request_for_reasoning(&mut request);
 
-        if has_tools && self.provider.supports_tools() {
-            let tools: Vec<crate::providers::ToolDefinition> = tool_defs
-                .into_iter()
-                .map(|f| crate::providers::ToolDefinition {
-                    tool_type: "function".to_string(),
-                    function: f,
-                })
-                .collect();
-            request.tools = Some(tools);
+        // Convert FunctionDefinition to ToolDefinition. Kept owned so the
+        // request can be re-armed after a compaction retry below.
+        let tools: Vec<crate::providers::ToolDefinition> =
+            if has_tools && self.provider.supports_tools() {
+                tool_defs
+                    .into_iter()
+                    .map(|f| crate::providers::ToolDefinition {
+                        tool_type: "function".to_string(),
+                        function: f,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        if !tools.is_empty() {
+            request.tools = Some(tools.clone());
         }
 
         // Check live cost guard before calling provider
@@ -1641,9 +1737,12 @@ impl Agent {
         // Notify generating (starting)
         (progress_cb)(ProgressEvent::Generating { content: None }).await;
 
-        // Get streaming completion — use model router when available
-        let (raw_stream, family, round_model, round_provider) =
-            if let Some(ref router) = self.model_router {
+        // Get streaming completion — use model router when available. If the
+        // provider rejects the request as over its context window at stream
+        // setup (before any bytes are emitted), compact and retry once.
+        let mut retried = false;
+        let (raw_stream, family, round_model, round_provider) = loop {
+            let setup = if let Some(ref router) = self.model_router {
                 let model_id = {
                     let session_model = self.session_models.read().await.get(context.id()).cloned();
                     let guard = self.model_override.read().await;
@@ -1652,8 +1751,8 @@ impl Agent {
                         .or(self.model.clone())
                         .unwrap_or_else(|| self.provider.default_model().to_string())
                 };
-                let tools = request.tools.take();
-                let stream = router.stream(&model_id, request.messages, tools).await?;
+                let req_tools = request.tools.take();
+                let stream = router.stream(&model_id, request.messages, req_tools).await;
                 let provider = router
                     .provider_for_model(&model_id)
                     .await
@@ -1672,12 +1771,36 @@ impl Agent {
                     .unwrap_or_else(|| self.provider.default_model().to_string());
                 let round_provider = self.provider.name().to_string();
                 (
-                    self.provider.stream(request).await?,
+                    self.provider.stream(request.clone()).await,
                     self.provider.stream_family(),
                     round_model,
                     round_provider,
                 )
             };
+
+            match setup {
+                (Ok(stream), family, round_model, round_provider) => {
+                    break (stream, family, round_model, round_provider);
+                }
+                (Err(e), _, _, _)
+                    if !retried
+                        && crate::model_router::FailureClass::from_error(&e, None)
+                            == crate::model_router::FailureClass::ContextLength =>
+                {
+                    retried = true;
+                    info!(
+                        "[compaction] provider rejected streaming context as too long — \
+                         compacting and retrying once"
+                    );
+                    self.compact_context_forced(context, &cfg).await;
+                    request.messages = context.to_messages();
+                    if !tools.is_empty() {
+                        request.tools = Some(tools.clone());
+                    }
+                }
+                (Err(e), _, _, _) => return Err(e),
+            }
+        };
         let registry = crate::providers::stream_wrappers::StreamFamilyRegistry::default();
         let mut stream = registry.apply(family, raw_stream);
 
@@ -2112,5 +2235,127 @@ impl Agent {
         }
 
         Ok(final_response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use crate::error::SyscityError;
+    use crate::memory::ChatHistoryStore;
+    use crate::providers::{
+        CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, Message,
+        Provider, Usage,
+    };
+
+    /// A provider that fails the first completion with a context-length error
+    /// and succeeds afterwards — models the "model real limit < our estimate"
+    /// overflow that should trigger a compact-and-retry.
+    struct ContextLengthThenOk {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for ContextLengthThenOk {
+        fn name(&self) -> &str {
+            "ctx-overflow-test"
+        }
+
+        fn default_model(&self) -> &str {
+            "test-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            false
+        }
+
+        fn max_context(&self) -> usize {
+            128_000
+        }
+
+        async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                return Err(SyscityError::ExternalService {
+                    source: "Test provider: this model's maximum context length is 2048 tokens"
+                        .into(),
+                    cause: None,
+                });
+            }
+            Ok(CompletionResponse {
+                message: Message::assistant("ok"),
+                model: self.default_model().to_string(),
+                usage: Some(Usage::default()),
+                finish_reason: Some("stop".to_string()),
+            })
+        }
+
+        async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let _ = tx.send(CompletionChunk {
+                content: Some("ok".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                is_done: true,
+                usage: None,
+            });
+            Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)))
+        }
+
+        async fn health_check(&self) -> crate::Result<bool> {
+            Ok(true)
+        }
+
+        async fn set_credential(
+            &self,
+            _credential: crate::model_router::Credential,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_completion_retries_once_on_context_length() {
+        let provider = Arc::new(ContextLengthThenOk { calls: AtomicUsize::new(0) });
+        let store = Arc::new(crate::memory::DatabaseStore::new_in_memory().await.unwrap());
+        let agent = crate::agent::Agent::new(
+            crate::agent::AgentConfig::default(),
+            provider.clone(),
+            Arc::new(crate::tools::ToolRegistry::new()),
+        )
+        .with_chat_history(store.clone());
+
+        let mut context =
+            crate::agent::Context::new("conv-overflow", "You are a helpful assistant", 100_000);
+        // Enough messages (> KEEP_FIRST + KEEP_LAST + 1) that a forced
+        // `summarize()` actually shrinks the history, but short enough that the
+        // local budget check says no pre-flight pruning is needed.
+        for i in 0..10 {
+            context.add_message(Message::user(format!("user message {}", i)));
+            context.add_message(Message::assistant(format!("assistant message {}", i)));
+        }
+        assert!(!context.needs_pruning());
+
+        let response = agent.get_completion(&mut context, "user1").await.unwrap();
+        assert_eq!(response.message.content, "ok");
+        // First call failed, second call (after compaction) succeeded.
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        // The durable compaction record was written for this conversation.
+        let record = store
+            .get_compaction("conv-overflow")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.conversation_id, "conv-overflow");
+        assert!(!record.summary.is_empty());
+        // The in-memory context was actually compacted: it now carries the
+        // named summary and is much smaller than the original 20 messages.
+        assert!(context
+            .history()
+            .iter()
+            .any(|m| m.name.as_deref() == Some("compaction_summary")));
+        assert!(context.message_count() < 20);
     }
 }

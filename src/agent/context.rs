@@ -563,9 +563,26 @@ impl Context {
             return; // Nothing to summarize
         }
 
-        let middle_start = KEEP_FIRST;
-        let middle_end = self.messages.len() - KEEP_LAST;
+        let mut middle_start = KEEP_FIRST;
+        let mut middle_end = self.messages.len() - KEEP_LAST;
 
+        if middle_end <= middle_start {
+            return;
+        }
+
+        // Tool-pair boundary safety: the kept tail must never start on a tool
+        // result (its assistant tool-call would be summarized away) and the cut
+        // point must never leave an assistant tool-call without its results.
+        while middle_start < middle_end
+            && self.messages[middle_start].role == crate::providers::Role::Tool
+        {
+            middle_start += 1;
+        }
+        while middle_end < self.messages.len()
+            && self.messages[middle_end].role == crate::providers::Role::Tool
+        {
+            middle_end += 1;
+        }
         if middle_end <= middle_start {
             return;
         }
@@ -592,8 +609,12 @@ impl Context {
         let summary_content =
             format!("[Summary of {} earlier messages]\n{}", middle.len(), turns.join("\n"));
 
-        self.messages
-            .insert(middle_start, Message::system(summary_content));
+        // Name the summary message so callers can locate the boundary that the
+        // durable compaction record anchors on (`compaction_summary` matches
+        // the LLM path in compact_with_llm).
+        let mut summary = Message::system(summary_content);
+        summary.name = Some("compaction_summary".to_string());
+        self.messages.insert(middle_start, summary);
         self.recalculate_tokens();
     }
 }
@@ -698,6 +719,46 @@ mod tests {
 
         // Should have fewer messages after summarization
         assert!(ctx.message_count() < before_count);
+    }
+
+    #[test]
+    fn test_summarize_keeps_tool_pair_and_names_summary() {
+        let mut ctx = Context::new("test", "System", 10000);
+
+        let mut call = Message::assistant("");
+        call.tool_calls = Some(vec![]);
+        ctx.add_message(Message::user("u0"));
+        ctx.add_message(call);
+        ctx.add_message(Message {
+            role: crate::providers::Role::Tool,
+            content: "result0".to_string(),
+            content_blocks: None,
+            reasoning_content: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: Some("c1".to_string()),
+            metadata: None,
+        });
+        // Enough messages that KEEP_FIRST(2) lands exactly on the tool result.
+        for i in 1..6 {
+            ctx.add_message(Message::user(format!("u{}", i)));
+            ctx.add_message(Message::assistant(format!("a{}", i)));
+        }
+
+        ctx.summarize();
+
+        // Summary message is named so the durable-boundary finder can locate it.
+        let summary_idx = ctx
+            .history()
+            .iter()
+            .position(|m| m.name.as_deref() == Some("compaction_summary"))
+            .expect("summary message present");
+        // The tool result must sit before the summary with its call, never cut.
+        let roles: Vec<crate::providers::Role> = ctx.history().iter().map(|m| m.role).collect();
+        assert_eq!(roles[summary_idx - 1], crate::providers::Role::Tool);
+        assert_eq!(roles[summary_idx - 2], crate::providers::Role::Assistant);
+        // The message right after the summary is not a tool result.
+        assert_ne!(roles[summary_idx + 1], crate::providers::Role::Tool);
     }
 
     #[test]

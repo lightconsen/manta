@@ -363,10 +363,24 @@ impl ContextCompressor {
         let n = messages.len();
 
         // Nothing to summarise if the history is too short.
-        let mid_start = keep_head;
-        let mid_end = n.saturating_sub(keep_tail);
+        let mut mid_start = keep_head;
+        let mut mid_end = n.saturating_sub(keep_tail);
         if mid_start >= mid_end {
             debug!("compact_with_llm: history too short to summarise, returning as-is");
+            return messages.to_vec();
+        }
+
+        // Tool-pair boundary safety: the kept tail must never start on a tool
+        // result (its assistant tool-call would be summarised away) and the cut
+        // point must never leave an assistant tool-call without its results.
+        while mid_start < mid_end && messages[mid_start].role == Role::Tool {
+            mid_start += 1;
+        }
+        while mid_end < n && messages[mid_end].role == Role::Tool {
+            mid_end += 1;
+        }
+        if mid_start >= mid_end {
+            debug!("compact_with_llm: history too short after pair snapping, returning as-is");
             return messages.to_vec();
         }
 
@@ -981,5 +995,104 @@ mod tests {
             .compact_with_llm(&messages, &provider, None, 2, 2)
             .await;
         assert_eq!(compacted.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_compact_with_llm_tail_never_starts_on_tool_result() {
+        // mid_start lands exactly on a tool result; snapping must fold it back
+        // into the kept head (with its tool call) so the tail starts on a user.
+        let compressor = ContextCompressor::new(100);
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider {
+            response: Some("Summary".to_string()),
+            should_fail: false,
+        });
+
+        let mut call = msg(Role::Assistant, "");
+        call.tool_calls = Some(vec![]);
+        let tool_result = Message {
+            role: Role::Tool,
+            content: "tool result".to_string(),
+            content_blocks: None,
+            reasoning_content: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: Some("c1".to_string()),
+            metadata: None,
+        };
+        let messages = vec![
+            msg(Role::System, "sys"),
+            call,
+            tool_result,
+            msg(Role::User, "follow up"),
+            msg(Role::Assistant, "reply"),
+            msg(Role::User, "another"),
+            msg(Role::Assistant, "done"),
+        ];
+
+        // keep_head=2 → mid_start=2 lands on the tool result. After snapping the
+        // tail must begin at "follow up" and the tool pair must stay intact.
+        let compacted = compressor
+            .compact_with_llm(&messages, &provider, None, 2, 2)
+            .await;
+
+        assert!(compacted.len() < messages.len(), "should compact");
+        // head(3: System, tool-call, tool-result) + summary + tail(2).
+        assert_eq!(
+            compacted[3].name.as_deref(),
+            Some("compaction_summary"),
+            "summary must follow the tool pair"
+        );
+        let tail_start = &compacted[4];
+        assert_eq!(tail_start.role, Role::User);
+        assert_eq!(tail_start.content, "another");
+        // The tool call + its result both survived in the head, in order.
+        let head_roles: Vec<Role> = compacted[..3].iter().map(|m| m.role).collect();
+        assert_eq!(head_roles, vec![Role::System, Role::Assistant, Role::Tool]);
+        assert!(compacted[1].tool_calls.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_compact_with_llm_cut_never_orphans_tool_call() {
+        // The cut point sits on an assistant tool-call whose results follow in
+        // the tail; snapping must fold the results into the mid (summarised).
+        let compressor = ContextCompressor::new(100);
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider {
+            response: Some("Summary".to_string()),
+            should_fail: false,
+        });
+
+        let mut call = msg(Role::Assistant, "");
+        call.tool_calls = Some(vec![]);
+        let tool_result = Message {
+            role: Role::Tool,
+            content: "result2".to_string(),
+            content_blocks: None,
+            reasoning_content: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: Some("c2".to_string()),
+            metadata: None,
+        };
+        let messages = vec![
+            msg(Role::System, "sys"),
+            msg(Role::User, "u1"),
+            msg(Role::Assistant, "a1"),
+            msg(Role::User, "u2"),
+            call,
+            tool_result,
+            msg(Role::User, "u3"),
+        ];
+
+        // keep_head=1, keep_tail=2 → mid_end=5 lands after the tool call; the
+        // tool result at index 5 must be pulled into the mid so the tail never
+        // starts with an orphaned result.
+        let compacted = compressor
+            .compact_with_llm(&messages, &provider, None, 1, 2)
+            .await;
+
+        assert!(compacted.len() < messages.len(), "should compact");
+        let tail_start = &compacted[2]; // head(1) + summary + tail
+        assert_eq!(tail_start.role, Role::User);
+        assert_eq!(tail_start.content, "u3");
     }
 }
