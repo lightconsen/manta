@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::channels::ChannelAcpBridge;
+use crate::hooks::ShellHookBridge;
 use crate::inbound::*;
 
 pub mod auth;
@@ -262,6 +263,11 @@ pub struct GatewayOptions {
     /// Only constructed on mobile; `None` on desktop keeps every `device_*`
     /// tool and `device.*` WS method unavailable.
     pub device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
+    /// Explicit path to the CC-compatible `hooks.json` shell-hooks file.
+    ///
+    /// When `None`, the bridge falls back to a `hooks.json` sibling of the
+    /// config file, then to `~/.syscity/hooks.json`.
+    pub hooks_file: Option<PathBuf>,
 }
 
 impl Gateway {
@@ -303,6 +309,17 @@ impl Gateway {
         let audit_log = storage_init.audit_log;
         let audit_log_dyn = storage_init.audit_log_dyn;
 
+        // Shell hooks bridge: loaded once at startup, read from the
+        // explicit option, a `hooks.json` sibling of the config file, or the
+        // default `~/.syscity/hooks.json`. Never fails — a missing/broken
+        // file yields an empty bridge and the daemon boots normally.
+        let hooks_path = options
+            .hooks_file
+            .clone()
+            .or_else(|| config_path.clone().map(|p| p.with_file_name("hooks.json")))
+            .unwrap_or_else(|| crate::dirs::config_dir().join("hooks.json"));
+        let shell_hooks = ShellHookBridge::load(&hooks_path, Some(audit_log_dyn.clone()));
+
         // Migrate legacy (alias-era) provider/model config in place before the
         // router is built, persisting once if anything changed so disk, the
         // live router, and the frontend agree from the first boot.
@@ -335,6 +352,7 @@ impl Gateway {
             task_registry.clone(),
             device_bridge.clone(),
             skills_manager.clone(),
+            shell_hooks.clone(),
         )
         .await?;
 
@@ -486,6 +504,7 @@ impl Gateway {
                 hot_reload: RwLock::new(None),
                 plugin_manager: tools_init.plugin_manager.clone(),
                 model_router: model_router.clone(),
+                shell_hooks: shell_hooks.clone(),
                 engine_metrics: None,
                 #[cfg(feature = "browser")]
                 browser_bridge: tokio::sync::RwLock::new(None),

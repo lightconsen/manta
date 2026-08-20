@@ -19,6 +19,7 @@ use std::pin::Pin;
 
 use crate::tools::approval::{ApprovalLevel, RiskLevel};
 use crate::tools::hooks::{PolicyHookFn, ToolPolicyDecision};
+use crate::tools::ToolContext;
 
 /// A list of pre-approved binary names / paths.
 ///
@@ -305,10 +306,10 @@ pub fn analyze_shell_command(command: &str, safe_bins: &SafeBinList) -> ShellSaf
 ///
 /// let safe_bins = SafeBinList::new().allow("docker");
 /// let policy = shell_safety_policy(safe_bins);
-/// let hooks = ToolHooks::new().policy(move |name, args| policy(name, args));
+/// let hooks = ToolHooks::new().policy(move |name, args, ctx| policy(name, args, ctx));
 /// ```
 pub fn shell_safety_policy(safe_bins: SafeBinList) -> PolicyHookFn {
-    std::sync::Arc::new(move |name: &str, args: &serde_json::Value| {
+    std::sync::Arc::new(move |name: &str, args: &serde_json::Value, _ctx: &ToolContext| {
         let safe_bins = safe_bins.clone();
         let name = name.to_string();
         let args = args.clone();
@@ -442,9 +443,9 @@ mod tests {
     fn test_shell_safety_policy_non_shell_tool() {
         let safe = SafeBinList::new();
         let policy = shell_safety_policy(safe);
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { policy("read", &serde_json::json!({})).await });
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            policy("read", &serde_json::json!({}), &ToolContext::default()).await
+        });
         assert_eq!(result, ToolPolicyDecision::Allow);
     }
 
@@ -452,9 +453,10 @@ mod tests {
     fn test_shell_safety_policy_allows_ls() {
         let safe = SafeBinList::new();
         let policy = shell_safety_policy(safe);
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { policy("shell", &serde_json::json!({"command": "ls -la"})).await });
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            policy("shell", &serde_json::json!({"command": "ls -la"}), &ToolContext::default())
+                .await
+        });
         assert!(result.is_allow());
     }
 
@@ -462,9 +464,10 @@ mod tests {
     fn test_shell_safety_policy_denies_rm_rf() {
         let safe = SafeBinList::new();
         let policy = shell_safety_policy(safe);
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { policy("shell", &serde_json::json!({"command": "rm -rf /"})).await });
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            policy("shell", &serde_json::json!({"command": "rm -rf /"}), &ToolContext::default())
+                .await
+        });
         assert!(result.is_deny());
     }
 
@@ -473,7 +476,12 @@ mod tests {
         let safe = SafeBinList::new();
         let policy = shell_safety_policy(safe);
         let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
-            policy("bash", &serde_json::json!({"command": "sudo apt update"})).await
+            policy(
+                "bash",
+                &serde_json::json!({"command": "sudo apt update"}),
+                &ToolContext::default(),
+            )
+            .await
         });
         assert!(result.is_needs_approval());
     }

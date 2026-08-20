@@ -15,6 +15,7 @@ use crate::canvas::CanvasManager;
 use crate::channels::{Channel, ChannelExtensionRegistry, IncomingMessage};
 use crate::computer::ComputerAdapter;
 use crate::gateway::GatewayConfig;
+use crate::hooks::ShellHookBridge;
 use crate::mcp::{McpEvent, McpManager};
 use crate::memory::MemoryManager;
 use crate::model_router::ModelRouter;
@@ -234,6 +235,7 @@ pub async fn init_tools(
     task_registry: Arc<crate::gateway::task_registry::TaskRegistry>,
     device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
     skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
+    shell_hooks: Arc<ShellHookBridge>,
 ) -> crate::Result<ToolsInit> {
     let (mcp_manager, mcp_event_rx) = init_mcp_manager().await;
     let approval_queue = Arc::new(ApprovalQueue::new());
@@ -254,6 +256,7 @@ pub async fn init_tools(
                 search_config: config.search.clone(),
                 device_bridge,
                 skills_manager,
+                tool_hooks: shell_hooks.tool_hooks(),
             },
         )
         .await?,

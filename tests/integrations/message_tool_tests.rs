@@ -196,6 +196,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             model_router: Arc::new(syscity::model_router::ModelRouter::new(
                 syscity::model_router::ModelRouterConfig::default(),
             )),
+            shell_hooks: syscity::hooks::ShellHookBridge::empty(),
             engine_metrics: None,
             #[cfg(feature = "browser")]
             browser_bridge: tokio::sync::RwLock::new(None),

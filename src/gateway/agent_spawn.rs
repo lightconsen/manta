@@ -917,6 +917,8 @@ pub(crate) struct ToolRegistryArgs {
     pub device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
     /// Shared skill manager for the on-demand `skill` tool.
     pub skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
+    /// Shell-hook `ToolHooks` bundle (empty when no hooks.json configured).
+    pub tool_hooks: crate::tools::hooks::ToolHooks,
 }
 
 /// Create default tool registry with all built-in tools
@@ -937,11 +939,13 @@ pub(crate) async fn create_default_tool_registry(
         search_config,
         device_bridge,
         skills_manager,
+        tool_hooks,
     } = args;
 
     let mut registry = ToolRegistry::new()
         .with_approval_queue(approval_queue)
-        .with_audit_log(audit_log);
+        .with_audit_log(audit_log)
+        .with_hooks(tool_hooks);
     if let Some(filter) = content_filter {
         registry = registry.with_content_filter(filter);
     }

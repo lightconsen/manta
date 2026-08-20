@@ -11,7 +11,7 @@
 //! ```rust,no_run
 //! use syscity::tools::hooks::{ToolHooks, ToolPolicyDecision};
 //!
-//! let hooks = ToolHooks::new().policy(|name, args| {
+//! let hooks = ToolHooks::new().policy(|name, args, _ctx| {
 //!     let name = name.to_string();
 //!     Box::pin(async move {
 //!         if name == "shell" {
@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::{ApprovalLevel, RiskLevel, ToolExecutionResult};
+use super::{ApprovalLevel, RiskLevel, ToolContext, ToolExecutionResult};
 
 // ── Policy decision
 // ───────────────────────────────────────────────────────────
@@ -120,6 +120,7 @@ pub type PostExecuteHookFn = Arc<
             &str,
             &Value,
             &ToolExecutionResult,
+            &ToolContext,
             PostExecuteDecision,
         ) -> Pin<Box<dyn Future<Output = PostExecuteDecision> + Send>>
         + Send
@@ -150,7 +151,9 @@ pub type AfterHookFn = Arc<
 /// registered policy hooks are evaluated in registration order; the first
 /// `Deny` short-circuits further evaluation.
 pub type PolicyHookFn = Arc<
-    dyn Fn(&str, &Value) -> Pin<Box<dyn Future<Output = ToolPolicyDecision> + Send>> + Send + Sync,
+    dyn Fn(&str, &Value, &ToolContext) -> Pin<Box<dyn Future<Output = ToolPolicyDecision> + Send>>
+        + Send
+        + Sync,
 >;
 
 /// A collection of before/after/policy hooks for tool execution.
@@ -238,11 +241,11 @@ impl ToolHooks {
     /// The first hook that returns `Deny` short-circuits evaluation.
     pub fn policy<F, Fut>(mut self, f: F) -> Self
     where
-        F: Fn(&str, &Value) -> Fut + Send + Sync + 'static,
+        F: Fn(&str, &Value, &ToolContext) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ToolPolicyDecision> + Send + 'static,
     {
-        self.policy_hooks.push(Arc::new(move |name, args| {
-            Box::pin(f(name, args)) as Pin<Box<dyn Future<Output = ToolPolicyDecision> + Send>>
+        self.policy_hooks.push(Arc::new(move |name, args, ctx| {
+            Box::pin(f(name, args, ctx)) as Pin<Box<dyn Future<Output = ToolPolicyDecision> + Send>>
         }));
         self
     }
@@ -256,15 +259,15 @@ impl ToolHooks {
     /// discarded.
     pub fn post_execute<F, Fut>(mut self, f: F) -> Self
     where
-        F: Fn(&str, &Value, &ToolExecutionResult, PostExecuteDecision) -> Fut
+        F: Fn(&str, &Value, &ToolExecutionResult, &ToolContext, PostExecuteDecision) -> Fut
             + Send
             + Sync
             + 'static,
         Fut: Future<Output = PostExecuteDecision> + Send + 'static,
     {
         self.post_execute_hooks
-            .push(Arc::new(move |name, args, result, decision| {
-                Box::pin(f(name, args, result, decision))
+            .push(Arc::new(move |name, args, result, ctx, decision| {
+                Box::pin(f(name, args, result, ctx, decision))
                     as Pin<Box<dyn Future<Output = PostExecuteDecision> + Send>>
             }));
         self
@@ -292,9 +295,14 @@ impl ToolHooks {
     ///
     /// Returns `Allow` if all hooks allow, or the first `Deny` or
     /// `NeedsApproval` encountered.
-    pub async fn run_policy(&self, name: &str, args: &Value) -> ToolPolicyDecision {
+    pub async fn run_policy(
+        &self,
+        name: &str,
+        args: &Value,
+        ctx: &ToolContext,
+    ) -> ToolPolicyDecision {
         for hook in &self.policy_hooks {
-            let decision = hook(name, args).await;
+            let decision = hook(name, args, ctx).await;
             if !decision.is_allow() {
                 return decision;
             }
@@ -329,12 +337,13 @@ impl ToolHooks {
         name: &str,
         args: &Value,
         result: &ToolExecutionResult,
+        ctx: &ToolContext,
     ) -> PostExecuteDecision {
         use futures::FutureExt;
 
         let mut decision = PostExecuteDecision::Accept;
         for hook in &self.post_execute_hooks {
-            let pending = std::panic::AssertUnwindSafe(hook(name, args, result, decision));
+            let pending = std::panic::AssertUnwindSafe(hook(name, args, result, ctx, decision));
             match pending.catch_unwind().await {
                 Ok(d) => decision = d,
                 Err(payload) => {
@@ -432,15 +441,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_policy_hook_allow() {
-        let hooks = ToolHooks::new().policy(|_name, _args| async { ToolPolicyDecision::Allow });
+        let hooks =
+            ToolHooks::new().policy(|_name, _args, _ctx| async { ToolPolicyDecision::Allow });
 
-        let decision = hooks.run_policy("shell", &serde_json::json!({})).await;
+        let decision = hooks
+            .run_policy("shell", &serde_json::json!({}), &ToolContext::default())
+            .await;
         assert_eq!(decision, ToolPolicyDecision::Allow);
     }
 
     #[tokio::test]
     async fn test_policy_hook_deny() {
-        let hooks = ToolHooks::new().policy(|name, _args| {
+        let hooks = ToolHooks::new().policy(|name, _args, _ctx| {
             let name = name.to_string();
             async move {
                 if name == "shell" {
@@ -453,7 +465,9 @@ mod tests {
             }
         });
 
-        let decision = hooks.run_policy("shell", &serde_json::json!({})).await;
+        let decision = hooks
+            .run_policy("shell", &serde_json::json!({}), &ToolContext::default())
+            .await;
         assert_eq!(
             decision,
             ToolPolicyDecision::Deny {
@@ -461,7 +475,9 @@ mod tests {
             }
         );
 
-        let decision = hooks.run_policy("memory", &serde_json::json!({})).await;
+        let decision = hooks
+            .run_policy("memory", &serde_json::json!({}), &ToolContext::default())
+            .await;
         assert_eq!(decision, ToolPolicyDecision::Allow);
     }
 
@@ -471,8 +487,8 @@ mod tests {
         let c = Arc::clone(&counter);
 
         let hooks = ToolHooks::new()
-            .policy(|_, _| async { ToolPolicyDecision::Deny { reason: "first".into() } })
-            .policy(move |_, _| {
+            .policy(|_, _, _| async { ToolPolicyDecision::Deny { reason: "first".into() } })
+            .policy(move |_, _, _| {
                 let c = Arc::clone(&c);
                 async move {
                     c.fetch_add(1, Ordering::SeqCst);
@@ -480,7 +496,9 @@ mod tests {
                 }
             });
 
-        let decision = hooks.run_policy("any", &serde_json::json!({})).await;
+        let decision = hooks
+            .run_policy("any", &serde_json::json!({}), &ToolContext::default())
+            .await;
         assert_eq!(decision, ToolPolicyDecision::Deny { reason: "first".into() });
         // Second hook should not have run.
         assert_eq!(counter.load(Ordering::SeqCst), 0);
@@ -489,7 +507,9 @@ mod tests {
     #[tokio::test]
     async fn test_no_policy_hooks_returns_allow() {
         let hooks = ToolHooks::new();
-        let decision = hooks.run_policy("any", &serde_json::json!({})).await;
+        let decision = hooks
+            .run_policy("any", &serde_json::json!({}), &ToolContext::default())
+            .await;
         assert_eq!(decision, ToolPolicyDecision::Allow);
     }
 
@@ -500,7 +520,7 @@ mod tests {
         let hooks = ToolHooks::new();
         let result = ToolExecutionResult::success("ok".to_string());
         let decision = hooks
-            .run_post_execute("read", &serde_json::json!({}), &result)
+            .run_post_execute("read", &serde_json::json!({}), &result, &ToolContext::default())
             .await;
         assert_eq!(decision, PostExecuteDecision::Accept);
     }
@@ -510,31 +530,31 @@ mod tests {
         // Hook 1 upgrades Accept → ReplaceOutput; hook 2 must observe the
         // upstream decision and escalates to Block.
         let hooks = ToolHooks::new()
-            .post_execute(|_, _, _, upstream| async move {
+            .post_execute(|_, _, _, _ctx, upstream| async move {
                 assert_eq!(upstream, PostExecuteDecision::Accept);
                 PostExecuteDecision::ReplaceOutput("replaced".to_string())
             })
-            .post_execute(|_, _, _, upstream| async move {
+            .post_execute(|_, _, _, _ctx, upstream| async move {
                 assert_eq!(upstream, PostExecuteDecision::ReplaceOutput("replaced".to_string()));
                 PostExecuteDecision::Block("confiscated".to_string())
             });
 
         let result = ToolExecutionResult::success("original".to_string());
         let decision = hooks
-            .run_post_execute("read", &serde_json::json!({}), &result)
+            .run_post_execute("read", &serde_json::json!({}), &result, &ToolContext::default())
             .await;
         assert_eq!(decision, PostExecuteDecision::Block("confiscated".to_string()));
     }
 
     #[tokio::test]
     async fn test_post_execute_hook_panic_fails_closed() {
-        let hooks = ToolHooks::new().post_execute(|_, _, _, _| async move {
+        let hooks = ToolHooks::new().post_execute(|_, _, _, _ctx, _| async move {
             panic!("boom");
         });
 
         let result = ToolExecutionResult::success("sensitive".to_string());
         let decision = hooks
-            .run_post_execute("read", &serde_json::json!({}), &result)
+            .run_post_execute("read", &serde_json::json!({}), &result, &ToolContext::default())
             .await;
         // A panicking policy hook must never pass the result through.
         match decision {
@@ -550,7 +570,7 @@ mod tests {
     async fn test_policy_hook_needs_approval() {
         use super::super::{ApprovalLevel, RiskLevel};
 
-        let hooks = ToolHooks::new().policy(|name, _args| {
+        let hooks = ToolHooks::new().policy(|name, _args, _ctx| {
             let name = name.to_string();
             async move {
                 if name == "shell" {
@@ -569,12 +589,16 @@ mod tests {
             }
         });
 
-        let decision = hooks.run_policy("shell", &serde_json::json!({})).await;
+        let decision = hooks
+            .run_policy("shell", &serde_json::json!({}), &ToolContext::default())
+            .await;
         assert!(decision.is_needs_approval());
         assert!(!decision.is_allow());
         assert!(!decision.is_deny());
 
-        let decision = hooks.run_policy("memory", &serde_json::json!({})).await;
+        let decision = hooks
+            .run_policy("memory", &serde_json::json!({}), &ToolContext::default())
+            .await;
         assert!(decision.is_allow());
         assert!(!decision.is_needs_approval());
     }
@@ -585,7 +609,7 @@ mod tests {
         let c = Arc::clone(&counter);
 
         let hooks = ToolHooks::new()
-            .policy(|_, _| async {
+            .policy(|_, _, _| async {
                 ToolPolicyDecision::NeedsApproval {
                     approval_id: "test".into(),
                     tool_name: "shell".into(),
@@ -596,7 +620,7 @@ mod tests {
                     message: "Approval required".into(),
                 }
             })
-            .policy(move |_, _| {
+            .policy(move |_, _, _| {
                 let c = Arc::clone(&c);
                 async move {
                     c.fetch_add(1, Ordering::SeqCst);
@@ -604,7 +628,9 @@ mod tests {
                 }
             });
 
-        let decision = hooks.run_policy("any", &serde_json::json!({})).await;
+        let decision = hooks
+            .run_policy("any", &serde_json::json!({}), &ToolContext::default())
+            .await;
         assert!(decision.is_needs_approval());
         // Second hook should not have run (NeedsApproval short-circuits like Deny).
         assert_eq!(counter.load(Ordering::SeqCst), 0);

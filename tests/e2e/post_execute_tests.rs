@@ -47,7 +47,7 @@ async fn test_post_execute_block_feedback_reaches_model() {
     // Confiscate every `time` result after the tool has executed.
     gateway
         .tool_registry()
-        .set_hooks(ToolHooks::new().post_execute(|name, _args, _result, _upstream| {
+        .set_hooks(ToolHooks::new().post_execute(|name, _args, _result, _ctx, _upstream| {
             let blocked = name == "time";
             async move {
                 if blocked {

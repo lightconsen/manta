@@ -70,7 +70,7 @@ const ALLOWED_SHELLS: &[&str] = &[
 ];
 
 /// Resolve the shell interpreter to use, validating against an allowlist.
-fn resolve_shell() -> String {
+pub(crate) fn resolve_shell() -> String {
     std::env::var("SHELL")
         .ok()
         .filter(|s| ALLOWED_SHELLS.contains(&s.as_str()))

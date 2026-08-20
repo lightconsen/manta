@@ -457,6 +457,26 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
         queue_mode,
     } = dispatch;
 
+    // UserPromptSubmit gate: a configured shell hook can block a message
+    // before it reaches the agent. A blocked message must never trigger an
+    // on-demand spawn, broadcast a Processing status, or reach the queue —
+    // it is dropped here with a chat.error to the caller.
+    if let Some(reason) = state
+        .infra
+        .shell_hooks
+        .check_user_prompt(session_id, user_id, message, channel)
+        .await
+    {
+        if let Err(e) = state.events.tx.send(GatewayEvent::ProcessingError {
+            session_id: session_id.to_string(),
+            agent_id: agent_id.to_string(),
+            message: reason,
+        }) {
+            debug!("No receivers for ProcessingError event: {}", e);
+        }
+        return;
+    }
+
     // Pre-read directive settings so the progress callback does not need to
     // capture the runtime_settings Arc across await boundaries.
     let (reasoning_vis, verbose_mode) = {
@@ -816,6 +836,12 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
     }) {
         debug!("No receivers for AgentStatus event: {}", e);
     }
+
+    // Stop hook: fire-and-forget shell commands for the turn that just ended.
+    state
+        .infra
+        .shell_hooks
+        .fire_stop(session_id, agent_id, channel);
 }
 
 #[cfg(test)]

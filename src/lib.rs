@@ -60,6 +60,7 @@ pub mod export;
 pub mod gateway;
 pub mod goal;
 pub mod heartbeat;
+pub mod hooks;
 pub mod inbound;
 pub mod logs;
 pub mod mcp;

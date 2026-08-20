@@ -795,7 +795,7 @@ mod tests {
     async fn test_post_execute_block_on_execute_call() {
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(ReadTool));
-        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _| async move {
+        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _ctx, _| async move {
             PostExecuteDecision::Block("write to workspace instead".to_string())
         }));
 
@@ -820,7 +820,7 @@ mod tests {
     async fn test_post_execute_replace_output_preserves_data() {
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(DataTool));
-        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _| async move {
+        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _ctx, _| async move {
             PostExecuteDecision::ReplaceOutput("preview…".to_string())
         }));
 
@@ -840,7 +840,7 @@ mod tests {
     async fn test_post_execute_block_on_streaming() {
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(StreamingTool));
-        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _| async move {
+        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _ctx, _| async move {
             PostExecuteDecision::Block("blocked after stream".to_string())
         }));
 
@@ -967,7 +967,7 @@ mod tests {
         let tmp = tmp_workspace();
         let mut registry = ToolRegistry::new().with_spill_threshold(Some(64));
         registry.register(Box::new(BigTool));
-        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _| async move {
+        registry.set_hooks(ToolHooks::new().post_execute(|_, _, _, _ctx, _| async move {
             PostExecuteDecision::Block("confiscated".to_string())
         }));
 

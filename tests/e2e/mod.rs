@@ -790,6 +790,7 @@ mod compaction_tests;
 mod computer_tests;
 mod goal_tests;
 mod health_tests;
+mod hooks_tests;
 mod llm_chat_tests;
 mod mock_chat_tests;
 mod planner_tests;

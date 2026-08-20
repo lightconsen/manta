@@ -726,8 +726,13 @@ impl ToolRegistry {
     /// `requires_approval`, this synthesises a `NeedsApproval` decision
     /// automatically so that high-risk tools (device access, etc.) are
     /// never executed silently without the caller going through approval.
-    async fn evaluate_policy(&self, name: &str, args: &Value) -> ToolPolicyDecision {
-        let mut decision = self.active_hooks().run_policy(name, args).await;
+    async fn evaluate_policy(
+        &self,
+        name: &str,
+        args: &Value,
+        ctx: &ToolContext,
+    ) -> ToolPolicyDecision {
+        let mut decision = self.active_hooks().run_policy(name, args, ctx).await;
 
         // requires_approval fallback — only when no policy hook exists, so
         // an explicitly-configured policy hook is always authoritative.
@@ -759,7 +764,61 @@ impl ToolRegistry {
             }
         }
 
+        self.audit_policy_decision(name, ctx, &decision).await;
         decision
+    }
+
+    /// Evaluate only the registered policy hooks — no `requires_approval`
+    /// fallback — auditing any non-allow decision.
+    ///
+    /// Used by the buffered [`execute_call`](Self::execute_call) path. With no
+    /// policy hooks installed the decision is always `Allow`, so high-risk
+    /// `requires_approval` tools keep today's ungated behaviour unless a user
+    /// actually configures a hooks policy. A policy hook that returns
+    /// `NeedsApproval` is still honoured (the caller routes it through the
+    /// full approval flow).
+    async fn evaluate_policy_hooks_only(
+        &self,
+        name: &str,
+        args: &Value,
+        ctx: &ToolContext,
+    ) -> ToolPolicyDecision {
+        let decision = self.active_hooks().run_policy(name, args, ctx).await;
+        self.audit_policy_decision(name, ctx, &decision).await;
+        decision
+    }
+
+    /// Audit a non-allow policy decision as a `ToolDeny` event so a denied or
+    /// approval-flagged call forms an auditable pair with any later
+    /// `ToolInvocation` entry.
+    async fn audit_policy_decision(
+        &self,
+        name: &str,
+        ctx: &ToolContext,
+        decision: &ToolPolicyDecision,
+    ) {
+        if decision.is_allow() {
+            return;
+        }
+        let Some(ref audit) = self.audit_log else {
+            return;
+        };
+        let (kind, description) = match decision {
+            ToolPolicyDecision::Deny { reason } => ("deny", reason.clone()),
+            ToolPolicyDecision::NeedsApproval { message, .. } => ("ask", message.clone()),
+            ToolPolicyDecision::Allow => return,
+        };
+        let details = serde_json::json!({ "kind": kind });
+        audit
+            .log_entry(
+                crate::security::runtime_audit::AuditEventType::ToolDeny,
+                ctx.user_id.clone(),
+                name.to_string(),
+                false,
+                format!("Tool '{}' {} by policy: {}", name, kind, description),
+                Some(details),
+            )
+            .await;
     }
 
     /// Execute a tool by name with optional caching, hooks, and approval flow.
@@ -780,7 +839,7 @@ impl ToolRegistry {
         args: Value,
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
-        let policy_decision = self.evaluate_policy(name, &args).await;
+        let policy_decision = self.evaluate_policy(name, &args, context).await;
 
         match policy_decision {
             ToolPolicyDecision::Allow => {
@@ -1041,8 +1100,11 @@ impl ToolRegistry {
             Some(Ok(exec_result)) if self.active_hooks().has_post_execute_hooks() => {
                 let decision = self
                     .active_hooks()
-                    .run_post_execute(name, args, &exec_result)
+                    .run_post_execute(name, args, &exec_result, context)
                     .await;
+                if let PostExecuteDecision::Block(feedback) = &decision {
+                    self.audit_post_execute_block(name, context, feedback).await;
+                }
                 Some(Ok(Self::apply_post_execute(name, exec_result, decision)))
             }
             other => other,
@@ -1141,6 +1203,25 @@ impl ToolRegistry {
         }
     }
 
+    /// Audit a post-execute block as a `ToolDeny` event — the auditable
+    /// counterpart to the tool's own `ToolInvocation` entry.
+    async fn audit_post_execute_block(&self, name: &str, ctx: &ToolContext, feedback: &str) {
+        let Some(ref audit) = self.audit_log else {
+            return;
+        };
+        let details = serde_json::json!({ "kind": "post_execute_block" });
+        audit
+            .log_entry(
+                crate::security::runtime_audit::AuditEventType::ToolDeny,
+                ctx.user_id.clone(),
+                name.to_string(),
+                false,
+                format!("Tool '{}' result blocked by post-execute policy: {}", name, feedback),
+                Some(details),
+            )
+            .await;
+    }
+
     /// Execute a tool by name, skipping the cache layer but still running the
     /// full policy, approval, hooks, and audit pipeline.
     ///
@@ -1160,7 +1241,7 @@ impl ToolRegistry {
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
         // Run policy evaluation (approval, denials, hooks all handled here).
-        let policy_decision = self.evaluate_policy(name, &args).await;
+        let policy_decision = self.evaluate_policy(name, &args, context).await;
         match policy_decision {
             ToolPolicyDecision::Allow => { /* proceed */ }
             ToolPolicyDecision::Deny { reason } => {
@@ -1273,6 +1354,35 @@ impl ToolRegistry {
         let tool_name = call.name.clone();
         let timeout = context.timeout();
 
+        // Pre-execute gate: policy hooks run for every buffered tool call.
+        // Uses the hooks-only variant so the built-in `requires_approval`
+        // fallback is NOT activated here — without installed policy hooks a
+        // `requires_approval` tool keeps its historical ungated behaviour.
+        let policy_decision = self
+            .evaluate_policy_hooks_only(&tool_name, &args, context)
+            .await;
+        match policy_decision {
+            ToolPolicyDecision::Allow => {}
+            ToolPolicyDecision::Deny { reason } => {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Tool '{}' denied: {}",
+                    tool_name, reason
+                )));
+            }
+            ToolPolicyDecision::NeedsApproval { .. } => {
+                // Route through the full execute() approval flow so the call
+                // suspends for human review (mirrors execute_call_streaming).
+                let result = self.execute(&tool_name, args.clone(), context).await;
+                return match result {
+                    Some(r) => r,
+                    None => Err(crate::error::SyscityError::Validation(format!(
+                        "Tool '{}' was found but could not be executed",
+                        tool_name
+                    ))),
+                };
+            }
+        }
+
         // Try static tools first
         if let Some(tool) = self.get(&tool_name) {
             let exec_start = std::time::Instant::now();
@@ -1378,7 +1488,7 @@ impl ToolRegistry {
 
         let tool_name = call.name.clone();
 
-        let policy_decision = self.evaluate_policy(&tool_name, &args).await;
+        let policy_decision = self.evaluate_policy(&tool_name, &args, context).await;
         match policy_decision {
             // Allow → proceed to execution below.
             ToolPolicyDecision::Allow => {}
@@ -1477,5 +1587,192 @@ impl ToolRegistry {
         self.active_hooks().run_after(name, args, &collected).await;
         self.finalize_result(name, args, context, Some(Ok(collected)))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use super::*;
+
+    /// A minimal tool that records whether its body actually ran.
+    struct SpyTool {
+        name: &'static str,
+        ran: Arc<AtomicBool>,
+        requires_approval: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for SpyTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn description(&self) -> &str {
+            "spy tool"
+        }
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({})
+        }
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &ToolContext,
+        ) -> crate::Result<ToolExecutionResult> {
+            self.ran.store(true, Ordering::SeqCst);
+            Ok(ToolExecutionResult::success(format!("{} ran", self.name)))
+        }
+        fn capabilities(&self) -> crate::tools::sdk::ToolCapabilities {
+            crate::tools::sdk::ToolCapabilities {
+                requires_approval: self.requires_approval,
+                ..Default::default()
+            }
+        }
+    }
+
+    fn spy(name: &'static str, ran: Arc<AtomicBool>) -> Box<dyn Tool> {
+        Box::new(SpyTool {
+            name,
+            ran,
+            requires_approval: false,
+        })
+    }
+
+    fn approval_spy(name: &'static str, ran: Arc<AtomicBool>) -> Box<dyn Tool> {
+        Box::new(SpyTool {
+            name,
+            ran,
+            requires_approval: true,
+        })
+    }
+
+    fn call(name: &str) -> FunctionCall {
+        FunctionCall {
+            name: name.to_string(),
+            arguments: "{}".to_string(),
+        }
+    }
+
+    /// A `Deny` from a policy hook must block a buffered `execute_call`
+    /// before the tool body runs.
+    #[tokio::test]
+    async fn test_execute_call_runs_policy_and_blocks() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let mut registry =
+            ToolRegistry::new().with_hooks(ToolHooks::new().policy(|name, _args, _ctx| {
+                let name = name.to_string();
+                async move {
+                    if name == "spy" {
+                        ToolPolicyDecision::Deny {
+                            reason: "blocked-by-policy".into(),
+                        }
+                    } else {
+                        ToolPolicyDecision::Allow
+                    }
+                }
+            }));
+        registry.register(spy("spy", ran.clone()));
+
+        let err = registry
+            .execute_call(&call("spy"), &ToolContext::default())
+            .await
+            .expect_err("should be denied");
+        assert!(err.to_string().contains("blocked-by-policy"), "err: {}", err);
+        assert!(!ran.load(Ordering::SeqCst), "tool body must not run when denied");
+    }
+
+    /// Regression guard: a `requires_approval` tool with NO policy hooks must
+    /// still run ungated through `execute_call`. The hooks-only gate must not
+    /// activate the `requires_approval` fallback (that would force approval
+    /// on shell and friends whenever no hooks.json exists).
+    #[tokio::test]
+    async fn test_execute_call_requires_approval_without_hooks_runs() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let mut registry = ToolRegistry::new(); // no hooks
+        registry.register(approval_spy("spy", ran.clone()));
+
+        let result = registry
+            .execute_call(&call("spy"), &ToolContext::default())
+            .await
+            .expect("requires_approval tool must run ungated through execute_call");
+        assert!(result.success);
+        assert!(ran.load(Ordering::SeqCst));
+    }
+
+    /// `NeedsApproval` from a policy hook must delegate to the full
+    /// `execute()` approval flow: a submitted request gets approved and the
+    /// tool runs.
+    #[tokio::test]
+    async fn test_execute_call_needs_approval_delegates_to_approval_queue() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let approval_queue = Arc::new(ApprovalQueue::new());
+        let queue = approval_queue.clone();
+        let mut registry = ToolRegistry::new()
+            .with_approval_queue(approval_queue.clone())
+            .with_hooks(ToolHooks::new().policy(|name, _args, _ctx| {
+                let name = name.to_string();
+                async move {
+                    if name == "spy" {
+                        ToolPolicyDecision::NeedsApproval {
+                            approval_id: "req-1".into(),
+                            tool_name: name,
+                            args: serde_json::json!({}),
+                            risk_level: crate::tools::approval::RiskLevel::High,
+                            approval_level: crate::tools::approval::ApprovalLevel::Ask,
+                            requested_by: "user1".into(),
+                            message: "needs approval".into(),
+                        }
+                    } else {
+                        ToolPolicyDecision::Allow
+                    }
+                }
+            }));
+        registry.register(spy("spy", ran.clone()));
+
+        // Auto-approve the first submitted request.
+        let mut rx = approval_queue.event_tx.subscribe();
+        let approver = tokio::spawn(async move {
+            let event = rx.recv().await.expect("approval event");
+            queue
+                .resolve(&event.approval_id, ApprovalDecision::Approve)
+                .await;
+        });
+
+        let result = registry
+            .execute_call(&call("spy"), &ToolContext::default())
+            .await
+            .expect("approved call should execute");
+        assert!(result.success);
+        assert!(ran.load(Ordering::SeqCst), "tool must run after approval");
+        approver.await.expect("approver task");
+    }
+
+    /// `NeedsApproval` with no approval queue must surface `execute()`'s
+    /// error — proving the call delegated to the full approval flow rather
+    /// than the ungated path.
+    #[tokio::test]
+    async fn test_execute_call_needs_approval_no_queue_errors() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let mut registry =
+            ToolRegistry::new().with_hooks(ToolHooks::new().policy(|_name, _args, _ctx| async {
+                ToolPolicyDecision::NeedsApproval {
+                    approval_id: "req-1".into(),
+                    tool_name: "spy".into(),
+                    args: serde_json::json!({}),
+                    risk_level: crate::tools::approval::RiskLevel::High,
+                    approval_level: crate::tools::approval::ApprovalLevel::Ask,
+                    requested_by: "user1".into(),
+                    message: "needs approval".into(),
+                }
+            }));
+        registry.register(spy("spy", ran.clone()));
+
+        let err = registry
+            .execute_call(&call("spy"), &ToolContext::default())
+            .await
+            .expect_err("must delegate to execute() which fails without a queue");
+        assert!(err.to_string().contains("no approval queue"), "err: {}", err);
+        assert!(!ran.load(Ordering::SeqCst), "tool must not run");
     }
 }

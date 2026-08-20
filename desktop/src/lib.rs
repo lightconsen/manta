@@ -589,7 +589,10 @@ async fn start_gateway(
     let gateway = Gateway::with_options(
         gateway_config.clone(),
         Some(config_path),
-        GatewayOptions { device_bridge },
+        GatewayOptions {
+            device_bridge,
+            ..Default::default()
+        },
     )
     .await
     .map_err(|e| format!("Failed to create gateway: {}", e))?;

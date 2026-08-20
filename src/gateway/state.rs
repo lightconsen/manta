@@ -157,6 +157,8 @@ pub struct InfraState {
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     pub plugin_manager: Arc<PluginManager>,
     pub model_router: Arc<ModelRouter>,
+    /// CC-compatible shell hooks bridge (`~/.syscity/hooks.json`).
+    pub shell_hooks: Arc<crate::hooks::ShellHookBridge>,
     /// Engine metrics counters (populated when a core `Engine` is wired in).
     pub engine_metrics: Option<Arc<crate::core::EngineMetrics>>,
     /// Browser bridge server (started when browser.bridge_enabled is true).
