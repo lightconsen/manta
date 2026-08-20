@@ -986,20 +986,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_spill_exempts_file_read() {
+    async fn test_file_read_spills_unless_targeting_spill_dir() {
         let tmp = tmp_workspace();
         let mut registry = ToolRegistry::new().with_spill_threshold(Some(64));
         registry.register(Box::new(FileReadBigTool));
 
         let ctx = ToolContext::new("user", "conv1").with_workspace_root(tmp.clone());
-        let call = crate::providers::FunctionCall {
-            name: "file_read".to_string(),
-            arguments: "{}".to_string(),
-        };
-        let result = registry.execute_call(&call, &ctx).await.unwrap();
 
-        assert_eq!(result.output.len(), 500, "file_read output never spilled");
-        assert!(spill_files(&tmp).is_empty());
+        // A large read of a non-spill path now spills like any other tool.
+        let spill_arg = crate::providers::FunctionCall {
+            name: "file_read".to_string(),
+            arguments: r#"{"path":"/somewhere/else/big.txt"}"#.to_string(),
+        };
+        let result = registry.execute_call(&spill_arg, &ctx).await.unwrap();
+        assert!(result.output.len() < 500, "large file_read spills (preview bounded)");
+        assert!(result.output.contains(".syscity/spill/"), "preview points at spill file");
+        assert_eq!(spill_files(&tmp).len(), 1);
+
+        // Re-reading a spilled artifact under the spill dir is exempt — the
+        // whole content comes back and no second spill file is written.
+        let spill_path = spill_files(&tmp)[0].clone();
+        let re_arg = crate::providers::FunctionCall {
+            name: "file_read".to_string(),
+            arguments: serde_json::json!({ "path": spill_path.display().to_string() }).to_string(),
+        };
+        let result = registry.execute_call(&re_arg, &ctx).await.unwrap();
+        assert_eq!(result.output, "y".repeat(500), "spill-dir read returns whole content");
+        assert_eq!(spill_files(&tmp).len(), 1, "no re-spill for spill-dir reads");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

@@ -1112,7 +1112,9 @@ impl ToolRegistry {
         // Spill bounds whatever the hooks produced; a hook Block yields
         // success=false and is naturally skipped.
         let result = match result {
-            Some(Ok(exec_result)) => Some(Ok(self.maybe_spill(name, context, exec_result).await)),
+            Some(Ok(exec_result)) => {
+                Some(Ok(self.maybe_spill(name, args, context, exec_result).await))
+            }
             other => other,
         };
         self.filter_and_audit(name, context, result).await
@@ -1125,19 +1127,24 @@ impl ToolRegistry {
     async fn maybe_spill(
         &self,
         name: &str,
+        args: &Value,
         context: &ToolContext,
         result: ToolExecutionResult,
     ) -> ToolExecutionResult {
         let Some(threshold) = self.spill_threshold else {
             return result;
         };
-        // `file_read` is exempt: spilling its output would force the model
-        // into a read -> spill -> read loop.
-        if name == "file_read" || !result.success || result.output.len() <= threshold {
+        if !result.success || result.output.len() <= threshold {
             return result;
         }
-
+        // Re-reading a previously spilled artifact is exempt: spilling it
+        // again would force the model into a read -> spill -> read loop. Every
+        // other oversized output (including `file_read` of a large file)
+        // spills, preserving the tail.
         let root = context.workspace_root().clone();
+        if super::spill::arg_targets_spilled_file(&root, args) {
+            return result;
+        }
         let tool_name = name.to_string();
         let output = result.output.clone();
         let spilled = tokio::task::spawn_blocking(move || {

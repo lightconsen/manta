@@ -14,6 +14,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
+
 /// Subdirectory (inside the workspace root) holding spilled outputs.
 const SPILL_DIR: &str = ".syscity/spill";
 
@@ -77,6 +79,45 @@ fn floor_char_boundary_from_end(text: &str, count: usize) -> usize {
         start += 1;
     }
     text.len() - start
+}
+
+/// True when any path-like arg resolves under the workspace spill dir —
+/// i.e. the tool is re-reading a previously spilled artifact.
+///
+/// Relative args are joined with `workspace_root`, mirroring
+/// [`ToolContext::resolve_path`](crate::tools::ToolContext::resolve_path)
+/// (the tools resolve relative paths against the workspace root, not the tool
+/// cwd), so a workspace-relative `.syscity/spill/…` path handed to the model
+/// by a spill notice resolves straight back under the spill dir.
+///
+/// Lexical `starts_with` (no canonicalization): the path comes verbatim from
+/// the spill notice, and the exemption only ever widens (never narrows) what
+/// gets spilled.
+pub(crate) fn arg_targets_spilled_file(workspace_root: &Path, args: &Value) -> bool {
+    const PATH_FIELDS: &[&str] = &[
+        "path",
+        "file",
+        "directory",
+        "dir",
+        "source",
+        "destination",
+        "dst",
+    ];
+    let spill_root = workspace_root.join(SPILL_DIR);
+    PATH_FIELDS.iter().any(|field| {
+        args.get(*field)
+            .and_then(|v| v.as_str())
+            .map(|raw| {
+                let p = Path::new(raw);
+                let abs = if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    workspace_root.join(p)
+                };
+                abs.starts_with(&spill_root)
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn sanitize_tool_name(name: &str) -> String {
@@ -148,6 +189,7 @@ pub fn spill_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn head_tail_passthrough_when_fits() {
@@ -197,5 +239,62 @@ mod tests {
     fn spill_fails_cleanly_on_unwritable_dir() {
         let outcome = spill_output(Path::new("/nonexistent-root-xyz/nope"), "shell", "data", 100);
         assert!(outcome.is_err());
+    }
+
+    // ── arg_targets_spilled_file ──────────────────────────────────────────
+
+    fn root_dir() -> PathBuf {
+        PathBuf::from("/ws")
+    }
+
+    #[test]
+    fn spilled_absolute_path_under_spill_dir_hits() {
+        let args = json!({ "path": "/ws/.syscity/spill/abc-shell.log" });
+        assert!(arg_targets_spilled_file(&root_dir(), &args));
+    }
+
+    #[test]
+    fn spilled_relative_path_resolves_against_workspace_root() {
+        // The notice hands the model a workspace-relative path like
+        // `.syscity/spill/abc.log`; `resolve_path` joins it with the
+        // workspace root, so it must hit.
+        let args = json!({ "path": ".syscity/spill/abc.log" });
+        assert!(arg_targets_spilled_file(&root_dir(), &args));
+    }
+
+    #[test]
+    fn spilled_nested_path_hits() {
+        let args = json!({ "path": "/ws/.syscity/spill/sub/dir/abc.log" });
+        assert!(arg_targets_spilled_file(&root_dir(), &args));
+    }
+
+    #[test]
+    fn relative_path_with_dot_segments_hits() {
+        // Dot segments still lexically resolve under the spill dir, matching
+        // `resolve_path`'s join semantics.
+        let args = json!({ "path": "./.syscity/spill/abc.log" });
+        assert!(arg_targets_spilled_file(&root_dir(), &args));
+    }
+
+    #[test]
+    fn directory_field_is_checked_too() {
+        let args = json!({ "dir": "/ws/.syscity/spill" });
+        assert!(arg_targets_spilled_file(&root_dir(), &args));
+    }
+
+    #[test]
+    fn outside_path_misses() {
+        let args = json!({ "path": "/ws/other/big.txt" });
+        assert!(!arg_targets_spilled_file(&root_dir(), &args));
+        // The spill dir itself is not under its own `.syscity/spill` parent.
+        let edge = json!({ "path": "/ws/.syscity" });
+        assert!(!arg_targets_spilled_file(&root_dir(), &edge));
+    }
+
+    #[test]
+    fn non_path_or_missing_fields_miss() {
+        assert!(!arg_targets_spilled_file(&root_dir(), &json!({ "command": "cat x" })));
+        assert!(!arg_targets_spilled_file(&root_dir(), &json!({ "path": 42 })));
+        assert!(!arg_targets_spilled_file(&root_dir(), &json!({})));
     }
 }
