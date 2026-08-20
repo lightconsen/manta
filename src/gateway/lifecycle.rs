@@ -432,6 +432,44 @@ pub(crate) async fn start_gateway(
             .await;
     }
 
+    // Forward ask_user events from the ask queue into the Gateway event bus.
+    {
+        let mut ask_rx = state.tools.ask_queue.event_tx.subscribe();
+        let event_tx = state.events.tx.clone();
+        let shutdown_token = shutdown_token.clone();
+        let ask_handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown_token.cancelled() => {
+                        info!("Ask forwarder received shutdown signal, exiting");
+                        break;
+                    }
+                    result = ask_rx.recv() => {
+                        let evt = match result {
+                            Ok(evt) => evt,
+                            Err(_) => break,
+                        };
+                        let gateway_evt = match evt {
+                            crate::tools::ask_user::AskEvent::Required(e) => {
+                                crate::gateway::GatewayEvent::AskRequired(e)
+                            }
+                            crate::tools::ask_user::AskEvent::Resolved(e) => {
+                                crate::gateway::GatewayEvent::AskResolved(e)
+                            }
+                        };
+                        if let Err(e) = event_tx.send(gateway_evt) {
+                            debug!("No receivers for ask event: {}", e);
+                        }
+                    }
+                }
+            }
+        });
+        state
+            .task_registry
+            .insert_join("ask_forwarder", ask_handle)
+            .await;
+    }
+
     // Start gateway-level self-repair watchdog (60 s interval)
     let repair_handle =
         tokio::spawn(super::watchdog::run_repair_loop(state.clone(), shutdown_token.clone()));

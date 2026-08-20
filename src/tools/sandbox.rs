@@ -310,6 +310,7 @@ mod tests {
                 tool_policy: None,
             },
             delegation: None,
+            ask_queue: None,
         }
     }
 

@@ -23,6 +23,7 @@ use crate::plugins::PluginManager;
 use crate::security::content_filter::ContentFilter;
 use crate::security::runtime_audit::AuditLogger;
 use crate::tools::approval::ApprovalQueue;
+use crate::tools::ask_user::AskQueue;
 use crate::tools::ToolRegistry;
 
 /// Tool subsystem initialization result.
@@ -30,6 +31,7 @@ pub struct ToolsInit {
     pub mcp_manager: Arc<McpManager>,
     pub mcp_event_rx: mpsc::UnboundedReceiver<McpEvent>,
     pub approval_queue: Arc<ApprovalQueue>,
+    pub ask_queue: Arc<AskQueue>,
     pub memory_manager_holder: Arc<RwLock<Option<Arc<MemoryManager>>>>,
     pub tool_registry: Arc<ToolRegistry>,
     pub computer_adapter: Option<Arc<dyn ComputerAdapter>>,
@@ -239,6 +241,7 @@ pub async fn init_tools(
 ) -> crate::Result<ToolsInit> {
     let (mcp_manager, mcp_event_rx) = init_mcp_manager().await;
     let approval_queue = Arc::new(ApprovalQueue::new());
+    let ask_queue = Arc::new(AskQueue::new());
     let memory_manager_holder: Arc<RwLock<Option<Arc<MemoryManager>>>> =
         Arc::new(RwLock::new(None));
 
@@ -248,6 +251,7 @@ pub async fn init_tools(
                 acp: acp.clone(),
                 mcp_manager: mcp_manager.clone(),
                 approval_queue: approval_queue.clone(),
+                ask_queue: ask_queue.clone(),
                 session_store: session_store.clone(),
                 memory_manager: memory_manager_holder.clone(),
                 capabilities: config.capabilities.clone(),
@@ -317,6 +321,7 @@ pub async fn init_tools(
         mcp_manager,
         mcp_event_rx,
         approval_queue,
+        ask_queue,
         memory_manager_holder,
         tool_registry,
         computer_adapter,

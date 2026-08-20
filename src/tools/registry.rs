@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 use super::util::consume_stream;
 use super::{
-    ApprovalDecision, ApprovalQueue, BoxedTool, PendingApproval, PolicyEvaluationContext,
+    ApprovalDecision, ApprovalQueue, AskQueue, BoxedTool, PendingApproval, PolicyEvaluationContext,
     PostExecuteDecision, SharedTool, SkillTrust, Tool, ToolContext, ToolExecutionChunk,
     ToolExecutionResult, ToolHooks, ToolPolicyDecision,
 };
@@ -58,6 +58,9 @@ pub struct ToolRegistry {
     /// Approval queue for human-in-the-loop tool execution.
     /// When set, high-risk tool calls can be suspended pending human approval.
     approval_queue: Option<Arc<ApprovalQueue>>,
+    /// Ask queue for the `ask_user` clarification tool. When set, the tool
+    /// can suspend a turn and wait for a human answer.
+    ask_queue: Option<Arc<AskQueue>>,
     /// Content filter for scanning tool outputs for PII and secrets.
     content_filter: Option<Arc<crate::security::content_filter::ContentFilter>>,
     /// Audit logger for recording tool invocations and security events.
@@ -85,6 +88,7 @@ impl Default for ToolRegistry {
             hooks: ToolHooks::new(),
             hooks_override: std::sync::Mutex::new(None),
             approval_queue: None,
+            ask_queue: None,
             content_filter: None,
             audit_log: None,
             web_search_providers: None,
@@ -132,6 +136,7 @@ impl ToolRegistry {
             hooks: ToolHooks::new(),
             hooks_override: std::sync::Mutex::new(None),
             approval_queue: None,
+            ask_queue: None,
             content_filter: None,
             audit_log: None,
             web_search_providers: None,
@@ -153,6 +158,7 @@ impl ToolRegistry {
             hooks: ToolHooks::new(),
             hooks_override: std::sync::Mutex::new(None),
             approval_queue: None,
+            ask_queue: None,
             content_filter: None,
             audit_log: None,
             web_search_providers: None,
@@ -504,6 +510,17 @@ impl ToolRegistry {
     /// Get a reference to the approval queue if set.
     pub fn approval_queue(&self) -> Option<&Arc<ApprovalQueue>> {
         self.approval_queue.as_ref()
+    }
+
+    /// Set the ask queue for the `ask_user` clarification tool.
+    pub fn with_ask_queue(mut self, queue: Arc<AskQueue>) -> Self {
+        self.ask_queue = Some(queue);
+        self
+    }
+
+    /// Get a reference to the ask queue if set.
+    pub fn ask_queue(&self) -> Option<&Arc<AskQueue>> {
+        self.ask_queue.as_ref()
     }
 
     /// Set the content filter for scanning tool outputs.

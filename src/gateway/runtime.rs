@@ -281,6 +281,10 @@ pub enum GatewayEvent {
         session_id: String,
         event: crate::goal::GoalEvent,
     },
+    /// A question was submitted; the session must answer it.
+    AskRequired(crate::tools::ask_user::AskRequiredEvent),
+    /// A question was answered or timed out.
+    AskResolved(crate::tools::ask_user::AskResolvedEvent),
 }
 
 /// Agent status

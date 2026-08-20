@@ -783,6 +783,7 @@ pub async fn run_tool_chat_test(
 }
 
 mod agent_tests;
+mod ask_user_tests;
 #[cfg(feature = "browser")]
 mod browser_chat_tests;
 mod command_tests;

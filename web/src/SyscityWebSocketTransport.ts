@@ -734,6 +734,16 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
+  /** Answer a pending `ask_user` question, waking the blocked agent turn. */
+  async respondToAsk(askId: string, response: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("ask.respond", { ask_id: askId, response });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async deleteSession(sessionId: string): Promise<boolean> {
     try {
       await this.sendRequestAndWait("sessions.delete", { session_id: sessionId });

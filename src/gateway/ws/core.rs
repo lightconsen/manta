@@ -189,8 +189,18 @@ async fn handle_websocket(
                         | GatewayEvent::Completed { session_id, .. }
                         | GatewayEvent::ProcessingError { session_id, .. }
                         | GatewayEvent::Thinking { session_id, .. }
-                        | GatewayEvent::GoalProgress { session_id, .. } => {
+                        | GatewayEvent::GoalProgress { session_id, .. }
+                        | GatewayEvent::AskRequired(crate::tools::ask_user::AskRequiredEvent {
+                            session_id,
+                            ..
+                        }) => {
                             conn_guard.is_subscribed(session_id)
+                        }
+                        GatewayEvent::AskResolved(e) => {
+                            // Route resolution to whoever is subscribed to the
+                            // session the question belonged to (best-effort:
+                            // the ask_id may resolve across subscribers).
+                            conn_guard.is_subscribed(&e.session_id)
                         }
                         _ => true,
                     };
@@ -452,6 +462,7 @@ async fn dispatch_method(
         "chat.send" => chat::handle_chat_send(req, conn, state).await,
         "chat.history" => chat::handle_chat_history(req, conn, state).await,
         "chat.abort" => chat::handle_chat_abort(req, conn, state).await,
+        "ask.respond" => ask::handle_ask_respond(req, state).await,
         "sessions.list" => sessions::handle_sessions_list(req, state).await,
         "sessions.create" => sessions::handle_sessions_create(req, conn, state).await,
         "sessions.delete" => sessions::handle_sessions_delete(req, conn, state).await,

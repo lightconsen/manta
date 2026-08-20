@@ -243,7 +243,14 @@ impl Agent {
                 .allow_path(crate::dirs::delegation_workspace_dir(&scope.root_id));
         }
 
-        ctx.with_delegation(delegation)
+        // Carry the shared ask-user queue so `ask_user` can block for a human
+        // answer.  `None` (unit tests, goal runner's own context) means the
+        // tool refuses via its guard.
+        let ctx = ctx.with_delegation(delegation);
+        match self.tools.ask_queue() {
+            Some(queue) => ctx.with_ask_queue(Arc::clone(queue)),
+            None => ctx,
+        }
     }
 
     /// Attach a `SessionStore` for turn persistence.

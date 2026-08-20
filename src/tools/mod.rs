@@ -4,6 +4,7 @@
 //! with the world (execute shell commands, read files, search the web, etc.).
 
 pub mod approval;
+pub mod ask_user;
 pub mod eval;
 pub mod rbac;
 
@@ -11,6 +12,11 @@ pub mod rbac;
 pub use approval::{
     ApprovalDecision, ApprovalFilter, ApprovalLevel, ApprovalQueue, ApprovalRequiredEvent,
     PendingApproval, PendingApprovalSummary, RiskLevel,
+};
+// Re-export ask_user types for convenience
+pub use ask_user::{
+    background_context_reason, AskEvent, AskQueue, AskRequest, AskRequiredEvent, AskResolvedEvent,
+    AskUserTool, PendingQuestion,
 };
 // Re-export RBAC types for convenience
 pub use rbac::{

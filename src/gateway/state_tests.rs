@@ -165,6 +165,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             registry: Arc::new(ToolRegistry::new()),
             mcp_manager: Arc::new(McpManager::new()),
             approval_queue: Arc::new(ApprovalQueue::new()),
+            ask_queue: Arc::new(crate::tools::ask_user::AskQueue::new()),
             skills_manager,
             canvas_manager: Arc::new(CanvasManager::new()),
             computer_adapter: Arc::new(tokio::sync::RwLock::new(None)),

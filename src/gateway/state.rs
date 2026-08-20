@@ -53,7 +53,9 @@ use crate::security::{
     RateLimiter,
 };
 use crate::skills::SkillManager;
-use crate::tools::{approval::ApprovalQueue, command_gate::CommandGate, ToolRegistry, ToolSdk};
+use crate::tools::{
+    approval::ApprovalQueue, ask_user::AskQueue, command_gate::CommandGate, ToolRegistry, ToolSdk,
+};
 
 /// Authentication, authorization, and security-related state.
 pub struct AuthState {
@@ -122,6 +124,7 @@ pub struct ToolState {
     pub registry: Arc<ToolRegistry>,
     pub mcp_manager: Arc<McpManager>,
     pub approval_queue: Arc<ApprovalQueue>,
+    pub ask_queue: Arc<AskQueue>,
     pub skills_manager: Arc<RwLock<SkillManager>>,
     pub canvas_manager: Arc<CanvasManager>,
     pub computer_adapter: Arc<RwLock<Option<Arc<dyn crate::computer::ComputerAdapter>>>>,

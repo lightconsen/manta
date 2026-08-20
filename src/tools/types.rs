@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{ModelCapabilities, SandboxPolicy, ToolPolicy, UserContext};
+use super::{AskQueue, ModelCapabilities, SandboxPolicy, ToolPolicy, UserContext};
 use crate::providers::{FunctionDefinition, ToolResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
@@ -156,6 +156,9 @@ pub struct ToolContext {
     /// Active delegation scope, when this tool call runs inside a delegated
     /// child agent.  `None` for ordinary top-level conversations.
     pub delegation: Option<crate::delegation::DelegationScope>,
+    /// Ask queue for the `ask_user` clarification tool. `None` in contexts
+    /// with no interactive human (goals build their own context and skip it).
+    pub ask_queue: Option<Arc<AskQueue>>,
 }
 
 /// Allowed environment variables that are safe to forward to child processes.
@@ -307,6 +310,12 @@ impl ToolContext {
     /// Attach the active delegation scope for this tool call.
     pub fn with_delegation(mut self, scope: Option<crate::delegation::DelegationScope>) -> Self {
         self.delegation = scope;
+        self
+    }
+
+    /// Attach the ask queue so `ask_user` can suspend for a human answer.
+    pub fn with_ask_queue(mut self, queue: Arc<AskQueue>) -> Self {
+        self.ask_queue = Some(queue);
         self
     }
 

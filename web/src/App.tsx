@@ -19,6 +19,7 @@ import { GoalPanel } from "@/components/chat/GoalPanel";
 import { DocumentPreviewPanel } from "@/components/shared/DocumentPreviewPanel";
 import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
 import { UpdateBanner } from "@/components/update/UpdateBanner";
+import { AskModal, type AskPrompt } from "@/components/ask/AskModal";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
 /* ── Agent emoji pool — ensures each agent has a unique icon ── */
@@ -134,6 +135,8 @@ function ChatApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const previewDocument = useChatStore((s) => s.previewDocument);
   const setPreviewDocument = useChatStore((s) => s.setPreviewDocument);
+  // A pending ask_user question awaiting a human answer.
+  const [askPrompt, setAskPrompt] = useState<AskPrompt | null>(null);
   const workspacePanelOpen = useChatStore((s) => s.workspacePanelOpen);
   const setWorkspacePanelOpen = useChatStore((s) => s.setWorkspacePanelOpen);
   const currentAgent = useChatStore((s) => s.currentAgent);
@@ -229,6 +232,25 @@ function ChatApp() {
   // Listen for new sessions, renames, and cron results
   useEffect(() => {
     return transport.onEvent((evt) => {
+      if (evt.event === "ask.required") {
+        const p = evt.payload;
+        if (!p) return;
+        setAskPrompt({
+          ask_id: String(p.ask_id ?? ""),
+          session_id: String(p.session_id ?? ""),
+          question: String(p.question ?? ""),
+          options: Array.isArray(p.options) ? p.options.map(String) : [],
+          required: (p.required as boolean) ?? true,
+          default: typeof p.default === "string" ? p.default : undefined,
+        });
+      }
+      if (evt.event === "ask.resolved") {
+        const p = evt.payload;
+        if (!p) return;
+        setAskPrompt((prev) =>
+          prev && prev.ask_id === p.ask_id ? null : prev
+        );
+      }
       if (evt.event === "session.created") {
         refreshSessions();
       }
@@ -374,6 +396,21 @@ function ChatApp() {
       }
     });
   }, [transport, refreshSessions]);
+
+  const handleAskRespond = useCallback(
+    async (response: string) => {
+      if (!askPrompt) return;
+      await transport.respondToAsk(askPrompt.ask_id, response);
+      setAskPrompt(null);
+    },
+    [askPrompt, transport]
+  );
+
+  const handleAskDismiss = useCallback(() => {
+    // No server resolve: the blocked tool times out server-side (5 min) and
+    // broadcasts ask.resolved(cancelled), which clears this modal.
+    setAskPrompt(null);
+  }, []);
 
   const handleNewSession = useCallback(() => {
     setSettingsOpen(false);
@@ -700,6 +737,15 @@ function ChatApp() {
             onClose={() => setPreviewDocument(null)}
           />
         </div>
+      )}
+
+      {/* Agent asked a question — the turn is paused until the human answers. */}
+      {askPrompt && (
+        <AskModal
+          prompt={askPrompt}
+          onRespond={handleAskRespond}
+          onDismiss={handleAskDismiss}
+        />
       )}
     </div>
   );

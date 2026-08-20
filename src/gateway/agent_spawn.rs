@@ -16,6 +16,7 @@ use crate::agent::{Agent, AgentConfig};
 use crate::config::CapabilitiesConfig;
 use crate::mcp::McpManager;
 use crate::tools::approval::ApprovalQueue;
+use crate::tools::ask_user::AskQueue;
 use crate::tools::delegate_tool::AgentResolver;
 use crate::tools::ToolRegistry;
 
@@ -901,6 +902,8 @@ pub(crate) struct ToolRegistryArgs {
     pub mcp_manager: Arc<McpManager>,
     /// Shared approval queue.
     pub approval_queue: Arc<ApprovalQueue>,
+    /// Shared ask-user queue.
+    pub ask_queue: Arc<AskQueue>,
     /// Persistent session store.
     pub session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
     /// Lazy memory manager holder.
@@ -931,6 +934,7 @@ pub(crate) async fn create_default_tool_registry(
         acp,
         mcp_manager,
         approval_queue,
+        ask_queue,
         session_store,
         memory_manager,
         capabilities,
@@ -944,6 +948,7 @@ pub(crate) async fn create_default_tool_registry(
 
     let mut registry = ToolRegistry::new()
         .with_approval_queue(approval_queue)
+        .with_ask_queue(ask_queue)
         .with_audit_log(audit_log)
         .with_hooks(tool_hooks);
     if let Some(filter) = content_filter {
@@ -1113,6 +1118,10 @@ pub(crate) async fn create_default_tool_registry(
 
     // Register capability discovery tool
     registry.register(Box::new(ListCapabilitiesTool::new()));
+
+    // Register ask-user tool (interactive clarification; the queue rides in
+    // ToolContext so no queue reference is needed here).
+    registry.register(Box::new(AskUserTool));
 
     // ── Device capability tools (mobile only; bridge is None on desktop,
     //    so is_available() is false and these are invisible to the agent) ──

@@ -235,7 +235,7 @@ pub const DEFAULT_SCOPES: &[&str] = &[SCOPE_CHAT, SCOPE_READ];
 /// Check if a method requires a specific scope
 pub fn method_scope(method: &str) -> Option<&'static str> {
     match method {
-        "chat.send" | "chat.abort" => Some(SCOPE_CHAT),
+        "chat.send" | "chat.abort" | "ask.respond" => Some(SCOPE_CHAT),
         "chat.history"
         | "sessions.list"
         | "agents.list"
@@ -698,6 +698,24 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "event": event,
             }),
         )),
+        GatewayEvent::AskRequired(e) => Some((
+            "ask.required".to_string(),
+            serde_json::json!({
+                "ask_id": e.ask_id,
+                "session_id": e.session_id,
+                "question": e.question,
+                "options": e.options,
+                "required": e.required,
+                "default": e.default,
+            }),
+        )),
+        GatewayEvent::AskResolved(e) => Some((
+            "ask.resolved".to_string(),
+            serde_json::json!({
+                "ask_id": e.ask_id,
+                "cancelled": e.cancelled,
+            }),
+        )),
     }
 }
 
@@ -777,6 +795,7 @@ mod tests {
         // SCOPE_CHAT
         assert_eq!(method_scope("chat.send"), Some(SCOPE_CHAT));
         assert_eq!(method_scope("chat.abort"), Some(SCOPE_CHAT));
+        assert_eq!(method_scope("ask.respond"), Some(SCOPE_CHAT));
 
         // SCOPE_READ
         assert_eq!(method_scope("chat.history"), Some(SCOPE_READ));
@@ -889,5 +908,37 @@ mod tests {
         };
         let (name, _) = gateway_event_to_ws(&event).expect("mapped event");
         assert_eq!(name, "acp.status_changed");
+    }
+
+    #[test]
+    fn test_ask_event_mapping() {
+        use crate::tools::ask_user::{AskRequiredEvent, AskResolvedEvent};
+
+        let required = crate::gateway::GatewayEvent::AskRequired(AskRequiredEvent {
+            ask_id: "ask-1".into(),
+            session_id: "s1".into(),
+            question: "Proceed?".into(),
+            options: vec!["yes".into(), "no".into()],
+            required: true,
+            default: Some("yes".into()),
+        });
+        let (name, payload) = gateway_event_to_ws(&required).expect("mapped event");
+        assert_eq!(name, "ask.required");
+        assert_eq!(payload["ask_id"], "ask-1");
+        assert_eq!(payload["session_id"], "s1");
+        assert_eq!(payload["question"], "Proceed?");
+        assert_eq!(payload["options"], serde_json::json!(["yes", "no"]));
+        assert_eq!(payload["required"], true);
+        assert_eq!(payload["default"], "yes");
+
+        let resolved = crate::gateway::GatewayEvent::AskResolved(AskResolvedEvent {
+            ask_id: "ask-1".into(),
+            session_id: "s1".into(),
+            cancelled: true,
+        });
+        let (name, payload) = gateway_event_to_ws(&resolved).expect("mapped event");
+        assert_eq!(name, "ask.resolved");
+        assert_eq!(payload["ask_id"], "ask-1");
+        assert_eq!(payload["cancelled"], true);
     }
 }

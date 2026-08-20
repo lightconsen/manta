@@ -42,6 +42,7 @@ const BLOCKED_TOOLS: &[&str] = &[
     "memory",
     "send_message",
     "execute_code",
+    "ask_user",
 ];
 
 /// Upper bound (seconds) for how long the `wait` action may block.

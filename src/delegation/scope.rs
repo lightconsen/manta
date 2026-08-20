@@ -21,8 +21,13 @@ pub const DELEGATION_SCOPE_KEY: &str = "delegation_scope";
 /// `delegate` is deliberately absent — it is gated separately on delegation
 /// depth via [`DelegationScope::can_delegate`], so interior nodes keep the
 /// ability to recurse while leaves lose it.
-pub const DELEGATION_BLOCKED_TOOLS: &[&str] =
-    &["clarify", "memory", "send_message", "execute_code"];
+pub const DELEGATION_BLOCKED_TOOLS: &[&str] = &[
+    "clarify",
+    "memory",
+    "send_message",
+    "execute_code",
+    "ask_user",
+];
 
 /// Shared-task delegation contract for one child agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

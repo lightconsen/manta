@@ -162,6 +162,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             registry: Arc::new(syscity::tools::ToolRegistry::new()),
             mcp_manager: Arc::new(McpManager::new()),
             approval_queue: Arc::new(syscity::tools::approval::ApprovalQueue::new()),
+            ask_queue: Arc::new(syscity::tools::ask_user::AskQueue::new()),
             skills_manager,
             canvas_manager: Arc::new(syscity::canvas::CanvasManager::new()),
             computer_adapter: Arc::new(tokio::sync::RwLock::new(None)),
