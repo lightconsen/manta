@@ -68,7 +68,13 @@ fn compaction_mock_provider() -> MockProvider {
             ProviderMessage::assistant(format!("assistant-reply-{}", n))
         })
         .with_error_callback(move |messages| {
-            let last_user = messages.iter().rev().find(|m| m.role == Role::User);
+            // `Context::to_messages` appends a labeled `state_snapshot` user
+            // message at the request tail; skip it so the trigger keys on the
+            // human's actual turn (matching production semantics).
+            let last_user = messages
+                .iter()
+                .rev()
+                .find(|m| m.role == Role::User && m.name.as_deref() != Some("state_snapshot"));
             if !cb_fired.load(Ordering::Relaxed)
                 && last_user
                     .map(|m| m.content.contains("TRIGGER_COMPACTION"))

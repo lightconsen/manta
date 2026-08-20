@@ -50,6 +50,30 @@ pub struct Context {
     delegation: Option<DelegationScope>,
 }
 
+/// Marker name on the framework-injected state-snapshot user message.
+pub(crate) const STATE_SNAPSHOT_NAME: &str = "state_snapshot";
+
+/// Build the current-state snapshot user message appended to every request.
+///
+/// Kept minimal (calendar date / weekday / timezone offset): the model can
+/// query the exact current time via the `time` tool. The message is transient
+/// — it appears only in the `to_messages()` output, never in history, so it
+/// does not pollute persistence, compaction, or undo, and the system-prompt
+/// prefix stays byte-stable across threads (provider KV-cache reuse).
+fn state_snapshot_message() -> Message {
+    let now = chrono::Local::now();
+    Message::user_named(
+        STATE_SNAPSHOT_NAME,
+        format!(
+            "[state snapshot] Today is {} ({}), timezone UTC{}. \
+             For the exact current time, use the time tool.",
+            now.format("%Y-%m-%d"),
+            now.format("%A"),
+            now.format("%z"),
+        ),
+    )
+}
+
 impl Context {
     /// Default maximum tool iterations to prevent infinite loops
     pub const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
@@ -330,9 +354,10 @@ impl Context {
 
     /// Get all messages including system prompt
     pub fn to_messages(&self) -> Vec<Message> {
-        let mut result = Vec::with_capacity(self.messages.len() + 1);
+        let mut result = Vec::with_capacity(self.messages.len() + 2);
         result.push(Message::system(&self.system_prompt));
         result.extend(self.messages.iter().cloned());
+        result.push(state_snapshot_message());
         result
     }
 
@@ -647,8 +672,34 @@ mod tests {
         ctx.add_message(Message::assistant("Hi!"));
 
         let messages = ctx.to_messages();
-        assert_eq!(messages.len(), 3); // System + user + assistant
+        assert_eq!(messages.len(), 4); // System + user + assistant + snapshot
         assert_eq!(messages[0].role, Role::System);
+        assert_eq!(messages[3].role, Role::User);
+        assert_eq!(messages[3].name.as_deref(), Some(STATE_SNAPSHOT_NAME));
+    }
+
+    #[test]
+    fn test_state_snapshot_message() {
+        let msg = state_snapshot_message();
+        assert_eq!(msg.role, crate::providers::Role::User);
+        assert_eq!(msg.name.as_deref(), Some(STATE_SNAPSHOT_NAME));
+        assert!(
+            msg.content
+                .contains(&chrono::Local::now().format("%Y-%m-%d").to_string()),
+            "snapshot carries today's date: {}",
+            msg.content
+        );
+        assert!(msg.content.contains("time tool"), "hints at the time tool");
+    }
+
+    #[test]
+    fn test_to_messages_snapshot_after_history() {
+        let mut ctx = Context::new("test", "System prompt", 1000);
+        ctx.add_message(Message::user("Hello"));
+        let messages = ctx.to_messages();
+        assert_eq!(messages[1].role, crate::providers::Role::User);
+        assert_eq!(messages[1].content, "Hello");
+        assert_eq!(messages[2].name.as_deref(), Some(STATE_SNAPSHOT_NAME));
     }
 
     #[test]

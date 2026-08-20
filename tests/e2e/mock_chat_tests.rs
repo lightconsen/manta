@@ -88,6 +88,75 @@ async fn mock_shell_tool_invoked_via_chat() {
     assert!(chat_final.is_some(), "Expected chat.final event");
 }
 
+/// The system prompt must no longer embed the current time (it would break
+/// KV-cache prefix reuse across threads and go stale in long-lived ones).
+/// Instead every request carries a labeled `state_snapshot` user message at
+/// its tail with the current calendar date, and the model can query the exact
+/// time via the `time` tool.
+#[tokio::test]
+#[serial]
+async fn request_tail_has_state_snapshot_and_system_prompt_lacks_current_time() {
+    let port = 41073;
+    let ws = std::env::temp_dir().join(format!("syscity_snapshot_e2e_{}", port));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).expect("create temp workspace");
+
+    let mut config = test_config(port, false);
+    config.model_provider = "mock".to_string();
+    config.model = "mock-model".to_string();
+    config.default_agent.workspace_dir = Some(ws.clone());
+
+    let gateway = Gateway::new(config, None)
+        .await
+        .expect("Failed to create test gateway");
+    let router = gateway.model_router();
+    let mock = llm_mock_provider_for_streaming();
+    register_mock_provider_with_model(&router, mock.clone(), "mock-model").await;
+
+    start_gateway_and_wait(port, gateway).await;
+    let mut client = FrontendSimulator::connect(port).await;
+
+    let sid = client.create_session().await;
+    client.subscribe(vec![sid.clone()]).await;
+    client.send_chat(&sid, "hello").await;
+    client
+        .wait_for_event("chat.final", 30)
+        .await
+        .expect("Expected chat.final event");
+
+    // Pick the request carrying the user's actual message (background
+    // session-title / cache-check calls predate it).
+    let history = mock.history();
+    let req = history
+        .iter()
+        .find(|req| {
+            req.messages
+                .iter()
+                .any(|m| m.role == Role::User && m.content == "hello")
+        })
+        .expect("a request carrying the user's message");
+
+    let system = &req.messages[0];
+    assert_eq!(system.role, Role::System);
+    assert!(
+        !system.content.contains("Current Time"),
+        "system prompt must not embed the current time"
+    );
+
+    let last = req.messages.last().unwrap();
+    assert_eq!(last.role, Role::User);
+    assert_eq!(last.name.as_deref(), Some("state_snapshot"));
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    assert!(
+        last.content.contains(&today),
+        "snapshot carries today's date {}: {}",
+        today,
+        last.content
+    );
+
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 /// Build a MockProvider that drives a two-turn file tool conversation.
 ///
 /// Uses a callback so cache-check prompts don't consume a fixed-sequence slot.

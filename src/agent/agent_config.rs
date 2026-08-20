@@ -186,18 +186,13 @@ impl AgentConfig {
             Err(_) => base_prompt,
         };
 
-        // Inject current time so the LLM can reason about time-sensitive
-        // queries (news, weather, schedules).
-        let time_str = chrono::Local::now()
-            .format("%Y-%m-%d %H:%M:%S %z")
-            .to_string();
-
         // Inject host environment awareness so the LLM knows what OS
-        // controls are available on this machine.
+        // controls are available on this machine. The current time is NOT
+        // baked into the system prompt (it would invalidate the KV-cache
+        // prefix on every fresh thread and go stale in long-lived ones);
+        // `Context::to_messages` appends it as a per-request user snapshot
+        // instead.
         let host_env = crate::computer::platform::host_environment_summary();
-        format!(
-            "{}\n\n## Current Time\n{}\n\n## Host Environment\n\n{}",
-            result, time_str, host_env
-        )
+        format!("{}\n\n## Host Environment\n\n{}", result, host_env)
     }
 }
