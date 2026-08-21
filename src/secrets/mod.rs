@@ -32,12 +32,17 @@ mod file_store;
 mod in_memory;
 #[cfg(feature = "keyring")]
 mod keyring_store;
+mod mask;
 mod store;
 
 pub use file_store::{migrate_legacy_mcp_env, sanitize_entity, secrets_root_dir, FileStore};
 pub use in_memory::MemoryStore;
 #[cfg(feature = "keyring")]
 pub use keyring_store::{probe_keyring, KeyringStore};
+pub use mask::{
+    is_secret_container_key, is_secret_key, mask_json_value, mask_secret,
+    mask_secret_container_payload,
+};
 pub use store::{
     choose_store, persist_channel_secrets, resolve_channel_credential, resolve_oauth_client_secret,
     resolve_secret_or_ref, resolve_store_ref, route_store, SecretId, SecretOrigin, SecretStore,

@@ -38,7 +38,8 @@ pub(crate) async fn persist_config_atomic(
 pub async fn get_config_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let config = state.config.read().await;
     match serde_json::to_value(&*config) {
-        Ok(json) => (StatusCode::OK, Json(json)).into_response(),
+        Ok(json) => (StatusCode::OK, Json(crate::secrets::mask_json_value(&json))).into_response(),
+
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("Serialization failed: {}", e)})),
@@ -150,6 +151,43 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(body["model"].as_str().is_some());
         assert!(body["model_provider"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn get_config_masks_secrets() {
+        let mut cfg = GatewayConfig::default();
+        cfg.providers.insert(
+            "openai".into(),
+            crate::model_router::ProviderConfig {
+                provider_type: crate::model_router::ProviderType::OpenAi,
+                models: vec!["gpt-4o".into()],
+                default_model: "gpt-4o".into(),
+                api_key: "sk-plaintext-12345".to_string().into(),
+                api_keys: vec![],
+                auth_profile: None,
+                oauth: None,
+                base_url: None,
+                timeout: std::time::Duration::from_secs(30),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            },
+        );
+        cfg.search.api_key = "tvly-plaintext-12345".to_string();
+        let state = Arc::new(make_test_state(cfg).await);
+        let (status, body) =
+            body_json(get_config_handler(State(state)).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        // Innocent fields stay readable.
+        assert!(body["model"].as_str().is_some());
+        // Secrets are masked, not leaked.
+        let api_key = body["providers"]["openai"]["api_key"]
+            .as_str()
+            .expect("provider api_key");
+        assert!(!api_key.contains("sk-plaintext"));
+        assert!(api_key.contains("••••"));
+        let search_key = body["search"]["api_key"].as_str().expect("search api_key");
+        assert!(!search_key.contains("tvly-plaintext"));
+        assert!(search_key.contains("••••"));
     }
 
     #[tokio::test]

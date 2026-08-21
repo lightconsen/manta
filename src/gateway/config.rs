@@ -931,6 +931,50 @@ pub struct ConfigChange {
     pub new_value: Option<serde_json::Value>,
 }
 
+/// Recursively rebuild a JSON value with object keys sorted, so a hash over it
+/// is independent of `HashMap` iteration order. Defensive: `serde_json`'s
+/// default `Map` is already a `BTreeMap`, but this survives a future
+/// `preserve_order` unification.
+fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut pairs: Vec<(String, serde_json::Value)> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), canonicalize_json(v)))
+                .collect();
+            pairs.sort_by(|a, b| a.0.cmp(&b.0));
+            serde_json::Value::Object(pairs.into_iter().collect())
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(canonicalize_json).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// Canonical SHA-256 (hex) of a config JSON value. The canonical form makes
+/// the hash stable across `HashMap` insertion orders, so two equal configs
+/// always hash equal — the basis for optimistic-locking revisions.
+pub(crate) fn config_json_hash(value: &serde_json::Value) -> String {
+    use sha2::{Digest, Sha256};
+
+    let canonical = canonicalize_json(value);
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    format!("{digest:x}")
+}
+
+/// Current revision of the whole `GatewayConfig` — the same fingerprint the
+/// gateway tool reports as `hash`, so both write surfaces agree on CAS.
+///
+/// Synchronous and lock-free: callers hold a read/write guard, and computing
+/// the hash must not `.await` (respects `await_holding_lock` deny).
+pub(crate) fn config_revision(config: &GatewayConfig) -> String {
+    // All GatewayConfig fields implement Serialize; this cannot fail.
+    #[allow(clippy::expect_used)]
+    let value = serde_json::to_value(config).expect("GatewayConfig serialization cannot fail");
+    config_json_hash(&value)
+}
+
 impl GatewayConfig {
     /// Find the provider name that owns a concrete model ID, if any.
     pub fn provider_for_model(&self, model_id: &str) -> Option<&str> {
@@ -1360,5 +1404,60 @@ mod tests {
                 .max_context_tokens,
             Some(8192)
         );
+    }
+
+    /// Build two configs with identical content but HashMaps populated in
+    /// different insertion orders (channels, search keys, agent models). Their
+    /// revisions must be identical — the CAS fingerprint cannot depend on
+    /// HashMap iteration order.
+    #[test]
+    fn config_revision_stable_across_insertion_order() {
+        let mut a = GatewayConfig::default();
+        for (name, ty) in [("a", "telegram"), ("b", "slack"), ("c", "discord")] {
+            let mut ch = ChannelConfig::new(match ty {
+                "telegram" => crate::channels::ChannelType::Telegram,
+                "slack" => crate::channels::ChannelType::Slack,
+                _ => crate::channels::ChannelType::Discord,
+            });
+            ch.agent_id = Some(name.to_string());
+            a.channels.insert(name.to_string(), ch);
+        }
+        a.search.keys.insert("k1".into(), "v1".into());
+        a.search.keys.insert("k2".into(), "v2".into());
+        a.agent_models.insert("m1".into(), "gpt-4o".into());
+        a.agent_models.insert("m2".into(), "claude".into());
+
+        let mut b = GatewayConfig::default();
+        for (name, ty) in [("c", "discord"), ("b", "slack"), ("a", "telegram")] {
+            let mut ch = ChannelConfig::new(match ty {
+                "telegram" => crate::channels::ChannelType::Telegram,
+                "slack" => crate::channels::ChannelType::Slack,
+                _ => crate::channels::ChannelType::Discord,
+            });
+            ch.agent_id = Some(name.to_string());
+            b.channels.insert(name.to_string(), ch);
+        }
+        b.search.keys.insert("k2".into(), "v2".into());
+        b.search.keys.insert("k1".into(), "v1".into());
+        b.agent_models.insert("m2".into(), "claude".into());
+        b.agent_models.insert("m1".into(), "gpt-4o".into());
+
+        assert_eq!(config_revision(&a), config_revision(&b));
+    }
+
+    #[test]
+    fn config_revision_changes_when_config_changes() {
+        let mut config = GatewayConfig::default();
+        let before = config_revision(&config);
+        config.default_agent.temperature = 0.5;
+        let after = config_revision(&config);
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn config_revision_matches_config_json_hash() {
+        let config = GatewayConfig::default();
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(config_revision(&config), config_json_hash(&value));
     }
 }

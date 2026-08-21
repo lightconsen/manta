@@ -4,9 +4,11 @@ use super::*;
 pub(super) async fn handle_config_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let config = state.config.read().await;
     let heartbeat = &config.heartbeat;
+    let revision = crate::gateway::config_revision(&config);
     WsResponse::ok(
         &req.id,
         serde_json::json!({
+            "revision": revision,
             "model": config.model,
             "model_provider": config.model_provider,
             "agent_models": config.agent_models,
@@ -62,12 +64,31 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
     struct SetParams {
         path: String,
         value: serde_json::Value,
+        #[serde(default)]
+        base_revision: Option<String>,
     }
 
     let params: SetParams = match parse_params(req) {
         Ok(p) => p,
         Err(res) => return res,
     };
+
+    // Empty base_revision is treated as "not supplied" (clients may default
+    // the field to "").
+    let base_revision = params.base_revision.as_deref().filter(|r| !r.is_empty());
+
+    // Optimistic-lock fast-fail, run *before* the model-router side effect so a
+    // stale `path="model"` write cannot switch the router before the conflict
+    // is caught. The authoritative check under the write lock follows below.
+    if let Some(expected) = base_revision {
+        let current = {
+            let cfg = state.config.read().await;
+            crate::gateway::config_revision(&cfg)
+        };
+        if expected != current {
+            return revision_conflict(req, expected, &current);
+        }
+    }
 
     // Handle model switching and agent model bindings outside the config write
     // lock so the lock is not held across an async model-router operation.
@@ -112,6 +133,16 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
     };
 
     let mut config_guard = state.config.write().await;
+
+    // Authoritative CAS: under the write lock no other writer can slip between
+    // this check and the mutation below.
+    if let Some(expected) = base_revision {
+        let current = crate::gateway::config_revision(&config_guard);
+        if expected != current {
+            return revision_conflict(req, expected, &current);
+        }
+    }
+
     let config = Arc::make_mut(&mut config_guard);
 
     // Agents whose running instance must receive an UpdateConfig push after
@@ -376,6 +407,7 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
             );
         }
     }
+    let new_revision = crate::gateway::config_revision(&config_guard);
     drop(config_guard);
 
     // Push the recomputed effective config to running agents so the change
@@ -392,8 +424,38 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
         serde_json::json!({
             "status": "updated",
             "path": params.path,
+            "revision": new_revision,
         }),
     )
+}
+
+/// Optimistic-lock conflict response: the config changed since `expected` was
+/// read. Built as a literal because `WsResponse::err` always drops the payload,
+/// and the client needs the current revision to retry.
+/// First 12 hex chars of a hash, for a readable error message.
+fn short_hash(hash: &str) -> &str {
+    &hash[..hash.len().min(12)]
+}
+
+fn revision_conflict(req: &WsRequest, expected: &str, current: &str) -> WsResponse {
+    WsResponse {
+        frame_type: "res",
+        id: req.id.clone(),
+        ok: false,
+        payload: Some(serde_json::json!({
+            "current_revision": current,
+            "expected_revision": expected,
+        })),
+        error: Some(WsError {
+            code: "REVISION_CONFLICT".to_string(),
+            message: format!(
+                "Config changed since revision {} was read (current {}). \
+                 Re-run config.get and retry.",
+                short_hash(expected),
+                short_hash(current)
+            ),
+        }),
+    }
 }
 
 /// Recompute `agent_id`'s effective config (`base_config + agent_overrides`)
@@ -745,5 +807,117 @@ mod tests {
             }
             other => panic!("expected UpdateConfig, got {:?}", other),
         }
+    }
+
+    async fn set_with_base(
+        state: &Arc<GatewayState>,
+        path: &str,
+        value: serde_json::Value,
+        base_revision: Option<&str>,
+    ) -> WsResponse {
+        let mut params = serde_json::json!({ "path": path, "value": value });
+        if let Some(br) = base_revision {
+            params["base_revision"] = serde_json::Value::String(br.to_string());
+        }
+        handle_config_set(&req("r", "config.set", params), state).await
+    }
+
+    #[tokio::test]
+    async fn config_get_includes_revision() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = handle_config_get(&req("g", "config.get", serde_json::json!({})), &state).await;
+        assert!(res.ok);
+        let p = res.payload.expect("payload");
+        let revision = p["revision"].as_str().expect("revision");
+        assert_eq!(revision.len(), 64, "sha256 hex should be 64 chars");
+    }
+
+    #[tokio::test]
+    async fn config_set_with_matching_base_revision_succeeds() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let get = handle_config_get(&req("g", "config.get", serde_json::json!({})), &state).await;
+        let revision = get.payload.unwrap()["revision"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let res = set_with_base(
+            &state,
+            "default_agent.temperature",
+            serde_json::json!(0.9),
+            Some(&revision),
+        )
+        .await;
+        assert!(res.ok, "matching base_revision should succeed");
+        let payload = res.payload.unwrap();
+        let new_rev = payload["revision"].as_str().unwrap();
+        assert_ne!(new_rev, revision, "revision must change after a write");
+    }
+
+    #[tokio::test]
+    async fn config_set_with_stale_base_revision_conflicts() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let get = handle_config_get(&req("g", "config.get", serde_json::json!({})), &state).await;
+        let get_payload = get.payload.unwrap();
+        let stale = get_payload["revision"].as_str().unwrap().to_string();
+
+        // Another writer changes the config, invalidating `stale`.
+        let other = set_and_ok(&state, "default_agent.temperature", serde_json::json!(0.9)).await;
+        assert!(other.ok);
+
+        let pre_max_tokens = state.config.read().await.default_agent.max_tokens;
+        let res = set_with_base(
+            &state,
+            "default_agent.max_tokens",
+            serde_json::json!(2048),
+            Some(&stale),
+        )
+        .await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "REVISION_CONFLICT");
+        let payload = res.payload.expect("conflict payload");
+        assert!(payload["current_revision"].as_str().is_some());
+        assert_eq!(payload["expected_revision"], serde_json::json!(stale));
+        // The target field must NOT have been mutated.
+        assert_eq!(state.config.read().await.default_agent.max_tokens, pre_max_tokens);
+    }
+
+    #[tokio::test]
+    async fn config_set_stale_base_does_not_switch_router() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        register_provider(&state, "openai", &["gpt-4o"]).await;
+
+        // A bogus base_revision must fail fast — before the model-router side
+        // effect — so the default model is not switched.
+        let res =
+            set_with_base(&state, "model", serde_json::json!("gpt-4o"), Some("deadbeef")).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "REVISION_CONFLICT");
+        assert_ne!(
+            state.infra.model_router.get_default_model().await,
+            "gpt-4o",
+            "router must not switch when CAS fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_set_empty_base_revision_treated_as_absent() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res =
+            set_with_base(&state, "default_agent.temperature", serde_json::json!(0.5), Some(""))
+                .await;
+        assert!(res.ok, "empty base_revision must be ignored");
+    }
+
+    #[tokio::test]
+    async fn config_set_success_returns_new_revision() {
+        let state = Arc::new(make_test_state(GatewayConfig::default()).await);
+        let res = set_and_ok(&state, "heartbeat.enabled", serde_json::json!(true)).await;
+        assert!(res.ok);
+        let payload = res.payload.unwrap();
+        let returned = payload["revision"].as_str().unwrap().to_string();
+        let config = state.config.read().await;
+        let current = crate::gateway::config_revision(&config);
+        assert_eq!(returned, current);
     }
 }

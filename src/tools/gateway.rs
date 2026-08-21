@@ -204,10 +204,25 @@ fn resolve_config_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
 }
 
 fn compute_config_hash(config: &Value) -> String {
-    use sha2::{Digest, Sha256};
-    let json_str = config.to_string();
-    let hash = Sha256::digest(json_str.as_bytes());
-    format!("{:x}", hash)
+    crate::gateway::config_json_hash(config)
+}
+
+/// Whether the final segment of a config dot-path is a secret container, so the
+/// resolved value is a container payload whose string leaves are all secret
+/// (e.g. `search.keys`, `channels.tg.credentials`). `env` maps are NOT treated
+/// this way — they mix secrets and non-secrets and need per-key masking.
+fn path_is_container_payload(path: &str) -> bool {
+    path.split('.')
+        .next_back()
+        .is_some_and(crate::secrets::is_secret_container_key)
+}
+
+/// Whether the final segment of a config dot-path names a secret value, so a
+/// resolved scalar leaf must be masked (e.g. `search.api_key`).
+fn path_is_secret_leaf(path: &str) -> bool {
+    path.split('.')
+        .next_back()
+        .is_some_and(crate::secrets::is_secret_key)
 }
 
 // ── GatewayArgs ──────────────────────────────────────────────────────────────
@@ -369,13 +384,17 @@ impl Tool for GatewayTool {
                     }
                 };
                 let hash = compute_config_hash(&config);
+                // The hash is computed from the unmasked config (so `config.apply`
+                // base_hash CAS stays stable), but the returned snapshot masks
+                // secrets so they never reach the model.
+                let masked = crate::secrets::mask_json_value(&config);
                 Ok(ToolExecutionResult {
                     success: true,
                     output: format!("Current gateway config (hash: {})", &hash[..16]),
                     error: None,
                     data: Some(serde_json::json!({
                         "ok": true,
-                        "config": config,
+                        "config": masked,
                         "hash": hash,
                     })),
                     execution_time: start.elapsed(),
@@ -411,17 +430,34 @@ impl Tool for GatewayTool {
                     }
                 };
                 match resolve_config_path(&config, &path) {
-                    Some(value) => Ok(ToolExecutionResult {
-                        success: true,
-                        output: format!("{} = {}", path, value),
-                        error: None,
-                        data: Some(serde_json::json!({
-                            "ok": true,
-                            "path": path,
-                            "value": value,
-                        })),
-                        execution_time: start.elapsed(),
-                    }),
+                    Some(value) => {
+                        // Secret values must not reach the model. The walker is
+                        // always applied (it is identity for innocent config, so
+                        // ancestor lookups like `mcp.servers.s` are covered
+                        // too); container payloads and secret scalar leaves get
+                        // stricter handling the walker cannot express.
+                        let display = if path_is_container_payload(&path) {
+                            crate::secrets::mask_secret_container_payload(value)
+                        } else if path_is_secret_leaf(&path) {
+                            match value {
+                                Value::String(s) => Value::String(crate::secrets::mask_secret(s)),
+                                other => crate::secrets::mask_json_value(other),
+                            }
+                        } else {
+                            crate::secrets::mask_json_value(value)
+                        };
+                        Ok(ToolExecutionResult {
+                            success: true,
+                            output: format!("{} = {}", path, display),
+                            error: None,
+                            data: Some(serde_json::json!({
+                                "ok": true,
+                                "path": path,
+                                "value": display,
+                            })),
+                            execution_time: start.elapsed(),
+                        })
+                    }
                     None => Ok(ToolExecutionResult {
                         success: false,
                         output: String::new(),
@@ -640,7 +676,55 @@ impl Tool for GatewayTool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    use crate::channels::ChannelType;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+    use crate::mcp::McpServerConfig;
+    use crate::model_router::{ProviderConfig, ProviderType};
+
     use super::*;
+
+    fn leaked_config() -> GatewayConfig {
+        let mut cfg = GatewayConfig::default();
+        cfg.providers.insert(
+            "openai".into(),
+            ProviderConfig {
+                provider_type: ProviderType::OpenAi,
+                models: vec!["gpt-4o".into()],
+                default_model: "gpt-4o".into(),
+                api_key: "sk-plaintext-12345".to_string().into(),
+                api_keys: vec![],
+                auth_profile: None,
+                oauth: None,
+                base_url: None,
+                timeout: Duration::from_secs(30),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            },
+        );
+        cfg.search.api_key = "tvly-plaintext-12345".to_string();
+        cfg.search
+            .keys
+            .insert("tavily".to_string(), "tvly-secret-99999".to_string());
+        cfg.mcp.servers.insert(
+            "s".into(),
+            McpServerConfig {
+                env: HashMap::from([
+                    ("ANTHROPIC_API_KEY".to_string(), "sk-env-55555".to_string()),
+                    ("HOST".to_string(), "localhost".to_string()),
+                ]),
+                ..McpServerConfig::default()
+            },
+        );
+        let mut tg = crate::gateway::ChannelConfig::new(ChannelType::Telegram);
+        tg.credentials
+            .insert("bot_token".to_string(), "123456:ABC".to_string());
+        cfg.channels.insert("tg".into(), tg);
+        cfg
+    }
 
     #[test]
     fn test_gateway_args_defaults() {
@@ -656,5 +740,96 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(args.action, "restart");
+    }
+
+    #[tokio::test]
+    async fn config_get_masks_secrets_and_hash_matches_revision() {
+        let state = Arc::new(make_test_state(leaked_config()).await);
+        let tool = GatewayTool::new(state.clone());
+        let ctx = ToolContext::new("user", "conv1");
+
+        let res = tool
+            .execute(serde_json::json!({"action": "config.get"}), &ctx)
+            .await
+            .expect("execute");
+        assert!(res.success, "config.get should succeed");
+        let data = res.data.expect("data");
+        let config = &data["config"];
+
+        let api_key = config["providers"]["openai"]["api_key"]
+            .as_str()
+            .expect("provider api_key");
+        assert!(!api_key.contains("sk-plaintext"), "provider api_key must be masked");
+        assert!(api_key.contains("••••"));
+
+        let search_key = config["search"]["api_key"]
+            .as_str()
+            .expect("search api_key");
+        assert!(!search_key.contains("tvly-plaintext"), "search api_key must be masked");
+        assert!(search_key.contains("••••"));
+
+        let keys = &config["search"]["keys"]["tavily"];
+        assert!(!keys.to_string().contains("tvly-secret"), "keys container must be masked");
+
+        let bot_token = config["channels"]["tg"]["credentials"]["bot_token"]
+            .as_str()
+            .expect("credentials bot_token");
+        assert!(!bot_token.contains("123456"), "credentials container must be masked");
+
+        // Non-secret fields stay readable.
+        assert_eq!(config["model_provider"], "anthropic");
+
+        // The hash (used for base_hash CAS) must match the WS revision so the
+        // two surfaces agree on "current config".
+        let cfg_guard = state.config.read().await;
+        let ws_rev = crate::gateway::config_revision(&cfg_guard);
+        assert_eq!(data["hash"].as_str().expect("hash"), ws_rev);
+    }
+
+    #[tokio::test]
+    async fn schema_lookup_masks_sensitive_and_passes_innocent() {
+        let state = Arc::new(make_test_state(leaked_config()).await);
+        let tool = GatewayTool::new(state.clone());
+        let ctx = ToolContext::new("user", "conv1");
+
+        async fn lookup(tool: &GatewayTool, ctx: &ToolContext, path: &str) -> serde_json::Value {
+            let res = tool
+                .execute(serde_json::json!({"action": "config.schema.lookup", "path": path}), ctx)
+                .await
+                .expect("execute");
+            assert!(res.success, "lookup {path} should succeed");
+            res.data.expect("data")["value"].clone()
+        }
+
+        // Innocent values pass through untouched.
+        assert_eq!(lookup(&tool, &ctx, "model_provider").await, "anthropic");
+        assert_eq!(lookup(&tool, &ctx, "default_agent.max_tokens").await, serde_json::json!(2048));
+
+        // Secret scalar leaf is masked.
+        let api_key = lookup(&tool, &ctx, "search.api_key").await;
+        let s = api_key.as_str().expect("string");
+        assert!(!s.contains("tvly-plaintext"));
+        assert!(s.contains("••••"));
+
+        // Container payload masks every leaf.
+        let keys = lookup(&tool, &ctx, "search.keys").await;
+        assert!(!keys["tavily"].to_string().contains("tvly-secret"));
+        assert!(keys["tavily"].as_str().unwrap().contains("••••"));
+
+        let creds = lookup(&tool, &ctx, "channels.tg.credentials").await;
+        assert!(!creds["bot_token"].to_string().contains("123456"));
+        assert!(creds["bot_token"].as_str().unwrap().contains("••••"));
+
+        // env map is masked per key: secret keyed values mask, HOST stays.
+        let env = lookup(&tool, &ctx, "mcp.servers.s.env").await;
+        assert!(!env["ANTHROPIC_API_KEY"].to_string().contains("sk-env"));
+        assert_eq!(env["HOST"], "localhost");
+
+        // Ancestor lookup is covered by the walker too.
+        let server = lookup(&tool, &ctx, "mcp.servers.s").await;
+        assert!(!server["env"]["ANTHROPIC_API_KEY"]
+            .to_string()
+            .contains("sk-env"));
+        assert_eq!(server["env"]["HOST"], "localhost");
     }
 }

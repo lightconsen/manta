@@ -1,17 +1,6 @@
 //! models.list / presets / fetch_remote / add / remove / set_default.
 
 use super::*;
-/// Mask an API key for display: keep the first 3 and last 4 characters, hide
-/// the rest. Short keys are fully masked.
-fn mask_api_key(key: &str) -> String {
-    let k = key.trim();
-    if k.len() <= 6 {
-        return "••••".to_string();
-    }
-    let head = k.get(..3).unwrap_or("");
-    let tail = k.get(k.len() - 4..).unwrap_or("");
-    format!("{head}••••{tail}")
-}
 
 pub(super) async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     // List (provider, model_id) pairs from provider configs + catalog.
@@ -29,7 +18,7 @@ pub(super) async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState
                     .api_key
                     .inline_value()
                     .filter(|k| !k.is_empty())
-                    .map(mask_api_key);
+                    .map(crate::secrets::mask_secret);
                 let has_key = masked.is_some()
                     || matches!(pcfg.api_key, crate::model_router::ProviderKey::Ref(_));
                 (name.clone(), (has_key, masked, pcfg.base_url.clone()))
@@ -577,13 +566,6 @@ mod tests {
             method: method.to_string(),
             params: Some(params),
         }
-    }
-
-    #[test]
-    fn mask_api_key_hides_middle() {
-        assert_eq!(mask_api_key("sk-1234567890abcd"), "sk-••••abcd");
-        assert_eq!(mask_api_key("abc"), "••••");
-        assert_eq!(mask_api_key(""), "••••");
     }
 
     fn provider_config(models: &[&str]) -> ProviderConfig {
