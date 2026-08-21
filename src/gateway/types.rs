@@ -269,14 +269,6 @@ pub struct OpenAiUsage {
     pub total_tokens: u32,
 }
 
-// ── Runtime settings CRUD ────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct SetSettingRequest {
-    pub key: String,
-    pub value: serde_json::Value,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct DenyApprovalRequest {
     pub reason: Option<String>,
