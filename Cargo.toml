@@ -231,6 +231,11 @@ unicode-width = { version = "0.2" }
 teloxide = { version = "0.17", features = ["macros"], optional = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }
 
+# Landlock kernel write fence (Linux filesystem MAC; pre_exec `restrict_self`)
+# Landlock crate is Linux-only and never built on other platforms.
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+
 [features]
 default = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "plugins", "hot-reload", "local-embeddings", "browser", "vision", "sqlite-vec"]
 telegram = ["teloxide"]

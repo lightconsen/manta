@@ -10,7 +10,7 @@ use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
 use super::{create_schema, head_tail_truncate, Tool, ToolContext, ToolExecutionResult};
-use crate::tools::process_runner::{ProcessError, ProcessRequest};
+use crate::tools::process_runner::{ProcessError, ProcessRequest, WriteFence};
 use crate::tools::sdk::ToolCapabilities;
 
 /// Shell tool for executing commands
@@ -204,6 +204,10 @@ impl Tool for ShellTool {
             env_clear: true,
             env: context.environment().clone(),
             timeout: Some(context.timeout()),
+            fence: context.workspace_only().then(|| WriteFence {
+                workspace_root: context.workspace_root().clone(),
+                allowed_paths: context.allowed_paths().to_vec(),
+            }),
             ..Default::default()
         };
 
@@ -663,5 +667,39 @@ mod tests {
     fn test_contains_shell_control_ampersand_in_url() {
         // `&` inside double-quotes should not trigger.
         assert!(!contains_shell_control("echo \"foo & bar\""));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn test_shell_fence_blocks_outside_writes_when_workspace_only() {
+        // Skip when the Seatbelt binary is absent (the runner then hard-fails
+        // and the "fenced" half of this test would pass vacuously).
+        if !std::path::Path::new("/usr/bin/sandbox-exec").is_file() {
+            return;
+        }
+        let tool = ShellTool::new();
+        let target = format!("/tmp/syscity_shell_fence_{}", std::process::id());
+        let _ = std::fs::remove_file(&target);
+
+        // workspace_only defaults to true -> shell runs behind the kernel
+        // write fence, so a /tmp write is denied even though the shell tool's
+        // parent-process path check only validates the working directory.
+        let fenced = ToolContext::new("user", "conv1");
+        let result = tool
+            .execute(serde_json::json!({ "command": format!("echo x > {target}") }), &fenced)
+            .await
+            .unwrap();
+        assert!(!result.success, "fenced shell must not write outside workspace");
+        assert!(!std::path::Path::new(&target).exists());
+
+        // workspace_only=false -> no fence, the write goes through.
+        let relaxed = ToolContext::new("user", "conv1").with_workspace_only(false);
+        let result = tool
+            .execute(serde_json::json!({ "command": format!("echo x > {target}") }), &relaxed)
+            .await
+            .unwrap();
+        assert!(result.success, "non-fenced shell should write freely");
+        assert!(std::path::Path::new(&target).exists());
+        let _ = std::fs::remove_file(&target);
     }
 }

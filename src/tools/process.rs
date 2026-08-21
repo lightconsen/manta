@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
-use crate::tools::process_runner::{ProcessError, ProcessRequest};
+use crate::tools::process_runner::{ProcessError, ProcessRequest, WriteFence};
 use crate::tools::sdk::ToolCapabilities;
 
 /// Status of a background process
@@ -235,6 +235,10 @@ impl Tool for ProcessTool {
                         None => context.working_directory().clone(),
                     }),
                     env: env.unwrap_or_default(),
+                    fence: context.workspace_only().then(|| WriteFence {
+                        workspace_root: context.workspace_root().clone(),
+                        allowed_paths: context.allowed_paths().to_vec(),
+                    }),
                     ..Default::default()
                 };
 

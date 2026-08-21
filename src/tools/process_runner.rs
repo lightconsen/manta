@@ -20,6 +20,12 @@ use async_trait::async_trait;
 use std::process::Stdio;
 use tokio::process::{Child, Command};
 
+#[cfg(target_os = "linux")]
+use landlock::{
+    AccessFs, BitFlags, CompatLevel, Compatible, LandlockStatus, PathBeneath, PathFd, Ruleset,
+    RulesetAttr, RulesetCreated, RulesetCreatedAttr, RulesetError, ABI,
+};
+
 impl ProcessRequest {
     /// Build a request from a plain argv (no cwd/env/stdin/timeout).
     pub fn argv(argv: &[&str]) -> Self {
@@ -41,11 +47,31 @@ pub enum StdioMode {
     Piped,
 }
 
+/// Write-fence descriptor, platform-neutral.
+///
+/// When present on a [`ProcessRequest`], the platform runner confines the
+/// child with a kernel write fence: all file-write operations outside
+/// `workspace_root` / `allowed_paths` are denied, regardless of what the
+/// command does. Enforcement is platform-specific — macOS wraps `argv` behind
+/// `/usr/bin/sandbox-exec` ([`MacSeatbeltRunner`]); Linux restricts the child
+/// in-place with Landlock ([`LandlockRunner`]). On platforms without a kernel
+/// fence the field exists but is ignored.
+#[derive(Debug, Clone)]
+pub struct WriteFence {
+    /// Directory the child may write into (recursively).
+    pub workspace_root: std::path::PathBuf,
+    /// Additional roots the child may write into (recursively).
+    pub allowed_paths: Vec<std::path::PathBuf>,
+}
+
 /// A subprocess spawn request, covering the knobs the tools actually use.
 #[derive(Clone, Default)]
 pub struct ProcessRequest {
     /// Program + arguments. `argv[0]` is the executable; empty => error.
     pub argv: Vec<String>,
+    /// Optional kernel write fence applied around this process (platform
+    /// runners enforce it only when it is Some and the platform supports it).
+    pub fence: Option<WriteFence>,
     /// Working directory for the child.
     pub cwd: Option<PathBuf>,
     /// Clear the inherited environment before applying `env`.
@@ -63,6 +89,11 @@ pub struct ProcessRequest {
     /// Stdio wiring for [`ProcessRunner::spawn`]. Ignored by
     /// [`ProcessRunner::run`], which always captures output.
     pub stdio: StdioMode,
+    /// Terminate the whole process group on timeout instead of just the
+    /// direct child. Set by the macOS Seatbelt fence, whose wrapper forks a
+    /// sandboxed grandchild that a plain `child.kill()` would orphan (leaving
+    /// it alive and holding the output pipes open). Ignored when false.
+    pub kill_process_group: bool,
 }
 
 /// Output of a completed [`ProcessRunner::run`].
@@ -111,6 +142,8 @@ pub enum ProcessError {
     Timeout { duration: Duration },
     #[error("process execution is not supported on this platform")]
     Unsupported,
+    #[error("sandbox unavailable: {reason}")]
+    Sandbox { reason: String },
 }
 
 /// Platform-abstracted subprocess launcher.
@@ -270,8 +303,29 @@ impl ProcessRunner for StdProcessRunner {
                 Ok(res) => (Some(res.map_err(|source| spawn_err(req, source))?), false),
                 Err(_) => {
                     // Kill the runaway child (tokio does not kill on drop)
-                    // and reap it before collecting partial output.
-                    let _ = child.kill().await;
+                    // and reap it before collecting partial output. A request
+                    // that opted into a process-group kill (macOS seatbelt
+                    // fence, where the wrapped command runs in a forked
+                    // grandchild) terminates the whole group so the sandboxed
+                    // process cannot survive as an orphan holding the pipes.
+                    let pid = child.id();
+                    if req.kill_process_group {
+                        #[cfg(unix)]
+                        {
+                            if let Some(pid) = pid {
+                                #[allow(unsafe_code)]
+                                unsafe {
+                                    libc::kill(-(pid as i32), libc::SIGKILL);
+                                }
+                            }
+                        }
+                        // The flag is only ever set on macOS; keep a plain
+                        // kill fallback for non-Unix targets.
+                        #[cfg(not(unix))]
+                        let _ = child.kill().await;
+                    } else {
+                        let _ = child.kill().await;
+                    }
                     let _ = child.wait().await;
                     (None, true)
                 }
@@ -296,6 +350,289 @@ impl ProcessRunner for StdProcessRunner {
             stderr,
             timed_out,
         })
+    }
+}
+
+/// macOS: wraps an argv in `/usr/bin/sandbox-exec` so `workspace_only`
+/// becomes a kernel write fence instead of a parent-process path check.
+///
+/// The runner is a platform singleton, so whether to fence is decided
+/// per-request via [`ProcessRequest::fence`]; this runner only wraps when
+/// the request asks for it and Seatbelt is usable.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MacSeatbeltRunner {
+    inner: StdProcessRunner,
+}
+
+#[cfg(target_os = "macos")]
+impl MacSeatbeltRunner {
+    /// Rewrite `req.argv` behind `sandbox-exec` when the request asks for the
+    /// fence. Hard-fails (fail-closed) when Seatbelt is unavailable — missing
+    /// binary, running as root, or a functional probe failure.
+    fn fence(&self, req: &ProcessRequest) -> Result<ProcessRequest, ProcessError> {
+        let Some(fence) = &req.fence else {
+            return Ok(req.clone());
+        };
+        if !can_sandbox() {
+            return Err(ProcessError::Sandbox {
+                reason: "Seatbelt write fence requested but /usr/bin/sandbox-exec is not usable \
+                         (missing binary, running as root, or probe failed)"
+                    .to_string(),
+            });
+        }
+        let mut fenced = req.clone();
+        fenced.fence = None;
+        let mut argv = Vec::with_capacity(req.argv.len() + 3);
+        argv.push("/usr/bin/sandbox-exec".to_string());
+        argv.push("-p".to_string());
+        argv.push(seatbelt_profile(fence));
+        argv.extend_from_slice(&req.argv);
+        fenced.argv = argv;
+        // `sandbox-exec` forks once before exec'ing the real command, so a
+        // plain `child.kill()` on timeout would orphan the sandboxed
+        // grandchild and leave it holding the output pipes open. Make the
+        // wrapper a process-group leader and kill the whole group on
+        // timeout instead (see `kill_process_group` in run_collect).
+        let existing_pre = req.pre_exec.clone();
+        fenced.pre_exec = Some(Arc::new(move || {
+            if let Some(pre) = &existing_pre {
+                pre()?;
+            }
+            #[allow(unsafe_code)]
+            unsafe {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        }));
+        fenced.kill_process_group = true;
+        Ok(fenced)
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[async_trait]
+impl ProcessRunner for MacSeatbeltRunner {
+    async fn run(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+        let fenced = self.fence(req)?;
+        self.inner.run(&fenced).await
+    }
+
+    async fn run_collect(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+        // Delegate so partial output survives a timeout (the trait default
+        // returns empty buffers on timeout).
+        let fenced = self.fence(req)?;
+        self.inner.run_collect(&fenced).await
+    }
+
+    async fn spawn(&self, req: &ProcessRequest) -> Result<Child, ProcessError> {
+        let fenced = self.fence(req)?;
+        self.inner.spawn(&fenced).await
+    }
+}
+
+/// Build a Seatbelt write-fence profile (last-match-wins): allow everything
+/// by default, deny all file writes, then re-open writes to the workspace,
+/// the extra allowed paths, and `/dev/null` (needed for the ubiquitous
+/// `2>/dev/null` idiom).
+#[cfg(target_os = "macos")]
+fn seatbelt_profile(fence: &WriteFence) -> String {
+    fn quote(path: &std::path::Path) -> String {
+        // Canonicalize so `/var/...` -> `/private/var/...` symlinks don't
+        // silently break subpath matching.
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let escaped = canonical
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        format!("\"{escaped}\"")
+    }
+
+    let mut out = String::from("(version 1)(allow default)(deny file-write*)");
+    out.push_str("(allow file-write* (subpath ");
+    out.push_str(&quote(&fence.workspace_root));
+    out.push_str("))");
+    for path in &fence.allowed_paths {
+        out.push_str("(allow file-write* (subpath ");
+        out.push_str(&quote(path));
+        out.push_str("))");
+    }
+    out.push_str("(allow file-write* (literal \"/dev/null\"))");
+    out
+}
+
+/// Whether the macOS Seatbelt fence is usable, cached once. Checks the binary
+/// exists, we are not root (Seatbelt does not confine euid 0), and a trivial
+/// sandboxed probe exits successfully.
+#[cfg(target_os = "macos")]
+fn can_sandbox() -> bool {
+    static AVAILABLE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        if !std::path::Path::new("/usr/bin/sandbox-exec").is_file() {
+            return false;
+        }
+        let not_root = std::process::Command::new("/usr/bin/id")
+            .arg("-u")
+            .output()
+            .is_ok_and(|out| {
+                out.status.success()
+                    && String::from_utf8_lossy(&out.stdout)
+                        .trim()
+                        .parse::<u32>()
+                        .is_ok_and(|uid| uid != 0)
+            });
+        if !not_root {
+            return false;
+        }
+        std::process::Command::new("/usr/bin/sandbox-exec")
+            // `(allow default)` is required: a bare `(version 1)` profile
+            // denies everything, which would block the probe's own exec.
+            .args(["-p", "(version 1)(allow default)", "/usr/bin/true"])
+            .status()
+            .is_ok_and(|status| status.success())
+    });
+    *AVAILABLE
+}
+
+/// Linux: enforces the write fence in-place with Landlock, the kernel LSM.
+///
+/// Unlike macOS (which rewrites `argv` behind `sandbox-exec`), Landlock
+/// restricts the child itself: the `pre_exec` hook calls
+/// `landlock_restrict_self()` after fork, so there is no wrapper process (and
+/// no process-group kill needed — the restricted child is the direct child).
+/// Enforcement is a write fence: every handled write right is denied outside
+/// `workspace_root` / `allowed_paths`. Unhandled rights (reads, exec, network)
+/// stay unrestricted.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LandlockRunner {
+    inner: StdProcessRunner,
+}
+
+#[cfg(target_os = "linux")]
+impl LandlockRunner {
+    /// Compose a `pre_exec` that applies the Landlock fence when the request
+    /// asks for it. Hard-fails (fail-closed) when Landlock is unavailable —
+    /// kernel without Landlock, unsupported write rights, or a fenced path
+    /// that cannot be opened.
+    fn fence(&self, req: &ProcessRequest) -> Result<ProcessRequest, ProcessError> {
+        let Some(fence) = &req.fence else {
+            return Ok(req.clone());
+        };
+        if !landlock_available(fence) {
+            return Err(ProcessError::Sandbox {
+                reason: "Landlock write fence requested but not usable (kernel without Landlock, \
+                         unsupported write rights, or a fenced path cannot be opened)"
+                    .to_string(),
+            });
+        }
+        let mut fenced = req.clone();
+        fenced.fence = None;
+        let fence = fence.clone();
+        let existing_pre = req.pre_exec.clone();
+        fenced.pre_exec = Some(Arc::new(move || {
+            if let Some(pre) = &existing_pre {
+                pre()?;
+            }
+            landlock_restrict(&fence)
+        }));
+        Ok(fenced)
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[async_trait]
+impl ProcessRunner for LandlockRunner {
+    async fn run(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+        let fenced = self.fence(req)?;
+        self.inner.run(&fenced).await
+    }
+
+    async fn run_collect(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+        let fenced = self.fence(req)?;
+        self.inner.run_collect(&fenced).await
+    }
+
+    async fn spawn(&self, req: &ProcessRequest) -> Result<Child, ProcessError> {
+        let fenced = self.fence(req)?;
+        self.inner.spawn(&fenced).await
+    }
+}
+
+/// ABI-1 write rights: the irreducible write fence, hard-required (fail-closed
+/// on kernels without Landlock).
+#[cfg(target_os = "linux")]
+fn landlock_required_rights() -> BitFlags<AccessFs> {
+    AccessFs::from_write(ABI::V1)
+}
+
+/// Write rights added by later ABIs, best-effort (silently dropped on kernels
+/// too old to express them): rename/link protection (Refer, ABI 2) and
+/// truncate (Truncate, ABI 3).
+#[cfg(target_os = "linux")]
+fn landlock_optional_rights() -> BitFlags<AccessFs> {
+    AccessFs::Refer | AccessFs::Truncate
+}
+
+/// The full handled-rights mask; also the access granted on fenced paths.
+#[cfg(target_os = "linux")]
+fn landlock_write_rights() -> BitFlags<AccessFs> {
+    landlock_required_rights() | landlock_optional_rights()
+}
+
+/// Build a ruleset handling the write fence's access rights.
+#[cfg(target_os = "linux")]
+fn landlock_ruleset() -> Result<RulesetCreated, RulesetError> {
+    Ruleset::default()
+        .set_compatibility(CompatLevel::HardRequirement)
+        .handle_access(landlock_required_rights())?
+        .set_compatibility(CompatLevel::BestEffort)
+        .handle_access(landlock_optional_rights())?
+        .create()
+}
+
+/// Create a ruleset and add a write rule for the workspace and each allowed
+/// path. The caller either discards it (availability probe) or restricts the
+/// calling process with it.
+#[cfg(target_os = "linux")]
+fn landlock_build(fence: &WriteFence) -> std::io::Result<RulesetCreated> {
+    let mut ruleset = landlock_ruleset()
+        .map_err(|e| std::io::Error::other(format!("landlock unavailable: {e}")))?;
+    for path in std::iter::once(&fence.workspace_root).chain(fence.allowed_paths.iter()) {
+        let fd = PathFd::new(path)
+            .map_err(|e| std::io::Error::other(format!("cannot open '{}': {e}", path.display())))?;
+        let rule = PathBeneath::new(fd, landlock_write_rights());
+        ruleset = ruleset.add_rule(rule).map_err(|e| {
+            std::io::Error::other(format!("landlock rule for '{}': {e}", path.display()))
+        })?;
+    }
+    Ok(ruleset)
+}
+
+/// Parent-side gate: ensures the workspace directory exists (so the child's
+/// rule-open succeeds) and that a ruleset handling the write rights can be
+/// created for every fenced path. Does NOT call `restrict_self` (irreversible);
+/// enforcement happens in the child.
+#[cfg(target_os = "linux")]
+fn landlock_available(fence: &WriteFence) -> bool {
+    let _ = std::fs::create_dir_all(&fence.workspace_root);
+    landlock_build(fence).is_ok()
+}
+
+/// Apply the write fence to the calling process. Runs in the `pre_exec` hook
+/// after fork: `landlock_restrict_self` confines this process and its
+/// descendants, and because the restriction is irrevocable (and `no_new_privs`
+/// is set), the exec'd command inherits the fence.
+#[cfg(target_os = "linux")]
+fn landlock_restrict(fence: &WriteFence) -> std::io::Result<()> {
+    let ruleset = landlock_build(fence)?;
+    let status = ruleset
+        .restrict_self()
+        .map_err(|e| std::io::Error::other(format!("landlock restrict_self: {e}")))?;
+    match status.landlock {
+        LandlockStatus::Available { .. } => Ok(()),
+        other => Err(std::io::Error::other(format!("landlock not enforced: {other:?}"))),
     }
 }
 
@@ -361,7 +698,15 @@ fn default_process_runner() -> Arc<dyn ProcessRunner> {
     {
         Arc::new(IosProcessRunner)
     }
-    #[cfg(not(mobile_os))]
+    #[cfg(all(target_os = "macos", not(mobile_os)))]
+    {
+        Arc::new(MacSeatbeltRunner::default())
+    }
+    #[cfg(all(target_os = "linux", not(mobile_os)))]
+    {
+        Arc::new(LandlockRunner::default())
+    }
+    #[cfg(not(any(mobile_os, target_os = "macos", target_os = "linux")))]
     {
         Arc::new(StdProcessRunner)
     }
@@ -658,5 +1003,286 @@ mod tests {
         };
         let out = StdProcessRunner.run(&req).await.unwrap();
         assert!(out.success());
+    }
+
+    #[cfg(target_os = "macos")]
+    mod seatbelt {
+        use super::*;
+
+        fn fence(workspace_root: &str, allowed: &[&str]) -> WriteFence {
+            WriteFence {
+                workspace_root: std::path::PathBuf::from(workspace_root),
+                allowed_paths: allowed.iter().map(std::path::PathBuf::from).collect(),
+            }
+        }
+
+        #[test]
+        fn profile_denies_writes_outside_workspace() {
+            let p = seatbelt_profile(&fence("/tmp/ws", &[]));
+            assert!(p.contains("(version 1)"));
+            assert!(p.contains("(allow default)"));
+            assert!(p.contains("(deny file-write*)"));
+            assert!(p.contains("(allow file-write* (subpath \"/tmp/ws\"))"));
+            assert!(p.contains("(allow file-write* (literal \"/dev/null\"))"));
+        }
+
+        #[test]
+        fn profile_includes_allowed_paths() {
+            let p = seatbelt_profile(&fence("/tmp/ws", &["/tmp/extra"]));
+            assert!(p.contains("(allow file-write* (subpath \"/tmp/extra\"))"));
+        }
+
+        #[test]
+        fn profile_escapes_spaces_and_quotes() {
+            let p = seatbelt_profile(&fence("/tmp/ws with space", &["/tmp/a\"b"]));
+            assert!(p.contains("(subpath \"/tmp/ws with space\")"));
+            assert!(p.contains("(subpath \"/tmp/a\\\"b\")"));
+        }
+
+        #[test]
+        fn can_sandbox_is_usable_on_dev_machine() {
+            assert!(can_sandbox(), "seatbelt must be usable on the dev mac");
+        }
+
+        #[test]
+        fn fence_passes_through_without_seatbelt() {
+            let runner = MacSeatbeltRunner::default();
+            let req = argv(&["/bin/echo", "hi"]);
+            let out = runner.fence(&req).unwrap();
+            assert_eq!(out.argv, req.argv);
+            assert!(out.fence.is_none());
+        }
+
+        #[test]
+        fn fence_rewrites_argv_behind_sandbox_exec() {
+            if !can_sandbox() {
+                return;
+            }
+            let runner = MacSeatbeltRunner::default();
+            let req = ProcessRequest {
+                argv: vec!["/bin/echo".to_string(), "hi".to_string()],
+                fence: Some(fence("/tmp/ws", &[])),
+                ..Default::default()
+            };
+            let fenced = runner.fence(&req).unwrap();
+            assert_eq!(fenced.argv[0], "/usr/bin/sandbox-exec");
+            assert_eq!(fenced.argv[1], "-p");
+            assert!(fenced.argv[2].contains("deny file-write*"));
+            assert_eq!(&fenced.argv[3..], &["/bin/echo".to_string(), "hi".to_string()]);
+            assert!(fenced.fence.is_none());
+            assert!(fenced.kill_process_group);
+        }
+
+        #[tokio::test]
+        async fn seatbelt_blocks_write_outside_workspace() {
+            if !can_sandbox() {
+                return;
+            }
+            let runner = MacSeatbeltRunner::default();
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            let target = format!("/tmp/syscity_fence_{}", std::process::id());
+            let _ = std::fs::remove_file(&target);
+            let req = ProcessRequest {
+                argv: vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    format!("echo x > {target}"),
+                ],
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                timeout: Some(Duration::from_secs(10)),
+                ..Default::default()
+            };
+            let out = runner.run(&req).await.unwrap();
+            assert!(
+                !out.success(),
+                "write outside workspace must be denied: {}",
+                out.stderr_string()
+            );
+            assert!(!std::path::Path::new(&target).exists());
+        }
+
+        #[tokio::test]
+        async fn seatbelt_allows_write_inside_workspace() {
+            if !can_sandbox() {
+                return;
+            }
+            let runner = MacSeatbeltRunner::default();
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            let file = ws.join("f");
+            let req = ProcessRequest {
+                argv: vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    format!("echo x > '{}'", file.display()),
+                ],
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                timeout: Some(Duration::from_secs(10)),
+                ..Default::default()
+            };
+            let out = runner.run(&req).await.unwrap();
+            assert!(
+                out.success(),
+                "write inside workspace must be allowed: {}",
+                out.stderr_string()
+            );
+            assert!(file.exists());
+        }
+
+        #[tokio::test]
+        async fn seatbelt_run_collect_timeout_kills_sandboxed_grandchild() {
+            if !can_sandbox() {
+                return;
+            }
+            let runner = MacSeatbeltRunner::default();
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            // `sleep 5` is a descendant of the sandboxed sh; a plain kill of
+            // the wrapper would orphan it and leave the output pipe open.
+            let req = ProcessRequest {
+                argv: vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    "echo partial-out; sleep 5".to_string(),
+                ],
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                timeout: Some(Duration::from_millis(300)),
+                ..Default::default()
+            };
+            let started = std::time::Instant::now();
+            let out = runner.run_collect(&req).await.unwrap();
+            assert!(out.timed_out, "run_collect should report the timeout");
+            assert!(
+                out.stdout_string().contains("partial-out"),
+                "partial output must survive the timeout: {:?}",
+                out.stdout_string()
+            );
+            // The group kill must reap the sandboxed grandchild promptly; if
+            // the orphan still held the pipe, this await would block ~5s.
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "timeout must not wait for the orphaned sleep"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    mod landlock {
+        use super::*;
+
+        fn fence(workspace_root: &str, allowed: &[&str]) -> WriteFence {
+            WriteFence {
+                workspace_root: std::path::PathBuf::from(workspace_root),
+                allowed_paths: allowed.iter().map(std::path::PathBuf::from).collect(),
+            }
+        }
+
+        #[test]
+        fn rights_mask_is_write_only() {
+            let required = landlock_required_rights();
+            assert!(required.contains(AccessFs::WriteFile));
+            assert!(required.contains(AccessFs::MakeReg));
+            assert!(required.contains(AccessFs::RemoveFile));
+            assert!(required.contains(AccessFs::MakeDir));
+            // Not a read fence: reads/exec stay unrestricted outside the
+            // workspace.
+            assert!(!required.contains(AccessFs::ReadFile));
+            assert!(!required.contains(AccessFs::Execute));
+            assert!(!required.contains(AccessFs::ReadDir));
+            assert_eq!(landlock_optional_rights(), AccessFs::Refer | AccessFs::Truncate);
+        }
+
+        #[test]
+        fn fence_passes_through_without_fence() {
+            let runner = LandlockRunner::default();
+            let req = argv(&["/bin/echo", "hi"]);
+            let out = runner.fence(&req).unwrap();
+            assert_eq!(out.argv, req.argv);
+            assert!(out.fence.is_none());
+            assert!(out.pre_exec.is_none());
+        }
+
+        #[test]
+        fn fence_composes_pre_exec_without_argv_rewrite() {
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            if !landlock_available(&fence(ws.to_str().unwrap(), &[])) {
+                eprintln!("skipping: Landlock unavailable");
+                return;
+            }
+            let runner = LandlockRunner::default();
+            let req = ProcessRequest {
+                argv: vec!["/bin/echo".to_string(), "hi".to_string()],
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                ..Default::default()
+            };
+            let fenced = runner.fence(&req).unwrap();
+            // Unlike macOS there is no wrapper argv; the fence lives entirely
+            // in the composed pre_exec hook.
+            assert_eq!(fenced.argv, req.argv);
+            assert!(fenced.fence.is_none());
+            assert!(fenced.pre_exec.is_some());
+            assert!(!fenced.kill_process_group);
+        }
+
+        #[tokio::test]
+        async fn landlock_blocks_write_outside_workspace() {
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            if !landlock_available(&fence(ws.to_str().unwrap(), &[])) {
+                eprintln!("skipping: Landlock unavailable");
+                return;
+            }
+            let runner = LandlockRunner::default();
+            let target = format!("/tmp/syscity_ll_{}", std::process::id());
+            let _ = std::fs::remove_file(&target);
+            let req = ProcessRequest {
+                argv: vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    format!("echo x > {target}"),
+                ],
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                timeout: Some(Duration::from_secs(10)),
+                ..Default::default()
+            };
+            let out = runner.run(&req).await.unwrap();
+            assert!(
+                !out.success(),
+                "write outside workspace must be denied: {}",
+                out.stderr_string()
+            );
+            assert!(!std::path::Path::new(&target).exists());
+        }
+
+        #[tokio::test]
+        async fn landlock_allows_write_inside_workspace() {
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            if !landlock_available(&fence(ws.to_str().unwrap(), &[])) {
+                eprintln!("skipping: Landlock unavailable");
+                return;
+            }
+            let runner = LandlockRunner::default();
+            let file = ws.join("f");
+            let req = ProcessRequest {
+                argv: vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    format!("echo x > '{}'", file.display()),
+                ],
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                timeout: Some(Duration::from_secs(10)),
+                ..Default::default()
+            };
+            let out = runner.run(&req).await.unwrap();
+            assert!(
+                out.success(),
+                "write inside workspace must be allowed: {}",
+                out.stderr_string()
+            );
+            assert!(file.exists());
+        }
     }
 }

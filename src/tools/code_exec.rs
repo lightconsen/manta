@@ -15,7 +15,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
-use crate::tools::process_runner::{ProcessError, ProcessRequest, StdioMode};
+use crate::tools::process_runner::{ProcessError, ProcessRequest, StdioMode, WriteFence};
 use crate::tools::sdk::ToolCapabilities;
 
 /// Code execution sandbox configuration
@@ -117,7 +117,7 @@ impl CodeExecutionTool {
     async fn execute_python(
         &self,
         code: &str,
-        _context: &ToolContext,
+        context: &ToolContext,
         timeout_secs: u64,
     ) -> crate::Result<CodeResult> {
         // Create wrapped code with output capture
@@ -178,6 +178,10 @@ print(json.dumps(result))
         let mut req = ProcessRequest {
             argv: vec!["python3".to_string(), "-c".to_string(), wrapped_code],
             stdio: StdioMode::Piped,
+            fence: context.workspace_only().then(|| WriteFence {
+                workspace_root: context.workspace_root().clone(),
+                allowed_paths: context.allowed_paths().to_vec(),
+            }),
             ..Default::default()
         };
 
