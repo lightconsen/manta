@@ -248,7 +248,9 @@ impl Default for CspConfig {
 pub fn generate_csp_nonce() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..16).map(|_| rng.gen()).collect();
+    // `gen::<u8>()` — on Windows an extra `FromIterator` impl (encode_unicode)
+    // makes the element type ambiguous.
+    let bytes: Vec<u8> = (0..16).map(|_| rng.gen::<u8>()).collect();
     base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &bytes)
 }
 

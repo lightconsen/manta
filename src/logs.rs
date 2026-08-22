@@ -73,8 +73,18 @@ pub async fn tail_logs(n: usize) -> crate::Result<()> {
     let file_len = reader.seek(SeekFrom::End(0)).await?;
     let mut pos = file_len;
 
-    // Handle Ctrl+C
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    // Handle SIGTERM (Unix only; Windows has no signals — Ctrl+C is handled
+    // by the ctrl_c arm below, and this future then stays pending forever).
+    #[cfg(unix)]
+    let mut sigterm: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> = {
+        let mut stream = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        Box::pin(async move {
+            stream.recv().await;
+        })
+    };
+    #[cfg(not(unix))]
+    let mut sigterm: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+        Box::pin(std::future::pending());
 
     loop {
         tokio::select! {
@@ -99,12 +109,14 @@ pub async fn tail_logs(n: usize) -> crate::Result<()> {
                     pos = 0;
                 }
             }
-            // Handle Ctrl+C
-            _ = tokio::signal::ctrl_c() => {
+            // Handle SIGTERM (pending forever when unavailable)
+            _ = &mut sigterm => {
                 println!("\n👋 Stopped tailing logs");
                 break;
             }
-            _ = sigterm.recv() => {
+            // Handle Ctrl+C
+            _ = tokio::signal::ctrl_c() => {
+                println!("\n👋 Stopped tailing logs");
                 break;
             }
         }

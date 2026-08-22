@@ -512,7 +512,9 @@ async fn tail_windows_event(
     cmd.arg("qe").arg(channel).arg("/f:text").arg("/c:1");
     cmd.stdout(std::process::Stdio::piped());
 
-    let mut last_check = Instant::now();
+    // Wall-clock (not monotonic) so it can compare against parsed event
+    // timestamps directly — chrono has no portable Instant conversion.
+    let mut last_check = std::time::SystemTime::now();
     let mut interval = interval(Duration::from_secs(5));
 
     loop {
@@ -523,7 +525,7 @@ async fn tail_windows_event(
         for line in text.lines() {
             if let Some(entry) = parse_windows_event_line(line, source_name) {
                 // Only emit events newer than last check
-                if entry.timestamp > DateTime::from(last_check) {
+                if entry.timestamp > DateTime::<Utc>::from(last_check) {
                     if tx.send(entry).is_err() {
                         warn!(
                             "Log entry dropped (broadcast channel full) for source '{}'",
@@ -533,7 +535,7 @@ async fn tail_windows_event(
                 }
             }
         }
-        last_check = Instant::now();
+        last_check = std::time::SystemTime::now();
     }
 }
 
