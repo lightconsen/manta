@@ -1,0 +1,46 @@
+#!/bin/sh
+# Linker/CC wrapper for the x86_64-pc-windows-gnu cross-check (no Windows
+# machine in this project — compile-verification only). rustc invokes this as
+# the linker; the cc crate (ring, zstd-sys) invokes it via
+# CC_x86_64_pc_windows_gnu. zig ships its own mingw-w64 sysroot, so no mingw
+# installation is needed.
+#
+# Two adjustments are required:
+# 1. zig must be told the target (its bundled lld/headers switch on it), and
+# 2. zig >= 0.14 rejects Rust-style triples containing the `pc` vendor
+#    ("unable to parse target query 'x86_64-pc-windows-gnu'"), while cc-rs
+#    hardcodes `--target=<rust-triple>` into its compiler invocations. So a
+#    default target is prepended and every occurrence of the Rust triple in
+#    the arguments is rewritten to zig's spelling.
+#
+# Requires: zig 0.16 on PATH, or the tarball install under ~/.local/opt.
+ZIG="$(command -v zig || true)"
+if [ -z "$ZIG" ]; then
+    ZIG="$HOME/.local/opt/zig-aarch64-macos-0.16.0/zig"
+fi
+
+# Rotate through the original arguments, rewriting each (quoting preserved):
+# each iteration pops $1 and re-appends it, restoring order after n steps.
+n=$#
+i=0
+while [ "$i" -lt "$n" ]; do
+    a=$1
+    shift
+    case "$a" in
+        *x86_64-pc-windows-gnu*)
+            a=$(printf '%s' "$a" | sed 's/x86_64-pc-windows-gnu/x86_64-windows-gnu/g')
+            ;;
+    esac
+    set -- "$@" "$a"
+    i=$((i + 1))
+done
+
+# zig's cc driver rewrites every argument path containing the target triple
+# into its own spelling (`target/x86_64-pc-windows-gnu/…` ->
+# `target/x86_64-windows-gnu/…`), where nothing exists. Same workaround as
+# cargo-zigbuild: mirror the real target dir under zig's spelling via symlink.
+WS_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+mkdir -p "$WS_ROOT/target"
+ln -sfn x86_64-pc-windows-gnu "$WS_ROOT/target/x86_64-windows-gnu"
+
+exec "$ZIG" cc -target x86_64-windows-gnu "$@"

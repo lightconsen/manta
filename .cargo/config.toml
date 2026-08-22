@@ -36,3 +36,15 @@ coverage = "llvm-cov --workspace --exclude syscity-desktop --all-features --lcov
 # Benchmarks
 bench-serialization = "bench --bench serialization"
 bench-routing = "bench --bench message_routing"
+
+# Windows cross-check (compile-only; there is no Windows machine in this
+# project). zig provides the mingw-w64 sysroot — see scripts/cross/ for the
+# wrappers. The CC/AR vars are target-suffixed, so they are inert for host
+# builds; `relative = true` resolves them against the workspace root (dep
+# build scripts run from their own registry checkouts).
+[target.x86_64-pc-windows-gnu]
+linker = "scripts/cross/zig-cc-x86_64-windows-gnu"
+
+[env]
+CC_x86_64_pc_windows_gnu = { value = "scripts/cross/zig-cc-x86_64-windows-gnu", relative = true }
+AR_x86_64_pc_windows_gnu = { value = "scripts/cross/zig-ar-x86_64-windows-gnu", relative = true }

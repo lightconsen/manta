@@ -1,0 +1,8 @@
+#!/bin/sh
+# Archiver wrapper for the x86_64-pc-windows-gnu cross-check, invoked via
+# AR_x86_64_pc_windows_gnu (see zig-cc-x86_64-windows-gnu for context).
+ZIG="$(command -v zig || true)"
+if [ -z "$ZIG" ]; then
+    ZIG="$HOME/.local/opt/zig-aarch64-macos-0.16.0/zig"
+fi
+exec "$ZIG" ar "$@"
