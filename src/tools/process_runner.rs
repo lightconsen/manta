@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use std::process::Stdio;
+use tokio::io::AsyncRead;
 use tokio::process::{Child, Command};
 
 #[cfg(target_os = "linux")]
@@ -25,6 +26,9 @@ use landlock::{
     AccessFs, BitFlags, CompatLevel, Compatible, LandlockStatus, PathBeneath, PathFd, Ruleset,
     RulesetAttr, RulesetCreated, RulesetCreatedAttr, RulesetError, ABI,
 };
+
+#[cfg(target_os = "windows")]
+use crate::tools::win_appcontainer;
 
 impl ProcessRequest {
     /// Build a request from a plain argv (no cwd/env/stdin/timeout).
@@ -146,6 +150,68 @@ pub enum ProcessError {
     Sandbox { reason: String },
 }
 
+/// A spawned child process, abstracted from the concrete spawn mechanism.
+///
+/// Platform runners can return custom children — e.g. Windows fences spawn
+/// AppContainer processes owned by a Job object and cannot go through
+/// `tokio::process` at all — while the tools keep calling the same
+/// `id`/`wait`/`kill`/pipe surface they used on the tokio `Child`.
+#[async_trait]
+pub trait ProcessChild: Send {
+    /// The OS PID, if available.
+    fn id(&self) -> Option<u32>;
+    /// Take the child's stdout pipe, if piped (`None` for null/closed streams).
+    fn take_stdout(&mut self) -> Option<Box<dyn AsyncRead + Unpin + Send>>;
+    /// Take the child's stderr pipe, if piped (`None` for null/closed streams).
+    fn take_stderr(&mut self) -> Option<Box<dyn AsyncRead + Unpin + Send>>;
+    /// Wait for the child to exit and return its status.
+    async fn wait(&mut self) -> std::io::Result<ExitStatus>;
+    /// Terminate the child (and, for fenced Windows children, its whole job).
+    async fn kill(&mut self) -> std::io::Result<()>;
+}
+
+/// Adapter exposing a `tokio::process::Child` through the [`ProcessChild`]
+/// trait — the common case for runners that spawn via `tokio::process::Command`
+/// ([`StdProcessRunner`] and the wrapper runners that delegate to it).
+pub struct TokioProcessChild {
+    inner: Child,
+}
+
+impl TokioProcessChild {
+    fn new(inner: Child) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait]
+impl ProcessChild for TokioProcessChild {
+    fn id(&self) -> Option<u32> {
+        self.inner.id()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn AsyncRead + Unpin + Send>> {
+        self.inner
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn AsyncRead + Unpin + Send>)
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn AsyncRead + Unpin + Send>> {
+        self.inner
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn AsyncRead + Unpin + Send>)
+    }
+
+    async fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        self.inner.wait().await
+    }
+
+    async fn kill(&mut self) -> std::io::Result<()> {
+        self.inner.kill().await
+    }
+}
+
 /// Platform-abstracted subprocess launcher.
 #[async_trait]
 pub trait ProcessRunner: Send + Sync {
@@ -173,10 +239,10 @@ pub trait ProcessRunner: Send + Sync {
         }
     }
 
-    /// Spawn `req` and return a live [`Child`] for long-running process
+    /// Spawn `req` and return a live [`ProcessChild`] for long-running process
     /// management (tracked status, detached wait). Stdio follows
     /// `ProcessRequest::stdio` ([`StdioMode::Null`] by default).
-    async fn spawn(&self, req: &ProcessRequest) -> Result<Child, ProcessError>;
+    async fn spawn(&self, req: &ProcessRequest) -> Result<Box<dyn ProcessChild>, ProcessError>;
 }
 
 /// Desktop: spawns through `tokio::process` exactly as the tools did before
@@ -237,7 +303,7 @@ impl ProcessRunner for StdProcessRunner {
         }
     }
 
-    async fn spawn(&self, req: &ProcessRequest) -> Result<Child, ProcessError> {
+    async fn spawn(&self, req: &ProcessRequest) -> Result<Box<dyn ProcessChild>, ProcessError> {
         let mut cmd = build_command(req)?;
         match req.stdio {
             StdioMode::Null => {
@@ -251,7 +317,10 @@ impl ProcessRunner for StdProcessRunner {
                     .stdin(Stdio::null());
             }
         }
-        cmd.spawn().map_err(|source| spawn_err(req, source))
+        cmd.spawn()
+            .map(TokioProcessChild::new)
+            .map(|c| Box::new(c) as Box<dyn ProcessChild>)
+            .map_err(|source| spawn_err(req, source))
     }
 
     async fn run_collect(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
@@ -427,7 +496,7 @@ impl ProcessRunner for MacSeatbeltRunner {
         self.inner.run_collect(&fenced).await
     }
 
-    async fn spawn(&self, req: &ProcessRequest) -> Result<Child, ProcessError> {
+    async fn spawn(&self, req: &ProcessRequest) -> Result<Box<dyn ProcessChild>, ProcessError> {
         let fenced = self.fence(req)?;
         self.inner.spawn(&fenced).await
     }
@@ -554,7 +623,7 @@ impl ProcessRunner for LandlockRunner {
         self.inner.run_collect(&fenced).await
     }
 
-    async fn spawn(&self, req: &ProcessRequest) -> Result<Child, ProcessError> {
+    async fn spawn(&self, req: &ProcessRequest) -> Result<Box<dyn ProcessChild>, ProcessError> {
         let fenced = self.fence(req)?;
         self.inner.spawn(&fenced).await
     }
@@ -636,6 +705,185 @@ fn landlock_restrict(fence: &WriteFence) -> std::io::Result<()> {
     }
 }
 
+/// Windows: enforces the write fence by running the child as a Low-integrity
+/// AppContainer process owned by a Job object.
+///
+/// The fence direction is inverted vs. Unix: an AppContainer token denies
+/// writes nearly everywhere, so [`win_appcontainer::grant_write_acl`] *grants*
+/// workspace writes (a DACL ACE + mandatory Low label), and the Job provides
+/// whole-tree termination (`kill()` = `TerminateJobObject`; closing the last
+/// job handle kills whatever is left). See the `win_appcontainer` module docs
+/// for the full model.
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WindowsAppContainerRunner {
+    inner: StdProcessRunner,
+}
+
+/// Per-request fenced state: the AppContainer profile, ready to hand to
+/// [`win_appcontainer::launch_fenced`].
+#[cfg(target_os = "windows")]
+struct Prepared {
+    profile: win_appcontainer::AppContainerProfile,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsAppContainerRunner {
+    /// Prepare a fenced run when the request asks for the fence; `Ok(None)`
+    /// means "run unfenced" (delegate to the inner runner). Fail-closed when
+    /// the fence is requested but AppContainer is not usable.
+    fn prepare(&self, req: &ProcessRequest) -> Result<Option<Prepared>, ProcessError> {
+        let Some(fence) = &req.fence else {
+            return Ok(None);
+        };
+        if !win_appcontainer::available() {
+            return Err(ProcessError::Sandbox {
+                reason: "Windows AppContainer write fence requested but not usable (profile \
+                         creation failed or the OS lacks AppContainer support)"
+                    .to_string(),
+            });
+        }
+        let profile = win_appcontainer::AppContainerProfile::create_or_open().map_err(|e| {
+            ProcessError::Sandbox {
+                reason: format!("AppContainer profile: {e}"),
+            }
+        })?;
+        // The workspace must exist for the ACL+label to apply, and it is the
+        // child's scratch area.
+        let _ = std::fs::create_dir_all(&fence.workspace_root);
+        for path in std::iter::once(&fence.workspace_root).chain(fence.allowed_paths.iter()) {
+            win_appcontainer::grant_write_acl(path, profile.sid()).map_err(|e| {
+                ProcessError::Sandbox {
+                    reason: format!("grant write ACL on '{}': {e}", path.display()),
+                }
+            })?;
+        }
+        Ok(Some(Prepared { profile }))
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[async_trait]
+impl ProcessRunner for WindowsAppContainerRunner {
+    async fn run(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+        match self.prepare(req)? {
+            None => self.inner.run(req).await,
+            Some(prepared) => {
+                let out = run_fenced(req, &prepared.profile).await?;
+                if out.timed_out {
+                    // `run_fenced` already killed the job tree on timeout;
+                    // surface the timeout as an error per the trait contract
+                    // (no partial output) while leaving no orphan behind.
+                    Err(ProcessError::Timeout {
+                        duration: req.timeout.unwrap_or_default(),
+                    })
+                } else {
+                    Ok(out)
+                }
+            }
+        }
+    }
+
+    async fn run_collect(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
+        match self.prepare(req)? {
+            None => self.inner.run_collect(req).await,
+            Some(prepared) => run_fenced(req, &prepared.profile).await,
+        }
+    }
+
+    async fn spawn(&self, req: &ProcessRequest) -> Result<Box<dyn ProcessChild>, ProcessError> {
+        match self.prepare(req)? {
+            None => self.inner.spawn(req).await,
+            Some(prepared) => {
+                // Mirror StdProcessRunner::spawn: stdout/stderr are piped iff
+                // requested, stdin is null — a spawned child must not block
+                // reading an unwritten pipe.
+                let mut eff = req.clone();
+                eff.stdin = None;
+                let capture = req.stdio == StdioMode::Piped;
+                let launched = win_appcontainer::launch_fenced(&prepared.profile, &eff, capture)
+                    .map_err(|e| ProcessError::Sandbox {
+                        reason: format!("AppContainer spawn: {e}"),
+                    })?;
+                Ok(Box::new(launched.into_child()))
+            }
+        }
+    }
+}
+
+/// Run a fenced AppContainer child to completion, capturing stdout/stderr and
+/// killing the whole Job tree on timeout (partial output survives via
+/// `timed_out`). Shared by `WindowsAppContainerRunner::run`/`run_collect`.
+#[cfg(target_os = "windows")]
+async fn run_fenced(
+    req: &ProcessRequest,
+    profile: &win_appcontainer::AppContainerProfile,
+) -> Result<CommandOutput, ProcessError> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let launched =
+        win_appcontainer::launch_fenced(profile, req, true).map_err(|e| ProcessError::Sandbox {
+            reason: format!("AppContainer run: {e}"),
+        })?;
+    let mut child = launched.into_child();
+
+    if let Some(input) = &req.stdin {
+        if let Some(mut stdin) = child.take_stdin() {
+            let _ = stdin.write_all(input).await;
+        }
+    }
+
+    let mut out_pipe = child
+        .take_stdout()
+        .ok_or_else(|| spawn_err(req, std::io::Error::other("stdout pipe missing")))?;
+    let mut err_pipe = child
+        .take_stderr()
+        .ok_or_else(|| spawn_err(req, std::io::Error::other("stderr pipe missing")))?;
+    // Pump pipes in background tasks so they keep draining across the timeout
+    // boundary; after exit/kill they hit EOF and return their buffers.
+    let out_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        out_pipe.read_to_end(&mut buf).await.map(|_| buf)
+    });
+    let err_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        err_pipe.read_to_end(&mut buf).await.map(|_| buf)
+    });
+
+    let (status, timed_out) = match req.timeout {
+        Some(duration) => match tokio::time::timeout(duration, child.wait()).await {
+            Ok(res) => (Some(res.map_err(|source| spawn_err(req, source))?), false),
+            Err(_) => {
+                // Whole-tree kill via the Job object. Dropping `child` would
+                // also terminate everything (KILL_ON_JOB_CLOSE), but killing
+                // now lets the pipe pumpers see EOF promptly.
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                (None, true)
+            }
+        },
+        None => (
+            Some(
+                child
+                    .wait()
+                    .await
+                    .map_err(|source| spawn_err(req, source))?,
+            ),
+            false,
+        ),
+    };
+
+    let stdout = out_task.await.ok().and_then(|r| r.ok()).unwrap_or_default();
+    let stderr = err_task.await.ok().and_then(|r| r.ok()).unwrap_or_default();
+
+    Ok(CommandOutput {
+        status,
+        stdout,
+        stderr,
+        timed_out,
+    })
+}
+
 /// Build the underlying `tokio::process::Command` from a request.
 fn build_command(req: &ProcessRequest) -> Result<Command, ProcessError> {
     let program = req.argv.first().ok_or(ProcessError::EmptyArgv)?;
@@ -650,11 +898,17 @@ fn build_command(req: &ProcessRequest) -> Result<Command, ProcessError> {
     for (key, value) in &req.env {
         cmd.env(key, value);
     }
-    if let Some(pre) = &req.pre_exec {
-        let pre = Arc::clone(pre);
-        #[allow(unsafe_code)] // pre_exec runs in the child after fork; mirrors existing tools
-        unsafe {
-            cmd.pre_exec(move || pre());
+    // `pre_exec` is a Unix-only API (it runs in the child after fork, before
+    // exec). The field still exists on all platforms (ignored elsewhere) so
+    // requests stay platform-neutral.
+    #[cfg(unix)]
+    {
+        if let Some(pre) = &req.pre_exec {
+            let pre = Arc::clone(pre);
+            #[allow(unsafe_code)] // pre_exec runs in the child after fork; mirrors existing tools
+            unsafe {
+                cmd.pre_exec(move || pre());
+            }
         }
     }
     Ok(cmd)
@@ -706,7 +960,16 @@ fn default_process_runner() -> Arc<dyn ProcessRunner> {
     {
         Arc::new(LandlockRunner::default())
     }
-    #[cfg(not(any(mobile_os, target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        Arc::new(WindowsAppContainerRunner::default())
+    }
+    #[cfg(not(any(
+        mobile_os,
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows"
+    )))]
     {
         Arc::new(StdProcessRunner)
     }
@@ -725,7 +988,7 @@ pub async fn run_collect(req: &ProcessRequest) -> Result<CommandOutput, ProcessE
 }
 
 /// Spawn a detached subprocess. See [`ProcessRunner::spawn`].
-pub async fn spawn(req: &ProcessRequest) -> Result<Child, ProcessError> {
+pub async fn spawn(req: &ProcessRequest) -> Result<Box<dyn ProcessChild>, ProcessError> {
     process_runner().spawn(req).await
 }
 
@@ -869,7 +1132,7 @@ impl ProcessRunner for AndroidShellRunner {
         self.inner.run_collect(&eff).await
     }
 
-    async fn spawn(&self, req: &ProcessRequest) -> Result<Child, ProcessError> {
+    async fn spawn(&self, req: &ProcessRequest) -> Result<Box<dyn ProcessChild>, ProcessError> {
         let mut eff = req.clone();
         eff.argv = self.resolve_argv(req)?;
         self.apply_bundled_library_path(&mut eff);
@@ -891,7 +1154,7 @@ impl ProcessRunner for IosProcessRunner {
         Err(ProcessError::Unsupported)
     }
 
-    async fn spawn(&self, _req: &ProcessRequest) -> Result<Child, ProcessError> {
+    async fn spawn(&self, _req: &ProcessRequest) -> Result<Box<dyn ProcessChild>, ProcessError> {
         Err(ProcessError::Unsupported)
     }
 }
@@ -1283,6 +1546,170 @@ mod tests {
                 out.stderr_string()
             );
             assert!(file.exists());
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    mod appcontainer {
+        use super::*;
+
+        fn fence(workspace_root: &str, allowed: &[&str]) -> WriteFence {
+            WriteFence {
+                workspace_root: std::path::PathBuf::from(workspace_root),
+                allowed_paths: allowed.iter().map(std::path::PathBuf::from).collect(),
+            }
+        }
+
+        fn win_argv(cmd: &str) -> ProcessRequest {
+            ProcessRequest {
+                argv: vec!["cmd".to_string(), "/C".to_string(), cmd.to_string()],
+                timeout: Some(Duration::from_secs(10)),
+                ..Default::default()
+            }
+        }
+
+        #[test]
+        fn prepare_passes_through_without_fence() {
+            let runner = WindowsAppContainerRunner::default();
+            let req = win_argv("echo hi");
+            // No fence on the request => delegate unfenced (Ok(None)), never
+            // a Sandbox error.
+            assert!(runner.prepare(&req).unwrap().is_none());
+        }
+
+        #[test]
+        fn prepare_fails_closed_when_appcontainer_unavailable() {
+            let runner = WindowsAppContainerRunner::default();
+            let req = ProcessRequest {
+                fence: Some(fence(r"Z:\syscity_nonexistent\ws", &[])),
+                ..win_argv("echo hi")
+            };
+            // The fence is requested; the runner must never fall back to an
+            // unfenced run. Either AppContainer is unavailable (Sandbox
+            // error) or, on a machine that has it, the ACL grant on a
+            // nonexistent Z: drive fails.
+            assert!(runner.prepare(&req).is_err());
+        }
+
+        #[tokio::test]
+        async fn fence_allows_write_inside_workspace() {
+            if !win_appcontainer::available() {
+                eprintln!("skipping: AppContainer unavailable");
+                return;
+            }
+            let runner = WindowsAppContainerRunner::default();
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            let file = ws.join("f");
+            let req = ProcessRequest {
+                argv: vec![
+                    "cmd".to_string(),
+                    "/C".to_string(),
+                    format!("echo x > \"{}\"", file.display()),
+                ],
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                timeout: Some(Duration::from_secs(10)),
+                ..Default::default()
+            };
+            let out = runner.run(&req).await.unwrap();
+            assert!(
+                out.success(),
+                "write inside workspace must be allowed: {}",
+                out.stderr_string()
+            );
+            assert!(file.exists());
+        }
+
+        #[tokio::test]
+        async fn fence_blocks_write_outside_workspace() {
+            if !win_appcontainer::available() {
+                eprintln!("skipping: AppContainer unavailable");
+                return;
+            }
+            let runner = WindowsAppContainerRunner::default();
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            let target =
+                std::env::temp_dir().join(format!("syscity_fence_{}.txt", std::process::id()));
+            let _ = std::fs::remove_file(&target);
+            let req = ProcessRequest {
+                argv: vec![
+                    "cmd".to_string(),
+                    "/C".to_string(),
+                    format!("echo x > \"{}\"", target.display()),
+                ],
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                timeout: Some(Duration::from_secs(10)),
+                ..Default::default()
+            };
+            let out = runner.run(&req).await.unwrap();
+            assert!(
+                !out.success(),
+                "write outside workspace must be denied: {}",
+                out.stderr_string()
+            );
+            assert!(!target.exists());
+        }
+
+        #[tokio::test]
+        async fn run_collect_timeout_kills_job_tree() {
+            if !win_appcontainer::available() {
+                eprintln!("skipping: AppContainer unavailable");
+                return;
+            }
+            let runner = WindowsAppContainerRunner::default();
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            let req = ProcessRequest {
+                argv: vec![
+                    "cmd".to_string(),
+                    "/C".to_string(),
+                    "echo partial-out & timeout /t 5".to_string(),
+                ],
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                timeout: Some(Duration::from_millis(300)),
+                ..Default::default()
+            };
+            let started = std::time::Instant::now();
+            let out = runner.run_collect(&req).await.unwrap();
+            assert!(out.timed_out, "run_collect should report the timeout");
+            assert!(
+                out.stdout_string().contains("partial-out"),
+                "partial output must survive the timeout: {:?}",
+                out.stdout_string()
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "timeout must not wait for the orphaned child"
+            );
+        }
+
+        #[tokio::test]
+        async fn spawn_delegates_without_fence() {
+            let runner = WindowsAppContainerRunner::default();
+            let mut child = runner.spawn(&win_argv("echo hi")).await.unwrap();
+            assert!(child.id().is_some());
+            let status = child.wait().await.unwrap();
+            assert!(status.success());
+        }
+
+        #[tokio::test]
+        async fn spawn_returns_fenced_child_when_requested() {
+            if !win_appcontainer::available() {
+                eprintln!("skipping: AppContainer unavailable");
+                return;
+            }
+            let runner = WindowsAppContainerRunner::default();
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = std::fs::canonicalize(tmp.path()).unwrap();
+            let req = ProcessRequest {
+                fence: Some(fence(ws.to_str().unwrap(), &[])),
+                ..win_argv("echo hi")
+            };
+            let mut child = runner.spawn(&req).await.unwrap();
+            assert!(child.id().is_some());
+            let status = child.wait().await.unwrap();
+            assert!(status.success());
         }
     }
 }

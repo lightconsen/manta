@@ -246,10 +246,10 @@ print(json.dumps(result))
         // Wait for execution with timeout
         let timeout_duration = Duration::from_secs(timeout_secs);
         let result = timeout(timeout_duration, async {
-            let stdout = child.stdout.take().ok_or_else(|| {
+            let stdout = child.take_stdout().ok_or_else(|| {
                 crate::error::SyscityError::Internal("stdout pipe missing".into())
             })?;
-            let stderr = child.stderr.take().ok_or_else(|| {
+            let stderr = child.take_stderr().ok_or_else(|| {
                 crate::error::SyscityError::Internal("stderr pipe missing".into())
             })?;
 

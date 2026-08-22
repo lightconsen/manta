@@ -81,6 +81,8 @@ pub mod todo_tool;
 pub mod tts;
 pub mod update_plan;
 pub mod web;
+#[cfg(target_os = "windows")]
+pub mod win_appcontainer;
 pub mod write_guard;
 
 pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
