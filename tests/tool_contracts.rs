@@ -406,7 +406,7 @@ fn time_tool_schema_contract() {
     assert!(req_arr.contains(&json!("action")), "time tool must require 'action'");
 }
 
-/// Contract: todo tool schema must have "action" enum
+/// Contract: todo tool schema takes a whole-snapshot "todos" array
 #[test]
 fn todo_tool_schema_contract() {
     let registry = build_test_registry();
@@ -416,7 +416,12 @@ fn todo_tool_schema_contract() {
     let props = schema
         .get("properties")
         .expect("schema must have properties");
-    assert!(props.get("action").is_some(), "todo must have 'action' property");
+    assert!(props.get("todos").is_some(), "todo must have 'todos' property");
+    let required = schema
+        .get("required")
+        .expect("schema must have required list");
+    let req_arr = required.as_array().expect("required must be array");
+    assert!(req_arr.contains(&json!("todos")), "todo must require 'todos'");
 }
 
 /// Contract: cron tool schema must have "action"
