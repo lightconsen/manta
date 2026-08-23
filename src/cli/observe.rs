@@ -641,12 +641,36 @@ async fn run_prune(older_than: Option<&str>) -> Result<()> {
     let cutoff = crate::observe::prune::cutoff_date(days);
     let (dirs, files) = crate::observe::prune::prune_turn_dirs(&crate::dirs::turns_dir(), &cutoff);
 
+    let store = open_store().await?;
+
     let mut db_rows = (0u64, 0u64, 0u64, 0u64);
-    if let Some(store) = open_store().await? {
+    if let Some(ref store) = store {
         let cutoff_ms = crate::observe::prune::cutoff_ms(days);
         match store.delete_metrics_before(cutoff_ms).await {
             Ok(r) => db_rows = r,
             Err(e) => warn!("Failed to prune DB metric rows: {}", e),
+        }
+    }
+
+    // Attachment GC: drop CAS objects no persisted session row references
+    // anymore (plus orphaned temp files from interrupted writes).
+    let mut gc = None;
+    if let Some(ref store) = store {
+        match store.attachment_reference_texts().await {
+            Ok(texts) => {
+                let mut referenced = std::collections::HashSet::new();
+                for text in &texts {
+                    crate::attachments::extract_digests(text, &mut referenced);
+                }
+                match crate::attachments::gc_unreferenced(
+                    &crate::dirs::attachments_dir(),
+                    &referenced,
+                ) {
+                    Ok(outcome) => gc = Some(outcome),
+                    Err(e) => warn!("Failed to sweep attachment store: {}", e),
+                }
+            }
+            Err(e) => warn!("Failed to collect attachment references: {}", e),
         }
     }
 
@@ -656,6 +680,12 @@ async fn run_prune(older_than: Option<&str>) -> Result<()> {
         "  DB rows: {} llm_calls, {} tool_call_metrics, {} turn_outcomes, {} request_snapshots",
         db_rows.0, db_rows.1, db_rows.2, db_rows.3
     );
+    if let Some(gc) = gc {
+        println!(
+            "  Attachments: {} files removed ({} bytes reclaimed), {} kept",
+            gc.removed_files, gc.removed_bytes, gc.kept_files
+        );
+    }
     Ok(())
 }
 

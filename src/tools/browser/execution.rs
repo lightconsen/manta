@@ -8,19 +8,34 @@ use tracing::{debug, warn};
 #[cfg(feature = "browser")]
 fn build_result(
     results: Vec<Result<serde_json::Value, String>>,
-    screenshot_data: Option<String>,
+    screenshot_data: Option<super::BrowserScreenshot>,
 ) -> ToolExecutionResult {
     let success = results.iter().all(|r| r.is_ok());
-    let output = serde_json::to_string_pretty(&results)
+    let mut output = serde_json::to_string_pretty(&results)
         .unwrap_or_else(|_| "Failed to serialize results".to_string());
 
-    let data = if let Some(screenshot) = screenshot_data {
-        json!({
-            "screenshot_base64": screenshot,
-            "results": results
-        })
-    } else {
-        json!({ "results": results })
+    let data = match screenshot_data {
+        Some(super::BrowserScreenshot::Ref(aref)) => {
+            // The marker line on its own output line is what the
+            // request-time materializer scans for.
+            output.push_str(&format!(
+                "\nScreenshot captured ({} bytes, {}). The image is attached to this tool result.\n",
+                aref.size, aref.mime
+            ));
+            output.push_str(&crate::attachments::render_ref_line(&aref));
+            output.push('\n');
+            json!({
+                "screenshot_ref": aref.to_json(),
+                "results": results
+            })
+        }
+        Some(super::BrowserScreenshot::Inline(screenshot)) => {
+            json!({
+                "screenshot_base64": screenshot,
+                "results": results
+            })
+        }
+        None => json!({ "results": results }),
     };
 
     if success {

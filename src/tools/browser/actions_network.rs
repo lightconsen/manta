@@ -1,6 +1,6 @@
 //! Network log capture, emulation and capture-clearing actions.
 
-use super::BrowserAction;
+use super::{BrowserAction, BrowserScreenshot};
 use serde_json::{json, Value};
 
 use tracing::warn;
@@ -9,7 +9,7 @@ pub(super) async fn execute_network_actions(
     action: BrowserAction,
     page: &chromiumoxide::Page,
     _browser: Option<&chromiumoxide::Browser>,
-    _screenshot_data: &mut Option<String>,
+    _screenshot_data: &mut Option<BrowserScreenshot>,
 ) -> Result<serde_json::Value, String> {
     match action {
         BrowserAction::GetNetworkLog {

@@ -1396,7 +1396,10 @@ impl Agent {
         // the compaction mask so a restart can rehydrate the same boundary).
         self.compact_context_if_needed(context, &cfg).await;
 
-        let messages = context.to_messages();
+        // Attachment refs in tool results: current turn materializes to
+        // images, older turns degrade to placeholders (request clone only).
+        let mut messages = context.to_messages();
+        crate::attachments::materialize_history(&mut messages);
 
         // Get available tools
         let tool_context =
@@ -1476,7 +1479,9 @@ impl Agent {
                          retrying once"
                     );
                     self.compact_context_forced(context, &cfg).await;
-                    request.messages = context.to_messages();
+                    let mut messages = context.to_messages();
+                    crate::attachments::materialize_history(&mut messages);
+                    request.messages = messages;
                     if !tools.is_empty() {
                         request.tools = Some(tools.clone());
                     }
@@ -1768,7 +1773,10 @@ impl Agent {
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
         let cfg = self.config_snapshot();
-        let messages = context.to_messages();
+        // Attachment refs in tool results: current turn materializes to
+        // images, older turns degrade to placeholders (request clone only).
+        let mut messages = context.to_messages();
+        crate::attachments::materialize_history(&mut messages);
         let user_msg_count = messages.iter().filter(|m| m.role == Role::User).count();
         let assistant_msg_count = messages
             .iter()
@@ -1885,7 +1893,9 @@ impl Agent {
                          compacting and retrying once"
                     );
                     self.compact_context_forced(context, &cfg).await;
-                    request.messages = context.to_messages();
+                    let mut messages = context.to_messages();
+                    crate::attachments::materialize_history(&mut messages);
+                    request.messages = messages;
                     if !tools.is_empty() {
                         request.tools = Some(tools.clone());
                     }

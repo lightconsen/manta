@@ -210,6 +210,15 @@ pub fn delegation_task_dir(root_id: &str, task_id: &str) -> PathBuf {
         .join(task_id)
 }
 
+/// Get the attachment store directory (~/.syscity/attachments)
+///
+/// Content-addressed payloads (screenshots and other large tool-produced
+/// blobs) live under `attachments/sha256/<first2>/<rest>`; created lazily by
+/// the store on first write.
+pub fn attachments_dir() -> PathBuf {
+    syscity_dir().join("attachments")
+}
+
 /// Get the disk budget tracking directory (~/.syscity/budget)
 pub fn budget_dir() -> PathBuf {
     syscity_dir().join("budget")
@@ -511,6 +520,11 @@ mod tests {
         assert!(root.ends_with("delegations/root-1"));
         assert_eq!(delegation_shared_dir("root-1"), root.join("shared"));
         assert_eq!(delegation_task_dir("root-1", "task-1"), root.join("tasks").join("task-1"));
+    }
+
+    #[test]
+    fn test_attachments_dir() {
+        assert!(attachments_dir().to_string_lossy().contains("attachments"));
     }
 
     #[test]

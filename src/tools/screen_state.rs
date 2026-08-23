@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-#[cfg(feature = "vision")]
 use tracing::warn;
 
 use crate::computer::vision::ScreenState;
@@ -266,8 +265,10 @@ When the accessibility tree is empty (games, image-based UIs, remote desktops, w
             output.push_str(&state.ocr_text);
         }
 
-        let data = json!({
-            "screenshot_base64": state.screenshot.base64,
+        // CAS-first: store the screenshot bytes once and return a compact
+        // reference; fall back to inline base64 when the store is
+        // unavailable (fail-open — see crate::attachments docs).
+        let mut data = json!({
             "screenshot_width": state.screenshot.width,
             "screenshot_height": state.screenshot.height,
             "ui_tree": serde_json::to_value(&state.ui_tree).unwrap_or_default(),
@@ -275,6 +276,35 @@ When the accessibility tree is empty (games, image-based UIs, remote desktops, w
             "ocr_text": state.ocr_text,
             "ocr_regions": serde_json::to_value(&state.ocr_regions).unwrap_or_default(),
         });
+        if state.screenshot.base64.is_empty() {
+            // Adapters may deliver a file-only screenshot; nothing to store,
+            // keep the legacy (empty) field for compatibility.
+            data["screenshot_base64"] = json!(state.screenshot.base64);
+        } else {
+            match crate::attachments::store_base64_image_async(
+                &state.screenshot.base64,
+                "image/png",
+            )
+            .await
+            {
+                Ok(aref) => {
+                    data["screenshot_ref"] = aref.to_json();
+                    output.push_str(&format!(
+                        "\nScreenshot: {}x{} {} (attachment {}, {} bytes)\n{}",
+                        state.screenshot.width,
+                        state.screenshot.height,
+                        aref.mime,
+                        crate::attachments::short_id(&aref.digest),
+                        aref.size,
+                        crate::attachments::render_ref_line(&aref),
+                    ));
+                }
+                Err(e) => {
+                    warn!("attachment store write failed ({}); falling back to inline base64", e);
+                    data["screenshot_base64"] = json!(state.screenshot.base64);
+                }
+            }
+        }
 
         Ok(ToolExecutionResult::success(output).with_data(data))
     }

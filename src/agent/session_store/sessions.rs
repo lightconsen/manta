@@ -311,6 +311,29 @@ impl SessionStore {
         Ok(result.last_insert_rowid())
     }
 
+    /// Collect every persisted text blob that may carry an attachment
+    /// reference (message bodies and inline tool-call results containing the
+    /// `image_ref` marker), for the attachment-store GC sweep.
+    ///
+    /// The LIKE prefilter keeps this cheap on large histories; the caller
+    /// extracts exact digests from the returned texts.
+    pub async fn attachment_reference_texts(&self) -> Result<Vec<String>> {
+        sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT content FROM session_messages WHERE content LIKE '%"image_ref"%'
+            UNION ALL
+            SELECT tool_calls_json FROM session_messages
+            WHERE tool_calls_json LIKE '%"image_ref"%'
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| SyscityError::Storage {
+            context: "Failed to scan messages for attachment references".to_string(),
+            details: e.to_string(),
+        })
+    }
+
     /// Get messages for a session, ordered newest first.
     ///
     /// Returns the most recent `limit` messages whose `created_at` is strictly

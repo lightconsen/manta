@@ -1,7 +1,8 @@
 //! Screenshot, PDF and screencast actions.
 
-use super::BrowserAction;
+use super::{BrowserAction, BrowserScreenshot};
 use serde_json::json;
+use tracing::warn;
 
 use base64::Engine;
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
@@ -13,7 +14,7 @@ pub(super) async fn execute_screenshot_actions(
     action: BrowserAction,
     page: &chromiumoxide::Page,
     _browser: Option<&chromiumoxide::Browser>,
-    screenshot_data: &mut Option<String>,
+    screenshot_data: &mut Option<BrowserScreenshot>,
 ) -> Result<serde_json::Value, String> {
     match action {
         BrowserAction::Screenshot { full_page, selector } => {
@@ -39,14 +40,41 @@ pub(super) async fn execute_screenshot_actions(
 
             match result {
                 Ok(data) => {
-                    let base64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                    *screenshot_data = Some(base64.clone());
-                    Ok(json!({
-                        "success": true,
-                        "format": "png",
-                        "base64_length": base64.len(),
-                        "data": format!("data:image/png;base64,{}", base64)
-                    }))
+                    // CAS-first: store the PNG bytes once and hand back a
+                    // compact reference; fall back to inline base64 when the
+                    // store is unavailable (fail-open — see attachments docs).
+                    // The clone keeps the raw bytes available for the fallback.
+                    match crate::attachments::store_bytes_async(data.clone(), "image/png").await {
+                        Ok(aref) => {
+                            let note = format!(
+                                "Screenshot captured ({} bytes, image/png), stored as {}",
+                                aref.size,
+                                crate::attachments::short_id(&aref.digest)
+                            );
+                            *screenshot_data = Some(BrowserScreenshot::Ref(aref.clone()));
+                            Ok(json!({
+                                "success": true,
+                                "format": "png",
+                                "size": aref.size,
+                                "image_ref": aref.to_json(),
+                                "note": note,
+                            }))
+                        }
+                        Err(e) => {
+                            warn!(
+                                "attachment store write failed ({}); falling back to inline base64",
+                                e
+                            );
+                            let base64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                            *screenshot_data = Some(BrowserScreenshot::Inline(base64.clone()));
+                            Ok(json!({
+                                "success": true,
+                                "format": "png",
+                                "base64_length": base64.len(),
+                                "data": format!("data:image/png;base64,{}", base64)
+                            }))
+                        }
+                    }
                 }
                 Err(e) => Err(format!("Failed to take screenshot: {}", e)),
             }

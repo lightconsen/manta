@@ -181,7 +181,7 @@ Common workflows:
             _t_start.elapsed()
         );
 
-        let mut tool_result = action_result_to_tool_result(result);
+        let mut tool_result = action_result_to_tool_result(result).await;
 
         if let Some(pre) = pre_state {
             // Brief settle delay so the UI has time to react to the action.
@@ -467,27 +467,57 @@ fn parse_string_array(args: &Value, key: &str) -> Vec<String> {
 }
 
 /// Convert an [`ActionResult`] to a [`ToolExecutionResult`].
-fn action_result_to_tool_result(result: ActionResult) -> ToolExecutionResult {
+///
+/// Screenshots go through the content-addressed attachment store: the result
+/// carries a compact reference plus a marker line, not megabytes of base64.
+/// Fail-open: a store failure keeps the old inline-base64 behavior.
+async fn action_result_to_tool_result(result: ActionResult) -> ToolExecutionResult {
     let mut output = result.message.clone();
     let mut data = result.data.clone();
 
-    // If there's a screenshot, include base64 data and dimensions.
     if let Some(screenshot) = result.screenshot_after {
-        let screenshot_info = format!(
-            "\n[Screenshot: {}x{} (base64 length: {})]",
-            screenshot.width,
-            screenshot.height,
-            screenshot.base64.len()
-        );
-        output.push_str(&screenshot_info);
+        let stored = store_screenshot(&screenshot).await;
+        match stored {
+            Ok(Some(aref)) => {
+                output.push_str(&format!(
+                    "\n[Screenshot: {}x{} — attachment {} ({} bytes)]\n{}",
+                    screenshot.width,
+                    screenshot.height,
+                    crate::attachments::short_id(&aref.digest),
+                    aref.size,
+                    crate::attachments::render_ref_line(&aref),
+                ));
+                let mut data_obj = data.unwrap_or_else(|| json!({}));
+                if let Some(obj) = data_obj.as_object_mut() {
+                    obj.insert("screenshot_ref".to_string(), aref.to_json());
+                    obj.insert("screenshot_width".to_string(), json!(screenshot.width));
+                    obj.insert("screenshot_height".to_string(), json!(screenshot.height));
+                }
+                data = Some(data_obj);
+            }
+            Ok(None) => {} // No payload at all (no base64, no file) — nothing to attach.
+            Err(e) => {
+                tracing::warn!(
+                    "attachment store write failed ({}); falling back to inline base64",
+                    e
+                );
+                let screenshot_info = format!(
+                    "\n[Screenshot: {}x{} (base64 length: {})]",
+                    screenshot.width,
+                    screenshot.height,
+                    screenshot.base64.len()
+                );
+                output.push_str(&screenshot_info);
 
-        let mut data_obj = data.unwrap_or_else(|| json!({}));
-        if let Some(obj) = data_obj.as_object_mut() {
-            obj.insert("screenshot_base64".to_string(), json!(screenshot.base64));
-            obj.insert("screenshot_width".to_string(), json!(screenshot.width));
-            obj.insert("screenshot_height".to_string(), json!(screenshot.height));
+                let mut data_obj = data.unwrap_or_else(|| json!({}));
+                if let Some(obj) = data_obj.as_object_mut() {
+                    obj.insert("screenshot_base64".to_string(), json!(screenshot.base64));
+                    obj.insert("screenshot_width".to_string(), json!(screenshot.width));
+                    obj.insert("screenshot_height".to_string(), json!(screenshot.height));
+                }
+                data = Some(data_obj);
+            }
         }
-        data = Some(data_obj);
     }
 
     if result.success {
@@ -495,6 +525,30 @@ fn action_result_to_tool_result(result: ActionResult) -> ToolExecutionResult {
     } else {
         ToolExecutionResult::error(output)
     }
+}
+
+/// Store a captured screenshot's payload in the attachment CAS.
+///
+/// Platform adapters deliver either in-memory base64 or (rarely) a file
+/// path; `Ok(None)` means the screenshot carried no payload at all.
+async fn store_screenshot(
+    screenshot: &crate::computer::Screenshot,
+) -> std::io::Result<Option<crate::attachments::AttachmentRef>> {
+    use base64::Engine;
+    let bytes: Vec<u8> = if !screenshot.base64.is_empty() {
+        base64::engine::general_purpose::STANDARD
+            .decode(&screenshot.base64)
+            .map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, format!("invalid base64: {e}"))
+            })?
+    } else if let Some(ref path) = screenshot.file_path {
+        tokio::fs::read(path).await?
+    } else {
+        return Ok(None);
+    };
+    crate::attachments::store_bytes_async(bytes, "image/png")
+        .await
+        .map(Some)
 }
 
 /// Map [`ComputerError`] to [`SyscityError`].

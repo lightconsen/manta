@@ -1,13 +1,13 @@
 //! Cookie read/write/clear actions.
 
-use super::BrowserAction;
+use super::{BrowserAction, BrowserScreenshot};
 use serde_json::{json, Value};
 
 pub(super) async fn execute_cookies_actions(
     action: BrowserAction,
     page: &chromiumoxide::Page,
     _browser: Option<&chromiumoxide::Browser>,
-    _screenshot_data: &mut Option<String>,
+    _screenshot_data: &mut Option<BrowserScreenshot>,
 ) -> Result<serde_json::Value, String> {
     match action {
         BrowserAction::GetCookies => {

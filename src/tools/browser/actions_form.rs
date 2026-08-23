@@ -1,6 +1,6 @@
 //! Form filling, text input, drag/select and download behavior.
 
-use super::BrowserAction;
+use super::{BrowserAction, BrowserScreenshot};
 use serde_json::json;
 
 use tracing::warn;
@@ -9,7 +9,7 @@ pub(super) async fn execute_form_actions(
     action: BrowserAction,
     page: &chromiumoxide::Page,
     browser: Option<&chromiumoxide::Browser>,
-    _screenshot_data: &mut Option<String>,
+    _screenshot_data: &mut Option<BrowserScreenshot>,
 ) -> Result<serde_json::Value, String> {
     match action {
         BrowserAction::Type { selector, text, clear } => match page.find_element(&selector).await {

@@ -33,6 +33,17 @@ mod screencast;
 use action::normalize_browser_actions;
 pub use action::{BrowserAction, FormField};
 
+/// How a captured browser screenshot is handed from the screenshot action to
+/// result assembly: normally a content-addressed attachment reference; inline
+/// base64 only as the fail-open fallback when the store is unavailable.
+#[cfg(feature = "browser")]
+pub(super) enum BrowserScreenshot {
+    /// Bytes stored in the attachment CAS; only the reference travels.
+    Ref(crate::attachments::AttachmentRef),
+    /// Fail-open fallback: raw base64, the pre-CAS behavior.
+    Inline(String),
+}
+
 #[cfg(feature = "browser")]
 use actions_content::execute_content_actions;
 #[cfg(feature = "browser")]
@@ -125,7 +136,7 @@ impl BrowserTool {
         action: BrowserAction,
         page: &chromiumoxide::Page,
         browser: Option<&chromiumoxide::Browser>,
-        screenshot_data: &mut Option<String>,
+        screenshot_data: &mut Option<BrowserScreenshot>,
     ) -> Result<serde_json::Value, String> {
         match action {
             BrowserAction::Navigate { .. }
