@@ -604,7 +604,7 @@ impl Gateway {
                         .delete_metrics_before(crate::observe::prune::cutoff_ms(days))
                         .await
                     {
-                        Ok((l, t, o)) => Some(l + t + o),
+                        Ok((l, t, o, sn)) => Some(l + t + o + sn),
                         Err(e) => {
                             warn!("Observability retention sweep failed (DB): {}", e);
                             None

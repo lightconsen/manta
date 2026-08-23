@@ -228,6 +228,18 @@ impl Agent {
             .ok_or_else(|| crate::error::SyscityError::Internal("no session id".into()))?;
 
         let thread_rows = store.load_threads_for_session(sid).await?;
+
+        // Crash-recovery balance fix: a mid-turn crash can leave an assistant
+        // tool call without a result row. Append a synthetic
+        // TOOL_OUTCOME_UNKNOWN result per orphan before replaying, so the
+        // derived history is balanced and the outcome is treated as unknown.
+        // Idempotent — safe to run on every load.
+        match store.repair_orphan_tool_calls(sid).await {
+            Ok(0) => {}
+            Ok(n) => info!("Balanced {} orphaned tool call(s) in session {}", n, sid),
+            Err(e) => warn!("Failed to repair orphaned tool calls in session {}: {}", sid, e),
+        }
+
         let mut map = self.thread_map.lock().await;
 
         for (tid, label, _created_ms, turns) in thread_rows {

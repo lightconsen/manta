@@ -513,6 +513,32 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
+        // ── Per-request header snapshots ─────────────────────────────────────
+        // Debugging side table: one row per outgoing LLM request recording the
+        // resolved model id, system prompt, and offered tool names/schemas.
+        // Kept out of `session_messages` (rows can be large); pruned together
+        // with the observability tables by `delete_metrics_before`.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS request_snapshots (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      TEXT,
+                conversation_id TEXT,
+                agent_id        TEXT,
+                model           TEXT NOT NULL,
+                system_prompt   TEXT NOT NULL,
+                tools_json      TEXT NOT NULL,
+                created_at      INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SyscityError::Storage {
+            context: "Failed to create request_snapshots table".to_string(),
+            details: e.to_string(),
+        })?;
+
         for (table, index, cols) in [
             ("llm_calls", "idx_llm_calls_started", "started_at"),
             ("llm_calls", "idx_llm_calls_session", "session_id"),
@@ -525,6 +551,8 @@ impl SessionStore {
             ("turn_outcomes", "idx_turn_outcomes_started", "started_at"),
             ("turn_outcomes", "idx_turn_outcomes_session", "session_id"),
             ("turn_outcomes", "idx_turn_outcomes_state", "state"),
+            ("request_snapshots", "idx_request_snapshots_created", "created_at"),
+            ("request_snapshots", "idx_request_snapshots_session", "session_id"),
         ] {
             sqlx::query(&format!("CREATE INDEX IF NOT EXISTS {} ON {}({})", index, table, cols))
                 .execute(&self.pool)

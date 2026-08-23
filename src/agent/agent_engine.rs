@@ -1329,6 +1329,62 @@ impl Agent {
         result
     }
 
+    /// Resolve the effective model id for a conversation, using the same
+    /// precedence as the send path: per-session binding > temporary override >
+    /// agent default > provider default.
+    async fn resolve_model_id(&self, conversation_id: &str) -> String {
+        let session_model = self
+            .session_models
+            .read()
+            .await
+            .get(conversation_id)
+            .cloned();
+        let override_model = self.model_override.read().await.clone();
+        session_model
+            .or(override_model)
+            .or(self.model.clone())
+            .unwrap_or_else(|| self.provider.default_model().to_string())
+    }
+
+    /// Persist a compact snapshot of one outgoing LLM request — resolved model
+    /// id, system prompt, and the tool names/schemas offered — into the
+    /// `request_snapshots` side table, for post-hoc debugging of turns where
+    /// the model behaved oddly. Fire-and-forget: insert failures are logged,
+    /// never propagated. Only the first send attempt of a request is
+    /// snapshotted (a compaction retry changes the messages, not the header).
+    fn persist_request_snapshot(
+        &self,
+        context: &Context,
+        model_id: &str,
+        tools: &[crate::providers::ToolDefinition],
+    ) {
+        let Some(store) = self.session_store.clone() else {
+            return;
+        };
+        // Copy everything the snapshot needs into owned data before spawning:
+        // `RequestSnapshot` borrows, and borrowed locals cannot escape into a
+        // `'static` task.
+        let session_id = self.session_id.clone();
+        let conversation_id = context.id().to_string();
+        let agent_id = self.agent_id.clone();
+        let model = model_id.to_string();
+        let system_prompt = context.system_prompt().to_string();
+        let tools_json = super::session_store::compact_tools_json(tools);
+        tokio::spawn(async move {
+            let snapshot = super::session_store::RequestSnapshot {
+                session_id: session_id.as_deref(),
+                conversation_id: Some(&conversation_id),
+                agent_id: Some(&agent_id),
+                model: &model,
+                system_prompt: &system_prompt,
+                tools_json: &tools_json,
+            };
+            if let Err(e) = store.save_request_snapshot(&snapshot).await {
+                warn!("Failed to save request snapshot: {}", e);
+            }
+        });
+    }
+
     /// Get a completion from the LLM, handling tool calls
     async fn get_completion(
         &self,
@@ -1389,20 +1445,16 @@ impl Agent {
             }
         }
 
+        // Snapshot what is about to be sent (one row per LLM request).
+        let model_id = self.resolve_model_id(context.id()).await;
+        self.persist_request_snapshot(context, &model_id, &tools);
+
         // Get completion — use model router when available for key rotation /
         // fallback. If the provider rejects the request as over its context
         // window, compact the context and retry once instead of failing.
         let mut retried = false;
         let response = loop {
             let outcome = if let Some(ref router) = self.model_router {
-                let model_id = {
-                    let session_model = self.session_models.read().await.get(context.id()).cloned();
-                    let guard = self.model_override.read().await;
-                    session_model
-                        .or_else(|| guard.as_ref().cloned())
-                        .or(self.model.clone())
-                        .unwrap_or_else(|| self.provider.default_model().to_string())
-                };
                 let req_tools = request.tools.take();
                 router
                     .complete(&model_id, request.messages, req_tools)
@@ -1781,20 +1833,16 @@ impl Agent {
         // Notify generating (starting)
         (progress_cb)(ProgressEvent::Generating { content: None }).await;
 
+        // Snapshot what is about to be sent (one row per LLM request).
+        let model_id = self.resolve_model_id(context.id()).await;
+        self.persist_request_snapshot(context, &model_id, &tools);
+
         // Get streaming completion — use model router when available. If the
         // provider rejects the request as over its context window at stream
         // setup (before any bytes are emitted), compact and retry once.
         let mut retried = false;
         let (raw_stream, family, round_model, round_provider) = loop {
             let setup = if let Some(ref router) = self.model_router {
-                let model_id = {
-                    let session_model = self.session_models.read().await.get(context.id()).cloned();
-                    let guard = self.model_override.read().await;
-                    session_model
-                        .or_else(|| guard.as_ref().cloned())
-                        .or(self.model.clone())
-                        .unwrap_or_else(|| self.provider.default_model().to_string())
-                };
                 let req_tools = request.tools.take();
                 let stream = router.stream(&model_id, request.messages, req_tools).await;
                 let provider = router
@@ -1805,7 +1853,7 @@ impl Agent {
                 (
                     stream,
                     crate::providers::stream_wrappers::ProviderStreamFamily::Generic,
-                    model_id,
+                    model_id.clone(),
                     provider,
                 )
             } else {

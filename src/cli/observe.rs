@@ -641,7 +641,7 @@ async fn run_prune(older_than: Option<&str>) -> Result<()> {
     let cutoff = crate::observe::prune::cutoff_date(days);
     let (dirs, files) = crate::observe::prune::prune_turn_dirs(&crate::dirs::turns_dir(), &cutoff);
 
-    let mut db_rows = (0u64, 0u64, 0u64);
+    let mut db_rows = (0u64, 0u64, 0u64, 0u64);
     if let Some(store) = open_store().await? {
         let cutoff_ms = crate::observe::prune::cutoff_ms(days);
         match store.delete_metrics_before(cutoff_ms).await {
@@ -653,8 +653,8 @@ async fn run_prune(older_than: Option<&str>) -> Result<()> {
     println!("Pruned observability data older than {} days (cutoff {}):", days, cutoff);
     println!("  JSON: {} date directories, {} turn files", dirs, files);
     println!(
-        "  DB rows: {} llm_calls, {} tool_call_metrics, {} turn_outcomes",
-        db_rows.0, db_rows.1, db_rows.2
+        "  DB rows: {} llm_calls, {} tool_call_metrics, {} turn_outcomes, {} request_snapshots",
+        db_rows.0, db_rows.1, db_rows.2, db_rows.3
     );
     Ok(())
 }

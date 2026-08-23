@@ -141,9 +141,9 @@ impl SessionStore {
     }
 
     /// Delete metric rows whose `started_at` is strictly older than `cutoff_ms`
-    /// (epoch ms). Returns `(llm_calls, tool_call_metrics, turn_outcomes)`
-    /// deleted counts.
-    pub async fn delete_metrics_before(&self, cutoff_ms: i64) -> Result<(u64, u64, u64)> {
+    /// (epoch ms). Returns `(llm_calls, tool_call_metrics, turn_outcomes,
+    /// request_snapshots)` deleted counts.
+    pub async fn delete_metrics_before(&self, cutoff_ms: i64) -> Result<(u64, u64, u64, u64)> {
         async fn del(pool: &sqlx::Pool<sqlx::Sqlite>, sql: &str, cutoff_ms: i64) -> Result<u64> {
             let res = sqlx::query(sql)
                 .bind(cutoff_ms)
@@ -162,7 +162,10 @@ impl SessionStore {
                 .await?;
         let turns =
             del(&self.pool, "DELETE FROM turn_outcomes WHERE started_at < ?", cutoff_ms).await?;
-        Ok((llm, tools, turns))
+        let snapshots =
+            del(&self.pool, "DELETE FROM request_snapshots WHERE created_at < ?", cutoff_ms)
+                .await?;
+        Ok((llm, tools, turns, snapshots))
     }
 
     /// Query the aggregate stats from the metric tables within an optional
@@ -456,7 +459,8 @@ mod tests {
         store.persist_turn_metrics(&sample_record()).await.unwrap();
 
         // The sample started_at is 2026-08-14T02:00:00Z = 1786672800000 ms.
-        let (llm, tools, turns) = store.delete_metrics_before(1786672800001).await.unwrap();
+        let (llm, tools, turns, _snapshots) =
+            store.delete_metrics_before(1786672800001).await.unwrap();
         assert_eq!(llm, 1);
         assert_eq!(tools, 1);
         assert_eq!(turns, 1);

@@ -13,11 +13,15 @@ use tokio::sync::RwLock;
 
 mod acp_sessions;
 pub mod metrics;
+mod recovery;
+pub(crate) mod request_snapshots;
 mod schema;
 mod sessions;
 mod subagent_runs;
 mod threads;
 
+pub use self::recovery::TOOL_OUTCOME_UNKNOWN;
+pub use self::request_snapshots::{compact_tools_json, RequestSnapshot, RequestSnapshotRow};
 pub use self::subagent_runs::SubagentRunRecord;
 pub use self::threads::StoredMessage;
 
