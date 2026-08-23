@@ -79,6 +79,13 @@ pub struct ToolSandbox {
     pub process_limit: Option<u64>,
     /// Root directory for file operations (workspace boundary).
     pub workspace_root: std::path::PathBuf,
+    /// The owning agent's own workspace, when known.
+    ///
+    /// Differs from `workspace_root` for delegated children, whose
+    /// `workspace_root` is the per-task scratch dir inside the delegation
+    /// tree while their reports still belong in the owning agent's
+    /// workspace. Falls back to `workspace_root` when unset.
+    pub agent_workspace: Option<std::path::PathBuf>,
     /// When true, file operations are restricted to `workspace_root`.
     pub workspace_only: bool,
     /// Optional sandbox policy applied to tool execution.
@@ -102,6 +109,7 @@ impl Default for ToolSandbox {
             fd_limit: None,
             process_limit: None,
             workspace_root: crate::dirs::workspace_data_dir(),
+            agent_workspace: None,
             workspace_only: true,
             sandbox_policy: None,
             plugin_allowlist: None,
@@ -242,8 +250,15 @@ impl ToolContext {
     }
 
     /// Set the workspace root directory
+    /// Set workspace root
     pub fn with_workspace_root(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.sandbox.workspace_root = path.into();
+        self
+    }
+
+    /// Set the owning agent's own workspace (see [`ToolSandbox::agent_workspace`]).
+    pub fn with_agent_workspace(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.sandbox.agent_workspace = Some(path.into());
         self
     }
 

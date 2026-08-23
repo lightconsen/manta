@@ -224,6 +224,7 @@ impl Agent {
             .with_timeout(Duration::from_secs(120))
             .with_skill_trust(self.current_skill_trust())
             .with_workspace_root(agent_workspace.clone())
+            .with_agent_workspace(agent_workspace.clone())
             .with_workspace_only(cfg.workspace_only)
             .with_model_name(self.model.clone().unwrap_or_default())
             .with_provider_name(self.provider.name().to_string())

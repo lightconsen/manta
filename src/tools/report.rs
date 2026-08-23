@@ -21,6 +21,37 @@ impl WriteReportTool {
     }
 }
 
+/// Map an agent workspace path to its serving-URL owner segment, when the
+/// path follows the standard layout. Returns `None` for custom workspace
+/// layouts, whose reports fall back to the legacy global artifacts dir.
+///
+/// - `~/.syscity/workspace` → `default`
+/// - `~/.syscity/agents/<id>/workspace` → `<id>`
+fn artifact_url_owner(agent_ws: &std::path::Path) -> Option<String> {
+    let base = crate::dirs::syscity_dir();
+    if agent_ws == base.join("workspace") {
+        return Some("default".to_string());
+    }
+    // `agents/<id>/workspace` — the id is the parent-of-parent's file name.
+    let parent = agent_ws.parent()?;
+    if agent_ws.file_name().and_then(|f| f.to_str()) != Some("workspace") {
+        return None;
+    }
+    let id = parent.file_name()?.to_str()?;
+    if parent.parent()? != base.join("agents") {
+        return None;
+    }
+    // Keep the id URL-safe (same charset the gateway allows for agent ids).
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    Some(id.to_string())
+}
+
 #[async_trait]
 impl Tool for WriteReportTool {
     fn name(&self) -> &str {
@@ -103,16 +134,43 @@ impl Tool for WriteReportTool {
 
         let format = args["format"].as_str().unwrap_or("markdown").to_string();
 
-        // Resolve artifacts directory.  A delegated agent's reports are bound
-        // to its tree: stored under the global artifacts root but tree- and
-        // task-scoped, so parallel trees never collide and every artifact is
-        // attributable to a delegation tree.
+        // Resolve the artifacts directory: reports live in the producing
+        // agent's own workspace (`<workspace>/artifacts/`) so users can
+        // browse each agent's outputs in place. A delegated agent keeps its
+        // tree binding (`artifacts/<root_id>/<task_id>`) on top of that so
+        // parallel delegation trees never collide.
+        //
+        // The serving URL mirrors the physical placement: `@<owner>` names
+        // the agent workspace (the default agent's shared
+        // `~/.syscity/workspace` is addressed as `@default`). A workspace
+        // outside the standard layout cannot be addressed safely, so those
+        // reports keep the legacy global directory + flat URL.
         let delegation_scope = context.delegation.as_ref();
-        let artifacts_dir = match delegation_scope {
-            Some(scope) => crate::dirs::artifacts_dir()
-                .join(&scope.root_id)
-                .join(&scope.task_id),
-            None => crate::dirs::artifacts_dir(),
+        let agent_ws = context
+            .sandbox
+            .agent_workspace
+            .clone()
+            .unwrap_or_else(|| context.workspace_root().clone());
+        let owner = artifact_url_owner(&agent_ws);
+        let tree_path = match delegation_scope {
+            Some(scope) => format!("{}/{}", scope.root_id, scope.task_id),
+            None => String::new(),
+        };
+        let artifacts_dir = match &owner {
+            Some(_) => {
+                let mut d = agent_ws.join("artifacts");
+                if !tree_path.is_empty() {
+                    d = d.join(&tree_path);
+                }
+                d
+            }
+            None => {
+                let mut d = crate::dirs::artifacts_dir();
+                if !tree_path.is_empty() {
+                    d = d.join(&tree_path);
+                }
+                d
+            }
         };
         tokio::fs::create_dir_all(&artifacts_dir)
             .await
@@ -148,11 +206,19 @@ impl Tool for WriteReportTool {
             path = &path,
         );
 
-        let url = match delegation_scope {
-            Some(scope) => {
-                format!("/api/v1/artifacts/{}/{}/{}", scope.root_id, scope.task_id, filename)
+        let url = {
+            let mut url = String::from("/api/v1/artifacts");
+            if let Some(owner) = &owner {
+                url.push_str("/@");
+                url.push_str(owner);
             }
-            None => format!("/api/v1/artifacts/{}", filename),
+            if !tree_path.is_empty() {
+                url.push('/');
+                url.push_str(&tree_path);
+            }
+            url.push('/');
+            url.push_str(filename);
+            url
         };
 
         let data = serde_json::json!({
@@ -192,6 +258,8 @@ mod tests {
             "format": "markdown",
         });
 
+        // Default context has no agent_workspace override, so the default
+        // workspace is used and the URL is owner-addressed.
         let ctx = ToolContext::new("test", "test-conv");
         let result = tool.execute(args, &ctx).await.unwrap();
         assert!(result.success);
@@ -201,7 +269,14 @@ mod tests {
         assert_eq!(data["filename"], "test-report.md");
         assert_eq!(data["title"], "Test Report");
         assert_eq!(data["format"], "markdown");
-        assert!(data["url"].as_str().unwrap().contains("test-report.md"));
+        assert_eq!(data["url"], "/api/v1/artifacts/@default/test-report.md");
+
+        // Clean up the file written into the real default workspace.
+        let written = crate::dirs::workspace_data_dir()
+            .join("artifacts")
+            .join("test-report.md");
+        assert!(written.exists());
+        let _ = tokio::fs::remove_file(&written).await;
     }
 
     #[tokio::test]
@@ -222,10 +297,12 @@ mod tests {
         assert!(result.success);
 
         let data = result.data.unwrap();
-        assert_eq!(data["url"], "/api/v1/artifacts/root-9/task-9/report.md");
+        assert_eq!(data["url"], "/api/v1/artifacts/@default/root-9/task-9/report.md");
 
-        // The file physically lands under the tree-scoped artifacts subdir.
-        let written = crate::dirs::artifacts_dir()
+        // The file physically lands under the agent workspace's tree-scoped
+        // artifacts subdir.
+        let written = crate::dirs::workspace_data_dir()
+            .join("artifacts")
             .join("root-9")
             .join("task-9")
             .join("report.md");
@@ -234,6 +311,30 @@ mod tests {
         assert!(content.contains("Tree Report"));
 
         // Clean up so the test does not leak files.
-        let _ = tokio::fs::remove_dir_all(crate::dirs::artifacts_dir().join("root-9")).await;
+        let _ = tokio::fs::remove_dir_all(
+            crate::dirs::workspace_data_dir()
+                .join("artifacts")
+                .join("root-9"),
+        )
+        .await;
+    }
+
+    #[test]
+    fn test_artifact_url_owner_standard_layouts() {
+        let base = crate::dirs::syscity_dir();
+        assert_eq!(artifact_url_owner(&base.join("workspace")).as_deref(), Some("default"));
+        assert_eq!(
+            artifact_url_owner(&base.join("agents/worker/workspace")).as_deref(),
+            Some("worker")
+        );
+    }
+
+    #[test]
+    fn test_artifact_url_owner_rejects_nonstandard_or_unsafe() {
+        let base = crate::dirs::syscity_dir();
+        // Custom workspace outside the standard layout.
+        assert!(artifact_url_owner(std::path::Path::new("/tmp/custom-ws")).is_none());
+        // Agent id with URL-hostile characters.
+        assert!(artifact_url_owner(&base.join("agents/a.b/workspace")).is_none());
     }
 }

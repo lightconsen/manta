@@ -298,6 +298,7 @@ mod tests {
                 fd_limit: None,
                 process_limit: None,
                 workspace_root: PathBuf::from("/tmp"),
+                agent_workspace: None,
                 workspace_only: false,
                 sandbox_policy: None,
                 plugin_allowlist: None,
