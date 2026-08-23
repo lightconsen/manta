@@ -853,6 +853,9 @@ async fn run_fenced(
 
     Ok(CommandOutput {
         status,
+        // Windows has no signal concept; a job-tree kill on timeout is
+        // reported through `timed_out` instead.
+        signal: None,
         stdout,
         stderr,
         timed_out,

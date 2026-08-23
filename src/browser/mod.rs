@@ -37,14 +37,14 @@ pub use profile::{BrowserDriver, BrowserPoolConfig, BrowserProfile};
 pub mod bridge;
 #[cfg(feature = "browser")]
 pub mod bridge_client;
-#[cfg(feature = "browser")]
+// The SSRF guard is pure std/tokio logic — exported unconditionally so
+// non-browser consumers (the web tool) can reuse it on every platform.
 pub mod navigation_guard;
 
 #[cfg(feature = "browser")]
 pub use bridge::BrowserBridge;
 #[cfg(feature = "browser")]
 pub use bridge_client::BridgeClient;
-#[cfg(feature = "browser")]
 pub use navigation_guard::{assert_navigation_allowed, NavigationPolicy};
 
 // P3 module
