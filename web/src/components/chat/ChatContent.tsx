@@ -10,7 +10,7 @@ import { CommandPalette } from "./CommandPalette";
 import { ModelSelector } from "./ModelSelector";
 import { getCommandCompletions, type CommandDef } from "@/slash-commands";
 import { useChatStore } from "@/stores/chatStore";
-import { Mic, Image, Paperclip, Square, Send, ChevronDown, FolderTree } from "lucide-react";
+import { Mic, Image, Paperclip, Square, Send, ChevronDown, FolderOpen } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { MessageSkeleton } from "@/components/ui/Skeleton";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
@@ -451,7 +451,7 @@ export function ChatContent({ transport }: ChatContentProps) {
                     }`}
                     onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
                   >
-                    <FolderTree className="w-5 h-5" />
+                    <FolderOpen className="w-5 h-5" />
                   </button>
                 )}
               </div>
