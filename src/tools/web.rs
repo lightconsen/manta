@@ -1,12 +1,35 @@
 //! Web tools for Syscity
 //!
 //! Tools for fetching web content and searching the web.
+//!
+//! # Error-code contract
+//!
+//! Selection failures carry a machine-readable code in the result payload
+//! (`data.code`) drawn from [`WebErrorCode`], so webui surfaces, retry
+//! policies, and agent self-correction can branch on the code instead of
+//! parsing message strings.
+//!
+//! # Redirect safety
+//!
+//! Redirects are followed manually (up to [`MAX_REDIRECTS`] hops) and every
+//! hop — including the initially requested URL — is re-validated against the
+//! SSRF navigation guard (`crate::browser::assert_navigation_allowed`)
+//! before a request is issued. A public entry point therefore cannot bounce
+//! the fetcher onto a private or blocklisted target via a redirect.
+//!
+//! # Non-2xx responses
+//!
+//! An HTTP error status is a *result*, not a tool error: the status and body
+//! are surfaced in a successful payload so the model can reason about them.
+//! Only transport, SSRF-policy, and configuration failures produce error
+//! results.
 
 use async_trait::async_trait;
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use crate::browser::{assert_navigation_allowed, NavigationPolicy};
 use crate::tools::sdk::ToolCapabilities;
 
 /// Maximum content size to fetch (100KB)
@@ -20,15 +43,172 @@ const WEB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// tool-level wrapper times out.
 const PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
+/// Maximum number of redirects [`WebFetchTool`] follows manually.
+///
+/// Every hop is validated before it is issued, so this limit bounds both the
+/// work done and the damage of a malicious redirect loop.
+const MAX_REDIRECTS: usize = 10;
+
+/// Stable, machine-readable outcome codes for web tool selection failures.
+///
+/// The wire values are part of the tool contract: webui surfaces, retry
+/// policies, and agent self-correction branch on them instead of parsing
+/// error strings. They ride on error results as `data.code`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebErrorCode {
+    /// The feature is configured, but a required value inside it is absent
+    /// (for example an API-key-bearing search provider enabled with an empty
+    /// key).
+    ConfiguredMissing,
+    /// Nothing is configured to serve the request (for example an empty
+    /// search-provider list).
+    NotConfigured,
+    /// Configuration is complete, but every candidate endpoint failed —
+    /// transport errors, timeouts, upstream HTTP errors, or SSRF blocks.
+    Unavailable,
+    /// Several candidates were tried and their failures span more than one
+    /// cause class, so no single remediation applies. Inspect the
+    /// per-attempt details in `data.attempts` to attribute the failures.
+    Ambiguous,
+}
+
+impl WebErrorCode {
+    /// Canonical SCREAMING_SNAKE_CASE wire value for this code.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ConfiguredMissing => "CONFIGURED_MISSING",
+            Self::NotConfigured => "NOT_CONFIGURED",
+            Self::Unavailable => "UNAVAILABLE",
+            Self::Ambiguous => "AMBIGUOUS",
+        }
+    }
+
+    /// Build an error tool result whose `data` carries this code merged with
+    /// the fields of `extra`.
+    fn error_result(self, message: impl Into<String>, extra: Value) -> ToolExecutionResult {
+        let mut data = serde_json::json!({ "code": self.as_str() });
+        if let (Some(target), Some(source)) = (data.as_object_mut(), extra.as_object()) {
+            for (key, value) in source {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+        ToolExecutionResult::error(message).with_data(data)
+    }
+}
+
+/// Outcome class of a single failed attempt from the provider fallback walk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AttemptKind {
+    /// Required value absent from an otherwise-enabled provider.
+    MissingValue { field: &'static str },
+    /// Provider configured correctly, but the endpoint did not serve results.
+    Unavailable { detail: String },
+}
+
+impl AttemptKind {
+    /// The stable selection-failure code this outcome maps to.
+    fn code(&self) -> WebErrorCode {
+        match self {
+            Self::MissingValue { .. } => WebErrorCode::ConfiguredMissing,
+            Self::Unavailable { .. } => WebErrorCode::Unavailable,
+        }
+    }
+
+    /// Wire label for the per-attempt `outcome` field in `data.attempts`.
+    fn outcome(&self) -> &'static str {
+        match self {
+            Self::MissingValue { .. } => "configured_missing",
+            Self::Unavailable { .. } => "unavailable",
+        }
+    }
+}
+
+/// Record of one failed provider attempt during the fallback walk.
+#[derive(Debug, Clone)]
+struct ProviderAttempt {
+    provider: &'static str,
+    kind: AttemptKind,
+}
+
+impl ProviderAttempt {
+    fn missing_value(provider: &'static str, field: &'static str) -> Self {
+        Self {
+            provider,
+            kind: AttemptKind::MissingValue { field },
+        }
+    }
+
+    fn unavailable(provider: &'static str, detail: String) -> Self {
+        Self {
+            provider,
+            kind: AttemptKind::Unavailable { detail },
+        }
+    }
+
+    /// One-line human summary used in the model-facing message.
+    fn summary(&self) -> String {
+        match &self.kind {
+            AttemptKind::MissingValue { field } => format!("{}: missing {}", self.provider, field),
+            AttemptKind::Unavailable { detail } => format!("{}: {}", self.provider, detail),
+        }
+    }
+}
+
+/// Classify a completed provider fallback walk into one stable code.
+///
+/// Attempts sharing a single cause class keep that class's code; mixed cause
+/// classes collapse to [`WebErrorCode::Ambiguous`] because no single fix
+/// (restore connectivity, supply the missing key) covers every attempt. An
+/// empty slice maps to [`WebErrorCode::NotConfigured`] defensively; callers
+/// normally short-circuit empty provider lists before walking.
+fn classify_attempts(attempts: &[ProviderAttempt]) -> WebErrorCode {
+    let Some(first) = attempts.first() else {
+        return WebErrorCode::NotConfigured;
+    };
+    let shared = first.kind.code();
+    if attempts.iter().all(|attempt| attempt.kind.code() == shared) {
+        shared
+    } else {
+        WebErrorCode::Ambiguous
+    }
+}
+
+/// Name of the required configuration value absent from `provider`, if any.
+///
+/// A provider enabled in configuration without its credential is a
+/// configuration gap (`CONFIGURED_MISSING`), not an outage — detecting it
+/// here avoids spending a doomed network round-trip.
+fn missing_credential(provider: &SearchProvider) -> Option<&'static str> {
+    match provider {
+        SearchProvider::DuckDuckGo => None,
+        SearchProvider::Brave { api_key }
+        | SearchProvider::Tavily { api_key }
+        | SearchProvider::SerpApi { api_key }
+        | SearchProvider::Exa { api_key }
+        | SearchProvider::Firecrawl { api_key }
+        | SearchProvider::Serper { api_key }
+        | SearchProvider::Bocha { api_key } => api_key.trim().is_empty().then_some("api_key"),
+        SearchProvider::Custom { url, .. } => url.trim().is_empty().then_some("url"),
+    }
+}
+
 /// Web fetch tool for HTTP requests
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct WebFetchTool {
-    /// HTTP client
+    /// HTTP client (automatic redirects disabled — hops are walked manually)
     client: reqwest::Client,
+    /// SSRF policy applied to the requested URL and every redirect hop.
+    navigation_policy: NavigationPolicy,
+}
+
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WebFetchTool {
-    /// Create a new web fetch tool
+    /// Create a new web fetch tool with the restrictive SSRF policy.
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(WEB_TIMEOUT)
@@ -36,10 +216,40 @@ impl WebFetchTool {
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, \
                  like Gecko) Version/18.0 Safari/605.1.15",
             )
+            // Redirects are followed manually so each hop can be re-validated
+            // against the SSRF guard before a request is issued.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
 
-        Self { client }
+        Self {
+            client,
+            navigation_policy: NavigationPolicy::default(),
+        }
+    }
+
+    /// Override the SSRF navigation policy (for example a permissive policy
+    /// for local development against loopback services).
+    pub fn with_navigation_policy(mut self, policy: NavigationPolicy) -> Self {
+        self.navigation_policy = policy;
+        self
+    }
+
+    /// True for the redirect statuses this tool follows (301/302/303/307/308).
+    ///
+    /// Deliberately excludes other 3xx statuses such as 300 and 304, which
+    /// carry body or cache semantics rather than a relocation target.
+    fn is_followable_redirect(status: reqwest::StatusCode) -> bool {
+        matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
+    }
+
+    /// Resolve a `Location` header value against the current URL.
+    ///
+    /// Returns `None` when the value is unparseable or resolves outside
+    /// http/https — such targets are refused instead of followed.
+    fn resolve_redirect(current: &reqwest::Url, location: &str) -> Option<reqwest::Url> {
+        let next = current.join(location.trim()).ok()?;
+        matches!(next.scheme(), "http" | "https").then_some(next)
     }
 
     /// Check if content is HTML
@@ -77,7 +287,8 @@ impl Tool for WebFetchTool {
 
     fn description(&self) -> &str {
         "Fetch content from a URL. Supports HTML to markdown conversion. Maximum content size: \
-         100KB."
+         100KB. HTTP error statuses are returned as normal results carrying the status code, not \
+         as tool errors."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -117,7 +328,8 @@ impl Tool for WebFetchTool {
         let parsed_url = reqwest::Url::parse(url)
             .map_err(|e| crate::error::SyscityError::Validation(format!("Invalid URL: {}", e)))?;
 
-        // Only allow HTTP and HTTPS
+        // Only allow HTTP and HTTPS. This is argument-level validation and
+        // intentionally sits outside the provider-selection error taxonomy.
         if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
             return Ok(ToolExecutionResult::error(format!(
                 "Unsupported URL scheme: {}",
@@ -125,19 +337,75 @@ impl Tool for WebFetchTool {
             )));
         }
 
-        // Fetch content
-        let response = match self.client.get(url).send().await {
-            Ok(resp) => resp,
-            Err(e) => {
-                error!("Failed to fetch URL: {}", e);
-                return Ok(ToolExecutionResult::error(format!("Failed to fetch URL: {}", e)));
+        // Walk redirects manually: every hop — starting with the requested
+        // URL — passes the SSRF navigation guard before a request is issued.
+        let mut current = parsed_url;
+        let mut completed_hops = 0usize;
+        let response = loop {
+            if let Err(blocked) =
+                assert_navigation_allowed(current.as_str(), &self.navigation_policy).await
+            {
+                warn!("SSRF guard blocked {}: {}", current, blocked);
+                return Ok(WebErrorCode::Unavailable.error_result(
+                    format!(
+                        "Fetch blocked by SSRF guard at {} (hop {}): {}",
+                        current,
+                        completed_hops + 1,
+                        blocked
+                    ),
+                    serde_json::json!({
+                        "url": url,
+                        "blocked_target": current.as_str(),
+                        "hop": completed_hops + 1
+                    }),
+                ));
+            }
+
+            let response = match self.client.get(current.clone()).send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    error!("Failed to fetch URL: {}", e);
+                    return Ok(WebErrorCode::Unavailable.error_result(
+                        format!("Failed to fetch URL: {}", e),
+                        serde_json::json!({ "url": url }),
+                    ));
+                }
+            };
+
+            if !Self::is_followable_redirect(response.status()) {
+                break response;
+            }
+
+            completed_hops += 1;
+            if completed_hops > MAX_REDIRECTS {
+                return Ok(WebErrorCode::Unavailable.error_result(
+                    format!("Exceeded {} redirects while fetching {}", MAX_REDIRECTS, url),
+                    serde_json::json!({ "url": url, "hops": completed_hops }),
+                ));
+            }
+
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
+            let next = location.and_then(|loc| Self::resolve_redirect(&current, &loc));
+            match next {
+                Some(next) => {
+                    debug!("Following redirect {} -> {}", current, next);
+                    current = next;
+                }
+                None => {
+                    return Ok(WebErrorCode::Unavailable.error_result(
+                        format!(
+                            "Redirect from {} carries a missing or disallowed Location header",
+                            current
+                        ),
+                        serde_json::json!({ "url": url, "hop": completed_hops }),
+                    ));
+                }
             }
         };
-
-        // Check status
-        if !response.status().is_success() {
-            return Ok(ToolExecutionResult::error(format!("HTTP error: {}", response.status())));
-        }
 
         // Get content type (clone to avoid borrow issues)
         let content_type: Option<String> = response
@@ -148,12 +416,17 @@ impl Tool for WebFetchTool {
 
         debug!("Content-Type: {:?}", content_type);
 
+        let status = response.status();
+
         // Get content
         let bytes = match response.bytes().await {
             Ok(b) => b,
             Err(e) => {
                 error!("Failed to read response body: {}", e);
-                return Ok(ToolExecutionResult::error(format!("Failed to read response: {}", e)));
+                return Ok(WebErrorCode::Unavailable.error_result(
+                    format!("Failed to read response: {}", e),
+                    serde_json::json!({ "url": url, "status": status.as_u16() }),
+                ));
             }
         };
 
@@ -171,12 +444,39 @@ impl Tool for WebFetchTool {
         // Truncate if needed
         let truncated = Self::truncate_content(final_content);
 
-        info!("Successfully fetched {} bytes from {}", truncated.len(), url);
+        info!(
+            "Fetched {} bytes from {} (HTTP {}, {} redirect hop(s))",
+            bytes.len(),
+            url,
+            status,
+            completed_hops
+        );
+
+        // An HTTP error status is a result, not a tool error: surface the
+        // status and body so the model can reason about them.
+        if !status.is_success() {
+            return Ok(ToolExecutionResult::success(format!(
+                "HTTP {} from {}\n\n{}",
+                status, current, truncated
+            ))
+            .with_data(serde_json::json!({
+                "url": url,
+                "final_url": current.as_str(),
+                "status": status.as_u16(),
+                "http_error": true,
+                "content_type": content_type,
+                "size": bytes.len(),
+                "redirects": completed_hops
+            })));
+        }
 
         Ok(ToolExecutionResult::success(truncated).with_data(serde_json::json!({
             "url": url,
+            "final_url": current.as_str(),
+            "status": status.as_u16(),
             "content_type": content_type,
-            "size": bytes.len()
+            "size": bytes.len(),
+            "redirects": completed_hops
         })))
     }
 }
@@ -1088,9 +1388,29 @@ impl Tool for WebSearchTool {
 
         let execute_start = std::time::Instant::now();
         let providers = self.providers.read().await.clone();
-        let mut last_error = None;
+
+        // Nothing configured at all: report the stable NOT_CONFIGURED state
+        // instead of a misleading empty-success.
+        if providers.is_empty() {
+            return Ok(WebErrorCode::NotConfigured.error_result(
+                "No search provider is configured".to_string(),
+                serde_json::json!({ "query": query }),
+            ));
+        }
+
+        let mut failures: Vec<ProviderAttempt> = Vec::new();
         for (idx, provider) in providers.iter().enumerate() {
             let provider_name = provider_name(provider);
+
+            // A provider enabled without its required credential is a
+            // configuration gap (CONFIGURED_MISSING), not an outage — detect
+            // it before spending a doomed network round-trip.
+            if let Some(field) = missing_credential(provider) {
+                warn!("Provider {} is configured but '{}' is absent", provider_name, field);
+                failures.push(ProviderAttempt::missing_value(provider_name, field));
+                continue;
+            }
+
             info!("Trying provider {} ({}): {}", idx + 1, providers.len(), provider_name);
             match self.search_with_provider(provider, query, limit).await {
                 Ok(results) if !results.is_empty() => {
@@ -1121,6 +1441,7 @@ impl Tool for WebSearchTool {
                     return Ok(ToolExecutionResult::success(output).with_data(serde_json::json!({
                         "query": query,
                         "result_count": result_count,
+                        "provider": provider_name,
                         "results": results.iter().map(|r| {
                             serde_json::json!({
                                 "title": r.title,
@@ -1135,15 +1456,38 @@ impl Tool for WebSearchTool {
                 }
                 Err(e) => {
                     warn!("Provider {} search failed: {}", provider_name, e);
-                    last_error = Some(e);
+                    failures.push(ProviderAttempt::unavailable(provider_name, e.to_string()));
                 }
             }
         }
 
         info!("web_search exhausted all providers in {:?}", execute_start.elapsed());
 
-        if let Some(e) = last_error {
-            return Err(e);
+        // Every attempt either failed outright or came back empty-and-useless
+        // for at least one provider: surface the classified selection failure.
+        if !failures.is_empty() {
+            let code = classify_attempts(&failures);
+            let summary = failures
+                .iter()
+                .map(ProviderAttempt::summary)
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Ok(code.error_result(
+                format!("Search failed across {} provider(s): {}", failures.len(), summary),
+                serde_json::json!({
+                    "query": query,
+                    "attempts": failures.iter().map(|failure| serde_json::json!({
+                        "provider": failure.provider,
+                        "outcome": failure.kind.outcome(),
+                        "detail": match &failure.kind {
+                            AttemptKind::MissingValue { field } => {
+                                format!("required value '{}' is absent", field)
+                            }
+                            AttemptKind::Unavailable { detail } => detail.clone(),
+                        },
+                    })).collect::<Vec<_>>()
+                }),
+            ));
         }
 
         Ok(ToolExecutionResult::success("No results found for the query.".to_string()))
@@ -1154,7 +1498,90 @@ impl Tool for WebSearchTool {
 ///
 #[cfg(test)]
 mod tests {
+    // Tests assert against fallible bind/send/read results; unwrapping keeps
+    // the failure-path assertions readable (same allowance as
+    // `sandbox_interceptor`).
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
+    use crate::browser::NavigationPolicy;
+
+    /// Canned per-path raw HTTP responses served by [`spawn_http_server`].
+    type Routes = std::collections::HashMap<String, String>;
+
+    /// Build a raw HTTP/1.1 response with correct Content-Length.
+    fn http_response(status_line: &str, headers: &[(&str, &str)], body: &str) -> String {
+        let mut response = format!("{status_line}\r\n");
+        for (name, value) in headers {
+            response.push_str(&format!("{name}: {value}\r\n"));
+        }
+        response.push_str(&format!("Content-Length: {}\r\n", body.len()));
+        response.push_str("Connection: close\r\n\r\n");
+        response.push_str(body);
+        response
+    }
+
+    /// Serve canned raw HTTP responses on an ephemeral loopback port.
+    ///
+    /// Each accepted connection is handled on its own task: read the request
+    /// head, look up the path, write the canned response, then close. A
+    /// `{port}` placeholder inside a canned response is replaced with the
+    /// server's own port at serve time (redirects need absolute targets).
+    async fn spawn_http_server(routes: Routes) -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let routes = std::sync::Arc::new(routes);
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((socket, _)) => {
+                        let routes = std::sync::Arc::clone(&routes);
+                        tokio::spawn(serve_connection(socket, routes, port));
+                    }
+                    Err(err) => {
+                        debug!("test server accept failed, stopping: {}", err);
+                        break;
+                    }
+                }
+            }
+        });
+        port
+    }
+
+    /// Handle one connection of the canned-response test server.
+    async fn serve_connection(
+        mut socket: tokio::net::TcpStream,
+        routes: std::sync::Arc<Routes>,
+        port: u16,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            match socket.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    buffer.extend_from_slice(&chunk[..n]);
+                    if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+            }
+        }
+        let request = String::from_utf8_lossy(&buffer);
+        let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+        let path = path.split('?').next().unwrap_or("/").to_string();
+        let response = routes.get(&path).cloned().unwrap_or_else(|| {
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+        });
+        let response = response.replace("{port}", &port.to_string());
+        if let Err(err) = socket.write_all(response.as_bytes()).await {
+            debug!("test server write failed: {}", err);
+        }
+        if let Err(err) = socket.shutdown().await {
+            debug!("test server shutdown failed: {}", err);
+        }
+    }
 
     #[test]
     fn test_web_fetch_tool_creation() {
@@ -1222,5 +1649,357 @@ mod tests {
         assert_eq!(WebSearchTool::clean_html("Hello &amp; World"), "Hello & World");
         assert_eq!(WebSearchTool::clean_html("&lt;tag&gt;"), "<tag>");
         assert_eq!(WebSearchTool::clean_html("<b>Bold</b>"), "Bold");
+    }
+
+    // ── Error-code taxonomy ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_error_code_wire_values() {
+        assert_eq!(WebErrorCode::ConfiguredMissing.as_str(), "CONFIGURED_MISSING");
+        assert_eq!(WebErrorCode::NotConfigured.as_str(), "NOT_CONFIGURED");
+        assert_eq!(WebErrorCode::Unavailable.as_str(), "UNAVAILABLE");
+        assert_eq!(WebErrorCode::Ambiguous.as_str(), "AMBIGUOUS");
+    }
+
+    #[test]
+    fn test_error_result_carries_code_merged_with_extra() {
+        let result =
+            WebErrorCode::Unavailable.error_result("boom", serde_json::json!({ "url": "u" }));
+        assert!(!result.success);
+        assert_eq!(result.data.as_ref().unwrap()["code"], "UNAVAILABLE");
+        assert_eq!(result.data.as_ref().unwrap()["url"], "u");
+    }
+
+    fn attempt(provider: &'static str, kind: AttemptKind) -> ProviderAttempt {
+        match kind {
+            AttemptKind::MissingValue { field } => ProviderAttempt::missing_value(provider, field),
+            AttemptKind::Unavailable { detail } => ProviderAttempt::unavailable(provider, detail),
+        }
+    }
+
+    #[test]
+    fn test_classify_attempts_single_causes() {
+        assert_eq!(
+            classify_attempts(&[attempt(
+                "brave",
+                AttemptKind::MissingValue { field: "api_key" }
+            )]),
+            WebErrorCode::ConfiguredMissing
+        );
+        assert_eq!(
+            classify_attempts(&[attempt(
+                "duckduckgo",
+                AttemptKind::Unavailable { detail: "timeout".into() }
+            )]),
+            WebErrorCode::Unavailable
+        );
+    }
+
+    #[test]
+    fn test_classify_attempts_shared_class_keeps_code() {
+        let attempts = vec![
+            attempt("tavily", AttemptKind::MissingValue { field: "api_key" }),
+            attempt("serper", AttemptKind::MissingValue { field: "api_key" }),
+        ];
+        assert_eq!(classify_attempts(&attempts), WebErrorCode::ConfiguredMissing);
+
+        let attempts = vec![
+            attempt("duckduckgo", AttemptKind::Unavailable { detail: "dns".into() }),
+            attempt("exa", AttemptKind::Unavailable { detail: "5xx".into() }),
+        ];
+        assert_eq!(classify_attempts(&attempts), WebErrorCode::Unavailable);
+    }
+
+    #[test]
+    fn test_classify_attempts_mixed_classes_are_ambiguous() {
+        let attempts = vec![
+            attempt("brave", AttemptKind::MissingValue { field: "api_key" }),
+            attempt("duckduckgo", AttemptKind::Unavailable { detail: "refused".into() }),
+        ];
+        assert_eq!(classify_attempts(&attempts), WebErrorCode::Ambiguous);
+    }
+
+    #[test]
+    fn test_classify_attempts_empty_is_not_configured() {
+        assert_eq!(classify_attempts(&[]), WebErrorCode::NotConfigured);
+    }
+
+    #[test]
+    fn test_missing_credential_detection() {
+        assert_eq!(missing_credential(&SearchProvider::DuckDuckGo), None);
+        assert_eq!(
+            missing_credential(&SearchProvider::Brave { api_key: String::new() }),
+            Some("api_key")
+        );
+        assert_eq!(
+            missing_credential(&SearchProvider::Tavily { api_key: "  ".to_string() }),
+            Some("api_key")
+        );
+        assert_eq!(
+            missing_credential(&SearchProvider::Serper { api_key: "key".to_string() }),
+            None
+        );
+        assert_eq!(
+            missing_credential(&SearchProvider::Custom {
+                url: "  ".to_string(),
+                api_key: None,
+                headers: None,
+                result_parser: None
+            }),
+            Some("url")
+        );
+    }
+
+    // ── Redirect helpers ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_followable_redirect() {
+        use reqwest::StatusCode;
+        assert!(WebFetchTool::is_followable_redirect(StatusCode::MOVED_PERMANENTLY));
+        assert!(WebFetchTool::is_followable_redirect(StatusCode::FOUND));
+        assert!(WebFetchTool::is_followable_redirect(StatusCode::SEE_OTHER));
+        assert!(WebFetchTool::is_followable_redirect(StatusCode::TEMPORARY_REDIRECT));
+        assert!(WebFetchTool::is_followable_redirect(StatusCode::PERMANENT_REDIRECT));
+        // 300 and 304 are 3xx but carry no followable relocation target here.
+        assert!(!WebFetchTool::is_followable_redirect(StatusCode::MULTIPLE_CHOICES));
+        assert!(!WebFetchTool::is_followable_redirect(StatusCode::NOT_MODIFIED));
+        assert!(!WebFetchTool::is_followable_redirect(StatusCode::OK));
+    }
+
+    #[test]
+    fn test_resolve_redirect_joins_relative_targets() {
+        let base = reqwest::Url::parse("https://example.com/a/b").unwrap();
+        assert_eq!(
+            WebFetchTool::resolve_redirect(&base, "/c")
+                .unwrap()
+                .as_str(),
+            "https://example.com/c"
+        );
+        assert_eq!(
+            WebFetchTool::resolve_redirect(&base, "d").unwrap().as_str(),
+            "https://example.com/a/d"
+        );
+        assert_eq!(
+            WebFetchTool::resolve_redirect(&base, "https://other.org/x")
+                .unwrap()
+                .as_str(),
+            "https://other.org/x"
+        );
+    }
+
+    #[test]
+    fn test_resolve_redirect_rejects_disallowed_targets() {
+        let base = reqwest::Url::parse("https://example.com/").unwrap();
+        assert!(WebFetchTool::resolve_redirect(&base, "ftp://example.com/x").is_none());
+        assert!(WebFetchTool::resolve_redirect(&base, "file:///etc/passwd").is_none());
+        // Genuinely unparseable Location values are refused, not followed.
+        assert!(WebFetchTool::resolve_redirect(&base, "http://[").is_none());
+    }
+
+    // ── Fetch: SSRF guard and redirect revalidation ─────────────────────────
+
+    fn permissive_fetcher() -> WebFetchTool {
+        WebFetchTool::new().with_navigation_policy(NavigationPolicy::permissive())
+    }
+
+    async fn run_fetch(tool: &WebFetchTool, url: String) -> ToolExecutionResult {
+        tool.execute(serde_json::json!({ "url": url }), &ToolContext::default())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn fetch_follows_redirect_chain_to_final_body() {
+        let port = spawn_http_server(
+            [
+                ("/a".to_string(), http_response("HTTP/1.1 302 Found", &[("Location", "/b")], "")),
+                (
+                    "/b".to_string(),
+                    http_response(
+                        "HTTP/1.1 200 OK",
+                        &[("Content-Type", "text/plain")],
+                        "final body",
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        )
+        .await;
+
+        let result = run_fetch(&permissive_fetcher(), format!("http://127.0.0.1:{port}/a")).await;
+        assert!(result.success, "expected success, got {:?}", result.error);
+        assert!(result.output.contains("final body"));
+        let data = result.data.unwrap();
+        assert_eq!(data["status"], 200);
+        assert_eq!(data["redirects"], 1);
+        assert_eq!(data["final_url"], format!("http://127.0.0.1:{port}/b"));
+    }
+
+    #[tokio::test]
+    async fn fetch_returns_non_2xx_as_success_result() {
+        let port = spawn_http_server(
+            [(
+                "/missing".to_string(),
+                http_response(
+                    "HTTP/1.1 404 Not Found",
+                    &[("Content-Type", "text/plain")],
+                    "nothing here",
+                ),
+            )]
+            .into_iter()
+            .collect(),
+        )
+        .await;
+
+        let result =
+            run_fetch(&permissive_fetcher(), format!("http://127.0.0.1:{port}/missing")).await;
+        assert!(result.success, "non-2xx must be a successful tool result");
+        assert!(result.error.is_none());
+        assert!(result.output.contains("HTTP 404 Not Found"));
+        assert!(result.output.contains("nothing here"));
+        let data = result.data.unwrap();
+        assert_eq!(data["status"], 404);
+        assert_eq!(data["http_error"], true);
+    }
+
+    #[tokio::test]
+    async fn fetch_redirect_loop_reports_unavailable() {
+        let loop_response = http_response("HTTP/1.1 302 Found", &[("Location", "/y")], "");
+        let port = spawn_http_server(
+            [
+                ("/x".to_string(), loop_response.clone()),
+                ("/y".to_string(), loop_response),
+            ]
+            .into_iter()
+            .collect(),
+        )
+        .await;
+
+        let result = run_fetch(&permissive_fetcher(), format!("http://127.0.0.1:{port}/x")).await;
+        assert!(!result.success, "redirect loops must fail");
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("redirect"));
+        assert_eq!(result.data.unwrap()["code"], "UNAVAILABLE");
+    }
+
+    #[tokio::test]
+    async fn fetch_revalidates_every_redirect_hop_against_guard() {
+        // The initial target (127.0.0.1) passes this policy; the redirect
+        // target hostname "localhost" does not. If the guard only ran on the
+        // first hop, the second request would go through.
+        let policy = NavigationPolicy {
+            allow_private: true,
+            allowed_hostnames: Vec::new(),
+            blocked_hostnames: vec!["localhost".to_string()],
+        };
+        let port = spawn_http_server(
+            [(
+                "/go".to_string(),
+                http_response(
+                    "HTTP/1.1 302 Found",
+                    &[("Location", "http://localhost:{port}/end")],
+                    "",
+                ),
+            )]
+            .into_iter()
+            .collect(),
+        )
+        .await;
+
+        let tool = WebFetchTool::new().with_navigation_policy(policy);
+        let result = run_fetch(&tool, format!("http://127.0.0.1:{port}/go")).await;
+        assert!(!result.success, "hop 2 must be blocked by the SSRF guard");
+        let message = result.error.as_deref().unwrap_or_default();
+        assert!(message.contains("SSRF guard"), "unexpected message: {}", message);
+        assert!(message.contains("localhost"), "unexpected message: {}", message);
+        assert_eq!(result.data.unwrap()["code"], "UNAVAILABLE");
+    }
+
+    #[tokio::test]
+    async fn fetch_blocks_private_target_on_first_hop() {
+        let port = spawn_http_server(std::collections::HashMap::new()).await;
+        // Default policy is restrictive: private targets are refused before
+        // any request is issued.
+        let result = run_fetch(&WebFetchTool::new(), format!("http://127.0.0.1:{port}/a")).await;
+        assert!(!result.success);
+        let message = result.error.as_deref().unwrap_or_default();
+        assert!(message.contains("SSRF guard"), "unexpected message: {}", message);
+        assert_eq!(result.data.unwrap()["code"], "UNAVAILABLE");
+    }
+
+    // ── Search: selection-failure classification ────────────────────────────
+
+    /// Bind an ephemeral port and immediately drop it so connections are
+    /// deterministically refused.
+    async fn dead_port() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        port
+    }
+
+    async fn run_search(tool: &WebSearchTool) -> ToolExecutionResult {
+        tool.execute(serde_json::json!({ "query": "syscity" }), &ToolContext::default())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn search_empty_provider_list_reports_not_configured() {
+        let tool = WebSearchTool::new().with_providers(Vec::new());
+        let result = run_search(&tool).await;
+        assert!(!result.success);
+        assert_eq!(result.data.unwrap()["code"], "NOT_CONFIGURED");
+    }
+
+    #[tokio::test]
+    async fn search_provider_without_key_reports_configured_missing() {
+        let tool =
+            WebSearchTool::new().with_provider(SearchProvider::Brave { api_key: String::new() });
+        let result = run_search(&tool).await;
+        assert!(!result.success);
+        let data = result.data.unwrap();
+        assert_eq!(data["code"], "CONFIGURED_MISSING");
+        assert_eq!(data["attempts"][0]["provider"], "brave");
+        assert_eq!(data["attempts"][0]["outcome"], "configured_missing");
+    }
+
+    #[tokio::test]
+    async fn search_dead_endpoint_reports_unavailable() {
+        let port = dead_port().await;
+        let tool = WebSearchTool::new().with_provider(SearchProvider::Custom {
+            url: format!("http://127.0.0.1:{}/{{query}}", port),
+            api_key: None,
+            headers: None,
+            result_parser: None,
+        });
+        let result = run_search(&tool).await;
+        assert!(!result.success);
+        let data = result.data.unwrap();
+        assert_eq!(data["code"], "UNAVAILABLE");
+        assert_eq!(data["attempts"][0]["outcome"], "unavailable");
+    }
+
+    #[tokio::test]
+    async fn search_mixed_failure_classes_report_ambiguous() {
+        let port = dead_port().await;
+        let tool = WebSearchTool::new().with_providers(vec![
+            SearchProvider::Brave { api_key: String::new() },
+            SearchProvider::Custom {
+                url: format!("http://127.0.0.1:{}/{{query}}", port),
+                api_key: None,
+                headers: None,
+                result_parser: None,
+            },
+        ]);
+        let result = run_search(&tool).await;
+        assert!(!result.success);
+        let data = result.data.unwrap();
+        assert_eq!(data["code"], "AMBIGUOUS");
+        assert_eq!(data["attempts"].as_array().unwrap().len(), 2);
     }
 }
