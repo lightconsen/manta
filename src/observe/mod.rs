@@ -3,6 +3,7 @@
 //! Records one JSON file per agent turn under
 //! `~/.syscity/turns/YYYY-MM-DD/<turn_id>.json`, plus metric rows in SQLite
 //! (see `agent::session_store::metrics`). Aggregated by `syscity observe`.
+// INVARIANTS-NONE: side-table retention bounds are enforced by the prune sweep itself (delete_metrics_before / observe prune).
 
 pub mod aggregate;
 pub mod collector;

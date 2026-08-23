@@ -1,6 +1,7 @@
 //! Utility modules for Syscity
 //!
 //! This module contains shared utilities used across the application.
+// INVARIANTS-NONE: stateless helpers.
 
 pub mod batch;
 pub mod logging;

@@ -338,6 +338,95 @@ impl TodoStore {
     pub fn from_json(json: &str) -> crate::Result<Self> {
         serde_json::from_str(json).map_err(crate::error::SyscityError::Serialization)
     }
+
+    /// Check internal consistency: the display order must reference exactly
+    /// the stored task set — no duplicates, no dangling entries in either
+    /// direction. Returns a human-readable violation description on failure.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut seen = std::collections::HashSet::new();
+        for id in &self.order {
+            if !self.tasks.contains_key(id) {
+                return Err(format!("display order references unknown task id '{id}'"));
+            }
+            if !seen.insert(id) {
+                return Err(format!("display order lists task '{id}' more than once"));
+            }
+        }
+        for id in self.tasks.keys() {
+            if !seen.contains(id) {
+                return Err(format!("task '{id}' exists but is missing from display order"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Runtime invariant checks owned by the todo store (registered via
+/// `core::invariants::register_builtins`, surfaced through `syscity
+/// invariants`): every persisted todo file must be internally consistent.
+pub(crate) fn todo_invariant_checks() -> Vec<crate::core::invariants::Invariant> {
+    use crate::core::invariants::{Invariant, SKIP_PREFIX};
+
+    vec![Invariant {
+        id: "agent/todo_store_consistent",
+        module: "agent",
+        description: "every persisted todo file's display order matches its task set",
+        check: || {
+            Box::pin(async move {
+                let dir = crate::dirs::todos_dir();
+                let mut entries = match tokio::fs::read_dir(&dir).await {
+                    Ok(entries) => entries,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        return Err(format!(
+                            "{SKIP_PREFIX}no todos directory at {}",
+                            dir.display()
+                        ));
+                    }
+                    Err(e) => return Err(format!("cannot read {}: {e}", dir.display())),
+                };
+                let mut violations = Vec::new();
+                let mut checked = 0usize;
+                while let Some(entry) = entries
+                    .next_entry()
+                    .await
+                    .map_err(|e| format!("readdir {dir:?}: {e}"))?
+                {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                        continue;
+                    }
+                    checked += 1;
+                    let content = match tokio::fs::read_to_string(&path).await {
+                        Ok(c) => c,
+                        Err(e) => {
+                            violations.push(format!("{}: unreadable ({e})", path.display()));
+                            continue;
+                        }
+                    };
+                    match TodoStore::from_json(&content) {
+                        Ok(store) => {
+                            if let Err(violation) = store.validate() {
+                                violations.push(format!("{}: {}", path.display(), violation));
+                            }
+                        }
+                        Err(e) => violations.push(format!("{}: unparseable ({e})", path.display())),
+                    }
+                }
+                if violations.is_empty() {
+                    if checked == 0 {
+                        return Err(format!("{SKIP_PREFIX}no persisted todo files yet"));
+                    }
+                    return Ok(());
+                }
+                Err(format!(
+                    "{} of {} todo file(s) inconsistent: {}",
+                    violations.len(),
+                    checked,
+                    violations.join("; ")
+                ))
+            })
+        },
+    }]
 }
 
 /// Tool context for todo operations
@@ -641,5 +730,34 @@ mod tests {
         let tasks = store.replace_tasks([("Done already".to_string(), TaskStatus::Completed, 2)]);
         assert!(tasks[0].completed_at.is_some());
         assert!(!tasks[0].is_active());
+    }
+
+    #[test]
+    fn test_validate_accepts_consistent_store() {
+        let mut store = TodoStore::new();
+        store.create_task("a");
+        store.create_task("b");
+        assert!(store.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_order_and_task_set_drift() {
+        // Dangling order entry: order references a task that does not exist.
+        let json = r#"{
+            "tasks": {"task_1": {"id": "task_1", "content": "a", "status": "pending",
+                "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+                "subtasks": [], "priority": 3}},
+            "order": ["task_1", "task_2"],
+            "next_id": 2
+        }"#;
+        let store = TodoStore::from_json(json).unwrap();
+        let violation = store.validate().unwrap_err();
+        assert!(violation.contains("unknown task id 'task_2'"), "{violation}");
+
+        // Orphan task: present in tasks but missing from display order.
+        let json = json.replace(r#""order": ["task_1", "task_2"]"#, r#""order": []"#);
+        let store = TodoStore::from_json(&json).unwrap();
+        let violation = store.validate().unwrap_err();
+        assert!(violation.contains("missing from display order"), "{violation}");
     }
 }

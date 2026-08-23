@@ -2,6 +2,7 @@
 //!
 //! Channels are communication interfaces through which users interact
 //! with the AI assistant (CLI, Telegram, Discord, Slack, etc.).
+// INVARIANTS-NONE: transport adapters; delivery/ordering guarantees are owned by the external channel providers.
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -10,6 +10,7 @@
 //! - **Sandbox**: Docker-isolated browser (P3)
 //!
 //! All browser functionality is gated behind the `browser` feature.
+// INVARIANTS-NONE: CDP captures live in in-memory ring buffers bounded by construction (MAX_RECORDS).
 
 #[cfg(feature = "browser")]
 pub mod aria_snapshot;

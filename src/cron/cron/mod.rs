@@ -61,6 +61,48 @@ const MAX_SHELL_OUTPUT_BYTES: usize = 1024 * 1024;
 /// 10 MiB holds roughly 20k–50k run entries depending on payload size.
 const MAX_RUN_LOG_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Runtime invariant checks owned by the cron scheduler (registered via
+/// `core::invariants::register_builtins`, surfaced through `syscity
+/// invariants`).
+pub(crate) fn cron_invariant_checks() -> Vec<crate::core::invariants::Invariant> {
+    use crate::core::invariants::{Invariant, SKIP_PREFIX};
+
+    vec![Invariant {
+        id: "cron/run_log_bounded",
+        module: "cron",
+        description: "the run-history log stays within its retention cap",
+        check: || {
+            Box::pin(async move {
+                // Mirrors the store path wired in gateway/init/services.rs.
+                let log_path = crate::dirs::cron_dir()
+                    .join("jobs.json")
+                    .with_extension("runs.jsonl");
+                let meta = match tokio::fs::metadata(&log_path).await {
+                    Ok(meta) => meta,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        return Err(format!(
+                            "{SKIP_PREFIX}no run history at {} (no job has completed yet)",
+                            log_path.display()
+                        ));
+                    }
+                    Err(e) => return Err(format!("cannot stat {}: {e}", log_path.display())),
+                };
+                let size = meta.len();
+                if size > MAX_RUN_LOG_BYTES {
+                    return Err(format!(
+                        "run history {} is {} bytes, above the {}-byte retention cap — \
+                         the scheduler trims on write, so manual growth means it is not running",
+                        log_path.display(),
+                        size,
+                        MAX_RUN_LOG_BYTES
+                    ));
+                }
+                Ok(())
+            })
+        },
+    }]
+}
+
 /// Advanced cron scheduler with single global timer
 ///
 /// # Concurrency model

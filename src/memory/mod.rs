@@ -2,6 +2,7 @@
 //!
 //! Provides persistent storage for conversations, messages, and memories
 //! with support for semantic search using embeddings.
+// INVARIANTS-NONE: tables are written through typed sqlx paths; the cross-session history balance invariant is owned by agent/session_store.
 
 use std::time::SystemTime;
 

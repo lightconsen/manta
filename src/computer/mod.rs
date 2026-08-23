@@ -14,6 +14,7 @@
 //!       |
 //! ToolRegistry ──→ CapabilitySet ──→ xdotool / SendKeys / AXUIElement
 //! ```
+// INVARIANTS-NONE: device-automation drivers; every action is request-scoped and leaves no local persistent state.
 
 use std::sync::Arc;
 use std::time::Duration;

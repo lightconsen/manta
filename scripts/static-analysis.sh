@@ -175,6 +175,28 @@ fi
 
 do_full_scan "$PATTERN_SLEEP_LOOP" "$MSG_SLEEP_LOOP"
 
+# ── Invariant declaration convention (#16) ──────────────────────────────────
+#
+# Every top-level module must either own runtime invariants registered with
+# `core::invariants` (see src/core/invariants.rs, surfaced through
+# `syscity invariants`) or carry an explicit `INVARIANTS-NONE:` marker
+# explaining why it holds none. Nothing is silently unchecked.
+
+MISSING_INVARIANT_DECLS=''
+for dir in src/*/; do
+    if ! git grep -q -E '(core::invariants|INVARIANTS-NONE:)' -- "$dir" 2>/dev/null; then
+        MISSING_INVARIANT_DECLS="$MISSING_INVARIANT_DECLS $dir"
+    fi
+done
+if [[ -n "$MISSING_INVARIANT_DECLS" ]]; then
+    echo ""
+    echo -e "${RED}ERROR:${RESET} modules without invariant registration or an explicit INVARIANTS-NONE marker:"
+    for m in $MISSING_INVARIANT_DECLS; do
+        echo "  $m"
+    done
+    failures=$((failures + 1))
+fi
+
 # ── Summary ────────────────────────────────────────────────────────────────
 
 echo ""

@@ -825,3 +825,11 @@ mod tests {
         );
     }
 }
+
+/// Runtime invariant checks contributed by this module's stores, aggregated
+/// by `core::invariants::register_builtins` for `syscity invariants`.
+pub(crate) fn session_store_invariant_checks() -> Vec<crate::core::invariants::Invariant> {
+    session_store::session_store_invariant_checks()
+}
+
+pub(crate) use todo::todo_invariant_checks;

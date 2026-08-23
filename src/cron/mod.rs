@@ -11,3 +11,9 @@
 
 #[allow(clippy::module_inception)]
 pub mod cron;
+
+/// Runtime invariant checks contributed by the scheduler, aggregated by
+/// `core::invariants::register_builtins` for `syscity invariants`.
+pub(crate) fn cron_invariant_checks() -> Vec<crate::core::invariants::Invariant> {
+    cron::cron_invariant_checks()
+}

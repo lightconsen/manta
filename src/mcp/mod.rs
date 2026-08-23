@@ -7,6 +7,7 @@
 //! - `stdio` – spawn a subprocess and communicate over stdin/stdout
 //! - `sse` – connect to an HTTP server via Server-Sent Events
 //! - `streamable_http` – POST requests with SSE response bodies
+// INVARIANTS-NONE: server registry rebuilds wholesale on reconnect; no durable local state between sessions.
 
 mod client;
 mod config;

@@ -32,6 +32,7 @@
 //! `gateway::hooks` (message/event hooks), and `plugins::hooks` (plugin ABI).
 //! The bridge here *consumes* `tools::hooks` — it is a shell-based producer
 //! of `ToolHooks` plus two dispatcher seams.
+// INVARIANTS-NONE: shell hook bridge serializes decisions per call site within one invocation; no durable state.
 
 pub mod bridge;
 pub mod config;

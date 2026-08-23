@@ -3,6 +3,7 @@
 //! The planner takes a user goal (e.g. "deploy this project to a server"),
 //! breaks it into a directed acyclic graph of [`Task`]s, and executes them
 //! in topological order with automatic verification and rollback.
+// INVARIANTS-NONE: plan artifacts are user-visible files parsed and validated at load time.
 
 use std::collections::HashMap;
 use std::sync::Arc;

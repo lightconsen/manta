@@ -16,6 +16,7 @@
 //! - `manager`: [`SkillManager`] loading / hot reload / dependency logic
 //! - `chain`: dependency-check results and execution chains
 //! - `guard`: security scanning for skills and user input
+// INVARIANTS-NONE: the catalog is loaded read-only from disk with digest-based whole-file replacement.
 
 use std::collections::HashMap;
 use std::sync::Arc;

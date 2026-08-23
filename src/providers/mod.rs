@@ -2,6 +2,7 @@
 //!
 //! This module defines the `Provider` trait for interacting with various LLM
 //! services (OpenAI, Anthropic, Local models, etc.).
+// INVARIANTS-NONE: API clients are stateless per request.
 
 use std::collections::HashMap;
 use std::time::Duration;

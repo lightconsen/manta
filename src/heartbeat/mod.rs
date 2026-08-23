@@ -1,3 +1,4 @@
+// INVARIANTS-NONE: wake scheduling state is transient in-memory; the durable contract lives in HEARTBEAT.md files users edit.
 pub(crate) mod config;
 pub(crate) mod events;
 pub(crate) mod parser;

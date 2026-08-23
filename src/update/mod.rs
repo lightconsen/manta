@@ -7,6 +7,7 @@
 //! Security model: every downloaded tarball is verified against a SHA-256
 //! checksum published alongside the release artifact before it touches the
 //! running binary. Nothing is ever applied unverified.
+// INVARIANTS-NONE: self-update verifies downloads before swapping; failure paths leave the current binary untouched.
 
 pub mod apply;
 pub mod download;

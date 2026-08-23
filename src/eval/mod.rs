@@ -29,6 +29,7 @@
 //! # Ok(())
 //! # }
 //! ```
+// INVARIANTS-NONE: eval artifacts are user-visible files that are parsed and validated at load time.
 
 pub(crate) mod action;
 pub(crate) mod agent_type;

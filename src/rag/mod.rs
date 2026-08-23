@@ -5,6 +5,7 @@
 //! are fully domain-agnostic — usable for conversation memory, code
 //! documentation, task instructions, or any other knowledge base without
 //! pulling in the `memory` module's types.
+// INVARIANTS-NONE: the vector index is rebuilt wholesale on reindex; row/source linkage is established at insert time.
 
 pub mod chunk;
 pub mod config;

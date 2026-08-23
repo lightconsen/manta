@@ -20,6 +20,7 @@ mod sessions;
 mod subagent_runs;
 mod threads;
 
+pub(crate) use self::recovery::invariant_checks as session_store_invariant_checks;
 pub use self::recovery::TOOL_OUTCOME_UNKNOWN;
 pub use self::request_snapshots::{compact_tools_json, RequestSnapshot, RequestSnapshotRow};
 pub use self::subagent_runs::SubagentRunRecord;

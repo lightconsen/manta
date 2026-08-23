@@ -2,6 +2,7 @@
 //!
 //! This module handles loading and validating configuration from
 //! multiple sources: defaults, config files, and environment variables.
+// INVARIANTS-NONE: revision-CAS correctness is enforced atomically at config.set time; no separately checkable persisted artifact yet.
 
 pub mod hot_reload;
 mod loader;

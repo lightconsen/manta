@@ -6,6 +6,7 @@
 //! - Agent spawning and lifecycle management
 //! - WebSocket/HTTP API for channel adapters
 //! - Authentication and security policies
+// INVARIANTS-NONE: boot wiring only; runtime guarantees are owned by the subsystems it wires (tasks go through TaskRegistry).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

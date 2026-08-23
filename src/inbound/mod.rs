@@ -9,6 +9,7 @@
 //! -> Debounce -> Dispatch -> Media Understanding -> Envelope (optional)
 //! -> Queue Mode Resolve -> Agent Router -> Agent
 //! ```
+// INVARIANTS-NONE: message intake plumbing; access decisions are delegated to gateway::check_incoming_access and pairing/security stores.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

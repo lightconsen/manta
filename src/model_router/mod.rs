@@ -7,6 +7,7 @@
 //! - Health checking and load balancing
 //! - Auth profile rotation with cooldown
 //! - Cost-aware routing with pluggable task classification
+// INVARIANTS-NONE: provider selection is stateless per request; failures carry stable codes (see resolver/web).
 
 pub mod auth_profile;
 pub mod auth_profile_store;

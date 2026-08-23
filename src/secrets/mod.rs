@@ -27,6 +27,7 @@
 //! Default routing is the 0600 encrypted file store. The OS keyring backend is
 //! opt-in: compile with `--features keyring` for keyring-primary routing with a
 //! file fallback. Without it, the platform keychain is never touched.
+// INVARIANTS-NONE: the file store enforces 0600 + encryption atomically at write time; nothing readable persists if a write fails.
 
 mod file_store;
 mod in_memory;

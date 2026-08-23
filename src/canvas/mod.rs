@@ -3,6 +3,7 @@
 //! Provides A2UI (Agent-to-UI) capabilities for generating
 //! dynamic user interfaces through WebSocket updates. Supports forms, buttons,
 //! progress indicators, and real-time content streaming.
+// INVARIANTS-NONE: canvases are process-local UI surfaces with no persisted state to hold invariants over.
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -3,6 +3,7 @@
 //! Enabled by the `tui` Cargo feature. Connects to a running Syscity gateway
 //! over WebSocket and provides real-time chat, session management, slash
 //! commands, and a configuration editor.
+// INVARIANTS-NONE: presentation layer; owns no shared persistent state.
 
 mod actions;
 mod app;

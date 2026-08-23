@@ -1,6 +1,7 @@
 //! Security module for Syscity
 //!
 //! Provides authentication, authorization, rate limiting, and sandboxing.
+// INVARIANTS-NONE: pairing expiry and audit integrity are enforced at query/write time inside the respective stores.
 
 use std::collections::HashMap;
 use std::net::IpAddr;

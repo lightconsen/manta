@@ -13,6 +13,7 @@
 //! - [`runner`] — [`GoalRunner`](runner::GoalRunner) background execution loop
 //! - [`handoff`] — bounded structured handoff for the fresh-context ("Ralph")
 //!   loop mode, where each round runs in a brand-new seedless sub-agent
+// INVARIANTS-NONE: handoff validation and checkpoint terminality are fail-closed inline in the runner (checked every round).
 
 pub mod condition;
 pub mod event;

@@ -112,6 +112,13 @@ pub enum Commands {
     },
     /// Health check
     Health,
+    /// Run the registered runtime invariant checks (module-owned data
+    /// guarantees; see src/core/invariants.rs)
+    Invariants {
+        /// Emit machine-readable JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
     /// Run as an assistant process (internal use)
     AssistantRun {
         /// Configuration file path
@@ -422,6 +429,7 @@ impl Cli {
                 None => setup::run_setup().await,
             },
             Commands::Health => daemon::run_health_check(config).await,
+            Commands::Invariants { json } => run_invariants(*json).await,
             Commands::AssistantRun { config: config_path } => {
                 daemon::run_assistant_process(config_path).await
             }
@@ -485,6 +493,47 @@ impl Cli {
             }
         }
     }
+}
+
+/// Run every registered runtime invariant check and print the report.
+///
+/// Returns an error when any invariant is violated so the process exits
+/// non-zero (CI / cron-friendly). Checks that report "not applicable"
+/// (e.g. no store on disk yet) count as passed with a note.
+async fn run_invariants(json: bool) -> Result<()> {
+    use crate::core::invariants::{register_builtins, run_all};
+
+    register_builtins();
+    let report = run_all().await;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(crate::error::SyscityError::Serialization)?
+        );
+    } else {
+        println!("Runtime invariants ({} registered):", report.len());
+        for outcome in &report {
+            let mark = if outcome.passed { "✓" } else { "✗" };
+            println!("  {} [{}] {}", mark, outcome.module, outcome.id);
+            if let Some(detail) = &outcome.detail {
+                println!("      {}", detail);
+            }
+        }
+    }
+
+    let failures: Vec<&crate::core::invariants::InvariantOutcome> =
+        report.iter().filter(|o| !o.passed).collect();
+    if failures.is_empty() {
+        println!("All invariants hold.");
+        return Ok(());
+    }
+    Err(crate::error::SyscityError::Internal(format!(
+        "{} of {} invariant(s) violated",
+        failures.len(),
+        report.len()
+    )))
 }
 
 #[cfg(test)]

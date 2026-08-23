@@ -6,6 +6,7 @@
 //! - Channel plugins
 //! - Hooks system for extending behavior
 //! - Hot loading/unloading
+// INVARIANTS-NONE: wasm guests are sandboxed at instantiation (fuel metering, no preopens); nothing persists between runs.
 
 pub mod activation;
 pub mod deps;

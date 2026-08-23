@@ -5,6 +5,7 @@
 //! - Runtime modes: "run" (one-shot) vs "session" (persistent)
 //! - Session actor queue for serialized execution
 //! - Parent-child agent communication
+// INVARIANTS-NONE: session actors are per-process and rebuilt on reconnect; no persisted cross-run state.
 
 pub mod bus;
 pub mod config;

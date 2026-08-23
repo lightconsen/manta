@@ -6,6 +6,7 @@
 //! Follows the same lifecycle pattern as `DreamScheduler` in
 //! `src/memory/dreaming.rs` and borrows the agent-wake pattern from
 //! `src/heartbeat/runner.rs`.
+// INVARIANTS-NONE: orders are config-driven and every spawned run is tracked in TaskRegistry for coordinated shutdown.
 
 pub mod config;
 

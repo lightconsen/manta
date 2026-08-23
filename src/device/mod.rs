@@ -12,6 +12,7 @@
 //! stays `None`, every `device_*` tool reports unavailable, and each
 //! `device.*` WS method returns `UNSUPPORTED_PLATFORM`. Nothing in the
 //! desktop path changes behaviour.
+// INVARIANTS-NONE: bridge trait and drivers; no local persistent state.
 
 mod tools;
 

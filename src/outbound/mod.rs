@@ -10,6 +10,7 @@
 //! -> Reply Dispatcher (route to correct channel)
 //! -> Side Effects (memory, cron, webhooks, …)
 //! ```
+// INVARIANTS-NONE: dispatch plumbing toward channel providers; no local durable state.
 
 use std::sync::Arc;
 

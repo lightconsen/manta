@@ -17,6 +17,7 @@
 //! Orchestration is built on top of the existing [`DelegateTool`] +
 //! [`SubagentRegistry`](crate::agent::subagent_registry::SubagentRegistry)
 //! infrastructure; this module only adds the shared-state dimension.
+// INVARIANTS-NONE: depth/limit enforcement happens at spawn time (DelegationScope) plus the startup orphan sweep; no state that can silently drift.
 
 pub mod coordinator;
 pub mod scope;

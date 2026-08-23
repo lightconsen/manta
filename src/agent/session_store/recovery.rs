@@ -183,6 +183,105 @@ impl SessionStore {
         debug!("Inserted {} synthetic tool result(s) for session {}", repaired, session_id);
         Ok(repaired)
     }
+
+    /// Scan every persisted session for orphaned tool calls *without*
+    /// repairing them. Returns one entry per session that still has unpaired
+    /// calls; an empty map means every stored history is balanced.
+    ///
+    /// This is the read-only half of [`SessionStore::repair_orphan_tool_calls`],
+    /// used by the runtime invariant registry (`syscity invariants`).
+    pub async fn orphaned_tool_calls_by_session(
+        &self,
+    ) -> Result<Vec<(String, Vec<OrphanToolCall>)>> {
+        let session_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT session_id FROM session_messages ORDER BY session_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| SyscityError::Storage {
+            context: "Failed to list sessions for balance scan".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let mut unbalanced = Vec::new();
+        for session_id in session_ids {
+            let rows = sqlx::query(
+                r#"
+                SELECT role, tool_calls_json, metadata
+                FROM session_messages
+                WHERE session_id = ?
+                ORDER BY id
+                "#,
+            )
+            .bind(&session_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| SyscityError::Storage {
+                context: format!(
+                    "Failed to scan messages of session {session_id} for orphaned tool calls"
+                ),
+                details: e.to_string(),
+            })?;
+            let balance_rows: Vec<BalanceRow> = rows
+                .iter()
+                .map(|r| BalanceRow {
+                    role: r.get("role"),
+                    tool_calls_json: r.get("tool_calls_json"),
+                    metadata: r.get("metadata"),
+                })
+                .collect();
+            let orphans = orphan_tool_calls(&balance_rows);
+            if !orphans.is_empty() {
+                unbalanced.push((session_id, orphans));
+            }
+        }
+        Ok(unbalanced)
+    }
+}
+
+/// Runtime invariant checks owned by the session store (registered via
+/// `core::invariants::register_builtins`, surfaced through `syscity
+/// invariants`).
+pub(crate) fn invariant_checks() -> Vec<crate::core::invariants::Invariant> {
+    use crate::core::invariants::{Invariant, SKIP_PREFIX};
+
+    vec![Invariant {
+        id: "agent/session_history_balanced",
+        module: "agent",
+        description: "every persisted session has a tool result for each tool call",
+        check: || {
+            Box::pin(async {
+                let db_path = crate::dirs::default_memory_db();
+                if !db_path.exists() {
+                    return Err(format!(
+                        "{SKIP_PREFIX}daemon has never run; no session store at {}",
+                        db_path.display()
+                    ));
+                }
+                let url = format!("sqlite:///{}", db_path.display());
+                let store = SessionStore::new(&url).await.map_err(|e| {
+                    format!("failed to open session store at {}: {e}", db_path.display())
+                })?;
+                let unbalanced = store
+                    .orphaned_tool_calls_by_session()
+                    .await
+                    .map_err(|e| format!("balance scan failed: {e}"))?;
+                if unbalanced.is_empty() {
+                    return Ok(());
+                }
+                let summary: Vec<String> = unbalanced
+                    .iter()
+                    .map(|(sid, orphans)| format!("{} ({} orphaned)", sid, orphans.len()))
+                    .collect();
+                Err(format!(
+                    "{} session(s) with orphaned tool calls — run the daemon once to \
+                     auto-repair on load: {}",
+                    unbalanced.len(),
+                    summary.join(", ")
+                ))
+            })
+        },
+    }]
 }
 
 #[cfg(test)]

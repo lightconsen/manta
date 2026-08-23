@@ -2,6 +2,7 @@
 //!
 //! Tools are capabilities that the AI assistant can use to interact
 //! with the world (execute shell commands, read files, search the web, etc.).
+// INVARIANTS-NONE: tool results flow through the spill/fence/approval pipelines enforced per call; the todo store invariant lives with TodoStore in agent/.
 
 pub mod approval;
 pub mod ask_user;
