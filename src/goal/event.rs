@@ -18,6 +18,13 @@ pub enum BlockedReasonCode {
     AgentError,
     /// A human cancelled the goal.
     Cancelled,
+    /// Fresh-context mode: a round's structured handoff was missing,
+    /// malformed, over-limit, or violated its schema. Rejected outright —
+    /// never truncated or interpreted.
+    InvalidHandoff,
+    /// Fatal configuration problem (e.g. no provider configured for the
+    /// plan's model). Resuming requires fixing the configuration first.
+    FatalConfigError,
 }
 
 /// Structured abort reason: a stable code for programmatic consumers plus a

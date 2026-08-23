@@ -35,6 +35,11 @@ pub struct PersistedGoalState {
     /// checkpoints; resuming clears it.
     #[serde(default)]
     pub blocked_reason: Option<crate::goal::event::BlockedReason>,
+    /// Last validated structured handoff (fresh-context mode only). Carried
+    /// across restarts so a resumed goal keeps the same between-round state it
+    /// would have had in-process.
+    #[serde(default)]
+    pub last_handoff: Option<crate::goal::handoff::RoundHandoff>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -152,6 +157,7 @@ pub fn to_persisted(
     round: usize,
     condition_history: &[crate::goal::runner::RoundResult],
     blocked_reason: Option<crate::goal::event::BlockedReason>,
+    last_handoff: Option<&crate::goal::handoff::RoundHandoff>,
 ) -> PersistedGoalState {
     let now = Utc::now();
     PersistedGoalState {
@@ -167,6 +173,7 @@ pub fn to_persisted(
             })
             .collect(),
         blocked_reason,
+        last_handoff: last_handoff.cloned(),
         created_at: now,
         updated_at: now,
     }
@@ -231,6 +238,7 @@ mod tests {
                 }],
             }],
             blocked_reason: None,
+            last_handoff: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -257,7 +265,7 @@ mod tests {
             },
         );
 
-        let state = to_persisted("goal_1", "session_1", &plan, 3, &condition_history, None);
+        let state = to_persisted("goal_1", "session_1", &plan, 3, &condition_history, None, None);
         assert_eq!(state.goal_id, "goal_1");
         assert_eq!(state.parent_session_id, "session_1");
         assert_eq!(state.round, 3);
@@ -355,6 +363,38 @@ mod tests {
         let state: PersistedGoalState = serde_json::from_value(json).unwrap();
         assert_eq!(state.goal_id, "goal_old");
         assert!(state.blocked_reason.is_none());
+    }
+
+    #[test]
+    fn test_last_handoff_roundtrip_and_default() {
+        use crate::goal::handoff::{HandoffStatus, RoundHandoff};
+
+        // Old files without last_handoff load with None.
+        let json = serde_json::json!({
+            "goal_id": "goal_old",
+            "parent_session_id": "session_1",
+            "plan": {"description": "d", "conditions": [], "max_rounds": 5},
+            "round": 2,
+            "condition_history": [],
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        });
+        let state: PersistedGoalState = serde_json::from_value(json).unwrap();
+        assert!(state.last_handoff.is_none());
+
+        // A checkpoint carrying a handoff round-trips through to_persisted.
+        let handoff = RoundHandoff {
+            status: HandoffStatus::Continue,
+            summary: "wrote the skeleton".to_string(),
+            next_steps: vec!["fill in chapter 2".to_string()],
+            evidence: vec![],
+        };
+        let plan = GoalPlan::new("d");
+        let state = to_persisted("g", "s", &plan, 3, &[], None, Some(&handoff));
+        assert_eq!(state.last_handoff.as_ref().unwrap(), &handoff);
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: PersistedGoalState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.last_handoff.as_ref().unwrap(), &handoff);
     }
 
     #[test]

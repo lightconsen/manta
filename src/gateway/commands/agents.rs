@@ -164,7 +164,7 @@ pub(super) async fn handle_goal(
         return WsResponse::err(
             &req.id,
             "INVALID_ARGS",
-            "Usage: /goal <description> [--max-rounds N]",
+            "Usage: /goal <description> [--max-rounds N] [--fresh]",
         );
     }
 
@@ -186,11 +186,33 @@ pub(super) async fn handle_goal(
         return WsResponse::err(&req.id, "INVALID_ARGS", "Description required");
     }
 
+    // Parse optional --fresh flag: run the Ralph-style fresh-context loop,
+    // where each round spawns a seedless sub-agent and only a bounded
+    // validated handoff carries between rounds.
+    let mut fresh_context = false;
+    let mut parts: Vec<&str> = description.split_whitespace().collect();
+    let before_len = parts.len();
+    parts.retain(|token| {
+        if *token == "--fresh" {
+            fresh_context = true;
+            false
+        } else {
+            true
+        }
+    });
+    if parts.len() != before_len {
+        description = parts.join(" ");
+    }
+
+    if description.is_empty() {
+        return WsResponse::err(&req.id, "INVALID_ARGS", "Description required");
+    }
+
     // Resolve the real session_id from the connection's subscriptions.
     let session_id = conn.read().await.subscriptions.first().cloned();
 
     // Parse the goal description into structured conditions using the LLM.
-    let plan = match crate::goal::GoalPlan::parse_with_llm(
+    let mut plan = match crate::goal::GoalPlan::parse_with_llm(
         &state.infra.model_router,
         &description,
         Some(max_rounds),
@@ -206,6 +228,9 @@ pub(super) async fn handle_goal(
             );
         }
     };
+    if fresh_context {
+        plan.fresh_context = true;
+    }
 
     let goal_id = format!("goal_{}", uuid::Uuid::new_v4());
     let sid = session_id.unwrap_or_else(|| "unknown".to_string());
@@ -263,7 +288,13 @@ pub(super) async fn handle_goal(
     WsResponse::ok(
         &req.id,
         serde_json::json!({
-            "text": format!("🎯 Goal started: {}\nID: {}\nMax rounds: {}\n\nGoal events will appear in this session.", description, goal_id, max_rounds),
+            "text": format!(
+                "🎯 Goal started: {}\nID: {}\nMax rounds: {}{}\n\nGoal events will appear in this session.",
+                description,
+                goal_id,
+                max_rounds,
+                if fresh_context { "\nMode: fresh-context (Ralph)" } else { "" }
+            ),
             "goal_id": goal_id,
         }),
     )

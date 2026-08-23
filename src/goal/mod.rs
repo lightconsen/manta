@@ -11,14 +11,18 @@
 //! - [`plan`] — [`GoalPlan`](plan::GoalPlan) with parsed conditions, max rounds
 //! - [`event`] — [`GoalEvent`](event::GoalEvent) emitted during execution
 //! - [`runner`] — [`GoalRunner`](runner::GoalRunner) background execution loop
+//! - [`handoff`] — bounded structured handoff for the fresh-context ("Ralph")
+//!   loop mode, where each round runs in a brand-new seedless sub-agent
 
 pub mod condition;
 pub mod event;
+pub mod handoff;
 pub mod persist;
 pub mod plan;
 pub mod runner;
 
 pub use condition::{CheckResult, Comparison, GoalCondition};
 pub use event::{BlockedReason, BlockedReasonCode, GoalEvent};
+pub use handoff::{extract_handoff, HandoffStatus, RoundHandoff};
 pub use plan::GoalPlan;
 pub use runner::GoalRunner;

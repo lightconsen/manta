@@ -34,6 +34,13 @@ pub struct GoalPlan {
     /// Optional model override for the sub-agent.
     #[serde(default)]
     pub model_override: Option<String>,
+    /// Ralph-style fresh-context mode: each round runs in a brand-new seedless
+    /// sub-agent (no parent conversation prefix, no accumulating session). The
+    /// workspace on disk is the long-term memory; between rounds only a bounded,
+    /// strictly-validated [`RoundHandoff`](crate::goal::handoff::RoundHandoff)
+    /// plus the deterministic condition results are carried.
+    #[serde(default)]
+    pub fresh_context: bool,
 }
 
 fn default_max_rounds() -> usize {
@@ -48,6 +55,7 @@ impl GoalPlan {
             conditions: Vec::new(),
             max_rounds: default_max_rounds(),
             model_override: None,
+            fresh_context: false,
         }
     }
 
@@ -66,6 +74,12 @@ impl GoalPlan {
     /// Set model override.
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model_override = Some(model.into());
+        self
+    }
+
+    /// Enable or disable fresh-context (Ralph) loop mode.
+    pub fn with_fresh_context(mut self, fresh: bool) -> Self {
+        self.fresh_context = fresh;
         self
     }
 
@@ -160,6 +174,33 @@ mod tests {
     fn test_goal_plan_with_model() {
         let plan = GoalPlan::new("test").with_model("claude-sonnet-4-6");
         assert_eq!(plan.model_override, Some("claude-sonnet-4-6".to_string()));
+    }
+
+    #[test]
+    fn test_goal_plan_fresh_context_default_and_builder() {
+        assert!(!GoalPlan::new("test").fresh_context);
+        let plan = GoalPlan::new("test").with_fresh_context(true);
+        assert!(plan.fresh_context);
+    }
+
+    #[test]
+    fn test_goal_plan_fresh_context_missing_in_json_defaults_false() {
+        let json = r#"{"description":"test","conditions":[],"max_rounds":2}"#;
+        let plan: GoalPlan = serde_json::from_str(json).unwrap();
+        assert!(!plan.fresh_context);
+    }
+
+    #[test]
+    fn test_goal_plan_fresh_context_roundtrip() {
+        let plan = GoalPlan::new("test")
+            .with_condition(GoalCondition::ExitCode {
+                command: "true".to_string(),
+                expected: Some(0),
+            })
+            .with_fresh_context(true);
+        let json = serde_json::to_string(&plan).unwrap();
+        let restored: GoalPlan = serde_json::from_str(&json).unwrap();
+        assert!(restored.fresh_context);
     }
 
     #[test]

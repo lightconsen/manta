@@ -79,7 +79,11 @@ pub(crate) async fn spawn_goal_runner(
         goal_tx,
     )
     .with_store(crate::goal::persist::shared_store())
-    .with_progress(persisted.round, condition_history);
+    .with_progress(persisted.round, condition_history)
+    // Fresh-context goals resume with the same carried handoff they had
+    // in-process — a restart must not silently drop the only inter-round
+    // state.
+    .with_handoff(persisted.last_handoff.clone());
 
     let cancel_token = runner.cancel_token();
     {
