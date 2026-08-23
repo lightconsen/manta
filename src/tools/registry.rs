@@ -68,6 +68,10 @@ pub struct ToolRegistry {
     /// Shared provider list for the web_search tool. Hot-reload updates this
     /// directly when `[search]` configuration changes.
     web_search_providers: Option<WebSearchProviders>,
+    /// Shared todo state backing the `todo` tool. The agent engine reads
+    /// this to clear a conversation's active plan at the start of each new
+    /// user turn.
+    todo_state: Option<Arc<super::todo_tool::TodoState>>,
     /// Oversized successful tool outputs above this many bytes are spilled
     /// to a workspace file and replaced with a head/tail preview.
     /// `None` disables spilling.
@@ -92,6 +96,7 @@ impl Default for ToolRegistry {
             content_filter: None,
             audit_log: None,
             web_search_providers: None,
+            todo_state: None,
             spill_threshold: Some(Self::DEFAULT_SPILL_THRESHOLD),
         }
     }
@@ -140,6 +145,7 @@ impl ToolRegistry {
             content_filter: None,
             audit_log: None,
             web_search_providers: None,
+            todo_state: None,
             spill_threshold: Some(Self::DEFAULT_SPILL_THRESHOLD),
         }
     }
@@ -162,6 +168,7 @@ impl ToolRegistry {
             content_filter: None,
             audit_log: None,
             web_search_providers: None,
+            todo_state: None,
             spill_threshold: Some(Self::DEFAULT_SPILL_THRESHOLD),
         }
     }
@@ -182,6 +189,20 @@ impl ToolRegistry {
     /// Get a clone of the shared web_search provider list, if one was set.
     pub fn web_search_providers(&self) -> Option<WebSearchProviders> {
         self.web_search_providers.clone()
+    }
+
+    /// Attach the shared todo state so the agent engine can clear a
+    /// conversation's active plan at the start of each new user turn. The
+    /// registered `todo` tool must be built over the same handle
+    /// ([`TodoTool::with_state`](super::todo_tool::TodoTool::with_state)).
+    pub fn with_todo_state(mut self, state: Arc<super::todo_tool::TodoState>) -> Self {
+        self.todo_state = Some(state);
+        self
+    }
+
+    /// Get a clone of the shared todo state, if one was set.
+    pub fn todo_state(&self) -> Option<Arc<super::todo_tool::TodoState>> {
+        self.todo_state.clone()
     }
 
     // ── Circuit breaker ───────────────────────────────────────────────────────

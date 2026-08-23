@@ -1,15 +1,23 @@
 //! Todo Tool - Task management for the agent
 //!
-//! This tool allows the agent to create, update, and manage tasks
-//! during complex multi-step operations.
+//! The tool uses whole-snapshot semantics: every call carries the COMPLETE
+//! new task list, and writing it atomically replaces the stored state
+//! (last write wins — there is no partial merge). This eliminates
+//! partial-update corner states and stale checklists.
 //!
-//! Tasks are persisted to disk in ~/.syscity/todos/{conversation_id}.json
+//! State is held in [`TodoState`] behind an `Arc`, shared between the tool
+//! and the [`crate::tools::ToolRegistry`]. The engine clears a conversation's
+//! snapshot at the start of each new user turn so the UI never shows a stale
+//! checklist.
+//!
+//! Snapshots persist to disk in ~/.syscity/todos/{conversation_id}.json
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -18,29 +26,38 @@ use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::todo::{TaskStatus, TodoStore};
 use crate::tools::sdk::ToolCapabilities;
 
-/// Tool for managing tasks/todos
+/// Shared per-conversation todo state (in-memory cache + disk persistence).
+///
+/// Both the [`TodoTool`] and the agent engine hold an `Arc<TodoState>`,
+/// which lets the engine clear the active plan for a conversation when a
+/// new user turn begins without reaching into the boxed tool instance.
 #[derive(Debug)]
-pub struct TodoTool {
+pub struct TodoState {
     /// In-memory storage of todo lists per conversation
-    stores: Arc<RwLock<HashMap<String, TodoStore>>>,
+    stores: RwLock<HashMap<String, TodoStore>>,
     /// Base directory for todo files
     base_dir: PathBuf,
 }
 
-impl TodoTool {
-    /// Create a new todo tool
+impl Default for TodoState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TodoState {
+    /// Create state backed by the default todos directory
     pub fn new() -> Self {
         Self {
-            stores: Arc::new(RwLock::new(HashMap::new())),
+            stores: RwLock::new(HashMap::new()),
             base_dir: crate::dirs::todos_dir(),
         }
     }
 
     /// Create with custom directory (for testing)
-    #[cfg(test)]
     pub fn with_dir(base_dir: PathBuf) -> Self {
         Self {
-            stores: Arc::new(RwLock::new(HashMap::new())),
+            stores: RwLock::new(HashMap::new()),
             base_dir,
         }
     }
@@ -81,28 +98,12 @@ impl TodoTool {
         }
     }
 
-    /// Save a todo store to disk
-    async fn save_to_disk(&self, conversation_id: &str, store: &TodoStore) {
-        let path = self.todo_file_path(conversation_id);
-
-        debug!("Saving todo store to {:?}", path);
-
-        match store.to_json() {
-            Ok(json) => {
-                if let Err(e) = tokio::fs::write(&path, json).await {
-                    error!("Failed to write todo file {:?}: {}", path, e);
-                } else {
-                    debug!("Saved {} tasks for conversation {}", store.count(), conversation_id);
-                }
-            }
-            Err(e) => {
-                error!("Failed to serialize todo store: {}", e);
-            }
-        }
-    }
-
-    /// Get or create a store for a conversation
-    async fn get_store(&self, conversation_id: &str) -> TodoStore {
+    /// Get (or create) the in-store snapshot for a conversation.
+    ///
+    /// Prefers the in-memory cache, then falls back to the persisted file,
+    /// then starts from an empty store. The monotonic task-ID counter inside
+    /// the loaded store keeps IDs unique across whole-snapshot replaces.
+    pub async fn get_store(&self, conversation_id: &str) -> TodoStore {
         // First check in-memory cache
         {
             let stores = self.stores.read().await;
@@ -125,14 +126,67 @@ impl TodoTool {
         store
     }
 
-    /// Save a store for a conversation (memory + disk)
-    async fn save_store(&self, conversation_id: &str, store: TodoStore) {
-        // Save to disk first
-        self.save_to_disk(conversation_id, &store).await;
+    /// Persist the snapshot for a conversation (memory + disk).
+    ///
+    /// The file write goes through a temp file + rename so readers never see
+    /// a torn half-written snapshot.
+    pub async fn save_store(&self, conversation_id: &str, store: TodoStore) -> crate::Result<()> {
+        let path = self.todo_file_path(conversation_id);
 
-        // Update in-memory cache
+        debug!("Saving todo store to {:?}", path);
+
+        let json = store.to_json()?;
+        let tmp_path = path.with_extension("json.tmp");
+        if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
+            error!("Failed to write todo temp file {:?}: {}", tmp_path, e);
+            return Err(crate::error::SyscityError::Storage {
+                context: format!("Failed to write todo temp file: {:?}", tmp_path),
+                details: e.to_string(),
+            });
+        }
+        if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
+            error!("Failed to rename todo file {:?} -> {:?}: {}", tmp_path, path, e);
+            return Err(crate::error::SyscityError::Storage {
+                context: format!("Failed to persist todo file: {:?}", path),
+                details: e.to_string(),
+            });
+        }
+
+        debug!("Saved {} tasks for conversation {}", store.count(), conversation_id);
+
+        // Update in-memory cache only after the disk write succeeded.
         let mut stores = self.stores.write().await;
         stores.insert(conversation_id.to_string(), store);
+        Ok(())
+    }
+
+    /// Clear the active plan for a conversation (memory + disk).
+    ///
+    /// Called by the engine at the start of every new user turn: "the
+    /// currently effective plan" is the most recent turn's todo, so a new
+    /// turn automatically clears it and the UI never shows a stale
+    /// checklist. Best-effort: failures are logged, never fatal.
+    pub async fn clear_conversation(&self, conversation_id: &str) {
+        {
+            let mut stores = self.stores.write().await;
+            stores.remove(conversation_id);
+        }
+
+        let path = self.todo_file_path(conversation_id);
+        if !path.exists() {
+            return;
+        }
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => {
+                debug!("Cleared todo snapshot for conversation {}", conversation_id);
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to remove todo file {:?} for conversation {}: {}",
+                    path, conversation_id, e
+                );
+            }
+        }
     }
 
     /// Clean up old completed tasks across all conversations
@@ -190,7 +244,10 @@ impl TodoTool {
                     }
                 } else if store.count() != before_count {
                     // Save if we removed some tasks
-                    self.save_to_disk(&conversation_id, &store).await;
+                    if let Err(e) = self.save_store(&conversation_id, store.clone()).await {
+                        warn!("Failed to save cleaned todo store: {}", e);
+                        continue;
+                    }
 
                     // Update cache if present
                     let mut stores = self.stores.write().await;
@@ -230,6 +287,56 @@ impl TodoTool {
     }
 }
 
+/// One task entry in a whole-snapshot write.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TaskInput {
+    /// Task content/description
+    pub content: String,
+    /// Task status; defaults to pending
+    #[serde(default)]
+    pub status: Option<TaskStatus>,
+    /// Task priority 1-5 (1=highest); defaults to medium (3)
+    #[serde(default)]
+    pub priority: Option<u8>,
+}
+
+/// Tool for managing tasks/todos via whole-snapshot writes
+#[derive(Debug)]
+pub struct TodoTool {
+    /// Shared todo state, also held by the registry for turn-start resets
+    state: Arc<TodoState>,
+}
+
+impl TodoTool {
+    /// Create a new todo tool with its own private state
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(TodoState::new()),
+        }
+    }
+
+    /// Create a todo tool sharing `state`.
+    ///
+    /// Used by the gateway so the agent engine can clear the active plan
+    /// through the same handle the tool writes to.
+    pub fn with_state(state: Arc<TodoState>) -> Self {
+        Self { state }
+    }
+
+    /// Create with custom directory (for testing)
+    #[cfg(test)]
+    pub fn with_dir(base_dir: PathBuf) -> Self {
+        Self {
+            state: Arc::new(TodoState::with_dir(base_dir)),
+        }
+    }
+
+    /// The shared state backing this tool.
+    pub fn state(&self) -> Arc<TodoState> {
+        self.state.clone()
+    }
+}
+
 impl Default for TodoTool {
     fn default() -> Self {
         Self::new()
@@ -243,50 +350,55 @@ impl Tool for TodoTool {
     }
 
     fn description(&self) -> &str {
-        r#"Manage tasks and todo lists.
+        r#"Write the agent's task list (todo checklist).
 
-Use this tool for complex tasks with 3+ steps to track progress and ensure completion.
-You can create tasks, update their status, list active tasks, and clear completed ones.
+The input IS the complete new task list: EVERY call atomically replaces the
+entire stored list (last write wins - there is no merge or incremental update).
+To add a task, resend the full list including it. To drop a task, omit it.
+To clear the list, send an empty array.
 
-Tasks are automatically saved and persist across daemon restarts.
+Rules:
+- Always send the complete list, including unchanged tasks with their current
+  status.
+- Keep exactly ONE task in_progress at a time.
+- Mark tasks completed as soon as they finish, then resend the updated list.
 
-Examples:
-- Create tasks for a multi-step project
-- Mark tasks as complete when done
-- List pending tasks to see what's remaining
-- Clear completed tasks when finished"#
+Use this tool for complex tasks with 3+ steps to track progress and ensure
+completion. Snapshots persist across daemon restarts and are automatically
+cleared when a new user turn begins."#
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "update", "list", "clear_completed", "get_status"],
-                    "description": "The action to perform"
-                },
-                "task_id": {
-                    "type": "string",
-                    "description": "Task ID (required for update action)"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Task content/description (required for create action)"
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["pending", "in_progress", "completed", "cancelled"],
-                    "description": "New status (for update action)"
-                },
-                "priority": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 5,
-                    "description": "Task priority 1-5 (1=highest, 5=lowest)"
+                "todos": {
+                    "type": "array",
+                    "description": "The COMPLETE new task list; fully replaces the previous list",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {
+                                "type": "string",
+                                "description": "Task content/description"
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed", "cancelled"],
+                                "description": "Task status (defaults to pending)"
+                            },
+                            "priority": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 5,
+                                "description": "Task priority 1-5 (1=highest, 5=lowest; defaults to 3)"
+                            }
+                        },
+                        "required": ["content"]
+                    }
                 }
             },
-            "required": ["action"]
+            "required": ["todos"]
         })
     }
 
@@ -304,135 +416,58 @@ Examples:
         args: serde_json::Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args["action"].as_str().ok_or_else(|| {
-            crate::error::SyscityError::Validation("action is required".to_string())
+        let todos_value = args.get("todos").ok_or_else(|| {
+            crate::error::SyscityError::Validation(
+                "todos is required: pass the complete task list (possibly empty)".to_string(),
+            )
+        })?;
+        let items: Vec<TaskInput> = serde_json::from_value(todos_value.clone()).map_err(|e| {
+            crate::error::SyscityError::Validation(format!(
+                "Invalid todos array (each item needs content, plus optional status/priority): {}",
+                e
+            ))
         })?;
 
         let conversation_id = &context.conversation_id;
-        let mut store = self.get_store(conversation_id).await;
 
-        match action {
-            "create" => {
-                let content = args["content"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation(
-                        "content is required for create".to_string(),
-                    )
-                })?;
+        // Start from the existing store so its monotonic ID counter survives
+        // across snapshots, then replace its contents wholesale.
+        let mut store = self.state.get_store(conversation_id).await;
+        let specs = items.into_iter().map(|item| {
+            (
+                item.content,
+                item.status.unwrap_or(TaskStatus::Pending),
+                item.priority.unwrap_or(3),
+            )
+        });
+        let tasks = store.replace_tasks(specs);
 
-                let mut task = store.create_task(content);
+        let total = tasks.len();
+        let active = tasks.iter().filter(|t| t.is_active()).count();
+        let formatted = store.format_for_prompt();
+        self.state.save_store(conversation_id, store).await?;
 
-                if let Some(priority) = args["priority"].as_u64() {
-                    task.set_priority(priority as u8);
-                }
+        let output = if total == 0 {
+            "Task list cleared.".to_string()
+        } else {
+            format!("Task list replaced ({} tasks, {} active).\n{}", total, active, formatted)
+        };
 
-                self.save_store(conversation_id, store).await;
-
-                Ok(ToolExecutionResult::success(format!("Created task: {}", task.content))
-                    .with_data(json!({
-                        "task_id": task.id,
-                        "content": task.content,
-                        "status": task.status.to_string(),
-                        "priority": task.priority
-                    })))
-            }
-
-            "update" => {
-                let task_id = args["task_id"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation(
-                        "task_id is required for update".to_string(),
-                    )
-                })?;
-
-                let task = store.get_mut(task_id).ok_or_else(|| {
-                    crate::error::SyscityError::Validation(format!("Task {} not found", task_id))
-                })?;
-
-                if let Some(status_str) = args["status"].as_str() {
-                    let status = match status_str {
-                        "pending" => TaskStatus::Pending,
-                        "in_progress" => TaskStatus::InProgress,
-                        "completed" => TaskStatus::Completed,
-                        "cancelled" => TaskStatus::Cancelled,
-                        _ => {
-                            return Err(crate::error::SyscityError::Validation(format!(
-                                "Invalid status: {}",
-                                status_str
-                            )))
-                        }
-                    };
-                    task.set_status(status);
-                }
-
-                if let Some(priority) = args["priority"].as_u64() {
-                    task.set_priority(priority as u8);
-                }
-
-                let task_clone = task.clone();
-                self.save_store(conversation_id, store).await;
-
-                Ok(ToolExecutionResult::success(format!("Updated task: {}", task_clone.content))
-                    .with_data(json!({
-                        "task_id": task_clone.id,
-                        "content": task_clone.content,
-                        "status": task_clone.status.to_string(),
-                        "priority": task_clone.priority
-                    })))
-            }
-
-            "list" => {
-                let tasks: Vec<_> = store
-                    .list()
-                    .into_iter()
-                    .map(|t| {
-                        json!({
-                            "id": t.id,
-                            "content": t.content,
-                            "status": t.status.to_string(),
-                            "priority": t.priority,
-                            "created_at": t.created_at.to_rfc3339()
-                        })
+        Ok(ToolExecutionResult::success(output).with_data(json!({
+            "tasks": tasks
+                .iter()
+                .map(|t| {
+                    json!({
+                        "id": t.id,
+                        "content": t.content,
+                        "status": t.status.to_string(),
+                        "priority": t.priority,
                     })
-                    .collect();
-
-                let active_count = store.list_active().len();
-                let formatted = store.format_for_prompt();
-
-                Ok(ToolExecutionResult::success(formatted).with_data(json!({
-                    "tasks": tasks,
-                    "total": store.count(),
-                    "active": active_count
-                })))
-            }
-
-            "clear_completed" => {
-                let cleared = store.clear_completed();
-                self.save_store(conversation_id, store).await;
-
-                Ok(ToolExecutionResult::success(format!("Cleared {} completed tasks", cleared))
-                    .with_data(json!({"cleared": cleared})))
-            }
-
-            "get_status" => {
-                let total = store.count();
-                let pending = store.count_by_status(TaskStatus::Pending);
-                let in_progress = store.count_by_status(TaskStatus::InProgress);
-                let completed = store.count_by_status(TaskStatus::Completed);
-
-                let summary = format!(
-                    "Tasks: {} total, {} pending, {} in progress, {} completed",
-                    total, pending, in_progress, completed
-                );
-
-                Ok(ToolExecutionResult::success(summary).with_data(json!({
-                    "total": total,
-                    "pending": pending,
-                    "in_progress": in_progress,
-                    "completed": completed
-                })))
-            }
-
-            _ => Err(crate::error::SyscityError::Validation(format!("Unknown action: {}", action))),
-        }
+                })
+                .collect::<Vec<_>>(),
+            "total": total,
+            "active": active
+        })))
     }
 }
 
@@ -440,99 +475,199 @@ Examples:
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_todo_tool_create() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("syscity_todo_test_{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+    fn temp_todo_dir(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("syscity_todo_test_{}_{}", tag, uuid::Uuid::new_v4()))
+    }
 
+    async fn write_snapshot(tool: &TodoTool, ctx: &ToolContext, items: serde_json::Value) {
+        tool.execute(json!({ "todos": items }), ctx).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_todo_snapshot_replace_removes_stale_tasks() {
+        let temp_dir = temp_todo_dir("replace");
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let tool = TodoTool::with_dir(temp_dir.clone());
-        let ctx = ToolContext::new("user", "conv_1");
+        let ctx = ToolContext::new("user", "conv_replace");
 
-        let args = json!({
-            "action": "create",
-            "content": "Test task"
-        });
+        write_snapshot(
+            &tool,
+            &ctx,
+            json!([
+                {"content": "Old task A"},
+                {"content": "Old task B", "status": "in_progress"}
+            ]),
+        )
+        .await;
 
-        let result = tool.execute(args, &ctx).await;
-        assert!(result.is_ok());
-
-        // Verify file was created
-        let todo_file = temp_dir.join("conv_1.json");
-        assert!(todo_file.exists());
-
-        // Clean up
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    }
-
-    #[tokio::test]
-    async fn test_todo_tool_persistence() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("syscity_todo_test_{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-
-        // Create first tool instance and add task
-        {
-            let tool = TodoTool::with_dir(temp_dir.clone());
-            let ctx = ToolContext::new("user", "persistent_conv");
-
-            tool.execute(json!({"action": "create", "content": "Persistent task"}), &ctx)
-                .await
-                .unwrap();
-        }
-
-        // Create second tool instance (simulating daemon restart)
-        {
-            let tool = TodoTool::with_dir(temp_dir.clone());
-            let ctx = ToolContext::new("user", "persistent_conv");
-
-            let result = tool.execute(json!({"action": "list"}), &ctx).await.unwrap();
-
-            let output = result.to_string();
-            assert!(output.contains("Persistent task"));
-        }
-
-        // Clean up
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    }
-
-    #[tokio::test]
-    async fn test_todo_tool_list() {
-        let tool = TodoTool::new();
-        let ctx = ToolContext::new("user", "conv_1");
-
-        // Create a task first
-        tool.execute(json!({"action": "create", "content": "Task 1"}), &ctx)
+        // Second write carries the complete NEW list: removed tasks are gone.
+        let result = tool
+            .execute(json!({"todos": [{"content": "New task C", "status": "in_progress"}]}), &ctx)
             .await
             .unwrap();
 
-        let result = tool.execute(json!({"action": "list"}), &ctx).await.unwrap();
+        assert!(result.output.contains("New task C"));
+        assert!(!result.output.contains("Old task A"), "removed task must disappear");
+        let data = result.data.unwrap();
+        assert_eq!(data["total"], 1);
+        assert_eq!(data["tasks"][0]["status"], "in_progress");
 
-        let output = result.to_string();
-        assert!(output.contains("Task 1"));
+        // The persisted file reflects exactly the latest snapshot.
+        let raw = tokio::fs::read_to_string(temp_dir.join("conv_replace.json"))
+            .await
+            .unwrap();
+        assert!(raw.contains("New task C"));
+        assert!(!raw.contains("Old task A"));
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_todo_snapshot_empty_clears_all() {
+        let temp_dir = temp_todo_dir("empty");
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let tool = TodoTool::with_dir(temp_dir.clone());
+        let ctx = ToolContext::new("user", "conv_empty");
+
+        write_snapshot(&tool, &ctx, json!([{"content": "Only task"}])).await;
+
+        let result = tool.execute(json!({"todos": []}), &ctx).await.unwrap();
+        assert!(result.output.contains("cleared"));
+
+        let data = result.data.unwrap();
+        assert_eq!(data["total"], 0);
+
+        // A follow-up write starts fresh.
+        write_snapshot(&tool, &ctx, json!([{"content": "Fresh task"}])).await;
+        let raw = tokio::fs::read_to_string(temp_dir.join("conv_empty.json"))
+            .await
+            .unwrap();
+        assert!(raw.contains("Fresh task"));
+        assert!(!raw.contains("Only task"));
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_todo_missing_todos_arg_is_validation_error() {
+        let tool = TodoTool::with_dir(temp_todo_dir("missing"));
+        let ctx = ToolContext::new("user", "conv_missing");
+
+        let err = tool.execute(json!({}), &ctx).await.unwrap_err();
+        assert!(err.to_string().contains("todos is required"));
+
+        let err = tool
+            .execute(json!({"todos": [{"nope": true}]}), &ctx)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Invalid todos array"));
+    }
+
+    #[tokio::test]
+    async fn test_todo_persistence_across_instances() {
+        let temp_dir = temp_todo_dir("persist");
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+
+        // Create first tool instance and write a snapshot.
+        {
+            let tool = TodoTool::with_dir(temp_dir.clone());
+            let ctx = ToolContext::new("user", "persistent_conv");
+            write_snapshot(&tool, &ctx, json!([{"content": "Persistent task"}])).await;
+        }
+
+        // Create second tool instance (simulating daemon restart).
+        {
+            let tool = TodoTool::with_dir(temp_dir.clone());
+            let ctx = ToolContext::new("user", "persistent_conv");
+            // A whole-snapshot write that KEEPS the existing task must not
+            // collide IDs with pre-restart tasks.
+            let result = tool
+                .execute(
+                    json!({"todos": [
+                        {"content": "Persistent task", "status": "completed"},
+                        {"content": "Second generation task"}
+                    ]}),
+                    &ctx,
+                )
+                .await
+                .unwrap();
+
+            let data = result.data.unwrap();
+            assert_eq!(data["total"], 2);
+            let ids: Vec<&str> = data["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|t| t["id"].as_str())
+                .collect();
+            assert_eq!(ids.len(), 2);
+            assert_ne!(ids[0], ids[1], "regenerated IDs must stay unique");
+        }
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_todo_state_clear_conversation() {
+        let temp_dir = temp_todo_dir("clear");
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let state = Arc::new(TodoState::with_dir(temp_dir.clone()));
+        let tool = TodoTool::with_state(state.clone());
+        let ctx = ToolContext::new("user", "conv_clear");
+
+        write_snapshot(&tool, &ctx, json!([{"content": "Stale checklist"}])).await;
+        assert!(temp_dir.join("conv_clear.json").exists());
+
+        state.clear_conversation("conv_clear").await;
+
+        // Memory entry gone...
+        let stores = state.stores.read().await;
+        assert!(!stores.contains_key("conv_clear"));
+        drop(stores);
+        // ...and the persisted snapshot deleted.
+        assert!(!temp_dir.join("conv_clear.json").exists());
+
+        // Clearing again (nothing left) is a no-op, not an error.
+        state.clear_conversation("conv_clear").await;
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_shared_state_visible_between_tool_instances() {
+        let temp_dir = temp_todo_dir("shared");
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let state = Arc::new(TodoState::with_dir(temp_dir.clone()));
+
+        let writer = TodoTool::with_state(state.clone());
+        let reader = TodoTool::with_state(state.clone());
+        let ctx = ToolContext::new("user", "conv_shared");
+
+        write_snapshot(&writer, &ctx, json!([{"content": "Shared task"}])).await;
+
+        // The engine-facing handle sees the same snapshot without touching disk.
+        let store = state.get_store("conv_shared").await;
+        assert_eq!(store.count(), 1);
+        assert_eq!(store.list()[0].content, "Shared task");
+
+        // And so does another tool instance over the same handle.
+        let store = reader.state.get_store("conv_shared").await;
+        assert_eq!(store.count(), 1);
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 
     #[tokio::test]
     async fn test_todo_cleanup() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("syscity_todo_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir = temp_todo_dir("cleanup");
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
 
         let tool = TodoTool::with_dir(temp_dir.clone());
+        let state = tool.state();
 
-        // Create a task and complete it
         {
             let ctx = ToolContext::new("user", "cleanup_conv");
-            tool.execute(json!({"action": "create", "content": "Old task"}), &ctx)
-                .await
-                .unwrap();
-
-            tool.execute(
-                json!({"action": "update", "task_id": "task_1", "status": "completed"}),
-                &ctx,
-            )
-            .await
-            .unwrap();
+            write_snapshot(&tool, &ctx, json!([{"content": "Old task"}])).await;
         }
 
         // Manually modify the file to make the task old
@@ -540,19 +675,18 @@ mod tests {
         let todo_file = temp_dir.join("cleanup_conv.json");
         let old_date = (chrono::Utc::now() - chrono::Duration::days(40)).to_rfc3339();
         let modified = format!(
-            r#"{{"tasks":{{"task_1":{{"id":"task_1","content":"Old task","status":"completed","created_at":"{}","updated_at":"{}","completed_at":"{}","parent_id":null,"subtasks":[],"priority":3,"metadata":{{}}}}}},"order":["task_1"]}}"#,
+            r#"{{"tasks":{{"task_1":{{"id":"task_1","content":"Old task","status":"completed","created_at":"{}","updated_at":"{}","completed_at":"{}","parent_id":null,"subtasks":[],"priority":3,"metadata":{{}}}}}},"order":["task_1"],"next_id":2}}"#,
             old_date, old_date, old_date
         );
         tokio::fs::write(&todo_file, modified).await.unwrap();
 
         // Run cleanup (30 days)
-        let cleaned = tool.cleanup_old_completed(30).await;
+        let cleaned = state.cleanup_old_completed(30).await;
         assert_eq!(cleaned, 1);
 
         // Verify file was removed (since it was empty after cleanup)
         assert!(!todo_file.exists());
 
-        // Clean up
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 }

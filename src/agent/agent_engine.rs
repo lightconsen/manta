@@ -16,6 +16,42 @@ use super::agent_cache::{are_tools_cacheable, should_use_cache_llm};
 use super::*;
 
 impl Agent {
+    /// Begin-of-turn reset for the active plan surfaces.
+    ///
+    /// The currently effective plan is the todo list written during the most
+    /// recent turn; a new user turn automatically clears it so the UI never
+    /// shows a stale checklist. Concretely this:
+    ///
+    /// 1. Drops the conversation's `ActivePlan` (and its persisted snapshot)
+    ///    so the prompt no longer injects stale task context, and
+    /// 2. Clears the `todo` tool's whole-snapshot state for the conversation.
+    ///
+    /// Called before any planning runs for the new message, so a plan the
+    /// new turn creates is written after this reset and survives it.
+    async fn begin_user_turn_reset(&self, conversation_id: &str) {
+        let had_plan = {
+            let mut plans = self.active_plans.write().await;
+            plans.remove(conversation_id).is_some()
+        };
+        if had_plan {
+            // Best-effort removal of the persisted plan snapshot so a daemon
+            // restart cannot resurrect the cleared plan.
+            if let Some(ref dir) = self.plans_dir {
+                let path = dir.join(format!("{}.json", conversation_id));
+                if let Err(e) = tokio::fs::remove_file(&path).await {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        warn!("Failed to remove persisted plan {:?}: {}", path, e);
+                    }
+                }
+            }
+            info!("New turn: cleared active plan for conversation {}", conversation_id);
+        }
+
+        if let Some(todo_state) = self.tools.todo_state() {
+            todo_state.clear_conversation(conversation_id).await;
+        }
+    }
+
     /// Process an incoming message
     #[instrument(skip(self, message))]
     pub async fn process_message(
@@ -39,6 +75,10 @@ impl Agent {
                     .to_string(),
             ));
         }
+
+        // ── New-turn reset ────────────────────────────────────────────────────
+        // A new user turn clears the previous turn's active plan/todo list.
+        self.begin_user_turn_reset(&conversation_id).await;
 
         // ── Thread binding check ──────────────────────────────────────────────
         if let Some(ref manager) = self.thread_binding_manager {
@@ -535,6 +575,10 @@ impl Agent {
                 rejection,
             ));
         }
+
+        // ── New-turn reset ────────────────────────────────────────────────────
+        // A new user turn clears the previous turn's active plan/todo list.
+        self.begin_user_turn_reset(&conversation_id).await;
 
         // Check cache for identical prompt (only for non-follow-up, non-time-sensitive
         // messages)
@@ -2357,5 +2401,131 @@ mod tests {
             .iter()
             .any(|m| m.name.as_deref() == Some("compaction_summary")));
         assert!(context.message_count() < 20);
+    }
+
+    /// A provider whose completions always succeed.
+    struct AlwaysOk;
+
+    #[async_trait::async_trait]
+    impl Provider for AlwaysOk {
+        fn name(&self) -> &str {
+            "always-ok-test"
+        }
+
+        fn default_model(&self) -> &str {
+            "test-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            false
+        }
+
+        fn max_context(&self) -> usize {
+            128_000
+        }
+
+        async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                message: Message::assistant("ok"),
+                model: self.default_model().to_string(),
+                usage: Some(Usage::default()),
+                finish_reason: Some("stop".to_string()),
+            })
+        }
+
+        async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let _ = tx.send(CompletionChunk {
+                content: Some("ok".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                is_done: true,
+                usage: None,
+            });
+            Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)))
+        }
+
+        async fn health_check(&self) -> crate::Result<bool> {
+            Ok(true)
+        }
+
+        async fn set_credential(
+            &self,
+            _credential: crate::model_router::Credential,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A new user turn must automatically clear the previous turn's active
+    /// plan: the `todo` tool snapshot (memory + persisted file) and the
+    /// conversation's `ActivePlan` entry are both reset before the new turn
+    /// is processed.
+    #[tokio::test]
+    async fn test_new_turn_clears_active_todo_plan() {
+        use crate::agent::planner::{ActivePlan, PlannedTask, TaskPlan};
+        use crate::channels::IncomingMessage;
+        use crate::tools::{TodoState, TodoTool};
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("syscity_turn_todo_{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+
+        let todo_state = Arc::new(TodoState::with_dir(temp_dir.clone()));
+        let mut registry = crate::tools::ToolRegistry::new();
+        registry.register(Box::new(TodoTool::with_state(todo_state.clone())));
+        let registry = Arc::new(registry.with_todo_state(todo_state.clone()));
+
+        let agent =
+            super::Agent::new(super::AgentConfig::default(), Arc::new(AlwaysOk), registry.clone());
+
+        let conversation_id = "conv-turn-clear";
+
+        // Simulate the PREVIOUS turn: a todo snapshot on disk + an ActivePlan.
+        let mut store = crate::agent::todo::TodoStore::new();
+        store.create_task("Stale checklist task");
+        todo_state.save_store(conversation_id, store).await.unwrap();
+        assert!(temp_dir.join("conv-turn-clear.json").exists());
+
+        let mut plan = TaskPlan::new("old request", "old goal");
+        plan.tasks.push(PlannedTask {
+            id: "task_1".to_string(),
+            description: "Old planned step".to_string(),
+            complexity: 2,
+            dependencies: vec![],
+            suggested_tools: vec![],
+            expected_outcome: "Done".to_string(),
+        });
+        agent.active_plans.write().await.insert(
+            conversation_id.to_string(),
+            ActivePlan {
+                plan,
+                todos: crate::agent::todo::TodoStore::new(),
+                completed_tasks: Vec::new(),
+            },
+        );
+
+        // A new user turn arrives (short content: no planning/cache LLM calls).
+        let message = IncomingMessage::new("user", conversation_id, "hello");
+        let response = agent.process_message(message).await.unwrap();
+        assert_eq!(response.content, "ok");
+
+        // The todo snapshot was cleared: memory starts fresh and the
+        // persisted file is gone.
+        let cleared_store = todo_state.get_store(conversation_id).await;
+        assert_eq!(cleared_store.count(), 0, "stale checklist must be gone");
+        assert!(!temp_dir.join("conv-turn-clear.json").exists());
+
+        // The stale ActivePlan was dropped.
+        assert!(
+            !agent
+                .active_plans
+                .read()
+                .await
+                .contains_key(conversation_id),
+            "stale ActivePlan must be dropped"
+        );
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 }

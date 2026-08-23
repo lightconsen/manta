@@ -119,7 +119,7 @@ pub use skill_tool::SkillTool;
 pub(crate) use spill::head_tail_truncate;
 pub use stt::SttTool;
 pub use time::TimeTool;
-pub use todo_tool::TodoTool;
+pub use todo_tool::{TodoState, TodoTool};
 pub use tts::TtsTool;
 pub use update_plan::UpdatePlanTool;
 pub use web::{WebFetchTool, WebSearchTool};

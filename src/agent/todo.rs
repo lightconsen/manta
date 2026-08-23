@@ -204,6 +204,49 @@ impl TodoStore {
         task
     }
 
+    /// Replace the entire store contents with the given task specs
+    /// (whole-snapshot semantics).
+    ///
+    /// This is the write path used by the `todo` tool: every call carries
+    /// the complete new task list, so the previous list is dropped
+    /// wholesale — there is no merge step and removed tasks are gone
+    /// immediately. Specs are `(content, status, priority)` tuples applied
+    /// in iteration order.
+    ///
+    /// Task IDs are regenerated sequentially from the monotonic counter,
+    /// which survives persistence via `next_id`, so IDs stay unique across
+    /// snapshots within a conversation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use syscity::agent::todo::{TaskStatus, TodoStore};
+    ///
+    /// let mut store = TodoStore::new();
+    /// store.replace_tasks([("Write tests".to_string(), TaskStatus::Pending, 2)]);
+    /// assert_eq!(store.count(), 1);
+    /// ```
+    pub fn replace_tasks<I>(&mut self, specs: I) -> Vec<Task>
+    where
+        I: IntoIterator<Item = (String, TaskStatus, u8)>,
+    {
+        self.tasks.clear();
+        self.order.clear();
+
+        let mut tasks = Vec::new();
+        for (content, status, priority) in specs {
+            let id = format!("task_{}", self.next_id);
+            self.next_id += 1;
+            let mut task = Task::new(&id, content);
+            task.set_status(status);
+            task.set_priority(priority);
+            self.tasks.insert(id.clone(), task.clone());
+            self.order.push(id);
+            tasks.push(task);
+        }
+        tasks
+    }
+
     /// Get a task by ID
     pub fn get(&self, id: &str) -> Option<&Task> {
         self.tasks.get(id)
@@ -535,5 +578,68 @@ mod tests {
         }
         assert_eq!(store.count_by_status(TaskStatus::Completed), 1);
         assert_eq!(store.count_by_status(TaskStatus::Pending), 1);
+    }
+
+    #[test]
+    fn test_replace_tasks_whole_snapshot_semantics() {
+        let mut store = TodoStore::new();
+        let first = store.create_task("Old task A");
+        let _second = store.create_task("Old task B");
+
+        // Second write carries the COMPLETE new list: removed tasks are gone.
+        let tasks = store.replace_tasks([
+            ("New task".to_string(), TaskStatus::InProgress, 1),
+            ("Another new task".to_string(), TaskStatus::Pending, 5),
+        ]);
+
+        assert_eq!(store.count(), 2);
+        assert!(store.get(&first.id).is_none(), "removed task must be gone");
+        let contents: Vec<&str> = store.list().iter().map(|t| t.content.as_str()).collect();
+        assert_eq!(contents, vec!["New task", "Another new task"]);
+
+        // Status and priority are applied from the snapshot.
+        assert_eq!(tasks[0].status, TaskStatus::InProgress);
+        assert_eq!(tasks[0].priority, 1);
+        assert_eq!(tasks[1].status, TaskStatus::Pending);
+        assert_eq!(tasks[1].priority, 5);
+
+        // Order follows the snapshot order.
+        let ids: Vec<&str> = store.list().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["task_3", "task_4"]);
+    }
+
+    #[test]
+    fn test_replace_tasks_empty_clears_all() {
+        let mut store = TodoStore::new();
+        store.create_task("Only task");
+
+        let tasks = store.replace_tasks([]);
+        assert!(tasks.is_empty());
+        assert_eq!(store.count(), 0);
+        assert_eq!(store.format_for_prompt(), "No active tasks.");
+    }
+
+    #[test]
+    fn test_replace_tasks_ids_stay_unique_across_persistence() {
+        let mut store = TodoStore::new();
+        store.create_task("First generation");
+
+        // Persist and reload (simulates daemon restart between snapshots).
+        let json = store.to_json().unwrap();
+        let mut reloaded = TodoStore::from_json(&json).unwrap();
+
+        let tasks =
+            reloaded.replace_tasks([("Second generation".to_string(), TaskStatus::Pending, 3)]);
+        assert_eq!(tasks.len(), 1);
+        assert_ne!(tasks[0].id, "task_1", "regenerated IDs must not collide with pre-reload IDs");
+        assert_eq!(reloaded.count(), 1);
+    }
+
+    #[test]
+    fn test_replace_tasks_completed_sets_completed_at() {
+        let mut store = TodoStore::new();
+        let tasks = store.replace_tasks([("Done already".to_string(), TaskStatus::Completed, 2)]);
+        assert!(tasks[0].completed_at.is_some());
+        assert!(!tasks[0].is_active());
     }
 }

@@ -1026,8 +1026,11 @@ pub(crate) async fn create_default_tool_registry(
     registry.register(Box::new(WebSearchTool::new().with_providers_arc(shared_providers)));
     registry.register(Box::new(WebFetchTool::new()));
 
-    // Register todo tool
-    registry.register(Box::new(TodoTool::new()));
+    // Register todo tool. The tool and the registry share one TodoState so
+    // the engine can clear a conversation's active plan at each new turn.
+    let todo_state = std::sync::Arc::new(TodoState::new());
+    registry = registry.with_todo_state(todo_state.clone());
+    registry.register(Box::new(TodoTool::with_state(todo_state)));
 
     // Register cron tool
     registry.register(Box::new(CronTool::new()));
