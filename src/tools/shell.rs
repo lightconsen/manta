@@ -301,6 +301,7 @@ impl Tool for ShellTool {
                 let truncated = self.truncate_output(combined_output);
                 let data = serde_json::json!({
                     "exit_code": output.exit_code(),
+                    "signal": output.signal,
                     "timed_out": output.timed_out,
                     "duration_ms": duration.as_millis() as u64,
                 });
@@ -325,6 +326,17 @@ impl Tool for ShellTool {
                     Ok(ToolExecutionResult::success(truncated)
                         .with_data(data)
                         .with_execution_time(duration))
+                } else if let Some(signal) = output.signal {
+                    // Terminated by a signal (externally or by the command
+                    // itself) — there is no exit code to report, so lead with
+                    // the signal number instead.
+                    warn!("Command terminated by signal {}: {}", signal, command_str);
+                    Ok(ToolExecutionResult::error(format!(
+                        "Terminated by signal {}: {}",
+                        signal, truncated
+                    ))
+                    .with_data(data)
+                    .with_execution_time(duration))
                 } else {
                     let exit_code = output.exit_code().unwrap_or(-1);
                     warn!("Command failed with exit code {}: {}", exit_code, command_str);
@@ -501,6 +513,30 @@ mod tests {
             .unwrap();
         assert!(!fail.success);
         assert_eq!(fail.data.as_ref().unwrap()["exit_code"], 3);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_shell_tool_reports_terminating_signal() {
+        let tool = ShellTool::new();
+        let context = ToolContext::new("user", "conv1");
+
+        let result = tool
+            .execute(serde_json::json!({"command": "kill -TERM $$"}), &context)
+            .await
+            .unwrap();
+
+        assert!(!result.success, "signaled command must not report success");
+        let error = result.error.as_ref().unwrap();
+        assert!(
+            error.contains(&format!("Terminated by signal {}", libc::SIGTERM)),
+            "expected signal in error message, got {error:?}"
+        );
+        let data = result.data.expect("orthogonal fields present");
+        assert_eq!(data["signal"], libc::SIGTERM);
+        // A signaled process has no exit code and is not a timeout.
+        assert!(data["exit_code"].is_null());
+        assert_eq!(data["timed_out"], false);
     }
 
     #[test]

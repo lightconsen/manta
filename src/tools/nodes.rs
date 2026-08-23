@@ -337,6 +337,7 @@ impl Tool for NodesTool {
                             data: Some(serde_json::json!({
                                 "node_id": node_id,
                                 "exit_code": o.exit_code(),
+                                "signal": o.signal,
                             })),
                             execution_time: start.elapsed(),
                         })

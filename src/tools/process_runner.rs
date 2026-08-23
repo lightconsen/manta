@@ -16,6 +16,9 @@ use std::process::ExitStatus;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
 use async_trait::async_trait;
 use std::process::Stdio;
 use tokio::io::AsyncRead;
@@ -93,11 +96,6 @@ pub struct ProcessRequest {
     /// Stdio wiring for [`ProcessRunner::spawn`]. Ignored by
     /// [`ProcessRunner::run`], which always captures output.
     pub stdio: StdioMode,
-    /// Terminate the whole process group on timeout instead of just the
-    /// direct child. Set by the macOS Seatbelt fence, whose wrapper forks a
-    /// sandboxed grandchild that a plain `child.kill()` would orphan (leaving
-    /// it alive and holding the output pipes open). Ignored when false.
-    pub kill_process_group: bool,
 }
 
 /// Output of a completed [`ProcessRunner::run`].
@@ -105,6 +103,16 @@ pub struct ProcessRequest {
 pub struct CommandOutput {
     /// `None` when the run was aborted (spawn failure or timeout).
     pub status: Option<ExitStatus>,
+    /// Signal that terminated the process (`None` when it exited normally,
+    /// when `status` is `None`, or on non-Unix platforms).
+    ///
+    /// Orthogonal to [`CommandOutput::timed_out`]: `signal` records *how* the
+    /// process died whenever a signal was involved (an external kill or a
+    /// kill from our own tooling observed through a completed wait), while
+    /// `timed_out` records *that we cut the run short*. Our timeout kill
+    /// discards the wait status (`timed_out: true`, `status: None`), so the
+    /// `SIGKILL` we deliver ourselves is never reported through this field.
+    pub signal: Option<i32>,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     /// True when the run was cut short by its timeout. `status` is `None`
@@ -113,6 +121,22 @@ pub struct CommandOutput {
 }
 
 impl CommandOutput {
+    /// Assemble a completed-run output from a final wait status. On Unix the
+    /// terminating signal (if any) is extracted via
+    /// `std::os::unix::process::ExitStatusExt::signal`.
+    fn from_status(status: ExitStatus, stdout: Vec<u8>, stderr: Vec<u8>) -> Self {
+        Self {
+            status: Some(status),
+            #[cfg(unix)]
+            signal: status.signal(),
+            #[cfg(not(unix))]
+            signal: None,
+            stdout,
+            stderr,
+            timed_out: false,
+        }
+    }
+
     pub fn stdout_string(&self) -> String {
         String::from_utf8_lossy(&self.stdout).into_owned()
     }
@@ -215,14 +239,16 @@ impl ProcessChild for TokioProcessChild {
 /// Platform-abstracted subprocess launcher.
 #[async_trait]
 pub trait ProcessRunner: Send + Sync {
-    /// Run `req` to completion and capture stdout/stderr. On timeout the run
-    /// is aborted (the child is not force-killed, matching today's
-    /// `timeout(.., cmd.output())` behavior).
+    /// Run `req` to completion and capture stdout/stderr. On timeout the
+    /// child's whole Unix process group is killed and
+    /// [`ProcessError::Timeout`] is returned; partial output is discarded
+    /// (use [`run_collect`](ProcessRunner::run_collect) to keep it).
     async fn run(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError>;
 
-    /// Run `req` like [`run`](ProcessRunner::run), but on timeout the child
-    /// is killed and whatever partial output was collected is returned with
-    /// `timed_out: true` instead of an error.
+    /// Run `req` like [`run`](ProcessRunner::run), but on timeout the
+    /// child's whole Unix process group is killed and whatever partial
+    /// output was collected is returned with `timed_out: true` instead of
+    /// an error.
     ///
     /// The default implementation preserves legacy `run` semantics (no
     /// partial capture) for runners that do not override it.
@@ -231,6 +257,7 @@ pub trait ProcessRunner: Send + Sync {
             Ok(out) => Ok(out),
             Err(ProcessError::Timeout { .. }) => Ok(CommandOutput {
                 status: None,
+                signal: None,
                 stdout: Vec::new(),
                 stderr: Vec::new(),
                 timed_out: true,
@@ -253,54 +280,17 @@ pub struct StdProcessRunner;
 #[async_trait]
 impl ProcessRunner for StdProcessRunner {
     async fn run(&self, req: &ProcessRequest) -> Result<CommandOutput, ProcessError> {
-        let mut cmd = build_command(req)?;
-
-        match &req.stdin {
-            Some(input) => {
-                let mut child = cmd
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .map_err(|source| spawn_err(req, source))?;
-                let input = input.clone();
-                run_with_timeout(req, async move {
-                    use tokio::io::AsyncWriteExt;
-                    let mut stdin = child.stdin.take().ok_or(ProcessError::Spawn {
-                        program: req.argv.first().cloned().unwrap_or_default(),
-                        source: std::io::Error::other("stdin pipe missing"),
-                    })?;
-                    let _ = stdin.write_all(&input).await;
-                    drop(stdin); // EOF to the child
-                    child
-                        .wait_with_output()
-                        .await
-                        .map(|o| CommandOutput {
-                            status: Some(o.status),
-                            stdout: o.stdout,
-                            stderr: o.stderr,
-                            timed_out: false,
-                        })
-                        .map_err(|source| spawn_err(req, source))
-                })
-                .await
-            }
-            None => {
-                // `output()` nulls stdin and captures stdout/stderr.
-                run_with_timeout(req, async {
-                    cmd.output()
-                        .await
-                        .map(|o| CommandOutput {
-                            status: Some(o.status),
-                            stdout: o.stdout,
-                            stderr: o.stderr,
-                            timed_out: false,
-                        })
-                        .map_err(|source| spawn_err(req, source))
-                })
-                .await
-            }
+        // Delegate to `run_collect` so both entry points share a single
+        // spawn/collect/kill implementation (one timeout kill path to keep
+        // group-kill semantics correct); `run` preserves its legacy contract
+        // of surfacing a timeout as an error instead of partial output.
+        let out = self.run_collect(req).await?;
+        if out.timed_out {
+            return Err(ProcessError::Timeout {
+                duration: req.timeout.unwrap_or_default(),
+            });
         }
+        Ok(out)
     }
 
     async fn spawn(&self, req: &ProcessRequest) -> Result<Box<dyn ProcessChild>, ProcessError> {
@@ -367,57 +357,56 @@ impl ProcessRunner for StdProcessRunner {
             res.map(|_| buf)
         });
 
-        let (status, timed_out) = match req.timeout {
+        let status = match req.timeout {
             Some(duration) => match tokio::time::timeout(duration, child.wait()).await {
-                Ok(res) => (Some(res.map_err(|source| spawn_err(req, source))?), false),
+                Ok(res) => Some(res.map_err(|source| spawn_err(req, source))?),
                 Err(_) => {
-                    // Kill the runaway child (tokio does not kill on drop)
-                    // and reap it before collecting partial output. A request
-                    // that opted into a process-group kill (macOS seatbelt
-                    // fence, where the wrapped command runs in a forked
-                    // grandchild) terminates the whole group so the sandboxed
-                    // process cannot survive as an orphan holding the pipes.
-                    let pid = child.id();
-                    if req.kill_process_group {
-                        #[cfg(unix)]
-                        {
-                            if let Some(pid) = pid {
-                                #[allow(unsafe_code)]
-                                unsafe {
-                                    libc::kill(-(pid as i32), libc::SIGKILL);
-                                }
-                            }
+                    // Kill the runaway tree (tokio does not kill on drop) and
+                    // reap it before collecting partial output. Every Unix
+                    // child is its own process-group leader (`build_command`
+                    // sets pgid), so one negative-pid SIGKILL reaches the
+                    // command's own descendants too — e.g. the `sleep` in
+                    // `sh -c 'sleep 30 &'` would otherwise survive as an
+                    // orphan holding the output pipes open. Windows has no
+                    // process group on unfenced spawns: fall back to killing
+                    // the direct child only (the fenced Windows path
+                    // terminates its Job-object tree separately).
+                    #[cfg(unix)]
+                    if let Some(pid) = child.id() {
+                        // Best-effort: ESRCH just means the tree is gone.
+                        #[allow(unsafe_code)] // signal delivery only; no shared state touched
+                        unsafe {
+                            libc::kill(-(pid as i32), libc::SIGKILL);
                         }
-                        // The flag is only ever set on macOS; keep a plain
-                        // kill fallback for non-Unix targets.
-                        #[cfg(not(unix))]
-                        let _ = child.kill().await;
-                    } else {
-                        let _ = child.kill().await;
                     }
+                    #[cfg(not(unix))]
+                    let _ = child.kill().await;
                     let _ = child.wait().await;
-                    (None, true)
+                    None
                 }
             },
-            None => (
-                Some(
-                    child
-                        .wait()
-                        .await
-                        .map_err(|source| spawn_err(req, source))?,
-                ),
-                false,
+            None => Some(
+                child
+                    .wait()
+                    .await
+                    .map_err(|source| spawn_err(req, source))?,
             ),
         };
 
         let stdout = out_task.await.ok().and_then(|r| r.ok()).unwrap_or_default();
         let stderr = err_task.await.ok().and_then(|r| r.ok()).unwrap_or_default();
 
-        Ok(CommandOutput {
-            status,
-            stdout,
-            stderr,
-            timed_out,
+        Ok(match status {
+            Some(status) => CommandOutput::from_status(status, stdout, stderr),
+            // Timeout path: our kill discards the wait status; only the
+            // partial output collected so far is reported.
+            None => CommandOutput {
+                status: None,
+                signal: None,
+                stdout,
+                stderr,
+                timed_out: true,
+            },
         })
     }
 }
@@ -458,25 +447,11 @@ impl MacSeatbeltRunner {
         argv.push(seatbelt_profile(fence));
         argv.extend_from_slice(&req.argv);
         fenced.argv = argv;
-        // `sandbox-exec` forks once before exec'ing the real command, so a
-        // plain `child.kill()` on timeout would orphan the sandboxed
-        // grandchild and leave it holding the output pipes open. Make the
-        // wrapper a process-group leader and kill the whole group on
-        // timeout instead (see `kill_process_group` in run_collect).
-        let existing_pre = req.pre_exec.clone();
-        fenced.pre_exec = Some(Arc::new(move || {
-            if let Some(pre) = &existing_pre {
-                pre()?;
-            }
-            #[allow(unsafe_code)]
-            unsafe {
-                if libc::setpgid(0, 0) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-            }
-            Ok(())
-        }));
-        fenced.kill_process_group = true;
+        // No extra pre_exec needed here: `sandbox-exec` forks before exec'ing
+        // the real command, and both the wrapper and its sandboxed
+        // grandchild share the process group that `build_command` puts every
+        // child into, so the base runner's negative-pid timeout kill reaches
+        // the whole tree.
         Ok(fenced)
     }
 }
@@ -885,6 +860,14 @@ async fn run_fenced(
 }
 
 /// Build the underlying `tokio::process::Command` from a request.
+///
+/// On Unix every child is additionally made its own process-group leader
+/// (`setpgid(0, 0)` in a `pre_exec` hook, applied after any caller-supplied
+/// hook) so that a timeout kill can take down the command's whole descendant
+/// tree with one negative-pid signal (see
+/// [`StdProcessRunner::run_collect`]). Windows non-fenced spawns stay
+/// direct-child-only — there is no group equivalent; the fenced Windows path
+/// uses a Job object for tree termination.
 fn build_command(req: &ProcessRequest) -> Result<Command, ProcessError> {
     let program = req.argv.first().ok_or(ProcessError::EmptyArgv)?;
     let mut cmd = Command::new(program);
@@ -911,6 +894,20 @@ fn build_command(req: &ProcessRequest) -> Result<Command, ProcessError> {
             }
         }
     }
+    #[cfg(unix)]
+    {
+        #[allow(unsafe_code)]
+        // SAFETY: runs in the forked child before exec; `setpgid` is
+        // async-signal-safe and touches no shared state.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
     Ok(cmd)
 }
 
@@ -918,21 +915,6 @@ fn spawn_err(req: &ProcessRequest, source: std::io::Error) -> ProcessError {
     ProcessError::Spawn {
         program: req.argv.first().cloned().unwrap_or_default(),
         source,
-    }
-}
-
-/// Apply `req.timeout` around a future, preserving `timeout(.., fut)` drop
-/// semantics (the child is not force-killed on timeout).
-async fn run_with_timeout<T>(
-    req: &ProcessRequest,
-    fut: impl std::future::Future<Output = Result<T, ProcessError>>,
-) -> Result<T, ProcessError> {
-    match req.timeout {
-        Some(duration) => match tokio::time::timeout(duration, fut).await {
-            Ok(result) => result,
-            Err(_) => Err(ProcessError::Timeout { duration }),
-        },
-        None => fut.await,
     }
 }
 
@@ -1189,7 +1171,49 @@ mod tests {
             .unwrap();
         assert!(!out.success());
         assert_eq!(out.exit_code(), Some(3));
+        // Normal exit: no terminating signal, not a timeout.
+        assert_eq!(out.signal, None);
+        assert!(!out.timed_out);
         assert!(out.stderr_string().contains("err"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_reports_signal_when_child_is_killed() {
+        let out = StdProcessRunner
+            .run(&argv(&["/bin/sh", "-c", "kill -TERM $$"]))
+            .await
+            .unwrap();
+        assert!(!out.success());
+        // A signaled process has no exit code; the signal is surfaced
+        // instead and is distinct from our own timeout kill (`timed_out`
+        // stays false — this termination was requested by the child).
+        assert_eq!(out.exit_code(), None);
+        assert_eq!(out.signal, Some(libc::SIGTERM));
+        assert!(!out.timed_out);
+    }
+
+    #[tokio::test]
+    async fn run_collect_timeout_kills_backgrounded_descendants() {
+        // Unfenced spawn: `sleep 5` is backgrounded by sh. Without the
+        // process-group kill the orphan keeps the shared stdout pipe open
+        // and the pipe-drain below blocks ~5s past the 300ms timeout.
+        let mut req = argv(&["/bin/sh", "-c", "echo partial-out; sleep 5 & wait"]);
+        req.timeout = Some(Duration::from_millis(300));
+        let started = std::time::Instant::now();
+        let out = StdProcessRunner.run_collect(&req).await.unwrap();
+        assert!(out.timed_out, "run_collect should report the timeout");
+        // Our own SIGKILL discards the wait status, so no signal surfaces.
+        assert_eq!(out.signal, None);
+        assert!(
+            out.stdout_string().contains("partial-out"),
+            "partial output must survive the timeout: {:?}",
+            out.stdout_string()
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "timeout must not wait for the orphaned sleep"
+        );
     }
 
     #[tokio::test]
@@ -1333,7 +1357,10 @@ mod tests {
             assert!(fenced.argv[2].contains("deny file-write*"));
             assert_eq!(&fenced.argv[3..], &["/bin/echo".to_string(), "hi".to_string()]);
             assert!(fenced.fence.is_none());
-            assert!(fenced.kill_process_group);
+            // Group setup/teardown lives in the base runner now (`build_command`
+            // puts every Unix child in its own group), so the fence no longer
+            // composes any extra pre_exec hook of its own.
+            assert!(fenced.pre_exec.is_none());
         }
 
         #[tokio::test]
@@ -1486,7 +1513,6 @@ mod tests {
             assert_eq!(fenced.argv, req.argv);
             assert!(fenced.fence.is_none());
             assert!(fenced.pre_exec.is_some());
-            assert!(!fenced.kill_process_group);
         }
 
         #[tokio::test]
