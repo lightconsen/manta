@@ -11,11 +11,11 @@
 //! The round agent must end its final reply with exactly one fenced block
 //! tagged [`HANDOFF_FENCE_TAG`] containing this JSON schema:
 //!
-//! ```text
+//! ````text
 //! ```handoff
 //! {"status": "continue", "summary": "...", "next_steps": ["..."], "evidence": ["..."]}
 //! ```
-//! ```
+//! ````
 //!
 //! Validation is strict: an over-limit or schema-invalid handoff fails the
 //! whole round. Semantics are never silently truncated or guessed.

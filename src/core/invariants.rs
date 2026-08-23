@@ -11,6 +11,7 @@
 //! # Example
 //!
 //! ```
+//! use std::future::Future;
 //! use syscity::core::invariants::{Invariant, register, run_all};
 //!
 //! fn always_ok() -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
