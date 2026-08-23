@@ -58,6 +58,47 @@ const MAX_TOOL_ITERATIONS: usize = 25;
 /// context window. Mirrors the cron executor's head-kept byte cap.
 const MAX_TOOL_RESULT_BYTES: usize = 8 * 1024;
 
+/// Write a human-readable round note so users can browse long-running goal
+/// progress in the default workspace: `<workspace>/goals/<goal-id>/round-N.md`.
+///
+/// `base` is separated out for testability; production callers pass the
+/// default workspace. Best-effort — callers log failures, never abort the
+/// loop for them.
+pub(crate) async fn write_round_note(
+    base: &std::path::Path,
+    goal_id: &str,
+    description: &str,
+    round: usize,
+    handoff: &RoundHandoff,
+) -> std::io::Result<std::path::PathBuf> {
+    let dir = base.join("goals").join(goal_id);
+    tokio::fs::create_dir_all(&dir).await?;
+    let path = dir.join(format!("round-{}.md", round));
+
+    let mut out = String::new();
+    out.push_str(&format!("# Round {} — {}\n\n", round, description));
+    out.push_str(&format!("- **Goal**: `{}`\n", goal_id));
+    out.push_str(&format!("- **Status**: `{:?}`\n", handoff.status));
+    out.push_str(&format!("- **Time**: {}\n", chrono::Local::now().to_rfc3339()));
+    out.push_str("\n## Summary\n\n");
+    out.push_str(&handoff.summary);
+    out.push('\n');
+    if !handoff.evidence.is_empty() {
+        out.push_str("\n## Evidence\n\n");
+        for e in &handoff.evidence {
+            out.push_str(&format!("- {}\n", e));
+        }
+    }
+    if !handoff.next_steps.is_empty() {
+        out.push_str("\n## Next steps\n\n");
+        for s in &handoff.next_steps {
+            out.push_str(&format!("- {}\n", s));
+        }
+    }
+    tokio::fs::write(&path, out).await?;
+    Ok(path)
+}
+
 /// A background goal runner that acts and checks conditions in a loop.
 pub struct GoalRunner {
     /// Unique identifier for this goal run.
@@ -222,6 +263,19 @@ impl GoalRunner {
                             self.round,
                             handoff.status
                         );
+                        // Best-effort: also leave a human-readable note in the
+                        // workspace so users can watch long-goal progress.
+                        if let Err(e) = write_round_note(
+                            &crate::dirs::workspace_data_dir(),
+                            &self.id,
+                            &self.plan.description,
+                            self.round,
+                            &handoff,
+                        )
+                        .await
+                        {
+                            tracing::warn!("[goal {}] Failed to write round note: {}", self.id, e);
+                        }
                         self.last_handoff = Some(handoff);
                     }
                     // Cancelled mid-round — the post-round cancel check below
@@ -1548,5 +1602,45 @@ mod tests {
         assert!(feedback.contains("prior progress"));
         assert!(feedback.contains("next action"));
         assert!(runner.last_handoff.is_some());
+    }
+
+    /// A round note renders the validated handoff as browsable markdown.
+    #[tokio::test]
+    async fn test_write_round_note_renders_handoff() {
+        let tmp = tempfile::tempdir().unwrap();
+        let handoff = RoundHandoff {
+            status: HandoffStatus::Continue,
+            summary: "found the login bug".to_string(),
+            next_steps: vec!["add regression test".to_string()],
+            evidence: vec![],
+        };
+        let path = write_round_note(tmp.path(), "g1", "Fix login", 3, &handoff)
+            .await
+            .unwrap();
+        assert_eq!(path, tmp.path().join("goals").join("g1").join("round-3.md"));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("# Round 3 — Fix login"));
+        assert!(content.contains("found the login bug"));
+        assert!(content.contains("add regression test"));
+        assert!(!content.contains("## Evidence"), "empty sections are omitted");
+    }
+
+    /// Completion handoffs include their evidence list.
+    #[tokio::test]
+    async fn test_write_round_note_includes_evidence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let handoff = RoundHandoff {
+            status: HandoffStatus::Complete,
+            summary: "done".to_string(),
+            next_steps: vec![],
+            evidence: vec!["src/auth.rs:42".to_string()],
+        };
+        let path = write_round_note(tmp.path(), "g2", "Ship it", 1, &handoff)
+            .await
+            .unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("## Evidence"));
+        assert!(content.contains("src/auth.rs:42"));
+        assert!(!content.contains("## Next steps"));
     }
 }

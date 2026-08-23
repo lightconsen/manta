@@ -561,6 +561,22 @@ impl CronScheduler {
 
         debug!("Job run logged: {} - {:?}", entry.job_id, entry.status);
 
+        // Human-facing digest: one markdown line per run in the default
+        // workspace, so "did the scheduled jobs run OK" is a glance at a
+        // file, not a jsonl parse. Best-effort — never fail the run log.
+        let line = render_cron_log_line(
+            job_id,
+            started_at,
+            completed_at,
+            &entry.status,
+            entry.error.as_deref(),
+            entry.delivery_status.as_ref(),
+        );
+        let digest_path = crate::dirs::workspace_data_dir().join("cron-log.md");
+        if let Err(e) = append_line(&digest_path, &line).await {
+            warn!("Failed to append cron run digest to {}: {}", digest_path.display(), e);
+        }
+
         // Persist to JSONL file if store_path is configured
         if let Some(ref path) = store_path {
             let log_path = path.with_extension("runs.jsonl");
@@ -602,5 +618,106 @@ impl CronScheduler {
         }
 
         Ok(())
+    }
+}
+
+/// Render one cron run as a single markdown digest line for
+/// `workspace/cron-log.md`.
+///
+/// Kept pure for testability; the `log_run` caller appends the line.
+fn render_cron_log_line(
+    job_id: &str,
+    started_at: DateTime<Utc>,
+    completed_at: DateTime<Utc>,
+    status: &RunStatus,
+    error: Option<&str>,
+    delivery_status: Option<&DeliveryStatus>,
+) -> String {
+    let mark = if matches!(status, RunStatus::Ok) {
+        "✅"
+    } else {
+        "❌"
+    };
+    let secs = (completed_at - started_at).num_seconds().max(0);
+    let mut line = format!(
+        "- `{}` {} **{}** — {} ({}s)",
+        started_at.format("%Y-%m-%d %H:%M"),
+        mark,
+        job_id,
+        if matches!(status, RunStatus::Ok) {
+            "ok".to_string()
+        } else {
+            // Keep the digest to one line; the full error is in runs.jsonl.
+            let first = error
+                .and_then(|e| e.lines().next())
+                .map(str::trim)
+                .filter(|e| !e.is_empty())
+                .unwrap_or("unknown error");
+            format!("failed: {}", first.chars().take(120).collect::<String>())
+        },
+        secs
+    );
+    // A failed delivery is itself noteworthy even when execution succeeded.
+    if let Some(delivery) = delivery_status {
+        if !matches!(delivery, DeliveryStatus::Delivered) {
+            line.push_str(&format!(", delivery: {:?}", delivery));
+        }
+    }
+    line
+}
+
+/// Append one line to a digest file (creating parent dirs), newline-terminated.
+async fn append_line(path: &std::path::Path, line: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await?;
+    use tokio::io::AsyncWriteExt;
+    file.write_all(line.as_bytes()).await?;
+    file.write_all(b"\n").await
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+
+    fn at(secs: u64) -> DateTime<Utc> {
+        DateTime::from_timestamp(secs as i64, 0).unwrap()
+    }
+
+    #[test]
+    fn render_ok_run() {
+        let line = render_cron_log_line(
+            "daily-brief",
+            at(1000),
+            at(1003),
+            &RunStatus::Ok,
+            None,
+            Some(&DeliveryStatus::Delivered),
+        );
+        assert!(line.contains("daily-brief"));
+        assert!(line.contains("✅"));
+        assert!(line.contains("(3s)"));
+        assert!(!line.contains("delivery:"), "delivered stays implicit");
+    }
+
+    #[test]
+    fn render_failed_run_keeps_one_line() {
+        let line = render_cron_log_line(
+            "sync",
+            at(2000),
+            at(2000),
+            &RunStatus::Error,
+            Some("first line\nsecond line"),
+            Some(&DeliveryStatus::Failed("webhook 500".to_string())),
+        );
+        assert!(line.contains("❌"));
+        assert!(line.contains("failed: first line"));
+        assert!(!line.contains("second line"));
+        assert!(line.contains("delivery: Failed"));
     }
 }
