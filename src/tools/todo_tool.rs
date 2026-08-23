@@ -135,8 +135,21 @@ impl TodoState {
 
         debug!("Saving todo store to {:?}", path);
 
+        // Fresh installs have no todos directory yet; create it lazily.
+        if let Some(parent) = path.parent() {
+            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                error!("Failed to create todo directory {:?}: {}", parent, e);
+                return Err(crate::error::SyscityError::Storage {
+                    context: format!("Failed to create todo directory: {:?}", parent),
+                    details: e.to_string(),
+                });
+            }
+        }
+
         let json = store.to_json()?;
-        let tmp_path = path.with_extension("json.tmp");
+        // Unique tmp name per save: two parallel writes to the same
+        // conversation file must not consume each other's temp file.
+        let tmp_path = path.with_extension(format!("json.{}.tmp", uuid::Uuid::new_v4()));
         if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
             error!("Failed to write todo temp file {:?}: {}", tmp_path, e);
             return Err(crate::error::SyscityError::Storage {
