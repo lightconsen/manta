@@ -784,13 +784,15 @@ mod tests {
         // Execute with force=true; persistence will fail but must not panic
         let inflight = Arc::new(TokioMutex::new(Vec::new()));
         CronScheduler::execute_job(
-            &jobs,
+            executor::CronRuntime {
+                jobs: &jobs,
+                agent: &agent,
+                store_path: &Some(path),
+                announce_tx: &None,       // announce_tx
+                heartbeat_wake_tx: &None, // heartbeat_wake_tx
+                inflight: &inflight,
+            },
             "test-job",
-            &agent,
-            &Some(path),
-            &None, // announce_tx
-            &None, // heartbeat_wake_tx
-            &inflight,
             true, // force
         )
         .await;
@@ -834,13 +836,15 @@ mod tests {
         // running_at_ms must not change.
         let inflight = Arc::new(TokioMutex::new(Vec::new()));
         CronScheduler::execute_job(
-            &jobs,
+            executor::CronRuntime {
+                jobs: &jobs,
+                agent: &agent,
+                store_path: &None,
+                announce_tx: &None,
+                heartbeat_wake_tx: &None,
+                inflight: &inflight,
+            },
             "running-job",
-            &agent,
-            &None,
-            &None,
-            &None,
-            &inflight,
             true, // force
         )
         .await;
@@ -1024,7 +1028,16 @@ mod tests {
         let inflight = Arc::new(TokioMutex::new(Vec::new()));
 
         CronScheduler::execute_job(
-            &jobs, "doomed", &agent, &None, &None, &None, &inflight, true, // force
+            executor::CronRuntime {
+                jobs: &jobs,
+                agent: &agent,
+                store_path: &None,
+                announce_tx: &None,
+                heartbeat_wake_tx: &None,
+                inflight: &inflight,
+            },
+            "doomed",
+            true, // force
         )
         .await;
 

@@ -17,19 +17,16 @@ impl ModelRouter {
             other => other,
         };
 
-        use crate::providers::resolver::resolve_from_config;
+        use crate::providers::resolver::{resolve_from_config, ProviderOverrides};
 
         resolve_from_config(
             provider_type,
             Some(api_key),
-            None, // protocol: auto-detect from preset default
-            config.base_url.clone(),
-            None, // model: use preset default
-            None, // max_context: use preset default
-            None, // supports_vision: use preset default
-            None, // supports_tools: use preset default
-            None, // stream_family: use preset default
-            None, // auth_method: use preset default
+            ProviderOverrides {
+                // protocol: auto-detect from preset default
+                base_url: config.base_url.clone(),
+                ..ProviderOverrides::default()
+            },
         )
         .map(|p| p as Arc<dyn Provider + Send + Sync>)
     }

@@ -310,7 +310,6 @@ enum TaskExecutionOutcome {
 ///
 /// This is a standalone function (not a method on [`TaskExecutor`]) so that
 /// independent tasks can be spawned concurrently via [`tokio::spawn`].
-#[allow(clippy::too_many_arguments)]
 async fn execute_task_inner(
     task: crate::planner::Task,
     adapter: Arc<dyn ComputerAdapter>,

@@ -184,21 +184,23 @@ pub(crate) struct ActorContext {
 
 /// Dispatches an execute command to a session actor.
 ///
-/// Extracted to eliminate the 3-way repetition across ExecuteSession,
-/// ExecuteRun, and ExecuteSessionWithProgress.
-#[allow(clippy::too_many_arguments)]
+/// Extracted to eliminate the repetition across ExecuteSession, ExecuteRun,
+/// ExecuteSessionWithProgress, and ExecuteForBridge.
 async fn dispatch_execute(
     sessions: &mut HashMap<String, SessionHandle>,
     session_meta: &mut HashMap<String, usize>,
     session_id: String,
-    agent: Arc<Agent>,
-    message: IncomingMessage,
-    mode: ExecutionMode,
-    progress_cb: Option<ProgressCallback>,
-    max_iterations: usize,
-    respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
+    payload: SessionExecutePayload,
     label: &str,
 ) {
+    let SessionExecutePayload {
+        agent,
+        message,
+        mode,
+        progress_cb,
+        max_iterations,
+        respond_to,
+    } = payload;
     let handle =
         get_or_create_session(sessions, session_meta, &session_id, mode, max_iterations).await;
 
@@ -237,12 +239,14 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                     &mut sessions,
                     &mut session_meta,
                     session_id,
-                    agent,
-                    message,
-                    ExecutionMode::Session,
-                    None,
-                    effective_max,
-                    respond_to,
+                    SessionExecutePayload {
+                        agent,
+                        message,
+                        mode: ExecutionMode::Session,
+                        progress_cb: None,
+                        max_iterations: effective_max,
+                        respond_to,
+                    },
                     "ExecuteSession",
                 )
                 .await;
@@ -260,12 +264,14 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                     &mut sessions,
                     &mut session_meta,
                     session_id,
-                    agent,
-                    message,
-                    ExecutionMode::Run,
-                    None,
-                    effective_max,
-                    respond_to,
+                    SessionExecutePayload {
+                        agent,
+                        message,
+                        mode: ExecutionMode::Run,
+                        progress_cb: None,
+                        max_iterations: effective_max,
+                        respond_to,
+                    },
                     "ExecuteRun",
                 )
                 .await;
@@ -284,12 +290,14 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                     &mut sessions,
                     &mut session_meta,
                     session_id,
-                    agent,
-                    message,
-                    ExecutionMode::Session,
-                    Some(progress_cb),
-                    effective_max,
-                    respond_to,
+                    SessionExecutePayload {
+                        agent,
+                        message,
+                        mode: ExecutionMode::Session,
+                        progress_cb: Some(progress_cb),
+                        max_iterations: effective_max,
+                        respond_to,
+                    },
                     "ExecuteSessionWithProgress",
                 )
                 .await;
@@ -404,12 +412,14 @@ pub(crate) async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, c
                     &mut sessions,
                     &mut session_meta,
                     session_id,
-                    agent,
-                    message,
-                    mode,
-                    None,
-                    ctx.max_iterations,
-                    respond_to,
+                    SessionExecutePayload {
+                        agent,
+                        message,
+                        mode,
+                        progress_cb: None,
+                        max_iterations: ctx.max_iterations,
+                        respond_to,
+                    },
                     "ExecuteForBridge",
                 )
                 .await;

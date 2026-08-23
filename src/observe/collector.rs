@@ -56,17 +56,31 @@ pub struct TurnMetricsCollector {
     metrics_sink: Option<Arc<dyn TurnMetricsSink>>,
 }
 
+/// Identity of the turn a [`TurnMetricsCollector`] observes.
+pub struct TurnContext {
+    /// Session this turn belongs to (if any).
+    pub session_id: Option<String>,
+    /// Conversation the turn is part of.
+    pub conversation_id: String,
+    /// Agent executing the turn.
+    pub agent_id: String,
+    /// Thread within the conversation.
+    pub thread_id: String,
+    /// Zero-based position of the turn in its thread.
+    pub turn_index: usize,
+    /// The user prompt that started the turn.
+    pub user_message: String,
+    /// When the message was queued, for queue-wait metrics.
+    pub enqueued_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 impl TurnMetricsCollector {
-    pub fn new(
-        session_id: Option<String>,
-        conversation_id: String,
-        agent_id: String,
-        thread_id: String,
-        turn_index: usize,
-        user_message: &str,
-        enqueued_at: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Self {
-        Self::with_writer(
+    pub fn new(ctx: TurnContext) -> Self {
+        Self::with_writer(ctx, Arc::new(TurnMetricsWriter::default_dir()))
+    }
+
+    pub fn with_writer(ctx: TurnContext, writer: Arc<TurnMetricsWriter>) -> Self {
+        let TurnContext {
             session_id,
             conversation_id,
             agent_id,
@@ -74,21 +88,7 @@ impl TurnMetricsCollector {
             turn_index,
             user_message,
             enqueued_at,
-            Arc::new(TurnMetricsWriter::default_dir()),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_writer(
-        session_id: Option<String>,
-        conversation_id: String,
-        agent_id: String,
-        thread_id: String,
-        turn_index: usize,
-        user_message: &str,
-        enqueued_at: Option<chrono::DateTime<chrono::Utc>>,
-        writer: Arc<TurnMetricsWriter>,
-    ) -> Self {
+        } = ctx;
         let now = Instant::now();
         let queue_wait_ms = enqueued_at.map(|t| {
             chrono::Utc::now()
@@ -108,7 +108,7 @@ impl TurnMetricsCollector {
             queue_wait_ms,
             cache_hit: false,
             model: String::new(),
-            user_message: user_message.to_string(),
+            user_message,
             partial_text: Arc::new(Mutex::new(String::new())),
             partial_reasoning: Arc::new(Mutex::new(String::new())),
             rounds: Vec::new(),
@@ -407,13 +407,15 @@ mod tests {
 
     fn make_collector(dir: &TempDir) -> TurnMetricsCollector {
         TurnMetricsCollector::with_writer(
-            Some("s1".into()),
-            "c1".into(),
-            "worker".into(),
-            "main".into(),
-            0,
-            "hello",
-            None,
+            TurnContext {
+                session_id: Some("s1".into()),
+                conversation_id: "c1".into(),
+                agent_id: "worker".into(),
+                thread_id: "main".into(),
+                turn_index: 0,
+                user_message: "hello".into(),
+                enqueued_at: None,
+            },
             Arc::new(TurnMetricsWriter::new(dir.path().to_path_buf())),
         )
     }

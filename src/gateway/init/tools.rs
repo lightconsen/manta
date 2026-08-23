@@ -226,19 +226,31 @@ pub async fn init_plugin_manager(
     Ok(plugin_manager)
 }
 
+/// Shared handles the tool subsystem needs at boot (each a distinct
+/// process-wide service wired together during gateway startup).
+pub struct ToolSystemDeps {
+    pub acp: Arc<AcpControlPlane>,
+    pub session_store: Option<Arc<SessionStore>>,
+    pub audit_log_dyn: Arc<dyn AuditLogger>,
+    pub model_router: Arc<ModelRouter>,
+    pub task_registry: Arc<crate::gateway::task_registry::TaskRegistry>,
+    pub device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
+    pub skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
+    pub shell_hooks: Arc<ShellHookBridge>,
+}
+
 /// Initialize the full tool subsystem.
-#[allow(clippy::too_many_arguments)] // boot wiring: each dep is a distinct shared handle
-pub async fn init_tools(
-    config: &GatewayConfig,
-    acp: Arc<AcpControlPlane>,
-    session_store: Option<Arc<SessionStore>>,
-    audit_log_dyn: Arc<dyn AuditLogger>,
-    model_router: Arc<ModelRouter>,
-    task_registry: Arc<crate::gateway::task_registry::TaskRegistry>,
-    device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
-    skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
-    shell_hooks: Arc<ShellHookBridge>,
-) -> crate::Result<ToolsInit> {
+pub async fn init_tools(config: &GatewayConfig, deps: ToolSystemDeps) -> crate::Result<ToolsInit> {
+    let ToolSystemDeps {
+        acp,
+        session_store,
+        audit_log_dyn,
+        model_router,
+        task_registry,
+        device_bridge,
+        skills_manager,
+        shell_hooks,
+    } = deps;
     let (mcp_manager, mcp_event_rx) = init_mcp_manager().await;
     let approval_queue = Arc::new(ApprovalQueue::new());
     let ask_queue = Arc::new(AskQueue::new());

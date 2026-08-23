@@ -115,6 +115,25 @@ pub struct ScoringOutput {
     pub screening_layer: ScreeningLayer,
 }
 
+/// One trial to score: what was asked, what was answered, and where it sits
+/// in its task's trial sequence.
+pub struct ScoredTrial<'a> {
+    /// Identifier of the eval task this trial belongs to.
+    pub task_id: &'a str,
+    /// The original task prompt shown to the agent.
+    pub input: &'a str,
+    /// The agent's final answer.
+    pub response: &'a str,
+    /// The full action/observation trajectory leading to `response`.
+    pub trajectory: &'a str,
+    /// Goal conditions the response is checked against.
+    pub conditions: &'a [GoalCondition],
+    /// Optional extra quality criteria for fine scoring.
+    pub criteria: Option<&'a QualityCriteria>,
+    /// Zero-based position of this trial within the task.
+    pub trial_index: usize,
+}
+
 /// Configuration for the layered scorer.
 #[derive(Debug, Clone)]
 pub struct ScorerConfig {
@@ -175,26 +194,18 @@ impl LayeredScorer {
     ///
     /// When the verdict is `InsufficientInfo` and a `HumanReviewStore` is
     /// configured, the case is written to disk automatically.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn score_and_review(
-        &self,
-        conditions: &[GoalCondition],
-        criteria: Option<&QualityCriteria>,
-        response: &str,
-        trajectory: &str,
-        task_id: &str,
-        trial_index: usize,
-        input: &str,
-    ) -> ScoringOutput {
-        let output = self.score(conditions, criteria, response, trajectory).await;
+    pub async fn score_and_review(&self, trial: ScoredTrial<'_>) -> ScoringOutput {
+        let output = self
+            .score(trial.conditions, trial.criteria, trial.response, trial.trajectory)
+            .await;
 
         if output.verdict == Verdict::InsufficientInfo {
             if let Some(ref store) = self.review_store {
                 let case = HumanReviewCase {
-                    task_id: task_id.to_string(),
-                    trial_index,
-                    input: input.to_string(),
-                    response: response.to_string(),
+                    task_id: trial.task_id.to_string(),
+                    trial_index: trial.trial_index,
+                    input: trial.input.to_string(),
+                    response: trial.response.to_string(),
                     scoring_output: output.clone(),
                     status: ReviewStatus::Pending,
                     created_at: std::time::SystemTime::now(),

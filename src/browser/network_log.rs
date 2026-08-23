@@ -176,24 +176,41 @@ pub async fn start_capture(page: &Page) -> Result<(), String> {
     Ok(())
 }
 
+/// Network-log filter — a field only constrains the result when it is set.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NetworkQuery<'a> {
+    /// Substring match on the entry URL.
+    pub url: Option<&'a str>,
+    /// Case-insensitive exact match on the HTTP method.
+    pub method: Option<&'a str>,
+    /// Inclusive lower bound on the response status.
+    pub min_status: Option<u16>,
+    /// Inclusive upper bound on the response status.
+    pub max_status: Option<u16>,
+    /// Case-insensitive exact match on the resource type.
+    pub resource_type: Option<&'a str>,
+}
+
 /// Query captured network records with filters and pagination.
 ///
 /// When `include_body` is set, bodies are fetched lazily via
 /// `Network.getResponseBody` for the returned page of entries only (failures
 /// are silently omitted — some bodies, e.g. redirects or streams, are not
 /// retrievable).
-#[allow(clippy::too_many_arguments)]
 pub async fn query(
     page: &Page,
-    url: Option<&str>,
-    method: Option<&str>,
-    min_status: Option<u16>,
-    max_status: Option<u16>,
-    resource_type: Option<&str>,
+    filter: NetworkQuery<'_>,
     include_body: bool,
     limit: usize,
     offset: usize,
 ) -> Result<Value, String> {
+    let NetworkQuery {
+        url,
+        method,
+        min_status,
+        max_status,
+        resource_type,
+    } = filter;
     let key = page.target_id().as_ref().to_string();
     let records = {
         let logs = logs().lock().await;
@@ -342,7 +359,7 @@ mod tests {
         // Give the page a moment to fire the fetch.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        let result = query(&page, None, None, None, None, None, false, 50, 0)
+        let result = query(&page, NetworkQuery::default(), false, 50, 0)
             .await
             .unwrap();
         let entries = result["entries"].as_array().unwrap();
@@ -360,9 +377,18 @@ mod tests {
         );
 
         // Body fetch for the JSON entry.
-        let result = query(&page, Some("data.json"), None, None, None, None, true, 50, 0)
-            .await
-            .unwrap();
+        let result = query(
+            &page,
+            NetworkQuery {
+                url: Some("data.json"),
+                ..NetworkQuery::default()
+            },
+            true,
+            50,
+            0,
+        )
+        .await
+        .unwrap();
         let entries = result["entries"].as_array().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["body"].as_str(), Some("{\"ok\":true}"));

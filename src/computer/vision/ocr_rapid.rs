@@ -228,15 +228,8 @@ impl RapidOcr {
                 }
 
                 // Flood-fill to find connected component
-                let (min_x, min_y, max_x, max_y, sum_prob, count) = self.flood_fill(
-                    &prob_map.view(),
-                    shape.len(),
-                    &mut visited,
-                    x,
-                    y,
-                    map_w,
-                    map_h,
-                );
+                let (min_x, min_y, max_x, max_y, sum_prob, count) =
+                    self.flood_fill(&prob_map.view(), &mut visited, x, y);
 
                 if count < 10 {
                     // Too small, likely noise
@@ -271,17 +264,20 @@ impl RapidOcr {
     }
 
     /// Flood-fill on the probability map to find a connected component.
-    #[allow(clippy::too_many_arguments)]
+    /// The map's own shape supplies the dimensionality and extents.
     fn flood_fill(
         &self,
         prob_map: &ndarray::ArrayViewD<f32>,
-        ndim: usize,
         visited: &mut [Vec<bool>],
         start_x: usize,
         start_y: usize,
-        map_w: usize,
-        map_h: usize,
     ) -> (usize, usize, usize, usize, f32, usize) {
+        let ndim = prob_map.ndim();
+        let (map_h, map_w) = if ndim == 4 {
+            (prob_map.shape()[2], prob_map.shape()[3])
+        } else {
+            (prob_map.shape()[1], prob_map.shape()[2])
+        };
         let mut stack = vec![(start_x, start_y)];
         let mut min_x = start_x;
         let mut min_y = start_y;

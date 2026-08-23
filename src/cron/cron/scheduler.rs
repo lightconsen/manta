@@ -1,6 +1,7 @@
 //! `CronScheduler` construction, the global-timer loop, command handling,
 //! and the public job-management API.
 
+use super::executor::CronRuntime;
 use super::*;
 
 impl CronScheduler {
@@ -102,7 +103,20 @@ impl CronScheduler {
                 tokio::select! {
                     cmd = command_rx.recv() => {
                         if let Some(cmd) = cmd {
-                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx, &inflight, &rearm_notify, &schedule_change_tx, cmd).await;
+                            Self::handle_command(
+                                CronRuntime {
+                                    jobs: &jobs,
+                                    agent: &agent,
+                                    store_path: &store_path,
+                                    announce_tx: &announce_tx,
+                                    heartbeat_wake_tx: &heartbeat_wake_tx,
+                                    inflight: &inflight,
+                                },
+                                &rearm_notify,
+                                &schedule_change_tx,
+                                cmd,
+                            )
+                            .await;
                         }
                     }
                     _ = cmd_shutdown_rx.recv() => {
@@ -303,13 +317,15 @@ impl CronScheduler {
             let inflight = Arc::clone(inflight);
             set.spawn(async move {
                 Self::execute_job(
-                    &jobs,
+                    CronRuntime {
+                        jobs: &jobs,
+                        agent: &agent,
+                        store_path: &store_path,
+                        announce_tx: &announce_tx,
+                        heartbeat_wake_tx: &heartbeat_wake_tx,
+                        inflight: &inflight,
+                    },
                     &job_id,
-                    &agent,
-                    &store_path,
-                    &announce_tx,
-                    &heartbeat_wake_tx,
-                    &inflight,
                     false,
                 )
                 .await;
@@ -326,18 +342,20 @@ impl CronScheduler {
     }
 
     /// Handle scheduler commands
-    #[allow(clippy::too_many_arguments)]
     async fn handle_command(
-        jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
-        agent: &Arc<RwLock<Option<Arc<Agent>>>>,
-        store_path: &Option<PathBuf>,
-        announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
-        heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
-        inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
+        rt: CronRuntime<'_>,
         rearm_notify: &Arc<tokio::sync::Notify>,
         schedule_change_tx: &Option<mpsc::Sender<ScheduleChangeSnapshot>>,
         cmd: CronCommand,
     ) {
+        let CronRuntime {
+            jobs,
+            agent,
+            store_path,
+            announce_tx,
+            heartbeat_wake_tx,
+            inflight,
+        } = rt;
         match cmd {
             CronCommand::Add(mut job) => {
                 info!("Adding job: {} ({})", job.name, job.id);
@@ -434,13 +452,15 @@ impl CronScheduler {
                 let id_for_spawn = id.clone();
                 let handle = tokio::spawn(async move {
                     Self::execute_job(
-                        &jobs_c,
+                        CronRuntime {
+                            jobs: &jobs_c,
+                            agent: &agent_c,
+                            store_path: &store_path_c,
+                            announce_tx: &announce_tx_c,
+                            heartbeat_wake_tx: &heartbeat_wake_tx_c,
+                            inflight: &inflight_c,
+                        },
                         &id_for_spawn,
-                        &agent_c,
-                        &store_path_c,
-                        &announce_tx_c,
-                        &heartbeat_wake_tx_c,
-                        &inflight_c,
                         true,
                     )
                     .await;

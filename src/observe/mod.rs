@@ -12,7 +12,7 @@ pub mod writer;
 
 use std::sync::atomic::AtomicU64;
 
-pub use collector::TurnMetricsCollector;
+pub use collector::{TurnContext, TurnMetricsCollector};
 pub use record::{
     ErrorSource, LlmRoundRecord, ObservedError, ObservedToolCall, ObservedUsage, TurnEndState,
     TurnRecord,

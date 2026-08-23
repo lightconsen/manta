@@ -891,16 +891,12 @@ impl ToolRegistry {
                 let (tx, rx) = tokio::sync::oneshot::channel();
 
                 // Create pending approval
-                let approval = PendingApproval::new(
-                    &approval_id,
-                    &tool_name,
-                    approval_args,
-                    requested_by,
-                    risk_level,
-                    approval_level,
-                    message,
-                    tx,
-                );
+                let approval =
+                    PendingApproval::new(&approval_id, &tool_name, approval_args, requested_by)
+                        .with_risk_level(risk_level)
+                        .with_approval_level(approval_level)
+                        .with_message(message)
+                        .with_response_tx(tx);
 
                 // Submit to approval queue
                 approval_queue.submit(approval).await;

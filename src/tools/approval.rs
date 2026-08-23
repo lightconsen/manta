@@ -94,17 +94,14 @@ pub struct PendingApproval {
 }
 
 impl PendingApproval {
-    /// Create a new pending approval
-    #[allow(clippy::too_many_arguments)]
+    /// Create a new pending approval with defaults; chain the `with_*`
+    /// builders to set risk/approval level, message, and the response
+    /// channel.
     pub fn new(
         id: impl Into<String>,
         tool_name: impl Into<String>,
         args: serde_json::Value,
         requested_by: impl Into<String>,
-        risk_level: RiskLevel,
-        approval_level: ApprovalLevel,
-        message: impl Into<String>,
-        response_tx: oneshot::Sender<ApprovalDecision>,
     ) -> Self {
         Self {
             id: id.into(),
@@ -112,11 +109,35 @@ impl PendingApproval {
             args,
             requested_at: Instant::now(),
             requested_by: requested_by.into(),
-            risk_level,
-            approval_level,
-            message: message.into(),
-            response_tx: Some(response_tx),
+            risk_level: RiskLevel::Medium,
+            approval_level: ApprovalLevel::Ask,
+            message: String::new(),
+            response_tx: None,
         }
+    }
+
+    /// Set the risk level assessment.
+    pub fn with_risk_level(mut self, risk_level: RiskLevel) -> Self {
+        self.risk_level = risk_level;
+        self
+    }
+
+    /// Set who can approve.
+    pub fn with_approval_level(mut self, approval_level: ApprovalLevel) -> Self {
+        self.approval_level = approval_level;
+        self
+    }
+
+    /// Set the human-readable message explaining the request.
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
+        self
+    }
+
+    /// Set the channel the suspended execution waits on for the decision.
+    pub fn with_response_tx(mut self, response_tx: oneshot::Sender<ApprovalDecision>) -> Self {
+        self.response_tx = Some(response_tx);
+        self
     }
 
     /// Age of this approval request
@@ -408,11 +429,11 @@ mod tests {
             "shell",
             serde_json::json!({"command": "ls"}),
             "user123",
-            RiskLevel::High,
-            ApprovalLevel::Ask,
-            "Shell command requires approval",
-            tx,
-        );
+        )
+        .with_risk_level(RiskLevel::High)
+        .with_approval_level(ApprovalLevel::Ask)
+        .with_message("Shell command requires approval")
+        .with_response_tx(tx);
 
         let id = queue.submit(approval).await;
         assert_eq!(id, "test-1");
@@ -438,11 +459,11 @@ mod tests {
             "file_delete",
             serde_json::json!({"path": "/tmp/test"}),
             "user456",
-            RiskLevel::Critical,
-            ApprovalLevel::Ask,
-            "File deletion requires approval",
-            tx,
-        );
+        )
+        .with_risk_level(RiskLevel::Critical)
+        .with_approval_level(ApprovalLevel::Ask)
+        .with_message("File deletion requires approval")
+        .with_response_tx(tx);
 
         let id = queue.submit(approval).await;
 
@@ -477,15 +498,15 @@ mod tests {
                 if i == 0 { "shell" } else { "memory_read" },
                 serde_json::json!({}),
                 if i == 0 { "user1" } else { "user2" },
-                if i == 2 {
-                    RiskLevel::Critical
-                } else {
-                    RiskLevel::Medium
-                },
-                ApprovalLevel::Ask,
-                "Test",
-                tx,
-            );
+            )
+            .with_risk_level(if i == 2 {
+                RiskLevel::Critical
+            } else {
+                RiskLevel::Medium
+            })
+            .with_approval_level(ApprovalLevel::Ask)
+            .with_message("Test")
+            .with_response_tx(tx);
             queue.submit(approval).await;
         }
 
@@ -517,29 +538,23 @@ mod tests {
         let (tx2, _rx2) = oneshot::channel();
 
         queue
-            .submit(PendingApproval::new(
-                "a1",
-                "tool",
-                serde_json::json!({}),
-                "user1",
-                RiskLevel::Low,
-                ApprovalLevel::Ask,
-                "Test",
-                tx1,
-            ))
+            .submit(
+                PendingApproval::new("a1", "tool", serde_json::json!({}), "user1")
+                    .with_risk_level(RiskLevel::Low)
+                    .with_approval_level(ApprovalLevel::Ask)
+                    .with_message("Test")
+                    .with_response_tx(tx1),
+            )
             .await;
 
         queue
-            .submit(PendingApproval::new(
-                "a2",
-                "tool",
-                serde_json::json!({}),
-                "user2",
-                RiskLevel::Low,
-                ApprovalLevel::Ask,
-                "Test",
-                tx2,
-            ))
+            .submit(
+                PendingApproval::new("a2", "tool", serde_json::json!({}), "user2")
+                    .with_risk_level(RiskLevel::Low)
+                    .with_approval_level(ApprovalLevel::Ask)
+                    .with_message("Test")
+                    .with_response_tx(tx2),
+            )
             .await;
 
         let cancelled = queue.cancel_for("user1").await;
@@ -580,16 +595,13 @@ mod tests {
         let (tx, _rx) = oneshot::channel();
 
         queue
-            .submit(PendingApproval::new(
-                "g1",
-                "tool",
-                serde_json::json!({}),
-                "user",
-                RiskLevel::Low,
-                ApprovalLevel::Ask,
-                "msg",
-                tx,
-            ))
+            .submit(
+                PendingApproval::new("g1", "tool", serde_json::json!({}), "user")
+                    .with_risk_level(RiskLevel::Low)
+                    .with_approval_level(ApprovalLevel::Ask)
+                    .with_message("msg")
+                    .with_response_tx(tx),
+            )
             .await;
 
         let summary = queue.get("g1").await;
@@ -606,16 +618,13 @@ mod tests {
         let (tx, _rx) = oneshot::channel();
 
         queue
-            .submit(PendingApproval::new(
-                "id1",
-                "t1",
-                serde_json::json!({}),
-                "u",
-                RiskLevel::Low,
-                ApprovalLevel::Ask,
-                "m",
-                tx,
-            ))
+            .submit(
+                PendingApproval::new("id1", "t1", serde_json::json!({}), "u")
+                    .with_risk_level(RiskLevel::Low)
+                    .with_approval_level(ApprovalLevel::Ask)
+                    .with_message("m")
+                    .with_response_tx(tx),
+            )
             .await;
 
         let ids = queue.list_ids().await;
@@ -630,16 +639,13 @@ mod tests {
 
         let (tx, _rx) = oneshot::channel();
         queue
-            .submit(PendingApproval::new(
-                "e1",
-                "t",
-                serde_json::json!({}),
-                "u",
-                RiskLevel::Low,
-                ApprovalLevel::Ask,
-                "m",
-                tx,
-            ))
+            .submit(
+                PendingApproval::new("e1", "t", serde_json::json!({}), "u")
+                    .with_risk_level(RiskLevel::Low)
+                    .with_approval_level(ApprovalLevel::Ask)
+                    .with_message("m")
+                    .with_response_tx(tx),
+            )
             .await;
 
         assert!(!queue.is_empty().await);
@@ -664,16 +670,11 @@ mod tests {
     #[test]
     fn test_pending_approval_age() {
         let (tx, _rx) = oneshot::channel();
-        let pa = PendingApproval::new(
-            "a1",
-            "tool",
-            serde_json::json!({}),
-            "user",
-            RiskLevel::Low,
-            ApprovalLevel::Ask,
-            "test",
-            tx,
-        );
+        let pa = PendingApproval::new("a1", "tool", serde_json::json!({}), "user")
+            .with_risk_level(RiskLevel::Low)
+            .with_approval_level(ApprovalLevel::Ask)
+            .with_message("test")
+            .with_response_tx(tx);
         // Age should be very small since just created
         assert!(pa.age() < Duration::from_secs(1));
     }
@@ -699,16 +700,13 @@ mod tests {
         let (tx, rx) = oneshot::channel();
 
         queue
-            .submit(PendingApproval::new(
-                "d1",
-                "tool",
-                serde_json::json!({}),
-                "user",
-                RiskLevel::Low,
-                ApprovalLevel::Ask,
-                "test",
-                tx,
-            ))
+            .submit(
+                PendingApproval::new("d1", "tool", serde_json::json!({}), "user")
+                    .with_risk_level(RiskLevel::Low)
+                    .with_approval_level(ApprovalLevel::Ask)
+                    .with_message("test")
+                    .with_response_tx(tx),
+            )
             .await;
 
         let first = queue.resolve("d1", ApprovalDecision::Approve).await;

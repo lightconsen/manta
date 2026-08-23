@@ -31,6 +31,28 @@ pub struct OmniParserDetector {
     nms_iou_threshold: f32,
 }
 
+/// A detection box in center format (cx, cy, w, h) — the geometry OmniParser
+/// emits and NMS compares.
+#[derive(Clone, Copy)]
+struct CenterBox {
+    cx: f32,
+    cy: f32,
+    w: f32,
+    h: f32,
+}
+
+impl CenterBox {
+    /// Extract the box fields (indices 2..6) from a raw detection tuple.
+    fn of(d: &(usize, f32, f32, f32, f32, f32)) -> Self {
+        Self {
+            cx: d.2,
+            cy: d.3,
+            w: d.4,
+            h: d.5,
+        }
+    }
+}
+
 /// Role mapping from model class IDs to UiElement roles.
 const CLASS_ROLES: [&str; 10] = [
     "button",
@@ -290,16 +312,8 @@ impl OmniParserDetector {
                     continue;
                 }
 
-                let iou = Self::compute_iou(
-                    detections[i].2,
-                    detections[i].3,
-                    detections[i].4,
-                    detections[i].5,
-                    detections[j].2,
-                    detections[j].3,
-                    detections[j].4,
-                    detections[j].5,
-                );
+                let iou =
+                    Self::compute_iou(CenterBox::of(&detections[i]), CenterBox::of(&detections[j]));
 
                 if iou >= self.nms_iou_threshold {
                     suppressed[j] = true;
@@ -310,27 +324,17 @@ impl OmniParserDetector {
         kept
     }
 
-    /// Compute Intersection over Union for two boxes in (cx, cy, w, h) format.
-    #[allow(clippy::too_many_arguments)]
-    fn compute_iou(
-        cx1: f32,
-        cy1: f32,
-        w1: f32,
-        h1: f32,
-        cx2: f32,
-        cy2: f32,
-        w2: f32,
-        h2: f32,
-    ) -> f32 {
-        let x1_min = cx1 - w1 / 2.0;
-        let y1_min = cy1 - h1 / 2.0;
-        let x1_max = cx1 + w1 / 2.0;
-        let y1_max = cy1 + h1 / 2.0;
+    /// Compute Intersection over Union for two center-format boxes.
+    fn compute_iou(a: CenterBox, b: CenterBox) -> f32 {
+        let x1_min = a.cx - a.w / 2.0;
+        let y1_min = a.cy - a.h / 2.0;
+        let x1_max = a.cx + a.w / 2.0;
+        let y1_max = a.cy + a.h / 2.0;
 
-        let x2_min = cx2 - w2 / 2.0;
-        let y2_min = cy2 - h2 / 2.0;
-        let x2_max = cx2 + w2 / 2.0;
-        let y2_max = cy2 + h2 / 2.0;
+        let x2_min = b.cx - b.w / 2.0;
+        let y2_min = b.cy - b.h / 2.0;
+        let x2_max = b.cx + b.w / 2.0;
+        let y2_max = b.cy + b.h / 2.0;
 
         let inter_x1 = x1_min.max(x2_min);
         let inter_y1 = y1_min.max(y2_min);
@@ -341,8 +345,8 @@ impl OmniParserDetector {
         let inter_h = (inter_y2 - inter_y1).max(0.0);
         let inter_area = inter_w * inter_h;
 
-        let area1 = w1 * h1;
-        let area2 = w2 * h2;
+        let area1 = a.w * a.h;
+        let area2 = b.w * b.h;
         let union_area = area1 + area2 - inter_area;
 
         if union_area <= 0.0 {
@@ -384,21 +388,31 @@ mod tests {
 
     #[test]
     fn test_compute_iou() {
-        // Identical boxes → IoU = 1.0
-        assert!(
-            (OmniParserDetector::compute_iou(50.0, 50.0, 20.0, 20.0, 50.0, 50.0, 20.0, 20.0) - 1.0)
-                .abs()
-                < 0.001
-        );
+        fn box_at(cx: f32, cy: f32) -> CenterBox {
+            CenterBox { cx, cy, w: 20.0, h: 20.0 }
+        }
 
-        // Non-overlapping → IoU = 0.0
-        assert_eq!(
-            OmniParserDetector::compute_iou(10.0, 10.0, 10.0, 10.0, 50.0, 50.0, 10.0, 10.0),
-            0.0
-        );
+        // Identical boxes → IoU = 1.0
+        let iou = OmniParserDetector::compute_iou(box_at(50.0, 50.0), box_at(50.0, 50.0));
+        assert!((iou - 1.0).abs() < 0.001);
+
+        // Non-overlapping (10-wide boxes) → IoU = 0.0
+        let a = CenterBox {
+            cx: 10.0,
+            cy: 10.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        let b = CenterBox {
+            cx: 50.0,
+            cy: 50.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        assert_eq!(OmniParserDetector::compute_iou(a, b), 0.0);
 
         // Partial overlap
-        let iou = OmniParserDetector::compute_iou(10.0, 10.0, 20.0, 20.0, 15.0, 15.0, 20.0, 20.0);
+        let iou = OmniParserDetector::compute_iou(box_at(10.0, 10.0), box_at(15.0, 15.0));
         assert!(iou > 0.0 && iou < 1.0);
     }
 
@@ -428,14 +442,8 @@ mod tests {
                     continue;
                 }
                 let iou = OmniParserDetector::compute_iou(
-                    detections[i].2,
-                    detections[i].3,
-                    detections[i].4,
-                    detections[i].5,
-                    detections[j].2,
-                    detections[j].3,
-                    detections[j].4,
-                    detections[j].5,
+                    CenterBox::of(&detections[i]),
+                    CenterBox::of(&detections[j]),
                 );
                 if iou >= iou_threshold {
                     suppressed[j] = true;

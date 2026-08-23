@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use config::StandingOrderConfig;
+use config::{StandingOrderConfig, StandingOrderDef};
 use cron::Schedule as CronSchedule;
 use tokio::sync::oneshot;
 use tokio::time::{sleep_until, Instant as TokioInstant};
@@ -75,12 +75,7 @@ impl StandingOrderManager {
             self.shutdown_txs.push((order.name.clone(), shutdown_tx));
 
             let handle = tokio::spawn(Self::run_single_order(
-                order.name.clone(),
-                order.agent_id.clone(),
-                order.prompt.clone(),
-                order.schedule.clone(),
-                order.output_channel.clone(),
-                order.timeout_secs.unwrap_or(120),
+                order.clone(),
                 Arc::clone(&self.state),
                 shutdown_rx,
             ));
@@ -144,17 +139,21 @@ impl StandingOrderManager {
 
     /// Run a single standing order: parse the cron schedule, then loop,
     /// sleeping until each tick and firing the prompt against the agent.
-    #[allow(clippy::too_many_arguments)]
     async fn run_single_order(
-        order_name: String,
-        agent_id: String,
-        prompt: String,
-        schedule_expr: String,
-        output_channel: Option<String>,
-        timeout_secs: u64,
+        order: StandingOrderDef,
         state: Arc<GatewayState>,
         mut shutdown_rx: oneshot::Receiver<()>,
     ) {
+        let StandingOrderDef {
+            name: order_name,
+            agent_id,
+            prompt,
+            schedule: schedule_expr,
+            output_channel,
+            timeout_secs,
+            ..
+        } = order;
+        let timeout_secs = timeout_secs.unwrap_or(120);
         let schedule = match CronSchedule::from_str(&schedule_expr) {
             Ok(s) => s,
             Err(e) => {

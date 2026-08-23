@@ -85,6 +85,28 @@ pub fn resolve_provider(
     create_protocol_provider(&instance)
 }
 
+/// Per-field overrides merged over a provider preset's defaults (used by
+/// `ModelRouter`). Every field left as `None` falls back to the preset.
+#[derive(Debug, Clone, Default)]
+pub struct ProviderOverrides {
+    /// Protocol override (required for `"custom"` providers).
+    pub protocol: Option<Protocol>,
+    /// Base URL override.
+    pub base_url: Option<String>,
+    /// Model override.
+    pub model: Option<String>,
+    /// Max context window override.
+    pub max_context: Option<usize>,
+    /// Vision support override.
+    pub supports_vision: Option<bool>,
+    /// Tool-calling support override.
+    pub supports_tools: Option<bool>,
+    /// Stream family override.
+    pub stream_family: Option<ProviderStreamFamily>,
+    /// Auth method override.
+    pub auth_method: Option<AuthMethod>,
+}
+
 /// Resolve from a fully-specified set of parameters (used by `ModelRouter`).
 ///
 /// Merges preset defaults with all overrides, then creates the provider.
@@ -92,27 +114,22 @@ pub fn resolve_provider(
 /// # Arguments
 /// * `provider_type` — Preset name or `"custom"`
 /// * `api_key` — The effective API key
-/// * `protocol` — Protocol override
-/// * `base_url` — Base URL override
-/// * `model` — Model override
-/// * `max_context` — Max context override
-/// * `supports_vision` — Vision support override
-/// * `supports_tools` — Tools support override
-/// * `stream_family` — Stream family override
-/// * `auth_method` — Auth method override
-#[allow(clippy::too_many_arguments)]
+/// * `overrides` — Per-field overrides over the preset defaults
 pub fn resolve_from_config(
     provider_type: &str,
     api_key: Option<String>,
-    protocol: Option<Protocol>,
-    base_url: Option<String>,
-    model: Option<String>,
-    max_context: Option<usize>,
-    supports_vision: Option<bool>,
-    supports_tools: Option<bool>,
-    stream_family: Option<ProviderStreamFamily>,
-    auth_method: Option<AuthMethod>,
+    overrides: ProviderOverrides,
 ) -> crate::Result<Arc<dyn Provider>> {
+    let ProviderOverrides {
+        protocol,
+        base_url,
+        model,
+        max_context,
+        supports_vision,
+        supports_tools,
+        stream_family,
+        auth_method,
+    } = overrides;
     let presets = builtin_providers();
     let provider_type = canonical_provider_name(provider_type);
 

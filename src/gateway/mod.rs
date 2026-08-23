@@ -345,14 +345,16 @@ impl Gateway {
 
         let tools_init = init::tools::init_tools(
             &config,
-            acp.clone(),
-            session_store.clone(),
-            audit_log_dyn.clone(),
-            model_router.clone(),
-            task_registry.clone(),
-            device_bridge.clone(),
-            skills_manager.clone(),
-            shell_hooks.clone(),
+            init::tools::ToolSystemDeps {
+                acp: acp.clone(),
+                session_store: session_store.clone(),
+                audit_log_dyn: audit_log_dyn.clone(),
+                model_router: model_router.clone(),
+                task_registry: task_registry.clone(),
+                device_bridge: device_bridge.clone(),
+                skills_manager: skills_manager.clone(),
+                shell_hooks: shell_hooks.clone(),
+            },
         )
         .await?;
 

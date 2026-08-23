@@ -30,11 +30,13 @@ pub(super) async fn execute_network_actions(
             {
                 return crate::browser::network_log::query(
                     page,
-                    url.as_deref(),
-                    method.as_deref(),
-                    min_status,
-                    max_status,
-                    resource_type.as_deref(),
+                    crate::browser::network_log::NetworkQuery {
+                        url: url.as_deref(),
+                        method: method.as_deref(),
+                        min_status,
+                        max_status,
+                        resource_type: resource_type.as_deref(),
+                    },
                     include_body.unwrap_or(true),
                     limit.unwrap_or(50),
                     offset.unwrap_or(0),

@@ -26,7 +26,9 @@ use tracing::warn;
 use super::{DelegationScope, DelegationTask, DelegationTaskStore};
 use crate::agent::subagent_registry::SubagentRegistry;
 use crate::agent::Agent;
-use crate::tools::delegate_tool::{execute_child_task, AgentResolver, DelegationTracker, TaskSpec};
+use crate::tools::delegate_tool::{
+    execute_child_task, AgentResolver, ChildTaskEnv, DelegationTracker, TaskSpec,
+};
 
 /// Resolves handoff targets and spawns their successor tasks.
 ///
@@ -206,18 +208,20 @@ impl DelegationCoordinator {
                         execute_child_task(
                             run_id,
                             spec,
-                            tracker,
-                            iterations,
-                            Some(agent),
-                            registry,
-                            Some(store),
-                            scope,
-                            target,
-                            Some(coordinator),
                             // No wake: a successor's parent session is the
                             // handing-off task's id, not a live agent session,
                             // so waking it would be spurious.
-                            None,
+                            ChildTaskEnv {
+                                tracker,
+                                iterations,
+                                agent: Some(agent),
+                                registry,
+                                store: Some(store),
+                                scope,
+                                agent_id: target,
+                                coordinator: Some(coordinator),
+                                wake: None,
+                            },
                         )
                         .await;
                     })

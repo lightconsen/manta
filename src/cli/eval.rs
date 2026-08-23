@@ -194,16 +194,20 @@ impl EvalCommands {
                 cmd_run(
                     config,
                     suite.clone(),
-                    dir.clone(),
                     *full,
-                    *trials,
-                    provider.clone(),
-                    model.clone(),
-                    api_key.clone(),
-                    base_url.clone(),
-                    *skill_breakdown,
-                    *collect_badcases,
-                    *sampling_rate,
+                    eval::standalone::SuiteRunOptions {
+                        evals_dir: dir.clone(),
+                        trials_override: *trials,
+                        sampling_rate_override: *sampling_rate,
+                        skill_breakdown: *skill_breakdown,
+                        collect_badcases: *collect_badcases,
+                    },
+                    eval::standalone::ProviderSelection {
+                        provider: provider.clone(),
+                        model: model.clone(),
+                        api_key: api_key.clone(),
+                        base_url: base_url.clone(),
+                    },
                 )
                 .await
             }
@@ -258,10 +262,12 @@ impl EvalCommands {
                     file.clone(),
                     *history,
                     *drift,
-                    provider.clone(),
-                    model.clone(),
-                    api_key.clone(),
-                    base_url.clone(),
+                    eval::standalone::ProviderSelection {
+                        provider: provider.clone(),
+                        model: model.clone(),
+                        api_key: api_key.clone(),
+                        base_url: base_url.clone(),
+                    },
                 )
                 .await
             }
@@ -352,22 +358,17 @@ async fn cmd_validate(dir: Option<PathBuf>) -> Result<()> {
 }
 
 /// `eval run <suite>` — load and optionally execute a suite.
-#[allow(clippy::too_many_arguments)]
 async fn cmd_run(
     config: &Config,
     suite: String,
-    dir: Option<PathBuf>,
     full: bool,
-    trials: Option<usize>,
-    provider: Option<String>,
-    model: Option<String>,
-    api_key: Option<String>,
-    base_url: Option<String>,
-    skill_breakdown: bool,
-    collect_badcases: bool,
-    sampling_rate_override: Option<f64>,
+    opts: eval::standalone::SuiteRunOptions,
+    selection: eval::standalone::ProviderSelection,
 ) -> Result<()> {
-    let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
+    let evals_dir = opts
+        .evals_dir
+        .clone()
+        .unwrap_or_else(eval::default_evals_dir);
     let manifest_path = evals_dir.join("suites").join(format!("{}.yaml", suite));
 
     if !manifest_path.exists() {
@@ -383,15 +384,11 @@ async fn cmd_run(
         return eval::standalone::run_standalone_suite(
             config,
             &suite,
-            Some(evals_dir),
-            trials,
-            sampling_rate_override,
-            provider,
-            model,
-            api_key,
-            base_url,
-            skill_breakdown,
-            collect_badcases,
+            eval::standalone::SuiteRunOptions {
+                evals_dir: Some(evals_dir),
+                ..opts
+            },
+            selection,
         )
         .await;
     }
@@ -881,21 +878,25 @@ async fn cmd_review(
 }
 
 /// `eval calibrate` — run Critic calibration against known-answer cases.
-#[allow(clippy::too_many_arguments)]
 async fn cmd_calibrate(
     dir: Option<PathBuf>,
     file: Option<PathBuf>,
     show_history: bool,
     check_drift: bool,
-    provider: Option<String>,
-    model: Option<String>,
-    api_key: Option<String>,
-    base_url: Option<String>,
+    selection: eval::standalone::ProviderSelection,
 ) -> Result<()> {
     use std::sync::Arc;
 
     use crate::eval::calibration;
     use crate::providers::resolver::resolve_provider;
+
+    let eval::standalone::ProviderSelection {
+        provider: provider_override,
+        model,
+        api_key,
+        base_url,
+    } = selection;
+    let provider = provider_override;
 
     let evals_dir = dir.unwrap_or_else(eval::default_evals_dir);
 

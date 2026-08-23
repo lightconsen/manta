@@ -465,15 +465,17 @@ impl DelegateTool {
                 execute_child_task(
                     run_id,
                     reg_task,
-                    reg_tracker,
-                    iterations_bg,
-                    child_agent,
-                    registry,
-                    store_opt,
-                    scope,
-                    agent_id,
-                    coordinator,
-                    wake,
+                    ChildTaskEnv {
+                        tracker: reg_tracker,
+                        iterations: iterations_bg,
+                        agent: child_agent,
+                        registry,
+                        store: store_opt,
+                        scope,
+                        agent_id,
+                        coordinator,
+                        wake,
+                    },
                 )
                 .await;
             }
@@ -523,24 +525,42 @@ impl DelegateTool {
 ///
 /// `wake`, when present, wakes the parent with the child's outcome after the
 /// child finishes (parent auto-wake, v2).
-#[allow(clippy::too_many_arguments)] // closure-captured execution context for a spawned child
+pub(crate) struct ChildTaskEnv {
+    pub tracker: DelegationTracker,
+    /// Shared iteration budget across the whole delegation tree.
+    pub iterations: Arc<AtomicUsize>,
+    /// The child's agent (absent for registry-only dry spawns).
+    pub agent: Option<Arc<crate::agent::Agent>>,
+    pub registry: Arc<SubagentRegistry>,
+    pub store: Option<Arc<DelegationTaskStore>>,
+    /// Where this child sits in the delegation tree.
+    pub scope: DelegationScope,
+    pub agent_id: String,
+    pub coordinator: Option<Arc<DelegationCoordinator>>,
+    pub wake: Option<Arc<DelegationWake>>,
+}
+
 pub(crate) fn execute_child_task(
     child_id: String,
     task: TaskSpec,
-    tracker: DelegationTracker,
-    iterations: Arc<AtomicUsize>,
-    agent: Option<Arc<crate::agent::Agent>>,
-    registry: Arc<SubagentRegistry>,
-    store: Option<Arc<DelegationTaskStore>>,
-    scope: DelegationScope,
-    agent_id: String,
-    coordinator: Option<Arc<DelegationCoordinator>>,
-    wake: Option<Arc<DelegationWake>>,
+    env: ChildTaskEnv,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     // Boxed (type-erased) future: `execute_child_task -> maybe_advance ->
     // successor spawn -> execute_child_task` is a genuinely cyclic call graph,
     // so a concrete `impl Future` would recurse in the type system (E0391).
     Box::pin(async move {
+        let ChildTaskEnv {
+            tracker,
+            iterations,
+            agent,
+            registry,
+            store,
+            scope,
+            agent_id,
+            coordinator,
+            wake,
+        } = env;
+
         tracker.update_status(&child_id, ChildStatus::Running).await;
 
         debug!("Child {} starting execution", child_id);
@@ -1790,15 +1810,17 @@ mod tests {
         execute_child_task(
             child_id.clone(),
             completion_task(),
-            tool.tracker.clone(),
-            Arc::new(AtomicUsize::new(0)),
-            Some(mock_agent("the answer")),
-            registry.clone(),
-            Some(store.clone()),
-            child_scope(&child_id, Some("parent-run".to_string()), 2),
-            "worker".to_string(),
-            None,
-            Some(wake.clone()),
+            ChildTaskEnv {
+                tracker: tool.tracker.clone(),
+                iterations: Arc::new(AtomicUsize::new(0)),
+                agent: Some(mock_agent("the answer")),
+                registry: registry.clone(),
+                store: Some(store.clone()),
+                scope: child_scope(&child_id, Some("parent-run".to_string()), 2),
+                agent_id: "worker".to_string(),
+                coordinator: None,
+                wake: Some(wake.clone()),
+            },
         )
         .await;
 
@@ -1847,15 +1869,17 @@ mod tests {
         execute_child_task(
             child_id.clone(),
             completion_task(),
-            tool.tracker.clone(),
-            Arc::new(AtomicUsize::new(0)),
-            Some(mock_agent("result")),
-            registry.clone(),
-            Some(store.clone()),
-            child_scope(&child_id, Some("parent-run".to_string()), 2),
-            "worker".to_string(),
-            None,
-            Some(wake.clone()),
+            ChildTaskEnv {
+                tracker: tool.tracker.clone(),
+                iterations: Arc::new(AtomicUsize::new(0)),
+                agent: Some(mock_agent("result")),
+                registry: registry.clone(),
+                store: Some(store.clone()),
+                scope: child_scope(&child_id, Some("parent-run".to_string()), 2),
+                agent_id: "worker".to_string(),
+                coordinator: None,
+                wake: Some(wake.clone()),
+            },
         )
         .await;
 
@@ -1887,15 +1911,17 @@ mod tests {
         execute_child_task(
             child_id.clone(),
             completion_task(),
-            DelegationTracker::new(1),
-            Arc::new(AtomicUsize::new(0)),
-            Some(mock_agent("root answer")),
-            registry,
-            None,
-            child_scope(&child_id, None, 1),
-            "worker".to_string(),
-            None,
-            Some(wake),
+            ChildTaskEnv {
+                tracker: DelegationTracker::new(1),
+                iterations: Arc::new(AtomicUsize::new(0)),
+                agent: Some(mock_agent("root answer")),
+                registry,
+                store: None,
+                scope: child_scope(&child_id, None, 1),
+                agent_id: "worker".to_string(),
+                coordinator: None,
+                wake: Some(wake),
+            },
         )
         .await;
 
@@ -1922,15 +1948,17 @@ mod tests {
         execute_child_task(
             child_id.clone(),
             completion_task(),
-            DelegationTracker::new(2),
-            Arc::new(AtomicUsize::new(0)),
-            None,
-            registry.clone(),
-            Some(store.clone()),
-            child_scope(&child_id, Some("parent-run".to_string()), 2),
-            "worker".to_string(),
-            None,
-            Some(wake.clone()),
+            ChildTaskEnv {
+                tracker: DelegationTracker::new(2),
+                iterations: Arc::new(AtomicUsize::new(0)),
+                agent: None,
+                registry: registry.clone(),
+                store: Some(store.clone()),
+                scope: child_scope(&child_id, Some("parent-run".to_string()), 2),
+                agent_id: "worker".to_string(),
+                coordinator: None,
+                wake: Some(wake.clone()),
+            },
         )
         .await;
 

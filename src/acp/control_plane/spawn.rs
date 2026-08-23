@@ -201,10 +201,12 @@ impl AcpControlPlane {
             self.store.clone(),
             self.clone(),
             session_id.clone(),
-            acp_for_recovery,
-            recovery_session_id,
-            recovery_parent_id,
-            recovery_config_clone,
+            RecoveryPlan {
+                acp: acp_for_recovery,
+                session_id: recovery_session_id,
+                parent_id: recovery_parent_id,
+                config: recovery_config_clone,
+            },
         ));
 
         let handle = SubagentHandle {
@@ -443,10 +445,22 @@ impl AcpControlPlane {
     }
 }
 
+/// Crash-recovery plan for a watchdog: where and how to respawn a crashed
+/// subagent through the control-plane actor loop.
+struct RecoveryPlan {
+    /// Control plane used to schedule the recovery command.
+    acp: AcpControlPlane,
+    /// Session id to respawn under.
+    session_id: crate::acp::config::AcpSessionId,
+    /// Parent session of the crashed subagent.
+    parent_id: String,
+    /// Original subagent configuration to respawn with.
+    config: SubagentConfig,
+}
+
 /// Watchdog task that monitors a subagent's JoinHandle, updates status on
 /// normal exit, panic, or external abort, and triggers automatic crash
 /// recovery when configured.
-#[allow(clippy::too_many_arguments)]
 async fn watchdog_task(
     join_handle: tokio::task::JoinHandle<()>,
     subagents: Arc<RwLock<HashMap<String, crate::acp::subagent::SubagentHandle>>>,
@@ -454,12 +468,15 @@ async fn watchdog_task(
     store: Option<Arc<crate::agent::session_store::SessionStore>>,
     acp: AcpControlPlane,
     session_id: crate::acp::config::AcpSessionId,
-    acp_for_recovery: AcpControlPlane,
-    recovery_session_id: crate::acp::config::AcpSessionId,
-    recovery_parent_id: String,
-    recovery_config: SubagentConfig,
+    recovery: RecoveryPlan,
 ) {
     type SubagentMap = HashMap<String, SubagentHandle>;
+    let RecoveryPlan {
+        acp: acp_for_recovery,
+        session_id: recovery_session_id,
+        parent_id: recovery_parent_id,
+        config: recovery_config,
+    } = recovery;
 
     match join_handle.await {
         Ok(()) => {

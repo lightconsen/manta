@@ -3,23 +3,32 @@
 
 use super::*;
 
+/// Shared runtime handles threaded through cron command handling and job
+/// execution (the scheduler state every command needs read/write access to).
+pub(super) struct CronRuntime<'a> {
+    pub jobs: &'a Arc<RwLock<HashMap<String, CronJob>>>,
+    pub agent: &'a Arc<RwLock<Option<Arc<Agent>>>>,
+    pub store_path: &'a Option<PathBuf>,
+    pub announce_tx: &'a Option<mpsc::Sender<AnnounceDelivery>>,
+    pub heartbeat_wake_tx: &'a Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
+    pub inflight: &'a Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
+}
+
 impl CronScheduler {
     /// Execute a job
     ///
     /// When `force` is true, the job runs regardless of `should_run` /
     /// `next_run_at`. Used by manual trigger (`Trigger` command).
     /// Timer-driven execution passes `false`.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn execute_job(
-        jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
-        job_id: &str,
-        agent: &Arc<RwLock<Option<Arc<Agent>>>>,
-        store_path: &Option<PathBuf>,
-        announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
-        heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
-        inflight: &Arc<TokioMutex<Vec<(String, AbortHandle)>>>,
-        force: bool,
-    ) {
+    pub(super) async fn execute_job(rt: CronRuntime<'_>, job_id: &str, force: bool) {
+        let CronRuntime {
+            jobs,
+            agent,
+            store_path,
+            announce_tx,
+            heartbeat_wake_tx,
+            inflight,
+        } = rt;
         let job = {
             let mut jobs_lock = jobs.write().await;
             let job = match jobs_lock.get_mut(job_id) {

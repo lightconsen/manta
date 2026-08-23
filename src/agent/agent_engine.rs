@@ -8,7 +8,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::agent::turns::ToolCallRecord;
 use crate::channels::{IncomingMessage, OutgoingMessage};
-use crate::observe::{ErrorSource, TurnMetricsCollector, TurnMetricsSink};
+use crate::observe::{ErrorSource, TurnContext, TurnMetricsCollector, TurnMetricsSink};
 use crate::providers::{CompletionRequest, Message, Role, ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolExecutionChunk};
 
@@ -592,15 +592,15 @@ impl Agent {
 
                 // Record the cache hit as a completed turn with no LLM rounds so
                 // cache-hit rate / cost statistics stay accurate.
-                let mut cache_collector = TurnMetricsCollector::new(
-                    self.session_id.clone(),
-                    conversation_id.clone(),
-                    self.agent_id.clone(),
-                    format!("thread-{}", conversation_id),
-                    0,
-                    &content,
-                    Some(message.metadata.timestamp),
-                )
+                let mut cache_collector = TurnMetricsCollector::new(TurnContext {
+                    session_id: self.session_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    agent_id: self.agent_id.clone(),
+                    thread_id: format!("thread-{}", conversation_id),
+                    turn_index: 0,
+                    user_message: content.clone(),
+                    enqueued_at: Some(message.metadata.timestamp),
+                })
                 .with_metrics_sink(
                     self.session_store
                         .clone()
@@ -768,15 +768,15 @@ impl Agent {
         thread.turns[turn_idx].start();
 
         // Per-turn observability collector (persisted on finish/fail/abort).
-        let mut collector = TurnMetricsCollector::new(
-            self.session_id.clone(),
-            conversation_id.clone(),
-            self.agent_id.clone(),
-            thread.id.clone(),
-            turn_idx,
-            &content,
-            Some(message.metadata.timestamp),
-        )
+        let mut collector = TurnMetricsCollector::new(TurnContext {
+            session_id: self.session_id.clone(),
+            conversation_id: conversation_id.clone(),
+            agent_id: self.agent_id.clone(),
+            thread_id: thread.id.clone(),
+            turn_index: turn_idx,
+            user_message: content.clone(),
+            enqueued_at: Some(message.metadata.timestamp),
+        })
         .with_metrics_sink(
             self.session_store
                 .clone()

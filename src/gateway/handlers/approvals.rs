@@ -112,16 +112,11 @@ mod tests {
 
     async fn submit_approval(state: &Arc<GatewayState>, id: &str) {
         let (tx, _rx) = oneshot::channel();
-        let pa = PendingApproval::new(
-            id,
-            "bash",
-            serde_json::json!({ "command": "ls" }),
-            "alice",
-            RiskLevel::High,
-            ApprovalLevel::Ask,
-            "Run bash",
-            tx,
-        );
+        let pa = PendingApproval::new(id, "bash", serde_json::json!({ "command": "ls" }), "alice")
+            .with_risk_level(RiskLevel::High)
+            .with_approval_level(ApprovalLevel::Ask)
+            .with_message("Run bash")
+            .with_response_tx(tx);
         state.tools.approval_queue.submit(pa).await;
     }
 

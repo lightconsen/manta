@@ -32,27 +32,61 @@ use crate::tools::web::{WebFetchTool, WebSearchTool};
 use crate::tools::{AcpSessionTool, AcpSpawnTool, SessionsSendTool, ToolRegistry};
 use crate::Result;
 
+/// Which provider a CLI-driven eval run should use; every field left as
+/// `None` falls back to the daemon's configured provider.
+#[derive(Debug, Clone, Default)]
+pub struct ProviderSelection {
+    /// Provider preset/type override.
+    pub provider: Option<String>,
+    /// Model override.
+    pub model: Option<String>,
+    /// API key override.
+    pub api_key: Option<String>,
+    /// API base URL override.
+    pub base_url: Option<String>,
+}
+
+/// Tunables for a standalone suite run beyond what the suite manifest says.
+#[derive(Debug, Clone, Default)]
+pub struct SuiteRunOptions {
+    /// Eval directory override (defaults to the standard evals dir).
+    pub evals_dir: Option<PathBuf>,
+    /// Trial-count override.
+    pub trials_override: Option<usize>,
+    /// Sampling-rate override.
+    pub sampling_rate_override: Option<f64>,
+    /// Print per-skill score breakdowns.
+    pub skill_breakdown: bool,
+    /// Collect bad cases into the badcase store.
+    pub collect_badcases: bool,
+}
+
 /// Run a full eval suite standalone (no daemon needed).
 ///
 /// 1. Loads GatewayConfig from the config file (or env var fallback).
 /// 2. Creates a provider, tool registry, Agent, and optional Critic.
 /// 3. Runs `EvalHarness` for each task in the suite.
 /// 4. Prints per-task and summary results.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_standalone_suite(
     _config: &crate::config::Config,
     suite_name: &str,
-    evals_dir: Option<PathBuf>,
-    trials_override: Option<usize>,
-    sampling_rate_override: Option<f64>,
-    provider_override: Option<String>,
-    model_override: Option<String>,
-    api_key_override: Option<String>,
-    base_url_override: Option<String>,
-    skill_breakdown: bool,
-    collect_badcases: bool,
+    opts: SuiteRunOptions,
+    selection: ProviderSelection,
 ) -> Result<()> {
-    let evals_dir = evals_dir.unwrap_or_else(default_evals_dir);
+    let SuiteRunOptions {
+        evals_dir: evals_dir_override,
+        trials_override,
+        sampling_rate_override,
+        skill_breakdown,
+        collect_badcases,
+    } = opts;
+    let ProviderSelection {
+        provider: provider_override,
+        model: model_override,
+        api_key: api_key_override,
+        base_url: base_url_override,
+    } = selection;
+    let evals_dir = evals_dir_override.unwrap_or_else(default_evals_dir);
     let manifest_path = evals_dir
         .join("suites")
         .join(format!("{}.yaml", suite_name));
