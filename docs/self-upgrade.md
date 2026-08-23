@@ -4,6 +4,8 @@
 
 Syscity can modify its own source code, compile, replace its binary, and restart — all triggered through chat conversation, without relying on external process managers (systemd/launchd/tmux).
 
+Separately, released binaries can be updated in place from GitHub Releases without touching source — see [Flow D: Online Self-Update](#flow-d-online-self-update-from-github-releases).
+
 ## Architecture: Shim + Core
 
 ```
@@ -238,6 +240,53 @@ Shim:
 - User returns to shell
 ```
 
+### Flow D: Online Self-Update (from GitHub Releases)
+
+The binary-update path: no source, no local build — download a published
+release, verify it, swap the binary, restart. Shared core lives in
+`src/update/`:
+
+| Piece | File | Role |
+|-------|------|------|
+| Discovery | `src/update/github.rs` | Query the GitHub API for the latest `lightconsen/syscity` release, semver-compare against the running version |
+| Download | `src/update/download.rs` | Fetch the platform tarball and verify it against the `.sha256` published alongside the release — nothing is applied unverified |
+| Apply | `src/update/apply.rs` | Extract the binary, write a temp file next to the current executable, atomically rename over it (a crash mid-apply never leaves a truncated binary) |
+| Platform | `src/update/platform.rs` | Map os/arch to the release asset name; platforms without published binaries are rejected up front |
+
+Surfaces:
+
+- **CLI** — `syscity update` checks, downloads, verifies, installs, then
+  restarts the daemon; `syscity update check` only reports; `--json` for
+  machine-readable output, `--no-restart` to skip the daemon restart.
+- **Daemon** — `GET /api/v1/update/status` (cached 6h; `?refresh=1` forces a
+  check), `POST /api/v1/update` (runs download/apply in the background,
+  `202 Accepted`), `GET /api/v1/update/progress` (phase/percent). The daemon
+  restarts itself via a detached `syscity restart --pid <old>` helper that
+  waits for the old process to exit before starting the new binary. The
+  endpoints are registered in `src/gateway/lifecycle.rs` and governed by
+  `[update]` in the config.
+- **Desktop** — the Tauri updater plugin with minisign-signed bundles
+  (pubkey in `desktop/tauri.conf.json`; the private key lives in the
+  `TAURI_SIGNING_PRIVATE_KEY` GitHub secret). A `check_for_updates` command
+  and tray item drive it. A gateway constructed embedded (desktop) defers:
+  `POST /api/v1/update` refuses and points at the desktop updater.
+- **Web UI** — a global update banner plus a Settings → Update section with
+  progress polling; inside the desktop webview it routes to the Tauri
+  updater.
+
+Config (`~/.syscity/syscity.toml`):
+
+```toml
+[update]
+enabled = true     # master switch for the update endpoints / CLI path
+auto_check = true  # background release check at daemon startup
+```
+
+Release pipeline (`.github/workflows/release.yml`): CLI tarballs each ship a
+`.sha256`; desktop builds publish minisign-signed updater artifacts
+(`.app.tar.gz` / installers + `.sig`) and a per-platform `latest.json`
+rewritten with absolute download URLs.
+
 ## Safety Mechanisms
 
 | Layer | Protection |
@@ -249,6 +298,7 @@ Shim:
 | Sandbox | `file_write` cannot overwrite shim binary |
 | Binary atomic | `cp` new binary, then exit — no partial writes |
 | Dual detection (Scheme C) | Exit 42 + marker file + mtime check prevents false restarts |
+| Download verification (Flow D) | SHA-256 checksum checked before any apply; desktop bundles minisign-signed |
 
 ## Exit Code Semantics
 

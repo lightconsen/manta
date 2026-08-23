@@ -16,11 +16,11 @@ The control plane for Syscity, managing channels, agents, and the HTTP/WebSocket
 - **Middleware** (`middleware.rs`) — CORS, auth, logging, trusted proxy auth
 - **Protocol** (`protocol.rs`) — ACP protocol handlers
 - **Commands** (`commands.rs`) — Gateway control commands
-- **WebSocket** (`ws.rs`) — Real-time bidirectional message streaming
+- **WebSocket** (`ws/`) — Real-time bidirectional message streaming; per-topic method modules include `config_ws.rs`, `models.rs`, `sessions.rs`, `tasks.rs`, `skills_ws.rs`, `logs.rs`, `workspace.rs` (agent workspace browser), and `ask.rs` (`ask.respond`)
 - **Send Policy** (`send_policy.rs`) — Message send policy enforcement
 - **Hooks** (`hooks.rs`) — Gateway-level hooks system
 - **Command Provider** (`command_provider.rs`) — Command resolution and provisioning
-- **Handlers** (`handlers/`) — REST API handlers for health, device pairing, admin, etc.
+- **Handlers** (`handlers/`) — REST API handlers for health, device pairing, artifact serving (`/api/v1/artifacts/*path`), admin, etc.
 
 ### Module Layout
 
@@ -73,7 +73,6 @@ access checks and the `Gateway` struct shell; behavior lives in:
 | Cost | `cost_guard` |
 | Workspace | `workspace_dir`, `workspace_only` |
 | Browser | `browser` |
-| Computer | `computer` |
 | Computer | `computer` |
 | Dreaming | `dreaming` |
 | Standing Orders | `standing_orders` |
@@ -146,7 +145,13 @@ pub struct GatewayConfig {
 - Command provider for dynamic command resolution
 - Health check and admin handlers
 - Admin endpoints for provider switching and status
+- Online self-update endpoints (`/api/v1/update`, `/api/v1/update/status`, `/api/v1/update/progress`)
 - Cost guard configuration
 - Workspace boundary enforcement
 - Config snapshot and diff for change tracking
+- Agent workspace file browsing over WebSocket (`workspace.list` / `workspace.read`) with path-traversal protection
+- Artifact serving from per-agent workspaces (`/api/v1/artifacts/@<owner>/...`, `@default` = shared workspace) with fallback to the legacy `~/.syscity/artifacts/` directory
+- Secret masking on all config read surfaces (WS `config.get`, gateway tool `config.get` / `config.schema.lookup`, REST config handler) via `secrets::mask_json_value`
+- Config revision CAS: `config.get` returns a SHA-256 `revision`; `config.set` accepts `base_revision` and rejects stale writes with `REVISION_CONFLICT`
+- Human-in-the-loop `ask_user` flow: `ask.required` / `ask.resolved` events forwarded onto the WS bus, answered via `ask.respond`
 

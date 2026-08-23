@@ -23,9 +23,10 @@ Events stream back to the session WebSocket as the goal progresses.
 
 | Command | Description |
 |---|---|
-| `/goal <description> [--max-rounds N]` | Start a new goal |
-| `/goal cancel <goal_id>` | Cancel a running goal |
-| `/goal list` | List active goals |
+| `/goal <description> [--max-rounds N] [--fresh]` | Start a new goal; `--fresh` enables the fresh-context (Ralph) loop |
+| `/goal cancel <goal_id>` | Cancel a running goal; also discards a suspended goal's checkpoint |
+| `/goal list` | List running goals and suspended goals (with round and blocked reason) |
+| `/goal resume <goal_id>` | Re-arm a suspended goal from its persisted checkpoint |
 
 ---
 
@@ -58,11 +59,59 @@ Each goal emits `goal.progress` gateway events with a nested `event` field:
 goal.started → goal.retry → goal.check → (goal.done | goal.aborted)
 ```
 
-- **goal.started**: goal 已创建，包含描述和条件列表
+- **goal.started**: goal 已创建，包含描述和条件列表（恢复执行时描述带 `(resumed, round N/M)` 后缀）
 - **goal.retry**: 新一轮开始，包含上一轮反馈
 - **goal.check**: 条件检查结果，含通过数/总数
 - **goal.done**: 所有条件通过
-- **goal.aborted**: 达到 max_rounds / 死循环 / 手动取消 / 错误
+- **goal.aborted**: 达到 max_rounds / 死循环 / 手动取消 / 错误 / 无效 handoff。除 `reason` 字符串外还带结构化的
+  `blocked_reason: {code, message}` 字段，code 为 kebab-case：
+  `loop-detected`、`max-rounds`、`agent-error`、`cancelled`、`invalid-handoff`、`fatal-config-error`
+
+---
+
+## Fresh-Context Mode (Ralph, `--fresh`)
+
+`/goal <description> --fresh` runs the goal in fresh-context mode: every round
+spawns a brand-new **seedless sub-agent** — system prompt plus a single user
+message, with no parent conversation prefix, no session history, and no
+personality/memory seeding. The workspace on disk is the only long-term
+memory; the agent is instructed to persist durable findings to files.
+
+Between rounds the only LLM-produced state carried is a bounded, strictly
+validated structured handoff. The round agent must end its final reply with
+exactly one fenced block tagged `handoff`:
+
+````text
+```handoff
+{"status": "continue", "summary": "...", "next_steps": ["..."], "evidence": ["..."]}
+```
+````
+
+Validation rules (violations fail the whole round — never truncated or guessed):
+
+- The whole block must be ≤ 16,384 characters (`MAX_HANDOFF_CHARS`)
+- `status` is one of `continue` / `complete` / `failed`
+  - `continue` requires a non-empty `next_steps` array (seeds the next round)
+  - `complete` requires a non-empty `evidence` array (paths, command output)
+  - `failed` stops the loop for human review (aborts with `agent-error`)
+- `summary` must be non-empty; unknown fields are rejected
+
+Deterministic conditions remain authoritative: a `complete` handoff whose
+conditions still fail does not end the loop — the next round sees the failed
+check results as ground truth.
+
+Fresh-context failures map to dedicated blocked reasons:
+
+- **invalid-handoff** — the final reply had no valid `handoff` block, or it
+  was over-limit/schema-invalid. Policy stop; the checkpoint is kept.
+- **fatal-config-error** — missing model/provider configuration aborts loudly
+  instead of being retried as a transient agent failure. Fix the config, then
+  `/goal resume <id>`.
+
+After each validated handoff the runner also writes a human-readable round
+note to `<workspace>/goals/<goal-id>/round-N.md` (summary, evidence, next
+steps), so long-running goal progress can be browsed from the workspace. This
+is best-effort: a failed write is logged, never fatal.
 
 ---
 
@@ -89,9 +138,11 @@ LLM 根据目标自动生成条件。支持的类型：
 | Guardrail | Default | 说明 |
 |---|---|---|
 | `max_rounds` | 5 | 最大重试轮数，`--max-rounds` 可覆盖 |
-| Loop detection | 3 rounds | 同一条件连续 3 轮相同失败原因 → abort |
+| Loop detection | 3 rounds | 同一条件连续 3 轮相同失败原因 → abort (checkpoint 保留，可 `/goal resume`) |
 | Cancellation | — | `/goal cancel <id>` 手动中止 |
 | Tool iterations | 25 | 单轮内最大 LLM→tool 调用次数 |
+| Tool result size | 8 KB | 单个工具结果进入 round context 前截断头部 |
+| Handoff validation | fresh mode | 缺失 / 超限 (>16K) / 违反 schema 的 handoff → 该轮整体失败 |
 
 ---
 
@@ -104,20 +155,31 @@ GoalPlan 支持 `model_override` 字段，LLM 可以在返回的计划中指定�
   "description": "code review",
   "conditions": [...],
   "max_rounds": 3,
-  "model_override": "gpt-4o-mini"
+  "model_override": "gpt-4o-mini",
+  "fresh_context": true
 }
 ```
 
-未指定时使用 session 默认模型。
+未指定时使用 session 默认模型。`fresh_context`（默认 `false`）由 `/goal --fresh` 设置，见上文
+Fresh-Context Mode。
 
 ---
 
 ## Persistence
 
-Goal 状态在每个 round 结束后 checkpoint 到 `~/.syscity/goals/<goal_id>.json`。
-Gateway 启动时自动恢复所有 persisted goal，从上一次 round 继续执行。
+Goal 状态在每个 round 结束后 checkpoint 到 `~/.syscity/goals/<goal_id>.json`，内容包括
+plan、当前 round、condition history，以及（fresh-context 模式）最近一次通过校验的 handoff。
 
-Goal 完成后或取消时状态文件自动删除。
+**重启后不再自动恢复**：gateway 启动时只记录 `N persisted goal(s) suspended`，这些
+*suspended* goal 出现在 `/goal list` 中（含 round/max_rounds 和 blocked reason），需要显式
+`/goal resume <id>` 才会重新拉起 runner。
+
+Checkpoint 的去留取决于终止方式：
+
+- **完成 / 取消 / agent 错误**：状态文件删除
+- **Policy stop**（loop detected、max rounds、invalid handoff、fatal config error）：状态文件
+  **保留**，并写入结构化的 `blocked_reason {code, message}`，以便人工排查后通过
+  `/goal resume <id>` 继续
 
 ---
 
@@ -127,16 +189,18 @@ Goal 完成后或取消时状态文件自动删除。
 src/goal/
 ├── mod.rs          # 模块入口，重导出
 ├── condition.rs    # GoalCondition enum + check() 执行
-├── plan.rs         # GoalPlan + LLM 解析
-├── runner.rs       # GoalRunner 子 agent 执行循环
-├── event.rs        # GoalEvent 事件类型
-└── persist.rs      # GoalStore 持久化/恢复
+├── plan.rs         # GoalPlan + LLM 解析（含 fresh_context / model_override）
+├── runner.rs       # GoalRunner 子 agent 执行循环（legacy + fresh-context 两种模式）
+├── handoff.rs      # RoundHandoff schema + ```handoff 提取与严格校验
+├── event.rs        # GoalEvent 事件类型 + BlockedReason
+└── persist.rs      # GoalStore 持久化/恢复（含 blocked_reason、last_handoff）
 ```
 
 Gateway 集成：
 
-- `src/gateway/commands.rs` — `/goal` 命令处理
-- `src/gateway/lifecycle.rs` — 启动时恢复 persisted goals
+- `src/gateway/commands/agents.rs` — `/goal` 命令处理（start / cancel / list / resume）
+- `src/gateway/goal_spawn.rs` — suspended goal 列表 + 从 checkpoint 重建 runner
+- `src/gateway/lifecycle.rs` — 启动时记录 suspended goals（不自动恢复）
 - `src/gateway/protocol.rs` — `gateway.progress` 事件序列化
 - `src/gateway/ws.rs` — WebSocket 路由到订阅 session
 

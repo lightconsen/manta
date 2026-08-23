@@ -14,6 +14,11 @@
 ```bash
 sudo apt-get install -y build-essential pkg-config libssl-dev
 ```
+A full `--all-features` build (what release CI runs) additionally needs:
+```bash
+sudo apt-get install -y protobuf-compiler libasound2-dev libdbus-1-dev
+# protobuf-compiler: prost builds; libasound2-dev: cpal audio; libdbus-1-dev: libdbus-sys
+```
 
 **macOS:**
 ```bash
@@ -58,6 +63,9 @@ all channels plus browser, vision, and local embeddings.
 | `plugins` | ✓ | WASM plugin sandbox (`wasmtime`) |
 | `hot-reload` | ✓ | Config/plugin hot-reload via file watching |
 | `vector-db` / `pgvector` / `sqlite-vec` | — / — / ✓ | Vector memory backends (`sqlite-vec` is the default persistent backend) |
+| `keyring` | — | OS keyring (macOS Keychain / Windows DPAPI / Linux Secret Service) as the primary secret store; default builds use 0600 AES-GCM encrypted files only and never touch the keychain |
+| `intel-macos` | — | Release profile for Intel Macs: default features minus `vision` (ONNX Runtime ships no prebuilt `x86_64-apple-darwin` library). Build with `--no-default-features --features intel-macos` |
+| `mobile` | — | Pruned Android/iOS profile: `webchat` + `plugins` + `embedded-assets` + `sqlite-vec` with bundled SQLite; no channels, embeddings, vision, browser, or keyring. Build with `--no-default-features --features mobile` |
 
 Build with a custom feature set:
 ```bash
@@ -67,6 +75,43 @@ cargo build --release --no-default-features --features webchat,plugins
 # Everything
 cargo build --release --features all-channels,vector-db
 ```
+
+## Cross-compiling to Windows (compile check)
+
+There is no Windows machine in this project, so Windows support is verified
+by cross-compiling from Linux/macOS with [zig](https://ziglang.org/) as the
+linker/CC — zig ships its own mingw-w64 sysroot, so no MinGW install is
+needed:
+
+```bash
+rustup target add x86_64-pc-windows-gnu
+cargo check --target x86_64-pc-windows-gnu
+```
+
+`.cargo/config.toml` wires that target's linker and the target-suffixed
+`CC_`/`AR_` vars to the wrappers in `scripts/cross/` (`zig-cc-…`,
+`zig-ar-…`); the wrappers rewrite the Rust triple into zig's spelling and
+mirror the target dir via symlink. They need zig 0.16 on `PATH` (or the
+tarball install under `~/.local/opt`). The vars are target-suffixed, so host
+builds are unaffected. This is a **compile-only** check — the resulting
+binary is never run here; the desktop release pipeline builds real Windows
+bundles natively on `windows-latest` (MSVC).
+
+## Release targets
+
+Release CI (`.github/workflows/release.yml`) publishes:
+
+- CLI tarballs: Linux x64/arm64, macOS arm64, and macOS Intel via the
+  `intel-macos` profile (no `vision`/ONNX — `ort` has no prebuilt
+  `x86_64-apple-darwin` library).
+- Desktop bundles: Linux x64, macOS arm64 + Intel (also `intel-macos`), and
+  Windows x64 (MSVC).
+- Each CLI tarball ships a `.sha256`; desktop updater artifacts are
+  minisign-signed with per-platform `latest.json` manifests (see
+  [self-upgrade.md](self-upgrade.md)).
+
+macOS builds pin `MACOSX_DEPLOYMENT_TARGET=10.15` because llama.cpp requires
+`std::filesystem`.
 
 ## Desktop App
 

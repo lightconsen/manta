@@ -4,11 +4,11 @@ Platform capability sets for Syscity — organizes platform-specific tools by en
 
 ## Design
 
-`CapabilitySet` is a way to group platform-specific tools by environment (Linux Server, macOS Desktop, etc.). Tools are registered individually into `ToolRegistry`; `CapabilitySet` is only an organizational unit that controls *which* tools are exposed for the current environment.
+`PlatformToolSet` (in `src/computer/platform/`) is a way to group platform-specific tools by environment (Linux Server, macOS Desktop, etc.). Tools are registered individually into `ToolRegistry`; `PlatformToolSet` is only an organizational unit that controls *which* tools are exposed for the current environment.
 
-- **`CapabilitySet` trait** — Defines a set of tools scoped to a specific platform/environment
+- **`PlatformToolSet` trait** — Defines a set of tools scoped to a specific platform/environment
 - **`CapabilityProfile`** — Pre-defined profiles: Minimal, Observer, Server, Desktop, Full, Custom
-- **`CapabilityRegistry`** — Holds all registered capability sets and manages enablement
+- **`PlatformCapabilityRegistry`** (`platform/registry.rs`) — Holds all registered capability sets and manages enablement
 - **`PlatformConstraints`** — Runtime availability checks (target OS, GUI requirement, services)
 - **`OsControlScope`** — Permission scope hierarchy: ReadOnly, UserSpace, System, Root
 
@@ -16,16 +16,17 @@ Platform capability sets for Syscity — organizes platform-specific tools by en
 
 | Platform | Module | Description |
 |----------|--------|-------------|
-| Linux Server | `linux.rs` | Server-oriented tools (systemd, logs, processes) |
-| Linux Desktop | `wayland/` | Wayland desktop tools |
-| macOS | `platform_macos.rs` | macOS-specific desktop automation |
-| Windows | `platform_windows.rs` | Windows-specific desktop automation |
-| Linux | `platform_linux.rs` | Linux-specific desktop automation |
+| Linux Server | `platform/linux/` | Server-oriented tools (systemd, logs, processes, packages, firewall) |
+| Linux Desktop (Wayland) | `platform/wayland/` | Wayland desktop tools |
+| Linux Desktop (X11) | `platform/x11/` | X11 desktop tools |
+| macOS | `platform/macos/` | macOS-specific desktop automation |
+| Windows | `platform/windows/` | Windows-specific desktop automation |
+| Mobile | `platform/mobile/` | On-device (Android/iOS) platform tools |
 
 ## Key Types
 
 ```rust
-pub trait CapabilitySet: Send + Sync {
+pub trait PlatformToolSet: Send + Sync {
     fn id(&self) -> &str;
     fn name(&self) -> &str;
     fn description(&self) -> &str;
@@ -74,7 +75,7 @@ CapabilityProfile::apply(registry)
     └──▶ Custom → enable only specified sets
             │
             ▼
-        ToolRegistry::register_set_tools()
+        PlatformCapabilityRegistry::export_to_tool_registry()
 ```
 
 ## Implemented Features

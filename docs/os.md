@@ -115,6 +115,7 @@ pub struct UiElement {
 - Rollback manager with file backups and system-level snapshots (APFS/Btrfs/System Restore)
 - Sensitive UI element detection and masking
 - Screen recorder and audio capture
+- Vision-based UI detection (`screen_ui_detect` via OmniParser), including an automatic fallback when the accessibility tree comes back empty
 - Remote control adapter (SSH-based) for Linux/macOS/Windows
 
 ## Server Control (Headless Environments)
@@ -194,6 +195,8 @@ Pre-defined profiles make it easy to constrain what the agent can do:
 ## Safety and Verification
 
 - **SandboxInterceptor** enforces path allowlists, command blacklists, domain/IP allowlists, and resource quotas before tool execution.
+- **Kernel write fences** (`src/tools/process_runner.rs`, `src/tools/win_appcontainer.rs`) confine `workspace_only` command tools (`shell`, `process`, `code_exec`) at the OS level: macOS Seatbelt (`sandbox-exec` profile denying writes outside the workspace), Linux Landlock (in-place `pre_exec` restriction of write rights), and Windows AppContainer + Job object (Low-integrity token, DACL + mandatory label grant on the workspace, `KILL_ON_JOB_CLOSE`). Unlike the parent-side path check, the kernel denies the write no matter what the spawned command does; requests fail closed when the platform sandbox is unavailable.
+- **Process-group kill** on timeout: Unix spawns run as process-group leaders and timeouts SIGKILL the whole group, so detached grandchildren cannot survive (or hold output pipes open) after the parent is reaped.
 - **Approval queue** gates high-scope or high-risk actions behind human confirmation.
 - **VerificationEngine** automatically checks the result of an action and retries on failure.
 - **RollbackManager** snapshots files/system state before destructive operations and rolls back on failure.

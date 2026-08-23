@@ -130,6 +130,7 @@ GoalPlanner::achieve()
 5. **CapabilitySet + ToolRegistry** — OS-specific tools are grouped by platform/environment, runtime-detected, and exported individually into `ToolRegistry`.
 6. **Security-first execution** — Path/command validation, sandboxed resource limits, approval levels, RBAC, content filtering, audit logging.
 7. **Planner + ComputerAdapter** — High-level goals decompose into task DAGs executed against a unified desktop/server abstraction.
+8. **Runtime invariant registry** — Modules own the data invariants they uphold and register checks with `core::invariants`; `syscity invariants` runs them all against live local state. A `static-analysis.sh --full` rule requires every top-level module to register checks or carry an explicit `INVARIANTS-NONE:` marker — nothing is silently unchecked.
 
 ## Module Documentation Map
 

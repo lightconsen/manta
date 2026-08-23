@@ -1,6 +1,18 @@
 # Syscity Mobile Migration Plan
 
-Status: **Proposal** (revised 2026-08-04 after dependency audit) · Target: Android first, iOS second · Owner: TBD
+Status: **Implemented** (P1–P4 landed 2026-08; this document is the original
+plan, kept for design rationale) · Target: Android first, iOS second · Owner: TBD
+
+> Landing commits: P1/P2 bring-up (`9985e50` — `mobile` feature profile,
+> platform gating, Android shell), P3 execution layer (`cb23c73` —
+> `is_available()` branches, `ProcessRunner` abstraction, WASM `code_exec`,
+> MCP in-process/HTTP), P4 mobile-native (`a64f444`, `652a9f5`, `3232008`,
+> `153af2c`, `8ad2d69` — device bridge + capability/SAF tools, WorkManager
+> cron wake + loopback ADB self-pairing, pairing UI, iOS build + DevicePlugin,
+> Shortcuts/App Intents bus). Later hardening: the iOS Swift link in
+> `desktop/build.rs` is gated behind
+> `#[cfg(target_os = "macos")]` because `tauri_utils::build::link_apple_library`
+> is macOS-host-only — iOS targets build only from a macOS host.
 
 This document is the migration plan for running **Syscity** standalone on a
 mobile device — the full runtime on-device: gateway, agents, delegation, memory,
@@ -536,5 +548,6 @@ Goal: turn "Syscity on a phone" into "a phone-native Syscity".
 
 ---
 
-*This document is a proposal. Phase 1 is the smallest useful slice that proves
-the whole idea; it is also the recommended first PR.*
+*This document was written as a proposal; Phases 1–4 have since landed (see
+the status header). Phase 1 was the smallest useful slice that proved the
+whole idea.*

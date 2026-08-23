@@ -59,6 +59,40 @@ pub enum ConfigFileType {
 
 `Config::resolve_secrets()` uses `SecretResolver` to resolve `SecretRef` values in service configurations via environment variables, files, or external executables.
 
+### Secret Masking
+
+`src/secrets/mask.rs` is the single secret-masking walker applied to every
+surface that reports configuration back to a client (the gateway tool's
+`config.get` / `config.schema.lookup`, REST `get_config_handler`, and
+`models.list`'s `api_key_masked`):
+
+- Object keys recognized by `is_secret_key` (trailing `_key` / `_token` /
+  `_secret` / `_password`, or the bare `key` / `token` / `secret` /
+  `password`, plus the shared channel-credential registry) have their string
+  values masked.
+- Secret *containers* (`keys` / `credentials` / `api_keys`) have every string
+  leaf masked, regardless of the leaf key name.
+- `env` maps (MCP server env vars) are matched per key, so identifiers like
+  `HOST` / `PORT` stay readable while `*_KEY` / `*_TOKEN` values are masked.
+- Masking keeps the first 3 and last 4 characters (`sk-••••abcd`); values of
+  6 characters or fewer are fully masked, and empty values stay empty.
+
+### Concurrent Writes (Revision CAS)
+
+The whole `GatewayConfig` has a stable revision: a SHA-256 over the
+canonicalized (key-sorted) JSON serialization, so the fingerprint is
+independent of `HashMap` iteration order (`gateway::config_revision`).
+
+- WS `config.get` returns the current `revision`; `config.set` accepts an
+  optional `base_revision` and rejects stale writes with `REVISION_CONFLICT`
+  (the error payload carries `current_revision` / `expected_revision` so the
+  client can re-read and retry). The CAS is checked twice: a fast-fail before
+  the model-router side effect (a stale `path="model"` write cannot switch
+  the router first) and an authoritative check under the write lock.
+- The gateway tool's `config.get` reports the same fingerprint as `hash`
+  (computed from the *unmasked* config), so `config.apply`'s `base_hash`
+  optimistic locking and the WS revision agree on "current config".
+
 ## Key Types
 
 ```rust
@@ -107,6 +141,8 @@ pub struct ConfigChangeEvent {
 - File watcher with 500ms debounce for hot reload
 - Per-config-type handler registration
 - Secret resolution with `SecretRef` (env, file, exec providers)
+- Canonical secret masking (`secrets::mask_json_value`) on all config read surfaces
+- Config revision CAS (`REVISION_CONFLICT`) for safe concurrent writes
 - `ReloadableConfig` with broadcast-based change notifications
 - Comprehensive unit tests for all config subsystems
 

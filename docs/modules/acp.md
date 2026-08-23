@@ -12,6 +12,10 @@ ACP provides a control plane for managing agent execution with pause/resume/step
 - **ACP Actor Loop** — Routes commands to the appropriate session actor
 - **`CrashRecoveryConfig`** — Automatic crash recovery with retry and backoff for subagents
 
+### Agent Identity
+
+The default agent builder closure receives the subagent id being constructed (`Fn(&str) -> Result<Agent>`), so the spawned `Agent` is tagged with it as `Agent.agent_id`. Subagent turn records (observe JSON files and SQLite metric rows) are therefore attributed to the subagent that handled them. Bridge agents (`ExecuteForBridge`, not named subagents) pass an empty id and keep their default identity.
+
 ### Execution Modes
 
 | Mode | Behavior |
@@ -112,4 +116,5 @@ Gateway ──▶ AcpControlPlane ──▶ ACP Actor Loop
 - Progress callback support for long-running sessions
 - ACP tools for agent-facing subagent control
 - Parent-child communication via command channels
+- Subagent id tagging of constructed agents for per-subagent observability
 

@@ -1,14 +1,15 @@
 # Syscity Built-in Tools Testing Coverage
 
 > Generated: 2026-05-22
+> Updated: 2026-08-24 — reflects the whole-snapshot `todo` API, read-before-edit write guard, output spill, post-execute hooks, shell-hooks bridge, `ask_user`, and `write_report`
 
 ## Tool Registry
 
-All tools are registered in `src/gateway/mod.rs` via `create_default_tool_registry()` (line 3920).
+All tools are registered in `src/gateway/agent_spawn.rs` via `create_default_tool_registry()`.
 
 ## Coverage Matrix
 
-| # | Tool Name | Category | Function | `e2e_websocket.rs` | `integrations_live.rs` | Status |
+| # | Tool Name | Category | Function | `tests/e2e/` | `tests/integrations/` | Status |
 |---|-----------|----------|----------|:------------------:|:----------------------:|:------:|
 | 1 | `file_read` | File System | Read file content | Chat trigger | Direct call | **Tested** |
 | 2 | `file_write` | File System | Write file content | Chat trigger | Direct call | **Tested** |
@@ -45,14 +46,22 @@ All tools are registered in `src/gateway/mod.rs` via `create_default_tool_regist
 | 33 | `tts` | Media | Text-to-speech | Chat trigger | Direct call | **Tested** |
 | 34 | `nodes` | Network | Tailscale node management | Chat trigger | Direct call | **Tested** |
 | 35 | `canvas` | UI | Canvas / dynamic UI | Chat trigger | Direct call | **Tested** |
+| 36 | `ask_user` | Interaction | Human-in-the-loop clarification | Gateway round-trip | -- | **Tested** |
+| 37 | `write_report` | Report | Write markdown/HTML report artifact | -- | -- | **Untested** |
+
+Notes on recent tool changes:
+
+- `todo` (row 10) now uses **whole-snapshot semantics**: every call takes `{"todos": [...]}` as the complete new task list and atomically replaces the stored state; the snapshot is cleared when a new user turn begins. The integration tests were rewritten for this API (`todo_tool_adds_and_lists`, `todo_updates_status`, `todo_update_nonexistent_fails`, `todo_clears_completed` in `tests/integrations/task_time_tests.rs`), and `tests/tool_contracts.rs::todo_tool_schema_contract` pins the new schema.
+- `file_write` / `file_edit` (rows 2-3) are guarded by a read-before-edit `WriteGuard`; behavior is covered by `tests/e2e/write_guard_tests.rs`.
+- `ask_user` (row 36) blocks the turn until the human answers via `ask.respond` over WS; covered by `tests/e2e/ask_user_tests.rs` (blocks → respond → resumes → `chat.final`).
 
 ## Test File Summary
 
-### `tests/e2e_websocket.rs` (57 tests)
+### `tests/e2e/` (WebSocket frontend simulation)
 
 Tests tools through the **WebSocket frontend simulation** path:
 
-- **Chat-triggered tools** (indirect): The LLM decides to call a tool during chat processing. Tests verify `tool.calling` and `tool.result` events are emitted.
+- **Chat-triggered tools** (indirect), in `tool_chat_tests.rs`: The LLM decides to call a tool during chat processing. Tests verify `tool.calling` and `tool.result` events are emitted.
   - `llm_tool_invocation_journey` -- triggers `time` tool via "What is the current date and time?"
   - `tool_shell_invoked_via_chat` -- triggers `shell` tool via explicit prompt
   - `tool_file_invoked_via_chat` -- triggers `file_write` / `file_read` via explicit prompt
@@ -86,16 +95,23 @@ Tests tools through the **WebSocket frontend simulation** path:
   - `tool_delegate_invoked_via_chat` -- triggers `delegate` tool via explicit prompt
   - `tool_mcp_connection_invoked_via_chat` -- triggers `mcp_connection` tool via explicit prompt
 
-- **Command-query tools**:
+- **Command-query tools** (in `command_tests.rs`):
   - `command_tools_returns_catalog` -- verifies `/tools` slash command returns tool names including "shell", "file"
   - `command_skill_lists_skills` -- verifies `/skill` command lists installed skills
   - `command_skill_not_found` -- verifies error for nonexistent skill
   - `command_mcp_returns_server_info` -- verifies `/mcp` command returns MCP status
   - `command_mcp_disconnect_requires_arg` -- verifies error for missing MCP server name
 
-### `tests/integrations_live.rs` (116 tests)
+- **Tool pipeline suites** (recent additions):
+  - `write_guard_tests.rs` -- read-before-edit guard blocks blind/stale writes and the model recovers via `file_read`
+  - `spill_tests.rs` -- oversized tool outputs spill to `<workspace>/.syscity/spill/`; re-reading a spilled file returns full content (path-aware exemption)
+  - `post_execute_tests.rs` -- post-execute hook block-with-feedback reaches the model as an error
+  - `hooks_tests.rs` -- Claude-Code-compatible shell hooks (`hooks.json`): PreToolUse deny, PostToolUse block, UserPromptSubmit block, Stop fan-out, fail-open on broken hooks
+  - `ask_user_tests.rs` -- `ask_user` blocks the turn until `ask.respond` delivers the human's answer
 
-Tests tools via **direct `Tool::execute()` invocation** (no Gateway / WebSocket):
+### `tests/integrations/` (direct tool invocation)
+
+Tests tools via **direct `Tool::execute()` invocation** (no Gateway / WebSocket), organized by area (`file_tests.rs`, `web_tests.rs`, `task_time_tests.rs`, `memory_tests.rs`, `acp_tests.rs`, `execution_tests.rs`, `media_tests.rs`, `network_tests.rs`, ...). Representative tests:
 
 | Test | Tool Tested |
 |------|------------|
@@ -105,7 +121,7 @@ Tests tools via **direct `Tool::execute()` invocation** (no Gateway / WebSocket)
 | `glob_tool_lists_files` | `glob` |
 | `grep_tool_finds_patterns` | `grep` |
 | `time_tool_returns_timestamp` | `time` |
-| `todo_tool_adds_and_lists` | `todo` |
+| `todo_tool_adds_and_lists` (+ `todo_updates_status`, `todo_update_nonexistent_fails`, `todo_clears_completed`) | `todo` (whole-snapshot API) |
 | `web_fetch_tool_fetches_example_com` | `web_fetch` |
 | `process_tool_lists_processes` | `process` |
 | `nodes_tool_returns_definitions` | `nodes` |
@@ -132,7 +148,7 @@ Tests tools via **direct `Tool::execute()` invocation** (no Gateway / WebSocket)
 | `subagents_tool_lists_subagents` | `subagents` |
 | `apply_patch_tool_validates_patch` | `apply_patch` |
 
-## Untested Tools (2 total)
+## Untested Tools (3 total)
 
 The following tools have **no E2E or integration test coverage**:
 
@@ -140,10 +156,11 @@ The following tools have **no E2E or integration test coverage**:
 |------|-----------------|
 | `browser` | Requires `browser` feature flag + Chrome/Chromium (not enabled in default build) |
 | `image_generate` | Requires image generation API key (no fallback path) |
+| `write_report` | No e2e/integration coverage yet (artifact path + URL covered by unit tests in `src/tools/report.rs`) |
 
 ## ACP Tools
 
-The following ACP tools are verified via **direct `execute()` invocation** in `integrations_live.rs`. They are also tested via chat-triggered E2E tests in `e2e_websocket.rs`:
+The following ACP tools are verified via **direct `execute()` invocation** in `tests/integrations/`. They are also tested via chat-triggered E2E tests in `tests/e2e/tool_chat_tests.rs`:
 
 | Tool | Integration Test | E2E Chat Test |
 |------|-----------------|---------------|
@@ -161,7 +178,7 @@ The following ACP tools are verified via **direct `execute()` invocation** in `i
 
 The following tools are covered in both E2E and integration tests, but may not exercise full functionality due to missing dependencies:
 
-| Tool | `integrations_live.rs` | `e2e_websocket.rs` | Limitation |
+| Tool | `tests/integrations/` | `tests/e2e/` | Limitation |
 |------|------------------------|--------------------|------------|
 | `web_search` | `web_search_tool_duckduckgo` | `tool_web_search_invoked_via_chat` | Requires network; may timeout |
 | `cron` | `cron_tool_list_without_scheduler` | `tool_cron_invoked_via_chat` | Without scheduler: error; with scheduler: full test |
@@ -188,7 +205,7 @@ Community-trust skills are restricted from using these tools.
 
 ## How to Add Missing Tests
 
-### Option 1: Direct Tool Execution (like `integrations_live.rs`)
+### Option 1: Direct Tool Execution (like `tests/integrations/`)
 
 ```rust
 #[tokio::test]
@@ -202,7 +219,7 @@ async fn web_fetch_tool_fetches_example_com() {
 }
 ```
 
-### Option 2: Chat-Triggered (like `e2e_websocket.rs`)
+### Option 2: Chat-Triggered (like `tests/e2e/tool_chat_tests.rs`)
 
 ```rust
 async fn tool_xyz_invoked_via_chat() {

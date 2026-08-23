@@ -238,3 +238,41 @@ are resolved via `SecretResolver` which supports:
 - `$ENV_VAR` — environment variable
 - `file:///path/to/secret` — file content
 - `exec://command` — command stdout
+
+## Secret Masking on Config Surfaces
+
+Every surface that reports configuration back to a client masks secrets before
+returning them. This covers the WS `config.get` payload, the gateway tool's
+`config.get` / `config.schema.lookup`, the REST config handler, and
+`models.list` (`api_key_masked`).
+
+- Keys that look secret (trailing `_key` / `_token` / `_secret` / `_password`,
+  or bare `key` / `token` / `secret` / `password`) have their string values
+  masked as `head••••tail` (first 3 and last 4 characters; values of 6
+  characters or fewer are fully masked).
+- Container keys (`keys` / `credentials` / `api_keys`) have every string leaf
+  masked, so channel credentials and search-provider key maps never leak.
+- `env` maps (e.g. MCP server env vars) are matched per key: `HOST` / `PORT` /
+  `BASE_URL` stay readable while `*_KEY` / `*_TOKEN` values are masked.
+- Everything else (model names, ports, feature flags) passes through unchanged.
+
+Masking is display-only: writes still use the real values, and the config
+revision hash (below) is computed from the unmasked config.
+
+## Concurrent Writes (base_revision CAS)
+
+WS `config.get` returns a `revision` — a SHA-256 fingerprint of the whole
+canonicalized config. `config.set` accepts an optional `base_revision`:
+
+```json
+{ "type": "req", "id": "w1", "method": "config.set",
+  "params": { "path": "default_agent.temperature", "value": 0.9,
+              "base_revision": "<revision from config.get>" } }
+```
+
+If the config changed since `base_revision` was read, the write is rejected
+with `REVISION_CONFLICT` and the error payload carries `current_revision` /
+`expected_revision` — re-run `config.get` and retry. A successful write
+returns the new `revision`. The same fingerprint is exposed as `hash` by the
+gateway tool's `config.get` for its `base_hash` optimistic locking, so both
+write surfaces agree on what "current config" means.

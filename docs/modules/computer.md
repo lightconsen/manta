@@ -30,7 +30,7 @@ ToolRegistry ──→ CapabilitySet ──→ xdotool / SendKeys / AXUIElement
 - **`sensitive_ui.rs`** — Sensitive UI element detection and masking
 - **`remote_control.rs`** — `RemoteControlAdapter` for SSH/VNC/RDP remote machines
 - **`reflection.rs`** — Self-reflection and state introspection
-- **`vision.rs`** — Computer vision integration (behind `vision` feature)
+- **`vision/`** — Visual perception layer (behind the `vision` feature): RapidOCR (`ocr_rapid.rs`) for text and OmniParser (`ui_onnx.rs`) for UI element detection from screenshots, plus `screen_state.rs` capture, `model_download.rs`, and `preprocess.rs`
 
 ### Platform Adapters
 
@@ -49,29 +49,36 @@ pub trait ComputerAdapter: Send + Sync {
     async fn read_ui_tree(&self, app: Option<&str>) -> Result<Vec<UiElement>>;
     async fn execute(&self, action: DesktopAction) -> Result<ActionResult>;
     async fn wait_for(&self, condition: WaitCondition, timeout: Duration) -> Result<bool>;
-    async fn click_at(&self, point: Point, button: MouseButton) -> Result<ActionResult>;
-    async fn type_text(&self, text: &str) -> Result<ActionResult>;
-    async fn key_press(&self, keys: Vec<String>) -> Result<ActionResult>;
-    async fn clipboard_get(&self) -> Result<String>;
-    async fn clipboard_set(&self, text: &str) -> Result<ActionResult>;
-    async fn watch_directory(&self, path: &str) -> Result<ActionResult>;
-    async fn unwatch_directory(&self, path: &str) -> Result<ActionResult>;
-    async fn list_ports(&self, filter_protocol: Option<&str>, filter_state: Option<&str>) -> Result<ActionResult>;
+    // Convenience wrappers over execute(): click_at, type_text, key_press,
+    // clipboard_get, clipboard_set, restart_process, set_process_priority
 }
 
 pub enum DesktopAction {
     Screenshot { region: Option<Rect> },
     Click { target: ClickTarget, button: MouseButton },
+    DoubleClick { target: ClickTarget, button: MouseButton },
     Type { text: String },
     KeyPress { keys: Vec<String> },
-    Scroll { direction: ScrollDirection, amount: i32 },
+    Scroll { target: ClickTarget, direction: ScrollDirection, amount: i32 },
+    Drag { from: ClickTarget, to: ClickTarget },
+    ReadUiTree { app: Option<String> },
+    LaunchApp { name: String, args: Vec<String>, wait_for_ready: bool },
+    ActivateWindow { title_pattern: String },
+    CloseWindow { title_pattern: String },
+    ListWindows,
+    GetWindowGeometry { title_pattern: String },
+    MoveWindow { title_pattern: String, x: i32, y: i32 },
+    ResizeWindow { title_pattern: String, width: u32, height: u32 },
+    MinimizeWindow { title_pattern: String },
+    MaximizeWindow { title_pattern: String },
     Wait { milliseconds: u64 },
     ClipboardGet,
     ClipboardSet { text: String },
-    WatchDirectory { path: String },
-    UnwatchDirectory { path: String },
-    WatchFile { path: String },
-    UnwatchFile { path: String },
+    GetSystemStatus,
+    ListProcesses { filter: Option<String>, limit: Option<usize> },
+    KillProcess { pid: Option<u32>, name: Option<String>, force: bool },
+    RestartProcess { pid: Option<u32>, name: Option<String>, force: bool },
+    SetProcessPriority { pid: Option<u32>, name: Option<String>, priority: i32 },
 }
 
 pub enum LoopDecision {
@@ -108,7 +115,9 @@ ComputerUseLoop::run()
 - Cross-platform `ComputerAdapter` trait (macOS, Windows, Linux)
 - Screenshot capture with optional region selection
 - Accessibility UI tree reading
-- Desktop actions: click, type, key press, scroll, wait, clipboard
+- Desktop actions: click/double-click/drag, type, key press, scroll, wait, clipboard
+- Window management: list/activate/close/move/resize/minimize/maximize windows, app launching
+- Process control: list/kill/restart processes, set priority, system status
 - File and directory watching
 - Network port listing and inspection
 - Computer use loop with iterative LLM-driven desktop interaction
@@ -121,5 +130,8 @@ ComputerUseLoop::run()
 - Audio capture and event detection
 - Screen recording with video frame capture
 - Sensitive UI element detection and masking
-- Computer vision integration (feature-gated)
+- Computer vision integration (feature-gated behind `vision`):
+  - RapidOCR for on-demand text extraction (`screen_ocr` tool)
+  - OmniParser ONNX UI element detection (`screen_ui_detect` tool) returning role, bounds, and confidence for buttons, text fields, checkboxes, icons, and links
+  - Automatic OmniParser fallback in the `screen_state` tool when the accessibility tree is empty (games, image-based UIs, remote desktops, webviews); opt out with `ui_fallback=false`. The fallback never runs in `ScreenState::capture_light`, so the cheap verification loop is unaffected. Both detectors load lazily on first use via shared handles.
 

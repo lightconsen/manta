@@ -1,6 +1,24 @@
 # Delegation Result Collection: `wait` + Parent Auto-Wake
 
-Status: **Proposal** · Owner: TBD · Target: v1 (wait only) first, v2 (wake) second
+Status: **Implemented** — v1 (`wait`) and v2 (wake) both shipped.
+
+> Implementation notes (the sections below remain the original design record):
+>
+> - `wait` lives in `src/tools/delegate_tool.rs` with `MAX_WAIT_SECONDS = 60`
+>   and returns `Ok("still running …")` on timeout — never `Err`, so the
+>   circuit breaker is untouched. The shipped timeout text is the v2 wording:
+>   *"End your turn — you will be woken with its result when it completes."*
+> - Wake lives in `src/delegation/wake.rs` (`DelegationWake`), wired in
+>   `src/gateway/lifecycle.rs`. Instead of a retry loop it uses a **coalescing
+>   drain**: near-simultaneous child completions are buffered per parent
+>   session and joined into a single wake turn; completions that land while a
+>   wake turn is running are picked up by the next drain pass, so no
+>   notification is lost. A failed wake is informational — the result stays
+>   persisted for `delegate status` / `wait`.
+> - Startup sweep: `DelegationTaskStore::fail_orphaned_runs`
+>   (`src/delegation/state.rs`) runs once at gateway startup and marks tasks
+>   left in `running` / `waiting_handoff` by a previous process as `failed`,
+>   so dead executions no longer read as "running" forever.
 
 This document is the design for fixing a delegation usability bug observed with
 DeepSeek (and similar models): intermediate agents early-stop instead of
@@ -370,6 +388,6 @@ cargo test --lib delegation::
 
 ---
 
-*This document is a proposal. Phase 1 (`wait` only) is the smallest useful
-slice and is the recommended first PR; Phase 2 (wake) builds on the exact
-seam Phase 1 defines.*
+*Both phases are implemented (see the status header). This document remains as
+the design record: Phase 1 (`wait`) and Phase 2 (wake) landed as specified,
+with the wake path realized as a coalescing drain rather than a busy-retry.*

@@ -53,6 +53,7 @@ directory under `src/`.
 - [MCP Servers Guide](mcp-servers.md) — how to add and connect MCP servers
 - [acp](modules/acp.md) — Agent Control Protocol / sub-agents
 - [plugins](modules/plugins.md) — WASM plugin sandbox + hot-reload
+- [hooks](modules/hooks.md) — Claude-Code-compatible shell hooks (hooks.json)
 - [canvas](modules/canvas.md) — A2UI dynamic UI components
 
 ### Physical / execution layer
@@ -70,6 +71,7 @@ directory under `src/`.
 - [cron](modules/cron.md) — scheduled tasks
 - [heartbeat](modules/heartbeat.md) — periodic wake (interval-based)
 - [standing_orders](modules/standing_orders.md) — cron-like background agents
+- [observe](modules/observe.md) — per-turn observability records + `syscity observe` CLI
 
 ### Infrastructure
 - [adapters](modules/adapters.md) — storage backends (InMem/File/Sqlite)

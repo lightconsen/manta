@@ -60,8 +60,17 @@ Query 参数：
 | GET | `/ready` | 就绪探针 |
 | POST | `/v1/chat/completions` | OpenAI 兼容 API (SSE 流式) |
 | GET | `/v1/models` | OpenAI 兼容模型列表 |
+| GET | `/api/v1/artifacts/*path` | 文档预览产物（`write_report` 生成的报告） |
 
 > 其余所有 `/api/*` 和 `/api/v1/*` 端点已 **废弃**，将在 v2.0 中移除。
+
+**产物 URL 形态**（通配路由，只读）：
+
+- `/api/v1/artifacts/@<agent_id>/<file>` — 某个 Agent 工作区内的 artifacts（`@default` = 共享默认工作区）
+- `/api/v1/artifacts/@<agent_id>/<root>/<task>/<file>` — 该 Agent 工作区内的 delegation 作用域报告
+- `/api/v1/artifacts/[<root>/<task>/]<file>` — 旧版全局 `~/.syscity/artifacts/` 目录（向后兼容，迁移窗口内仍可访问）
+
+路径段均经过遍历防护校验（拒绝绝对路径、`..`、反斜杠及百分号编码变体）；`@owner` 段仅允许 agent id 字符集（字母数字、`-`、`_`）。
 
 ---
 
@@ -308,6 +317,7 @@ Query 参数：
 | `chat.send` | `chat` | 向 Agent 发送消息 |
 | `chat.history` | `read` | 获取某个 session 的对话历史 |
 | `chat.abort` | `chat` | 中止当前生成 |
+| `ask.respond` | `chat` | 回答 `ask_user` 工具挂起的问题（human-in-the-loop） |
 
 #### Sessions
 
@@ -326,6 +336,19 @@ Query 参数：
 |--------|-------|-------------|
 | `agents.list` | `read` | 列出可用 Agents |
 | `agents.get` | `read` | 获取 Agent 详情 |
+
+#### Workspace（Agent 工作区文件浏览）
+
+只读访问某个 Agent 的工作区目录，供 Web UI 文件浏览器使用。客户端路径始终相对于解析后的工作区根目录，并经过遍历防护校验（段级校验 + 规范化前缀比对，拒绝绝对路径、`..`、反斜杠与符号链接逃逸）。`agent_id` 缺省/空/`"default"` 解析为默认 Agent 的共享工作区；未知 Agent 返回 `AGENT_NOT_FOUND`。
+
+| 方法 | 作用域 | 说明 |
+|--------|-------|-------------|
+| `workspace.list` | `read` | 列出目录内容（每目录最多 1000 条；目录在前，按名称排序） |
+| `workspace.read` | `read` | 读取文本文件内容（超过 256 KiB 截断并置 `truncated: true`；二进制文件返回 `binary: true` 且无 `content`） |
+
+`workspace.list` 参数：`{ agent_id?, path? }`；响应含 `root`、`path`、`entries`（每项为 `name` / `path` / `kind` / `size` / `modified`）。工作区目录不存在时返回空列表而非错误。
+
+`workspace.read` 参数：`{ agent_id?, path }`（`path` 必填）；响应含 `path`、`size`、`truncated`、`binary`、`content`（仅文本）。路径越界返回 `PATH_FORBIDDEN`，不存在返回 `NOT_FOUND`。
 
 #### 状态与在线
 
@@ -346,6 +369,8 @@ Query 参数：
 | `agent.thinking` | Agent 正在生成（打字指示器） |
 | `session.created` | 自动创建了新 session |
 | `device.pair.requested` | 新设备等待批准 |
+| `ask.required` | `ask_user` 工具挂起等待人类回答（payload: `ask_id`, `session_id`, `question`, `options`, `required`, `default`） |
+| `ask.resolved` | 问题已被回答或取消（payload: `ask_id`, `cancelled`） |
 
 ### 6.2 管理 API（仅限 CLI）
 
@@ -508,6 +533,8 @@ Session key 统一采用 `{channel}:{user_id}` 格式：
 | `SESSION_NOT_FOUND` | 404 | Session 不存在 |
 | `AGENT_NOT_FOUND` | 404 | Agent 不存在 |
 | `RATE_LIMITED` | 429 | 请求过于频繁 |
+| `REVISION_CONFLICT` | 409 | 配置乐观锁冲突：`config.set` 携带的 `base_revision` 已过期，payload 含 `current_revision` / `expected_revision`，重新 `config.get` 后重试 |
+| `PATH_FORBIDDEN` | 403 | 路径越出允许的根目录（如 workspace 浏览） |
 | `INTERNAL_ERROR` | 500 | 服务端错误 |
 
 ### 9.2 协议版本控制

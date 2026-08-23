@@ -3,6 +3,8 @@
 > **关联文档**: [protocol.md](./protocol.md)
 > **状态**: 参考文档，Syscity 暂不实现
 
+> **术语说明**: 本文描述的是 **Gateway 协议层面** 的状态快照（连接握手时下发的完整状态）。Agent 模块另有一个同名但不同的概念：`Context::to_messages()` 会在每次 LLM 请求末尾追加一条瞬时的 `[state snapshot]` 用户消息（日期 / 星期 / 时区偏移），仅存在于本次请求中、不写入历史，详见 [modules/agent.md](./modules/agent.md)。两者不要混淆。
+
 ---
 
 ## 1. 问题背景

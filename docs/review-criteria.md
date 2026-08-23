@@ -65,6 +65,7 @@ These signals indicate the review is drifting into formality:
 | Minimal public surface | Are there types/functions/fields exposed as `pub` that should be `pub(crate)`? |
 | File organization | Single file > 500 lines? `mod.rs` crammed with too many types? |
 | Naming conventions | Do names follow the project conventions? |
+| Invariant declaration | Does the module register its data invariants with `core::invariants`, or carry an explicit `INVARIANTS-NONE:` marker justifying why it has none? (declare-or-register convention; enforced by `scripts/static-analysis.sh --full`, see `src/core/invariants.rs`) |
 
 ### 2. Thread Safety & State Management
 
@@ -161,6 +162,7 @@ Not a numbered dimension; check opportunistically in relevant reviews.
 - **Dependency management**: unnecessary deps? Feature flags overgrown? `cargo audit` findings?
 - **Send + Sync**: Do trait objects and closures auto-implement these where needed?
 - **Config propagation**: Do new config fields have sensible defaults to avoid breaking existing users?
+- **Registered invariants**: If the module registers checks with `core::invariants`, does each check actually verify what its description claims, and does `syscity invariants` still pass after the change?
 
 ---
 

@@ -315,6 +315,7 @@ src/secrets/
 ├── keyring_store.rs Tier 1 backend + availability probe + KeyringHealth
 │                     (compiled only with the `keyring` feature)
 ├── file_store.rs    Tier 2 backend (AES-GCM encryption) + master key + migration
+├── mask.rs          Canonical secret masking for all config-describe surfaces
 └── in_memory.rs     Tier 3 memory backend (zeroize)
 ```
 
@@ -337,6 +338,8 @@ src/secrets/
   `purge {namespace}`.
 - OAuth persistence: `persist_refresh_token` / `load_refresh_token` /
   `delete_refresh_token` (mcp-oauth) plus `persist_metadata` (0600 sidecar).
+- Masking: `mask_json_value` / `mask_secret` / `is_secret_key` (mask.rs),
+  applied by every config-describe surface (§6.6).
 
 ### 6.4 Robustness (timeout + auto-recovery)
 
@@ -371,6 +374,35 @@ src/secrets/
   `route_store("plugin")`.
 - `src/mcp/oauth.rs`: access memory-only, refresh persisted, metadata 0600
   sidecar.
+
+### 6.6 Config-Surface Masking & Revision CAS
+
+`mask.rs` is the single secret-masking walker for any `serde_json::Value`
+describing gateway configuration. It replaced per-surface ad-hoc masking
+(which leaked plaintext on some paths):
+
+- object keys matching `is_secret_key` (the `SENSITIVE_CHANNEL_CREDENTIALS`
+  registry, `api_keys`, and a conservative `*_key` / `*_token` / `*_secret` /
+  `*_password` suffix heuristic that deliberately does **not** match
+  `max_tokens`, `token_url`, `key_path`, `client_id`, …) have their string
+  values masked;
+- secret *containers* (`keys` / `credentials` / `api_keys`) have every string
+  leaf masked regardless of leaf key;
+- `env` maps (MCP server env) are matched per key, so `HOST` / `PORT` /
+  `BASE_URL` stay readable while `*_KEY` / `*_TOKEN` values are masked.
+
+`mask_secret` renders `head(3)••••tail(4)`; values of ≤6 chars are fully
+masked, and empty values stay empty (an unset secret must not look set).
+
+Surfaces going through the walker: REST `get_config_handler`, the
+gateway-tool `config.get` / `config.schema.lookup` (whose `hash` stays raw so
+`base_hash` optimistic locking is unaffected), and `models.list` (its local
+`mask_api_key` folded into the shared `mask_secret`). The local CLI
+(`syscity config get`) reads the file directly and is unmasked. WS
+`config.get` returns only a SHA-256 `revision` of the config; WS
+`config.set` accepts an optional `base_revision` and rejects stale writes
+with `REVISION_CONFLICT` — checked twice: fast-fail before the model-router
+side effect, then authoritatively under the write lock.
 
 ---
 
@@ -414,7 +446,9 @@ src/secrets/
   roundtrip + permission assertions + atomic writes + AES-GCM encrypt/decrypt;
   KeyringStore through the in-memory backend (including `HangingBackend`
   timeouts and `KeyringHealth` stickiness/throttle/recovery); migration
-  idempotence (mcp_env / mcp_tokens); `SecretValue` redaction.
+  idempotence (mcp_env / mcp_tokens); `SecretValue` redaction; masking matrix
+  (mask.rs secret keys / containers / env per-key; REST + gateway-tool
+  regression tests proving no plaintext leaks).
 - **Integration tests**: real OS-keyring roundtrip
   (`tests/secrets_keyring_roundtrip.rs`, `#![cfg(feature = "keyring")]` +
   `#[ignore]`; run with `--features keyring -- --ignored`).

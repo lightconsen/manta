@@ -11,6 +11,7 @@ A **skill** is a reusable prompt bundle with YAML frontmatter metadata, trigger 
 The system prompt carries only a **stable catalog** — name + description for every eligible skill (`SkillManager::build_catalog`), identical across messages so provider prompt caches stay effective. Skill bodies are **not** inlined: the model loads full instructions on demand via the `skill` tool (`SkillTool`), which returns the body plus any dependencies in dependency order. Explicit invocations (the `/cmd` slash triggers, the REST run endpoint) still prepend the full body directly.
 
 - **`Skill`** — Core skill struct: name, description, prompt, triggers, metadata, dependencies
+- **`SkillTool`** (`crate::tools::skill_tool`) — AI-facing `skill` tool that loads a full skill body (plus dependencies, in dependency order) on demand
 - **`SkillRegistry`** — Remote registry client for discovery and installation (ClawHub, skills.syscity.dev)
 - **`SkillStorage`** / **`StorageLevel`** — Multi-level storage:
   - `Bundled` — Built into the binary
@@ -111,4 +112,5 @@ pub struct SkillMetadata {
 - Token optimization with path compaction and size limits
 - Slash command integration
 - Skill eligibility checking with error reporting
+- Stable prompt catalog with on-demand skill bodies via the `skill` tool (provider prompt-cache friendly)
 

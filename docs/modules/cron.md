@@ -38,6 +38,17 @@ pub struct CronJob {
 }
 ```
 
+### Run Digest
+
+Every completed run also appends one markdown line to `~/.syscity/workspace/cron-log.md`, so "did the scheduled jobs run OK" is a glance at a file rather than a `runs.jsonl` parse. The line carries the start time, a ✅/❌ marker, the job id, the outcome (first line of the error, truncated to 120 chars, on failure), the duration in seconds, and a `delivery:` suffix when delivery did not succeed:
+
+```
+- `2026-08-23 09:30` ✅ **daily-brief** — ok (12s)
+- `2026-08-23 09:45` ❌ **sync** — failed: webhook unreachable (3s), delivery: Failed(...)
+```
+
+Appending is best-effort: a digest write failure is `warn!`-logged and never fails the run log.
+
 ## Key Types
 
 ```rust
@@ -68,6 +79,7 @@ pub struct CronJob {
 - Retry logic with configurable count
 - Timeout protection for job execution
 - Run history tracking
+- Human-readable run digest appended to `~/.syscity/workspace/cron-log.md`
 - AI-facing tool for dynamic job management
 - Integration with Gateway lifecycle
 

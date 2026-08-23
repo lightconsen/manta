@@ -6,7 +6,7 @@ Capabilities the AI assistant can use to interact with the world.
 
 - **`Tool` trait** — `name()`, `description()`, `parameters_schema()`, `execute(args, context)`
 - **`ToolRegistry`** — Registration, lookup, execution with caching, circuit breaker, and trust-level filtering
-- **`ToolContext`** — Execution context: user_id, conversation_id, working_directory, allowed_paths, allowed_commands, sandbox flags, workspace_root, skill_trust, optional `user_context` and `tool_policy` for RBAC
+- **`ToolContext`** — Execution context grouped into `identity` (user/conversation/sender/RBAC), `sandbox` (working dir, limits, workspace root, `agent_workspace`, sandbox policy), and `model` (provider/model gating, skill trust, tool policy), plus optional `delegation` scope and `ask_queue` handles
 - **`ToolRegistrar`** — Validation-aware registration with name, schema, and security validators
 - **`ApprovalQueue`** — Human-in-the-loop approval system with risk levels
 - **`RBAC`** — Role-based access control with `Role`, `UserContext`, `ToolPolicy`, `SandboxPolicy`
@@ -15,13 +15,15 @@ Capabilities the AI assistant can use to interact with the world.
 
 | Category | Tools |
 |----------|-------|
-| File | `read_file`, `write_file`, `edit_file`, `glob` |
+| File | `file_read`, `file_write`, `file_edit`, `glob` |
 | Shell | `shell` (with allowlist) |
 | Web | `web_fetch`, `web_search` |
-| Code | `code_exec` (sandboxed) |
+| Code | `execute_code` (sandboxed) |
 | Memory | `memory_search`, `memory_get` |
-| Session | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_status` |
+| Session | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_yield`, `session_status` |
 | Agent | `delegate`, `agents_list` |
+| Interaction | `ask_user` (human-in-the-loop clarification) |
+| Report | `write_report` |
 | Browser | `browser` |
 | Image | `image_generate` |
 | PDF | `pdf` |
@@ -41,12 +43,26 @@ Capabilities the AI assistant can use to interact with the world.
 | STT | `stt` |
 | Command Detection | `command_detector` |
 
+### Notable Tool Behaviors
+
+- **`todo`** — Whole-snapshot semantics: the input `{"todos": [...]}` IS the complete new task list and each call atomically replaces the stored state (last write wins; no partial merge). State lives in a `TodoState` shared by the tool, the registry, and the agent engine, persists to `~/.syscity/todos/<conversation_id>.json`, and is cleared automatically when a new user turn begins so the UI never shows a stale checklist.
+- **`file_write` / `file_edit`** — Guarded by a read-before-edit `WriteGuard`: modifying an existing file the model has not read in this conversation (or that changed on disk since the last read) is rejected with corrective feedback. Successful writes record the new version, so read → edit → edit flows work without re-reading.
+- **`shell`** — Output truncation keeps the head and the tail (command errors usually sit at the end). Results carry a `signal` field when the process was terminated by a signal, and every Unix child is spawned as its own process-group leader so timeouts/cancellation kill the whole group, not just the direct child.
+- **`web_fetch`** — Selection failures carry stable machine-readable codes in `data.code`; redirects are followed manually (max 10 hops) with every hop re-validated against the SSRF navigation guard; non-2xx responses are returned as successful results (status + body) rather than tool errors.
+- **`write_report`** — Reports land in the producing agent's own workspace at `<agent-workspace>/artifacts/` (falling back to the legacy global artifacts dir for custom workspace layouts) and return an owner-addressed URL for the frontend preview.
+- **`ask_user`** — Pauses the turn on an `AskQueue` oneshot until the human answers via the web modal (`ask.required` / `ask.respond` over WS). Background contexts (delegated sub-agents, goal runner, cron/heartbeat/standing orders) refuse with a clear message instead of blocking.
+- **Screenshot producers** (`browser`, `computer`, `screen_state`) — Large image payloads are written once to the content-addressed attachment store at `~/.syscity/attachments/sha256/<2>/<rest>`; tool results carry a compact `{"type":"image_ref",...}` marker plus a human note instead of megabytes of base64. Current-turn refs are materialized back as image blocks at request time; older-turn refs degrade to a one-line placeholder. Unreferenced objects are swept by `syscity observe prune`.
+- **Output spill** — Successful tool outputs above 32 KiB (configurable, `ToolRegistry::with_spill_threshold`) are written to `<workspace>/.syscity/spill/` and replaced with a head/tail preview plus a retrieval hint. The exemption is path-aware: only calls whose path-like argument resolves under the spill directory return full content, which breaks the read → spill → read loop without exempting every `file_read`.
+
 ### Security Features
 
 - **Path traversal detection** — `../`, `~`, null bytes blocked in SecurityValidator
 - **Command injection detection** — `;`, `|`, `$`, `` ` ``, `$(` blocked
 - **Sandbox mode** — Resource limits via `setrlimit` (Unix): memory, CPU, FDs, processes
+- **Kernel write fences** — `workspace_only` command tools (`shell`, `execute_code`, `process`) are fenced at the kernel level, not just path-checked: Seatbelt on macOS, Landlock on Linux, AppContainer + Job object on Windows
 - **Workspace boundary** — `workspace_only` mode restricts file ops to `workspace_root`
+- **Read-before-edit guard** — `file_write` / `file_edit` reject blind or stale writes to existing files (see `src/tools/write_guard.rs`)
+- **Hooks** — Programmable gates before and after tool execution: pre-execute policy hooks can deny or route to approval; post-execute hooks can replace the output or block the result with feedback the model sees as an error. A Claude-Code-compatible shell hooks bridge (`~/.syscity/hooks.json`, fail-open) maps PreToolUse / PostToolUse / UserPromptSubmit / Stop events onto these points
 - **Approval queue** — Human-in-the-loop for high-risk tools with `RiskLevel` classification
 - **Circuit breaker** — Tools disabled after 3 consecutive failures
 - **Privilege filtering** — Privileged tools hidden when `skill_trust == Community`
@@ -64,8 +80,28 @@ Capabilities the AI assistant can use to interact with the world.
 
 ```rust
 pub struct ToolContext {
+    /// Identity fields (who is calling the tool)
+    pub identity: ToolIdentity,
+    /// Sandbox / execution environment
+    pub sandbox: ToolSandbox,
+    /// Model / policy metadata
+    pub model: ToolModel,
+    /// Active delegation scope for delegated child agents
+    pub delegation: Option<DelegationScope>,
+    /// Ask queue for the `ask_user` clarification tool (None in
+    /// non-interactive contexts)
+    pub ask_queue: Option<Arc<AskQueue>>,
+}
+
+pub struct ToolIdentity {
     pub user_id: String,
     pub conversation_id: String,
+    pub sender_id: Option<String>,
+    pub sender_is_owner: bool,
+    pub user_context: Option<UserContext>,
+}
+
+pub struct ToolSandbox {
     pub working_directory: PathBuf,
     pub environment: HashMap<String, String>,
     pub timeout: Duration,
@@ -76,18 +112,21 @@ pub struct ToolContext {
     pub cpu_limit: Option<u64>,
     pub fd_limit: Option<u64>,
     pub process_limit: Option<u64>,
-    pub skill_trust: SkillTrust,
     pub workspace_root: PathBuf,
+    /// Owning agent's own workspace (differs from `workspace_root` for
+    /// delegated children; where reports/artifacts are written)
+    pub agent_workspace: Option<PathBuf>,
     pub workspace_only: bool,
-    pub user_context: Option<UserContext>,
-    pub tool_policy: Option<ToolPolicy>,
+    pub sandbox_policy: Option<SandboxPolicy>,
+    pub plugin_allowlist: Option<Vec<String>>,
+}
+
+pub struct ToolModel {
     pub model_name: Option<String>,
     pub provider_name: Option<String>,
-    pub sender_id: Option<String>,
-    pub sender_is_owner: bool,
-    pub plugin_allowlist: Option<Vec<String>>,
     pub model_capabilities: ModelCapabilities,
-    pub sandbox_policy: Option<SandboxPolicy>,
+    pub skill_trust: SkillTrust,
+    pub tool_policy: Option<ToolPolicy>,
 }
 ```
 
@@ -126,4 +165,11 @@ pub enum RiskLevel {
 - Streaming tool execution with chunk-based output
 - Model and provider-based tool gating
 - Sender-based tool access control
+- Pre/post-execution hook points with deny, approval-routing, output replacement, and block-with-feedback
+- Claude-Code-compatible shell hooks bridge for external gating scripts
+- Kernel-enforced write fences for workspace-only command tools (Seatbelt / Landlock / AppContainer)
+- Read-before-edit write guard for file-mutating tools
+- Output spill of oversized results to workspace files with tail-preserving previews
+- Content-addressed attachment store for tool-produced images
+- Human-in-the-loop clarification via the `ask_user` tool
 

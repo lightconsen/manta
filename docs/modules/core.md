@@ -17,6 +17,19 @@ Domain models, shared business logic, and cross-cutting infrastructure for the S
 - **`context.rs`** — Structured request context for tracing
   - `RequestContext` — Holds `trace_id`, `session_id`, `user_id`, `entity_id`
   - `attach_to_span()` — Creates a tracing span with these fields, injected at WebSocket entry points
+- **`invariants.rs`** — Runtime invariant registry
+  - `Invariant` — A named, module-owned async check over local persistent state (`<module>/<name>` id)
+  - `register()` / `register_builtins()` / `run_all()` — Global registry; `run_all()` executes every registered check and reports pass/fail (a `skip: `-prefixed detail counts as passed-with-note, e.g. store absent)
+  - Surfaced through the `syscity invariants` CLI (`--json` for machine-readable output); exits non-zero when any invariant is violated (CI/cron-friendly)
+
+### Invariant declare-or-register convention
+
+Modules own the data invariants they are responsible for upholding. The convention — enforced mechanically by `scripts/static-analysis.sh --full` — is that **every top-level `src/` module must either**:
+
+1. register its checks with `core::invariants` (contributed via `register_builtins()`, kept next to the code that upholds them), or
+2. carry an explicit `INVARIANTS-NONE:` marker explaining why it holds none.
+
+Nothing is silently unchecked. Currently registered built-ins: `agent/session_history_balanced` (every persisted session has a tool result for each tool call), `agent/todo_store_consistent` (persisted todo files' display order matches their task set), and `cron/run_log_bounded` (run-history log stays within its retention cap).
 
 ## Key Types
 
@@ -52,4 +65,5 @@ impl Id {
 - Atomic engine metrics for operational visibility
 - Publish-subscribe event bus for decoupled cross-module communication
 - Structured request context with tracing span integration
+- Runtime invariant registry with a `syscity invariants` CLI and the declare-or-register convention (`INVARIANTS-NONE:` marker) enforced by static analysis
 

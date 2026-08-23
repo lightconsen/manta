@@ -4,7 +4,7 @@
 
 The command system has two layers:
 
-- **Gateway command catalog** (`src/gateway/commands.rs`) — canonical command definitions exposed via the WebSocket RPC method `commands.list` and executed via `commands.execute`.
+- **Gateway command catalog** (`src/gateway/commands/mod.rs`) — canonical command definitions exposed via the WebSocket RPC method `commands.list` and executed via `commands.execute`, with handlers split by domain into `admin.rs`, `agents.rs`, `model.rs`, `session.rs`, and `tools.rs`.
 - **TUI slash commands** (`src/tui/commands.rs`) — client-side parser that handles a small set of local commands and forwards everything else to the gateway.
 
 - **Local** commands run client-side without a backend round-trip.
@@ -114,6 +114,20 @@ The command system has two layers:
 | `/tell` | `<id> <message>` | Alias for `/steer`. | no | no |
 | `/focus` | `<target>` | Bind the current thread to an agent target via `AgentRouter::bind_session()`. | no | no |
 | `/unfocus` | — | Remove thread binding via `AgentRouter::unbind_session()`. | no | no |
+| `/goal` | `<description> [--max-rounds N] [--fresh]` | Run an autonomous goal loop with structured stop conditions. Subcommands: `cancel`, `list`, `resume`. | no | no |
+
+### Goal Commands
+
+`/goal` starts a background `GoalRunner` that iterates "agent acts → check conditions → feedback" until all LLM-generated stop conditions pass or a guardrail trips. Progress streams back as `goal.progress` events. See [Goal-Based Execution](goal.md) for the full contract.
+
+| Subcommand | Description |
+|---|---|
+| `/goal <description> [--max-rounds N] [--fresh]` | Start a new goal. `--fresh` enables the fresh-context (Ralph) loop: each round is a seedless sub-agent and only a validated ```handoff JSON block (≤16K) carries state between rounds. |
+| `/goal cancel <goal_id>` | Cancel a running goal; also discards the checkpoint of a suspended goal. |
+| `/goal list` | List running goals plus suspended goals (round, max rounds, blocked reason). |
+| `/goal resume <goal_id>` | Re-arm a suspended goal from its persisted checkpoint. |
+
+Goals are checkpointed per round to `~/.syscity/goals/<goal_id>.json`. After a gateway restart, persisted goals are **suspended, not auto-resumed** — use `/goal list` to see them and `/goal resume <id>` to continue. Policy stops (loop detected, max rounds, invalid handoff, fatal config error) keep their checkpoint with a structured `blocked_reason`; completion, cancellation, and agent errors delete it.
 
 ### Examples
 
@@ -125,6 +139,11 @@ The command system has two layers:
 /steer subagent-1 stop and summarize
 /focus my-agent
 /unfocus
+/goal write tests for src/module.rs --max-rounds 3
+/goal refactor the auth module --fresh
+/goal list
+/goal resume goal_7f3a...
+/goal cancel goal_7f3a...
 ```
 
 ---
@@ -309,15 +328,21 @@ Both require `SCOPE_READ` (list) and `SCOPE_WRITE` (execute) respectively. Admin
 | `/bash` | Runs `sh -c <args>` and returns stdout/stderr/exit code. |
 | `/approve` | Lists pending approvals or resolves one via `ApprovalQueue::resolve()`. |
 | `/allowlist` | Reads/writes user levels via `CommandGate`. |
+| `/goal` | Parses the description into a `GoalPlan` via an LLM call, then spawns a background `GoalRunner` (`src/goal/runner.rs`); `cancel`/`list`/`resume` are handled in `src/gateway/commands/agents.rs`, resume re-arms from checkpoint via `src/gateway/goal_spawn.rs`. |
 
 ---
 
 ## Module Relationships
 
 ```
-src/gateway/commands.rs        # canonical catalog and execute handler
+src/gateway/commands/mod.rs     # canonical catalog and commands.list/execute dispatcher
+src/gateway/commands/session.rs # session & status handlers
+src/gateway/commands/model.rs   # model tuning handlers
+src/gateway/commands/agents.rs  # subagent/ACP/goal handlers
+src/gateway/commands/tools.rs   # tools/skill/approval handlers
+src/gateway/commands/admin.rs   # admin handlers
 src/gateway/command_provider.rs # provider/model hint resolution
-src/tui/commands.rs            # TUI client-side slash command parser
-src/channels/command_gate.rs   # channel-side command gating
-src/tools/command_gate.rs      # user level store and enforcement
+src/tui/commands.rs             # TUI client-side slash command parser
+src/channels/command_gate.rs    # channel-side command gating
+src/tools/command_gate.rs       # user level store and enforcement
 ```

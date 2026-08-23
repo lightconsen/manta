@@ -33,6 +33,16 @@ syscity config set security.auth_mode=token
 syscity reload
 ```
 
+> **Secrets are masked on remote read surfaces.** Anything that returns
+> config content to a client — REST `GET /api/v1/config`, the agent-facing
+> `config.get` / `config.schema.lookup` gateway tools, `models.list` — runs
+> through the canonical masking walker (`src/secrets/mask.rs`), so
+> `shared_token`, provider `api_key`s, and channel `credentials` come back as
+> `abc••••wxyz`. The local CLI (`syscity config get`) reads the file directly
+> and is unmasked. Over WebSocket, `config.get` returns only a SHA-256
+> `revision`; `config.set` accepts an optional `base_revision` and rejects
+> stale writes with `REVISION_CONFLICT` (compare-and-swap).
+
 ## Authentication modes
 
 `auth_mode` (enum in `src/gateway/protocol.rs`) selects the strategy:
