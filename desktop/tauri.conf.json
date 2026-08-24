@@ -51,7 +51,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "RWSAjNSx2cQZY/cu1bKRhC4moVluPEmj9vMDenwkPgSKZfyZd2iaIhTh",
+      "pubkey": "RWSuEcHYq0h6GWOdfGoWJQxCJV+uL+hav1BH5o0XYzcHOwhyvVXTLmrp",
       "endpoints": [
         "https://github.com/lightconsen/syscity/releases/latest/download/syscity-desktop-{{target}}-{{arch}}.json"
       ]
