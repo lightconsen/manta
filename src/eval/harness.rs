@@ -772,21 +772,33 @@ impl EvalHarness {
 
         // ── Step 8: Build trajectory ──────────────────────────────────
         let critique = if let Some(ref turns) = turns {
-            let trajectory = Self::build_trajectory_from_turns(turns);
-            let trajectory_text = trajectory.format_for_prompt();
+            if turns.is_empty() {
+                // A turn-less thread means the harness failed to capture the
+                // conversation (not an agent fault) — judging an empty
+                // trajectory would auto-fail the trial on a bogus 0.0.
+                warn!("No recorded turns for trial; skipping critic evaluation");
+                None
+            } else {
+                let trajectory = Self::build_trajectory_from_turns(turns);
+                let trajectory_text = trajectory.format_for_prompt();
 
-            // ── Step 8: Critic evaluation ────────────────────────────
-            if let Some(ref critic) = self.critic {
-                if let Some(ref criteria) = task.criteria {
-                    critic
-                        .evaluate_trajectory(&trajectory_text, criteria, task.agent_type.as_ref())
-                        .await
-                        .ok()
+                // ── Step 8: Critic evaluation ────────────────────────────
+                if let Some(ref critic) = self.critic {
+                    if let Some(ref criteria) = task.criteria {
+                        critic
+                            .evaluate_trajectory(
+                                &trajectory_text,
+                                criteria,
+                                task.agent_type.as_ref(),
+                            )
+                            .await
+                            .ok()
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
-            } else {
-                None
             }
         } else {
             None

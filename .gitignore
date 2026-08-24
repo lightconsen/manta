@@ -72,3 +72,6 @@ evals/actions/
 
 lcov.info
 
+
+# Local secret material (never commit)
+.tavily-key
