@@ -352,7 +352,33 @@ jobs:
           done
           ls -la artifacts/
 
+      # Release body comes from the CHANGELOG.md section matching the tag
+      # (## [X.Y.Z]); without one, fall back to GitHub's generated notes.
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ -s release_notes.md ]; then
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create Release
+        if: steps.notes.outputs.has_notes == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          body_path: release_notes.md
+
+      - name: Create Release (generated notes fallback)
+        if: steps.notes.outputs.has_notes != 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
