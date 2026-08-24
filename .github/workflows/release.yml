@@ -263,48 +263,43 @@ jobs:
             [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/$PREFIX.deb.sig"
           done
 
-          # Tauri writes `latest.json` per bundle type with relative artifact URLs.
-          # Rewrite the URL for this platform to an absolute GitHub download link
-          # and publish it under the endpoint's placeholder name.
-          python3 - "$BUNDLE_DIR" "$OUTPUT_DIR" "$UPDATER_JSON" "$PREFIX" "$UPDATER_BASE" "${{ matrix.updater_target }}" "${{ matrix.updater_arch }}" <<'PY'
-          import json, os, sys
+          # Tauri v2 does NOT write a latest.json — build the updater manifest
+          # from scratch: version from the tag, signature from the payload's
+          # .sig file, URL pointing at the release download. One JSON per
+          # platform, published under the endpoint's placeholder name.
+          python3 - "$OUTPUT_DIR" "$UPDATER_JSON" "$PREFIX" "$UPDATER_BASE" "${{ matrix.updater_target }}" "${{ matrix.updater_arch }}" <<'PY'
+          import datetime, json, os, sys
 
-          bundle_dir, out_dir, updater_json, prefix, base, target, arch = sys.argv[1:]
+          out_dir, updater_json, prefix, base, target, arch = sys.argv[1:]
+          version = os.environ["GITHUB_REF_NAME"].lstrip("v")
           payload = {
               "darwin": f"{prefix}.app.tar.gz",
               "linux": f"{prefix}.AppImage",
-              "windows": f"{prefix}.msi",
+              "windows": f"{prefix}.exe",
           }[target]
           platform_key = f"{target}-{arch}"
 
-          candidates = []
-          for root, _dirs, files in os.walk(bundle_dir):
-              if "latest.json" in files:
-                  candidates.append(os.path.join(root, "latest.json"))
+          sig_file = os.path.join(out_dir, payload + ".sig")
+          if not os.path.exists(sig_file):
+              print(f"::error::missing updater signature {sig_file}")
+              sys.exit(1)
+          with open(sig_file) as fh:
+              signature = fh.read().strip()
 
-          # Prefer the updater's preferred bundle type per platform.
-          def rank(p):
-              for i, name in enumerate(["appimage", "nsis", "msi", "deb", "macos"]):
-                  if name in p:
-                      return i
-              return 99
-
-          candidates.sort(key=rank)
-          chosen = None
-          for c in candidates:
-              with open(c) as fh:
-                  data = json.load(fh)
-              if platform_key in data.get("platforms", {}):
-                  data["platforms"][platform_key]["url"] = f"{base}/{payload}"
-                  chosen = data
-                  break
-
-          if chosen is None:
-              print(f"::warning::No updater latest.json for {platform_key}")
-              sys.exit(0)
-
+          manifest = {
+              "version": version,
+              "notes": "",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "platforms": {
+                  platform_key: {
+                      "signature": signature,
+                      "url": f"{base}/{payload}",
+                  }
+              },
+          }
           with open(os.path.join(out_dir, updater_json), "w") as fh:
-              json.dump(chosen, fh, indent=2)
+              json.dump(manifest, fh, indent=2)
+          print(f"Wrote updater manifest {updater_json} for {platform_key}")
           PY
 
       - name: Upload artifact
@@ -340,6 +335,12 @@ jobs:
           for prefix in syscity-desktop-linux-amd64 syscity-desktop-macos-arm64 syscity-desktop-macos-amd64 syscity-desktop-windows-amd64; do
             if ! ls artifacts/ | grep -q "^${prefix}"; then
               echo "::error::missing desktop artifacts for ${prefix}"
+              exit 1
+            fi
+          done
+          for uj in syscity-desktop-linux-x86_64.json syscity-desktop-darwin-aarch64.json syscity-desktop-darwin-x86_64.json syscity-desktop-windows-x86_64.json; do
+            if [ ! -f "artifacts/$uj" ]; then
+              echo "::error::missing updater manifest $uj"
               exit 1
             fi
           done
