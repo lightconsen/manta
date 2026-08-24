@@ -12,6 +12,8 @@ name: Eval Nightly
 #   vars.EVAL_PROVIDER       — provider preset name (default: anthropic)
 #   vars.EVAL_MODEL          — model override (default: provider preset)
 #   vars.EVAL_BASE_URL       — custom/self-hosted endpoint (optional)
+#   vars.EVAL_JUDGE_MODEL    — cheaper judge model, e.g. deepseek-v4-flash
+#                              (default: same model as the agent)
 
 on:
   schedule:
@@ -33,6 +35,7 @@ env:
   EVAL_PROVIDER: ${{ vars.EVAL_PROVIDER || 'anthropic' }}
   EVAL_MODEL: ${{ vars.EVAL_MODEL || '' }}
   EVAL_BASE_URL: ${{ vars.EVAL_BASE_URL || '' }}
+  EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL || '' }}
   EVAL_API_KEY: ${{ secrets.EVAL_API_KEY }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -73,6 +76,7 @@ jobs:
           set -o pipefail
           args=(eval run "$SUITE" --full --collect-badcases --provider "$EVAL_PROVIDER")
           [ -n "$EVAL_MODEL" ] && args+=(--model "$EVAL_MODEL")
+          [ -n "$EVAL_JUDGE_MODEL" ] && args+=(--judge-model "$EVAL_JUDGE_MODEL")
           [ -n "$EVAL_BASE_URL" ] && args+=(--base-url "$EVAL_BASE_URL")
           [ -n "$EVAL_API_KEY" ] && args+=(--api-key "$EVAL_API_KEY")
           [ "$TRIALS" != "0" ] && args+=(--trials "$TRIALS")

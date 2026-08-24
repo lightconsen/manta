@@ -16,7 +16,7 @@ use crate::Result;
 /// System prompt for trajectory-level evaluation (retrospect engine).
 const TRAJECTORY_CRITIC_PROMPT: &str = r#"You are analyzing a conversation trajectory to identify interaction patterns.
 
-Review the full sequence of turns — user messages, assistant responses, tool calls, and tool results. Pay close attention to the actual content returned by tools versus what the assistant claims.
+Review the full sequence of turns — user messages, assistant responses, tool calls, and tool results. Pay close attention to the actual content returned by tools versus what the assistant claims. Tool results may be truncated (ending with "…"); never penalize evidence faithfulness for content hidden by truncation.
 
 Evaluation criteria:
 1. Evidence faithfulness — does the response accurately reflect tool outputs?
@@ -27,7 +27,7 @@ Evaluation criteria:
 5. Recurring themes — what patterns repeat across user requests?
 6. Improvement opportunities — where could the agent serve better?
 
-Output JSON:
+Output a single raw JSON object — no prose, no markdown fences, nothing before or after it:
 {"dimension_scores": {"Evidence Faithfulness": 0.9, "Tool Usage": 0.85, "Response Quality": 0.9, "Efficiency": 0.75, "Pattern Recognition": 0.7}, "strengths": [...], "weaknesses": [...], "suggested_improvements": [...], "observation": "concise actionable insight in English"}
 
 observation must be a single sentence capturing the key lesson from this window."#;
@@ -95,14 +95,51 @@ Evaluate the trajectory above."#,
         );
 
         let response = self
-            .call_llm(&system_prompt, &user_prompt, Some(2000))
+            .call_llm(&system_prompt, &user_prompt, Some(8192))
             .await?;
 
+        if response.finish_reason.as_deref() == Some("length") {
+            tracing::warn!("Critic response hit the max_tokens cap; scores may be truncated");
+        }
+
         let raw = response.message.content.trim().to_string();
-        let mut critique = parse_critique_json(&raw, criteria);
+        let mut last_parsed_json = None;
+        let mut critique = match try_parse_critique(&raw, criteria) {
+            Some((c, v)) => {
+                last_parsed_json = Some(v);
+                c
+            }
+            None => {
+                // One format-correction retry: feed the unparsable output back
+                // and demand pure JSON. Judge models that reason out loud
+                // (deepseek, o1-style) often need this nudge.
+                tracing::warn!("Critic output was not JSON; retrying with format correction");
+                let retry_user = format!(
+                    "Your previous reply was not valid JSON:\n\n{raw}\n\n\
+                     Restate your evaluation as a single raw JSON object with the exact \
+                     keys dimension_scores, strengths, weaknesses, suggested_improvements, \
+                     observation. No prose, no markdown fences."
+                );
+                let retry = self
+                    .call_llm(&system_prompt, &retry_user, Some(8192))
+                    .await?;
+                match try_parse_critique(retry.message.content.trim(), criteria) {
+                    Some((c, v)) => {
+                        last_parsed_json = Some(v);
+                        c
+                    }
+                    None => {
+                        tracing::warn!(
+                            "Critic JSON parse failed after retry; falling back to default critique"
+                        );
+                        default_critique(criteria)
+                    }
+                }
+            }
+        };
 
         // Extract the natural-language observation from the LLM output.
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
+        if let Some(parsed) = last_parsed_json {
             if let Some(obs) = parsed.get("observation").and_then(|v| v.as_str()) {
                 critique.observation = Some(obs.to_string());
             }
@@ -133,22 +170,43 @@ Evaluate the trajectory above."#,
 
 // ── JSON Parsing ───────────────────────────────────────────────────────────
 
-/// Parse a JSON critique from the LLM response.
-///
-/// Handles both raw JSON and JSON wrapped in markdown code blocks.
+/// Parse a JSON critique from the LLM response, falling back to a default
+/// (failed) critique when no JSON object can be recovered.
+#[cfg(test)]
 fn parse_critique_json(raw: &str, criteria: &QualityCriteria) -> Critique {
-    // Strip markdown code fences if present.
+    try_parse_critique(raw, criteria)
+        .map(|(c, _)| c)
+        .unwrap_or_else(|| {
+            tracing::warn!("Failed to parse critic JSON. Raw: {}", raw);
+            default_critique(criteria)
+        })
+}
+
+/// Try to recover a JSON critique from the LLM response, returning the
+/// critique and the parsed JSON value (used for the `observation` field).
+///
+/// Handles raw JSON, markdown-fenced JSON, and JSON embedded in surrounding
+/// prose (first `{` .. last `}`), which reasoning-style judge models produce
+/// when they think out loud before answering.
+fn try_parse_critique(
+    raw: &str,
+    criteria: &QualityCriteria,
+) -> Option<(Critique, serde_json::Value)> {
     let cleaned = strip_code_fences(raw);
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(cleaned) {
+        return Some((critique_from_value(&v, criteria), v));
+    }
+    let start = cleaned.find('{')?;
+    let end = cleaned.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let v = serde_json::from_str::<serde_json::Value>(&cleaned[start..=end]).ok()?;
+    Some((critique_from_value(&v, criteria), v))
+}
 
-    // Try to parse as JSON.
-    let parsed: serde_json::Value = match serde_json::from_str(cleaned) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("Failed to parse critic JSON: {}. Raw: {}", e, raw);
-            return default_critique(criteria);
-        }
-    };
-
+/// Build a critique from a successfully parsed JSON value.
+fn critique_from_value(parsed: &serde_json::Value, criteria: &QualityCriteria) -> Critique {
     // Extract dimension_scores.
     let dimension_scores = parsed
         .get("dimension_scores")
@@ -312,6 +370,42 @@ mod tests {
         let criteria = QualityCriteria::default();
         let critique = parse_critique_json(raw, &criteria);
         assert!(!critique.passed);
+    }
+
+    #[test]
+    fn test_parse_json_critique_embedded_in_prose() {
+        // Reasoning-style judges often prefix the JSON with a prose verdict.
+        let raw = "FAIL — the numbers cannot be verified against the tool output.\n\n{\"dimension_scores\":{\"Factual Accuracy\":0.4},\"strengths\":[],\"weaknesses\":[\"unverifiable\"]}";
+        let criteria = QualityCriteria::default();
+        let critique = parse_critique_json(raw, &criteria);
+        assert!(
+            (critique
+                .dimension_scores
+                .get("Factual Accuracy")
+                .copied()
+                .unwrap_or(0.0)
+                - 0.4)
+                .abs()
+                < 1e-6
+        );
+        assert!(critique.weaknesses.contains(&"unverifiable".to_string()));
+    }
+
+    #[test]
+    fn test_parse_json_critique_trailing_prose() {
+        let raw = "{\"dimension_scores\":{\"Efficiency\":0.8}}\nHope this helps!";
+        let criteria = QualityCriteria::default();
+        let critique = parse_critique_json(raw, &criteria);
+        assert!(
+            (critique
+                .dimension_scores
+                .get("Efficiency")
+                .copied()
+                .unwrap_or(0.0)
+                - 0.8)
+                .abs()
+                < 1e-6
+        );
     }
 
     #[test]

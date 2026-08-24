@@ -88,9 +88,11 @@ impl Trajectory {
                         ));
                     }
                     TrajectoryStep::ToolResult { name, content, success } => {
-                        // Truncate long results
-                        let result_preview = if content.len() > 300 {
-                            format!("{}…", &content[..300])
+                        // Truncate long results. The critic needs enough of the
+                        // payload to verify faithfulness (e.g. the actual figures
+                        // in a search result), so keep this generous.
+                        let result_preview = if content.len() > 1000 {
+                            format!("{}…", &content[..1000])
                         } else {
                             content.clone()
                         };

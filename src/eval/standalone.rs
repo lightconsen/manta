@@ -59,6 +59,9 @@ pub struct SuiteRunOptions {
     pub skill_breakdown: bool,
     /// Collect bad cases into the badcase store.
     pub collect_badcases: bool,
+    /// Judge (Critic) provider overrides. All-`None` judges with the agent's
+    /// own provider (self-evaluation); setting any field separates the judge.
+    pub judge: ProviderSelection,
 }
 
 /// Run a full eval suite standalone (no daemon needed).
@@ -79,6 +82,7 @@ pub async fn run_standalone_suite(
         sampling_rate_override,
         skill_breakdown,
         collect_badcases,
+        judge,
     } = opts;
     let ProviderSelection {
         provider: provider_override,
@@ -152,7 +156,14 @@ pub async fn run_standalone_suite(
     });
 
     // ── Step 3: Create provider ─────────────────────────────────────────────
-    let provider = match resolve_provider(&provider_type, api_key, base_url, model.clone(), None) {
+    // (keys/URL are cloned so the judge fallback below can reuse them)
+    let provider = match resolve_provider(
+        &provider_type,
+        api_key.clone(),
+        base_url.clone(),
+        model.clone(),
+        None,
+    ) {
         Ok(p) => p,
         Err(e) => {
             return Err(crate::error::SyscityError::Validation(format!(
@@ -210,9 +221,47 @@ pub async fn run_standalone_suite(
     // ── Step 6: Create Critic (only if at least one task has criteria) ──────
     let has_criteria = suite.tasks.iter().any(|t| t.criteria.is_some());
     let critic = if has_criteria {
-        let mut c = Critic::new(provider);
-        if let Some(ref model) = model {
-            c = c.with_model(model.clone());
+        // Judge separation: a different provider needs its own resolved
+        // provider; model-only overrides reuse the agent's provider with
+        // `with_model`. Key/URL fall back to the agent provider's when the
+        // judge uses the same preset.
+        let judge_needs_own_provider =
+            judge.provider.is_some() || judge.api_key.is_some() || judge.base_url.is_some();
+        let (judge_provider, judge_model) = if judge_needs_own_provider {
+            let jt = judge
+                .provider
+                .clone()
+                .unwrap_or_else(|| provider_type.clone());
+            let same = jt == provider_type;
+            let jkey = judge.api_key.clone().or_else(|| {
+                if same {
+                    api_key.clone()
+                } else {
+                    std::env::var("ANTHROPIC_API_KEY")
+                        .ok()
+                        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                }
+            });
+            let jbase =
+                judge
+                    .base_url
+                    .clone()
+                    .or_else(|| if same { base_url.clone() } else { None });
+            let jm = judge.model.clone();
+            let jp = resolve_provider(&jt, jkey, jbase, jm.clone(), None).map_err(|e| {
+                crate::error::SyscityError::Validation(format!(
+                    "Failed to create judge provider '{}': {}",
+                    jt, e
+                ))
+            })?;
+            info!("Eval judge provider: {} (model: {})", jt, jm.as_deref().unwrap_or("default"));
+            (jp, jm)
+        } else {
+            (provider.clone(), judge.model.clone().or_else(|| model.clone()))
+        };
+        let mut c = Critic::new(judge_provider);
+        if let Some(ref m) = judge_model {
+            c = c.with_model(m.clone());
         }
         Some(c)
     } else {

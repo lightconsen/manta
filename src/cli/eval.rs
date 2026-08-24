@@ -64,6 +64,18 @@ pub enum EvalCommands {
         /// Fraction of tasks to run (0.0–1.0). 1.0 = all tasks (§10).
         #[arg(long)]
         sampling_rate: Option<f64>,
+        /// Judge (Critic) provider preset (defaults to the agent's provider)
+        #[arg(long)]
+        judge_provider: Option<String>,
+        /// Judge model (e.g. a cheaper/faster model than the agent's)
+        #[arg(long)]
+        judge_model: Option<String>,
+        /// Judge API key (overrides env var / agent key)
+        #[arg(long)]
+        judge_api_key: Option<String>,
+        /// Judge API base URL
+        #[arg(long)]
+        judge_base_url: Option<String>,
     },
     /// List collected badcases
     BadcaseList {
@@ -190,6 +202,10 @@ impl EvalCommands {
                 skill_breakdown,
                 collect_badcases,
                 sampling_rate,
+                judge_provider,
+                judge_model,
+                judge_api_key,
+                judge_base_url,
             } => {
                 cmd_run(
                     config,
@@ -201,6 +217,12 @@ impl EvalCommands {
                         sampling_rate_override: *sampling_rate,
                         skill_breakdown: *skill_breakdown,
                         collect_badcases: *collect_badcases,
+                        judge: eval::standalone::ProviderSelection {
+                            provider: judge_provider.clone(),
+                            model: judge_model.clone(),
+                            api_key: judge_api_key.clone(),
+                            base_url: judge_base_url.clone(),
+                        },
                     },
                     eval::standalone::ProviderSelection {
                         provider: provider.clone(),
