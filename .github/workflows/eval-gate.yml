@@ -1,0 +1,103 @@
+name: Eval Release Gate
+
+# Layer-3 eval: manual pre-release gate. Unlike the nightly run this one IS
+# blocking — a red conclusion means do not tag the release.
+#
+# Usage: Actions → Eval Release Gate → Run workflow, then check the run is
+# green before pushing the release tag. The default suite is release_gate
+# (min_pass_rate 0.85, 5 trials per task).
+#
+# Provider configuration is shared with eval-nightly.yml:
+#   secrets.EVAL_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
+#   vars.EVAL_PROVIDER / EVAL_MODEL / EVAL_BASE_URL
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Suite to run'
+        default: 'release_gate'
+      trials:
+        description: 'Trials per task (0 = suite default)'
+        default: '0'
+      sampling_rate:
+        description: 'Fraction of tasks to run, 0.0-1.0 (empty = all)'
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  EVAL_PROVIDER: ${{ vars.EVAL_PROVIDER || 'anthropic' }}
+  EVAL_MODEL: ${{ vars.EVAL_MODEL || '' }}
+  EVAL_BASE_URL: ${{ vars.EVAL_BASE_URL || '' }}
+  EVAL_API_KEY: ${{ secrets.EVAL_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  SYSCITY_BASE_URL: ${{ vars.EVAL_BASE_URL || '' }}
+
+jobs:
+  gate:
+    name: Release gate eval
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler pkg-config libasound2-dev libdbus-1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # Default features: release_gate includes multimedia/platform tasks that
+      # need the vision/browser tool surface.
+      - name: Build syscity
+        run: cargo build --locked
+
+      - name: Run release gate suite
+        env:
+          SUITE: ${{ inputs.suite }}
+          TRIALS: ${{ inputs.trials }}
+          SAMPLING: ${{ inputs.sampling_rate }}
+        run: |
+          set -o pipefail
+          args=(eval run "$SUITE" --full --collect-badcases --provider "$EVAL_PROVIDER")
+          [ -n "$EVAL_MODEL" ] && args+=(--model "$EVAL_MODEL")
+          [ -n "$EVAL_BASE_URL" ] && args+=(--base-url "$EVAL_BASE_URL")
+          [ -n "$EVAL_API_KEY" ] && args+=(--api-key "$EVAL_API_KEY")
+          [ "$TRIALS" != "0" ] && args+=(--trials "$TRIALS")
+          [ -n "$SAMPLING" ] && args+=(--sampling-rate "$SAMPLING")
+          ./target/debug/syscity "${args[@]}" 2>&1 | tee eval-gate-output.log
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## Eval Release Gate — ${SUITE}"
+            echo
+            echo '- Suite summary:'
+            echo '```'
+            grep -A5 'Suite Summary' eval-gate-output.log || tail -20 eval-gate-output.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SUITE: ${{ inputs.suite }}
+
+      - name: Upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-gate-${{ github.run_number }}
+          path: |
+            eval-gate-output.log
+            evals/badcases/
+            evals/actions/
+          if-no-files-found: ignore
