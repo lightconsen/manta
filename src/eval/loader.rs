@@ -194,6 +194,10 @@ struct YamlManifest {
     name: Option<String>,
     #[serde(default)]
     description: String,
+    /// Optional informational category label (e.g. "regression"). Without this
+    /// field the flatten map below would try to parse it as a YamlCategory.
+    #[serde(default)]
+    category: Option<String>,
     #[serde(default)]
     trials: Option<usize>,
     #[serde(default)]
