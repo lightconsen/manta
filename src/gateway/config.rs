@@ -298,6 +298,33 @@ impl SearchConfig {
             .or_else(|| self.api_key.clone().into())
             .filter(|k| !k.is_empty())
     }
+
+    /// Resolve the configured provider list into provider instances.
+    ///
+    /// Unknown names are skipped with a warning; an empty result falls back
+    /// to DuckDuckGo so the search tool is never left provider-less.
+    pub fn to_providers(&self) -> Vec<crate::tools::web::SearchProvider> {
+        let mut providers: Vec<crate::tools::web::SearchProvider> = self
+            .provider_list()
+            .iter()
+            .filter_map(|name| {
+                match crate::tools::web::SearchProvider::from_config_name(
+                    name,
+                    self.api_key_for(name),
+                ) {
+                    Some(p) => Some(p),
+                    None => {
+                        tracing::warn!("Unknown search provider '{}', skipping", name);
+                        None
+                    }
+                }
+            })
+            .collect();
+        if providers.is_empty() {
+            providers.push(crate::tools::web::SearchProvider::DuckDuckGo);
+        }
+        providers
+    }
 }
 
 impl Default for SearchConfig {

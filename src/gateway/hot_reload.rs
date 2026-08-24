@@ -463,55 +463,10 @@ pub(crate) async fn register_hot_reload_handlers(
                     // new providers / API keys are picked up without a restart.
                     if search_config_changed {
                         info!("Search config changed, updating web_search tool...");
-                        let mut search_providers = Vec::new();
-                        let search_config = {
+                        let search_providers = {
                             let cfg = state.config.read().await;
-                            cfg.search.clone()
+                            cfg.search.to_providers()
                         };
-                        for name in search_config.provider_list() {
-                            let provider = match name.as_str() {
-                                "tavily" => Some(crate::tools::web::SearchProvider::Tavily {
-                                    api_key: search_config
-                                        .api_key_for("tavily")
-                                        .unwrap_or_default(),
-                                }),
-                                "serpapi" => Some(crate::tools::web::SearchProvider::SerpApi {
-                                    api_key: search_config
-                                        .api_key_for("serpapi")
-                                        .unwrap_or_default(),
-                                }),
-                                "exa" => Some(crate::tools::web::SearchProvider::Exa {
-                                    api_key: search_config.api_key_for("exa").unwrap_or_default(),
-                                }),
-                                "firecrawl" => Some(crate::tools::web::SearchProvider::Firecrawl {
-                                    api_key: search_config
-                                        .api_key_for("firecrawl")
-                                        .unwrap_or_default(),
-                                }),
-                                "serper" => Some(crate::tools::web::SearchProvider::Serper {
-                                    api_key: search_config
-                                        .api_key_for("serper")
-                                        .unwrap_or_default(),
-                                }),
-                                "bocha" => Some(crate::tools::web::SearchProvider::Bocha {
-                                    api_key: search_config.api_key_for("bocha").unwrap_or_default(),
-                                }),
-                                "duckduckgo" => Some(crate::tools::web::SearchProvider::DuckDuckGo),
-                                "brave" => Some(crate::tools::web::SearchProvider::Brave {
-                                    api_key: search_config.api_key_for("brave").unwrap_or_default(),
-                                }),
-                                _ => {
-                                    warn!("Unknown search provider '{}', skipping", name);
-                                    None
-                                }
-                            };
-                            if let Some(provider) = provider {
-                                search_providers.push(provider);
-                            }
-                        }
-                        if search_providers.is_empty() {
-                            search_providers.push(crate::tools::web::SearchProvider::DuckDuckGo);
-                        }
 
                         if let Some(providers) = state.tools.registry.web_search_providers() {
                             let mut guard = providers.write().await;

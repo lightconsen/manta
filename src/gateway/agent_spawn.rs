@@ -984,43 +984,7 @@ pub(crate) async fn create_default_tool_registry(
     )));
 
     // Register web tools
-    let mut search_providers = Vec::new();
-    for name in search_config.provider_list() {
-        let provider = match name.as_str() {
-            "tavily" => Some(crate::tools::web::SearchProvider::Tavily {
-                api_key: search_config.api_key_for("tavily").unwrap_or_default(),
-            }),
-            "serpapi" => Some(crate::tools::web::SearchProvider::SerpApi {
-                api_key: search_config.api_key_for("serpapi").unwrap_or_default(),
-            }),
-            "exa" => Some(crate::tools::web::SearchProvider::Exa {
-                api_key: search_config.api_key_for("exa").unwrap_or_default(),
-            }),
-            "firecrawl" => Some(crate::tools::web::SearchProvider::Firecrawl {
-                api_key: search_config.api_key_for("firecrawl").unwrap_or_default(),
-            }),
-            "serper" => Some(crate::tools::web::SearchProvider::Serper {
-                api_key: search_config.api_key_for("serper").unwrap_or_default(),
-            }),
-            "bocha" => Some(crate::tools::web::SearchProvider::Bocha {
-                api_key: search_config.api_key_for("bocha").unwrap_or_default(),
-            }),
-            "duckduckgo" => Some(crate::tools::web::SearchProvider::DuckDuckGo),
-            "brave" => Some(crate::tools::web::SearchProvider::Brave {
-                api_key: search_config.api_key_for("brave").unwrap_or_default(),
-            }),
-            _ => {
-                warn!("Unknown search provider '{}', skipping", name);
-                None
-            }
-        };
-        if let Some(provider) = provider {
-            search_providers.push(provider);
-        }
-    }
-    if search_providers.is_empty() {
-        search_providers.push(crate::tools::web::SearchProvider::DuckDuckGo);
-    }
+    let search_providers = search_config.to_providers();
     let shared_providers = std::sync::Arc::new(tokio::sync::RwLock::new(search_providers));
     registry = registry.with_web_search_providers(shared_providers.clone());
     registry.register(Box::new(WebSearchTool::new().with_providers_arc(shared_providers)));

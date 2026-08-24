@@ -528,6 +528,28 @@ pub enum SearchProvider {
     Bocha { api_key: String },
 }
 
+impl SearchProvider {
+    /// Build a provider from its config name and resolved API key.
+    ///
+    /// Returns `None` for unknown names (callers log and skip). This is the
+    /// single name → variant mapping shared by gateway spawn, hot-reload, and
+    /// the standalone eval registry.
+    pub fn from_config_name(name: &str, api_key: Option<String>) -> Option<SearchProvider> {
+        let key = api_key.unwrap_or_default();
+        match name {
+            "tavily" => Some(SearchProvider::Tavily { api_key: key }),
+            "serpapi" => Some(SearchProvider::SerpApi { api_key: key }),
+            "exa" => Some(SearchProvider::Exa { api_key: key }),
+            "firecrawl" => Some(SearchProvider::Firecrawl { api_key: key }),
+            "serper" => Some(SearchProvider::Serper { api_key: key }),
+            "bocha" => Some(SearchProvider::Bocha { api_key: key }),
+            "duckduckgo" => Some(SearchProvider::DuckDuckGo),
+            "brave" => Some(SearchProvider::Brave { api_key: key }),
+            _ => None,
+        }
+    }
+}
+
 impl Default for WebSearchTool {
     fn default() -> Self {
         let client = reqwest::Client::builder()
@@ -1490,7 +1512,13 @@ impl Tool for WebSearchTool {
             ));
         }
 
-        Ok(ToolExecutionResult::success("No results found for the query.".to_string()))
+        Ok(ToolExecutionResult::success(
+            "No results found: every configured search provider returned empty results. \
+             You MUST tell the user the search returned nothing, and any answer you then \
+             give comes from prior knowledge, not from the search — never present \
+             prior-knowledge claims as search results."
+                .to_string(),
+        ))
     }
 }
 

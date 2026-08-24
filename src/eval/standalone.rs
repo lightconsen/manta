@@ -184,7 +184,8 @@ pub async fn run_standalone_suite(
     let acp = Arc::new(AcpControlPlane::new(50));
 
     // ── Step 5: Create tool registry ────────────────────────────────────────
-    let tool_registry = create_eval_tool_registry(Some(acp.clone()));
+    let tool_registry =
+        create_eval_tool_registry(Some(acp.clone()), gateway_cfg.as_ref().map(|g| &g.search));
     let tool_registry = Arc::new(tool_registry);
 
     // ── Step 6: Set up agent builder on ACP (needed for acp_spawn) ──────────
@@ -242,11 +243,10 @@ pub async fn run_standalone_suite(
                         .or_else(|| std::env::var("OPENAI_API_KEY").ok())
                 }
             });
-            let jbase =
-                judge
-                    .base_url
-                    .clone()
-                    .or_else(|| if same { base_url.clone() } else { None });
+            let jbase = judge
+                .base_url
+                .clone()
+                .or_else(|| if same { base_url.clone() } else { None });
             let jm = judge.model.clone();
             let jp = resolve_provider(&jt, jkey, jbase, jm.clone(), None).map_err(|e| {
                 crate::error::SyscityError::Validation(format!(
@@ -488,7 +488,10 @@ async fn try_load_gateway_config() -> Option<GatewayConfig> {
 /// Registers shell, file operations, search, web, todo, time tools, and
 /// optionally ACP tools (acp_spawn, acp_session, sessions_send) when an
 /// `AcpControlPlane` is provided.
-fn create_eval_tool_registry(acp: Option<Arc<AcpControlPlane>>) -> ToolRegistry {
+fn create_eval_tool_registry(
+    acp: Option<Arc<AcpControlPlane>>,
+    search_cfg: Option<&crate::gateway::config::SearchConfig>,
+) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(ShellTool::new()));
     registry.register(Box::new(FileReadTool::new()));
@@ -496,7 +499,9 @@ fn create_eval_tool_registry(acp: Option<Arc<AcpControlPlane>>) -> ToolRegistry 
     registry.register(Box::new(FileEditTool::new()));
     registry.register(Box::new(GrepTool::new()));
     registry.register(Box::new(GlobTool::new()));
-    registry.register(Box::new(WebSearchTool::new()));
+    let search_providers = eval_search_providers(search_cfg);
+    let shared = std::sync::Arc::new(tokio::sync::RwLock::new(search_providers));
+    registry.register(Box::new(WebSearchTool::new().with_providers_arc(shared)));
     registry.register(Box::new(WebFetchTool::new()));
     registry.register(Box::new(TodoTool::new()));
     registry.register(Box::new(TimeTool::new()));
@@ -508,4 +513,43 @@ fn create_eval_tool_registry(acp: Option<Arc<AcpControlPlane>>) -> ToolRegistry 
     }
 
     registry
+}
+
+/// Pick search providers for the eval agent: an explicit `[web_search]`
+/// config wins; otherwise any `*_API_KEY` env var for a known provider
+/// enables it (CI path — DuckDuckGo HTML scraping is blocked on datacenter
+/// IPs); DuckDuckGo remains the last-resort fallback.
+fn eval_search_providers(
+    search_cfg: Option<&crate::gateway::config::SearchConfig>,
+) -> Vec<crate::tools::web::SearchProvider> {
+    use crate::tools::web::SearchProvider;
+
+    if let Some(cfg) = search_cfg {
+        return cfg.to_providers();
+    }
+
+    const ENV_KEYS: &[(&str, &str)] = &[
+        ("tavily", "TAVILY_API_KEY"),
+        ("brave", "BRAVE_API_KEY"),
+        ("serper", "SERPER_API_KEY"),
+        ("exa", "EXA_API_KEY"),
+        ("firecrawl", "FIRECRAWL_API_KEY"),
+        ("bocha", "BOCHA_API_KEY"),
+        ("serpapi", "SERPAPI_API_KEY"),
+    ];
+    let mut providers: Vec<SearchProvider> = ENV_KEYS
+        .iter()
+        .filter_map(|(name, var)| {
+            std::env::var(var)
+                .ok()
+                .filter(|k| !k.trim().is_empty())
+                .and_then(|k| SearchProvider::from_config_name(name, Some(k)))
+        })
+        .collect();
+    if !providers.is_empty() {
+        providers.push(SearchProvider::DuckDuckGo);
+        return providers;
+    }
+
+    vec![SearchProvider::DuckDuckGo]
 }
