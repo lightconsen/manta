@@ -53,6 +53,19 @@ pub struct Trajectory {
     pub window_size: usize,
 }
 
+/// Truncate to at most `max_bytes` without splitting a multi-byte UTF-8
+/// character (byte-slicing at a non-boundary index panics).
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 impl Trajectory {
     /// Format the trajectory into a human-readable string for the critic
     /// prompt.
@@ -78,7 +91,7 @@ impl Trajectory {
                     TrajectoryStep::ToolCall { name, args, duration_ms } => {
                         // Truncate long args for readability
                         let args_preview = if args.len() > 200 {
-                            format!("{}…", &args[..200])
+                            format!("{}…", truncate_utf8(args, 200))
                         } else {
                             args.clone()
                         };
@@ -92,7 +105,7 @@ impl Trajectory {
                         // payload to verify faithfulness (e.g. the actual figures
                         // in a search result), so keep this generous.
                         let result_preview = if content.len() > 1000 {
-                            format!("{}…", &content[..1000])
+                            format!("{}…", truncate_utf8(content, 1000))
                         } else {
                             content.clone()
                         };
@@ -175,6 +188,51 @@ mod tests {
         let formatted = trajectory.format_for_prompt();
         assert!(formatted.contains("[Tool call: search_web("));
         assert!(formatted.contains("[Tool result: search_web →"));
+    }
+
+    #[test]
+    fn test_format_trajectory_truncates_multibyte_utf8_without_panic() {
+        // Regression: byte-slicing at a non-char boundary panics. CJK content
+        // (e.g. Chinese search snippets) must truncate on a char boundary.
+        let cjk_result = "注".repeat(400); // 3 bytes each = 1200 bytes > 1000 cap
+        let cjk_args = format!("{{\"q\": \"{}\"}}", "价".repeat(250));
+        let trajectory = Trajectory {
+            turns: vec![TrajectoryWindow {
+                index: 0,
+                user_message: "搜索比特币价格".to_string(),
+                steps: vec![
+                    TrajectoryStep::ToolCall {
+                        name: "web_search".to_string(),
+                        args: cjk_args,
+                        duration_ms: 100,
+                    },
+                    TrajectoryStep::ToolResult {
+                        name: "web_search".to_string(),
+                        content: cjk_result,
+                        success: true,
+                    },
+                ],
+            }],
+            total_turns: 1,
+            window_size: 1,
+        };
+
+        let formatted = trajectory.format_for_prompt();
+        assert!(formatted.contains("web_search"));
+        // Preview ends on a char boundary and carries the ellipsis marker.
+        assert!(formatted.contains("…"));
+    }
+
+    #[test]
+    fn test_truncate_utf8_boundaries() {
+        assert_eq!(truncate_utf8("abc", 10), "abc");
+        assert_eq!(truncate_utf8("abc", 2), "ab");
+        // '注' spans bytes 1..=3, so the next char boundary after 'a' is 4.
+        // Cutting inside the char (bytes 2 or 3) backs off to just "a";
+        // cutting at 4 keeps the whole char.
+        assert_eq!(truncate_utf8("a注b", 4), "a注");
+        assert_eq!(truncate_utf8("a注b", 3), "a");
+        assert_eq!(truncate_utf8("a注b", 2), "a");
     }
 
     #[test]
