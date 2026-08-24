@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 #[serial]
 async fn session_full_lifecycle() {
-    let port = 40001;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -49,7 +49,7 @@ async fn session_full_lifecycle() {
 #[tokio::test]
 #[serial]
 async fn session_subscribe_unsubscribe() {
-    let port = 40002;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -76,7 +76,7 @@ async fn session_subscribe_unsubscribe() {
 #[tokio::test]
 #[serial]
 async fn session_auto_named_after_first_message() {
-    let port = 39014;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 

@@ -32,7 +32,7 @@ fn time_mock_provider() -> MockProvider {
 #[tokio::test]
 #[serial]
 async fn test_post_execute_block_feedback_reaches_model() {
-    let port = 41210;
+    let port = free_port();
     let mut config = test_config(port, false);
     config.model_provider = "mock".to_string();
     config.model = "mock-model".to_string();

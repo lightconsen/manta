@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 #[serial]
 async fn llm_chat_streaming_journey() {
-    let port = 40040;
+    let port = free_port();
     if pick_test_provider().is_some() {
         start_test_gateway(port, true).await;
     } else {
@@ -59,7 +59,7 @@ async fn llm_chat_streaming_journey() {
 #[tokio::test]
 #[serial]
 async fn llm_tool_invocation_journey() {
-    let port = 40041;
+    let port = free_port();
     if pick_test_provider().is_some() {
         start_test_gateway(port, true).await;
     } else {
@@ -132,7 +132,7 @@ async fn llm_tool_invocation_journey() {
 #[tokio::test]
 #[serial]
 async fn session_created_event_on_first_chat() {
-    let port = 40042;
+    let port = free_port();
     if pick_test_provider().is_some() {
         start_test_gateway(port, true).await;
     } else {

@@ -30,7 +30,7 @@ async fn start_workspace_gateway(port: u16) -> std::path::PathBuf {
 #[tokio::test]
 #[serial]
 async fn test_workspace_list_root_dirs_first() {
-    let port = 41200;
+    let port = free_port();
     let dir = start_workspace_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -54,7 +54,7 @@ async fn test_workspace_list_root_dirs_first() {
 #[tokio::test]
 #[serial]
 async fn test_workspace_list_subdir_and_read_file() {
-    let port = 41201;
+    let port = free_port();
     let dir = start_workspace_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -85,7 +85,7 @@ async fn test_workspace_list_subdir_and_read_file() {
 #[tokio::test]
 #[serial]
 async fn test_workspace_read_rejects_traversal() {
-    let port = 41202;
+    let port = free_port();
     let dir = start_workspace_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 

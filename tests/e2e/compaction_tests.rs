@@ -21,10 +21,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use syscity::error::SyscityError;
 
-// Ports reserved for this test (not used elsewhere in tests/e2e).
-const PORT_A: u16 = 41300;
-const PORT_B: u16 = 41301;
-
 /// Context-length error a real provider would surface when the request
 /// exceeds the model's actual window.
 fn context_length_error() -> SyscityError {
@@ -148,8 +144,9 @@ async fn test_compaction_overflow_retry_persists_and_rehydrates() {
     let mock = compaction_mock_provider();
 
     // ── Gateway A: accumulate context, then trip the overflow retry ────────
-    let gateway_a = start_gateway_with_mock_on_db(PORT_A, mock.clone(), &db_path).await;
-    let mut client = FrontendSimulator::connect(PORT_A).await;
+    let port_a = free_port();
+    let gateway_a = start_gateway_with_mock_on_db(port_a, mock.clone(), &db_path).await;
+    let mut client = FrontendSimulator::connect(port_a).await;
     let sid = client.create_session().await;
     client.subscribe(vec![sid.clone()]).await;
 
@@ -215,8 +212,9 @@ async fn test_compaction_overflow_retry_persists_and_rehydrates() {
 
     // ── Gateway B: rehydrate the same conversation from the record ─────────
     gateway_a.stop().await.expect("gateway A stop");
-    let gateway_b = start_gateway_with_mock_on_db(PORT_B, mock.clone(), &db_path).await;
-    let mut client_b = FrontendSimulator::connect(PORT_B).await;
+    let port_b = free_port();
+    let gateway_b = start_gateway_with_mock_on_db(port_b, mock.clone(), &db_path).await;
+    let mut client_b = FrontendSimulator::connect(port_b).await;
     // No create_session: reuse gateway A's session id so the agent rebuilds
     // THAT conversation's context.
     send_chat_and_wait_final(&mut client_b, &sid, "follow up").await;

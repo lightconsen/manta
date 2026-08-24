@@ -98,7 +98,7 @@ async fn start_goal_test_gateway(port: u16) {
 #[tokio::test]
 #[serial]
 async fn test_goal_full_lifecycle() {
-    let port = 41106;
+    let port = free_port();
     start_goal_test_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -177,7 +177,7 @@ async fn test_goal_full_lifecycle() {
 #[tokio::test]
 #[serial]
 async fn test_goal_command_starts_and_completes() {
-    let port = 41100;
+    let port = free_port();
     start_goal_test_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -211,7 +211,7 @@ async fn test_goal_command_starts_and_completes() {
 #[tokio::test]
 #[serial]
 async fn test_goal_command_creates_goal_id() {
-    let port = 41101;
+    let port = free_port();
     start_goal_test_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -239,7 +239,7 @@ async fn test_goal_command_creates_goal_id() {
 #[tokio::test]
 #[serial]
 async fn test_goal_list_shows_active_goals() {
-    let port = 41102;
+    let port = free_port();
     start_goal_test_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -277,7 +277,7 @@ async fn test_goal_list_shows_active_goals() {
 #[tokio::test]
 #[serial]
 async fn test_goal_cancel_aborts_goal() {
-    let port = 41103;
+    let port = free_port();
     start_goal_test_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -313,7 +313,7 @@ async fn test_goal_cancel_aborts_goal() {
 #[tokio::test]
 #[serial]
 async fn test_goal_cancel_unknown_id_returns_error() {
-    let port = 41104;
+    let port = free_port();
     start_goal_test_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -329,7 +329,7 @@ async fn test_goal_cancel_unknown_id_returns_error() {
 #[tokio::test]
 #[serial]
 async fn test_goal_empty_description_returns_error() {
-    let port = 41105;
+    let port = free_port();
     start_goal_test_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -359,7 +359,7 @@ async fn wait_for_goal_abort(client: &mut FrontendSimulator) -> serde_json::Valu
 #[tokio::test]
 #[serial]
 async fn test_goal_blocked_persists_reason_and_resumes() {
-    let port = 41260;
+    let port = free_port();
     start_goal_test_gateway(port).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -423,8 +423,8 @@ async fn test_goals_not_auto_resumed_on_restart() {
     // gw1 starts a goal that fails forever; once its first checkpoint is
     // saved, a second gateway (same HOME, another port) must list it as
     // suspended — not running — proving startup does not re-arm it.
-    let port1 = 41261;
-    let port2 = 41262;
+    let port1 = free_port();
+    let port2 = free_port();
     start_goal_test_gateway(port1).await;
     let mut client1 = FrontendSimulator::connect(port1).await;
 

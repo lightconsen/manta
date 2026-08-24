@@ -231,7 +231,7 @@ async fn tool_file_edit_invoked_via_chat() {
     // drive the read → edit flow (file_edit without a prior file_read is
     // rejected by design).
     std::fs::write("/tmp/syscity-e2e-edit.txt", "old text").expect("seed edit target");
-    let port = 40098;
+    let port = free_port();
 
     /// Mock: read the target first, then edit it — the flow the write guard
     /// enforces.

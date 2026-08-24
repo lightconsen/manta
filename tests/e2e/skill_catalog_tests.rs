@@ -31,7 +31,7 @@ fn skill_loader_mock_provider() -> MockProvider {
 #[tokio::test]
 #[serial]
 async fn test_skills_catalog_stable_and_body_on_demand() {
-    let port = 41230;
+    let port = free_port();
     let mock = skill_loader_mock_provider();
     start_test_gateway_with_mock(port, mock.clone()).await;
     let mut client = FrontendSimulator::connect(port).await;

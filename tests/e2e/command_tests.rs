@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 #[serial]
 async fn command_help_returns_markdown() {
-    let port = 40010;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -25,7 +25,7 @@ async fn command_help_returns_markdown() {
 #[tokio::test]
 #[serial]
 async fn command_status_returns_gateway_info() {
-    let port = 40011;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -47,7 +47,7 @@ async fn command_status_returns_gateway_info() {
 #[tokio::test]
 #[serial]
 async fn command_tools_returns_catalog() {
-    let port = 40012;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -69,7 +69,7 @@ async fn command_tools_returns_catalog() {
 #[tokio::test]
 #[serial]
 async fn command_whoami_returns_user_info() {
-    let port = 40013;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -91,7 +91,7 @@ async fn command_whoami_returns_user_info() {
 #[tokio::test]
 #[serial]
 async fn command_skill_lists_skills() {
-    let port = 40014;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -117,7 +117,7 @@ async fn command_skill_lists_skills() {
 #[tokio::test]
 #[serial]
 async fn command_mcp_returns_server_info() {
-    let port = 40015;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -143,7 +143,7 @@ async fn command_mcp_returns_server_info() {
 #[tokio::test]
 #[serial]
 async fn command_acp_returns_status_or_no_session() {
-    let port = 40016;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -169,7 +169,7 @@ async fn command_acp_returns_status_or_no_session() {
 #[tokio::test]
 #[serial]
 async fn commands_list_returns_catalog() {
-    let port = 40017;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -198,7 +198,7 @@ async fn commands_list_returns_catalog() {
 #[tokio::test]
 #[serial]
 async fn command_reset_clears_history() {
-    let port = 40018;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -234,7 +234,7 @@ async fn command_reset_clears_history() {
 #[tokio::test]
 #[serial]
 async fn command_stop_no_session() {
-    let port = 40019;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -259,7 +259,7 @@ async fn command_stop_no_session() {
 #[tokio::test]
 #[serial]
 async fn command_skill_not_found() {
-    let port = 40060;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -278,7 +278,7 @@ async fn command_skill_not_found() {
 #[tokio::test]
 #[serial]
 async fn command_mcp_disconnect_requires_arg() {
-    let port = 40061;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -297,7 +297,7 @@ async fn command_mcp_disconnect_requires_arg() {
 #[tokio::test]
 #[serial]
 async fn command_model_returns_status() {
-    let port = 40071;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -323,7 +323,7 @@ async fn command_model_returns_status() {
 #[tokio::test]
 #[serial]
 async fn command_usage_returns_info() {
-    let port = 40072;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -349,7 +349,7 @@ async fn command_usage_returns_info() {
 #[tokio::test]
 #[serial]
 async fn command_debug_show_returns_overrides() {
-    let port = 40073;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -375,7 +375,7 @@ async fn command_debug_show_returns_overrides() {
 #[tokio::test]
 #[serial]
 async fn command_persisted_to_session_history() {
-    let port = 39011;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 

@@ -38,7 +38,7 @@ fn shell_mock_provider() -> MockProvider {
 #[tokio::test]
 #[serial]
 async fn mock_shell_tool_invoked_via_chat() {
-    let port = 41070;
+    let port = free_port();
     start_test_gateway_with_mock(port, shell_mock_provider()).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -96,7 +96,7 @@ async fn mock_shell_tool_invoked_via_chat() {
 #[tokio::test]
 #[serial]
 async fn request_tail_has_state_snapshot_and_system_prompt_lacks_current_time() {
-    let port = 41073;
+    let port = free_port();
     let ws = std::env::temp_dir().join(format!("syscity_snapshot_e2e_{}", port));
     let _ = std::fs::remove_dir_all(&ws);
     std::fs::create_dir_all(&ws).expect("create temp workspace");
@@ -194,7 +194,7 @@ async fn mock_file_tool_invoked_via_chat() {
     // Fresh target: the write guard would otherwise reject overwriting a
     // leftover from a previous run.
     let _ = std::fs::remove_file("/tmp/syscity-mock-e2e.txt");
-    let port = 41071;
+    let port = free_port();
     start_test_gateway_with_mock(port, file_mock_provider()).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -268,7 +268,7 @@ fn never_called_mock_provider() -> MockProvider {
 #[tokio::test]
 #[serial]
 async fn mock_prompt_injection_blocked_via_chat() {
-    let port = 41072;
+    let port = free_port();
     start_test_gateway_with_mock(port, never_called_mock_provider()).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -319,7 +319,7 @@ async fn mock_prompt_injection_blocked_via_chat() {
 #[tokio::test]
 #[serial]
 async fn mock_jailbreak_blocked_via_chat() {
-    let port = 41073;
+    let port = free_port();
     start_test_gateway_with_mock(port, never_called_mock_provider()).await;
     let mut client = FrontendSimulator::connect(port).await;
 

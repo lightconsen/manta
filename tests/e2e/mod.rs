@@ -206,6 +206,18 @@ pub fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
 /// wait and read as a spurious "did not start" failure.
 pub const GATEWAY_START_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Ask the OS for a free TCP port (bind to :0, read the assignment, release).
+///
+/// E2E tests used to hardcode ports in the 41xxx range; on shared CI runners
+/// those collide with whatever else is bound there ("Failed to bind gateway"
+/// flakes). The brief release-then-rebind race beats certain collision.
+pub fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .unwrap_or(41391) // last-resort fixed port if :0 is unavailable
+}
+
 /// Cap on captured log bytes. Bounds memory in long-running chat tests while
 /// keeping the tail (the part relevant to a failure) available.
 const LOG_BUFFER_CAP: usize = 4 * 1024 * 1024;

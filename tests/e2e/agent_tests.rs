@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 #[serial]
 async fn agents_list_returns_array() {
-    let port = 40020;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 
@@ -29,7 +29,7 @@ async fn agents_list_returns_array() {
 #[tokio::test]
 #[serial]
 async fn agents_get_returns_not_found_for_unknown() {
-    let port = 40021;
+    let port = free_port();
     start_test_gateway(port, false).await;
     let mut client = FrontendSimulator::connect(port).await;
 

@@ -66,7 +66,7 @@ fn edit_without_read_mock() -> MockProvider {
 async fn test_write_guard_blocks_blind_edit_and_model_recovers() {
     std::fs::write("/tmp/syscity-wg-e2e.txt", "old text").expect("seed edit target");
 
-    let port = 41250;
+    let port = free_port();
     let mock = edit_without_read_mock();
     start_test_gateway_with_mock(port, mock.clone()).await;
     let mut client = FrontendSimulator::connect(port).await;

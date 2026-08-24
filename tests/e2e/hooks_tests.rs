@@ -82,7 +82,7 @@ async fn start_hooked_gateway(port: u16, hooks: PathBuf, mock: MockProvider) {
 #[tokio::test]
 #[serial]
 async fn pre_tool_use_deny_blocks_shell_and_skips_body() {
-    let port = 41220;
+    let port = free_port();
     let sentinel = sentinel_path("deny", port);
     let _ = std::fs::remove_file(&sentinel);
 
@@ -134,7 +134,7 @@ async fn pre_tool_use_deny_blocks_shell_and_skips_body() {
 #[tokio::test]
 #[serial]
 async fn post_tool_use_block_withholds_result_from_model() {
-    let port = 41221;
+    let port = free_port();
     let marker = "SECRET-HOOK-MARKER-41221";
 
     let hooks = write_hooks_file(
@@ -186,7 +186,7 @@ async fn post_tool_use_block_withholds_result_from_model() {
 #[tokio::test]
 #[serial]
 async fn user_prompt_submit_block_rejects_message() {
-    let port = 41222;
+    let port = free_port();
 
     let hooks = write_hooks_file(
         port,
@@ -238,7 +238,7 @@ async fn user_prompt_submit_block_rejects_message() {
 #[tokio::test]
 #[serial]
 async fn stop_hook_fires_after_turn_ends() {
-    let port = 41223;
+    let port = free_port();
     let log = sentinel_path("stop", port);
     let _ = std::fs::remove_file(&log);
 
@@ -284,7 +284,7 @@ async fn stop_hook_fires_after_turn_ends() {
 #[tokio::test]
 #[serial]
 async fn broken_pre_hook_fails_open() {
-    let port = 41224;
+    let port = free_port();
     let sentinel = sentinel_path("open", port);
     let _ = std::fs::remove_file(&sentinel);
 

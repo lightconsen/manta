@@ -33,7 +33,7 @@ fn big_output_mock_provider() -> MockProvider {
 #[tokio::test]
 #[serial]
 async fn test_oversized_tool_output_spills_to_workspace_file() {
-    let port = 41220;
+    let port = free_port();
     let ws = std::env::temp_dir().join(format!("syscity_spill_e2e_{}", port));
     let _ = std::fs::remove_dir_all(&ws);
     std::fs::create_dir_all(&ws).expect("create temp workspace");
@@ -164,7 +164,7 @@ fn file_read_spill_mock(big_path: PathBuf, ws: PathBuf) -> MockProvider {
 #[tokio::test]
 #[serial]
 async fn test_large_file_read_spills_and_reread_breaks_loop() {
-    let port = 41225;
+    let port = free_port();
     let ws = std::env::temp_dir().join(format!("syscity_spill_e2e_{}", port));
     let _ = std::fs::remove_dir_all(&ws);
     std::fs::create_dir_all(&ws).expect("create temp workspace");

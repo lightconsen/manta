@@ -34,7 +34,7 @@ fn ask_user_mock_provider() -> MockProvider {
 #[tokio::test]
 #[serial]
 async fn ask_user_blocks_turn_until_ws_respond_then_resumes() {
-    let port = 41270;
+    let port = free_port();
     start_test_gateway_with_mock(port, ask_user_mock_provider()).await;
     let mut client = FrontendSimulator::connect(port).await;
 
