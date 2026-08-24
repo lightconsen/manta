@@ -45,7 +45,8 @@
     ],
     "macOS": {
       "infoPlist": "Info.plist",
-      "entitlements": "entitlements.plist"
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "10.15"
     }
   },
   "plugins": {
