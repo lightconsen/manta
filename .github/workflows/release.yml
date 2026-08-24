@@ -202,7 +202,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # desktop/ is a workspace member, so `cargo tauri build` writes to
+          # the WORKSPACE ROOT target dir, not desktop/target/. Try both.
           BUNDLE_DIR="desktop/target/${{ matrix.target }}/release/bundle"
+          if [ ! -d "$BUNDLE_DIR" ]; then
+            BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
+          fi
+          if [ ! -d "$BUNDLE_DIR" ]; then
+            echo "::error::bundle directory not found (looked in desktop/target and target)"
+            exit 1
+          fi
+          echo "Using bundle dir: $BUNDLE_DIR"
           OUTPUT_DIR="desktop-artifacts"
           mkdir -p "$OUTPUT_DIR"
           PREFIX="${{ matrix.asset_prefix }}"
@@ -302,6 +312,7 @@ jobs:
         with:
           name: ${{ matrix.asset_prefix }}
           path: desktop-artifacts/*
+          if-no-files-found: error
 
   release:
     name: Create GitHub Release
@@ -318,6 +329,27 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+
+      # Guard: a release without desktop bundles is worse than no release —
+      # desktop artifact collection used to silently no-op (wrong bundle path),
+      # shipping a CLI-only release with green jobs.
+      - name: Verify artifact completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          for prefix in syscity-desktop-linux-amd64 syscity-desktop-macos-arm64 syscity-desktop-macos-amd64 syscity-desktop-windows-amd64; do
+            if ! ls artifacts/ | grep -q "^${prefix}"; then
+              echo "::error::missing desktop artifacts for ${prefix}"
+              exit 1
+            fi
+          done
+          for prefix in syscity-linux-amd64 syscity-linux-arm64 syscity-macos-arm64 syscity-macos-amd64; do
+            if ! ls artifacts/ | grep -q "^${prefix}\.tar\.gz$"; then
+              echo "::error::missing CLI tarball for ${prefix}"
+              exit 1
+            fi
+          done
+          ls -la artifacts/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
