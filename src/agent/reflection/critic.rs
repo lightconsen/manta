@@ -27,8 +27,9 @@ Evaluation criteria:
 5. Recurring themes — what patterns repeat across user requests?
 6. Improvement opportunities — where could the agent serve better?
 
-Output a single raw JSON object — no prose, no markdown fences, nothing before or after it:
-{"dimension_scores": {"Evidence Faithfulness": 0.9, "Tool Usage": 0.85, "Response Quality": 0.9, "Efficiency": 0.75, "Pattern Recognition": 0.7}, "strengths": [...], "weaknesses": [...], "suggested_improvements": [...], "observation": "concise actionable insight in English"}
+Output a single raw JSON object — no prose, no markdown fences, nothing before or after it.
+dimension_scores MUST contain exactly one entry per dimension listed under EVALUATION CRITERIA, keyed by the exact dimension name given there; you may add extra dimensions but they are informational only.
+{"dimension_scores": {"<dimension name>": 0.9, "...": 0.85}, "strengths": [...], "weaknesses": [...], "suggested_improvements": [...], "observation": "concise actionable insight in English"}
 
 observation must be a single sentence capturing the key lesson from this window."#;
 

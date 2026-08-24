@@ -80,8 +80,16 @@ impl QualityCriteria {
     }
 
     /// Get the threshold for a given dimension label.
+    ///
+    /// Label matching is normalized (case-insensitive, `_`/space-insensitive)
+    /// so YAML keys like `factual_accuracy` match the label "Factual Accuracy".
     pub fn threshold_for(&self, label: &str) -> f64 {
-        self.thresholds.get(label).copied().unwrap_or(0.7)
+        let want = normalize_label(label);
+        self.thresholds
+            .iter()
+            .find(|(k, _)| normalize_label(k) == want)
+            .map(|(_, v)| *v)
+            .unwrap_or(0.7)
     }
 
     /// Format dimensions for inclusion in a prompt.
@@ -139,19 +147,49 @@ pub struct Critique {
 
 impl Critique {
     /// Compute `overall_score` and `passed` from dimension scores and criteria.
+    ///
+    /// Gating uses ONLY the dimensions the task declared: extra dimensions the
+    /// judge volunteers (e.g. "Pattern Recognition" from the prompt template)
+    /// are informational and must not fail the critique. A declared dimension
+    /// the judge did not score fails closed with an explanatory weakness.
     pub fn finalize(mut self, criteria: &QualityCriteria) -> Self {
         let count = self.dimension_scores.len();
         if count > 0 {
             self.overall_score = self.dimension_scores.values().sum::<f64>() / count as f64;
         }
 
-        self.passed = self
-            .dimension_scores
-            .iter()
-            .all(|(label, score)| *score >= criteria.threshold_for(label));
-
+        let mut passed = true;
+        for dim in &criteria.dimensions {
+            let label = dim.label();
+            let want = normalize_label(label);
+            let score = self
+                .dimension_scores
+                .iter()
+                .find(|(k, _)| normalize_label(k) == want)
+                .map(|(_, v)| *v);
+            match score {
+                Some(s) if s >= criteria.threshold_for(label) => {}
+                Some(_) => passed = false,
+                None => {
+                    passed = false;
+                    self.weaknesses
+                        .push(format!("Judge did not score declared dimension '{label}'"));
+                }
+            }
+        }
+        self.passed = passed;
         self
     }
+}
+
+/// Normalize a dimension label for comparison: lowercase, ignoring spaces
+/// and underscores, so "Factual Accuracy", "factual_accuracy" and
+/// "factualAccuracy" all compare equal.
+fn normalize_label(s: &str) -> String {
+    s.chars()
+        .filter(|c| *c != '_' && !c.is_whitespace())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
 }
 
 #[cfg(test)]
@@ -179,6 +217,12 @@ mod tests {
         let mut scores = std::collections::HashMap::new();
         scores.insert("Factual Accuracy".to_string(), 0.9);
         scores.insert("Completeness".to_string(), 0.8);
+        scores.insert("Clarity".to_string(), 0.85);
+        scores.insert("Instruction Following".to_string(), 0.9);
+        scores.insert("Evidence Consistency".to_string(), 0.8);
+        // Extra judge-volunteered dimensions are informational only and must
+        // not gate, even when below the default threshold.
+        scores.insert("Pattern Recognition".to_string(), 0.5);
 
         let critique = Critique {
             dimension_scores: scores,
@@ -192,7 +236,44 @@ mod tests {
         .finalize(&criteria);
 
         assert!(critique.passed);
-        assert!(critique.overall_score > 0.8);
+        assert!(critique.overall_score > 0.7);
+    }
+
+    #[test]
+    fn test_critique_fails_when_declared_dimension_unscored() {
+        let criteria = QualityCriteria::default();
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("Factual Accuracy".to_string(), 0.9);
+
+        let critique = Critique {
+            dimension_scores: scores,
+            strengths: vec![],
+            weaknesses: vec![],
+            suggested_improvements: vec![],
+            overall_score: 0.0,
+            passed: false,
+            observation: None,
+        }
+        .finalize(&criteria);
+
+        assert!(!critique.passed);
+        assert!(critique
+            .weaknesses
+            .iter()
+            .any(|w| w.contains("did not score declared dimension")));
+    }
+
+    #[test]
+    fn test_threshold_for_matches_yaml_snake_case_keys() {
+        // YAML thresholds use snake_case ("factual_accuracy"); labels are
+        // title case ("Factual Accuracy"). Lookup must normalize.
+        let mut thresholds = std::collections::HashMap::new();
+        thresholds.insert("factual_accuracy".to_string(), 0.9);
+        let criteria = QualityCriteria {
+            dimensions: vec![QualityDimension::FactualAccuracy],
+            thresholds,
+        };
+        assert!((criteria.threshold_for("Factual Accuracy") - 0.9).abs() < 1e-9);
     }
 
     #[test]
