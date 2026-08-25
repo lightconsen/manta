@@ -46,6 +46,14 @@ pub struct CanvasElement {
     /// `font-size` in px, if specified. Converted to `sz` hundredths of a
     /// point (px × 0.75 × 100) in the generated deck.
     pub font_size_px: Option<f64>,
+    /// CSS `padding` as [left, top, right, bottom] px (defaults 0).
+    pub padding: [f64; 4],
+    /// CSS `line-height` as a unitless multiplier (e.g. 1.6), if specified.
+    pub line_height: Option<f64>,
+    /// CSS `letter-spacing` in px, if specified.
+    pub letter_spacing_px: Option<f64>,
+    /// CSS `border-radius` in px, if specified (renders as a round rect).
+    pub border_radius_px: Option<f64>,
     pub kind: ElementKind,
 }
 
@@ -72,6 +80,8 @@ pub struct TextSegment {
     pub mono: bool,
     /// Foreground color as `RRGGBB`, if specified.
     pub color: Option<String>,
+    /// Foreground alpha 0–100000 (100000 = opaque), from `rgba(...)`.
+    pub color_alpha: Option<u32>,
     /// Font size in px, if specified (px × 75 → `sz` hundredths of a point).
     pub font_size_px: Option<f64>,
 }
@@ -154,6 +164,34 @@ pub fn normalize_color(value: &str) -> Option<String> {
     }
 }
 
+/// Parse a CSS color, returning `(RRGGBB, alpha 0–100000)`. Supports hex,
+/// named colors, and `rgb()` / `rgba()`. Alpha is `None` for fully opaque
+/// colors (100000 = fully opaque).
+pub fn parse_color(value: &str) -> Option<(String, Option<u32>)> {
+    let v = value.trim().to_ascii_lowercase();
+    let func = v
+        .find('(')
+        .map(|i| (&v[..i], &v[i + 1..v.len().saturating_sub(1)]))
+        .filter(|(name, _)| *name == "rgb" || *name == "rgba" || *name == "rgbaa");
+    if let Some((name, inner)) = func {
+        let mut parts = inner.split(',').map(str::trim);
+        let r = parts.next()?.parse::<u32>().ok()?;
+        let g = parts.next()?.parse::<u32>().ok()?;
+        let b = parts.next()?.parse::<u32>().ok()?;
+        let hex = format!("{r:02x}{g:02x}{b:02x}");
+        if name == "rgba" || name == "rgbaa" {
+            let a = parts
+                .next()
+                .and_then(|p| p.parse::<f32>().ok())
+                .unwrap_or(1.0);
+            let alpha = (a.clamp(0.0, 1.0) * 100000.0).round() as u32;
+            return Some((hex, (alpha < 100000).then_some(alpha)));
+        }
+        return Some((hex, None));
+    }
+    normalize_color(&v).map(|hex| (hex, None))
+}
+
 /// Parse a CSS `linear-gradient(...)` value into a [`GradientSpec`].
 ///
 /// Supports `linear-gradient(<angle>deg, <color> [<pos>%], …)` and the
@@ -227,6 +265,7 @@ struct InlineCtx {
     italic: bool,
     mono: bool,
     color: Option<String>,
+    color_alpha: Option<u32>,
     font_size_px: Option<f64>,
 }
 
@@ -235,15 +274,17 @@ impl InlineCtx {
         let bold = style_get(style, "font-weight")
             .map(|v| v == "bold" || v.parse::<u32>().map(|n| n >= 600).unwrap_or(false))
             .unwrap_or(self.bold);
-        let color = style_get(style, "color")
-            .and_then(normalize_color)
-            .or(self.color);
+        let (color, color_alpha) = match style_get(style, "color").and_then(parse_color) {
+            Some((c, a)) => (Some(c), a),
+            None => (self.color.clone(), self.color_alpha),
+        };
         let font_size_px = style_get(style, "font-size")
             .and_then(px)
             .or(self.font_size_px);
         InlineCtx {
             bold,
             color,
+            color_alpha,
             font_size_px,
             ..self
         }
@@ -278,6 +319,7 @@ fn collect_text_inner(el: &ElementRef, ctx: &InlineCtx, lines: &mut TextBlock) {
                         italic: ctx.italic,
                         mono: ctx.mono,
                         color: ctx.color.clone(),
+                        color_alpha: ctx.color_alpha,
                         font_size_px: ctx.font_size_px,
                     };
                     // `lines` always holds at least one line; the fallback
@@ -386,10 +428,20 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
     let background = style_get(&style, "background-color")
         .or_else(|| style_get(&style, "background"))
         .and_then(normalize_color);
-    let color = style_get(&style, "color").and_then(normalize_color);
+    let (color, color_alpha) = match style_get(&style, "color").and_then(parse_color) {
+        Some((c, a)) => (Some(c), a),
+        None => (None, None),
+    };
     let bold = style_get(&style, "font-weight")
         .map(|v| v == "bold" || v.parse::<u32>().map(|n| n >= 600).unwrap_or(false))
         .unwrap_or(false);
+    let padding = style_get(&style, "padding")
+        .map(parse_padding)
+        .unwrap_or_default();
+    let line_height =
+        style_get(&style, "line-height").and_then(|v| v.trim_end_matches("px").parse::<f64>().ok());
+    let letter_spacing_px = style_get(&style, "letter-spacing").and_then(px);
+    let border_radius_px = style_get(&style, "border-radius").and_then(px);
 
     let tag = el.value().name();
     let kind = if tag == "img" {
@@ -411,6 +463,7 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
         let ctx = InlineCtx {
             bold,
             color: color.clone(),
+            color_alpha,
             font_size_px,
             ..Default::default()
         };
@@ -430,8 +483,24 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
         background,
         bold,
         font_size_px,
+        padding,
+        line_height,
+        letter_spacing_px,
+        border_radius_px,
         kind,
     })
+}
+
+/// Parse a CSS `padding` shorthand into [left, top, right, bottom] px.
+/// Supports 1, 2, or 4 values (mirroring CSS).
+fn parse_padding(value: &str) -> [f64; 4] {
+    let vals: Vec<f64> = value.split_whitespace().filter_map(px).collect();
+    match vals.as_slice() {
+        [a] => [*a; 4],
+        [v, h] => [*h, *v, *h, *v],
+        [t, r, b, l] => [*l, *t, *r, *b],
+        _ => [0.0; 4],
+    }
 }
 
 /// Parse a canvas-HTML document into slide specs. Returns an error when the
@@ -527,8 +596,13 @@ pub fn canvas_html_to_pptx(
         for el in &spec.elements {
             match &el.kind {
                 ElementKind::Text(block) => {
+                    let shape_type = if el.border_radius_px.is_some() {
+                        ShapeType::RoundedRectangle
+                    } else {
+                        ShapeType::Rectangle
+                    };
                     let mut shape = Shape::new(
-                        ShapeType::Rectangle,
+                        shape_type,
                         emu(el.x_px),
                         emu(el.y_px),
                         emu(el.w_px),
@@ -652,33 +726,10 @@ fn slide_spec_for_entry<'a>(name: &str, specs: &'a [SlideSpec]) -> Option<&'a Sl
 /// Only text-bearing `<p:sp>` blocks consume a queue entry, so textless
 /// background boxes and placeholder shapes cannot shift the mapping.
 fn patch_slide_text(xml: &str, spec: &SlideSpec) -> String {
-    // Only text-bearing elements consume a queue entry; empty text blocks
-    // (dividers, background-only boxes) and images are excluded so they
-    // cannot block the mapping.
-    let mut queue: Vec<TextBlock> = spec
+    let mut queue: Vec<ShapeText> = spec
         .elements
         .iter()
-        .filter_map(|el| match &el.kind {
-            ElementKind::Text(block) if !block.is_empty() => Some(block.clone()),
-            ElementKind::Bullets(items) => {
-                // Each bullet becomes a line; the element's style carries over.
-                let lines = items
-                    .iter()
-                    .map(|item| {
-                        vec![TextSegment {
-                            text: format!("• {item}"),
-                            bold: el.bold,
-                            italic: false,
-                            mono: false,
-                            color: el.color.clone(),
-                            font_size_px: el.font_size_px,
-                        }]
-                    })
-                    .collect();
-                Some(lines)
-            }
-            _ => None,
-        })
+        .filter_map(shape_text_for_element)
         .collect();
 
     let mut out = String::with_capacity(xml.len());
@@ -697,10 +748,15 @@ fn patch_slide_text(xml: &str, spec: &SlideSpec) -> String {
         let block = &rest[start..end];
 
         let patched = if block.contains("<a:t>") {
-            if let Some(text_block) = queue.first() {
-                let tx = text_block_to_txbody(text_block);
+            if let Some(shape_text) = queue.first().cloned() {
+                let tx = text_block_to_txbody(&shape_text);
                 queue.remove(0);
-                replace_txbody(block, &tx)
+                let mut patched = replace_txbody(block, &tx);
+                if let Some(radius) = shape_text.border_radius_px {
+                    patched =
+                        apply_round_rect_radius(&patched, radius, shape_text.w_px, shape_text.h_px);
+                }
+                patched
             } else {
                 block.to_string()
             }
@@ -713,6 +769,67 @@ fn patch_slide_text(xml: &str, spec: &SlideSpec) -> String {
         rest = &rest[end..];
     }
     out
+}
+
+/// Text-bearing shape content plus the box-level decorations the txBody and
+/// shape geometry carry.
+#[derive(Clone)]
+struct ShapeText {
+    block: TextBlock,
+    padding: [f64; 4],
+    line_height: Option<f64>,
+    letter_spacing_px: Option<f64>,
+    border_radius_px: Option<f64>,
+    w_px: f64,
+    h_px: f64,
+}
+
+/// Build the patch queue entry for one element: its text block (bullets are
+/// synthesized as one line each) plus its decorations. Returns `None` for
+/// images and empty text blocks so they cannot shift the mapping.
+fn shape_text_for_element(el: &CanvasElement) -> Option<ShapeText> {
+    let block = match &el.kind {
+        ElementKind::Text(block) if !block.is_empty() => block.clone(),
+        ElementKind::Bullets(items) => items
+            .iter()
+            .map(|item| {
+                vec![TextSegment {
+                    text: format!("• {item}"),
+                    bold: el.bold,
+                    italic: false,
+                    mono: false,
+                    color: el.color.clone(),
+                    color_alpha: None,
+                    font_size_px: el.font_size_px,
+                }]
+            })
+            .collect(),
+        _ => return None,
+    };
+    Some(ShapeText {
+        block,
+        padding: el.padding,
+        line_height: el.line_height,
+        letter_spacing_px: el.letter_spacing_px,
+        border_radius_px: el.border_radius_px,
+        w_px: el.w_px,
+        h_px: el.h_px,
+    })
+}
+
+/// Set a round-rect shape's corner radius by injecting an adjustment guide.
+/// `radius_px` is converted to a fraction of the smaller dimension (the
+/// OOXML `adj` unit), clamped to [0, 0.5].
+fn apply_round_rect_radius(block: &str, radius_px: f64, w_px: f64, h_px: f64) -> String {
+    let smaller = w_px.min(h_px);
+    if smaller <= 0.0 {
+        return block.to_string();
+    }
+    let adj = ((radius_px / smaller).clamp(0.0, 0.5) * 100000.0).round() as u32;
+    block.replace(
+        "<a:avLst/>",
+        &format!("<a:avLst><a:gd name=\"adj\" fmla=\"val {adj}\"/></a:avLst>"),
+    )
 }
 
 /// Replace the first `<p:txBody>…</p:txBody>` in a shape block.
@@ -728,15 +845,53 @@ fn replace_txbody(block: &str, txbody: &str) -> String {
 }
 
 /// Generate a `<p:txBody>` with one `<a:p>` per line and one `<a:r>` per
-/// segment. `noAutofit` when any segment declares a font size, otherwise
+/// segment, honoring box padding, line-height, letter-spacing, and per-run
+/// color alpha. `noAutofit` when any segment declares a font size, otherwise
 /// `normAutofit` (auto-fit) as the fallback.
-fn text_block_to_txbody(block: &TextBlock) -> String {
+fn text_block_to_txbody(st: &ShapeText) -> String {
+    let block = &st.block;
     let any_sized = block.iter().flatten().any(|s| s.font_size_px.is_some());
     let autofit = if any_sized {
         "noAutofit"
     } else {
         "normAutofit"
     };
+
+    // Padding px → EMU (defaults to the standard 0.1"/0.05" insets).
+    let [pl, pt, pr, pb] = st.padding;
+    let emu = |v: f64| (v * EMU_PER_PX).round().max(0.0) as u32;
+    let l_ins = if st.padding == [0.0; 4] {
+        91440
+    } else {
+        emu(pl)
+    };
+    let t_ins = if st.padding == [0.0; 4] {
+        45720
+    } else {
+        emu(pt)
+    };
+    let r_ins = if st.padding == [0.0; 4] {
+        91440
+    } else {
+        emu(pr)
+    };
+    let b_ins = if st.padding == [0.0; 4] {
+        45720
+    } else {
+        emu(pb)
+    };
+
+    // line-height (unitless multiplier) → spcPct (percent × 1000).
+    let ln_spc = st
+        .line_height
+        .map(|h| {
+            format!("<a:lnSpc><a:spcPct val=\"{}\"/></a:lnSpc>", (h * 100000.0).round() as u32)
+        })
+        .unwrap_or_default();
+
+    let letter_spc = st
+        .letter_spacing_px
+        .map(|s| (s * 75.0).round().max(0.0) as u32);
 
     let mut paras = String::new();
     for line in block {
@@ -753,6 +908,9 @@ fn text_block_to_txbody(block: &TextBlock) -> String {
             if seg.italic {
                 attrs.push_str(" i=\"1\"");
             }
+            if let Some(spc) = letter_spc {
+                attrs.push_str(&format!(" spc=\"{spc}\""));
+            }
             let mut children = String::new();
             if seg.mono {
                 children.push_str(
@@ -761,20 +919,25 @@ fn text_block_to_txbody(block: &TextBlock) -> String {
                 );
             }
             if let Some(c) = &seg.color {
-                children
-                    .push_str(&format!("<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>", c));
+                let alpha = seg
+                    .color_alpha
+                    .map(|a| format!("<a:alpha val=\"{a}\"/>"))
+                    .unwrap_or_default();
+                children.push_str(&format!(
+                    "<a:solidFill><a:srgbClr val=\"{c}\">{alpha}</a:srgbClr></a:solidFill>"
+                ));
             }
             runs.push_str(&format!(
                 "<a:r><a:rPr {attrs}>{children}</a:rPr><a:t>{}</a:t></a:r>",
                 escape_xml_text(&seg.text)
             ));
         }
-        paras.push_str(&format!("<a:p><a:pPr algn=\"l\"/>{runs}</a:p>"));
+        paras.push_str(&format!("<a:p><a:pPr algn=\"l\"/>{ln_spc}{runs}</a:p>"));
     }
 
     format!(
-        "<p:txBody><a:bodyPr wrap=\"square\" rtlCol=\"0\" anchor=\"t\" lIns=\"91440\" \
-         tIns=\"45720\" rIns=\"91440\" bIns=\"45720\"><a:{autofit}/></a:bodyPr>\
+        "<p:txBody><a:bodyPr wrap=\"square\" rtlCol=\"0\" anchor=\"t\" lIns=\"{l_ins}\" \
+         tIns=\"{t_ins}\" rIns=\"{r_ins}\" bIns=\"{b_ins}\"><a:{autofit}/></a:bodyPr>\
          <a:lstStyle/>{paras}</p:txBody>"
     )
 }
@@ -821,6 +984,7 @@ mod tests {
                 italic: false,
                 mono: false,
                 color: Some("191a23".to_string()),
+                color_alpha: None,
                 font_size_px: Some(56.0),
             }]])
         );
@@ -1076,5 +1240,41 @@ mod tests {
         assert!(slide1.contains("核心特征"));
         assert!(slide1.contains("• 参数量巨大"));
         assert!(slide1.contains("• 自监督预训练"));
+    }
+
+    #[test]
+    fn decorations_padding_radius_spacing_and_alpha() {
+        // padding, border-radius, line-height, letter-spacing and rgba text
+        // color must all survive into the generated slide XML.
+        let html = r#"
+            <div class="slide">
+              <div style="position:absolute;left:60px;top:260px;width:560px;height:200px;background:#f0f6ff;border-radius:16px;padding:28px;line-height:1.7;font-size:22px;color:rgba(31,58,95,0.5);">内容文字</div>
+              <div style="position:absolute;left:80px;top:60px;width:200px;height:60px;letter-spacing:2px;font-size:20px;">标题</div>
+            </div>
+        "#;
+        let bytes = canvas_html_to_pptx(html, "t", &NoImages).unwrap();
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("pptx should be a zip");
+        let mut slide1 = String::new();
+        use std::io::Read;
+        archive
+            .by_name("ppt/slides/slide1.xml")
+            .unwrap()
+            .read_to_string(&mut slide1)
+            .unwrap();
+
+        // border-radius → roundRect with an adj guide.
+        assert!(slide1.contains("prst=\"roundRect\""), "roundRect missing");
+        assert!(slide1.contains("name=\"adj\""), "radius adj missing");
+        // padding → bodyPr insets (28px × 9525 = 266700).
+        assert!(slide1.contains("lIns=\"266700\""), "padding left inset missing");
+        assert!(slide1.contains("tIns=\"266700\""), "padding top inset missing");
+        // line-height 1.7 → spcPct 170000.
+        assert!(slide1.contains("spcPct val=\"170000\""), "line-height missing");
+        // letter-spacing 2px → spc 150 (2 × 75).
+        assert!(slide1.contains("spc=\"150\""), "letter-spacing missing");
+        // rgba(...,0.5) → srgbClr 1f3a5f with alpha 50000.
+        assert!(slide1.contains("srgbClr val=\"1f3a5f\""), "rgba color missing");
+        assert!(slide1.contains("<a:alpha val=\"50000\"/>"), "rgba alpha missing");
     }
 }
