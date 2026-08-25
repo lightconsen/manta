@@ -25,6 +25,14 @@ ignore = [
     { id = "RUSTSEC-2026-0187", reason = "transitive via pdf-extract 0.7.12 -> lopdf 0.34; fix requires lopdf >=0.42 major bump" },
     # wasmtime 45.x type-index mixup; fix requires a major version jump incompatible with the pinned WASI plugin stack.
     { id = "RUSTSEC-2026-0222", reason = "transitive via wiggle/wasmtime-wasi; low severity, upgrade blocked by WASI plugin stack pin" },
+    # The three below all flow through ppt-rs 0.2.25's default `pdf-native`
+    # feature (pdfrs -> syntect/bincode/yaml-rust, pdfrs -> ttf-parser). We do
+    # not use pptx→pdf export, and ppt-rs's default-features=false build is
+    # broken upstream (slide_render.rs references pdfrs unconditionally), so
+    # the stack cannot be dropped from our side.
+    { id = "RUSTSEC-2025-0141", reason = "transitive via ppt-rs 0.2.25 -> pdfrs -> syntect 5.3 -> bincode 1.3.3; upstream team permanently ceased development, no replacement release" },
+    { id = "RUSTSEC-2026-0192", reason = "transitive via ppt-rs 0.2.25 -> pdfrs -> ttf-parser; author confirmed unmaintained, no safe upgrade; only reachable via the pptx pdf-export path we do not use" },
+    { id = "RUSTSEC-2024-0320", reason = "transitive via ppt-rs 0.2.25 -> pdfrs -> syntect -> yaml-rust 0.4.5; unmaintained, no actionable upgrade; not our YAML stack (serde_yml tracked under RUSTSEC-2025-0068)" },
 ]
 
 [licenses]
