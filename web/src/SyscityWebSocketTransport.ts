@@ -958,12 +958,21 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           // Reconstruct document-ref part from write_report tool arguments
           // Also match old name "write_document" for backward compat with saved sessions
           if ((tc.function.name === "write_report" || tc.function.name === "write_document") && args.filename) {
+            // Saved sessions persist only the tool args, not the result data,
+            // so the owner-addressed url is reconstructed. write_report writes
+            // the default agent's artifacts to @default/<filename>.
+            const fmt = (args.format as string) || "markdown";
+            const url = `/api/v1/artifacts/@default/${args.filename}`;
+            const exportTarget =
+              fmt === "slides" ? "pptx" : fmt === "docx" ? "docx" : fmt === "xlsx" ? "xlsx" : null;
             parts.push({
               type: "document-ref",
               data: {
                 filename: args.filename,
                 title: args.title || (args.filename as string),
-                format: args.format || "markdown",
+                format: fmt,
+                url,
+                export_url: exportTarget ? `${url}?to=${exportTarget}` : undefined,
               },
             } as ChatMessagePart);
           }
