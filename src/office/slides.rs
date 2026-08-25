@@ -93,6 +93,9 @@ pub struct TextLine {
     pub segments: Vec<TextSegment>,
     /// `margin-top` on the block that started this line, in px.
     pub spacing_before_px: Option<f64>,
+    /// `line-height` on the block that started this line, if specified
+    /// (falls back to the box-level default when `None`).
+    pub line_height: Option<LineHeight>,
 }
 
 impl TextLine {
@@ -411,12 +414,23 @@ fn collect_text_inner(el: &ElementRef, ctx: &InlineCtx, lines: &mut TextBlock) {
                         | "h6" => {
                             let c = ctx.clone().merge_style(&style);
                             let margin_top = style_get(&style, "margin-top").and_then(px);
+                            let line_height = style_get(&style, "line-height").and_then(|v| {
+                                let v = v.trim();
+                                if let Some(px_val) = v.strip_suffix("px") {
+                                    px_val.trim().parse::<f64>().ok().map(LineHeight::Px)
+                                } else {
+                                    v.parse::<f64>().ok().map(LineHeight::Multiplier)
+                                }
+                            });
                             if !lines.last().map(|l| l.is_empty()).unwrap_or(true) {
                                 lines.push(TextLine::default());
                             }
-                            if let Some(mt) = margin_top {
-                                if let Some(last) = lines.last_mut() {
-                                    last.spacing_before_px = Some(mt);
+                            if let Some(last) = lines.last_mut() {
+                                if margin_top.is_some() {
+                                    last.spacing_before_px = margin_top;
+                                }
+                                if line_height.is_some() {
+                                    last.line_height = line_height;
                                 }
                             }
                             collect_text_inner(&child_el, &c, lines);
@@ -909,7 +923,7 @@ fn shape_text_for_element(el: &CanvasElement) -> Option<ShapeText> {
                     color_alpha: None,
                     font_size_px: el.font_size_px,
                 }],
-                spacing_before_px: None,
+                ..Default::default()
             })
             .collect(),
         _ => return None,
@@ -995,7 +1009,7 @@ fn text_block_to_txbody(st: &ShapeText) -> String {
     };
 
     // line-height → <a:lnSpc> (spcPct for a multiplier, spcPts for px).
-    let ln_spc = match st.line_height {
+    let ln_spc_for = |lh: Option<LineHeight>| match lh {
         Some(LineHeight::Multiplier(m)) => {
             format!("<a:lnSpc><a:spcPct val=\"{}\"/></a:lnSpc>", (m * 100000.0).round() as u32)
         }
@@ -1031,6 +1045,8 @@ fn text_block_to_txbody(st: &ShapeText) -> String {
                 format!("<a:spcBef><a:spcPts val=\"{}\"/></a:spcBef>", (mt * 75.0).round() as u32)
             })
             .unwrap_or_default();
+        // Per-line line-height wins over the box-level default.
+        let ln_spc = ln_spc_for(line.line_height.or(st.line_height));
 
         let mut runs = String::new();
         for seg in &line.segments {
@@ -1127,7 +1143,7 @@ mod tests {
                     color_alpha: None,
                     font_size_px: Some(56.0),
                 }],
-                spacing_before_px: None,
+                ..Default::default()
             }])
         );
         assert!((els[0].x_px - 80.0).abs() < 1e-9 && (els[0].w_px - 1120.0).abs() < 1e-9);
