@@ -9,6 +9,7 @@ agents perceive and act on your computer.
 |-----|----------------|
 | [Getting Started](getting-started.md) | Install, configure, and run your first agent |
 | [Build from Source](build.md) | Prerequisites, feature flags, desktop app build |
+| [Release Process](release.md) | Version bump, changelog-driven notes, tagging, updater signing |
 | [Architecture](arch.md) | System overview, control plane, pipelines |
 | [Slash Commands](command.md) | `/` commands available in chat, TUI, and channels |
 | [Goal-Based Execution](goal.md) | `/goal` autonomous execution with stop conditions |
