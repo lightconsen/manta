@@ -48,13 +48,28 @@ pub struct CanvasElement {
     pub font_size_px: Option<f64>,
     /// CSS `padding` as [left, top, right, bottom] px (defaults 0).
     pub padding: [f64; 4],
-    /// CSS `line-height` as a unitless multiplier (e.g. 1.6), if specified.
-    pub line_height: Option<f64>,
+    /// CSS `line-height` (unitless multiplier or px), if specified.
+    pub line_height: Option<LineHeight>,
     /// CSS `letter-spacing` in px, if specified.
     pub letter_spacing_px: Option<f64>,
     /// CSS `border-radius` in px, if specified (renders as a round rect).
     pub border_radius_px: Option<f64>,
+    /// CSS `text-align`, mapped to an OOXML `algn` value on paragraphs.
+    pub text_align: Option<String>,
+    /// Font family (first usable name from a `font-family` list).
+    pub font_family: Option<String>,
+    /// Background alpha 0–100000 (100000 = opaque), from `rgba(...)`.
+    pub background_alpha: Option<u32>,
     pub kind: ElementKind,
+}
+
+/// Parsed `line-height`: a unitless multiplier or an absolute px value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineHeight {
+    /// Unitless multiplier (e.g. `1.6`).
+    Multiplier(f64),
+    /// Absolute length in px (e.g. `24px`).
+    Px(f64),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,8 +83,23 @@ pub enum ElementKind {
     Image(String),
 }
 
-/// A text box's content: lines, each a list of formatted runs.
-pub type TextBlock = Vec<Vec<TextSegment>>;
+/// A text box's content: lines, each with formatted runs and optional
+/// spacing-before (from a nested block's `margin-top`).
+pub type TextBlock = Vec<TextLine>;
+
+/// One line within a text box.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TextLine {
+    pub segments: Vec<TextSegment>,
+    /// `margin-top` on the block that started this line, in px.
+    pub spacing_before_px: Option<f64>,
+}
+
+impl TextLine {
+    fn is_empty(&self) -> bool {
+        self.segments.iter().all(|s| s.text.is_empty())
+    }
+}
 
 /// A single formatted run of text within a text box.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,6 +121,8 @@ pub struct TextSegment {
 pub struct SlideSpec {
     /// Slide background color as `RRGGBB`, if specified.
     pub background: Option<String>,
+    /// Slide background alpha 0–100000 (100000 = opaque), from `rgba(...)`.
+    pub background_alpha: Option<u32>,
     /// Slide background gradient (`linear-gradient(...)`), if specified.
     pub background_gradient: Option<GradientSpec>,
     pub elements: Vec<CanvasElement>,
@@ -190,6 +222,25 @@ pub fn parse_color(value: &str) -> Option<(String, Option<u32>)> {
         return Some((hex, None));
     }
     normalize_color(&v).map(|hex| (hex, None))
+}
+
+/// Extract the first usable font name from a CSS `font-family` list,
+/// skipping generic/system keywords and system stack tokens.
+fn parse_font_family(value: &str) -> Option<String> {
+    value
+        .split(',')
+        .map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"'))
+        .find(|s| {
+            !s.is_empty()
+                && !s.eq_ignore_ascii_case("sans-serif")
+                && !s.eq_ignore_ascii_case("serif")
+                && !s.eq_ignore_ascii_case("monospace")
+                && !s.eq_ignore_ascii_case("cursive")
+                && !s.eq_ignore_ascii_case("fantasy")
+                && !s.eq_ignore_ascii_case("system-ui")
+                && !s.starts_with('-')
+        })
+        .map(str::to_string)
 }
 
 /// Parse a CSS `linear-gradient(...)` value into a [`GradientSpec`].
@@ -295,15 +346,15 @@ impl InlineCtx {
 /// block-level descendants start new lines; inline tags (`b`, `strong`, `em`,
 /// `i`, `code`) and nested inline-styled `div`/`span` adjust formatting.
 fn collect_text_lines(el: &ElementRef, ctx: &InlineCtx) -> TextBlock {
-    let mut lines: TextBlock = vec![Vec::new()];
+    let mut lines: TextBlock = vec![TextLine::default()];
     collect_text_inner(el, ctx, &mut lines);
-    // Drop trailing empty lines and empty leading segments.
+    // Drop trailing empty lines.
     while lines.len() > 1 && lines.last().map(|l| l.is_empty()).unwrap_or(false) {
         lines.pop();
     }
     lines
         .into_iter()
-        .filter(|line| line.iter().any(|s| !s.text.is_empty()))
+        .filter(|line| line.segments.iter().any(|s| !s.text.is_empty()))
         .collect()
 }
 
@@ -325,9 +376,12 @@ fn collect_text_inner(el: &ElementRef, ctx: &InlineCtx, lines: &mut TextBlock) {
                     // `lines` always holds at least one line; the fallback
                     // keeps this clippy-clean without an unwrap.
                     if let Some(last) = lines.last_mut() {
-                        last.push(seg);
+                        last.segments.push(seg);
                     } else {
-                        lines.push(vec![seg]);
+                        lines.push(TextLine {
+                            segments: vec![seg],
+                            ..Default::default()
+                        });
                     }
                 }
             }
@@ -336,7 +390,7 @@ fn collect_text_inner(el: &ElementRef, ctx: &InlineCtx, lines: &mut TextBlock) {
                     let tag = child_el.value().name();
                     let style = parse_inline_style(child_el.value().attr("style").unwrap_or(""));
                     match tag {
-                        "br" => lines.push(Vec::new()),
+                        "br" => lines.push(TextLine::default()),
                         "b" | "strong" => {
                             let mut c = ctx.clone();
                             c.bold = true;
@@ -356,11 +410,17 @@ fn collect_text_inner(el: &ElementRef, ctx: &InlineCtx, lines: &mut TextBlock) {
                         "div" | "p" | "li" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5"
                         | "h6" => {
                             let c = ctx.clone().merge_style(&style);
+                            let margin_top = style_get(&style, "margin-top").and_then(px);
                             if !lines.last().map(|l| l.is_empty()).unwrap_or(true) {
-                                lines.push(Vec::new());
+                                lines.push(TextLine::default());
+                            }
+                            if let Some(mt) = margin_top {
+                                if let Some(last) = lines.last_mut() {
+                                    last.spacing_before_px = Some(mt);
+                                }
                             }
                             collect_text_inner(&child_el, &c, lines);
-                            lines.push(Vec::new());
+                            lines.push(TextLine::default());
                         }
                         // Inline container (span/a/u/s) — inherit + own style.
                         _ => {
@@ -375,7 +435,7 @@ fn collect_text_inner(el: &ElementRef, ctx: &InlineCtx, lines: &mut TextBlock) {
     }
 }
 
-fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
+fn parse_element(el: &ElementRef, default_font: Option<&str>) -> Option<CanvasElement> {
     let style = parse_inline_style(el.value().attr("style").unwrap_or(""));
     if style_get(&style, "position") != Some("absolute") {
         return None;
@@ -425,9 +485,12 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
         return None;
     }
 
-    let background = style_get(&style, "background-color")
-        .or_else(|| style_get(&style, "background"))
-        .and_then(normalize_color);
+    let bg_value =
+        style_get(&style, "background-color").or_else(|| style_get(&style, "background"));
+    let (background, background_alpha) = match bg_value.and_then(parse_color) {
+        Some((c, a)) => (Some(c), a),
+        None => (None, None),
+    };
     let (color, color_alpha) = match style_get(&style, "color").and_then(parse_color) {
         Some((c, a)) => (Some(c), a),
         None => (None, None),
@@ -438,10 +501,20 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
     let padding = style_get(&style, "padding")
         .map(parse_padding)
         .unwrap_or_default();
-    let line_height =
-        style_get(&style, "line-height").and_then(|v| v.trim_end_matches("px").parse::<f64>().ok());
+    let line_height = style_get(&style, "line-height").and_then(|v| {
+        let v = v.trim();
+        if let Some(px_val) = v.strip_suffix("px") {
+            px_val.trim().parse::<f64>().ok().map(LineHeight::Px)
+        } else {
+            v.parse::<f64>().ok().map(LineHeight::Multiplier)
+        }
+    });
     let letter_spacing_px = style_get(&style, "letter-spacing").and_then(px);
     let border_radius_px = style_get(&style, "border-radius").and_then(px);
+    let text_align = style_get(&style, "text-align").map(css_align_to_oo);
+    let font_family = style_get(&style, "font-family")
+        .and_then(parse_font_family)
+        .or_else(|| default_font.map(str::to_string));
 
     let tag = el.value().name();
     let kind = if tag == "img" {
@@ -487,8 +560,21 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
         line_height,
         letter_spacing_px,
         border_radius_px,
+        text_align,
+        font_family,
+        background_alpha,
         kind,
     })
+}
+
+/// Map a CSS `text-align` keyword to the OOXML `algn` value.
+fn css_align_to_oo(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "center" => "ctr".to_string(),
+        "right" => "r".to_string(),
+        "justify" => "just".to_string(),
+        _ => "l".to_string(),
+    }
 }
 
 /// Parse a CSS `padding` shorthand into [left, top, right, bottom] px.
@@ -510,22 +596,34 @@ pub fn parse_canvas(html: &str) -> Result<Vec<SlideSpec>, String> {
     let slide_sel =
         Selector::parse("div.slide").map_err(|e| format!("internal selector error: {e}"))?;
 
+    // Document-level font (e.g. a wrapper div's `font-family`) applies to all
+    // text as the default typeface.
+    let any_sel = Selector::parse("*").map_err(|e| format!("internal selector error: {e}"))?;
+    let default_font = doc.select(&any_sel).find_map(|el| {
+        let style = parse_inline_style(el.value().attr("style").unwrap_or(""));
+        style_get(&style, "font-family").and_then(parse_font_family)
+    });
+
     let mut slides = Vec::new();
     for slide_el in doc.select(&slide_sel) {
         let style = parse_inline_style(slide_el.value().attr("style").unwrap_or(""));
         let bg_value =
             style_get(&style, "background-color").or_else(|| style_get(&style, "background"));
-        let background = bg_value.and_then(normalize_color);
+        let (background, background_alpha) = match bg_value.and_then(parse_color) {
+            Some((c, a)) => (Some(c), a),
+            None => (None, None),
+        };
         let background_gradient = bg_value.and_then(parse_gradient);
 
         // Direct children only — nested content belongs to its parent box.
         let elements = slide_el
             .child_elements()
-            .filter_map(|child| parse_element(&child))
+            .filter_map(|child| parse_element(&child, default_font.as_deref()))
             .collect();
 
         slides.push(SlideSpec {
             background,
+            background_alpha,
             background_gradient,
             elements,
         });
@@ -569,9 +667,12 @@ pub fn canvas_html_to_pptx(
 
         // Slide background → full-canvas rect drawn first (under everything).
         if let Some(bg) = &spec.background {
+            let mut fill = ShapeFill::new(bg);
+            if let Some(alpha) = spec.background_alpha {
+                fill = fill.with_transparency(100_000 - alpha);
+            }
             slide = slide.add_shape(
-                Shape::new(ShapeType::Rectangle, 0, 0, SLIDE_W_EMU, SLIDE_H_EMU)
-                    .with_fill(ShapeFill::new(bg)),
+                Shape::new(ShapeType::Rectangle, 0, 0, SLIDE_W_EMU, SLIDE_H_EMU).with_fill(fill),
             );
         } else if let Some(grad) = &spec.background_gradient {
             let stops = grad
@@ -609,14 +710,18 @@ pub fn canvas_html_to_pptx(
                         emu(el.h_px),
                     );
                     if let Some(bg) = &el.background {
-                        shape = shape.with_fill(ShapeFill::new(bg));
+                        let mut fill = ShapeFill::new(bg);
+                        if let Some(alpha) = el.background_alpha {
+                            fill = fill.with_transparency(100_000 - alpha);
+                        }
+                        shape = shape.with_fill(fill);
                     }
                     // Placeholder flat text (space-joined) so ppt-rs emits a
                     // text-bearing shape; the post-patch rewrites its txBody
                     // with the structured lines/segments.
                     let flat: String = block
                         .iter()
-                        .flat_map(|line| line.iter().map(|s| s.text.as_str()))
+                        .flat_map(|line| line.segments.iter().map(|s| s.text.as_str()))
                         .collect::<Vec<_>>()
                         .join(" ");
                     if !flat.is_empty() {
@@ -777,9 +882,11 @@ fn patch_slide_text(xml: &str, spec: &SlideSpec) -> String {
 struct ShapeText {
     block: TextBlock,
     padding: [f64; 4],
-    line_height: Option<f64>,
+    line_height: Option<LineHeight>,
     letter_spacing_px: Option<f64>,
     border_radius_px: Option<f64>,
+    text_align: Option<String>,
+    font_family: Option<String>,
     w_px: f64,
     h_px: f64,
 }
@@ -792,8 +899,8 @@ fn shape_text_for_element(el: &CanvasElement) -> Option<ShapeText> {
         ElementKind::Text(block) if !block.is_empty() => block.clone(),
         ElementKind::Bullets(items) => items
             .iter()
-            .map(|item| {
-                vec![TextSegment {
+            .map(|item| TextLine {
+                segments: vec![TextSegment {
                     text: format!("• {item}"),
                     bold: el.bold,
                     italic: false,
@@ -801,7 +908,8 @@ fn shape_text_for_element(el: &CanvasElement) -> Option<ShapeText> {
                     color: el.color.clone(),
                     color_alpha: None,
                     font_size_px: el.font_size_px,
-                }]
+                }],
+                spacing_before_px: None,
             })
             .collect(),
         _ => return None,
@@ -812,6 +920,8 @@ fn shape_text_for_element(el: &CanvasElement) -> Option<ShapeText> {
         line_height: el.line_height,
         letter_spacing_px: el.letter_spacing_px,
         border_radius_px: el.border_radius_px,
+        text_align: el.text_align.clone(),
+        font_family: el.font_family.clone(),
         w_px: el.w_px,
         h_px: el.h_px,
     })
@@ -850,7 +960,10 @@ fn replace_txbody(block: &str, txbody: &str) -> String {
 /// `normAutofit` (auto-fit) as the fallback.
 fn text_block_to_txbody(st: &ShapeText) -> String {
     let block = &st.block;
-    let any_sized = block.iter().flatten().any(|s| s.font_size_px.is_some());
+    let any_sized = block
+        .iter()
+        .flat_map(|l| l.segments.iter())
+        .any(|s| s.font_size_px.is_some());
     let autofit = if any_sized {
         "noAutofit"
     } else {
@@ -881,22 +994,46 @@ fn text_block_to_txbody(st: &ShapeText) -> String {
         emu(pb)
     };
 
-    // line-height (unitless multiplier) → spcPct (percent × 1000).
-    let ln_spc = st
-        .line_height
-        .map(|h| {
-            format!("<a:lnSpc><a:spcPct val=\"{}\"/></a:lnSpc>", (h * 100000.0).round() as u32)
-        })
-        .unwrap_or_default();
+    // line-height → <a:lnSpc> (spcPct for a multiplier, spcPts for px).
+    let ln_spc = match st.line_height {
+        Some(LineHeight::Multiplier(m)) => {
+            format!("<a:lnSpc><a:spcPct val=\"{}\"/></a:lnSpc>", (m * 100000.0).round() as u32)
+        }
+        Some(LineHeight::Px(px)) => {
+            format!("<a:lnSpc><a:spcPts val=\"{}\"/></a:lnSpc>", (px * 75.0).round() as u32)
+        }
+        None => String::new(),
+    };
 
+    // Default font for the whole body, carried by the list-style defRPr.
+    let font_def = st
+        .font_family
+        .as_deref()
+        .map(|f| {
+            format!(
+                "<a:lstStyle><a:defRPr><a:latin typeface=\"{f}\"/><a:ea typeface=\"{f}\"/>\
+                 <a:cs typeface=\"{f}\"/></a:defRPr></a:lstStyle>"
+            )
+        })
+        .unwrap_or_else(|| "<a:lstStyle/>".to_string());
+
+    let algn = st.text_align.as_deref().unwrap_or("l");
     let letter_spc = st
         .letter_spacing_px
         .map(|s| (s * 75.0).round().max(0.0) as u32);
 
     let mut paras = String::new();
     for line in block {
+        // margin-top → space-before on this paragraph (px → pt → hundredths).
+        let spc_bef = line
+            .spacing_before_px
+            .map(|mt| {
+                format!("<a:spcBef><a:spcPts val=\"{}\"/></a:spcBef>", (mt * 75.0).round() as u32)
+            })
+            .unwrap_or_default();
+
         let mut runs = String::new();
-        for seg in line {
+        for seg in &line.segments {
             let sz = seg
                 .font_size_px
                 .map(|s| (s * 75.0).round().max(100.0) as u32)
@@ -932,13 +1069,15 @@ fn text_block_to_txbody(st: &ShapeText) -> String {
                 escape_xml_text(&seg.text)
             ));
         }
-        paras.push_str(&format!("<a:p><a:pPr algn=\"l\"/>{ln_spc}{runs}</a:p>"));
+        paras.push_str(&format!(
+            "<a:p><a:pPr algn=\"{algn}\">{spc_bef}{ln_spc}</a:pPr>{runs}</a:p>"
+        ));
     }
 
     format!(
         "<p:txBody><a:bodyPr wrap=\"square\" rtlCol=\"0\" anchor=\"t\" lIns=\"{l_ins}\" \
          tIns=\"{t_ins}\" rIns=\"{r_ins}\" bIns=\"{b_ins}\"><a:{autofit}/></a:bodyPr>\
-         <a:lstStyle/>{paras}</p:txBody>"
+         {font_def}{paras}</p:txBody>"
     )
 }
 
@@ -978,15 +1117,18 @@ mod tests {
         assert_eq!(els.len(), 3);
         assert_eq!(
             els[0].kind,
-            ElementKind::Text(vec![vec![TextSegment {
-                text: "季度回顾".to_string(),
-                bold: true,
-                italic: false,
-                mono: false,
-                color: Some("191a23".to_string()),
-                color_alpha: None,
-                font_size_px: Some(56.0),
-            }]])
+            ElementKind::Text(vec![TextLine {
+                segments: vec![TextSegment {
+                    text: "季度回顾".to_string(),
+                    bold: true,
+                    italic: false,
+                    mono: false,
+                    color: Some("191a23".to_string()),
+                    color_alpha: None,
+                    font_size_px: Some(56.0),
+                }],
+                spacing_before_px: None,
+            }])
         );
         assert!((els[0].x_px - 80.0).abs() < 1e-9 && (els[0].w_px - 1120.0).abs() < 1e-9);
         assert!(els[0].bold);
@@ -1192,10 +1334,10 @@ mod tests {
         match &els[0].kind {
             ElementKind::Text(block) => {
                 assert_eq!(block.len(), 3, "expected 3 lines, got {:?}", block);
-                assert!(block[0][0].bold, "first line should be bold");
-                assert_eq!(block[0][0].text, "核心特征");
-                assert_eq!(block[1][0].text, "• 参数量巨大");
-                assert_eq!(block[2][0].text, "• 自监督预训练");
+                assert!(block[0].segments[0].bold, "first line should be bold");
+                assert_eq!(block[0].segments[0].text, "核心特征");
+                assert_eq!(block[1].segments[0].text, "• 参数量巨大");
+                assert_eq!(block[2].segments[0].text, "• 自监督预训练");
             }
             other => panic!("expected text, got {other:?}"),
         }
@@ -1204,12 +1346,12 @@ mod tests {
         match &els[1].kind {
             ElementKind::Text(block) => {
                 assert_eq!(block.len(), 2, "expected 2 lines, got {:?}", block);
-                assert_eq!(block[0][0].text, "① 预训练");
-                assert_eq!(block[0][0].font_size_px, Some(30.0));
-                assert_eq!(block[0][0].color.as_deref(), Some("e65100"));
-                assert_eq!(block[1][0].text, "在海量文本上学习");
-                assert_eq!(block[1][0].font_size_px, Some(20.0));
-                assert_eq!(block[1][0].color.as_deref(), Some("5d4037"));
+                assert_eq!(block[0].segments[0].text, "① 预训练");
+                assert_eq!(block[0].segments[0].font_size_px, Some(30.0));
+                assert_eq!(block[0].segments[0].color.as_deref(), Some("e65100"));
+                assert_eq!(block[1].segments[0].text, "在海量文本上学习");
+                assert_eq!(block[1].segments[0].font_size_px, Some(20.0));
+                assert_eq!(block[1].segments[0].color.as_deref(), Some("5d4037"));
             }
             other => panic!("expected text, got {other:?}"),
         }
@@ -1276,5 +1418,41 @@ mod tests {
         // rgba(...,0.5) → srgbClr 1f3a5f with alpha 50000.
         assert!(slide1.contains("srgbClr val=\"1f3a5f\""), "rgba color missing");
         assert!(slide1.contains("<a:alpha val=\"50000\"/>"), "rgba alpha missing");
+    }
+
+    #[test]
+    fn margin_font_align_and_px_line_height() {
+        let html = r#"
+            <div style="font-family: -apple-system, 'PingFang SC', sans-serif;">
+              <div class="slide">
+                <div style="position:absolute;left:60px;top:150px;width:360px;height:200px;text-align:center;line-height:24px;">
+                  <div style="font-size:30px;">标题行</div>
+                  <div style="font-size:20px;margin-top:12px;">正文行</div>
+                </div>
+              </div>
+            </div>
+        "#;
+        let bytes = canvas_html_to_pptx(html, "t", &NoImages).unwrap();
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("pptx should be a zip");
+        let mut slide1 = String::new();
+        use std::io::Read;
+        archive
+            .by_name("ppt/slides/slide1.xml")
+            .unwrap()
+            .read_to_string(&mut slide1)
+            .unwrap();
+
+        // margin-top 12px → spcBef 900 (12 × 75).
+        assert!(
+            slide1.contains("<a:spcBef><a:spcPts val=\"900\"/></a:spcBef>"),
+            "margin-top missing"
+        );
+        // text-align center → algn ctr.
+        assert!(slide1.contains("algn=\"ctr\""), "text-align missing");
+        // line-height 24px → spcPts 1800 (24 × 75).
+        assert!(slide1.contains("spcPts val=\"1800\""), "px line-height missing");
+        // font-family → defRPr typeface PingFang SC.
+        assert!(slide1.contains("typeface=\"PingFang SC\""), "font-family missing");
     }
 }
