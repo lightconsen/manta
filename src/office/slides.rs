@@ -4,13 +4,16 @@
 //! each a 1280×720 px canvas (16:9). Children carry inline styles with
 //! absolute positioning (`left/top/width/height` in px) plus a small
 //! supported subset: `background`/`background-color`, `color`, `font-weight`,
-//! `text-align`. 1 px = 9525 EMU, so the HTML preview is pixel-identical to
+//! `font-size`. 1 px = 9525 EMU, so the HTML preview is pixel-identical to
 //! the generated deck.
 //!
-//! v1 limitation: ppt-rs renders shape text with auto-fit sizing, so
-//! `font-size` is intentionally not honored yet — the box geometry is exact
-//! and the text scales to fit. A later backend (ooxmlsdk or a hand-rolled
-//! writer) can honor font-size precisely without changing the contract.
+//! ppt-rs renders shape text with auto-fit sizing and has no API to carry an
+//! explicit font size into a positioned shape, so after generation the
+//! package is patched: for every element that declares `font-size`, the
+//! runs inside its shape get `sz="{px * 0.75 * 100}"` (px → pt → hundredths
+//! of a point) and `<a:normAutofit/>` becomes `<a:noAutofit/>` so Office
+//! does not shrink the text back. Elements without an explicit `font-size`
+//! keep the auto-fit behavior.
 
 use scraper::{ElementRef, Html, Selector};
 
@@ -39,6 +42,9 @@ pub struct CanvasElement {
     /// Background color as `RRGGBB`, if specified.
     pub background: Option<String>,
     pub bold: bool,
+    /// `font-size` in px, if specified. Converted to `sz` hundredths of a
+    /// point (px × 0.75 × 100) in the generated deck.
+    pub font_size_px: Option<f64>,
     pub kind: ElementKind,
 }
 
@@ -149,6 +155,7 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
     let bold = style_get(&style, "font-weight")
         .map(|v| v == "bold" || v.parse::<u32>().map(|n| n >= 600).unwrap_or(false))
         .unwrap_or(false);
+    let font_size_px = style_get(&style, "font-size").and_then(px);
 
     let tag = el.value().name();
     let kind = if tag == "img" {
@@ -180,6 +187,7 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
         color,
         background,
         bold,
+        font_size_px,
         kind,
     })
 }
@@ -238,7 +246,7 @@ pub fn canvas_html_to_pptx(
     let specs = parse_canvas(html)?;
     let mut slides = Vec::with_capacity(specs.len());
 
-    for spec in specs {
+    for spec in &specs {
         let mut slide = SlideContent::new("").with_layout(SlideLayout::Blank);
 
         // Slide background → full-canvas rect drawn first (under everything).
@@ -300,12 +308,14 @@ pub fn canvas_html_to_pptx(
 
     let pptx = create_pptx_with_content(title, slides)
         .map_err(|e| format!("pptx generation failed: {e}"))?;
-    patch_slide_size_16x9(&pptx)
+    patch_pptx(&pptx, &specs)
 }
 
-/// Rewrite `<p:sldSz>` in `ppt/presentation.xml` from the generator's 4:3
-/// default to the 1280×720-equivalent 16:9 size.
-fn patch_slide_size_16x9(pptx: &[u8]) -> Result<Vec<u8>, String> {
+/// Post-generation package patch, applied by rewriting the zip in one pass:
+/// 1. `ppt/presentation.xml`: slide size 4:3 → the 1280×720 16:9 size.
+/// 2. `ppt/slides/slideN.xml`: inject explicit font sizes for elements that
+///    declare `font-size` (ppt-rs only emits auto-fit text).
+fn patch_pptx(pptx: &[u8], specs: &[SlideSpec]) -> Result<Vec<u8>, String> {
     use std::io::{Cursor, Read, Write};
 
     let mut archive = zip::ZipArchive::new(Cursor::new(pptx))
@@ -333,6 +343,9 @@ fn patch_slide_size_16x9(pptx: &[u8]) -> Result<Vec<u8>, String> {
                 return Err("slide size marker not found in presentation.xml".to_string());
             }
             buf = patched.into_bytes();
+        } else if let Some(spec) = slide_spec_for_entry(&name, specs) {
+            let xml = String::from_utf8_lossy(&buf).into_owned();
+            buf = patch_slide_font_sizes(&xml, spec).into_bytes();
         }
 
         writer
@@ -348,13 +361,104 @@ fn patch_slide_size_16x9(pptx: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// Map `ppt/slides/slideN.xml` to its spec (N is 1-based).
+fn slide_spec_for_entry<'a>(name: &str, specs: &'a [SlideSpec]) -> Option<&'a SlideSpec> {
+    let rest = name.strip_prefix("ppt/slides/slide")?;
+    let n: usize = rest.strip_suffix(".xml")?.parse().ok()?;
+    specs.get(n.checked_sub(1)?)
+}
+
+/// Inject explicit font sizes into a slide's shape XML.
+///
+/// Shapes appear in insertion order, which mirrors the element order in the
+/// spec (background rect first, then elements; images are `p:pic`, not
+/// `p:sp`). Only text-bearing `<p:sp>` blocks consume a queue entry, so
+/// textless background boxes and placeholder shapes cannot shift the
+/// mapping. Blocks whose element declared no `font-size` keep auto-fit.
+fn patch_slide_font_sizes(xml: &str, spec: &SlideSpec) -> String {
+    let mut queue: Vec<Option<f64>> = spec
+        .elements
+        .iter()
+        .filter_map(|el| {
+            let has_text = match &el.kind {
+                ElementKind::Text(t) => !t.is_empty(),
+                ElementKind::Bullets(_) => true,
+                ElementKind::Image(_) => false,
+            };
+            has_text.then_some(el.font_size_px)
+        })
+        .collect();
+
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    loop {
+        let Some(start_rel) = rest.find("<p:sp>") else {
+            out.push_str(rest);
+            break;
+        };
+        let start = start_rel;
+        let Some(end_rel) = rest[start..].find("</p:sp>") else {
+            out.push_str(rest);
+            break;
+        };
+        let end = start + end_rel + "</p:sp>".len();
+        let block = &rest[start..end];
+
+        let patched = if block.contains("<a:t>") {
+            if let Some(Some(size_px)) = queue.first().copied() {
+                queue.remove(0);
+                patch_block_font_size(block, size_px)
+            } else {
+                block.to_string()
+            }
+        } else {
+            block.to_string()
+        };
+
+        out.push_str(&rest[..start]);
+        out.push_str(&patched);
+        rest = &rest[end..];
+    }
+    out
+}
+
+/// Rewrite every `sz="…"` run property in a shape block to the given px size
+/// (px × 0.75 = pt; sz is hundredths of a point) and disable auto-fit so
+/// Office keeps the declared size.
+fn patch_block_font_size(block: &str, size_px: f64) -> String {
+    let sz = (size_px * 0.75 * 100.0).round().max(100.0) as u32;
+    let mut out = String::with_capacity(block.len());
+    let mut rest = block;
+    loop {
+        let Some(prefix_end) = rest.find("sz=\"") else {
+            out.push_str(rest);
+            break;
+        };
+        let digits_start = prefix_end + 4;
+        let digits_len = rest[digits_start..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
+        if digits_len == 0 {
+            // Not a numeric sz attribute (e.g. inside a longer name) — keep.
+            out.push_str(&rest[..digits_start]);
+            rest = &rest[digits_start..];
+            continue;
+        }
+        out.push_str(&rest[..digits_start]);
+        out.push_str(&sz.to_string());
+        rest = &rest[digits_start + digits_len..];
+    }
+    out.replace("<a:normAutofit/>", "<a:noAutofit/>")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const SAMPLE: &str = r##"
         <div class="slide" style="background:#ffffff">
-          <div style="position:absolute; left:80px; top:60px; width:1120px; height:100px; color:#191a23; font-weight:700">季度回顾</div>
+          <div style="position:absolute; left:80px; top:60px; width:1120px; height:100px; color:#191a23; font-weight:700; font-size:56px">季度回顾</div>
           <ul style="position:absolute; left:80px; top:220px; width:500px; height:300px">
             <li>收入增长 25%</li>
             <li>用户量翻倍</li>
@@ -379,6 +483,8 @@ mod tests {
         assert!((els[0].x_px - 80.0).abs() < 1e-9 && (els[0].w_px - 1120.0).abs() < 1e-9);
         assert!(els[0].bold);
         assert_eq!(els[0].color.as_deref(), Some("191a23"));
+        assert_eq!(els[0].font_size_px, Some(56.0));
+        assert_eq!(els[1].font_size_px, None);
         match &els[1].kind {
             ElementKind::Bullets(items) => {
                 assert_eq!(items, &vec!["收入增长 25%".to_string(), "用户量翻倍".to_string()])
@@ -449,5 +555,53 @@ mod tests {
             .unwrap();
         assert!(slide1.contains("季度回顾"));
         assert!(slide1.contains("收入增长 25%"));
+
+        // The title declares font-size:56px → sz=4200 (56 × 0.75 × 100) and
+        // auto-fit disabled. The bullets declare no size → auto-fit kept.
+        assert!(slide1.contains("sz=\"4200\""), "explicit font size missing");
+        assert!(slide1.contains("<a:noAutofit/>"), "noAutofit not injected for sized element");
+        assert!(
+            slide1.contains("<a:normAutofit/>"),
+            "auto-fit should be kept for unsized elements"
+        );
+    }
+
+    #[test]
+    fn font_sizes_map_to_their_own_shapes() {
+        // Three sized text boxes must each get their own sz value, in
+        // element order — a mapping bug would swap them.
+        let html = r#"
+            <div class="slide">
+              <div style="position:absolute;left:0px;top:0px;width:600px;height:80px;font-size:64px">甲</div>
+              <div style="position:absolute;left:0px;top:100px;width:600px;height:60px;font-size:24px">乙</div>
+              <div style="position:absolute;left:0px;top:180px;width:600px;height:40px;font-size:12.5px">丙</div>
+            </div>
+        "#;
+        let bytes = canvas_html_to_pptx(html, "t", &NoImages).unwrap();
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("pptx should be a zip");
+        let mut slide1 = String::new();
+        use std::io::Read;
+        archive
+            .by_name("ppt/slides/slide1.xml")
+            .unwrap()
+            .read_to_string(&mut slide1)
+            .unwrap();
+
+        // 64px → 4800, 24px → 1800, 12.5px → 937.5 → rounds to 938 (min 100).
+        assert!(slide1.contains("甲"));
+        let (i_jia, i_yi, i_bing) = (
+            slide1.find("甲").unwrap(),
+            slide1.find("乙").unwrap(),
+            slide1.find("丙").unwrap(),
+        );
+        let sz_4800 = slide1.find("sz=\"4800\"").expect("64px size missing");
+        let sz_1800 = slide1.find("sz=\"1800\"").expect("24px size missing");
+        let sz_938 = slide1.find("sz=\"938\"").expect("12.5px size missing");
+        assert!(
+            sz_4800 < i_jia && sz_1800 < i_yi && sz_938 < i_bing,
+            "sizes must land inside their own shapes: {sz_4800} {sz_1800} {sz_938} vs {i_jia} {i_yi} {i_bing}"
+        );
+        assert_eq!(slide1.matches("<a:noAutofit/>").count(), 3);
     }
 }

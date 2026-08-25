@@ -75,8 +75,8 @@ impl Tool for WriteReportTool {
          file on download: \
          - \"slides\": canvas HTML — one `<div class=\"slide\">` per slide, each \
            a 1280x720 px canvas with absolutely-positioned children (inline \
-           styles left/top/width/height in px, background, color, font-weight) \
-           → .pptx. \
+           styles left/top/width/height in px, background, color, font-weight, \
+           font-size in px — honored exactly in the downloaded deck) → .pptx. \
          - \"docx\": flowing HTML (h1-h6, p, ul/ol/li, table, strong/em/a/code, \
            pre, blockquote) → .docx. \
          - \"xlsx\": table HTML — one `<table>` per worksheet; use `data-sheet` \
