@@ -24,6 +24,17 @@ interface DocumentPreviewPanelProps {
 
 type LoadState = "loading" | "loaded" | "error";
 
+/** Baseline table styling injected into the shadow DOM so authored table
+ *  HTML (docx/xlsx) renders as a real bordered spreadsheet instead of a
+ *  borderless run of text. Inline styles on the elements take precedence. */
+const TABLE_STYLES = `
+<style>
+  table { border-collapse: collapse; width: 100%; margin: 0.5em 0; font-size: 13px; }
+  th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; font-weight: 600; color: #1f2937; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+</style>`;
+
 /** Render HTML content inside a Shadow DOM root — no iframe event isolation issues. */
 function HtmlShadowDom({ content }: { content: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -35,7 +46,7 @@ function HtmlShadowDom({ content }: { content: string }) {
     if (!root) {
       root = host.attachShadow({ mode: "open" });
     }
-    root.innerHTML = content;
+    root.innerHTML = content + TABLE_STYLES;
   }, [content]);
 
   return <div ref={hostRef} className="w-full h-full overflow-y-auto" />;
