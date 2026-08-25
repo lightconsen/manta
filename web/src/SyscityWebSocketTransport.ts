@@ -1980,13 +1980,15 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             // Add document-ref part for write_report tool results
             // Also match old name "write_document" for backward compat
             if ((toolName === "write_report" || toolName === "write_document") && data && typeof data === "object" && "filename" in (data as any)) {
-              const d = data as { filename: string; title?: string; format?: string };
+              const d = data as { filename: string; title?: string; format?: string; url?: string; export_url?: string };
               const docPart: any = {
                 type: "document-ref",
                 data: {
                   filename: d.filename,
                   title: d.title || d.filename,
                   format: d.format || "markdown",
+                  url: d.url,
+                  export_url: d.export_url,
                 },
               };
               newParts.push(docPart);
@@ -2185,7 +2187,13 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
               const d = data as Record<string, unknown>;
               extraParts.push({
                 type: "document-ref",
-                data: { filename: d.filename, title: d.title || d.filename, format: d.format || "markdown" },
+                data: {
+                  filename: d.filename,
+                  title: d.title || d.filename,
+                  format: d.format || "markdown",
+                  url: d.url,
+                  export_url: d.export_url,
+                },
               });
             }
             break;
