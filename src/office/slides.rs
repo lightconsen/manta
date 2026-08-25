@@ -16,7 +16,7 @@
 //! does not shrink the text back. Elements without an explicit `font-size`
 //! keep the auto-fit behavior.
 
-use scraper::{ElementRef, Html, Selector};
+use scraper::{ElementRef, Html, Node, Selector};
 
 /// EMU per CSS pixel at the 1280×720 canvas (1280 px = 12192000 EMU).
 pub const EMU_PER_PX: f64 = 9525.0;
@@ -51,12 +51,29 @@ pub struct CanvasElement {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ElementKind {
-    /// Plain text content (line breaks preserved).
-    Text(String),
+    /// Rich text content — lines of formatted segments (nested blocks and
+    /// `<br>` become line breaks; inline tags carry their formatting).
+    Text(TextBlock),
     /// Bullet list items.
     Bullets(Vec<String>),
     /// Image source path/URL from the `src` attribute.
     Image(String),
+}
+
+/// A text box's content: lines, each a list of formatted runs.
+pub type TextBlock = Vec<Vec<TextSegment>>;
+
+/// A single formatted run of text within a text box.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextSegment {
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+    pub mono: bool,
+    /// Foreground color as `RRGGBB`, if specified.
+    pub color: Option<String>,
+    /// Font size in px, if specified (px × 75 → `sz` hundredths of a point).
+    pub font_size_px: Option<f64>,
 }
 
 /// A parsed slide canvas.
@@ -198,6 +215,124 @@ fn element_text(el: &ElementRef) -> String {
     raw.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Collapse runs of whitespace to a single space (browser-style).
+fn collapse_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Inline formatting state threaded through the rich-text walk.
+#[derive(Clone, Default)]
+struct InlineCtx {
+    bold: bool,
+    italic: bool,
+    mono: bool,
+    color: Option<String>,
+    font_size_px: Option<f64>,
+}
+
+impl InlineCtx {
+    fn merge_style(self, style: &[(String, String)]) -> Self {
+        let bold = style_get(style, "font-weight")
+            .map(|v| v == "bold" || v.parse::<u32>().map(|n| n >= 600).unwrap_or(false))
+            .unwrap_or(self.bold);
+        let color = style_get(style, "color")
+            .and_then(normalize_color)
+            .or(self.color);
+        let font_size_px = style_get(style, "font-size")
+            .and_then(px)
+            .or(self.font_size_px);
+        InlineCtx {
+            bold,
+            color,
+            font_size_px,
+            ..self
+        }
+    }
+}
+
+/// Walk an element's children into lines of formatted segments. `<br>` and
+/// block-level descendants start new lines; inline tags (`b`, `strong`, `em`,
+/// `i`, `code`) and nested inline-styled `div`/`span` adjust formatting.
+fn collect_text_lines(el: &ElementRef, ctx: &InlineCtx) -> TextBlock {
+    let mut lines: TextBlock = vec![Vec::new()];
+    collect_text_inner(el, ctx, &mut lines);
+    // Drop trailing empty lines and empty leading segments.
+    while lines.len() > 1 && lines.last().map(|l| l.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    lines
+        .into_iter()
+        .filter(|line| line.iter().any(|s| !s.text.is_empty()))
+        .collect()
+}
+
+fn collect_text_inner(el: &ElementRef, ctx: &InlineCtx, lines: &mut TextBlock) {
+    for child in el.children() {
+        match child.value() {
+            Node::Text(t) => {
+                let text = collapse_ws(&t.text);
+                if !text.is_empty() {
+                    let seg = TextSegment {
+                        text,
+                        bold: ctx.bold,
+                        italic: ctx.italic,
+                        mono: ctx.mono,
+                        color: ctx.color.clone(),
+                        font_size_px: ctx.font_size_px,
+                    };
+                    // `lines` always holds at least one line; the fallback
+                    // keeps this clippy-clean without an unwrap.
+                    if let Some(last) = lines.last_mut() {
+                        last.push(seg);
+                    } else {
+                        lines.push(vec![seg]);
+                    }
+                }
+            }
+            Node::Element(_) => {
+                if let Some(child_el) = ElementRef::wrap(child) {
+                    let tag = child_el.value().name();
+                    let style = parse_inline_style(child_el.value().attr("style").unwrap_or(""));
+                    match tag {
+                        "br" => lines.push(Vec::new()),
+                        "b" | "strong" => {
+                            let mut c = ctx.clone();
+                            c.bold = true;
+                            collect_text_inner(&child_el, &c, lines);
+                        }
+                        "i" | "em" => {
+                            let mut c = ctx.clone();
+                            c.italic = true;
+                            collect_text_inner(&child_el, &c, lines);
+                        }
+                        "code" => {
+                            let mut c = ctx.clone();
+                            c.mono = true;
+                            collect_text_inner(&child_el, &c, lines);
+                        }
+                        // Block-level descendants → line break around content.
+                        "div" | "p" | "li" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5"
+                        | "h6" => {
+                            let c = ctx.clone().merge_style(&style);
+                            if !lines.last().map(|l| l.is_empty()).unwrap_or(true) {
+                                lines.push(Vec::new());
+                            }
+                            collect_text_inner(&child_el, &c, lines);
+                            lines.push(Vec::new());
+                        }
+                        // Inline container (span/a/u/s) — inherit + own style.
+                        _ => {
+                            let c = ctx.clone().merge_style(&style);
+                            collect_text_inner(&child_el, &c, lines);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
     let style = parse_inline_style(el.value().attr("style").unwrap_or(""));
     if style_get(&style, "position") != Some("absolute") {
@@ -271,7 +406,15 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
         }
         ElementKind::Bullets(items)
     } else {
-        let text = element_text(el);
+        // The element's own style seeds the inline context; nested blocks
+        // override per-run.
+        let ctx = InlineCtx {
+            bold,
+            color: color.clone(),
+            font_size_px,
+            ..Default::default()
+        };
+        let text = collect_text_lines(el, &ctx);
         if text.is_empty() && background.is_none() {
             return None;
         }
@@ -383,7 +526,7 @@ pub fn canvas_html_to_pptx(
 
         for el in &spec.elements {
             match &el.kind {
-                ElementKind::Text(text) => {
+                ElementKind::Text(block) => {
                     let mut shape = Shape::new(
                         ShapeType::Rectangle,
                         emu(el.x_px),
@@ -394,8 +537,16 @@ pub fn canvas_html_to_pptx(
                     if let Some(bg) = &el.background {
                         shape = shape.with_fill(ShapeFill::new(bg));
                     }
-                    if !text.is_empty() {
-                        shape = shape.with_text(text);
+                    // Placeholder flat text (space-joined) so ppt-rs emits a
+                    // text-bearing shape; the post-patch rewrites its txBody
+                    // with the structured lines/segments.
+                    let flat: String = block
+                        .iter()
+                        .flat_map(|line| line.iter().map(|s| s.text.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if !flat.is_empty() {
+                        shape = shape.with_text(&flat);
                     }
                     slide = slide.add_shape(shape);
                 }
@@ -469,7 +620,7 @@ fn patch_pptx(pptx: &[u8], specs: &[SlideSpec]) -> Result<Vec<u8>, String> {
             buf = patched.into_bytes();
         } else if let Some(spec) = slide_spec_for_entry(&name, specs) {
             let xml = String::from_utf8_lossy(&buf).into_owned();
-            buf = patch_slide_font_sizes(&xml, spec).into_bytes();
+            buf = patch_slide_text(&xml, spec).into_bytes();
         }
 
         writer
@@ -492,24 +643,38 @@ fn slide_spec_for_entry<'a>(name: &str, specs: &'a [SlideSpec]) -> Option<&'a Sl
     specs.get(n.checked_sub(1)?)
 }
 
-/// Inject explicit font sizes into a slide's shape XML.
+/// Rewrite a slide's text-bearing shape `<p:sp>` blocks with rich text:
+/// each line becomes a `<a:p>` paragraph, each segment a `<a:r>` run carrying
+/// its own bold/italic/color/font-size.
 ///
-/// Shapes appear in insertion order, which mirrors the element order in the
-/// spec (background rect first, then elements; images are `p:pic`, not
-/// `p:sp`). Only text-bearing `<p:sp>` blocks consume a queue entry, so
-/// textless background boxes and placeholder shapes cannot shift the
-/// mapping. Blocks whose element declared no `font-size` keep auto-fit.
-fn patch_slide_font_sizes(xml: &str, spec: &SlideSpec) -> String {
-    let mut queue: Vec<Option<f64>> = spec
+/// Shapes appear in insertion order, mirroring element order in the spec
+/// (background rect first, then elements; images are `p:pic`, not `p:sp`).
+/// Only text-bearing `<p:sp>` blocks consume a queue entry, so textless
+/// background boxes and placeholder shapes cannot shift the mapping.
+fn patch_slide_text(xml: &str, spec: &SlideSpec) -> String {
+    let mut queue: Vec<Option<TextBlock>> = spec
         .elements
         .iter()
-        .filter_map(|el| {
-            let has_text = match &el.kind {
-                ElementKind::Text(t) => !t.is_empty(),
-                ElementKind::Bullets(_) => true,
-                ElementKind::Image(_) => false,
-            };
-            has_text.then_some(el.font_size_px)
+        .map(|el| match &el.kind {
+            ElementKind::Text(block) if !block.is_empty() => Some(block.clone()),
+            ElementKind::Bullets(items) => {
+                // Each bullet becomes a line; the element's style carries over.
+                let lines = items
+                    .iter()
+                    .map(|item| {
+                        vec![TextSegment {
+                            text: format!("• {item}"),
+                            bold: el.bold,
+                            italic: false,
+                            mono: false,
+                            color: el.color.clone(),
+                            font_size_px: el.font_size_px,
+                        }]
+                    })
+                    .collect();
+                Some(lines)
+            }
+            _ => None,
         })
         .collect();
 
@@ -529,9 +694,10 @@ fn patch_slide_font_sizes(xml: &str, spec: &SlideSpec) -> String {
         let block = &rest[start..end];
 
         let patched = if block.contains("<a:t>") {
-            if let Some(Some(size_px)) = queue.first().copied() {
+            if let Some(Some(text_block)) = queue.first().cloned() {
+                let tx = text_block_to_txbody(&text_block);
                 queue.remove(0);
-                patch_block_font_size(block, size_px)
+                replace_txbody(block, &tx)
             } else {
                 block.to_string()
             }
@@ -546,34 +712,75 @@ fn patch_slide_font_sizes(xml: &str, spec: &SlideSpec) -> String {
     out
 }
 
-/// Rewrite every `sz="…"` run property in a shape block to the given px size
-/// (px × 0.75 = pt; sz is hundredths of a point) and disable auto-fit so
-/// Office keeps the declared size.
-fn patch_block_font_size(block: &str, size_px: f64) -> String {
-    let sz = (size_px * 0.75 * 100.0).round().max(100.0) as u32;
-    let mut out = String::with_capacity(block.len());
-    let mut rest = block;
-    loop {
-        let Some(prefix_end) = rest.find("sz=\"") else {
-            out.push_str(rest);
-            break;
-        };
-        let digits_start = prefix_end + 4;
-        let digits_len = rest[digits_start..]
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .count();
-        if digits_len == 0 {
-            // Not a numeric sz attribute (e.g. inside a longer name) — keep.
-            out.push_str(&rest[..digits_start]);
-            rest = &rest[digits_start..];
-            continue;
+/// Replace the first `<p:txBody>…</p:txBody>` in a shape block.
+fn replace_txbody(block: &str, txbody: &str) -> String {
+    let Some(start) = block.find("<p:txBody>") else {
+        return block.to_string();
+    };
+    let Some(end_rel) = block[start..].find("</p:txBody>") else {
+        return block.to_string();
+    };
+    let end = start + end_rel + "</p:txBody>".len();
+    format!("{}{}{}", &block[..start], txbody, &block[end..])
+}
+
+/// Generate a `<p:txBody>` with one `<a:p>` per line and one `<a:r>` per
+/// segment. `noAutofit` when any segment declares a font size, otherwise
+/// `normAutofit` (auto-fit) as the fallback.
+fn text_block_to_txbody(block: &TextBlock) -> String {
+    let any_sized = block.iter().flatten().any(|s| s.font_size_px.is_some());
+    let autofit = if any_sized {
+        "noAutofit"
+    } else {
+        "normAutofit"
+    };
+
+    let mut paras = String::new();
+    for line in block {
+        let mut runs = String::new();
+        for seg in line {
+            let sz = seg
+                .font_size_px
+                .map(|s| (s * 75.0).round().max(100.0) as u32)
+                .unwrap_or(1800);
+            let mut attrs = format!("lang=\"en-US\" sz=\"{sz}\"");
+            if seg.bold {
+                attrs.push_str(" b=\"1\"");
+            }
+            if seg.italic {
+                attrs.push_str(" i=\"1\"");
+            }
+            let mut children = String::new();
+            if seg.mono {
+                children.push_str(
+                    "<a:latin typeface=\"Courier New\"/><a:ea typeface=\"Courier New\"/>\
+                     <a:cs typeface=\"Courier New\"/>",
+                );
+            }
+            if let Some(c) = &seg.color {
+                children
+                    .push_str(&format!("<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>", c));
+            }
+            runs.push_str(&format!(
+                "<a:r><a:rPr {attrs}>{children}</a:rPr><a:t>{}</a:t></a:r>",
+                escape_xml_text(&seg.text)
+            ));
         }
-        out.push_str(&rest[..digits_start]);
-        out.push_str(&sz.to_string());
-        rest = &rest[digits_start + digits_len..];
+        paras.push_str(&format!("<a:p><a:pPr algn=\"l\"/>{runs}</a:p>"));
     }
-    out.replace("<a:normAutofit/>", "<a:noAutofit/>")
+
+    format!(
+        "<p:txBody><a:bodyPr wrap=\"square\" rtlCol=\"0\" anchor=\"t\" lIns=\"91440\" \
+         tIns=\"45720\" rIns=\"91440\" bIns=\"45720\"><a:{autofit}/></a:bodyPr>\
+         <a:lstStyle/>{paras}</p:txBody>"
+    )
+}
+
+/// Escape XML special characters in run text.
+fn escape_xml_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 #[cfg(test)]
@@ -603,7 +810,17 @@ mod tests {
 
         let els = &slides[0].elements;
         assert_eq!(els.len(), 3);
-        assert_eq!(els[0].kind, ElementKind::Text("季度回顾".to_string()));
+        assert_eq!(
+            els[0].kind,
+            ElementKind::Text(vec![vec![TextSegment {
+                text: "季度回顾".to_string(),
+                bold: true,
+                italic: false,
+                mono: false,
+                color: Some("191a23".to_string()),
+                font_size_px: Some(56.0),
+            }]])
+        );
         assert!((els[0].x_px - 80.0).abs() < 1e-9 && (els[0].w_px - 1120.0).abs() < 1e-9);
         assert!(els[0].bold);
         assert_eq!(els[0].color.as_deref(), Some("191a23"));
@@ -616,7 +833,7 @@ mod tests {
             other => panic!("expected bullets, got {other:?}"),
         }
         // Background-only box (no text) is kept as a colored rect.
-        assert_eq!(els[2].kind, ElementKind::Text(String::new()));
+        assert_eq!(els[2].kind, ElementKind::Text(vec![]));
         assert_eq!(els[2].background.as_deref(), Some("f8f9fa"));
     }
 
@@ -782,5 +999,79 @@ mod tests {
         assert!(slide1.contains("<a:gradFill"), "gradient fill missing from slide XML");
         assert!(slide1.contains("srgbClr val=\"1a1a2e\""));
         assert!(slide1.contains("srgbClr val=\"0f3460\""));
+    }
+
+    #[test]
+    fn nested_content_preserves_lines_and_formatting() {
+        // A card with <b>+<br/> bullets and a nested two-div block (title +
+        // body at different sizes) must come out as separate lines/segments.
+        let html = r#"
+            <div class="slide">
+              <div style="position:absolute;left:60px;top:260px;width:560px;height:200px;font-size:22px;color:#1f3a5f;">
+                <b>核心特征</b><br/>
+                • 参数量巨大<br/>
+                • 自监督预训练
+              </div>
+              <div style="position:absolute;left:60px;top:150px;width:360px;height:200px;">
+                <div style="font-size:30px;font-weight:800;color:#e65100;">① 预训练</div>
+                <div style="font-size:20px;color:#5d4037;">在海量文本上学习</div>
+              </div>
+            </div>
+        "#;
+        let specs = parse_canvas(html).unwrap();
+        let els = &specs[0].elements;
+
+        // Card 1: bold first line, then two bullet lines.
+        match &els[0].kind {
+            ElementKind::Text(block) => {
+                assert_eq!(block.len(), 3, "expected 3 lines, got {:?}", block);
+                assert!(block[0][0].bold, "first line should be bold");
+                assert_eq!(block[0][0].text, "核心特征");
+                assert_eq!(block[1][0].text, "• 参数量巨大");
+                assert_eq!(block[2][0].text, "• 自监督预训练");
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+
+        // Card 2: nested divs → two lines with distinct sizes/colors.
+        match &els[1].kind {
+            ElementKind::Text(block) => {
+                assert_eq!(block.len(), 2, "expected 2 lines, got {:?}", block);
+                assert_eq!(block[0][0].text, "① 预训练");
+                assert_eq!(block[0][0].font_size_px, Some(30.0));
+                assert_eq!(block[0][0].color.as_deref(), Some("e65100"));
+                assert_eq!(block[1][0].text, "在海量文本上学习");
+                assert_eq!(block[1][0].font_size_px, Some(20.0));
+                assert_eq!(block[1][0].color.as_deref(), Some("5d4037"));
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_content_renders_multiple_paragraphs() {
+        let html = r#"
+            <div class="slide">
+              <div style="position:absolute;left:60px;top:260px;width:560px;height:200px;font-size:22px;">
+                <b>核心特征</b><br/>• 参数量巨大<br/>• 自监督预训练
+              </div>
+            </div>
+        "#;
+        let bytes = canvas_html_to_pptx(html, "t", &NoImages).unwrap();
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("pptx should be a zip");
+        let mut slide1 = String::new();
+        use std::io::Read;
+        archive
+            .by_name("ppt/slides/slide1.xml")
+            .unwrap()
+            .read_to_string(&mut slide1)
+            .unwrap();
+        // Three lines → three <a:p> paragraphs, bold on the first run.
+        assert_eq!(slide1.matches("<a:p>").count(), 3, "expected 3 paragraphs");
+        assert!(slide1.contains("b=\"1\""), "bold run missing");
+        assert!(slide1.contains("核心特征"));
+        assert!(slide1.contains("• 参数量巨大"));
+        assert!(slide1.contains("• 自监督预训练"));
     }
 }
