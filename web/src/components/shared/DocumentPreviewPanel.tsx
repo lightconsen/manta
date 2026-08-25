@@ -12,7 +12,13 @@ import {
 import { MarkdownMessage } from "./MarkdownMessage";
 
 interface DocumentPreviewPanelProps {
-  document: { filename: string; title: string; format: string };
+  document: {
+    filename: string;
+    title: string;
+    format: string;
+    url?: string;
+    exportUrl?: string;
+  };
   onClose: () => void;
 }
 
@@ -35,6 +41,41 @@ function HtmlShadowDom({ content }: { content: string }) {
   return <div ref={hostRef} className="w-full h-full overflow-y-auto" />;
 }
 
+/** Slides canvas preview: renders the canvas HTML, scaling each 1280px-wide
+ *  `.slide` to the panel width (zoom keeps layout metrics honest, unlike
+ *  transform: scale which leaves the unscaled box in flow). */
+function SlidesShadowDom({ content }: { content: string }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    let root = host.shadowRoot;
+    if (!root) {
+      root = host.attachShadow({ mode: "open" });
+    }
+    root.innerHTML =
+      content +
+      `<style>
+        body { margin: 0; }
+        .slide { margin: 0 auto 16px; box-shadow: 0 4px 24px rgba(0,0,0,.12);
+                 border-radius: 6px; overflow: hidden; }
+      </style>`;
+    const applyZoom = () => {
+      const scale = host.clientWidth / 1280;
+      root.querySelectorAll<HTMLElement>(".slide").forEach((s) => {
+        s.style.zoom = String(scale);
+      });
+    };
+    applyZoom();
+    const ro = new ResizeObserver(applyZoom);
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [content]);
+
+  return <div ref={hostRef} className="w-full h-full overflow-y-auto p-2" />;
+}
+
 export function DocumentPreviewPanel({
   document,
   onClose,
@@ -49,8 +90,12 @@ export function DocumentPreviewPanel({
 
     // Mobile gateway requires the per-install token as a Bearer credential
     // (stashed by the WS transport); absent on desktop, where auth is off.
+    // Prefer the owner-addressed URL from the tool result; fall back to the
+    // legacy flat path for older artifacts.
     const gatewayToken = localStorage.getItem("syscity_gateway_token");
-    fetch(`/api/v1/artifacts/${document.filename}`, {
+    const artifactUrl =
+      document.url ?? `/api/v1/artifacts/${document.filename}`;
+    fetch(artifactUrl, {
       headers: gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {},
     })
       .then((res) => {
@@ -105,7 +150,27 @@ export function DocumentPreviewPanel({
     }
   }, [document.filename]);
 
-  const handleDownload = useCallback(() => {
+  const handleDownload = useCallback(async () => {
+    // Server-side export (slides canvas → real .pptx) when available.
+    if (document.exportUrl) {
+      try {
+        const gatewayToken = localStorage.getItem("syscity_gateway_token");
+        const res = await fetch(document.exportUrl, {
+          headers: gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {},
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const objUrl = URL.createObjectURL(blob);
+        const a = window.document.createElement("a");
+        a.href = objUrl;
+        a.download = document.filename.replace(/\.(html?|md)$/i, "") + ".pptx";
+        a.click();
+        URL.revokeObjectURL(objUrl);
+      } catch (err) {
+        console.error("Failed to export document:", err);
+      }
+      return;
+    }
     if (!content) return;
     const blob = new Blob([content], {
       type: document.format === "html" ? "text/html" : "text/markdown",
@@ -116,7 +181,7 @@ export function DocumentPreviewPanel({
     a.download = document.filename;
     a.click();
     URL.revokeObjectURL(objUrl);
-  }, [content, document.filename, document.format]);
+  }, [content, document.filename, document.format, document.exportUrl]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -150,7 +215,11 @@ export function DocumentPreviewPanel({
             </div>
             <div className="text-[10px] text-secondary">
               <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-medium bg-black/5 dark:bg-white/10">
-                {document.format === "html" ? "HTML" : "MD"}
+                {document.format === "slides"
+                  ? "PPT"
+                  : document.format === "html"
+                    ? "HTML"
+                    : "MD"}
               </span>
             </div>
           </div>
@@ -168,14 +237,14 @@ export function DocumentPreviewPanel({
               <FolderOpen className="w-4 h-4" />
             </button>
           )}
-          {/* Download */}
+          {/* Download (PPTX export when the document has an exportUrl) */}
           <button
             type="button"
             onClick={handleDownload}
             disabled={loadState !== "loaded"}
             className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary hover:text-primary transition disabled:opacity-30 disabled:pointer-events-none"
-            title="Download file"
-            aria-label="Download file"
+            title={document.exportUrl ? "Download as PPTX" : "Download file"}
+            aria-label={document.exportUrl ? "Download as PPTX" : "Download file"}
           >
             <Download className="w-4 h-4" />
           </button>
@@ -206,8 +275,8 @@ export function DocumentPreviewPanel({
         </div>
       </div>
 
-      {/* Content area — for HTML, use flex to let iframe fill height; for markdown, scrollable */}
-      {document.format === "html" ? (
+      {/* Content area — HTML/slides fill height; markdown scrolls */}
+      {document.format === "html" || document.format === "slides" ? (
         <div className="flex-1 flex flex-col min-h-0">
           {loadState === "loading" && (
             <div className="flex items-center justify-center h-40 text-secondary">
@@ -223,7 +292,11 @@ export function DocumentPreviewPanel({
             </div>
           )}
           {loadState === "loaded" && content !== null && (
-            <HtmlShadowDom content={content} />
+            document.format === "slides" ? (
+              <SlidesShadowDom content={content} />
+            ) : (
+              <HtmlShadowDom content={content} />
+            )
           )}
         </div>
       ) : (

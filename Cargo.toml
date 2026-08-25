@@ -186,6 +186,10 @@ cpal = "0.15"
 rust-embed = { version = "8", optional = true }
 pdf-extract = "0.7"
 
+# Office document generation (canvas-HTML → OOXML converters)
+ppt-rs = "0.2"
+scraper = "0.27"
+
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "migrate", "chrono"] }
 

@@ -68,6 +68,7 @@ pub mod mcp;
 pub mod memory;
 pub mod model_router;
 pub mod observe;
+pub mod office;
 pub mod outbound;
 pub mod planner;
 pub mod plugins;

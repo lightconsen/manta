@@ -17,6 +17,17 @@ function saveInternalsVisibility(v: Record<string, boolean>): void {
   } catch { /* quota exceeded */ }
 }
 
+/** Document shown in the side preview panel. `url` is the artifact's
+ *  serving path (owner-addressed); `exportUrl` converts on the server
+ *  (e.g. slides canvas → .pptx download). */
+interface PreviewDocument {
+  filename: string;
+  title: string;
+  format: string;
+  url?: string;
+  exportUrl?: string;
+}
+
 interface ChatState {
   messages: ChatMessage[];
   sessions: Array<{
@@ -40,7 +51,7 @@ interface ChatState {
   isLoadingHistory: boolean;
   hasMoreHistory: boolean;
   aiInternalsVisibility: Record<string, boolean>;
-  previewDocument: { filename: string; title: string; format: string } | null;
+  previewDocument: PreviewDocument | null;
   workspacePanelOpen: boolean;
 
   setMessages: (messages: ChatMessage[]) => void;
@@ -66,7 +77,7 @@ interface ChatState {
   setIsLoadingHistory: (loading: boolean) => void;
   setHasMoreHistory: (hasMore: boolean) => void;
   setAiInternalsVisibility: (messageId: string, visible: boolean) => void;
-  setPreviewDocument: (doc: { filename: string; title: string; format: string } | null) => void;
+  setPreviewDocument: (doc: PreviewDocument | null) => void;
   setWorkspacePanelOpen: (open: boolean) => void;
 }
 

@@ -7,6 +7,8 @@ interface DocumentRefPartProps {
     filename: string;
     title: string;
     format: string;
+    url?: string;
+    export_url?: string;
   };
 }
 
@@ -18,10 +20,13 @@ export function DocumentRefPart({ data }: DocumentRefPartProps) {
       filename: data.filename,
       title: data.title,
       format: data.format,
+      url: data.url,
+      exportUrl: data.export_url,
     });
   }, [data, setPreviewDocument]);
 
-  const formatBadge = data.format === "html" ? "HTML" : "MD";
+  const formatBadge =
+    data.format === "slides" ? "PPT" : data.format === "html" ? "HTML" : "MD";
 
   return (
     <div className="my-3 rounded-xl border border-subtle bg-card overflow-hidden">

@@ -59,20 +59,27 @@ impl Tool for WriteReportTool {
     }
 
     fn description(&self) -> &str {
-        "Write a markdown or HTML report that enables a rich split-panel \
+        "Write a markdown, HTML, or slides document that enables a rich split-panel \
          preview in the chat UI. \
          \
          PREFER THIS OVER file_write when the user asks you to create a \
-         document, report, article, essay, paper, summary, analysis, or any \
+         document, report, article, essay, paper, summary, analysis, presentation, \
+         slide deck, or any \
          formatted content they would want to READ rather than edit. This tool \
          saves the report to a special directory and renders it with a \
          clickable preview card in the chat — the user can then open it in a \
          side-by-side viewer. \
          \
+         For presentations, use format \"slides\" with canvas HTML: one \
+         `<div class=\"slide\">` per slide, each a 1280x720 px canvas with \
+         absolutely-positioned children (inline styles: left/top/width/height \
+         in px, background, color, font-weight). The preview renders the canvas \
+         exactly, and the user can download it as a real .pptx file. \
+         \
          Use cases: research reports, industry analysis, weekly summaries, \
          technical documentation, essays, HTML newsletters, formatted articles, \
-         meeting notes, whitepapers, tutorials, guides, and any long-form \
-         content that benefits from a dedicated reading view. \
+         meeting notes, whitepapers, tutorials, guides, slide decks, and any \
+         long-form content that benefits from a dedicated reading view. \
          \
          Do NOT use this for code files, configuration files, or data files — \
          those should use file_write."
@@ -96,8 +103,8 @@ impl Tool for WriteReportTool {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "html"],
-                    "description": "Report format (default: markdown)",
+                    "enum": ["markdown", "html", "slides"],
+                    "description": "Report format (default: markdown). Use \"slides\" for presentations: content must be canvas HTML — one `<div class=\"slide\">` per slide, each a 1280x720 px canvas with absolutely-positioned children (inline styles: left/top/width/height in px, plus background/color/font-weight). The preview renders it exactly, and the user can download a .pptx.",
                     "default": "markdown"
                 }
             }),
@@ -133,6 +140,17 @@ impl Tool for WriteReportTool {
             .unwrap_or_else(|| filename.to_string());
 
         let format = args["format"].as_str().unwrap_or("markdown").to_string();
+
+        // Canvas-contract validation for slides: fail fast with the parse
+        // error so the agent can fix the markup instead of shipping a deck
+        // that converts to nothing.
+        if format == "slides" {
+            if let Err(e) = crate::office::slides::parse_canvas(content) {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Invalid slides canvas: {e}"
+                )));
+            }
+        }
 
         // Resolve the artifacts directory: reports live in the producing
         // agent's own workspace (`<workspace>/artifacts/`) so users can
@@ -221,13 +239,18 @@ impl Tool for WriteReportTool {
             url
         };
 
-        let data = serde_json::json!({
+        let mut data = serde_json::json!({
             "filename": filename,
             "title": title,
             "format": format,
             "url": url,
             "size": file_size,
         });
+        if format == "slides" {
+            // The preview panel renders the canvas HTML directly; this URL
+            // converts it to a real .pptx on demand.
+            data["export_url"] = serde_json::Value::String(format!("{url}?to=pptx"));
+        }
 
         Ok(ToolExecutionResult::success(format!(
             "Report '{title}' written as {filename} ({format}, {size} bytes)",
@@ -276,6 +299,50 @@ mod tests {
             .join("artifacts")
             .join("test-report.md");
         assert!(written.exists());
+        let _ = tokio::fs::remove_file(&written).await;
+    }
+
+    #[tokio::test]
+    async fn test_write_report_slides_validates_canvas_and_exports() {
+        let tool = WriteReportTool::new();
+        let ctx = ToolContext::new("test", "test-conv");
+
+        // A valid canvas gets an export_url for on-demand pptx conversion.
+        let ok = tool
+            .execute(
+                serde_json::json!({
+                    "content": "<div class=\"slide\"><div style=\"position:absolute;left:80px;top:60px;width:1120px\">标题</div></div>",
+                    "filename": "deck-test.html",
+                    "title": "Deck",
+                    "format": "slides",
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let data = ok.data.unwrap();
+        assert_eq!(data["format"], "slides");
+        assert_eq!(
+            data["export_url"].as_str().unwrap(),
+            format!("{}?to=pptx", data["url"].as_str().unwrap())
+        );
+
+        // Missing slide divs is a validation error, not a silent bad deck.
+        let bad = tool
+            .execute(
+                serde_json::json!({
+                    "content": "<p>no slides here</p>",
+                    "filename": "deck-bad.html",
+                    "format": "slides",
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(bad.is_err());
+
+        let written = crate::dirs::workspace_data_dir()
+            .join("artifacts")
+            .join("deck-test.html");
         let _ = tokio::fs::remove_file(&written).await;
     }
 

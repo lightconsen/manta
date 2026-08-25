@@ -13,10 +13,109 @@
 //! - `/api/v1/artifacts/[<root>/<task>/]<file>` — legacy global artifacts dir.
 
 use axum::{
-    extract::Path,
+    extract::{Path, Query},
     http::{header, StatusCode},
     response::IntoResponse,
 };
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ArtifactExportQuery {
+    /// Export conversion target (currently only "pptx" for slides canvases).
+    to: Option<String>,
+}
+
+/// Resolve a canvas `<img src>` to bytes, relative to the artifact's own
+/// directory. Anything escaping that directory is skipped (the converter
+/// drops the image rather than failing the export).
+struct ArtifactImageResolver {
+    base: std::path::PathBuf,
+}
+
+impl crate::office::slides::ImageResolver for ArtifactImageResolver {
+    fn resolve(&self, src: &str) -> Option<(Vec<u8>, String)> {
+        if src.starts_with('/') || src.contains("..") || src.starts_with("http") {
+            return None;
+        }
+        let path = self.base.join(src);
+        let canon = path.canonicalize().ok()?;
+        if !canon.starts_with(&self.base) {
+            return None;
+        }
+        let bytes = std::fs::read(&canon).ok()?;
+        let format = canon
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("png")
+            .trim_start_matches('.')
+            .to_string();
+        Some((bytes, format))
+    }
+}
+
+/// Convert a slides-canvas artifact to a real .pptx download.
+async fn export_as_pptx(
+    file_path: std::path::PathBuf,
+    filename: String,
+) -> axum::response::Response {
+    let html = match tokio::fs::read_to_string(&file_path).await {
+        Ok(c) => c,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                "Document not found".to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    // Conversion is CPU-bound and synchronous (HTML parse + OOXML zip).
+    let base = file_path.parent().map(|p| p.to_path_buf());
+    let title = filename.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let resolver = ArtifactImageResolver { base: base.unwrap_or_default() };
+        crate::office::slides::canvas_html_to_pptx(&html, &title, &resolver)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(bytes)) => {
+            let download_name = filename
+                .trim_end_matches(".html")
+                .trim_end_matches(".md")
+                .to_string()
+                + ".pptx";
+            (
+                StatusCode::OK,
+                [
+                    (
+                        header::CONTENT_TYPE,
+                        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                            .to_string(),
+                    ),
+                    (
+                        header::CONTENT_DISPOSITION,
+                        format!("attachment; filename=\"{download_name}\""),
+                    ),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        Ok(Err(e)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            format!("Conversion failed: {e}"),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            format!("Conversion panicked: {e}"),
+        )
+            .into_response(),
+    }
+}
 
 /// Resolve a request path to its on-disk location, honoring the `@owner`
 /// prefix for agent-workspace artifacts and falling back to the legacy global
@@ -61,11 +160,16 @@ fn resolve_artifact_path(path: &str) -> Option<std::path::PathBuf> {
     Some(root.join(std::path::Path::new(rel)))
 }
 
-/// GET /api/v1/artifacts/*path
+/// GET /api/v1/artifacts/*path  (+ `?to=pptx` for on-demand conversion)
 ///
 /// Reads a document from the resolved artifacts location and returns it with
 /// the appropriate Content-Type (text/markdown for .md, text/html for .html).
-pub async fn artifact_handler(Path(path): Path<String>) -> impl IntoResponse {
+/// With `?to=pptx` the document must be a slides canvas and the response is
+/// the converted .pptx download instead of the source.
+pub async fn artifact_handler(
+    Path(path): Path<String>,
+    Query(query): Query<ArtifactExportQuery>,
+) -> impl IntoResponse {
     let Some(file_path) = resolve_artifact_path(&path) else {
         return (
             StatusCode::FORBIDDEN,
@@ -79,6 +183,19 @@ pub async fn artifact_handler(Path(path): Path<String>) -> impl IntoResponse {
     // fails on Unicode filenames due to NFC/NFD normalization differences
     // between the HTTP-decoded path and the filesystem-stored path.
     // The write_report tool already validates paths server-side.
+
+    if query.to.as_deref() == Some("pptx") {
+        let filename = path.rsplit('/').next().unwrap_or("slides.html").to_string();
+        return export_as_pptx(file_path, filename).await;
+    }
+    if let Some(to) = &query.to {
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            format!("Unsupported export target '{to}' (supported: pptx)"),
+        )
+            .into_response();
+    }
 
     match tokio::fs::read_to_string(&file_path).await {
         Ok(content) => {
@@ -115,9 +232,10 @@ mod tests {
             "a\\..\\b.md",
             "./a.md",
         ] {
-            let resp = artifact_handler(Path(bad.to_string()))
-                .await
-                .into_response();
+            let resp =
+                artifact_handler(Path(bad.to_string()), Query(ArtifactExportQuery { to: None }))
+                    .await
+                    .into_response();
             assert_eq!(resp.status(), StatusCode::FORBIDDEN, "should reject {:?}", bad);
         }
     }
@@ -132,9 +250,12 @@ mod tests {
             .await
             .unwrap();
 
-        let resp = artifact_handler(Path("root-t/task-t/r.md".to_string()))
-            .await
-            .into_response();
+        let resp = artifact_handler(
+            Path("root-t/task-t/r.md".to_string()),
+            Query(ArtifactExportQuery { to: None }),
+        )
+        .await
+        .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         assert!(String::from_utf8_lossy(&body).contains("# hi from tree"));
@@ -152,9 +273,12 @@ mod tests {
             .await
             .unwrap();
 
-        let resp = artifact_handler(Path("@default/ws-test.md".to_string()))
-            .await
-            .into_response();
+        let resp = artifact_handler(
+            Path("@default/ws-test.md".to_string()),
+            Query(ArtifactExportQuery { to: None }),
+        )
+        .await
+        .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         assert!(String::from_utf8_lossy(&body).contains("# hi from workspace"));
@@ -165,10 +289,56 @@ mod tests {
     #[tokio::test]
     async fn test_owner_segment_validated() {
         for bad in ["@../x.md", "@a.b/x.md", "@default"] {
-            let resp = artifact_handler(Path(bad.to_string()))
-                .await
-                .into_response();
+            let resp =
+                artifact_handler(Path(bad.to_string()), Query(ArtifactExportQuery { to: None }))
+                    .await
+                    .into_response();
             assert_ne!(resp.status(), StatusCode::OK, "should not serve {:?}", bad);
         }
+    }
+
+    #[tokio::test]
+    async fn test_slides_export_returns_pptx() {
+        let dir = crate::dirs::artifacts_dir();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(
+            dir.join("export-deck.html"),
+            r#"<div class="slide"><div style="position:absolute;left:80px;top:60px;width:1120px">标题页</div></div>"#,
+        )
+        .await
+        .unwrap();
+
+        let resp = artifact_handler(
+            Path("export-deck.html".to_string()),
+            Query(ArtifactExportQuery { to: Some("pptx".to_string()) }),
+        )
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        assert!(ct.contains("presentationml"), "content-type: {ct}");
+        let body = axum::body::to_bytes(resp.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        // A pptx is a zip package.
+        assert_eq!(&body[..2], b"PK");
+
+        let _ = tokio::fs::remove_file(dir.join("export-deck.html")).await;
+    }
+
+    #[tokio::test]
+    async fn test_export_rejects_unknown_target() {
+        let resp = artifact_handler(
+            Path("x.md".to_string()),
+            Query(ArtifactExportQuery { to: Some("pdf".to_string()) }),
+        )
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }
