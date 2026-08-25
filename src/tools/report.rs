@@ -52,6 +52,55 @@ fn artifact_url_owner(agent_ws: &std::path::Path) -> Option<String> {
     Some(id.to_string())
 }
 
+/// Resolve the artifacts directory + serving URL for a previewable file
+/// produced by the current agent. Shared by `write_report`, `svg_to_png`, and
+/// `generate_chart` so all document/image artifacts land in the same
+/// owner-addressed workspace convention.
+pub fn resolve_artifact_target(
+    context: &ToolContext,
+    filename: &str,
+) -> (std::path::PathBuf, String) {
+    let delegation_scope = context.delegation.as_ref();
+    let agent_ws = context
+        .sandbox
+        .agent_workspace
+        .clone()
+        .unwrap_or_else(|| context.workspace_root().clone());
+    let owner = artifact_url_owner(&agent_ws);
+    let tree_path = match delegation_scope {
+        Some(scope) => format!("{}/{}", scope.root_id, scope.task_id),
+        None => String::new(),
+    };
+    let artifacts_dir = match &owner {
+        Some(_) => {
+            let mut d = agent_ws.join("artifacts");
+            if !tree_path.is_empty() {
+                d = d.join(&tree_path);
+            }
+            d
+        }
+        None => {
+            let mut d = crate::dirs::artifacts_dir();
+            if !tree_path.is_empty() {
+                d = d.join(&tree_path);
+            }
+            d
+        }
+    };
+    let mut url = String::from("/api/v1/artifacts");
+    if let Some(owner) = &owner {
+        url.push_str("/@");
+        url.push_str(owner);
+    }
+    if !tree_path.is_empty() {
+        url.push('/');
+        url.push_str(&tree_path);
+    }
+    url.push('/');
+    url.push_str(filename);
+    (artifacts_dir, url)
+}
+
 #[async_trait]
 impl Tool for WriteReportTool {
     fn name(&self) -> &str {
@@ -184,33 +233,7 @@ impl Tool for WriteReportTool {
         // `~/.syscity/workspace` is addressed as `@default`). A workspace
         // outside the standard layout cannot be addressed safely, so those
         // reports keep the legacy global directory + flat URL.
-        let delegation_scope = context.delegation.as_ref();
-        let agent_ws = context
-            .sandbox
-            .agent_workspace
-            .clone()
-            .unwrap_or_else(|| context.workspace_root().clone());
-        let owner = artifact_url_owner(&agent_ws);
-        let tree_path = match delegation_scope {
-            Some(scope) => format!("{}/{}", scope.root_id, scope.task_id),
-            None => String::new(),
-        };
-        let artifacts_dir = match &owner {
-            Some(_) => {
-                let mut d = agent_ws.join("artifacts");
-                if !tree_path.is_empty() {
-                    d = d.join(&tree_path);
-                }
-                d
-            }
-            None => {
-                let mut d = crate::dirs::artifacts_dir();
-                if !tree_path.is_empty() {
-                    d = d.join(&tree_path);
-                }
-                d
-            }
-        };
+        let (artifacts_dir, url) = resolve_artifact_target(context, filename);
         tokio::fs::create_dir_all(&artifacts_dir)
             .await
             .map_err(|e| crate::error::SyscityError::IoContext {
@@ -244,21 +267,6 @@ impl Tool for WriteReportTool {
             size = file_size,
             path = &path,
         );
-
-        let url = {
-            let mut url = String::from("/api/v1/artifacts");
-            if let Some(owner) = &owner {
-                url.push_str("/@");
-                url.push_str(owner);
-            }
-            if !tree_path.is_empty() {
-                url.push('/');
-                url.push_str(&tree_path);
-            }
-            url.push('/');
-            url.push_str(filename);
-            url
-        };
 
         let mut data = serde_json::json!({
             "filename": filename,

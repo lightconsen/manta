@@ -81,7 +81,12 @@ async fn export_document(
             let resolver = ArtifactImageResolver { base: base.unwrap_or_default() };
             crate::office::slides::canvas_html_to_pptx(&html, &title, &resolver)
         }
-        "docx" => crate::office::docx::flow_html_to_docx(&html),
+        "docx" => {
+            let resolver = ArtifactImageResolver {
+                base: base.clone().unwrap_or_default(),
+            };
+            crate::office::docx::flow_html_to_docx(&html, &resolver)
+        }
         "xlsx" => crate::office::xlsx::tables_html_to_xlsx(&html),
         _ => Err(format!("unsupported export target '{target_owned}'")),
     })

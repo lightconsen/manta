@@ -962,6 +962,8 @@ pub(crate) async fn create_default_tool_registry(
     registry.register(Box::new(FileWriteTool::new().with_write_guard(write_guard.clone())));
     registry.register(Box::new(FileEditTool::new().with_write_guard(write_guard)));
     registry.register(Box::new(crate::tools::WriteReportTool::new()));
+    registry.register(Box::new(crate::tools::SvgToPngTool::new()));
+    registry.register(Box::new(crate::tools::GenerateChartTool::new()));
     registry.register(Box::new(GlobTool::new()));
     registry.register(Box::new(GrepTool::new()));
 

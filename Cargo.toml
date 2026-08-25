@@ -192,6 +192,10 @@ docx-rs = "0.4"
 rust_xlsxwriter = "0.99"
 scraper = "0.27"
 
+# Chart generation (SVG + PNG) and SVG rasterization
+charts-rs = "1.0"
+resvg = "0.44"
+
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "migrate", "chrono"] }
 

@@ -14,6 +14,8 @@
 //!   supported (deeper nests are clamped to level 1).
 //! - `table` → `w:tbl`; `<thead>` rows render their cells bold. All four
 //!   outer borders are set.
+//! - `img` (block-level, direct child) → inline picture; the source is
+//!   resolved via the image resolver and embedded as PNG.
 //! - `pre` and bare `code` blocks → monospace paragraph.
 //! - `blockquote` → indented paragraph.
 //! - `div`, `section`, `article`, `main`, `header`, `footer`, `nav` →
@@ -32,18 +34,21 @@
 //! Whitespace: runs of whitespace inside non-`<pre>` content are collapsed to
 //! a single space (browser-style). `<pre>` content preserves whitespace.
 //!
-//! Unsupported elements (`img`, `video`, `svg`, `iframe`, …) are silently
-//! skipped. Malformed HTML never panics — the converter degrades to whatever
-//! the `scraper` parser produces.
+//! Unsupported elements (`video`, `svg`, `iframe`, …) are silently skipped.
+//! Malformed HTML never panics — the converter degrades to whatever the
+//! `scraper` parser produces.
 
 use std::io::Cursor;
 
 use docx_rs::{
     AbstractNumbering, BorderType, Docx, Hyperlink, HyperlinkType, IndentLevel, Level, LevelJc,
-    LevelText, NumberFormat, Numbering, NumberingId, Paragraph, Run, RunFonts, SpecialIndentType,
-    Start, Style, StyleType, Table, TableBorder, TableBorderPosition, TableCell, TableRow,
+    LevelText, NumberFormat, Numbering, NumberingId, Paragraph, Pic, Run, RunFonts,
+    SpecialIndentType, Start, Style, StyleType, Table, TableBorder, TableBorderPosition, TableCell,
+    TableRow,
 };
 use scraper::{ElementRef, Html, Node};
+
+use crate::office::slides::ImageResolver;
 
 // ---------------------------------------------------------------------------
 // Numbering IDs
@@ -67,8 +72,11 @@ const MONO_FONT: &str = "Courier New";
 
 /// Convert flowing HTML to a `.docx` (returns the file bytes).
 ///
+/// `resolver` loads `<img>` sources (workspace-relative) into bytes; pass a
+/// no-op resolver to skip images.
+///
 /// See the module documentation for the supported HTML subset.
-pub fn flow_html_to_docx(html: &str) -> Result<Vec<u8>, String> {
+pub fn flow_html_to_docx(html: &str, resolver: &dyn ImageResolver) -> Result<Vec<u8>, String> {
     let doc = Html::parse_document(html);
 
     let root = doc
@@ -80,7 +88,7 @@ pub fn flow_html_to_docx(html: &str) -> Result<Vec<u8>, String> {
         .ok_or_else(|| "no <html> root found after parsing".to_string())?;
 
     let mut ctx = BuildContext::new();
-    process_block_children(root, &mut ctx);
+    process_block_children(root, &mut ctx, resolver);
 
     let mut docx = Docx::new();
 
@@ -160,12 +168,16 @@ impl BuildContext {
 
 /// Process block-level children of `parent`, appending paragraphs and tables
 /// to `ctx`.
-fn process_block_children(parent: ElementRef<'_>, ctx: &mut BuildContext) {
+fn process_block_children(
+    parent: ElementRef<'_>,
+    ctx: &mut BuildContext,
+    resolver: &dyn ImageResolver,
+) {
     for child in parent.children() {
         match child.value() {
             Node::Element(_) => {
                 if let Some(el) = ElementRef::wrap(child) {
-                    handle_block_element(el, ctx);
+                    handle_block_element(el, ctx, resolver);
                 }
             }
             Node::Text(t) => {
@@ -185,9 +197,17 @@ fn process_block_children(parent: ElementRef<'_>, ctx: &mut BuildContext) {
 }
 
 /// Dispatch a single block-level element.
-fn handle_block_element(el: ElementRef<'_>, ctx: &mut BuildContext) {
+fn handle_block_element(el: ElementRef<'_>, ctx: &mut BuildContext, resolver: &dyn ImageResolver) {
     let tag = el.value().name();
     match tag {
+        "img" => {
+            if let Some((bytes, _)) = resolver.resolve(el.value().attr("src").unwrap_or("")) {
+                if let Some((w, h)) = png_dimensions(&bytes) {
+                    let run = Run::new().add_image(Pic::new_with_dimensions(bytes, w, h));
+                    ctx.push_paragraph(Paragraph::new().add_run(run));
+                }
+            }
+        }
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
             let level: usize = tag[1..].parse().unwrap_or(1);
             let items = collect_inline_items(el, InlineState::default());
@@ -240,7 +260,7 @@ fn handle_block_element(el: ElementRef<'_>, ctx: &mut BuildContext) {
         }
         // Transparent containers — recurse.
         "div" | "section" | "article" | "main" | "header" | "footer" | "nav" | "body" | "html" => {
-            process_block_children(el, ctx);
+            process_block_children(el, ctx, resolver);
         }
         // Unknown block: try to extract text as a paragraph.
         _ => {
@@ -652,6 +672,17 @@ fn collapse_ws(s: &str) -> String {
     result
 }
 
+/// Parse PNG width/height from the IHDR chunk (bytes 16–23, big-endian).
+fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    const SIG: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    if data.len() < 24 || data[..8] != SIG {
+        return None;
+    }
+    let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+    let h = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+    Some((w, h))
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -660,6 +691,14 @@ fn collapse_ws(s: &str) -> String {
 mod tests {
     use super::*;
     use std::io::{Cursor, Read};
+
+    /// No-op image resolver for tests (skips all `<img>`).
+    struct NoImages;
+    impl ImageResolver for NoImages {
+        fn resolve(&self, _src: &str) -> Option<(Vec<u8>, String)> {
+            None
+        }
+    }
 
     /// Unzip a docx and return the contents of `word/document.xml`.
     fn document_xml(docx_bytes: &[u8]) -> String {
@@ -681,7 +720,7 @@ mod tests {
             <h1>Title</h1>
             <p>Hello <strong>bold</strong> and <em>italic</em> world</p>
         "#;
-        let bytes = flow_html_to_docx(html).expect("conversion should succeed");
+        let bytes = flow_html_to_docx(html, &NoImages).expect("conversion should succeed");
         let xml = document_xml(&bytes);
 
         // Heading text present.
@@ -709,7 +748,7 @@ mod tests {
                 <li>Second</li>
             </ol>
         "#;
-        let bytes = flow_html_to_docx(html).expect("conversion should succeed");
+        let bytes = flow_html_to_docx(html, &NoImages).expect("conversion should succeed");
         let xml = document_xml(&bytes);
 
         // List items present.
@@ -734,7 +773,7 @@ mod tests {
                 </tbody>
             </table>
         "#;
-        let bytes = flow_html_to_docx(html).expect("conversion should succeed");
+        let bytes = flow_html_to_docx(html, &NoImages).expect("conversion should succeed");
         let xml = document_xml(&bytes);
 
         assert!(xml.contains("<w:tbl>"), "table element missing");
@@ -748,7 +787,7 @@ mod tests {
     #[test]
     fn hyperlink_present() {
         let html = r#"<p>Visit <a href="https://example.com">Example</a> site</p>"#;
-        let bytes = flow_html_to_docx(html).expect("conversion should succeed");
+        let bytes = flow_html_to_docx(html, &NoImages).expect("conversion should succeed");
         let xml = document_xml(&bytes);
 
         assert!(xml.contains("Example"), "link text missing");
@@ -761,7 +800,8 @@ mod tests {
     fn malformed_html_does_not_panic() {
         // Intentionally broken HTML.
         let html = "<div><p>unclosed<p>another<span></div></garbage>";
-        let bytes = flow_html_to_docx(html).expect("malformed HTML should still produce output");
+        let bytes =
+            flow_html_to_docx(html, &NoImages).expect("malformed HTML should still produce output");
 
         // Must be a valid zip (starts with PK magic bytes).
         assert!(bytes.len() >= 2, "output too short to be a zip");
@@ -770,5 +810,33 @@ mod tests {
 
         // Must contain document.xml.
         let _xml = document_xml(&bytes);
+    }
+
+    #[test]
+    fn img_embeds_png() {
+        // Generate a tiny PNG via the rasterizer, then embed it via <img>.
+        let (png, _w, _h) = crate::tools::svg_to_png::rasterize_svg(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="#ff0000"/></svg>"##,
+        )
+        .expect("rasterize should succeed");
+
+        struct Resolver(Vec<u8>);
+        impl ImageResolver for Resolver {
+            fn resolve(&self, _src: &str) -> Option<(Vec<u8>, String)> {
+                Some((self.0.clone(), "png".to_string()))
+            }
+        }
+
+        let bytes = flow_html_to_docx(r#"<img src="chart.png"/>"#, &Resolver(png)).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
+            .collect();
+        assert!(
+            names.iter().any(|n| n.starts_with("word/media/")),
+            "media entry missing: {names:?}"
+        );
+        let xml = document_xml(&bytes);
+        assert!(xml.contains("<w:drawing>"), "drawing element missing");
     }
 }
