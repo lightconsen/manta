@@ -11,11 +11,14 @@ const LINES: { prompt?: string; text: string; dim?: boolean }[] = [
 
 export default function QuickStart() {
   return (
-    <section id="quickstart" className="border-t border-line bg-panel/40">
-      <div className="mx-auto max-w-6xl px-6 py-24">
+    <section id="quickstart">
+      <div className="mx-auto max-w-6xl px-6 py-28">
         <div className="grid items-center gap-12 lg:grid-cols-2">
           <div>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+              Quick Start
+            </p>
+            <h2 className="text-3xl font-black tracking-tight sm:text-4xl">
               Up and running in <span className="text-gradient">seconds</span>
             </h2>
             <p className="mt-4 max-w-md text-muted">
@@ -23,12 +26,12 @@ export default function QuickStart() {
               configure, start — then ask your agent to take a screenshot,
               build a report, or automate a task.
             </p>
-            <div className="mt-7 flex flex-wrap gap-3">
+            <div className="mt-8 flex flex-wrap gap-4">
               <a
                 href="https://github.com/lightconsen/syscity#readme"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-brand-500 to-primary-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
+                className="inline-flex h-12 items-center gap-2 rounded-md bg-brand-500 px-6 text-[15px] font-semibold text-white shadow-[0_8px_24px_rgba(178,42,194,0.3)] transition hover:bg-brand-600"
               >
                 Read the docs
               </a>
@@ -36,19 +39,19 @@ export default function QuickStart() {
                 href="https://github.com/lightconsen/syscity#quick-start"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg border border-line bg-panel px-5 py-2.5 text-sm font-semibold transition hover:border-brand-500/50 hover:text-ink"
+                className="inline-flex h-12 items-center gap-2 rounded-md border border-brand-500/60 px-6 text-[15px] font-semibold text-brand-600 transition hover:border-brand-500 hover:bg-brand-500/5"
               >
                 GitHub README
               </a>
             </div>
           </div>
 
-          <div className="card overflow-hidden rounded-2xl">
-            <div className="flex items-center gap-2 border-b border-line bg-panel-2 px-4 py-3">
+          <div className="overflow-hidden rounded-xl bg-[#191a23] shadow-[0_24px_64px_rgba(25,26,35,0.18)]">
+            <div className="flex items-center gap-2 border-b border-white/10 bg-white/5 px-4 py-3">
               <span className="h-3 w-3 rounded-full bg-[#ff5f57]" aria-hidden="true" />
               <span className="h-3 w-3 rounded-full bg-[#febc2e]" aria-hidden="true" />
               <span className="h-3 w-3 rounded-full bg-[#28c840]" aria-hidden="true" />
-              <span className="ml-3 inline-flex items-center gap-1.5 text-xs text-faint">
+              <span className="ml-3 inline-flex items-center gap-1.5 text-xs text-white/40">
                 <Terminal className="h-3.5 w-3.5" />
                 syscity
               </span>
@@ -57,9 +60,9 @@ export default function QuickStart() {
               {LINES.map((l, i) => (
                 <div
                   key={i}
-                  className={`flex items-baseline gap-2 ${l.dim ? "text-muted" : "text-ink/90"}`}
+                  className={`flex items-baseline gap-2 ${l.dim ? "text-white/45" : "text-white/90"}`}
                 >
-                  <span className={l.prompt === "$" ? "text-brand-400" : "text-primary-400"}>
+                  <span className={l.prompt === "$" ? "text-brand-400" : "text-primary-300"}>
                     {l.prompt}
                   </span>
                   <span className="break-all">{l.text}</span>

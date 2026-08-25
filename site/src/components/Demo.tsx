@@ -3,7 +3,7 @@ const base = import.meta.env.BASE_URL;
 export default function Demo() {
   return (
     <section className="mx-auto max-w-5xl px-6 pb-24">
-      <div className="card overflow-hidden rounded-3xl">
+      <div className="card overflow-hidden rounded-2xl shadow-[0_24px_64px_rgba(25,26,35,0.10)]">
         <div className="flex items-center gap-2 border-b border-line bg-panel-2 px-4 py-3">
           <span className="h-3 w-3 rounded-full bg-[#ff5f57]" aria-hidden="true" />
           <span className="h-3 w-3 rounded-full bg-[#febc2e]" aria-hidden="true" />

@@ -40,13 +40,13 @@ function Column({
   items: { icon: ReactNode; label: string }[];
 }) {
   return (
-    <div className="card rounded-2xl p-7">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-400">{eyebrow}</p>
+    <div className="card rounded-xl p-7">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">{eyebrow}</p>
       <h3 className="mt-1.5 text-xl font-bold">{title}</h3>
       <ul className="mt-6 space-y-3.5">
         {items.map((i) => (
           <li key={i.label} className="flex items-center gap-3 text-sm text-ink/90">
-            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-panel-2 text-brand-400 ring-1 ring-line">
+            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-brand-500/10 text-brand-500">
               {i.icon}
             </span>
             {i.label}
@@ -59,9 +59,9 @@ function Column({
 
 export default function ActionCognition() {
   return (
-    <section className="mx-auto max-w-6xl px-6 py-24">
-      <div className="mb-12 text-center">
-        <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
+    <section className="mx-auto max-w-6xl px-6 py-28">
+      <div className="mb-14 text-center">
+        <h2 className="text-3xl font-black tracking-tight sm:text-4xl">
           Action. <span className="text-gradient">Cognition.</span>
         </h2>
         <p className="mx-auto mt-4 max-w-2xl text-muted">

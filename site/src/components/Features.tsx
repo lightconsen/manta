@@ -43,10 +43,13 @@ const FEATURES: { icon: ReactNode; title: string; body: string }[] = [
 
 export default function Features() {
   return (
-    <section id="features" className="border-y border-line bg-panel/40">
-      <div className="mx-auto max-w-6xl px-6 py-24">
-        <div className="mb-12 max-w-2xl">
-          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
+    <section id="features" className="border-y border-line bg-alt">
+      <div className="mx-auto max-w-6xl px-6 py-28">
+        <div className="mb-14 max-w-2xl">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+            Features
+          </p>
+          <h2 className="text-3xl font-black tracking-tight sm:text-4xl">
             Why <span className="text-gradient">Syscity</span>?
           </h2>
           <p className="mt-4 text-muted">
@@ -57,11 +60,14 @@ export default function Features() {
 
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map((f) => (
-            <article key={f.title} className="card rounded-2xl p-6 transition hover:border-brand-500/40">
-              <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500/20 to-primary-500/20 text-brand-400 ring-1 ring-line">
+            <article
+              key={f.title}
+              className="card rounded-xl p-6 transition hover:border-brand-500/40 hover:shadow-[0_12px_32px_rgba(178,42,194,0.10)]"
+            >
+              <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500">
                 {f.icon}
               </div>
-              <h3 className="mb-2 text-base font-semibold">{f.title}</h3>
+              <h3 className="mb-2 text-base font-bold">{f.title}</h3>
               <p className="text-sm leading-relaxed text-muted">{f.body}</p>
             </article>
           ))}

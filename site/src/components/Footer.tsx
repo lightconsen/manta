@@ -5,7 +5,7 @@ const base = import.meta.env.BASE_URL;
 
 export default function Footer() {
   return (
-    <footer className="border-t border-line">
+    <footer className="border-t border-line bg-alt">
       <div className="mx-auto max-w-6xl px-6 py-14">
         <div className="grid gap-10 md:grid-cols-3">
           <div>
@@ -15,7 +15,7 @@ export default function Footer() {
                 alt="Syscity logo"
                 className="h-7 w-7 rounded-md object-contain"
               />
-              <span className="text-sm font-semibold">Syscity</span>
+              <span className="text-sm font-bold">Syscity</span>
             </div>
             <p className="mt-3 max-w-xs text-sm text-muted">
               AI agents that control your computer. Local-first, one runtime,
