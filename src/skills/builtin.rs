@@ -50,7 +50,8 @@ mod tests {
         assert!(skills.contains_key("nano-pdf"));
         assert!(skills.contains_key("self-improving-agent"));
         assert!(skills.contains_key("agent-creator"));
-        assert_eq!(skills.len(), 13);
+        assert!(skills.contains_key("document-authoring"));
+        assert_eq!(skills.len(), 14);
     }
 
     #[test]

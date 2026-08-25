@@ -53,6 +53,9 @@ macro_rules! include_builtin_skills {
         // Agent Creator
         skills.insert("agent-creator", include_str!("builtin/agent-creator/SKILL.md"));
 
+        // Document Authoring
+        skills.insert("document-authoring", include_str!("builtin/document-authoring/SKILL.md"));
+
         skills
     }};
 }
@@ -178,6 +181,7 @@ mod tests {
         assert!(skills.contains_key("nano-pdf"));
         assert!(skills.contains_key("self-improving-agent"));
         assert!(skills.contains_key("agent-creator"));
-        assert_eq!(skills.len(), 13);
+        assert!(skills.contains_key("document-authoring"));
+        assert_eq!(skills.len(), 14);
     }
 }
