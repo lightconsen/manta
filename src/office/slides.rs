@@ -652,10 +652,13 @@ fn slide_spec_for_entry<'a>(name: &str, specs: &'a [SlideSpec]) -> Option<&'a Sl
 /// Only text-bearing `<p:sp>` blocks consume a queue entry, so textless
 /// background boxes and placeholder shapes cannot shift the mapping.
 fn patch_slide_text(xml: &str, spec: &SlideSpec) -> String {
-    let mut queue: Vec<Option<TextBlock>> = spec
+    // Only text-bearing elements consume a queue entry; empty text blocks
+    // (dividers, background-only boxes) and images are excluded so they
+    // cannot block the mapping.
+    let mut queue: Vec<TextBlock> = spec
         .elements
         .iter()
-        .map(|el| match &el.kind {
+        .filter_map(|el| match &el.kind {
             ElementKind::Text(block) if !block.is_empty() => Some(block.clone()),
             ElementKind::Bullets(items) => {
                 // Each bullet becomes a line; the element's style carries over.
@@ -694,8 +697,8 @@ fn patch_slide_text(xml: &str, spec: &SlideSpec) -> String {
         let block = &rest[start..end];
 
         let patched = if block.contains("<a:t>") {
-            if let Some(Some(text_block)) = queue.first().cloned() {
-                let tx = text_block_to_txbody(&text_block);
+            if let Some(text_block) = queue.first() {
+                let tx = text_block_to_txbody(text_block);
                 queue.remove(0);
                 replace_txbody(block, &tx)
             } else {
