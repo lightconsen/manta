@@ -1,0 +1,32 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Capability: Presentations (slides canvas)
+#
+# The agent must produce slide decks through write_report with
+# format="slides" — canvas HTML (div.slide per slide, absolutely positioned
+# children) — which the preview renders and the gateway converts to .pptx.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tasks:
+  - id: slides_deck_generation
+    description: "用 write_report slides 格式生成演示文稿画布"
+    input: >
+      用 write_report 工具（format 设为 slides）生成一份 3 页的演示文稿，
+      标题《AI 助手周报》。画布要求：每页一个 class="slide" 的 div，
+      页内元素用绝对定位（inline style 写 left/top/width/height，单位 px），
+      第一页是封面大标题，后两页各有标题和两三条要点。
+    expected_behavior: "调用 write_report 且 format=slides，content 含三个 class=\"slide\" 画布"
+    conditions:
+      - type: pattern
+        command: "grep -c 'write_report' ${trial_dir}/eval_trace.log"
+        must_contain: 1
+      - type: pattern
+        command: "grep -c 'slides' ${trial_dir}/eval_trace.log"
+        must_contain: 1
+      - type: pattern
+        command: "grep -c 'class=.slide' ${trial_dir}/eval_trace.log"
+        must_contain: 1
+    criteria:
+      dimensions: [instruction_following, completeness]
+      thresholds:
+        instruction_following: 0.8
+        completeness: 0.7

@@ -31,6 +31,11 @@ capability:
       weight: 0.8
       min_pass_rate: 0.7
       trials: 3
+    - id: presentations
+      path: "../capability/presentations.yaml"
+      weight: 0.8
+      min_pass_rate: 0.7
+      trials: 3
 
 # ── 回归评测集：确保不退化 ──────────────────────────────────────────────
 regression:
