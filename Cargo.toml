@@ -188,6 +188,8 @@ pdf-extract = "0.7"
 
 # Office document generation (canvas-HTML → OOXML converters)
 ppt-rs = "0.2"
+docx-rs = "0.4"
+rust_xlsxwriter = "0.99"
 scraper = "0.27"
 
 # Database
@@ -310,6 +312,8 @@ mobile = [
 # Testing
 wiremock = "0.6"
 futures-util = "0.3"
+# Read-back verification of generated xlsx in converter tests
+calamine = "0.36"
 
 # Concurrency control for tests
 serial_test = "3.0"

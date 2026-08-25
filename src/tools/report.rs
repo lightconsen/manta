@@ -59,27 +59,35 @@ impl Tool for WriteReportTool {
     }
 
     fn description(&self) -> &str {
-        "Write a markdown, HTML, or slides document that enables a rich split-panel \
-         preview in the chat UI. \
+        "Write a markdown, HTML, slides, docx, or xlsx document that enables a \
+         rich split-panel preview in the chat UI. \
          \
          PREFER THIS OVER file_write when the user asks you to create a \
          document, report, article, essay, paper, summary, analysis, presentation, \
-         slide deck, or any \
+         slide deck, spreadsheet, or any \
          formatted content they would want to READ rather than edit. This tool \
          saves the report to a special directory and renders it with a \
          clickable preview card in the chat — the user can then open it in a \
          side-by-side viewer. \
          \
-         For presentations, use format \"slides\" with canvas HTML: one \
-         `<div class=\"slide\">` per slide, each a 1280x720 px canvas with \
-         absolutely-positioned children (inline styles: left/top/width/height \
-         in px, background, color, font-weight). The preview renders the canvas \
-         exactly, and the user can download it as a real .pptx file. \
+         Formats beyond plain markdown/html author constrained HTML that the \
+         preview renders exactly and that the server converts to a real Office \
+         file on download: \
+         - \"slides\": canvas HTML — one `<div class=\"slide\">` per slide, each \
+           a 1280x720 px canvas with absolutely-positioned children (inline \
+           styles left/top/width/height in px, background, color, font-weight) \
+           → .pptx. \
+         - \"docx\": flowing HTML (h1-h6, p, ul/ol/li, table, strong/em/a/code, \
+           pre, blockquote) → .docx. \
+         - \"xlsx\": table HTML — one `<table>` per worksheet; use `data-sheet` \
+           or `<caption>` for the sheet name, `<thead>` for a bold header row, \
+           and `data-type=\"percent\"` to turn \"12.5%\" into a number → .xlsx. \
          \
          Use cases: research reports, industry analysis, weekly summaries, \
          technical documentation, essays, HTML newsletters, formatted articles, \
-         meeting notes, whitepapers, tutorials, guides, slide decks, and any \
-         long-form content that benefits from a dedicated reading view. \
+         meeting notes, whitepapers, tutorials, guides, slide decks, data \
+         tables, and any long-form content that benefits from a dedicated \
+         reading view. \
          \
          Do NOT use this for code files, configuration files, or data files — \
          those should use file_write."
@@ -103,8 +111,8 @@ impl Tool for WriteReportTool {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "html", "slides"],
-                    "description": "Report format (default: markdown). Use \"slides\" for presentations: content must be canvas HTML — one `<div class=\"slide\">` per slide, each a 1280x720 px canvas with absolutely-positioned children (inline styles: left/top/width/height in px, plus background/color/font-weight). The preview renders it exactly, and the user can download a .pptx.",
+                    "enum": ["markdown", "html", "slides", "docx", "xlsx"],
+                    "description": "Report format (default: markdown). \"slides\"/\"docx\"/\"xlsx\" author constrained HTML (see the tool description) that previews as-is and converts to .pptx/.docx/.xlsx on download.",
                     "default": "markdown"
                 }
             }),
@@ -141,15 +149,28 @@ impl Tool for WriteReportTool {
 
         let format = args["format"].as_str().unwrap_or("markdown").to_string();
 
-        // Canvas-contract validation for slides: fail fast with the parse
-        // error so the agent can fix the markup instead of shipping a deck
-        // that converts to nothing.
-        if format == "slides" {
-            if let Err(e) = crate::office::slides::parse_canvas(content) {
-                return Err(crate::error::SyscityError::Validation(format!(
-                    "Invalid slides canvas: {e}"
-                )));
+        // Authoring-contract validation: fail fast so the agent can fix the
+        // markup instead of shipping a document that converts to nothing.
+        match format.as_str() {
+            "slides" => {
+                if let Err(e) = crate::office::slides::parse_canvas(content) {
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "Invalid slides canvas: {e}"
+                    )));
+                }
             }
+            "xlsx" => {
+                // Runs the converter as a cheap correctness gate — surfaces
+                // "no <table> elements" (and other build errors) at write time.
+                if let Err(e) = crate::office::xlsx::tables_html_to_xlsx(content) {
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "Invalid xlsx content: {e}"
+                    )));
+                }
+            }
+            // "docx" and plain markdown/html: any flowing HTML converts, so no
+            // structural gate is needed.
+            _ => {}
         }
 
         // Resolve the artifacts directory: reports live in the producing
@@ -246,10 +267,16 @@ impl Tool for WriteReportTool {
             "url": url,
             "size": file_size,
         });
-        if format == "slides" {
-            // The preview panel renders the canvas HTML directly; this URL
-            // converts it to a real .pptx on demand.
-            data["export_url"] = serde_json::Value::String(format!("{url}?to=pptx"));
+        // The preview panel renders the authored HTML directly; the export URL
+        // converts it to the real Office file on demand.
+        let export_target = match format.as_str() {
+            "slides" => Some("pptx"),
+            "docx" => Some("docx"),
+            "xlsx" => Some("xlsx"),
+            _ => None,
+        };
+        if let Some(target) = export_target {
+            data["export_url"] = serde_json::Value::String(format!("{url}?to={target}"));
         }
 
         Ok(ToolExecutionResult::success(format!(
@@ -344,6 +371,65 @@ mod tests {
             .join("artifacts")
             .join("deck-test.html");
         let _ = tokio::fs::remove_file(&written).await;
+    }
+
+    #[tokio::test]
+    async fn test_write_report_docx_and_xlsx_export_urls() {
+        let tool = WriteReportTool::new();
+        let ctx = ToolContext::new("test", "test-conv");
+
+        // docx: any flowing HTML converts; no structural gate.
+        let docx = tool
+            .execute(
+                serde_json::json!({
+                    "content": "<h1>Title</h1><p>Body</p>",
+                    "filename": "doc-test.html",
+                    "format": "docx",
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let data = docx.data.unwrap();
+        assert_eq!(data["format"], "docx");
+        assert_eq!(
+            data["export_url"].as_str().unwrap(),
+            format!("{}?to=docx", data["url"].as_str().unwrap())
+        );
+
+        // xlsx: valid table HTML exports; empty HTML is rejected.
+        let xlsx = tool
+            .execute(
+                serde_json::json!({
+                    "content": "<table><thead><tr><th>Name</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table>",
+                    "filename": "sheet-test.html",
+                    "format": "xlsx",
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let data = xlsx.data.unwrap();
+        assert_eq!(
+            data["export_url"].as_str().unwrap(),
+            format!("{}?to=xlsx", data["url"].as_str().unwrap())
+        );
+
+        let bad_xlsx = tool
+            .execute(
+                serde_json::json!({
+                    "content": "<p>no table</p>",
+                    "filename": "sheet-bad.html",
+                    "format": "xlsx",
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(bad_xlsx.is_err());
+
+        let base = crate::dirs::workspace_data_dir().join("artifacts");
+        let _ = tokio::fs::remove_file(base.join("doc-test.html")).await;
+        let _ = tokio::fs::remove_file(base.join("sheet-test.html")).await;
     }
 
     #[tokio::test]

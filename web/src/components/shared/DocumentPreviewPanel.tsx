@@ -151,7 +151,7 @@ export function DocumentPreviewPanel({
   }, [document.filename]);
 
   const handleDownload = useCallback(async () => {
-    // Server-side export (slides canvas → real .pptx) when available.
+    // Server-side export (authored HTML → real Office file) when available.
     if (document.exportUrl) {
       try {
         const gatewayToken = localStorage.getItem("syscity_gateway_token");
@@ -163,7 +163,15 @@ export function DocumentPreviewPanel({
         const objUrl = URL.createObjectURL(blob);
         const a = window.document.createElement("a");
         a.href = objUrl;
-        a.download = document.filename.replace(/\.(html?|md)$/i, "") + ".pptx";
+        const ext =
+          document.format === "slides"
+            ? "pptx"
+            : document.format === "docx"
+              ? "docx"
+              : document.format === "xlsx"
+                ? "xlsx"
+                : "pptx";
+        a.download = document.filename.replace(/\.(html?|md)$/i, "") + "." + ext;
         a.click();
         URL.revokeObjectURL(objUrl);
       } catch (err) {
@@ -217,9 +225,13 @@ export function DocumentPreviewPanel({
               <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-medium bg-black/5 dark:bg-white/10">
                 {document.format === "slides"
                   ? "PPT"
-                  : document.format === "html"
-                    ? "HTML"
-                    : "MD"}
+                  : document.format === "docx"
+                    ? "DOCX"
+                    : document.format === "xlsx"
+                      ? "XLSX"
+                      : document.format === "html"
+                        ? "HTML"
+                        : "MD"}
               </span>
             </div>
           </div>
@@ -275,8 +287,11 @@ export function DocumentPreviewPanel({
         </div>
       </div>
 
-      {/* Content area — HTML/slides fill height; markdown scrolls */}
-      {document.format === "html" || document.format === "slides" ? (
+      {/* Content area — HTML/slides/docx/xlsx fill height; markdown scrolls */}
+      {document.format === "html" ||
+      document.format === "slides" ||
+      document.format === "docx" ||
+      document.format === "xlsx" ? (
         <div className="flex-1 flex flex-col min-h-0">
           {loadState === "loading" && (
             <div className="flex items-center justify-center h-40 text-secondary">

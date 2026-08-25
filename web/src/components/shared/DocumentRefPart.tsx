@@ -26,7 +26,15 @@ export function DocumentRefPart({ data }: DocumentRefPartProps) {
   }, [data, setPreviewDocument]);
 
   const formatBadge =
-    data.format === "slides" ? "PPT" : data.format === "html" ? "HTML" : "MD";
+    data.format === "slides"
+      ? "PPT"
+      : data.format === "docx"
+        ? "DOCX"
+        : data.format === "xlsx"
+          ? "XLSX"
+          : data.format === "html"
+            ? "HTML"
+            : "MD";
 
   return (
     <div className="my-3 rounded-xl border border-subtle bg-card overflow-hidden">

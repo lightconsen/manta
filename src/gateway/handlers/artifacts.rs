@@ -52,10 +52,14 @@ impl crate::office::slides::ImageResolver for ArtifactImageResolver {
     }
 }
 
-/// Convert a slides-canvas artifact to a real .pptx download.
-async fn export_as_pptx(
+/// Convert an authored-HTML artifact to a real Office file download.
+///
+/// `target` is one of "pptx" | "docx" | "xlsx". The conversion is CPU-bound
+/// and synchronous (HTML parse + OOXML zip), so it runs off the async runtime.
+async fn export_document(
     file_path: std::path::PathBuf,
     filename: String,
+    target: &str,
 ) -> axum::response::Response {
     let html = match tokio::fs::read_to_string(&file_path).await {
         Ok(c) => c,
@@ -69,30 +73,36 @@ async fn export_as_pptx(
         }
     };
 
-    // Conversion is CPU-bound and synchronous (HTML parse + OOXML zip).
     let base = file_path.parent().map(|p| p.to_path_buf());
     let title = filename.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let resolver = ArtifactImageResolver { base: base.unwrap_or_default() };
-        crate::office::slides::canvas_html_to_pptx(&html, &title, &resolver)
+    let target_owned = target.to_string();
+    let result = tokio::task::spawn_blocking(move || match target_owned.as_str() {
+        "pptx" => {
+            let resolver = ArtifactImageResolver { base: base.unwrap_or_default() };
+            crate::office::slides::canvas_html_to_pptx(&html, &title, &resolver)
+        }
+        "docx" => crate::office::docx::flow_html_to_docx(&html),
+        "xlsx" => crate::office::xlsx::tables_html_to_xlsx(&html),
+        _ => Err(format!("unsupported export target '{target_owned}'")),
     })
     .await;
 
     match result {
         Ok(Ok(bytes)) => {
-            let download_name = filename
-                .trim_end_matches(".html")
-                .trim_end_matches(".md")
-                .to_string()
-                + ".pptx";
+            let stem = filename.trim_end_matches(".html").trim_end_matches(".md");
+            let download_name = format!("{stem}.{target}");
+            let content_type = match target {
+                "pptx" => {
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                }
+                "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                _ => "application/octet-stream",
+            };
             (
                 StatusCode::OK,
                 [
-                    (
-                        header::CONTENT_TYPE,
-                        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                            .to_string(),
-                    ),
+                    (header::CONTENT_TYPE, content_type.to_string()),
                     (
                         header::CONTENT_DISPOSITION,
                         format!("attachment; filename=\"{download_name}\""),
@@ -164,8 +174,8 @@ fn resolve_artifact_path(path: &str) -> Option<std::path::PathBuf> {
 ///
 /// Reads a document from the resolved artifacts location and returns it with
 /// the appropriate Content-Type (text/markdown for .md, text/html for .html).
-/// With `?to=pptx` the document must be a slides canvas and the response is
-/// the converted .pptx download instead of the source.
+/// With `?to=pptx|docx|xlsx` the document must be authored HTML and the
+/// response is the converted Office file download instead of the source.
 pub async fn artifact_handler(
     Path(path): Path<String>,
     Query(query): Query<ArtifactExportQuery>,
@@ -184,15 +194,19 @@ pub async fn artifact_handler(
     // between the HTTP-decoded path and the filesystem-stored path.
     // The write_report tool already validates paths server-side.
 
-    if query.to.as_deref() == Some("pptx") {
-        let filename = path.rsplit('/').next().unwrap_or("slides.html").to_string();
-        return export_as_pptx(file_path, filename).await;
-    }
     if let Some(to) = &query.to {
+        if matches!(to.as_str(), "pptx" | "docx" | "xlsx") {
+            let filename = path
+                .rsplit('/')
+                .next()
+                .unwrap_or("document.html")
+                .to_string();
+            return export_document(file_path, filename, to).await;
+        }
         return (
             StatusCode::BAD_REQUEST,
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            format!("Unsupported export target '{to}' (supported: pptx)"),
+            format!("Unsupported export target '{to}' (supported: pptx, docx, xlsx)"),
         )
             .into_response();
     }
@@ -329,6 +343,62 @@ mod tests {
         assert_eq!(&body[..2], b"PK");
 
         let _ = tokio::fs::remove_file(dir.join("export-deck.html")).await;
+    }
+
+    #[tokio::test]
+    async fn test_docx_and_xlsx_export() {
+        let dir = crate::dirs::artifacts_dir();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("export-doc.html"), "<h1>标题</h1><p>正文</p>")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            dir.join("export-sheet.html"),
+            "<table><thead><tr><th>A</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table>",
+        )
+        .await
+        .unwrap();
+
+        let docx = artifact_handler(
+            Path("export-doc.html".to_string()),
+            Query(ArtifactExportQuery { to: Some("docx".to_string()) }),
+        )
+        .await
+        .into_response();
+        assert_eq!(docx.status(), StatusCode::OK);
+        let ct = docx
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        assert!(ct.contains("wordprocessingml"), "content-type: {ct}");
+        let body = axum::body::to_bytes(docx.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(&body[..2], b"PK");
+
+        let xlsx = artifact_handler(
+            Path("export-sheet.html".to_string()),
+            Query(ArtifactExportQuery { to: Some("xlsx".to_string()) }),
+        )
+        .await
+        .into_response();
+        assert_eq!(xlsx.status(), StatusCode::OK);
+        let ct = xlsx
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        assert!(ct.contains("spreadsheetml"), "content-type: {ct}");
+        let body = axum::body::to_bytes(xlsx.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(&body[..2], b"PK");
+
+        let _ = tokio::fs::remove_file(dir.join("export-doc.html")).await;
+        let _ = tokio::fs::remove_file(dir.join("export-sheet.html")).await;
     }
 
     #[tokio::test]
