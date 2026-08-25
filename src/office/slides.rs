@@ -2,8 +2,9 @@
 //!
 //! Contract: the document is a sequence of `<div class="slide">` elements,
 //! each a 1280×720 px canvas (16:9). Children carry inline styles with
-//! absolute positioning (`left/top/width/height` in px) plus a small
-//! supported subset: `background`/`background-color`, `color`, `font-weight`,
+//! absolute positioning (`left`/`top` or `right`/`bottom` plus `width`/
+//! `height` in px) plus a small supported subset: `background`/`background-
+//! color` (solid or `linear-gradient(...)`), `color`, `font-weight`,
 //! `font-size`. 1 px = 9525 EMU, so the HTML preview is pixel-identical to
 //! the generated deck.
 //!
@@ -63,7 +64,18 @@ pub enum ElementKind {
 pub struct SlideSpec {
     /// Slide background color as `RRGGBB`, if specified.
     pub background: Option<String>,
+    /// Slide background gradient (`linear-gradient(...)`), if specified.
+    pub background_gradient: Option<GradientSpec>,
     pub elements: Vec<CanvasElement>,
+}
+
+/// A parsed linear gradient: direction angle plus color stops.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradientSpec {
+    /// Direction angle in degrees (0 = to top, 90 = to right, 135 = diagonal).
+    pub angle_deg: f32,
+    /// `(RRGGBB color, position 0.0–100.0)` stops in order.
+    pub stops: Vec<(String, f32)>,
 }
 
 /// Parse an inline `style` attribute into lowercase-key property pairs.
@@ -125,6 +137,60 @@ pub fn normalize_color(value: &str) -> Option<String> {
     }
 }
 
+/// Parse a CSS `linear-gradient(...)` value into a [`GradientSpec`].
+///
+/// Supports `linear-gradient(<angle>deg, <color> [<pos>%], …)` and the
+/// `to <side>` direction keywords. Missing stop positions are distributed
+/// evenly across 0–100.
+pub fn parse_gradient(value: &str) -> Option<GradientSpec> {
+    let inner = value
+        .trim()
+        .strip_prefix("linear-gradient(")?
+        .strip_suffix(")")?;
+    let mut parts = inner.split(',').map(str::trim);
+    let first = parts.next()?.to_ascii_lowercase();
+    let angle_deg = if let Some(d) = first.strip_suffix("deg") {
+        d.trim().parse::<f32>().ok()?
+    } else {
+        match first.as_str() {
+            "to right" => 90.0,
+            "to left" => 270.0,
+            "to bottom" => 180.0,
+            "to top" => 0.0,
+            "to bottom right" => 135.0,
+            "to bottom left" => 225.0,
+            _ => return None,
+        }
+    };
+
+    let mut stops: Vec<(String, Option<f32>)> = Vec::new();
+    for part in parts {
+        let mut toks = part.split_whitespace();
+        let color = normalize_color(toks.next()?)?;
+        let pos = toks
+            .next()
+            .and_then(|p| p.trim_end_matches('%').parse::<f32>().ok());
+        stops.push((color, pos));
+    }
+    if stops.is_empty() {
+        return None;
+    }
+    let n = stops.len();
+    let stops = stops
+        .into_iter()
+        .enumerate()
+        .map(|(i, (color, pos))| {
+            let pos = pos.unwrap_or(if n == 1 {
+                100.0
+            } else {
+                i as f32 * 100.0 / (n - 1) as f32
+            });
+            (color, pos)
+        })
+        .collect();
+    Some(GradientSpec { angle_deg, stops })
+}
+
 fn element_text(el: &ElementRef) -> String {
     // Join text nodes; <br>/<p>/<li> already separated by the caller for
     // lists — for plain text collapse runs of whitespace.
@@ -137,13 +203,47 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
     if style_get(&style, "position") != Some("absolute") {
         return None;
     }
-    let x_px = style_get(&style, "left").and_then(px).unwrap_or(0.0);
-    let y_px = style_get(&style, "top").and_then(px).unwrap_or(0.0);
-    // Default box: span to the canvas right edge with a one-line height.
-    let w_px = style_get(&style, "width")
-        .and_then(px)
-        .unwrap_or(CANVAS_W_PX - x_px);
-    let h_px = style_get(&style, "height").and_then(px).unwrap_or(80.0);
+    let left = style_get(&style, "left").and_then(px);
+    let right = style_get(&style, "right").and_then(px);
+    let top = style_get(&style, "top").and_then(px);
+    let bottom = style_get(&style, "bottom").and_then(px);
+    let width = style_get(&style, "width").and_then(px);
+    let height = style_get(&style, "height").and_then(px);
+
+    let font_size_px = style_get(&style, "font-size").and_then(px);
+
+    // Width/height resolve first (they participate in right/bottom anchoring);
+    // unanchored text defaults to a font-size-derived box.
+    let w_px = match width {
+        Some(w) => w,
+        None => match (left, right) {
+            (Some(l), Some(r)) => CANVAS_W_PX - l - r,
+            (Some(l), None) => CANVAS_W_PX - l,
+            (None, Some(_)) => font_size_px.map(|s| s * 2.5).unwrap_or(400.0),
+            (None, None) => CANVAS_W_PX,
+        },
+    };
+    let h_px = match height {
+        Some(h) => h,
+        None => match (top, bottom) {
+            (Some(t), Some(b)) => CANVAS_H_PX - t - b,
+            _ => font_size_px.map(|s| s * 1.4).unwrap_or(80.0),
+        },
+    };
+    let x_px = match left {
+        Some(l) => l,
+        None => match right {
+            Some(r) => CANVAS_W_PX - r - w_px,
+            None => 0.0,
+        },
+    };
+    let y_px = match top {
+        Some(t) => t,
+        None => match bottom {
+            Some(b) => CANVAS_H_PX - b - h_px,
+            None => 0.0,
+        },
+    };
     if w_px <= 0.0 || h_px <= 0.0 {
         return None;
     }
@@ -155,7 +255,6 @@ fn parse_element(el: &ElementRef) -> Option<CanvasElement> {
     let bold = style_get(&style, "font-weight")
         .map(|v| v == "bold" || v.parse::<u32>().map(|n| n >= 600).unwrap_or(false))
         .unwrap_or(false);
-    let font_size_px = style_get(&style, "font-size").and_then(px);
 
     let tag = el.value().name();
     let kind = if tag == "img" {
@@ -202,9 +301,10 @@ pub fn parse_canvas(html: &str) -> Result<Vec<SlideSpec>, String> {
     let mut slides = Vec::new();
     for slide_el in doc.select(&slide_sel) {
         let style = parse_inline_style(slide_el.value().attr("style").unwrap_or(""));
-        let background = style_get(&style, "background-color")
-            .or_else(|| style_get(&style, "background"))
-            .and_then(normalize_color);
+        let bg_value =
+            style_get(&style, "background-color").or_else(|| style_get(&style, "background"));
+        let background = bg_value.and_then(normalize_color);
+        let background_gradient = bg_value.and_then(parse_gradient);
 
         // Direct children only — nested content belongs to its parent box.
         let elements = slide_el
@@ -212,7 +312,11 @@ pub fn parse_canvas(html: &str) -> Result<Vec<SlideSpec>, String> {
             .filter_map(|child| parse_element(&child))
             .collect();
 
-        slides.push(SlideSpec { background, elements });
+        slides.push(SlideSpec {
+            background,
+            background_gradient,
+            elements,
+        });
     }
 
     if slides.is_empty() {
@@ -239,7 +343,9 @@ pub fn canvas_html_to_pptx(
     resolver: &dyn ImageResolver,
 ) -> Result<Vec<u8>, String> {
     use ppt_rs::generator::images::Image;
-    use ppt_rs::generator::shapes::{Shape, ShapeFill, ShapeType};
+    use ppt_rs::generator::shapes::{
+        GradientDirection, GradientFill, GradientStop, Shape, ShapeFill, ShapeType,
+    };
     use ppt_rs::generator::{create_pptx_with_content, SlideContent};
     use ppt_rs::SlideLayout;
 
@@ -254,6 +360,24 @@ pub fn canvas_html_to_pptx(
             slide = slide.add_shape(
                 Shape::new(ShapeType::Rectangle, 0, 0, SLIDE_W_EMU, SLIDE_H_EMU)
                     .with_fill(ShapeFill::new(bg)),
+            );
+        } else if let Some(grad) = &spec.background_gradient {
+            let stops = grad
+                .stops
+                .iter()
+                .map(|(color, pos)| GradientStop {
+                    color: color.clone(),
+                    position: (pos * 1000.0).round() as u32,
+                    transparency: None,
+                })
+                .collect();
+            slide = slide.add_shape(
+                Shape::new(ShapeType::Rectangle, 0, 0, SLIDE_W_EMU, SLIDE_H_EMU).with_gradient(
+                    GradientFill {
+                        stops,
+                        direction: GradientDirection::Angle(grad.angle_deg.round() as u32),
+                    },
+                ),
             );
         }
 
@@ -603,5 +727,60 @@ mod tests {
             "sizes must land inside their own shapes: {sz_4800} {sz_1800} {sz_938} vs {i_jia} {i_yi} {i_bing}"
         );
         assert_eq!(slide1.matches("<a:noAutofit/>").count(), 3);
+    }
+
+    #[test]
+    fn parse_gradient_linear_with_stops() {
+        let g = parse_gradient("linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)")
+            .expect("valid gradient");
+        assert!((g.angle_deg - 135.0).abs() < 1e-6);
+        assert_eq!(
+            g.stops,
+            vec![
+                ("1a1a2e".to_string(), 0.0),
+                ("16213e".to_string(), 50.0),
+                ("0f3460".to_string(), 100.0),
+            ]
+        );
+        // Direction keyword + missing positions are distributed evenly.
+        let g2 = parse_gradient("linear-gradient(to right, #000, #fff)").unwrap();
+        assert!((g2.angle_deg - 90.0).abs() < 1e-6);
+        assert_eq!(g2.stops, vec![("000000".to_string(), 0.0), ("ffffff".to_string(), 100.0)]);
+        // Non-gradient returns None.
+        assert!(parse_gradient("#ffffff").is_none());
+    }
+
+    #[test]
+    fn right_bottom_anchoring_positions_box() {
+        // A watermark anchored with right/bottom (no left/top/width/height)
+        // must land against the bottom-right corner.
+        let html = r#"<div class="slide"><div style="position:absolute;right:80px;bottom:120px;font-size:160px">AI</div></div>"#;
+        let spec = parse_canvas(html).unwrap();
+        let el = &spec[0].elements[0];
+        let w = 160.0 * 2.5;
+        let h = 160.0 * 1.4;
+        assert!((el.x_px - (CANVAS_W_PX - 80.0 - w)).abs() < 0.01, "x={}", el.x_px);
+        assert!((el.y_px - (CANVAS_H_PX - 120.0 - h)).abs() < 0.01, "y={}", el.y_px);
+        assert!((el.w_px - w).abs() < 0.01);
+        assert!((el.h_px - h).abs() < 0.01);
+    }
+
+    #[test]
+    fn gradient_background_renders_into_pptx() {
+        let html = r#"<div class="slide" style="background:linear-gradient(135deg,#1a1a2e,#0f3460)"><div style="position:absolute;left:0px;top:0px;width:100px;height:50px;font-size:20px">x</div></div>"#;
+        let bytes = canvas_html_to_pptx(html, "t", &NoImages).unwrap();
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("pptx should be a zip");
+        let mut slide1 = String::new();
+        use std::io::Read;
+        archive
+            .by_name("ppt/slides/slide1.xml")
+            .unwrap()
+            .read_to_string(&mut slide1)
+            .unwrap();
+        // ppt-rs emits a gradient fill element for the background rect.
+        assert!(slide1.contains("<a:gradFill"), "gradient fill missing from slide XML");
+        assert!(slide1.contains("srgbClr val=\"1a1a2e\""));
+        assert!(slide1.contains("srgbClr val=\"0f3460\""));
     }
 }
