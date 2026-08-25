@@ -41,6 +41,14 @@ function HtmlShadowDom({ content }: { content: string }) {
   return <div ref={hostRef} className="w-full h-full overflow-y-auto" />;
 }
 
+/** Map an authored-format name to its Office export file extension. */
+function exportExtension(format: string): string {
+  if (format === "slides") return "pptx";
+  if (format === "docx") return "docx";
+  if (format === "xlsx") return "xlsx";
+  return "pptx";
+}
+
 /** Slides canvas preview: renders the canvas HTML, scaling each 1280px-wide
  *  `.slide` to the panel width (zoom keeps layout metrics honest, unlike
  *  transform: scale which leaves the unscaled box in flow). */
@@ -163,14 +171,7 @@ export function DocumentPreviewPanel({
         const objUrl = URL.createObjectURL(blob);
         const a = window.document.createElement("a");
         a.href = objUrl;
-        const ext =
-          document.format === "slides"
-            ? "pptx"
-            : document.format === "docx"
-              ? "docx"
-              : document.format === "xlsx"
-                ? "xlsx"
-                : "pptx";
+        const ext = exportExtension(document.format);
         a.download = document.filename.replace(/\.(html?|md)$/i, "") + "." + ext;
         a.click();
         URL.revokeObjectURL(objUrl);
@@ -249,14 +250,14 @@ export function DocumentPreviewPanel({
               <FolderOpen className="w-4 h-4" />
             </button>
           )}
-          {/* Download (PPTX export when the document has an exportUrl) */}
+          {/* Download (Office export when the document has an exportUrl) */}
           <button
             type="button"
             onClick={handleDownload}
             disabled={loadState !== "loaded"}
             className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary hover:text-primary transition disabled:opacity-30 disabled:pointer-events-none"
-            title={document.exportUrl ? "Download as PPTX" : "Download file"}
-            aria-label={document.exportUrl ? "Download as PPTX" : "Download file"}
+            title={document.exportUrl ? `Download as ${exportExtension(document.format).toUpperCase()}` : "Download file"}
+            aria-label={document.exportUrl ? `Download as ${exportExtension(document.format).toUpperCase()}` : "Download file"}
           >
             <Download className="w-4 h-4" />
           </button>
